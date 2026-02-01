@@ -509,8 +509,15 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   g_debug("[SIGNER_SERVICE] Subscribed for NIP-46 responses");
 
   /* Publish the request */
+  const char *wrapper_id = nostr_event_get_id(wrapper);
+  const char *wrapper_pubkey = nostr_event_get_pubkey(wrapper);
+  g_debug("[SIGNER_SERVICE] Publishing NIP-46 request: id=%.16s... pubkey=%.16s... kind=%d to relay=%s",
+          wrapper_id ? wrapper_id : "(null)",
+          wrapper_pubkey ? wrapper_pubkey : "(null)",
+          nostr_event_get_kind(wrapper),
+          relay_url);
   nostr_relay_publish(relay, wrapper);
-  g_debug("[SIGNER_SERVICE] Published NIP-46 request to %s", relay_url);
+  g_debug("[SIGNER_SERVICE] nostr_relay_publish returned (check [nostr_relay_publish] logs for result)");
 
   nostr_event_free(wrapper);
   free(encrypted_request);

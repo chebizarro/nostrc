@@ -1064,14 +1064,25 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
 }
 
 void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
+    if (!relay) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: relay is NULL\n");
+        return;
+    }
+    if (!event) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: event is NULL\n");
+        return;
+    }
+
     nostr_metric_timer t_ser = {0};
     nostr_metric_timer_start(&t_ser);
     char *event_json = nostr_event_serialize_compact(event);
     static nostr_metric_histogram *h_event_serialize_ns;
     if (!h_event_serialize_ns) h_event_serialize_ns = nostr_metric_histogram_get("event_serialize_ns");
     nostr_metric_timer_stop(&t_ser, h_event_serialize_ns);
-    if (!event_json)
+    if (!event_json) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: failed to serialize event\n");
         return;
+    }
 
     nostr_metric_counter_add("events_published", 1);
     /* NIP-01 requires client publish envelope: ["EVENT", <event>] */
@@ -1079,6 +1090,7 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
     size_t frame_len = 10 /* ["EVENT",] */ + ej_len + 1;
     char *frame = (char *)malloc(frame_len);
     if (!frame) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: malloc failed\n");
         free(event_json);
         return;
     }
@@ -1087,12 +1099,48 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
     int nw = snprintf(frame, frame_len, "[\"EVENT\",%s]", event_json);
     free(event_json);
     if (nw <= 0 || (size_t)nw >= frame_len) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: snprintf failed\n");
         free(frame);
         return;
     }
+
+    /* Log the EVENT being sent for debugging (matching nostr_subscription_fire style) */
+    fprintf(stderr, "[nostr_relay_publish] sending to %s: %s\n",
+            relay->url ? relay->url : "(null)", frame);
+
     nostr_metric_counter_add("ws_tx_bytes", (uint64_t)nw);
-    (void)nostr_relay_write(relay, frame);
+
+    /* Enqueue the write and wait for confirmation */
+    GoChannel *write_ch = nostr_relay_write(relay, frame);
     free(frame);
+
+    if (!write_ch) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: nostr_relay_write returned NULL channel\n");
+        return;
+    }
+
+    /* Wait for write confirmation (no timeout per project policy) */
+    Error *write_err = NULL;
+    GoSelectCase cases[1];
+    cases[0].op = GO_SELECT_RECEIVE;
+    cases[0].chan = write_ch;
+    cases[0].recv_buf = (void **)&write_err;
+
+    int result = go_select(cases, 1);
+    go_channel_free(write_ch);
+
+    if (result < 0) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: go_select failed\n");
+        return;
+    }
+    if (write_err) {
+        fprintf(stderr, "[nostr_relay_publish] ERROR: write failed: %s\n",
+                write_err->message ? write_err->message : "unknown");
+        free_error(write_err);
+        return;
+    }
+
+    fprintf(stderr, "[nostr_relay_publish] SUCCESS: event sent\n");
 }
 
 void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
