@@ -1549,14 +1549,18 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
 
     /* Rebuild UI with new events */
     rebuild_thread_ui(self);
-
-    /* Check if new events reference ancestors we don't have yet */
-    fetch_missing_ancestors(self);
   } else {
-    g_message("[THREAD_VIEW] on_root_fetch_done: NO RESULTS from relay query!");
+    g_message("[THREAD_VIEW] on_root_fetch_done: NO RESULTS from relay query");
   }
 
   if (results) g_ptr_array_unref(results);
+
+  /* nostrc-uxz: Always check for missing ancestors, even if this query returned
+   * no results. The focus event may have been loaded from nostrdb before the
+   * relay query, and its ancestors need to be fetched. */
+  if (g_hash_table_size(self->events_by_id) > 0) {
+    fetch_missing_ancestors(self);
+  }
 }
 
 /* Callback for missing ancestor fetch completion.
@@ -1702,9 +1706,32 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
   }
 
   if (missing_ids->len == 0) {
+    /* nostrc-uxz: Add detailed logging to diagnose why no missing ancestors found */
+    guint total_events = g_hash_table_size(self->events_by_id);
+    guint already_fetched = g_hash_table_size(self->ancestors_fetched);
+    g_message("[THREAD_VIEW] No missing ancestors to fetch (events=%u, already_fetched=%u)",
+              total_events, already_fetched);
+
+    /* Log the events we have and their parent/root references */
+    GHashTableIter dbg_iter;
+    gpointer dbg_key, dbg_value;
+    g_hash_table_iter_init(&dbg_iter, self->events_by_id);
+    while (g_hash_table_iter_next(&dbg_iter, &dbg_key, &dbg_value)) {
+      ThreadEventItem *item = (ThreadEventItem *)dbg_value;
+      gboolean parent_present = item->parent_id ? g_hash_table_contains(self->events_by_id, item->parent_id) : TRUE;
+      gboolean root_present = item->root_id ? g_hash_table_contains(self->events_by_id, item->root_id) : TRUE;
+      gboolean parent_fetched = item->parent_id ? g_hash_table_contains(self->ancestors_fetched, item->parent_id) : FALSE;
+      gboolean root_fetched = item->root_id ? g_hash_table_contains(self->ancestors_fetched, item->root_id) : FALSE;
+      g_message("[THREAD_VIEW]   Event %.16s... parent=%.16s%s (%s) root=%.16s%s (%s)",
+                item->id_hex,
+                item->parent_id ? item->parent_id : "(none)", item->parent_id ? "..." : "",
+                parent_present ? "present" : (parent_fetched ? "fetched" : "MISSING"),
+                item->root_id ? item->root_id : "(none)", item->root_id ? "..." : "",
+                root_present ? "present" : (root_fetched ? "fetched" : "MISSING"));
+    }
+
     g_ptr_array_unref(missing_ids);
     g_ptr_array_unref(relay_hints);
-    g_debug("[THREAD_VIEW] No more missing ancestors to fetch, chain complete");
     return;
   }
 
