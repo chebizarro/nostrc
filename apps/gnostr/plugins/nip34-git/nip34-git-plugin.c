@@ -266,6 +266,94 @@ parse_repository_event(const gchar *event_json)
  * GnostrPlugin interface implementation
  * ============================================================================ */
 
+/* Callback for repository subscription events */
+static void
+on_repository_event(const char *event_json, gpointer user_data)
+{
+  Nip34GitPlugin *self = NIP34_GIT_PLUGIN(user_data);
+
+  if (!self->active || !event_json)
+    return;
+
+  RepoInfo *info = parse_repository_event(event_json);
+  if (info && info->d_tag)
+    {
+      g_hash_table_replace(self->repositories,
+                           g_strdup(info->d_tag), info);
+      g_debug("[NIP-34] Subscription: cached repository %s",
+              info->name ? info->name : info->d_tag);
+    }
+  else
+    {
+      repo_info_free(info);
+    }
+}
+
+/* Load cached repositories from plugin storage */
+static void
+load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
+{
+  GError *error = NULL;
+  GBytes *data = gnostr_plugin_context_load_data(context, "repositories", &error);
+
+  if (error)
+    {
+      g_debug("[NIP-34] No cached repositories: %s", error->message);
+      g_error_free(error);
+      return;
+    }
+
+  if (!data)
+    return;
+
+  gsize size;
+  const char *json = g_bytes_get_data(data, &size);
+  if (!json || size == 0)
+    {
+      g_bytes_unref(data);
+      return;
+    }
+
+  /* Parse JSON array of repository events */
+  JsonParser *parser = json_parser_new();
+  if (json_parser_load_from_data(parser, json, size, NULL))
+    {
+      JsonNode *root = json_parser_get_root(parser);
+      if (JSON_NODE_HOLDS_ARRAY(root))
+        {
+          JsonArray *arr = json_node_get_array(root);
+          guint len = json_array_get_length(arr);
+          for (guint i = 0; i < len; i++)
+            {
+              JsonNode *node = json_array_get_element(arr, i);
+              if (JSON_NODE_HOLDS_OBJECT(node))
+                {
+                  JsonGenerator *gen = json_generator_new();
+                  json_generator_set_root(gen, node);
+                  char *event_json = json_generator_to_data(gen, NULL);
+                  g_object_unref(gen);
+
+                  RepoInfo *info = parse_repository_event(event_json);
+                  if (info && info->d_tag)
+                    {
+                      g_hash_table_replace(self->repositories,
+                                           g_strdup(info->d_tag), info);
+                    }
+                  else
+                    {
+                      repo_info_free(info);
+                    }
+                  g_free(event_json);
+                }
+            }
+          g_debug("[NIP-34] Loaded %u cached repositories",
+                  g_hash_table_size(self->repositories));
+        }
+    }
+  g_object_unref(parser);
+  g_bytes_unref(data);
+}
+
 static void
 nip34_git_plugin_activate(GnostrPlugin        *plugin,
                           GnostrPluginContext *context)
@@ -277,16 +365,94 @@ nip34_git_plugin_activate(GnostrPlugin        *plugin,
   self->context = context;
   self->active = TRUE;
 
-  /* TODO: Subscribe to repository announcement events
-   * Filter: {"kinds": [30617], "authors": [followed_users]}
-   */
+  /* Subscribe to repository announcement events */
+  const char *repo_filter = "{\"kinds\":[30617]}";
+  self->repo_subscription = gnostr_plugin_context_subscribe_events(
+      context, repo_filter, G_CALLBACK(on_repository_event), self, NULL);
 
-  /* TODO: Register UI menu items
-   * - "Repositories" in sidebar
-   * - "Git Client" in tools menu
-   */
+  if (self->repo_subscription > 0)
+    g_debug("[NIP-34] Subscribed to repository events (id=%lu)",
+            (unsigned long)self->repo_subscription);
 
-  /* TODO: Load cached repository list from plugin storage */
+  /* Load cached repository list from plugin storage */
+  load_cached_repositories(self, context);
+}
+
+/* Save repositories to plugin storage for persistence */
+static void
+save_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
+{
+  if (g_hash_table_size(self->repositories) == 0)
+    return;
+
+  /* Build JSON array of repository d-tags for cache */
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_array(builder);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->repositories);
+  while (g_hash_table_iter_next(&iter, &key, &value))
+    {
+      RepoInfo *info = value;
+      if (!info)
+        continue;
+
+      json_builder_begin_object(builder);
+      if (info->id)
+        {
+          json_builder_set_member_name(builder, "id");
+          json_builder_add_string_value(builder, info->id);
+        }
+      if (info->d_tag)
+        {
+          json_builder_set_member_name(builder, "d_tag");
+          json_builder_add_string_value(builder, info->d_tag);
+        }
+      if (info->name)
+        {
+          json_builder_set_member_name(builder, "name");
+          json_builder_add_string_value(builder, info->name);
+        }
+      if (info->clone_url)
+        {
+          json_builder_set_member_name(builder, "clone_url");
+          json_builder_add_string_value(builder, info->clone_url);
+        }
+      if (info->description)
+        {
+          json_builder_set_member_name(builder, "description");
+          json_builder_add_string_value(builder, info->description);
+        }
+      json_builder_end_object(builder);
+    }
+
+  json_builder_end_array(builder);
+
+  JsonGenerator *gen = json_generator_new();
+  JsonNode *root = json_builder_get_root(builder);
+  json_generator_set_root(gen, root);
+  gsize len;
+  char *json = json_generator_to_data(gen, &len);
+
+  GBytes *data = g_bytes_new_take(json, len);
+  GError *error = NULL;
+  if (!gnostr_plugin_context_store_data(context, "repositories", data, &error))
+    {
+      g_warning("[NIP-34] Failed to save repository cache: %s",
+                error ? error->message : "unknown error");
+      g_clear_error(&error);
+    }
+  else
+    {
+      g_debug("[NIP-34] Saved %u repositories to cache",
+              g_hash_table_size(self->repositories));
+    }
+
+  g_bytes_unref(data);
+  json_node_unref(root);
+  g_object_unref(gen);
+  g_object_unref(builder);
 }
 
 static void
@@ -294,13 +460,24 @@ nip34_git_plugin_deactivate(GnostrPlugin        *plugin,
                             GnostrPluginContext *context)
 {
   Nip34GitPlugin *self = NIP34_GIT_PLUGIN(plugin);
-  (void)context;
 
   g_debug("[NIP-34] Deactivating Git Repository plugin");
 
-  /* TODO: Cancel subscriptions when API is implemented */
-  self->repo_subscription = 0;
-  self->patch_subscription = 0;
+  /* Save cached repositories before deactivation */
+  if (context)
+    save_cached_repositories(self, context);
+
+  /* Cancel subscriptions */
+  if (self->repo_subscription > 0 && context)
+    {
+      gnostr_plugin_context_unsubscribe_events(context, self->repo_subscription);
+      self->repo_subscription = 0;
+    }
+  if (self->patch_subscription > 0 && context)
+    {
+      gnostr_plugin_context_unsubscribe_events(context, self->patch_subscription);
+      self->patch_subscription = 0;
+    }
 
   /* Clear cached data */
   g_hash_table_remove_all(self->repositories);
@@ -521,7 +698,41 @@ on_refresh_button_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
 
   gtk_label_set_text(data->status_label, "Refreshing...");
 
-  /* TODO: Query relays for repositories when API is available */
+  /* Query local storage for repository events */
+  if (data->plugin && data->plugin->context)
+    {
+      const char *filter = "{\"kinds\":[30617],\"limit\":100}";
+      GError *error = NULL;
+      GPtrArray *events = gnostr_plugin_context_query_events(
+          data->plugin->context, filter, &error);
+
+      if (error)
+        {
+          g_warning("[NIP-34] Query failed: %s", error->message);
+          g_error_free(error);
+        }
+      else if (events)
+        {
+          for (guint i = 0; i < events->len; i++)
+            {
+              const char *event_json = g_ptr_array_index(events, i);
+              RepoInfo *info = parse_repository_event(event_json);
+              if (info && info->d_tag)
+                {
+                  g_hash_table_replace(data->plugin->repositories,
+                                       g_strdup(info->d_tag), info);
+                }
+              else
+                {
+                  repo_info_free(info);
+                }
+            }
+          g_debug("[NIP-34] Refreshed %u repositories from storage",
+                  g_hash_table_size(data->plugin->repositories));
+          g_ptr_array_unref(events);
+        }
+    }
+
   update_repo_list(data);
 }
 
