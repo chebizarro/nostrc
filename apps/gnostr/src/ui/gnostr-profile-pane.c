@@ -2375,6 +2375,46 @@ static GPtrArray *extract_media_urls_from_content(const char *content) {
   return urls;
 }
 
+/* Extract media URLs from event tags (imeta NIP-92 and r tags) */
+static GPtrArray *extract_media_urls_from_tags(NostrTags *tags) {
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  if (!tags) return urls;
+
+  size_t tag_count = nostr_tags_size(tags);
+  for (size_t i = 0; i < tag_count; i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag) continue;
+
+    const char *key = nostr_tag_get_key(tag);
+    if (!key) continue;
+
+    /* Handle imeta tags (NIP-92): ["imeta", "url <url>", "m <mimetype>", ...] */
+    if (g_strcmp0(key, "imeta") == 0) {
+      size_t val_count = nostr_tag_size(tag);
+      for (size_t j = 1; j < val_count; j++) {
+        const char *val = nostr_tag_get(tag, j);
+        if (!val) continue;
+        /* Look for "url <url>" format */
+        if (g_str_has_prefix(val, "url ")) {
+          const char *url = val + 4; /* skip "url " */
+          if (*url && (g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://"))) {
+            g_ptr_array_add(urls, g_strdup(url));
+          }
+        }
+      }
+    }
+    /* Handle r tags: ["r", "<url>"] */
+    else if (g_strcmp0(key, "r") == 0) {
+      const char *url = nostr_tag_get_value(tag);
+      if (url && is_media_url(url)) {
+        g_ptr_array_add(urls, g_strdup(url));
+      }
+    }
+  }
+
+  return urls;
+}
+
 /* Setup media grid item widget factory */
 static void setup_media_item(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
   (void)factory;
@@ -2476,6 +2516,7 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
 
     const char *id_hex = nostr_event_get_id(evt);
     const char *content = nostr_event_get_content(evt);
+    NostrTags *tags = nostr_event_get_tags(evt);
     gint64 created_at = (gint64)nostr_event_get_created_at(evt);
 
     if (created_at > 0 && created_at < oldest_timestamp) {
@@ -2483,17 +2524,25 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
     }
 
     /* Extract media URLs from content */
-    GPtrArray *media_urls = extract_media_urls_from_content(content);
-
-    for (guint j = 0; j < media_urls->len; j++) {
-      const char *url = g_ptr_array_index(media_urls, j);
-
+    GPtrArray *content_urls = extract_media_urls_from_content(content);
+    for (guint j = 0; j < content_urls->len; j++) {
+      const char *url = g_ptr_array_index(content_urls, j);
       ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
       g_list_store_append(self->media_model, item);
       g_object_unref(item);
     }
+    g_ptr_array_unref(content_urls);
 
-    g_ptr_array_unref(media_urls);
+    /* Extract media URLs from imeta tags (NIP-92) and r tags */
+    GPtrArray *tag_urls = extract_media_urls_from_tags(tags);
+    for (guint j = 0; j < tag_urls->len; j++) {
+      const char *url = g_ptr_array_index(tag_urls, j);
+      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+      g_list_store_append(self->media_model, item);
+      g_object_unref(item);
+    }
+    g_ptr_array_unref(tag_urls);
+
     nostr_event_free(evt);
   }
 
