@@ -16,6 +16,7 @@
 #include "nip34-git-plugin.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
+#include <json-glib/json-glib.h>
 
 /* NIP-34 Event Kinds */
 #define NIP34_KIND_REPOSITORY     30617  /* Addressable: repository announcement */
@@ -120,20 +121,145 @@ nip34_git_plugin_init(Nip34GitPlugin *self)
 static RepoInfo *
 parse_repository_event(const gchar *event_json)
 {
-  /* TODO: Parse kind 30617 event to extract repository metadata
-   *
-   * Expected tags:
-   * - ["d", "<unique-identifier>"]
-   * - ["name", "<repo-name>"]
-   * - ["description", "<description>"]
-   * - ["clone", "<git-clone-url>"]
-   * - ["web", "<web-url>"] (optional)
-   * - ["maintainers", "<pubkey>", ...] (optional)
-   * - ["relays", "<relay-url>", ...] (optional)
-   * - ["r", "<reference>", ...] (optional, HEAD commit, etc.)
-   */
-  (void)event_json;
-  return NULL;
+  if (!event_json || *event_json == '\0')
+    return NULL;
+
+  JsonParser *parser = json_parser_new();
+  GError *error = NULL;
+
+  if (!json_parser_load_from_data(parser, event_json, -1, &error))
+    {
+      g_warning("[NIP-34] Failed to parse event JSON: %s", error->message);
+      g_error_free(error);
+      g_object_unref(parser);
+      return NULL;
+    }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root))
+    {
+      g_object_unref(parser);
+      return NULL;
+    }
+
+  JsonObject *event = json_node_get_object(root);
+  RepoInfo *info = g_new0(RepoInfo, 1);
+
+  /* Get event ID */
+  if (json_object_has_member(event, "id"))
+    info->id = g_strdup(json_object_get_string_member(event, "id"));
+
+  /* Get created_at timestamp */
+  if (json_object_has_member(event, "created_at"))
+    info->created_at = json_object_get_int_member(event, "created_at");
+
+  /* Parse tags array */
+  if (!json_object_has_member(event, "tags"))
+    {
+      g_object_unref(parser);
+      repo_info_free(info);
+      return NULL;
+    }
+
+  JsonArray *tags = json_object_get_array_member(event, "tags");
+  guint n_tags = json_array_get_length(tags);
+
+  GPtrArray *maintainers_list = g_ptr_array_new();
+  GPtrArray *relays_list = g_ptr_array_new();
+
+  for (guint i = 0; i < n_tags; i++)
+    {
+      JsonArray *tag = json_array_get_array_element(tags, i);
+      if (!tag || json_array_get_length(tag) < 2)
+        continue;
+
+      const gchar *tag_name = json_array_get_string_element(tag, 0);
+      const gchar *tag_value = json_array_get_string_element(tag, 1);
+
+      if (!tag_name || !tag_value)
+        continue;
+
+      if (g_strcmp0(tag_name, "d") == 0)
+        {
+          g_free(info->d_tag);
+          info->d_tag = g_strdup(tag_value);
+        }
+      else if (g_strcmp0(tag_name, "name") == 0)
+        {
+          g_free(info->name);
+          info->name = g_strdup(tag_value);
+        }
+      else if (g_strcmp0(tag_name, "description") == 0)
+        {
+          g_free(info->description);
+          info->description = g_strdup(tag_value);
+        }
+      else if (g_strcmp0(tag_name, "clone") == 0)
+        {
+          g_free(info->clone_url);
+          info->clone_url = g_strdup(tag_value);
+        }
+      else if (g_strcmp0(tag_name, "web") == 0)
+        {
+          g_free(info->web_url);
+          info->web_url = g_strdup(tag_value);
+        }
+      else if (g_strcmp0(tag_name, "maintainers") == 0 ||
+               g_strcmp0(tag_name, "p") == 0)
+        {
+          /* Collect all maintainer pubkeys from this tag */
+          for (guint j = 1; j < json_array_get_length(tag); j++)
+            {
+              const gchar *pubkey = json_array_get_string_element(tag, j);
+              if (pubkey && *pubkey)
+                g_ptr_array_add(maintainers_list, g_strdup(pubkey));
+            }
+        }
+      else if (g_strcmp0(tag_name, "relays") == 0 ||
+               g_strcmp0(tag_name, "relay") == 0)
+        {
+          for (guint j = 1; j < json_array_get_length(tag); j++)
+            {
+              const gchar *relay = json_array_get_string_element(tag, j);
+              if (relay && *relay)
+                g_ptr_array_add(relays_list, g_strdup(relay));
+            }
+        }
+    }
+
+  /* Convert arrays to NULL-terminated string arrays */
+  if (maintainers_list->len > 0)
+    {
+      g_ptr_array_add(maintainers_list, NULL);
+      info->maintainers = (gchar **)g_ptr_array_free(maintainers_list, FALSE);
+    }
+  else
+    {
+      g_ptr_array_free(maintainers_list, TRUE);
+    }
+
+  if (relays_list->len > 0)
+    {
+      g_ptr_array_add(relays_list, NULL);
+      info->relays = (gchar **)g_ptr_array_free(relays_list, FALSE);
+    }
+  else
+    {
+      g_ptr_array_free(relays_list, TRUE);
+    }
+
+  info->updated_at = info->created_at;
+
+  g_object_unref(parser);
+
+  /* Must have at least a d-tag to be valid */
+  if (!info->d_tag)
+    {
+      repo_info_free(info);
+      return NULL;
+    }
+
+  return info;
 }
 
 /* ============================================================================
