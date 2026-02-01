@@ -250,43 +250,67 @@ static pthread_mutex_t g_nip46_ctx_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void
 nip46_sign_event_middleware(NostrIncomingEvent *incoming)
 {
-  if (!incoming || !incoming->event) return;
+  if (!incoming || !incoming->event) {
+    g_debug("[NIP46-MW] middleware called with NULL incoming/event");
+    return;
+  }
+
+  NostrEvent *ev = incoming->event;
+  int kind = nostr_event_get_kind(ev);
+  const char *sender = nostr_event_get_pubkey(ev);
+  g_debug("[NIP46-MW] received event kind=%d from %.16s...", kind, sender ? sender : "(null)");
 
   /* Get context under lock */
   pthread_mutex_lock(&g_nip46_ctx_mutex);
   Nip46SignRoundtripCtx *ctx = g_nip46_roundtrip_ctx;
   pthread_mutex_unlock(&g_nip46_ctx_mutex);
 
-  if (!ctx) return;
+  if (!ctx) {
+    g_debug("[NIP46-MW] no roundtrip context set");
+    return;
+  }
 
-  NostrEvent *ev = incoming->event;
-  int kind = nostr_event_get_kind(ev);
-  if (kind != NOSTR_EVENT_KIND_NIP46) return;
+  if (kind != NOSTR_EVENT_KIND_NIP46) {
+    g_debug("[NIP46-MW] ignoring non-NIP46 event kind=%d", kind);
+    return;
+  }
 
   /* Check if this is for us (p-tag matches our client pubkey) */
   NostrTags *tags = nostr_event_get_tags(ev);
-  if (!tags) return;
+  if (!tags) {
+    g_debug("[NIP46-MW] event has no tags");
+    return;
+  }
 
   gboolean is_for_us = FALSE;
   size_t tag_count = nostr_tags_size(tags);
+  g_debug("[NIP46-MW] checking %zu tags for p-tag matching %.16s...",
+          tag_count, ctx->expected_client_pk ? ctx->expected_client_pk : "(null)");
+
   for (size_t i = 0; i < tag_count; i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
     if (!tag || nostr_tag_size(tag) < 2) continue;
     const char *key = nostr_tag_get(tag, 0);
     const char *value = nostr_tag_get(tag, 1);
-    if (key && value && strcmp(key, "p") == 0 &&
-        ctx->expected_client_pk &&
-        strcmp(value, ctx->expected_client_pk) == 0) {
-      is_for_us = TRUE;
-      break;
+    if (key && value && strcmp(key, "p") == 0) {
+      g_debug("[NIP46-MW] found p-tag: %.16s...", value);
+      if (ctx->expected_client_pk &&
+          strcmp(value, ctx->expected_client_pk) == 0) {
+        is_for_us = TRUE;
+        break;
+      }
     }
   }
 
-  if (!is_for_us) return;
+  if (!is_for_us) {
+    g_debug("[NIP46-MW] event not for us (p-tag mismatch)");
+    return;
+  }
 
   /* Got a response! Store it and signal */
   const char *content = nostr_event_get_content(ev);
-  const char *sender = nostr_event_get_pubkey(ev);
+  g_info("[NIP46-MW] GOT RESPONSE from %.16s..., content_len=%zu",
+         sender ? sender : "(null)", content ? strlen(content) : 0);
 
   pthread_mutex_lock(&ctx->mutex);
   if (!ctx->response_received && content && sender) {
@@ -294,6 +318,7 @@ nip46_sign_event_middleware(NostrIncomingEvent *incoming)
     ctx->response_sender_pk = g_strdup(sender);
     ctx->response_received = TRUE;
     pthread_cond_signal(&ctx->cond);
+    g_debug("[NIP46-MW] signaled response received");
   }
   pthread_mutex_unlock(&ctx->mutex);
 }
@@ -465,34 +490,52 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
 
   /* Set event middleware to capture responses */
   nostr_simple_pool_set_event_middleware(pool, nip46_sign_event_middleware);
+  g_debug("[NIP46-SIGN] middleware registered");
 
   /* Subscribe for response events (kind 24133, p-tag = client_pubkey) */
   NostrFilter *filter = nostr_filter_new();
   int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
   nostr_filter_set_kinds(filter, kinds, 1);
   nostr_filter_tags_append(filter, "p", client_pubkey, NULL);
+  g_debug("[NIP46-SIGN] filter: kind=%d, #p=%.16s...", NOSTR_EVENT_KIND_NIP46, client_pubkey);
 
   NostrFilters *filters = nostr_filters_new();
   nostr_filters_add(filters, filter);
 
   const char *relay_urls[] = { relay_url, NULL };
+  g_debug("[NIP46-SIGN] ensuring relay connection to %s", relay_url);
   nostr_simple_pool_ensure_relay(pool, relay_url);
+
+  g_debug("[NIP46-SIGN] creating subscription");
   nostr_simple_pool_subscribe(pool, relay_urls, 1, *filters, true);
+
+  g_debug("[NIP46-SIGN] starting pool thread");
   nostr_simple_pool_start(pool);
 
-  /* Give relay time to connect */
+  /* Give relay time to connect and subscription to be established */
+  g_debug("[NIP46-SIGN] waiting 500ms for relay connection...");
   g_usleep(500000); /* 500ms */
 
   /* Publish the request */
   pthread_mutex_lock(&pool->pool_mutex);
+  gboolean published = FALSE;
+  g_debug("[NIP46-SIGN] checking %zu relays for publishing", pool->relay_count);
   for (size_t i = 0; i < pool->relay_count; i++) {
     NostrRelay *relay = pool->relays[i];
-    if (relay && nostr_relay_is_connected(relay)) {
+    gboolean connected = relay ? nostr_relay_is_connected(relay) : FALSE;
+    g_debug("[NIP46-SIGN] relay[%zu]: url=%s connected=%d",
+            i, relay ? nostr_relay_get_url_const(relay) : "(null)", connected);
+    if (relay && connected) {
       nostr_relay_publish(relay, wrapper);
-      g_debug("[SIGNER_SERVICE] Published NIP-46 request to %s", nostr_relay_get_url_const(relay));
+      g_info("[NIP46-SIGN] Published NIP-46 request to %s", nostr_relay_get_url_const(relay));
+      published = TRUE;
     }
   }
   pthread_mutex_unlock(&pool->pool_mutex);
+
+  if (!published) {
+    g_warning("[NIP46-SIGN] FAILED TO PUBLISH: no connected relays!");
+  }
 
   nostr_event_free(wrapper);
   free(encrypted_request);
@@ -504,11 +547,12 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   clock_gettime(CLOCK_REALTIME, &timeout_ts);
   timeout_ts.tv_sec += 30; /* 30 second timeout */
 
+  g_info("[NIP46-SIGN] waiting up to 30s for response...");
   pthread_mutex_lock(&roundtrip.mutex);
   while (!roundtrip.response_received) {
     int rc = pthread_cond_timedwait(&roundtrip.cond, &roundtrip.mutex, &timeout_ts);
     if (rc == ETIMEDOUT) {
-      g_warning("[SIGNER_SERVICE] NIP-46 sign timed out waiting for response");
+      g_warning("[NIP46-SIGN] TIMEOUT: no response received after 30s");
       break;
     }
   }
