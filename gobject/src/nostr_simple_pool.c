@@ -734,20 +734,30 @@ static gpointer query_single_thread(gpointer user_data) {
     QuerySingleCtx *ctx = (QuerySingleCtx *)user_data;
     GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
 
+    g_message("[QUERY_SINGLE_THREAD] Starting with %zu URLs", ctx->url_count);
+    for (size_t i = 0; i < ctx->url_count; i++) {
+        g_message("[QUERY_SINGLE_THREAD]   URL[%zu]: %s", i, ctx->urls[i] ? ctx->urls[i] : "(null)");
+    }
+
     // Create results array
     ctx->results = g_ptr_array_new_with_free_func(g_free);
 
     // Track relays we created (not from pool) for cleanup
     GPtrArray *created_relays = g_ptr_array_new();
 
-    // Create a temporary subscription for each URL until we get a result
+    // Create a temporary subscription for each URL
     for (size_t i = 0; i < ctx->url_count; i++) {
         if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+            g_message("[QUERY_SINGLE_THREAD] Cancelled at URL index %zu", i);
             break;
         }
 
         const char *url = ctx->urls[i];
-        if (!url || !*url) continue;
+        if (!url || !*url) {
+            g_message("[QUERY_SINGLE_THREAD] Skipping empty URL at index %zu", i);
+            continue;
+        }
+        g_message("[QUERY_SINGLE_THREAD] Processing URL[%zu]: %s", i, url);
 
         // REUSE existing relay from pool if available (like subscribe_many_thread)
         NostrRelay *relay = NULL;
