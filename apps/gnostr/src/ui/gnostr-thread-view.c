@@ -1157,11 +1157,27 @@ static void build_thread_graph(GnostrThreadView *self) {
     /* All branches expanded by default - user can collapse manually if needed */
   }
 
-  /* Step 6: Build render order (DFS from root) */
+  /* Step 6: Build render order (DFS from all roots) */
   g_ptr_array_set_size(self->thread_graph->render_order, 0);
-  if (self->thread_graph->root_id) {
-    add_subtree_to_render_order(self, self->thread_graph->root_id);
+
+  /* Collect all root nodes (nodes without a parent in the graph) */
+  GPtrArray *root_ids = g_ptr_array_new();
+  g_hash_table_iter_init(&iter, self->thread_graph->nodes);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadNode *node = (ThreadNode *)value;
+    if (!node->parent_id || !g_hash_table_contains(self->thread_graph->nodes, node->parent_id)) {
+      g_ptr_array_add(root_ids, (gpointer)key);
+    }
   }
+
+  /* Sort roots: prefer thread_root_id first, then focus_id, then by timestamp */
+  /* For now just render from each root */
+  for (guint i = 0; i < root_ids->len; i++) {
+    const char *root_id = g_ptr_array_index(root_ids, i);
+    add_subtree_to_render_order(self, root_id);
+  }
+
+  g_ptr_array_unref(root_ids);
 }
 
 /* Internal: create collapse indicator showing hidden reply count */
