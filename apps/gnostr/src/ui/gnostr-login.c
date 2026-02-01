@@ -54,9 +54,19 @@ struct _GnostrLogin {
   GtkWidget *entry_bunker_uri;
   GtkWidget *btn_paste_bunker;
   GtkWidget *btn_connect_bunker;
-  GtkWidget *spinner_bunker;
-  GtkWidget *lbl_bunker_status;
+  GtkWidget *btn_cancel_bunker;
+  GtkWidget *btn_retry_bunker;
   GtkWidget *btn_back_bunker;
+
+  /* Status area widgets */
+  GtkWidget *status_frame;
+  GtkWidget *status_icon_stack;
+  GtkWidget *spinner_bunker;
+  GtkWidget *status_icon_success;
+  GtkWidget *status_icon_error;
+  GtkWidget *status_icon_waiting;
+  GtkWidget *lbl_bunker_status;
+  GtkWidget *lbl_bunker_status_detail;
 
   /* Success page widgets */
   GtkWidget *lbl_success_npub;
@@ -100,6 +110,8 @@ static void on_remote_signer_clicked(GtkButton *btn, gpointer user_data);
 static void on_back_clicked(GtkButton *btn, gpointer user_data);
 static void on_paste_bunker_clicked(GtkButton *btn, gpointer user_data);
 static void on_connect_bunker_clicked(GtkButton *btn, gpointer user_data);
+static void on_cancel_bunker_clicked(GtkButton *btn, gpointer user_data);
+static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data);
 static void on_close_clicked(GtkButton *btn, gpointer user_data);
 static void on_done_clicked(GtkButton *btn, gpointer user_data);
 static void check_local_signer_availability(GnostrLogin *self);
@@ -111,6 +123,18 @@ static void show_success(GnostrLogin *self, const char *npub);
 static void start_nip46_listener(GnostrLogin *self, const char *relay_url);
 static void stop_nip46_listener(GnostrLogin *self);
 static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
+
+/* Status state enum for bunker connection */
+typedef enum {
+  BUNKER_STATUS_IDLE,
+  BUNKER_STATUS_CONNECTING,
+  BUNKER_STATUS_WAITING,
+  BUNKER_STATUS_SUCCESS,
+  BUNKER_STATUS_ERROR
+} BunkerStatusState;
+
+static void set_bunker_status(GnostrLogin *self, BunkerStatusState state,
+                               const char *message, const char *detail);
 
 static void show_toast(GnostrLogin *self, const char *msg) {
   if (!self->toast_label || !self->toast_revealer) return;
@@ -127,6 +151,84 @@ static gboolean hide_toast_on_main(gpointer user_data) {
     gtk_revealer_set_reveal_child(revealer, FALSE);
   }
   return G_SOURCE_REMOVE;
+}
+
+/* Helper to set bunker status UI state */
+static void set_bunker_status(GnostrLogin *self, BunkerStatusState state,
+                               const char *message, const char *detail) {
+  if (!GNOSTR_IS_LOGIN(self)) return;
+
+  /* Show/hide status frame */
+  gboolean show_status = (state != BUNKER_STATUS_IDLE);
+  if (self->status_frame) {
+    gtk_widget_set_visible(self->status_frame, show_status);
+  }
+
+  /* Set status message */
+  if (self->lbl_bunker_status) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), message ? message : "");
+  }
+
+  /* Set detail message */
+  if (self->lbl_bunker_status_detail) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status_detail), detail ? detail : "");
+    gtk_widget_set_visible(self->lbl_bunker_status_detail, detail && *detail);
+  }
+
+  /* Set icon based on state */
+  const char *icon_child = "spinner_bunker";
+  switch (state) {
+    case BUNKER_STATUS_IDLE:
+      icon_child = "spinner_bunker";
+      break;
+    case BUNKER_STATUS_CONNECTING:
+      icon_child = "spinner_bunker";
+      if (self->spinner_bunker) {
+        gtk_spinner_start(GTK_SPINNER(self->spinner_bunker));
+      }
+      break;
+    case BUNKER_STATUS_WAITING:
+      icon_child = "status_icon_waiting";
+      break;
+    case BUNKER_STATUS_SUCCESS:
+      icon_child = "status_icon_success";
+      break;
+    case BUNKER_STATUS_ERROR:
+      icon_child = "status_icon_error";
+      break;
+  }
+
+  if (self->status_icon_stack) {
+    GtkWidget *child = gtk_stack_get_child_by_name(GTK_STACK(self->status_icon_stack), icon_child);
+    if (child) {
+      gtk_stack_set_visible_child(GTK_STACK(self->status_icon_stack), child);
+    }
+  }
+
+  /* Update button visibility */
+  gboolean is_connecting = (state == BUNKER_STATUS_CONNECTING || state == BUNKER_STATUS_WAITING);
+  gboolean is_error = (state == BUNKER_STATUS_ERROR);
+
+  if (self->btn_connect_bunker) {
+    gtk_widget_set_visible(self->btn_connect_bunker, !is_connecting && !is_error);
+  }
+  if (self->btn_cancel_bunker) {
+    gtk_widget_set_visible(self->btn_cancel_bunker, is_connecting);
+  }
+  if (self->btn_retry_bunker) {
+    gtk_widget_set_visible(self->btn_retry_bunker, is_error);
+  }
+
+  /* Enable/disable input during connection */
+  if (self->entry_bunker_uri) {
+    gtk_widget_set_sensitive(self->entry_bunker_uri, !is_connecting);
+  }
+  if (self->btn_paste_bunker) {
+    gtk_widget_set_sensitive(self->btn_paste_bunker, !is_connecting);
+  }
+  if (self->btn_back_bunker) {
+    gtk_widget_set_sensitive(self->btn_back_bunker, !is_connecting);
+  }
 }
 
 /* Deferred NIP-46 success context - used to safely stop the listener
@@ -267,9 +369,17 @@ static void gnostr_login_class_init(GnostrLoginClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, entry_bunker_uri);
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_paste_bunker);
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_connect_bunker);
-  gtk_widget_class_bind_template_child(wclass, GnostrLogin, spinner_bunker);
-  gtk_widget_class_bind_template_child(wclass, GnostrLogin, lbl_bunker_status);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_cancel_bunker);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_retry_bunker);
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_back_bunker);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, status_frame);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, status_icon_stack);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, spinner_bunker);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, status_icon_success);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, status_icon_error);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, status_icon_waiting);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, lbl_bunker_status);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, lbl_bunker_status_detail);
 
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, lbl_success_npub);
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_done);
@@ -283,6 +393,8 @@ static void gnostr_login_class_init(GnostrLoginClass *klass) {
   gtk_widget_class_bind_template_callback(wclass, on_back_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_paste_bunker_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_connect_bunker_clicked);
+  gtk_widget_class_bind_template_callback(wclass, on_cancel_bunker_clicked);
+  gtk_widget_class_bind_template_callback(wclass, on_retry_bunker_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_close_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_done_clicked);
 
@@ -610,9 +722,10 @@ static void on_remote_signer_clicked(GtkButton *btn, gpointer user_data) {
   const char *relay = "wss://relay.nsec.app";
   start_nip46_listener(self, relay);
 
-  /* Update status */
-  gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), "Scan QR code with your mobile signer...");
-  gtk_widget_set_visible(self->spinner_bunker, TRUE);
+  /* Update status to waiting state */
+  set_bunker_status(self, BUNKER_STATUS_WAITING,
+                    "Waiting for approval...",
+                    "Scan the QR code with your signer app (Amber, nsec.app, etc.)");
 }
 
 static void on_back_clicked(GtkButton *btn, gpointer user_data) {
@@ -623,7 +736,51 @@ static void on_back_clicked(GtkButton *btn, gpointer user_data) {
   /* Stop listening for NIP-46 responses */
   stop_nip46_listener(self);
 
+  /* Reset status */
+  set_bunker_status(self, BUNKER_STATUS_IDLE, "", NULL);
+
   gtk_stack_set_visible_child(GTK_STACK(self->stack), self->page_choose);
+}
+
+static void on_cancel_bunker_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrLogin *self = GNOSTR_LOGIN(user_data);
+  if (!GNOSTR_IS_LOGIN(self)) return;
+
+  /* Cancel any pending operations */
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+    self->cancellable = g_cancellable_new();
+  }
+
+  /* Stop listening for NIP-46 responses */
+  stop_nip46_listener(self);
+
+  self->connecting_bunker = FALSE;
+
+  /* Reset status to idle */
+  set_bunker_status(self, BUNKER_STATUS_IDLE, "", NULL);
+}
+
+static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrLogin *self = GNOSTR_LOGIN(user_data);
+  if (!GNOSTR_IS_LOGIN(self)) return;
+
+  /* Reset to idle state, then user can try again */
+  set_bunker_status(self, BUNKER_STATUS_IDLE, "", NULL);
+
+  /* Re-generate nostrconnect URI and restart listener */
+  generate_nostrconnect_uri(self);
+
+  const char *relay = "wss://relay.nsec.app";
+  start_nip46_listener(self, relay);
+
+  /* Set waiting status */
+  set_bunker_status(self, BUNKER_STATUS_WAITING,
+                    "Waiting for approval...",
+                    "Scan the QR code with your signer app");
 }
 
 static void on_paste_read_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -736,22 +893,27 @@ static void bunker_connect_complete(GObject *source, GAsyncResult *res, gpointer
   if (!GNOSTR_IS_LOGIN(self)) return;
 
   self->connecting_bunker = FALSE;
-  gtk_widget_set_visible(self->spinner_bunker, FALSE);
-  gtk_widget_set_sensitive(self->btn_connect_bunker, TRUE);
-  gtk_widget_set_sensitive(self->entry_bunker_uri, TRUE);
 
   GError *error = NULL;
   char **result = g_task_propagate_pointer(G_TASK(res), &error);
 
   if (error) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), error->message);
-    show_toast(self, error->message);
+    /* Show error state with helpful message */
+    const char *detail = NULL;
+    if (g_str_has_prefix(error->message, "Failed to connect")) {
+      detail = "Check the URI is correct and the signer is online";
+    } else if (g_str_has_prefix(error->message, "Failed to get public key")) {
+      detail = "The signer did not return your public key";
+    }
+    set_bunker_status(self, BUNKER_STATUS_ERROR, error->message, detail);
     g_error_free(error);
     return;
   }
 
   if (!result || !result[0]) {
-    show_toast(self, "Connection failed");
+    set_bunker_status(self, BUNKER_STATUS_ERROR,
+                      "Connection failed",
+                      "The signer did not respond. Try again.");
     return;
   }
 
@@ -782,21 +944,24 @@ static void on_connect_bunker_clicked(GtkButton *btn, gpointer user_data) {
 
   const char *uri = gtk_editable_get_text(GTK_EDITABLE(self->entry_bunker_uri));
   if (!uri || !*uri) {
-    show_toast(self, "Please enter a bunker:// URI");
+    show_toast(self, "Please enter a connection URI");
     return;
   }
 
   /* Validate URI starts with bunker:// or nostrconnect:// */
   if (!g_str_has_prefix(uri, "bunker://") && !g_str_has_prefix(uri, "nostrconnect://")) {
-    show_toast(self, "Invalid URI format (expected bunker:// or nostrconnect://)");
+    set_bunker_status(self, BUNKER_STATUS_ERROR,
+                      "Invalid URI format",
+                      "URI must start with bunker:// or nostrconnect://");
     return;
   }
 
   self->connecting_bunker = TRUE;
-  gtk_widget_set_visible(self->spinner_bunker, TRUE);
-  gtk_widget_set_sensitive(self->btn_connect_bunker, FALSE);
-  gtk_widget_set_sensitive(self->entry_bunker_uri, FALSE);
-  gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), "Connecting...");
+
+  /* Show connecting status */
+  set_bunker_status(self, BUNKER_STATUS_CONNECTING,
+                    "Connecting to signer...",
+                    "Establishing secure connection");
 
   BunkerConnectCtx *ctx = g_new0(BunkerConnectCtx, 1);
   ctx->self = self;
@@ -881,8 +1046,9 @@ static void on_nip46_subscribe_done(GObject *source, GAsyncResult *res, gpointer
   if (error) {
     g_warning("[NIP46_LOGIN] Subscription failed: %s", error->message);
     if (GNOSTR_IS_LOGIN(self)) {
-      gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), "Failed to connect to relay");
-      gtk_widget_set_visible(self->spinner_bunker, FALSE);
+      set_bunker_status(self, BUNKER_STATUS_ERROR,
+                        "Failed to connect to relay",
+                        "Check your internet connection and try again");
     }
     g_clear_error(&error);
   } else {
@@ -962,8 +1128,8 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
         nostr_json_get_type(plaintext, "error") == NOSTR_JSON_STRING &&
         nostr_json_get_string(plaintext, "error", &err_msg) == 0 && err_msg && *err_msg) {
       g_warning("[NIP46_LOGIN] Signer error: %s", err_msg);
-      gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), err_msg);
-      gtk_widget_set_visible(self->spinner_bunker, FALSE);
+      set_bunker_status(self, BUNKER_STATUS_ERROR, err_msg,
+                        "The remote signer rejected the request");
       free(err_msg);
       g_free(plaintext);
       continue;

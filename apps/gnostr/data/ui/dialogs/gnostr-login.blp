@@ -255,7 +255,7 @@ template $GnostrLogin: Adw.Bin {
                         spacing: 16;
                         margin-start: 24;
                         margin-end: 24;
-                        margin-top: 24;
+                        margin-top: 16;
                         margin-bottom: 24;
 
                         Button btn_back_bunker {
@@ -283,10 +283,21 @@ template $GnostrLogin: Adw.Bin {
                             halign: center;
 
                             Label {
-                                label: "Scan with Mobile Signer";
+                                label: "Connect Remote Signer";
 
                                 styles [
                                     "title-3",
+                                ]
+                            }
+
+                            Label {
+                                label: "Scan the QR code with your mobile signer app, or paste a connection URI below.";
+                                wrap: true;
+                                max-width-chars: 45;
+                                justify: center;
+
+                                styles [
+                                    "dim-label",
                                 ]
                             }
 
@@ -303,19 +314,17 @@ template $GnostrLogin: Adw.Bin {
 
                                     Picture qr_picture {
                                         content-fit: contain;
-                                        width-request: 200;
-                                        height-request: 200;
+                                        width-request: 180;
+                                        height-request: 180;
                                     }
                                 }
                             }
+                        }
 
-                            Label {
-                                label: "or enter bunker:// URI manually";
-
-                                styles [
-                                    "dim-label",
-                                ]
-                            }
+                        Separator {
+                            orientation: horizontal;
+                            margin-top: 4;
+                            margin-bottom: 4;
                         }
 
                         Box {
@@ -323,11 +332,11 @@ template $GnostrLogin: Adw.Bin {
                             spacing: 8;
 
                             Label {
-                                label: "Bunker URI";
+                                label: "Or paste connection URI";
                                 xalign: 0;
 
                                 styles [
-                                    "dim-label",
+                                    "heading",
                                 ]
                             }
 
@@ -336,7 +345,7 @@ template $GnostrLogin: Adw.Bin {
                                 spacing: 8;
 
                                 Entry entry_bunker_uri {
-                                    placeholder-text: "bunker://...";
+                                    placeholder-text: "bunker://... or nostrconnect://...";
                                     hexpand: true;
                                     input-purpose: url;
                                 }
@@ -349,7 +358,7 @@ template $GnostrLogin: Adw.Bin {
                             }
 
                             Label {
-                                label: "Get this URI from your signer app (e.g., Amber, nsec.app)";
+                                label: "Supported formats: bunker:// (Amber, Nostr Signer) or nostrconnect:// (nsec.app)";
                                 xalign: 0;
                                 wrap: true;
 
@@ -360,6 +369,80 @@ template $GnostrLogin: Adw.Bin {
                             }
                         }
 
+                        /* Status area - shows connection progress */
+                        Frame status_frame {
+                            visible: false;
+
+                            styles [
+                                "view",
+                            ]
+
+                            Box {
+                                orientation: horizontal;
+                                spacing: 12;
+                                margin-start: 12;
+                                margin-end: 12;
+                                margin-top: 10;
+                                margin-bottom: 10;
+
+                                Stack status_icon_stack {
+                                    Spinner spinner_bunker {
+                                        spinning: true;
+                                    }
+
+                                    Image status_icon_success {
+                                        icon-name: "emblem-ok-symbolic";
+
+                                        styles [
+                                            "success",
+                                        ]
+                                    }
+
+                                    Image status_icon_error {
+                                        icon-name: "dialog-error-symbolic";
+
+                                        styles [
+                                            "error",
+                                        ]
+                                    }
+
+                                    Image status_icon_waiting {
+                                        icon-name: "appointment-soon-symbolic";
+
+                                        styles [
+                                            "accent",
+                                        ]
+                                    }
+                                }
+
+                                Box {
+                                    orientation: vertical;
+                                    spacing: 2;
+                                    hexpand: true;
+                                    valign: center;
+
+                                    Label lbl_bunker_status {
+                                        label: "";
+                                        xalign: 0;
+                                        wrap: true;
+                                    }
+
+                                    Label lbl_bunker_status_detail {
+                                        label: "";
+                                        xalign: 0;
+                                        wrap: true;
+                                        visible: false;
+
+                                        styles [
+                                            "caption",
+                                            "dim-label",
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+
+                        /* Action buttons */
                         Box {
                             orientation: horizontal;
                             spacing: 8;
@@ -376,20 +459,28 @@ template $GnostrLogin: Adw.Bin {
                                 ]
                             }
 
-                            Spinner spinner_bunker {
+                            Button btn_cancel_bunker {
+                                label: "Cancel";
                                 visible: false;
-                                spinning: true;
+                                tooltip-text: "Cancel connection";
+                                clicked => $on_cancel_bunker_clicked();
+
+                                styles [
+                                    "pill",
+                                ]
                             }
-                        }
 
-                        Label lbl_bunker_status {
-                            label: "";
-                            wrap: true;
-                            halign: center;
+                            Button btn_retry_bunker {
+                                label: "Retry";
+                                visible: false;
+                                tooltip-text: "Try connecting again";
+                                clicked => $on_retry_bunker_clicked();
 
-                            styles [
-                                "dim-label",
-                            ]
+                                styles [
+                                    "suggested-action",
+                                    "pill",
+                                ]
+                            }
                         }
                     };
                 }
