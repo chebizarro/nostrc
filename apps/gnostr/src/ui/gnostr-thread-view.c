@@ -1044,7 +1044,7 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
   gboolean found_new_events = FALSE;
 
   if (results && results->len > 0) {
-    g_debug("[THREAD_VIEW] Fetched %u missing ancestor events", results->len);
+    g_message("[THREAD_VIEW] Received %u ancestor events from relays", results->len);
 
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
@@ -1052,6 +1052,7 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
         storage_ndb_ingest_event_json(json, NULL);
         ThreadEventItem *item = add_event_from_json(self, json);
         if (item) {
+          g_message("[THREAD_VIEW]   Added ancestor: %.16s...", item->id_hex);
           found_new_events = TRUE;
         }
       }
@@ -1059,6 +1060,8 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
 
     /* Rebuild UI with new events */
     rebuild_thread_ui(self);
+  } else {
+    g_message("[THREAD_VIEW] No ancestor events returned from relay query");
   }
 
   if (results) g_ptr_array_unref(results);
@@ -1167,11 +1170,18 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
 
   /* nostrc-7r5: Log relay hints being used */
   if (relay_hints->len > 0) {
-    g_debug("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u) with %u relay hints",
-            missing_ids->len, self->ancestor_fetch_depth, relay_hints->len);
+    g_message("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u) with %u relay hints",
+              missing_ids->len, self->ancestor_fetch_depth, relay_hints->len);
+    for (guint i = 0; i < relay_hints->len; i++) {
+      g_message("[THREAD_VIEW]   Hint: %s", (const char *)g_ptr_array_index(relay_hints, i));
+    }
   } else {
-    g_debug("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u), no relay hints",
-            missing_ids->len, self->ancestor_fetch_depth);
+    g_message("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u), no relay hints",
+              missing_ids->len, self->ancestor_fetch_depth);
+  }
+  /* Log the missing IDs we're looking for */
+  for (guint i = 0; i < missing_ids->len; i++) {
+    g_message("[THREAD_VIEW]   Missing: %.16s...", (const char *)g_ptr_array_index(missing_ids, i));
   }
 
   /* Build filter with missing IDs */
