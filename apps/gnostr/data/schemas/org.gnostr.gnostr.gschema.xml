@@ -115,6 +115,15 @@
         The bech32 npub of the active identity. Empty string means not signed in.
       </description>
     </key>
+    <key name="known-accounts" type="as">
+      <default>[]</default>
+      <summary>Known account npubs</summary>
+      <description>
+        List of npubs for accounts that have been logged into.
+        Used for multi-account switching. The current-npub should be in this list
+        when signed in. Accounts can be removed individually or kept for quick switching.
+      </description>
+    </key>
     <key name="nip46-timeout-ms" type="i">
       <default>15000</default>
       <summary>NIP-46 pairing timeout (ms)</summary>

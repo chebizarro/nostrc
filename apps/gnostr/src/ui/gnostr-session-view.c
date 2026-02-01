@@ -34,6 +34,7 @@ typedef enum {
   SIGNAL_RECONNECT_REQUESTED,
   SIGNAL_LOGIN_REQUESTED,
   SIGNAL_LOGOUT_REQUESTED,
+  SIGNAL_ACCOUNT_SWITCH_REQUESTED,
   SIGNAL_NEW_NOTES_CLICKED,
   SIGNAL_COMPOSE_REQUESTED,
   SIGNAL_SEARCH_CHANGED,
@@ -89,6 +90,10 @@ struct _GnostrSessionView {
   GtkLabel *lbl_profile_name;
   GtkButton *btn_login;
   GtkButton *btn_logout;
+  GtkButton *btn_add_account;
+  GtkListBox *account_list;
+  GtkWidget *account_separator;
+  char *current_npub;  /* Cache for popover rebuild */
 
   GtkOverlay *content_root;
 
@@ -158,43 +163,167 @@ static const char *title_for_page_name(const char *page_name) {
 /* Forward declarations for signal handlers used in ensure_avatar_popover */
 static void on_btn_login_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_logout_clicked(GtkButton *btn, gpointer user_data);
+static void on_btn_add_account_clicked(GtkButton *btn, gpointer user_data);
+static void on_account_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data);
+
+/* Helper: Truncate npub for display (e.g., "npub1abc...xyz") */
+static char *truncate_npub(const char *npub) {
+  if (!npub || strlen(npub) < 20) return g_strdup(npub ? npub : "");
+  /* Show first 10 and last 4 characters: npub1abcd...wxyz */
+  return g_strdup_printf("%.10s...%s", npub, npub + strlen(npub) - 4);
+}
+
+/* Helper: Create a row for an account in the account list */
+static GtkWidget *create_account_row(const char *npub, gboolean is_current) {
+  GtkWidget *row = gtk_list_box_row_new();
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_top(box, 4);
+  gtk_widget_set_margin_bottom(box, 4);
+  gtk_widget_set_margin_start(box, 4);
+  gtk_widget_set_margin_end(box, 4);
+
+  /* Avatar placeholder - could be enhanced to show actual avatar */
+  GtkWidget *avatar = gtk_image_new_from_icon_name("avatar-default-symbolic");
+  gtk_box_append(GTK_BOX(box), avatar);
+
+  /* Truncated npub */
+  char *display = truncate_npub(npub);
+  GtkWidget *label = gtk_label_new(display);
+  gtk_widget_set_hexpand(label, TRUE);
+  gtk_label_set_xalign(GTK_LABEL(label), 0);
+  if (is_current) {
+    gtk_widget_add_css_class(label, "heading");
+  }
+  gtk_box_append(GTK_BOX(box), label);
+  g_free(display);
+
+  /* Checkmark for current account */
+  if (is_current) {
+    GtkWidget *check = gtk_image_new_from_icon_name("object-select-symbolic");
+    gtk_box_append(GTK_BOX(box), check);
+  }
+
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+
+  /* Store npub as row data for switch handler */
+  g_object_set_data_full(G_OBJECT(row), "npub", g_strdup(npub), g_free);
+
+  /* Disable activation for current account */
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), !is_current);
+
+  return row;
+}
+
+/* Rebuild the account list in the popover */
+static void rebuild_account_list(GnostrSessionView *self) {
+  if (!self || !self->account_list) return;
+
+  /* Clear existing rows */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->account_list))) != NULL) {
+    gtk_list_box_remove(self->account_list, child);
+  }
+
+  /* Get known accounts from GSettings */
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return;
+
+  char *current_npub = g_settings_get_string(settings, "current-npub");
+  char **accounts = g_settings_get_strv(settings, "known-accounts");
+  g_object_unref(settings);
+
+  /* Add rows for each account */
+  gboolean has_accounts = FALSE;
+  if (accounts) {
+    for (int i = 0; accounts[i]; i++) {
+      if (!accounts[i][0]) continue;  /* Skip empty strings */
+      gboolean is_current = (current_npub && g_strcmp0(accounts[i], current_npub) == 0);
+      GtkWidget *row = create_account_row(accounts[i], is_current);
+      gtk_list_box_append(self->account_list, row);
+      has_accounts = TRUE;
+    }
+    g_strfreev(accounts);
+  }
+
+  /* Show/hide account list and separator based on whether we have accounts */
+  gtk_widget_set_visible(GTK_WIDGET(self->account_list), has_accounts);
+  if (self->account_separator) {
+    gtk_widget_set_visible(self->account_separator, has_accounts);
+  }
+
+  g_free(current_npub);
+}
 
 /* Create avatar popover lazily to avoid GTK4 crash on Linux */
 static void ensure_avatar_popover(GnostrSessionView *self) {
   if (!self || !self->btn_avatar || self->avatar_popover) return;
 
   self->avatar_popover = GTK_POPOVER(gtk_popover_new());
-  
+
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
   gtk_widget_set_margin_top(box, 12);
   gtk_widget_set_margin_bottom(box, 12);
   gtk_widget_set_margin_start(box, 12);
   gtk_widget_set_margin_end(box, 12);
-  
+  gtk_widget_set_size_request(box, 200, -1);
+
+  /* Status label (shown when not signed in) */
   self->lbl_signin_status = GTK_LABEL(gtk_label_new(_("Not signed in")));
   gtk_widget_add_css_class(GTK_WIDGET(self->lbl_signin_status), "dim-label");
   gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->lbl_signin_status));
-  
+
+  /* Profile name (shown when signed in) */
   self->lbl_profile_name = GTK_LABEL(gtk_label_new(""));
   gtk_widget_add_css_class(GTK_WIDGET(self->lbl_profile_name), "heading");
   gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), FALSE);
   gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->lbl_profile_name));
-  
+
+  /* Account list for switching (hidden when empty) */
+  GtkWidget *accounts_label = gtk_label_new(_("Accounts"));
+  gtk_widget_add_css_class(accounts_label, "dim-label");
+  gtk_label_set_xalign(GTK_LABEL(accounts_label), 0);
+  gtk_widget_set_margin_top(accounts_label, 8);
+  gtk_widget_set_visible(accounts_label, FALSE);
+  gtk_box_append(GTK_BOX(box), accounts_label);
+
+  self->account_list = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_widget_add_css_class(GTK_WIDGET(self->account_list), "boxed-list");
+  gtk_widget_set_visible(GTK_WIDGET(self->account_list), FALSE);
+  gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->account_list));
+
+  /* Separator before buttons */
+  self->account_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_widget_set_margin_top(self->account_separator, 8);
+  gtk_widget_set_margin_bottom(self->account_separator, 4);
+  gtk_widget_set_visible(self->account_separator, FALSE);
+  gtk_box_append(GTK_BOX(box), self->account_separator);
+
+  /* Sign In button (shown when not signed in) */
   self->btn_login = GTK_BUTTON(gtk_button_new_with_label(_("Sign In")));
   gtk_widget_add_css_class(GTK_WIDGET(self->btn_login), "suggested-action");
   gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->btn_login));
-  
+
+  /* Add Account button (always shown) */
+  self->btn_add_account = GTK_BUTTON(gtk_button_new_with_label(_("Add Account")));
+  gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->btn_add_account));
+
+  /* Sign Out button (shown when signed in) */
   self->btn_logout = GTK_BUTTON(gtk_button_new_with_label(_("Sign Out")));
   gtk_widget_add_css_class(GTK_WIDGET(self->btn_logout), "destructive-action");
   gtk_widget_set_visible(GTK_WIDGET(self->btn_logout), FALSE);
   gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->btn_logout));
-  
+
   gtk_popover_set_child(self->avatar_popover, box);
   gtk_menu_button_set_popover(self->btn_avatar, GTK_WIDGET(self->avatar_popover));
 
-  /* Connect signals for the newly created buttons */
+  /* Connect signals */
   g_signal_connect(self->btn_login, "clicked", G_CALLBACK(on_btn_login_clicked), self);
   g_signal_connect(self->btn_logout, "clicked", G_CALLBACK(on_btn_logout_clicked), self);
+  g_signal_connect(self->btn_add_account, "clicked", G_CALLBACK(on_btn_add_account_clicked), self);
+  g_signal_connect(self->account_list, "row-activated", G_CALLBACK(on_account_row_activated), self);
+
+  /* Build initial account list */
+  rebuild_account_list(self);
 }
 
 static void update_auth_gating(GnostrSessionView *self) {
@@ -324,6 +453,38 @@ static void on_btn_logout_clicked(GtkButton *btn, gpointer user_data) {
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
   if (!GNOSTR_IS_SESSION_VIEW(self)) return;
   g_signal_emit(self, signals[SIGNAL_LOGOUT_REQUESTED], 0);
+}
+
+static void on_btn_add_account_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+
+  /* Close popover before opening login dialog */
+  if (self->avatar_popover) {
+    gtk_popover_popdown(self->avatar_popover);
+  }
+
+  /* Emit login-requested - main window will open login dialog */
+  g_signal_emit(self, signals[SIGNAL_LOGIN_REQUESTED], 0);
+}
+
+static void on_account_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
+  (void)box;
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self) || !row) return;
+
+  /* Get the npub stored in the row */
+  const char *npub = g_object_get_data(G_OBJECT(row), "npub");
+  if (!npub || !*npub) return;
+
+  /* Close popover */
+  if (self->avatar_popover) {
+    gtk_popover_popdown(self->avatar_popover);
+  }
+
+  /* Emit account-switch-requested with the npub */
+  g_signal_emit(self, signals[SIGNAL_ACCOUNT_SWITCH_REQUESTED], 0, npub);
 }
 
 static void on_btn_new_notes_clicked(GtkButton *btn, gpointer user_data) {
@@ -500,6 +661,18 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       g_cclosure_marshal_VOID__VOID,
       G_TYPE_NONE,
       0);
+
+  signals[SIGNAL_ACCOUNT_SWITCH_REQUESTED] = g_signal_new(
+      "account-switch-requested",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      g_cclosure_marshal_VOID__STRING,
+      G_TYPE_NONE,
+      1,
+      G_TYPE_STRING);
 
   signals[SIGNAL_NEW_NOTES_CLICKED] = g_signal_new(
       "new-notes-clicked",
@@ -970,4 +1143,9 @@ const char *gnostr_session_view_get_search_text(GnostrSessionView *self) {
     return gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
   }
   return NULL;
+}
+
+void gnostr_session_view_refresh_account_list(GnostrSessionView *self) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+  rebuild_account_list(self);
 }

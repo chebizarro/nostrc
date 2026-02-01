@@ -67,10 +67,20 @@ const char *gnostr_session_view_get_search_text(GnostrSessionView *self);
  * - "reconnect-requested": Emitted when reconnect clicked
  * - "login-requested": Emitted when sign in requested
  * - "logout-requested": Emitted when sign out clicked
+ * - "account-switch-requested" (const char *npub): Emitted when user wants to switch accounts
  * - "new-notes-clicked": Emitted when new notes toast clicked
  * - "compose-requested": Emitted when compose button clicked
  * - "search-changed" (const char *text): Emitted when search text changes
  */
+
+/**
+ * gnostr_session_view_refresh_account_list:
+ * @self: a #GnostrSessionView
+ *
+ * Refreshes the account list in the avatar popover.
+ * Call this after adding or removing accounts.
+ */
+void gnostr_session_view_refresh_account_list(GnostrSessionView *self);
 
 G_END_DECLS
 

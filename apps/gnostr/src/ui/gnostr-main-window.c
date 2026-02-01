@@ -3235,6 +3235,46 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
   /* Update UI to show signed-in state */
   update_login_ui_state(self);
 
+  /* Add npub to known-accounts for multi-account support */
+  if (npub && *npub) {
+    GSettings *settings = g_settings_new("org.gnostr.Client");
+    if (settings) {
+      char **accounts = g_settings_get_strv(settings, "known-accounts");
+      gboolean found = FALSE;
+
+      /* Check if npub is already in the list */
+      if (accounts) {
+        for (int i = 0; accounts[i]; i++) {
+          if (g_strcmp0(accounts[i], npub) == 0) {
+            found = TRUE;
+            break;
+          }
+        }
+      }
+
+      /* Add npub if not found */
+      if (!found) {
+        guint len = accounts ? g_strv_length(accounts) : 0;
+        char **new_accounts = g_new0(char*, len + 2);
+        for (guint i = 0; i < len; i++) {
+          new_accounts[i] = g_strdup(accounts[i]);
+        }
+        new_accounts[len] = g_strdup(npub);
+        g_settings_set_strv(settings, "known-accounts", (const char * const *)new_accounts);
+        g_strfreev(new_accounts);
+        g_debug("[AUTH] Added npub to known-accounts list");
+      }
+
+      g_strfreev(accounts);
+      g_object_unref(settings);
+    }
+
+    /* Refresh account list in session view */
+    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+      gnostr_session_view_refresh_account_list(GNOSTR_SESSION_VIEW(self->session_view));
+    }
+  }
+
   /* nostrc-51a.10: Start notification subscriptions */
   if (self->user_pubkey_hex) {
     GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
@@ -3340,6 +3380,50 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   show_toast(self, "Signed out");
+}
+
+/* Handler for account switch request from session view */
+static void on_account_switch_requested(GnostrSessionView *view, const char *npub, gpointer user_data) {
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !npub || !*npub) return;
+
+  g_debug("[AUTH] Account switch requested to: %s", npub);
+
+  /* For now, switching accounts requires re-authentication since we don't
+   * store per-account credentials. We set the target npub and open login dialog. */
+
+  /* Stop current subscriptions */
+  stop_gift_wrap_subscription(self);
+  GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
+  gnostr_badge_manager_stop_subscriptions(badge_mgr);
+  gnostr_badge_manager_set_event_callback(badge_mgr, NULL, NULL, NULL);
+
+  /* Clear current session but keep the npub in settings as hint for login */
+  g_free(self->user_pubkey_hex);
+  self->user_pubkey_hex = NULL;
+
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
+  }
+
+  gnostr_signer_service_clear(gnostr_signer_service_get_default());
+
+  /* Set target npub - login dialog can use this as a hint */
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (settings) {
+    g_settings_set_string(settings, "current-npub", npub);
+    g_object_unref(settings);
+  }
+
+  /* Update UI first */
+  update_login_ui_state(self);
+
+  /* Open login dialog for re-authentication */
+  open_login_dialog(self);
+
+  show_toast(self, "Please sign in to switch accounts");
 }
 
 /* Update the avatar popover UI based on sign-in state */
@@ -4484,6 +4568,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_avatar_login_clicked), self);
     g_signal_connect(self->session_view, "logout-requested",
                      G_CALLBACK(on_avatar_logout_clicked), self);
+    g_signal_connect(self->session_view, "account-switch-requested",
+                     G_CALLBACK(on_account_switch_requested), self);
     g_signal_connect(self->session_view, "new-notes-clicked",
                      G_CALLBACK(on_new_notes_clicked), self);
     g_signal_connect(self->session_view, "compose-requested",
