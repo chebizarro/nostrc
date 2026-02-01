@@ -1504,8 +1504,9 @@ static void relay_discovery_apply_filter(RelayDiscoveryCtx *ctx) {
 
     gboolean matches = TRUE;
 
-    /* Online filter */
-    if (online_only && !meta->is_online) matches = FALSE;
+    /* Online filter - only exclude relays explicitly marked offline.
+     * Treat unknown status (no l tag) as possibly online. */
+    if (online_only && meta->has_status && !meta->is_online) matches = FALSE;
 
     /* Free filter */
     if (free_only && meta->payment_required) matches = FALSE;

@@ -91,7 +91,8 @@ typedef struct {
   gboolean restricted_writes;
 
   /* Monitoring stats (from monitor) */
-  gboolean is_online;        /* Current online status */
+  gboolean has_status;       /* TRUE if status was explicitly set via l tag */
+  gboolean is_online;        /* Current online status (only valid if has_status) */
   gint64 last_seen;          /* Last successful connection timestamp */
   gint64 first_seen;         /* First discovery timestamp */
   gdouble uptime_percent;    /* Uptime percentage (0-100) */

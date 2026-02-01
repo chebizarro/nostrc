@@ -433,6 +433,7 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
     /* L/l tags for status */
     gchar *status_val = find_tag_value(tags_json, "l", 1);
     if (status_val) {
+      meta->has_status = TRUE;
       meta->is_online = (g_ascii_strcasecmp(status_val, "online") == 0);
       g_free(status_val);
     }
@@ -782,8 +783,10 @@ GPtrArray *gnostr_nip66_filter_relays(const GnostrNip66RelayFilter *filter)
     gboolean matches = TRUE;
 
     if (filter) {
-      /* Check flags */
-      if ((filter->flags & GNOSTR_NIP66_FILTER_ONLINE_ONLY) && !meta->is_online) {
+      /* Check flags - only filter out relays that are explicitly offline
+       * (has_status=TRUE and is_online=FALSE). Treat unknown status as possibly online. */
+      if ((filter->flags & GNOSTR_NIP66_FILTER_ONLINE_ONLY) &&
+          meta->has_status && !meta->is_online) {
         matches = FALSE;
       }
       if ((filter->flags & GNOSTR_NIP66_FILTER_FREE_ONLY) && meta->payment_required) {
