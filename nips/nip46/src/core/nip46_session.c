@@ -256,6 +256,7 @@ static struct {
 } s_nip46_resp_ctx;
 
 static pthread_mutex_t s_nip46_resp_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t s_nip46_resp_cond = PTHREAD_COND_INITIALIZER;
 
 /* Callback for incoming NIP-46 sign responses */
 static void nip46_client_event_cb(NostrIncomingEvent *incoming) {
@@ -300,6 +301,7 @@ static void nip46_client_event_cb(NostrIncomingEvent *incoming) {
         s_nip46_resp_ctx.response_content = strdup(content);
         s_nip46_resp_ctx.response_pubkey = strdup(sender_pubkey);
         s_nip46_resp_ctx.received = 1;
+        pthread_cond_signal(&s_nip46_resp_cond);
     }
     pthread_mutex_unlock(&s_nip46_resp_mutex);
 }
@@ -486,36 +488,26 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     nostr_event_free(req_ev);
     nostr_filters_free(filters);
 
-    /* Wait for response with timeout (30 seconds) */
-    time_t start = time(NULL);
-    while (time(NULL) - start < 30) {
-        pthread_mutex_lock(&s_nip46_resp_mutex);
-        int received = s_nip46_resp_ctx.received;
-        pthread_mutex_unlock(&s_nip46_resp_mutex);
-
-        if (received) break;
-
-        /* Simple poll - in production this should integrate with event loop */
-        struct timespec ts = {0, 100000000}; /* 100ms */
-        nanosleep(&ts, NULL);
-    }
-
-    nostr_simple_pool_stop(pool);
-    nostr_simple_pool_free(pool);
-
+    /* Wait for response indefinitely using condition variable.
+     * No timeout - waits until response received or thread cancelled. */
     pthread_mutex_lock(&s_nip46_resp_mutex);
-    int received = s_nip46_resp_ctx.received;
+    while (!s_nip46_resp_ctx.received) {
+        pthread_cond_wait(&s_nip46_resp_cond, &s_nip46_resp_mutex);
+    }
+    /* Extract response while holding mutex */
     char *response_content = s_nip46_resp_ctx.response_content;
     char *response_pubkey = s_nip46_resp_ctx.response_pubkey;
     s_nip46_resp_ctx.response_content = NULL;
     s_nip46_resp_ctx.response_pubkey = NULL;
     pthread_mutex_unlock(&s_nip46_resp_mutex);
 
-    if (!received || !response_content) {
-        fprintf(stderr, "[nip46] sign_event: ERROR -1: timeout waiting for signer response\n");
+    nostr_simple_pool_stop(pool);
+    nostr_simple_pool_free(pool);
+
+    if (!response_content) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: response content is NULL\n");
         secure_wipe(sk, sizeof(sk));
         free(client_pubkey);
-        if (response_content) free(response_content);
         if (response_pubkey) free(response_pubkey);
         return -1;
     }
