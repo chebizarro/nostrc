@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # CMakeLists.txt for NIP-77 Negentropy Sync Plugin
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
+
 set(PLUGIN_NAME nip77-negentropy)
 
 # Plugin sources
@@ -32,6 +35,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
     PkgConfig::JSON_GLIB
+    PkgConfig::LIBADWAITA
 )
 
 # Link libgo for include paths (nsync, etc)
