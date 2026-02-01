@@ -1667,17 +1667,38 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   const char *root = self->thread_root_id ? self->thread_root_id : self->focus_event_id;
   const char *focus = self->focus_event_id;
 
-  /* Get read-capable relay URLs for fetching (NIP-65) */
-  GPtrArray *relay_arr = gnostr_get_read_relay_urls();
+  /* Build relay URL list: configured relays + hints from loaded events */
+  GPtrArray *all_relays = g_ptr_array_new_with_free_func(g_free);
 
-  g_message("[THREAD_VIEW] fetch_thread_from_relays: got %u relay URLs", relay_arr->len);
-  for (guint i = 0; i < relay_arr->len; i++) {
-    g_message("[THREAD_VIEW]   Relay %u: %s", i, (const char *)g_ptr_array_index(relay_arr, i));
+  /* Add configured read relays first */
+  GPtrArray *config_relays = gnostr_get_read_relay_urls();
+  for (guint i = 0; i < config_relays->len; i++) {
+    g_ptr_array_add(all_relays, g_strdup(g_ptr_array_index(config_relays, i)));
+  }
+  g_ptr_array_unref(config_relays);
+
+  /* Add relay hints from loaded events */
+  GHashTableIter hint_iter;
+  gpointer hkey, hvalue;
+  g_hash_table_iter_init(&hint_iter, self->events_by_id);
+  while (g_hash_table_iter_next(&hint_iter, &hkey, &hvalue)) {
+    ThreadEventItem *item = (ThreadEventItem *)hvalue;
+    if (item->root_relay_hint) {
+      add_relay_hint_if_unique(all_relays, item->root_relay_hint);
+    }
+    if (item->parent_relay_hint) {
+      add_relay_hint_if_unique(all_relays, item->parent_relay_hint);
+    }
   }
 
-  const char **urls = g_new0(const char*, relay_arr->len);
-  for (guint i = 0; i < relay_arr->len; i++) {
-    urls[i] = g_ptr_array_index(relay_arr, i);
+  g_message("[THREAD_VIEW] fetch_thread_from_relays: got %u relay URLs (config + hints)", all_relays->len);
+  for (guint i = 0; i < all_relays->len; i++) {
+    g_message("[THREAD_VIEW]   Relay %u: %s", i, (const char *)g_ptr_array_index(all_relays, i));
+  }
+
+  const char **urls = g_new0(const char*, all_relays->len);
+  for (guint i = 0; i < all_relays->len; i++) {
+    urls[i] = g_ptr_array_index(all_relays, i);
   }
 
   /* Query 1: Fetch all replies and comments (events with #e tag referencing root)
@@ -1691,7 +1712,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   gnostr_simple_pool_query_single_async(
     gnostr_get_shared_query_pool(),
     urls,
-    relay_arr->len,
+    all_relays->len,
     filter_replies,
     self->fetch_cancellable,
     on_thread_query_done,
@@ -1735,7 +1756,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   gnostr_simple_pool_query_single_async(
     gnostr_get_shared_query_pool(),
     urls,
-    relay_arr->len,
+    all_relays->len,
     filter_ids,
     self->fetch_cancellable,
     on_root_fetch_done,
@@ -1754,7 +1775,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   gnostr_simple_pool_query_single_async(
     gnostr_get_shared_query_pool(),
     urls,
-    relay_arr->len,
+    all_relays->len,
     filter_nip22,
     self->fetch_cancellable,
     on_thread_query_done,  /* Reuse same callback */
@@ -1763,7 +1784,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
 
   nostr_filter_free(filter_nip22);
   g_free(urls);
-  g_ptr_array_unref(relay_arr);
+  g_ptr_array_unref(all_relays);
 
   /* Query 4: Fetch replies to the focus event specifically (children)
    * This enables bidirectional traversal - we want to see replies TO the focus event */
