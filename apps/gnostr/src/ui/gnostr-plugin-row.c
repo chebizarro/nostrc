@@ -246,7 +246,7 @@ gnostr_plugin_row_class_init(GnostrPluginRowClass *klass)
   /* Load UI template */
   gtk_widget_class_set_template_from_resource(
     widget_class,
-    "/org/gnome/gnostr/ui/widgets/gnostr-plugin-row.ui");
+    "/org/gnostr/ui/ui/widgets/gnostr-plugin-row.ui");
 
   /* Bind template children */
   gtk_widget_class_bind_template_child(widget_class, GnostrPluginRow, chk_enabled);

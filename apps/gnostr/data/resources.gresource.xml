@@ -38,6 +38,8 @@
     <file>ui/dialogs/gnostr-report-dialog.ui</file>
     <file>ui/dialogs/gnostr-app-handler-dialog.ui</file>
     <file>ui/widgets/gnostr-apps-page.ui</file>
+    <file>ui/widgets/gnostr-plugin-manager-panel.ui</file>
+    <file>ui/widgets/gnostr-plugin-row.ui</file>
     <file>ui/styles/gnostr.css</file>
   </gresource>
   <gresource prefix="/org/gnostr/assets">

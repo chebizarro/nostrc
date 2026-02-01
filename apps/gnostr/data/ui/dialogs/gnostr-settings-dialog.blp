@@ -1950,6 +1950,14 @@ Window settings_window {
         }
 
         StackPage {
+          name: "plugins";
+          title: "Plugins";
+          icon-name: "application-x-addon-symbolic";
+
+          child: $GnostrPluginManagerPanel plugin_manager_panel {};
+        }
+
+        StackPage {
           name: "mute";
           title: "Mute List";
           icon-name: "action-unavailable-symbolic";

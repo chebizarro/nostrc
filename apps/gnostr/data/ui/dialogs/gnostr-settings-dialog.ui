@@ -2179,6 +2179,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkStackPage">
+                    <property name="name">plugins</property>
+                    <property name="title">Plugins</property>
+                    <property name="icon-name">application-x-addon-symbolic</property>
+                    <property name="child">
+                      <object class="GnostrPluginManagerPanel" id="plugin_manager_panel"></object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkStackPage">
                     <property name="name">mute</property>
                     <property name="title">Mute List</property>
                     <property name="icon-name">action-unavailable-symbolic</property>

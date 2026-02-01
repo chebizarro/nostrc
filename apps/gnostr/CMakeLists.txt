@@ -53,6 +53,8 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-room-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-message-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-apps-page.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-plugin-manager-panel.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-plugin-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-channel-create-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.blp
@@ -117,6 +119,8 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-room-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-message-row.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-apps-page.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-plugin-manager-panel.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-plugin-row.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-channel-create-dialog.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
