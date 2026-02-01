@@ -192,13 +192,136 @@ template $GnostrSessionView: Adw.Bin {
                     [top]
                     Adw.HeaderBar header_bar {
                         [start]
-                        Button btn_relays {
-                            icon-name: "network-server-symbolic";
-                            tooltip-text: _("Manage Relays");
+                        MenuButton btn_relays {
+                            tooltip-text: _("Relay Status");
 
                             styles [
                                 "flat",
                             ]
+
+                            child: Box {
+                                orientation: horizontal;
+                                spacing: 4;
+
+                                Image relay_status_icon {
+                                    icon-name: "network-offline-symbolic";
+
+                                    styles [
+                                        "dim-label",
+                                    ]
+                                }
+
+                                Label relay_status_label {
+                                    label: "0/0";
+
+                                    styles [
+                                        "caption",
+                                        "dim-label",
+                                    ]
+                                }
+                            };
+
+                            popover: Popover relay_popover {
+                                child: Box {
+                                    orientation: vertical;
+                                    spacing: 8;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 8;
+                                    margin-bottom: 8;
+
+                                    Box {
+                                        orientation: horizontal;
+                                        spacing: 8;
+
+                                        Label {
+                                            label: _("Relay Connections");
+                                            hexpand: true;
+                                            xalign: 0;
+
+                                            styles [
+                                                "heading",
+                                            ]
+                                        }
+
+                                        Button btn_manage_relays {
+                                            icon-name: "emblem-system-symbolic";
+                                            tooltip-text: _("Manage Relays");
+
+                                            styles [
+                                                "flat",
+                                                "circular",
+                                            ]
+                                        }
+                                    }
+
+                                    Separator {}
+
+                                    Box relay_status_box {
+                                        orientation: horizontal;
+                                        spacing: 12;
+                                        halign: center;
+
+                                        Box {
+                                            orientation: vertical;
+                                            spacing: 2;
+
+                                            Label lbl_connected_count {
+                                                label: "0";
+
+                                                styles [
+                                                    "title-1",
+                                                    "success",
+                                                ]
+                                            }
+
+                                            Label {
+                                                label: _("Connected");
+
+                                                styles [
+                                                    "caption",
+                                                    "dim-label",
+                                                ]
+                                            }
+                                        }
+
+                                        Separator {
+                                            orientation: vertical;
+                                        }
+
+                                        Box {
+                                            orientation: vertical;
+                                            spacing: 2;
+
+                                            Label lbl_total_count {
+                                                label: "0";
+
+                                                styles [
+                                                    "title-1",
+                                                ]
+                                            }
+
+                                            Label {
+                                                label: _("Total");
+
+                                                styles [
+                                                    "caption",
+                                                    "dim-label",
+                                                ]
+                                            }
+                                        }
+                                    }
+
+                                    Button btn_reconnect {
+                                        label: _("Reconnect All");
+                                        halign: center;
+
+                                        styles [
+                                            "pill",
+                                        ]
+                                    }
+                                };
+                            };
                         }
 
                         [end]

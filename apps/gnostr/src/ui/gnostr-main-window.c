@@ -229,6 +229,7 @@ static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiE
 static gboolean periodic_backfill_cb(gpointer data);
 static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data);
 static void on_relays_clicked(GtkButton *btn, gpointer user_data);
+static void on_reconnect_requested(GnostrSessionView *view, gpointer user_data);
 static void on_settings_clicked(GtkButton *btn, gpointer user_data);
 static void on_show_mute_list_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
 static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
@@ -2151,6 +2152,15 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   gtk_window_present(win);
+}
+
+static void on_reconnect_requested(GnostrSessionView *view, gpointer user_data) {
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  show_toast(self, "Reconnecting to relays...");
+  start_pool_live(self);
 }
 
 /* Settings dialog context for callbacks */
@@ -4284,6 +4294,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_settings_clicked), self);
     g_signal_connect(self->session_view, "relays-requested",
                      G_CALLBACK(on_relays_clicked), self);
+    g_signal_connect(self->session_view, "reconnect-requested",
+                     G_CALLBACK(on_reconnect_requested), self);
     g_signal_connect(self->session_view, "login-requested",
                      G_CALLBACK(on_avatar_login_clicked), self);
     g_signal_connect(self->session_view, "logout-requested",
@@ -6450,13 +6462,20 @@ static gboolean check_relay_health(gpointer user_data) {
   /* Update tray icon with current relay status */
   gnostr_app_update_relay_status((int)connected_count, (int)relay_urls->len);
 
+  /* Update relay status indicator in UI */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_set_relay_status(self->session_view,
+                                         connected_count,
+                                         relay_urls->len);
+  }
+
   /* If ALL relays are disconnected, trigger reconnection */
   if (disconnected_count > 0 && connected_count == 0) {
     g_warning("relay_health: all %u relay(s) disconnected - reconnecting",
               disconnected_count);
     start_pool_live(self);
   }
-  
+
   g_ptr_array_unref(relay_urls);
   return G_SOURCE_CONTINUE; /* Keep checking every interval */
 }

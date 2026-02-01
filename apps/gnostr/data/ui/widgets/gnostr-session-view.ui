@@ -221,12 +221,145 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child type="top">
                       <object class="AdwHeaderBar" id="header_bar">
                         <child type="start">
-                          <object class="GtkButton" id="btn_relays">
-                            <property name="icon-name">network-server-symbolic</property>
-                            <property name="tooltip-text" translatable="yes">Manage Relays</property>
+                          <object class="GtkMenuButton" id="btn_relays">
+                            <property name="tooltip-text" translatable="yes">Relay Status</property>
                             <style>
                               <class name="flat"/>
                             </style>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <property name="orientation">0</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkImage" id="relay_status_icon">
+                                    <property name="icon-name">network-offline-symbolic</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="relay_status_label">
+                                    <property name="label">0/0</property>
+                                    <style>
+                                      <class name="caption"/>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                            <property name="popover">
+                              <object class="GtkPopover" id="relay_popover">
+                                <property name="child">
+                                  <object class="GtkBox">
+                                    <property name="orientation">1</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">8</property>
+                                    <property name="margin-bottom">8</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">0</property>
+                                        <property name="spacing">8</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Relay Connections</property>
+                                            <property name="hexpand">true</property>
+                                            <property name="xalign">0</property>
+                                            <style>
+                                              <class name="heading"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkButton" id="btn_manage_relays">
+                                            <property name="icon-name">emblem-system-symbolic</property>
+                                            <property name="tooltip-text" translatable="yes">Manage Relays</property>
+                                            <style>
+                                              <class name="flat"/>
+                                              <class name="circular"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkSeparator"></object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkBox" id="relay_status_box">
+                                        <property name="orientation">0</property>
+                                        <property name="spacing">12</property>
+                                        <property name="halign">3</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">1</property>
+                                            <property name="spacing">2</property>
+                                            <child>
+                                              <object class="GtkLabel" id="lbl_connected_count">
+                                                <property name="label">0</property>
+                                                <style>
+                                                  <class name="title-1"/>
+                                                  <class name="success"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Connected</property>
+                                                <style>
+                                                  <class name="caption"/>
+                                                  <class name="dim-label"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkSeparator">
+                                            <property name="orientation">1</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">1</property>
+                                            <property name="spacing">2</property>
+                                            <child>
+                                              <object class="GtkLabel" id="lbl_total_count">
+                                                <property name="label">0</property>
+                                                <style>
+                                                  <class name="title-1"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Total</property>
+                                                <style>
+                                                  <class name="caption"/>
+                                                  <class name="dim-label"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_reconnect">
+                                        <property name="label" translatable="yes">Reconnect All</property>
+                                        <property name="halign">3</property>
+                                        <style>
+                                          <class name="pill"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </property>
+                              </object>
+                            </property>
                           </object>
                         </child>
                         <child type="end">
