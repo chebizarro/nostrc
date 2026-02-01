@@ -853,10 +853,10 @@ static void handle_event_envelope(NostrMockRelayServer *server, MockConnection *
     const char *event_id = json_string_value(json_object_get(event, "id"));
     if (!event_id) event_id = "unknown";
 
-    /* Optional: validate signature */
+    /* Optional: validate signature (nostrc-5iuk) */
     bool valid = true;
     if (server->config.validate_signatures) {
-        /* TODO: Implement signature validation using nostr_event_check_signature */
+        /* nostrc-5iuk: parse JSON to NostrEvent and call nostr_event_check_signature */
         /* For now, accept all events */
     }
 

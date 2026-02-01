@@ -541,20 +541,30 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   free(encrypted_request);
   nostr_filters_free(filters);
 
-  /* Wait for response with timeout */
+  /* Wait for response - poll with cancellable checks instead of hard timeout */
   char *signed_event_json = NULL;
-  struct timespec timeout_ts;
-  clock_gettime(CLOCK_REALTIME, &timeout_ts);
-  timeout_ts.tv_sec += 30; /* 30 second timeout */
+  gboolean was_cancelled = FALSE;
+  const int max_poll_iterations = 60; /* Poll for up to 60 seconds */
 
-  g_info("[NIP46-SIGN] waiting up to 30s for response...");
+  g_info("[NIP46-SIGN] waiting for response (polling with cancellable)...");
   pthread_mutex_lock(&roundtrip.mutex);
-  while (!roundtrip.response_received) {
-    int rc = pthread_cond_timedwait(&roundtrip.cond, &roundtrip.mutex, &timeout_ts);
-    if (rc == ETIMEDOUT) {
-      g_warning("[NIP46-SIGN] TIMEOUT: no response received after 30s");
+  for (int i = 0; i < max_poll_iterations && !roundtrip.response_received; i++) {
+    /* Check if operation was cancelled */
+    if (g_cancellable_is_cancelled(cancellable)) {
+      g_info("[NIP46-SIGN] cancelled by user");
+      was_cancelled = TRUE;
       break;
     }
+
+    /* Wait up to 1 second for signal */
+    struct timespec poll_ts;
+    clock_gettime(CLOCK_REALTIME, &poll_ts);
+    poll_ts.tv_sec += 1;
+    pthread_cond_timedwait(&roundtrip.cond, &roundtrip.mutex, &poll_ts);
+  }
+
+  if (!roundtrip.response_received && !was_cancelled) {
+    g_warning("[NIP46-SIGN] no response from remote signer after %d seconds", max_poll_iterations);
   }
 
   if (roundtrip.response_received && roundtrip.response_content && roundtrip.response_sender_pk) {
@@ -608,9 +618,14 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
     goto cleanup_final;
   }
 
-  g_warning("[SIGNER_SERVICE] NIP-46 sign failed - no valid response");
-  g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
-                          "Remote signer did not respond. Please try again.");
+  if (was_cancelled) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "Signing operation was cancelled");
+  } else {
+    g_warning("[SIGNER_SERVICE] NIP-46 sign failed - no valid response");
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Remote signer did not respond. Check connection and try again.");
+  }
   goto cleanup_final;
 
 cleanup:
