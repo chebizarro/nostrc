@@ -68,7 +68,15 @@ nip98_httpauth_plugin_activate(GnostrPlugin        *plugin,
   self->context = context;
   self->active = TRUE;
 
-  /* TODO: Register as HTTP auth provider for Blossom uploads */
+  /*
+   * NIP-98 HTTP Auth is now active for this session.
+   * Blossom uploads use NIP-98 auth directly via the signer service
+   * (see blossom.c upload_with_auth/delete_with_auth).
+   * This plugin provides:
+   * - Kind 27235 event support declaration
+   * - Settings UI page for user visibility
+   */
+  g_message("[NIP-98] HTTP Auth provider ready for Blossom uploads");
 }
 
 static void

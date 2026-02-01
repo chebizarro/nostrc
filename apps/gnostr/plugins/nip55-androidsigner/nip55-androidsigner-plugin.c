@@ -76,18 +76,25 @@ nip55_androidsigner_plugin_init(Nip55AndroidsignerPlugin *self)
 static gboolean
 nip55_detect_android_signers(Nip55AndroidsignerPlugin *self)
 {
-  /* TODO: Query Android PackageManager for apps handling:
-   * android.intent.action.VIEW
-   * with category: android.intent.category.DEFAULT
-   * and scheme: nostrsigner
+  /*
+   * Android signer detection requires JNI to query PackageManager for apps handling:
+   *   - android.intent.action.VIEW
+   *   - android.intent.category.DEFAULT
+   *   - scheme: nostrsigner
    *
    * Known signer packages:
-   * - com.greenart7c3.nostrsigner (Amber)
-   * - com.example.nostrsigner (example)
+   *   - com.greenart7c3.nostrsigner (Amber)
+   *   - com.example.nostrsigner (example)
+   *
+   * This code path is only compiled for NIP55_PLATFORM_ANDROID.
+   * JNI implementation would call:
+   *   PackageManager.queryIntentActivities(intent, 0)
+   * and iterate through ResolveInfo results.
    */
-  g_debug("[NIP-55] Detecting Android signers...");
+  g_debug("[NIP-55] Android signer detection not implemented (requires JNI)");
+  (void)self;
 
-  /* Placeholder: actual implementation requires JNI */
+  /* Return FALSE - no signers detected without JNI implementation */
   return FALSE;
 }
 

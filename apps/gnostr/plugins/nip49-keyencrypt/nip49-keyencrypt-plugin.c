@@ -71,7 +71,21 @@ nip49_keyencrypt_plugin_activate(GnostrPlugin        *plugin,
   self->context = context;
   self->active = TRUE;
 
-  /* TODO: Load work factor preference from GSettings */
+  /* Load work factor preference from plugin storage */
+  GError *error = NULL;
+  GBytes *data = gnostr_plugin_context_load_data(context, "log_n", &error);
+  if (data) {
+    gsize size;
+    const guint8 *bytes = g_bytes_get_data(data, &size);
+    if (size == 1 && bytes[0] >= 8 && bytes[0] <= 22) {
+      self->default_log_n = bytes[0];
+      g_debug("[NIP-49] Loaded work factor log_n=%u from storage", self->default_log_n);
+    }
+    g_bytes_unref(data);
+  } else {
+    g_debug("[NIP-49] Using default work factor log_n=%u", self->default_log_n);
+    g_clear_error(&error);
+  }
 }
 
 static void
