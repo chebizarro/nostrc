@@ -84,7 +84,7 @@ struct _GnostrLogin {
   gboolean listening_for_response;
 };
 
-G_DEFINE_TYPE(GnostrLogin, gnostr_login, ADW_TYPE_BIN)
+G_DEFINE_TYPE(GnostrLogin, gnostr_login, GTK_TYPE_WINDOW)
 
 /* Signals */
 enum {
