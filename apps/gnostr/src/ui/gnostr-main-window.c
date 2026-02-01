@@ -3174,13 +3174,14 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
 /* Opens the login dialog */
 static void open_login_dialog(GnostrMainWindow *self) {
-  /* Create a window to host the login widget */
+  /* Create a window to host the login widget.
+   * Use undecorated window since GnostrLogin has its own AdwHeaderBar. */
   GtkWindow *win = GTK_WINDOW(gtk_window_new());
-  gtk_window_set_title(win, "Sign In");
   gtk_window_set_transient_for(win, GTK_WINDOW(self));
   gtk_window_set_modal(win, TRUE);
   gtk_window_set_default_size(win, 400, 500);
   gtk_window_set_resizable(win, FALSE);
+  gtk_window_set_decorated(win, FALSE);  /* GnostrLogin has AdwHeaderBar */
 
   /* Create and embed the login widget */
   GnostrLogin *login = gnostr_login_new();
@@ -3188,8 +3189,11 @@ static void open_login_dialog(GnostrMainWindow *self) {
 
   g_signal_connect(login, "signed-in", G_CALLBACK(on_login_signed_in), self);
 
-  /* Close window when login is complete - connect to window destroy */
+  /* Close window when login is complete */
   g_signal_connect_swapped(login, "signed-in", G_CALLBACK(gtk_window_close), win);
+
+  /* Also close window if user cancels */
+  g_signal_connect_swapped(login, "cancelled", G_CALLBACK(gtk_window_close), win);
 
   gtk_window_present(win);
 }
