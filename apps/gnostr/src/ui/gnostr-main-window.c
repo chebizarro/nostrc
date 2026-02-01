@@ -3969,8 +3969,16 @@ static void on_note_card_comment_requested(GnostrNoteCardRow *row, const char *i
 static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user_data);
 static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubkey_hex, gpointer user_data);
 
+/* Forward declaration */
+void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *root_event_id, const char *event_json);
+
 /* Public wrapper for viewing a thread (called from timeline view) */
 void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id) {
+  gnostr_main_window_view_thread_with_json(window, root_event_id, NULL);
+}
+
+/* nostrc-a2zd: View thread with optional event JSON to avoid nostrdb race condition */
+void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *root_event_id, const char *event_json) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -3980,7 +3988,8 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
     return;
   }
 
-  g_debug("[THREAD] View thread requested for root=%s", root_event_id);
+  g_debug("[THREAD] View thread requested for root=%s (json=%s)",
+          root_event_id, event_json ? "provided" : "NULL");
 
   /* Show thread view panel */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
@@ -3990,8 +3999,9 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
     return;
   }
 
-  /* Set the thread root and load the thread */
-  gnostr_thread_view_set_thread_root(GNOSTR_THREAD_VIEW(thread_view), root_event_id);
+  /* Set the thread root and load the thread.
+   * If event_json is provided, the event is pre-populated to avoid nostrdb lookup. */
+  gnostr_thread_view_set_thread_root_with_json(GNOSTR_THREAD_VIEW(thread_view), root_event_id, event_json);
 
   /* Show the thread panel */
   show_thread_panel(self);

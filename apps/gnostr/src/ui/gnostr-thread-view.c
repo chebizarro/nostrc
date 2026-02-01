@@ -197,6 +197,7 @@ static void load_thread(GnostrThreadView *self);
 static void rebuild_thread_ui(GnostrThreadView *self);
 static void set_loading_state(GnostrThreadView *self, gboolean loading);
 static void fetch_thread_from_relays(GnostrThreadView *self);
+static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *json_str);
 static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void setup_thread_subscription(GnostrThreadView *self);
 static void teardown_thread_subscription(GnostrThreadView *self);
@@ -619,6 +620,12 @@ GtkWidget *gnostr_thread_view_new(void) {
 }
 
 void gnostr_thread_view_set_focus_event(GnostrThreadView *self, const char *event_id_hex) {
+  gnostr_thread_view_set_focus_event_with_json(self, event_id_hex, NULL);
+}
+
+void gnostr_thread_view_set_focus_event_with_json(GnostrThreadView *self,
+                                                   const char *event_id_hex,
+                                                   const char *event_json) {
   g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
 
   if (!event_id_hex || strlen(event_id_hex) != 64) {
@@ -630,11 +637,29 @@ void gnostr_thread_view_set_focus_event(GnostrThreadView *self, const char *even
   g_free(self->focus_event_id);
   self->focus_event_id = g_strdup(event_id_hex);
 
+  /* nostrc-a2zd: Pre-populate focus event from JSON if provided.
+   * This avoids the nostrdb async ingestion race condition where
+   * events may not be queryable immediately after relay receipt. */
+  if (event_json && *event_json) {
+    ThreadEventItem *item = add_event_from_json(self, event_json);
+    if (item) {
+      g_message("[THREAD_VIEW] Pre-populated focus event from JSON: %.16s...", event_id_hex);
+      /* Also ingest into nostrdb for future queries */
+      storage_ndb_ingest_event_json(event_json, NULL);
+    }
+  }
+
   /* Load the thread */
   load_thread(self);
 }
 
 void gnostr_thread_view_set_thread_root(GnostrThreadView *self, const char *root_event_id_hex) {
+  gnostr_thread_view_set_thread_root_with_json(self, root_event_id_hex, NULL);
+}
+
+void gnostr_thread_view_set_thread_root_with_json(GnostrThreadView *self,
+                                                   const char *root_event_id_hex,
+                                                   const char *event_json) {
   g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
 
   if (!root_event_id_hex || strlen(root_event_id_hex) != 64) {
@@ -652,6 +677,17 @@ void gnostr_thread_view_set_thread_root(GnostrThreadView *self, const char *root
   /* Also set as focus if no focus set */
   if (!self->focus_event_id) {
     self->focus_event_id = g_strdup(root_event_id_hex);
+  }
+
+  /* nostrc-a2zd: Pre-populate root event from JSON if provided.
+   * This avoids the nostrdb async ingestion race condition. */
+  if (event_json && *event_json) {
+    ThreadEventItem *item = add_event_from_json(self, event_json);
+    if (item) {
+      g_message("[THREAD_VIEW] Pre-populated root event from JSON: %.16s...", root_event_id_hex);
+      /* Also ingest into nostrdb for future queries */
+      storage_ndb_ingest_event_json(event_json, NULL);
+    }
   }
 
   /* Load the thread */

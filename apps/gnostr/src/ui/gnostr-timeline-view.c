@@ -1000,9 +1000,16 @@ static void on_note_card_view_thread_requested_relay(GnostrNoteCardRow *row, con
   while (widget) {
     widget = gtk_widget_get_parent(widget);
     if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to show thread view */
-      extern void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
-      gnostr_main_window_view_thread(widget, root_event_id);
+      /* nostrc-a2zd: Try to get event JSON from nostrdb to avoid race condition.
+       * If the event is in nostrdb, pass it directly to thread view. */
+      char *event_json = NULL;
+      int json_len = 0;
+      storage_ndb_get_note_by_id_nontxn(root_event_id, &event_json, &json_len);
+
+      extern void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *root_event_id, const char *event_json);
+      gnostr_main_window_view_thread_with_json(widget, root_event_id, event_json);
+
+      if (event_json) free(event_json);
       break;
     }
   }
@@ -1016,9 +1023,15 @@ static void on_note_card_navigate_to_note_relay(GnostrNoteCardRow *row, const ch
   while (widget) {
     widget = gtk_widget_get_parent(widget);
     if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to show thread view focused on specific note */
-      extern void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
-      gnostr_main_window_view_thread(widget, event_id);
+      /* nostrc-a2zd: Try to get event JSON from nostrdb to avoid race condition. */
+      char *event_json = NULL;
+      int json_len = 0;
+      storage_ndb_get_note_by_id_nontxn(event_id, &event_json, &json_len);
+
+      extern void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *root_event_id, const char *event_json);
+      gnostr_main_window_view_thread_with_json(widget, event_id, event_json);
+
+      if (event_json) free(event_json);
       break;
     }
   }

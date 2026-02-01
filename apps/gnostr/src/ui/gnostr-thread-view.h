@@ -50,6 +50,20 @@ GtkWidget *gnostr_thread_view_new(void);
 void gnostr_thread_view_set_focus_event(GnostrThreadView *self, const char *event_id_hex);
 
 /**
+ * gnostr_thread_view_set_focus_event_with_json:
+ * @self: a #GnostrThreadView
+ * @event_id_hex: the 64-character hex event ID to focus on
+ * @event_json: (nullable): optional JSON of the focus event to avoid nostrdb lookup
+ *
+ * Sets the focus event with optional JSON data. When event_json is provided,
+ * the event is added directly to the view without requiring nostrdb lookup.
+ * This is useful when the event is already in memory (e.g., from timeline).
+ */
+void gnostr_thread_view_set_focus_event_with_json(GnostrThreadView *self,
+                                                   const char *event_id_hex,
+                                                   const char *event_json);
+
+/**
  * gnostr_thread_view_set_thread_root:
  * @self: a #GnostrThreadView
  * @root_event_id_hex: the 64-character hex event ID of the thread root
@@ -58,6 +72,19 @@ void gnostr_thread_view_set_focus_event(GnostrThreadView *self, const char *even
  * If different from focus_event, the root will be shown at the top.
  */
 void gnostr_thread_view_set_thread_root(GnostrThreadView *self, const char *root_event_id_hex);
+
+/**
+ * gnostr_thread_view_set_thread_root_with_json:
+ * @self: a #GnostrThreadView
+ * @root_event_id_hex: the 64-character hex event ID of the thread root
+ * @event_json: (nullable): optional JSON of the root event to avoid nostrdb lookup
+ *
+ * Sets the thread root with optional JSON data. When event_json is provided,
+ * the event is added directly to the view without requiring nostrdb lookup.
+ */
+void gnostr_thread_view_set_thread_root_with_json(GnostrThreadView *self,
+                                                   const char *root_event_id_hex,
+                                                   const char *event_json);
 
 /**
  * gnostr_thread_view_clear:
