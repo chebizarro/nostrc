@@ -269,6 +269,7 @@ add_subdirectory(plugins/nip46-connect)
 add_subdirectory(plugins/nip17-dms)
 add_subdirectory(plugins/nip55-androidsigner)
 add_subdirectory(plugins/nip49-keyencrypt)
+add_subdirectory(plugins/nip77-negentropy)
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
 # OpenSSL is already found at the top-level CMakeLists.txt
