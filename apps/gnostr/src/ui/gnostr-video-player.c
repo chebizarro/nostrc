@@ -889,6 +889,9 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   /* Create controls overlay */
   create_controls_overlay(self, self->overlay, &self->controls_box);
 
+  /* Add controls-visible class since controls_visible starts as TRUE */
+  gtk_widget_add_css_class(self->controls_box, "controls-visible");
+
   /* Motion controller for showing/hiding controls */
   self->motion_controller = gtk_event_controller_motion_new();
   g_signal_connect(self->motion_controller, "enter", G_CALLBACK(on_motion_enter), self);
