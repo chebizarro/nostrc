@@ -392,7 +392,8 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
 
   char *encrypted_request = NULL;
   char *encrypt_err = NULL;
-  if (nostr_nip04_encrypt_secure(request_json, signer_pubkey, &sb, &encrypted_request, &encrypt_err) != 0) {
+  /* Use legacy NIP-04 format (AES-CBC with ?iv=) for compatibility with NIP-46 signers like nsec.app */
+  if (nostr_nip04_encrypt_legacy_secure(request_json, signer_pubkey, &sb, &encrypted_request, &encrypt_err) != 0) {
     g_warning("[SIGNER_SERVICE] NIP-04 encryption failed: %s", encrypt_err ? encrypt_err : "unknown");
     secure_free(&sb);
     free(request_json);

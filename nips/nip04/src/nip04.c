@@ -559,6 +559,146 @@ int nostr_nip04_encrypt_secure(
     return 0;
 }
 
+/* Legacy NIP-04 encryption using AES-256-CBC with ?iv= format.
+ * This is required for compatibility with NIP-46 signers like nsec.app
+ * that expect the original NIP-04 format, not the AEAD v2 format. */
+int nostr_nip04_encrypt_legacy_secure(
+    const char *plaintext_utf8,
+    const char *receiver_pubkey_hex,
+    const nostr_secure_buf *sender_seckey,
+    char **out_content_b64_qiv,
+    char **out_error)
+{
+    if (out_error) *out_error = NULL;
+    if (!plaintext_utf8 || !receiver_pubkey_hex || !sender_seckey || !sender_seckey->ptr || sender_seckey->len < 32 || !out_content_b64_qiv)
+        return -1;
+    *out_content_b64_qiv = NULL;
+
+    /* ECDH to derive shared secret, then SHA-256 for AES key */
+    unsigned char pk_bin[65];
+    size_t pk_bin_len;
+    size_t hexlen = strlen(receiver_pubkey_hex);
+    if (hexlen == 64) {
+        unsigned char x32[32];
+        if (!nostr_hex2bin(x32, receiver_pubkey_hex, 32)) {
+            if (out_error) *out_error = strdup("invalid pubkey");
+            return -1;
+        }
+        xonly_to_compressed(x32, pk_bin);
+        pk_bin_len = 33;
+    } else if (hexlen == 66 || hexlen == 130) {
+        pk_bin_len = hexlen / 2;
+        if (!nostr_hex2bin(pk_bin, receiver_pubkey_hex, pk_bin_len)) {
+            if (out_error) *out_error = strdup("invalid pubkey");
+            return -1;
+        }
+    } else {
+        if (out_error) *out_error = strdup("invalid pubkey length");
+        return -1;
+    }
+
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    if (!ctx) { if (out_error) *out_error = strdup("secp256k1 context failed"); return -1; }
+
+    if (!secp256k1_ec_seckey_verify(ctx, (const unsigned char*)sender_seckey->ptr)) {
+        secp256k1_context_destroy(ctx);
+        if (out_error) *out_error = strdup("invalid secret key");
+        return -1;
+    }
+
+    secp256k1_pubkey pub;
+    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) {
+        secp256k1_context_destroy(ctx);
+        if (out_error) *out_error = strdup("invalid pubkey parse");
+        return -1;
+    }
+
+    /* ECDH with SHA-256 hash of X coordinate as the key (standard NIP-04) */
+    unsigned char key[32];
+    if (!secp256k1_ecdh(ctx, key, &pub, (const unsigned char*)sender_seckey->ptr, ecdh_hash_sha256, NULL)) {
+        secp256k1_context_destroy(ctx);
+        if (out_error) *out_error = strdup("ecdh failed");
+        return -1;
+    }
+    secp256k1_context_destroy(ctx);
+
+    /* Generate random 16-byte IV */
+    unsigned char iv[16];
+    if (RAND_bytes(iv, sizeof(iv)) != 1) {
+        secure_bzero(key, sizeof key);
+        if (out_error) *out_error = strdup("random iv failed");
+        return -1;
+    }
+
+    /* AES-256-CBC encryption with PKCS#7 padding */
+    size_t in_len = strlen(plaintext_utf8);
+    size_t max_cipher_len = in_len + 16; /* padding can add up to 16 bytes */
+    unsigned char *cipher = (unsigned char *)malloc(max_cipher_len);
+    if (!cipher) {
+        secure_bzero(key, sizeof key);
+        if (out_error) *out_error = strdup("oom");
+        return -1;
+    }
+
+    EVP_CIPHER_CTX *evp_ctx = EVP_CIPHER_CTX_new();
+    if (!evp_ctx) {
+        free(cipher);
+        secure_bzero(key, sizeof key);
+        if (out_error) *out_error = strdup("evp ctx failed");
+        return -1;
+    }
+
+    int len = 0, total = 0;
+    if (EVP_EncryptInit_ex(evp_ctx, EVP_aes_256_cbc(), NULL, key, iv) != 1 ||
+        EVP_EncryptUpdate(evp_ctx, cipher, &len, (const unsigned char *)plaintext_utf8, (int)in_len) != 1) {
+        EVP_CIPHER_CTX_free(evp_ctx);
+        free(cipher);
+        secure_bzero(key, sizeof key);
+        if (out_error) *out_error = strdup("encrypt failed");
+        return -1;
+    }
+    total = len;
+    if (EVP_EncryptFinal_ex(evp_ctx, cipher + total, &len) != 1) {
+        EVP_CIPHER_CTX_free(evp_ctx);
+        free(cipher);
+        secure_bzero(key, sizeof key);
+        if (out_error) *out_error = strdup("encrypt final failed");
+        return -1;
+    }
+    total += len;
+    EVP_CIPHER_CTX_free(evp_ctx);
+    secure_bzero(key, sizeof key);
+
+    /* Base64 encode ciphertext and IV */
+    char *ct_b64 = NULL;
+    char *iv_b64 = NULL;
+    if (!base64_encode(cipher, (size_t)total, &ct_b64) ||
+        !base64_encode(iv, sizeof(iv), &iv_b64)) {
+        free(cipher);
+        free(ct_b64);
+        free(iv_b64);
+        if (out_error) *out_error = strdup("base64 encode failed");
+        return -1;
+    }
+    free(cipher);
+
+    /* Format: base64(ciphertext)?iv=base64(iv) */
+    size_t out_len = strlen(ct_b64) + 4 + strlen(iv_b64) + 1; /* "?iv=" = 4 */
+    char *out = (char *)malloc(out_len);
+    if (!out) {
+        free(ct_b64);
+        free(iv_b64);
+        if (out_error) *out_error = strdup("oom");
+        return -1;
+    }
+    snprintf(out, out_len, "%s?iv=%s", ct_b64, iv_b64);
+    free(ct_b64);
+    free(iv_b64);
+
+    *out_content_b64_qiv = out;
+    return 0;
+}
+
 int nostr_nip04_decrypt_secure(
     const char *content_b64_qiv,
     const char *sender_pubkey_hex,

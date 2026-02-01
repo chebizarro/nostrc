@@ -78,6 +78,19 @@ int nostr_nip04_encrypt_secure(
     char **out_error);
 
 /**
+ * nostr_nip04_encrypt_legacy_secure:
+ * Encrypts using the ORIGINAL NIP-04 format (AES-256-CBC with ?iv= output).
+ * Required for compatibility with NIP-46 signers that expect legacy format.
+ * Output format: "base64(ciphertext)?iv=base64(iv)"
+ */
+int nostr_nip04_encrypt_legacy_secure(
+    const char *plaintext_utf8,
+    const char *receiver_pubkey_hex,
+    const nostr_secure_buf *sender_seckey,
+    char **out_content_b64_qiv,
+    char **out_error);
+
+/**
  * nostr_nip04_decrypt_secure:
  * Like nostr_nip04_decrypt but takes the receiver secret key as a secure buffer.
  */
