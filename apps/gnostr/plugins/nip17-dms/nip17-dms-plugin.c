@@ -88,17 +88,15 @@ on_gift_wrap_received(GnostrPluginContext *context G_GNUC_UNUSED,
 
   g_debug("[NIP-17] Received gift-wrapped DM: %.64s...", event_json);
 
-  /* TODO: Decrypt and process the gift-wrapped DM
-   * 1. Parse event JSON
-   * 2. Verify it's kind 1059
-   * 3. Check p-tag matches our pubkey
-   * 4. Decrypt gift wrap to get seal (kind 13)
-   * 5. Verify seal signature
-   * 6. Decrypt seal to get rumor (kind 14)
-   * 7. Verify seal pubkey matches rumor pubkey
-   * 8. Extract message content and sender
-   * 9. Store in DM conversation
-   * 10. Emit notification
+  /* Gift wrap decryption requires nostrc-n44s (NIP-44 signer integration)
+   *
+   * When implemented:
+   * 1. Parse event JSON, verify kind 1059
+   * 2. Decrypt gift wrap via signer (NIP-44)
+   * 3. Parse and verify seal (kind 13)
+   * 4. Decrypt seal via signer (NIP-44)
+   * 5. Extract rumor (kind 14) message content
+   * 6. Store in DM conversation and emit notification
    */
 }
 
@@ -141,11 +139,8 @@ nip17_dms_plugin_activate(GnostrPlugin        *plugin,
       g_debug("[NIP-17] No user logged in, deferring subscription");
     }
 
-  /* TODO: Register UI hooks for:
-   * - DM inbox view
-   * - Conversation thread view
-   * - Compose DM dialog
-   * - Unread indicators in sidebar
+  /* UI hooks (nostrc-xegl: DM inbox, conversation view, compose dialog)
+   * Deferred until decryption works (requires nostrc-n44s)
    */
 }
 
@@ -256,17 +251,8 @@ nip17_dms_plugin_handle_event(GnostrEventHandler  *handler,
             return FALSE;
           }
 
-        /* TODO: Full decryption pipeline:
-         * 1. Get user's secret key (via signer)
-         * 2. Decrypt gift wrap content (NIP-44) using sender's ephemeral pubkey
-         * 3. Parse seal event from decrypted content
-         * 4. Verify seal signature
-         * 5. Decrypt seal content (NIP-44) using seal pubkey
-         * 6. Parse rumor event from decrypted content
-         * 7. Verify seal.pubkey == rumor.pubkey
-         * 8. Extract message and conversation metadata
-         * 9. Store in local DM database
-         * 10. Notify UI of new message
+        /* Decryption pipeline requires nostrc-n44s (NIP-44 signer integration)
+         * See on_gift_wrap_received() for implementation outline
          */
 
         return TRUE;  /* Event handled */
@@ -278,7 +264,7 @@ nip17_dms_plugin_handle_event(GnostrEventHandler  *handler,
         const char *pubkey = gnostr_plugin_event_get_pubkey(event);
         g_debug("[NIP-17] Received DM relay list update from %s", pubkey);
 
-        /* TODO: Parse relay tags and cache for sending DMs to this user */
+        /* Parse relay tags and cache for sending DMs (nostrc-xegl) */
         return TRUE;
       }
 
