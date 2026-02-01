@@ -232,24 +232,33 @@ static void set_bunker_status(GnostrLogin *self, BunkerStatusState state,
   }
 }
 
-/* Deferred NIP-46 success context - used to safely stop the listener
- * and update UI AFTER the event callback completes */
+/* Deferred NIP-46 connect success context - used to safely stop the listener
+ * and call get_public_key RPC AFTER the event callback completes */
 typedef struct {
   GnostrLogin *self;
-  char *npub;
-  char *signer_pubkey_hex;  /* nostrc-rrfr: signer pubkey for session */
-  char *nostrconnect_uri;   /* nostrc-rrfr: URI for session secret/relays */
-  char *nostrconnect_secret; /* nostrc-1wfi: client private key for GSettings persistence */
-} Nip46SuccessCtx;
+  char *signer_pubkey_hex;   /* nostrc-rrfr: signer communication pubkey (sender of connect) */
+  char *nostrconnect_uri;    /* nostrc-rrfr: URI for session secret/relays */
+  char *nostrconnect_secret; /* nostrc-1wfi: client private key for ECDH */
+  char *relay_url;           /* Relay URL for get_public_key RPC */
+} Nip46ConnectCtx;
 
-static void nip46_success_ctx_free(gpointer data) {
-  Nip46SuccessCtx *ctx = data;
+/* Context for get_public_key RPC result - passed to main thread */
+typedef struct {
+  GnostrLogin *self;
+  char *user_pubkey_hex;     /* Actual user pubkey from get_public_key RPC */
+  char *signer_pubkey_hex;   /* Signer's communication pubkey */
+  char *nostrconnect_uri;    /* URI for session persistence */
+  char *nostrconnect_secret; /* Client private key for persistence */
+} Nip46PubkeyCtx;
+
+static void nip46_connect_ctx_free(gpointer data) {
+  Nip46ConnectCtx *ctx = data;
   if (ctx) {
     g_clear_object(&ctx->self);
-    g_free(ctx->npub);
     g_free(ctx->signer_pubkey_hex);
     g_free(ctx->nostrconnect_uri);
-    /* nostrc-1wfi: Securely clear the secret before freeing */
+    g_free(ctx->relay_url);
+    /* Securely clear the secret before freeing */
     if (ctx->nostrconnect_secret) {
       memset(ctx->nostrconnect_secret, 0, strlen(ctx->nostrconnect_secret));
       g_free(ctx->nostrconnect_secret);
@@ -258,90 +267,212 @@ static void nip46_success_ctx_free(gpointer data) {
   }
 }
 
-static gboolean nip46_success_on_main(gpointer data) {
-  Nip46SuccessCtx *ctx = data;
+static void nip46_pubkey_ctx_free(gpointer data) {
+  Nip46PubkeyCtx *ctx = data;
+  if (ctx) {
+    g_clear_object(&ctx->self);
+    g_free(ctx->user_pubkey_hex);
+    g_free(ctx->signer_pubkey_hex);
+    g_free(ctx->nostrconnect_uri);
+    if (ctx->nostrconnect_secret) {
+      memset(ctx->nostrconnect_secret, 0, strlen(ctx->nostrconnect_secret));
+      g_free(ctx->nostrconnect_secret);
+    }
+    g_free(ctx);
+  }
+}
+
+/* Final success handler - called after get_public_key RPC returns */
+static gboolean on_nip46_pubkey_result(gpointer data) {
+  Nip46PubkeyCtx *ctx = data;
   if (!ctx || !ctx->self || !GNOSTR_IS_LOGIN(ctx->self)) {
     return G_SOURCE_REMOVE;
   }
 
   GnostrLogin *self = ctx->self;
 
-  /* Now safe to stop the listener (we're not in the callback anymore) */
-  stop_nip46_listener(self);
+  g_message("[NIP46_LOGIN] Got user pubkey from RPC: %s", ctx->user_pubkey_hex);
 
-  /* Create NIP-46 session for future signing operations */
-  if (self->nip46_session) {
-    nostr_nip46_session_free(self->nip46_session);
-  }
-  self->nip46_session = nostr_nip46_client_new();
-
-  /* nostrc-rrfr: Populate session with connection info from the nostrconnect URI */
-  if (ctx->nostrconnect_uri) {
-    g_message("[NIP46_LOGIN] Populating session from URI: %.80s...", ctx->nostrconnect_uri);
-    int rc = nostr_nip46_client_connect(self->nip46_session, ctx->nostrconnect_uri, NULL);
-    if (rc != 0) {
-      g_warning("[NIP46_LOGIN] Failed to populate session from URI: %d", rc);
-    } else {
-      g_message("[NIP46_LOGIN] Session populated with relays from URI");
+  /* Convert hex pubkey to npub */
+  uint8_t pubkey_bytes[32];
+  for (int j = 0; j < 32; j++) {
+    unsigned int byte;
+    if (sscanf(ctx->user_pubkey_hex + j * 2, "%2x", &byte) != 1) {
+      g_warning("[NIP46_LOGIN] Invalid user pubkey from RPC");
+      set_bunker_status(self, BUNKER_STATUS_ERROR,
+                        "Invalid pubkey received",
+                        "The signer returned an invalid public key");
+      return G_SOURCE_REMOVE;
     }
-  } else {
-    g_warning("[NIP46_LOGIN] nostrconnect_uri is NULL!");
+    pubkey_bytes[j] = (uint8_t)byte;
   }
 
-  /* nostrc-1wfi: Set the REAL client secret key for ECDH encryption.
-   * The URI's secret= parameter is just an auth token, NOT the crypto key.
-   * ctx->nostrconnect_secret is the actual secp256k1 private key we generated. */
-  if (ctx->nostrconnect_secret) {
-    int rc = nostr_nip46_client_set_secret(self->nip46_session, ctx->nostrconnect_secret);
-    if (rc != 0) {
-      g_warning("[NIP46_LOGIN] Failed to set client secret key for ECDH: %d", rc);
-    } else {
-      g_message("[NIP46_LOGIN] Client secret key set for ECDH encryption");
-    }
-  } else {
-    g_warning("[NIP46_LOGIN] nostrconnect_secret is NULL - ECDH will fail!");
+  char *npub = NULL;
+  if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
+    g_warning("[NIP46_LOGIN] Failed to encode npub");
+    set_bunker_status(self, BUNKER_STATUS_ERROR,
+                      "Failed to encode npub",
+                      NULL);
+    return G_SOURCE_REMOVE;
   }
 
-  /* nostrc-rrfr: Store the signer's pubkey in the session - critical for signing */
-  if (ctx->signer_pubkey_hex) {
-    if (nostr_nip46_client_set_signer_pubkey(self->nip46_session, ctx->signer_pubkey_hex) != 0) {
-      g_warning("[NIP46_LOGIN] Failed to set signer pubkey in session");
-    } else {
-      g_message("[NIP46_LOGIN] Signer pubkey stored in session: %s", ctx->signer_pubkey_hex);
-    }
-  }
-
-  /* nostrc-1wfi: Persist NIP-46 credentials to GSettings for app restart survival */
+  /* Persist NIP-46 credentials to GSettings */
   if (ctx->nostrconnect_secret && ctx->signer_pubkey_hex) {
-    /* Extract relay URL from session (populated from nostrconnect URI) */
     char **relays = NULL;
     size_t n_relays = 0;
-    const char *relay_url = "wss://relay.nsec.app"; /* Fallback if no relay in session */
+    const char *relay_url = "wss://relay.nsec.app";
 
-    if (nostr_nip46_session_get_relays(self->nip46_session, &relays, &n_relays) == 0 &&
+    if (self->nip46_session &&
+        nostr_nip46_session_get_relays(self->nip46_session, &relays, &n_relays) == 0 &&
         n_relays > 0 && relays && relays[0]) {
       relay_url = relays[0];
-      g_message("[NIP46_LOGIN] Using relay from URI: %s", relay_url);
     }
 
     save_nip46_credentials_to_settings(ctx->nostrconnect_secret,
                                         ctx->signer_pubkey_hex,
                                         relay_url);
 
-    /* Free relay strings */
     if (relays) {
       for (size_t i = 0; i < n_relays; i++) free(relays[i]);
       free(relays);
     }
-  } else {
-    g_warning("[NIP46_LOGIN] Cannot persist credentials: secret=%s, pubkey=%s",
-              ctx->nostrconnect_secret ? "set" : "NULL",
-              ctx->signer_pubkey_hex ? "set" : "NULL");
   }
 
-  /* Save to settings and show success */
-  save_npub_to_settings(ctx->npub);
-  show_success(self, ctx->npub);
+  /* Save and show success with the ACTUAL user pubkey */
+  save_npub_to_settings(npub);
+  show_success(self, npub);
+  free(npub);
+
+  return G_SOURCE_REMOVE;
+}
+
+/* GTask thread function for get_public_key RPC */
+static void nip46_get_pubkey_thread(GTask *task,
+                                    gpointer source_object,
+                                    gpointer task_data,
+                                    GCancellable *cancellable) {
+  (void)source_object;
+  (void)cancellable;
+  Nip46ConnectCtx *ctx = task_data;
+
+  g_message("[NIP46_LOGIN] Starting get_public_key RPC in thread");
+
+  /* Create a fresh session for the RPC call */
+  NostrNip46Session *rpc_session = nostr_nip46_client_new();
+  if (!rpc_session) {
+    g_warning("[NIP46_LOGIN] Failed to create RPC session");
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to create RPC session");
+    return;
+  }
+
+  /* Set up the session for RPC:
+   * - remote_pubkey = signer's communication pubkey
+   * - secret = our client private key
+   * - relays = from URI */
+  if (ctx->nostrconnect_uri) {
+    nostr_nip46_client_connect(rpc_session, ctx->nostrconnect_uri, NULL);
+  }
+  if (ctx->nostrconnect_secret) {
+    nostr_nip46_client_set_secret(rpc_session, ctx->nostrconnect_secret);
+  }
+  if (ctx->signer_pubkey_hex) {
+    nostr_nip46_client_set_signer_pubkey(rpc_session, ctx->signer_pubkey_hex);
+  }
+
+  /* Call get_public_key RPC to get the user's actual pubkey */
+  char *user_pubkey_hex = NULL;
+  int rc = nostr_nip46_client_get_public_key_rpc(rpc_session, &user_pubkey_hex);
+
+  nostr_nip46_session_free(rpc_session);
+
+  if (rc != 0 || !user_pubkey_hex) {
+    g_warning("[NIP46_LOGIN] get_public_key RPC failed: %d", rc);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "get_public_key RPC failed");
+    return;
+  }
+
+  g_message("[NIP46_LOGIN] get_public_key RPC returned: %s", user_pubkey_hex);
+  g_task_return_pointer(task, user_pubkey_hex, free);
+}
+
+/* Callback when get_public_key RPC completes */
+static void on_get_pubkey_done(GObject *source, GAsyncResult *result, gpointer user_data) {
+  Nip46ConnectCtx *ctx = user_data;
+  GError *error = NULL;
+
+  char *user_pubkey_hex = g_task_propagate_pointer(G_TASK(result), &error);
+
+  if (error) {
+    g_warning("[NIP46_LOGIN] get_public_key async failed: %s", error->message);
+    if (ctx->self && GNOSTR_IS_LOGIN(ctx->self)) {
+      set_bunker_status(ctx->self, BUNKER_STATUS_ERROR,
+                        "Failed to get user pubkey",
+                        error->message);
+    }
+    g_clear_error(&error);
+    nip46_connect_ctx_free(ctx);
+    return;
+  }
+
+  /* Schedule final success handling on main thread */
+  Nip46PubkeyCtx *pubkey_ctx = g_new0(Nip46PubkeyCtx, 1);
+  pubkey_ctx->self = g_object_ref(ctx->self);
+  pubkey_ctx->user_pubkey_hex = g_strdup(user_pubkey_hex);
+  pubkey_ctx->signer_pubkey_hex = g_strdup(ctx->signer_pubkey_hex);
+  pubkey_ctx->nostrconnect_uri = g_strdup(ctx->nostrconnect_uri);
+  pubkey_ctx->nostrconnect_secret = g_strdup(ctx->nostrconnect_secret);
+
+  free(user_pubkey_hex);
+  nip46_connect_ctx_free(ctx);
+
+  g_idle_add_full(G_PRIORITY_HIGH, on_nip46_pubkey_result, pubkey_ctx, nip46_pubkey_ctx_free);
+}
+
+/* Called on main thread after connect response - sets up session and spawns get_public_key RPC */
+static gboolean on_nip46_connect_success(gpointer data) {
+  Nip46ConnectCtx *ctx = data;
+  if (!ctx || !ctx->self || !GNOSTR_IS_LOGIN(ctx->self)) {
+    nip46_connect_ctx_free(ctx);
+    return G_SOURCE_REMOVE;
+  }
+
+  GnostrLogin *self = ctx->self;
+
+  /* Stop the listener (we're not in the callback anymore) */
+  stop_nip46_listener(self);
+
+  g_message("[NIP46_LOGIN] Connect success, signer pubkey: %s", ctx->signer_pubkey_hex);
+  g_message("[NIP46_LOGIN] Now calling get_public_key RPC to get user's actual pubkey...");
+
+  /* Update status to show we're getting the pubkey */
+  set_bunker_status(self, BUNKER_STATUS_CONNECTING,
+                    "Getting user identity...",
+                    "Retrieving your public key from the signer");
+
+  /* Create session for future signing operations */
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+  }
+  self->nip46_session = nostr_nip46_client_new();
+
+  if (ctx->nostrconnect_uri) {
+    nostr_nip46_client_connect(self->nip46_session, ctx->nostrconnect_uri, NULL);
+  }
+  if (ctx->nostrconnect_secret) {
+    nostr_nip46_client_set_secret(self->nip46_session, ctx->nostrconnect_secret);
+  }
+  if (ctx->signer_pubkey_hex) {
+    nostr_nip46_client_set_signer_pubkey(self->nip46_session, ctx->signer_pubkey_hex);
+  }
+
+  /* Spawn async task for get_public_key RPC
+   * We pass ownership of ctx to the task chain */
+  GTask *task = g_task_new(NULL, self->cancellable, on_get_pubkey_done, ctx);
+  g_task_set_task_data(task, ctx, NULL); /* ctx freed in callback, not here */
+  g_task_run_in_thread(task, nip46_get_pubkey_thread);
+  g_object_unref(task);
 
   return G_SOURCE_REMOVE;
 }
@@ -1283,7 +1414,7 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
     }
     free(err_msg);
 
-    /* Get the result (signer's pubkey for connect, or "ack" for simple response) */
+    /* Get the connect result - should be "ack" or may match our connect secret */
     char *result = NULL;
     if (nostr_json_get_string(plaintext, "result", &result) != 0 || !result) {
       g_warning("[NIP46_LOGIN] No result in NIP-46 response");
@@ -1292,59 +1423,50 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
       continue;
     }
 
-    g_message("[NIP46_LOGIN] Authorization received, signer pubkey: %s", result);
+    g_message("[NIP46_LOGIN] Connect response result: %s", result);
 
-    /* For nostrconnect, the result is "ack" and we use the sender's pubkey as the signer */
-    char *signer_pubkey_hex = NULL;
+    /* Validate the connect response:
+     * - "ack" means simple acknowledgment
+     * - A 64-char hex may be the connect secret (we validate it matches)
+     * The signer's communication pubkey is always the sender_pubkey. */
+    gboolean connect_valid = FALSE;
     if (strcmp(result, "ack") == 0) {
-      signer_pubkey_hex = g_strdup(sender_pubkey);
+      connect_valid = TRUE;
+      g_message("[NIP46_LOGIN] Connect acknowledged with 'ack'");
+    } else if (self->nostrconnect_secret && strlen(result) == 64 &&
+               strcmp(result, self->nostrconnect_secret) == 0) {
+      /* Result matches our connect secret - this is valid per NIP-46 */
+      connect_valid = TRUE;
+      g_message("[NIP46_LOGIN] Connect acknowledged with matching secret");
     } else if (strlen(result) == 64) {
-      /* Result is the signer's pubkey */
-      signer_pubkey_hex = g_strdup(result);
+      /* Some signers return the secret, accept it even if we can't verify */
+      connect_valid = TRUE;
+      g_message("[NIP46_LOGIN] Connect acknowledged with 64-char result (assuming valid)");
     } else {
-      g_warning("[NIP46_LOGIN] Unexpected result format: %s", result);
-      free(result);
-      g_free(plaintext);
-      continue;
+      g_warning("[NIP46_LOGIN] Unexpected connect result format: %s", result);
     }
+
     free(result);
     g_free(plaintext);
 
-    /* Convert hex pubkey to npub */
-    uint8_t pubkey_bytes[32];
-    for (int j = 0; j < 32; j++) {
-      unsigned int byte;
-      if (sscanf(signer_pubkey_hex + j * 2, "%2x", &byte) != 1) {
-        g_warning("[NIP46_LOGIN] Invalid signer pubkey");
-        g_free(signer_pubkey_hex);
-        continue;
-      }
-      pubkey_bytes[j] = (uint8_t)byte;
-    }
-
-    char *npub = NULL;
-    if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
-      g_warning("[NIP46_LOGIN] Failed to encode npub");
-      g_free(signer_pubkey_hex);
+    if (!connect_valid) {
       continue;
     }
 
-    /* Defer the stop/success operations to after this callback completes.
-     * Stopping the listener from within the signal callback can cause issues
-     * since we're modifying the signal handler list during emission. */
-    Nip46SuccessCtx *ctx = g_new0(Nip46SuccessCtx, 1);
+    /* The signer's communication pubkey is ALWAYS the sender of the event.
+     * This is NOT the user's pubkey - we need to call get_public_key RPC for that. */
+    g_message("[NIP46_LOGIN] Signer communication pubkey (sender): %s", sender_pubkey);
+
+    /* Defer connect success handling - will call get_public_key RPC to get
+     * the user's ACTUAL pubkey (which may differ from signer communication key) */
+    Nip46ConnectCtx *ctx = g_new0(Nip46ConnectCtx, 1);
     ctx->self = g_object_ref(self);
-    ctx->npub = g_strdup(npub);
-    /* nostrc-rrfr: Pass signer info to deferred handler for session population */
-    ctx->signer_pubkey_hex = g_strdup(signer_pubkey_hex);
+    ctx->signer_pubkey_hex = g_strdup(sender_pubkey);
     ctx->nostrconnect_uri = g_strdup(self->nostrconnect_uri);
-    /* nostrc-1wfi: Copy secret to context so it survives until idle callback */
     ctx->nostrconnect_secret = g_strdup(self->nostrconnect_secret);
+    ctx->relay_url = g_strdup("wss://relay.nsec.app"); /* Default relay */
 
-    g_free(signer_pubkey_hex);
-    free(npub);
-
-    g_idle_add_full(G_PRIORITY_HIGH, nip46_success_on_main, ctx, nip46_success_ctx_free);
+    g_idle_add_full(G_PRIORITY_HIGH, on_nip46_connect_success, ctx, NULL);
     return;
   }
 }
