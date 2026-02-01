@@ -17,6 +17,7 @@
 #include "page-discover.h"
 #include "gnostr-search-results-view.h"
 #include "gnostr-classifieds-view.h"
+#include "gnostr-repo-browser.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
@@ -3957,6 +3958,48 @@ static void on_thread_view_need_profile(GnostrThreadView *view, const char *pubk
   enqueue_profile_author(self, pubkey_hex);
 }
 
+/* ============================================================================
+ * Repository Browser signal handlers
+ * ============================================================================ */
+
+/* Handler for repo-selected signal from repo browser */
+static void on_repo_selected(GnostrRepoBrowser *browser, const char *repo_id, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  (void)browser;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !repo_id) return;
+
+  g_debug("[REPO] Repository selected: %s", repo_id);
+
+  /* For now, just log the selection. In the future:
+   * - Open repo details view
+   * - Show patches, issues, activity
+   * - Enable clone/pull operations with libgit2 */
+  if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+    g_autofree char *msg = g_strdup_printf("Selected repository: %.16s...", repo_id);
+    adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new(msg));
+  }
+}
+
+/* Handler for clone-requested signal from repo browser */
+static void on_clone_requested(GnostrRepoBrowser *browser, const char *clone_url, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  (void)browser;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !clone_url) return;
+
+  g_debug("[REPO] Clone requested: %s", clone_url);
+
+  /* Copy clone URL to clipboard for now.
+   * In the future with libgit2: show clone dialog, pick destination, clone repo */
+  GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+  gdk_clipboard_set_text(clipboard, clone_url);
+
+  if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+    adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new("Clone URL copied to clipboard"));
+  }
+}
+
 /* Public: Mute a user (adds to mute list and refreshes timeline) */
 void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
@@ -4450,6 +4493,15 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                        G_CALLBACK(on_thread_view_need_profile), self);
       g_signal_connect(thread_view, "open-profile",
                        G_CALLBACK(on_thread_view_open_profile), self);
+    }
+
+    /* Connect repo browser signals */
+    GtkWidget *repo_browser = gnostr_session_view_get_repo_browser(self->session_view);
+    if (repo_browser && GNOSTR_IS_REPO_BROWSER(repo_browser)) {
+      g_signal_connect(repo_browser, "repo-selected",
+                       G_CALLBACK(on_repo_selected), self);
+      g_signal_connect(repo_browser, "clone-requested",
+                       G_CALLBACK(on_clone_requested), self);
     }
   }
 
