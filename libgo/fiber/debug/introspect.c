@@ -2,14 +2,14 @@
 #include <unistd.h>
 #include <string.h>
 
-/* Minimal stub implementations for V1 - see nostrc-l1no for full impl */
+/* Minimal stub implementations for V1 */
 
 void gof_set_name(const char *name) {
-  (void)name; /* nostrc-l1no: store into current fiber when accessible */
+  (void)name; /* nostrc-n63f: V1 stub - fiber naming requires scheduler access */
 }
 
 size_t gof_list(gof_info *out, size_t max) {
-  (void)out; (void)max; /* nostrc-l1no: track fibers in scheduler */
+  (void)out; (void)max; /* nostrc-n63f: V1 stub - fiber tracking requires scheduler instrumentation */
   return 0;
 }
 

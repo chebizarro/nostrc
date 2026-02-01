@@ -65,7 +65,7 @@ static void measure_channel_contention(const char *phase) {
            ev_cap ? ev_cap : "4096(default)",
            eose_cap ? eose_cap : "8(default)");
     
-    // TODO: Add runtime channel depth monitoring via go runtime metrics
+    /* nostrc-n63f: Channel depth monitoring requires go runtime metrics integration */
 }
 
 static void run_subscription_workload(BaselineMetrics *metrics) {
@@ -92,7 +92,7 @@ static void run_subscription_workload(BaselineMetrics *metrics) {
         strncpy(sub_metrics[i].relay_url, relay_urls[i % NUM_RELAYS], 255);
         sub_metrics[i].start_ns = get_time_ns();
         
-        // TODO: Create actual subscription and fire request
+        /* nostrc-n63f: Benchmark stub - actual subscription creation not implemented */
         printf("Created subscription %d on %s\n", i, sub_metrics[i].relay_url);
     }
     

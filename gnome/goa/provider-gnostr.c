@@ -29,7 +29,9 @@ static gboolean provider_add_account(GoaProvider *provider,
                                      GCancellable *cancellable) {
   (void)params; (void)cancellable;
 
-  // nostrc-mh77: Load goa-add-account.ui and offer choices. For now, pick first existing key.
+  /* nostrc-n63f: Account selection UI not implemented. Currently picks first
+   * existing key from Secret Service. A full implementation would load
+   * goa-add-account.ui and let user choose from available keys. */
   GError *err = NULL;
   GHashTable *all = gnostr_secret_store_find_all(&err);
   const gchar *chosen_npub = NULL;

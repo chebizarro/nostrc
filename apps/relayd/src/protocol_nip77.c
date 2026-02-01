@@ -100,8 +100,8 @@ static int handle_neg_open(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
     return 1;
   }
 
-  /* For now, we don't parse the filter - pass NULL to use all events */
-  /* TODO: Parse filter JSON when storage backend supports scoped negentropy */
+  /* nostrc-n63f: Filter parsing not implemented - uses all events.
+   * Scoped negentropy requires storage backend support for filtered sets. */
 
   /* Skip to message (fourth element) */
   p = strchr(p + 1, ',');

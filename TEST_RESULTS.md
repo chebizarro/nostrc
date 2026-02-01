@@ -113,8 +113,8 @@ cd build && ctest -R test_subscription_lifecycle
 2. ✅ **DONE:** Add signature validation skip to prevent crashes
 3. ✅ **DONE:** Implement comprehensive test infrastructure
 4. ✅ **DONE:** Fix use-after-free in async cleanup abandon
-5. **TODO:** Fix storage initialization return code handling
-6. **TODO:** Update test_subscription_lifecycle to properly fire subscriptions
+5. Fix storage initialization return code handling (nostrc-xbaj)
+6. Update test_subscription_lifecycle to properly fire subscriptions (nostrc-sfdl)
 
 ### Future Improvements
 1. Reduce "event drop: not live" log verbosity (INFO → DEBUG)

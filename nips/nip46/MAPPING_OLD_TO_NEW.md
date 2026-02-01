@@ -46,7 +46,7 @@ New public API will be split by role and documented in `include/nostr/nip46/`:
 - src/nip46.c → src/core/nip46_session.c + src/core/nip46_envelope.c
 - src/dynamic_signer.c → src/core/nip46_bunker.c (handlers; integrates with callbacks)
 - src/static_key_signer.c → src/core/nip46_client_crypto.c (adapters that call existing libnostr NIP-04/44 helpers)
-- src/well_known_nostr.c → src/core/nip46_uri.c (URI parsing/issuance; any .well-known lookup becomes an adapter that uses existing DNS/NIP-05 if present; otherwise TODO)
+- src/well_known_nostr.c → src/core/nip46_uri.c (URI parsing/issuance; .well-known lookup adapts existing DNS/NIP-05 helpers)
 
 GLib layer (new):
 
@@ -71,10 +71,10 @@ GLib layer (new):
   - Permissions and errors
   - NIP-44 payload encrypt/decrypt (via adapters)
 
-## Open TODOs/Decisions
+## Open Decisions
 
 - Define exact error taxonomy: NOSTR_ERROR_NIP46_* in shared error space; adapters return NostrError* or int + Error*
-- Confirm whether `well_known_nostr.c` is kept; if it performs discovery, wrap or mark TODO with spec citation.
+- Confirm whether `well_known_nostr.c` is kept; if it performs discovery, wrap or integrate with NIP-05 spec.
 - Verify constant-time secret compare helper (in core) and zeroization of secrets.
 
 All new files live under `nips/nip46/` per guardrails; link against libnostr core/GLib only.
