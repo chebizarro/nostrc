@@ -172,6 +172,9 @@ struct _GnostrThreadView {
   /* nostrc-50t: nostrdb subscription for live thread updates */
   uint64_t ndb_sub_thread;       /* Subscription ID for thread events */
   guint rebuild_pending_id;      /* Timeout source for debounced UI rebuild */
+
+  /* nostrc-hl6: Track pubkeys we've fetched NIP-65 relay lists for */
+  GHashTable *nip65_pubkeys_fetched;  /* pubkey_hex -> gboolean */
 };
 
 G_DEFINE_TYPE(GnostrThreadView, gnostr_thread_view, GTK_TYPE_WIDGET)
@@ -406,6 +409,7 @@ static void gnostr_thread_view_dispose(GObject *obj) {
   g_clear_pointer(&self->profiles_requested, g_hash_table_unref);
   g_clear_pointer(&self->ancestors_fetched, g_hash_table_unref);
   g_clear_pointer(&self->children_fetched, g_hash_table_unref);
+  g_clear_pointer(&self->nip65_pubkeys_fetched, g_hash_table_unref);
 
   /* Clear thread graph */
   if (self->thread_graph) {
@@ -537,6 +541,8 @@ static void gnostr_thread_view_init(GnostrThreadView *self) {
   self->children_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->child_discovery_iteration = 0;
   self->thread_graph = NULL;
+  /* nostrc-hl6: Track NIP-65 relay list fetches per author */
+  self->nip65_pubkeys_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
   /* Connect close button */
@@ -1329,8 +1335,127 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
   }
 }
 
-/* Forward declaration */
+/* Forward declarations */
 static void fetch_missing_ancestors(GnostrThreadView *self);
+static void fetch_nip65_for_missing_authors(GnostrThreadView *self);
+
+/* nostrc-hl6: Context for NIP-65 relay fetch callback */
+typedef struct {
+  GnostrThreadView *self;
+  gchar *pubkey_hex;
+} Nip65FetchContext;
+
+static void nip65_fetch_ctx_free(Nip65FetchContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx->pubkey_hex);
+  g_free(ctx);
+}
+
+/* nostrc-hl6: Callback when NIP-65 relay list is fetched */
+static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
+  Nip65FetchContext *ctx = (Nip65FetchContext *)user_data;
+  if (!ctx || !GNOSTR_IS_THREAD_VIEW(ctx->self)) {
+    nip65_fetch_ctx_free(ctx);
+    return;
+  }
+
+  GnostrThreadView *self = ctx->self;
+
+  if (!relays || relays->len == 0) {
+    g_debug("[THREAD_VIEW] NIP-65: No relays found for author %.16s...", ctx->pubkey_hex);
+    nip65_fetch_ctx_free(ctx);
+    return;
+  }
+
+  /* Get write relays - these are where the author publishes their posts */
+  GPtrArray *write_relays = gnostr_nip65_get_write_relays(relays);
+  g_message("[THREAD_VIEW] NIP-65: Author %.16s... has %u write relays",
+            ctx->pubkey_hex, write_relays ? write_relays->len : 0);
+
+  if (write_relays && write_relays->len > 0) {
+    for (guint i = 0; i < write_relays->len; i++) {
+      g_message("[THREAD_VIEW]   Write relay: %s", (const char *)g_ptr_array_index(write_relays, i));
+    }
+
+    /* Re-trigger ancestor fetch - the new relays will be picked up */
+    /* Reset depth to allow another traversal attempt with new relays */
+    self->ancestor_fetch_depth = 0;
+    fetch_missing_ancestors(self);
+  }
+
+  if (write_relays) g_ptr_array_unref(write_relays);
+  /* relays array is owned by caller (gnostr_nip65_fetch_relays_async) */
+  nip65_fetch_ctx_free(ctx);
+}
+
+/* nostrc-hl6: Fetch NIP-65 relay lists for authors of missing events.
+ * When root/parent events are not found, we try to fetch the author's
+ * relay list (kind 10002) and query their write relays. */
+static void fetch_nip65_for_missing_authors(GnostrThreadView *self) {
+  if (!self || !self->events_by_id) return;
+
+  /* Collect pubkeys of authors we should query for NIP-65 relay lists.
+   * We look at reply events and extract the pubkey of who they're replying to
+   * (often tagged with p-tag) */
+  GPtrArray *pubkeys_to_fetch = g_ptr_array_new_with_free_func(g_free);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->events_by_id);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadEventItem *item = (ThreadEventItem *)value;
+
+    /* If this event references a missing root, try to find root author pubkey */
+    if (item->root_id && !g_hash_table_contains(self->events_by_id, item->root_id)) {
+      /* Check if item has p-tags that might reference the root author */
+      /* For now, we use the focus event's root - if we have any event from the root
+       * author, we can get their pubkey from there */
+
+      /* Also: if this event itself IS the root (self-reference check), use its pubkey */
+      if (item->pubkey_hex &&
+          !g_hash_table_contains(self->nip65_pubkeys_fetched, item->pubkey_hex)) {
+        /* Check if not already in our list */
+        gboolean found = FALSE;
+        for (guint i = 0; i < pubkeys_to_fetch->len; i++) {
+          if (g_strcmp0(g_ptr_array_index(pubkeys_to_fetch, i), item->pubkey_hex) == 0) {
+            found = TRUE;
+            break;
+          }
+        }
+        if (!found) {
+          g_ptr_array_add(pubkeys_to_fetch, g_strdup(item->pubkey_hex));
+        }
+      }
+    }
+  }
+
+  if (pubkeys_to_fetch->len == 0) {
+    g_debug("[THREAD_VIEW] NIP-65: No authors to fetch relay lists for");
+    g_ptr_array_unref(pubkeys_to_fetch);
+    return;
+  }
+
+  g_message("[THREAD_VIEW] NIP-65: Fetching relay lists for %u authors", pubkeys_to_fetch->len);
+
+  /* Fetch NIP-65 for each pubkey (mark as fetched first to prevent duplicates) */
+  for (guint i = 0; i < pubkeys_to_fetch->len; i++) {
+    const gchar *pubkey = g_ptr_array_index(pubkeys_to_fetch, i);
+
+    /* Mark as fetched */
+    g_hash_table_insert(self->nip65_pubkeys_fetched, g_strdup(pubkey), GINT_TO_POINTER(1));
+
+    /* Create context for callback */
+    Nip65FetchContext *ctx = g_new0(Nip65FetchContext, 1);
+    ctx->self = self;
+    ctx->pubkey_hex = g_strdup(pubkey);
+
+    g_message("[THREAD_VIEW] NIP-65: Fetching relay list for %.16s...", pubkey);
+    gnostr_nip65_fetch_relays_async(pubkey, self->fetch_cancellable,
+                                     on_nip65_relays_fetched, ctx);
+  }
+
+  g_ptr_array_unref(pubkeys_to_fetch);
+}
 
 /* Callback for relay query completion */
 static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -1486,7 +1611,10 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
     /* Also fetch children of the new ancestors for complete graph */
     fetch_children_from_relays(self);
   } else {
-    g_debug("[THREAD_VIEW] No new ancestor events found, chain traversal complete");
+    g_debug("[THREAD_VIEW] No new ancestor events found from relay query");
+    /* nostrc-hl6: Try fetching NIP-65 relay lists for missing authors.
+     * This may find relays where the root/parent events are published. */
+    fetch_nip65_for_missing_authors(self);
   }
 }
 
