@@ -209,6 +209,17 @@ static void update_auth_gating(GnostrSessionView *self) {
   if (self->row_messages)
     gtk_widget_set_sensitive(GTK_WIDGET(self->row_messages), self->authenticated);
 
+  /* Update signin status label in avatar popover if it exists */
+  if (self->lbl_signin_status) {
+    gtk_label_set_text(self->lbl_signin_status,
+                       self->authenticated ? _("Signed in") : _("Not signed in"));
+  }
+
+  /* Update login button visibility if popover exists */
+  if (self->btn_login) {
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_login), !self->authenticated);
+  }
+
   /* If we became unauthenticated while on a gated page, go back to timeline */
   if (!self->authenticated && self->stack) {
     const char *visible = adw_view_stack_get_visible_child_name(self->stack);

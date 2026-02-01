@@ -1035,7 +1035,11 @@ static void on_close_clicked(GtkButton *btn, gpointer user_data) {
   if (!GNOSTR_IS_LOGIN(self)) return;
 
   g_signal_emit(self, signals[SIGNAL_CANCELLED], 0);
-  gtk_window_close(GTK_WINDOW(self));
+  /* Close the parent window (GnostrLogin is an AdwBin, not a GtkWindow) */
+  GtkWidget *win = gtk_widget_get_ancestor(GTK_WIDGET(self), GTK_TYPE_WINDOW);
+  if (win && GTK_IS_WINDOW(win)) {
+    gtk_window_close(GTK_WINDOW(win));
+  }
 }
 
 static void on_done_clicked(GtkButton *btn, gpointer user_data) {
@@ -1043,7 +1047,11 @@ static void on_done_clicked(GtkButton *btn, gpointer user_data) {
   GnostrLogin *self = GNOSTR_LOGIN(user_data);
   if (!GNOSTR_IS_LOGIN(self)) return;
 
-  gtk_window_close(GTK_WINDOW(self));
+  /* Close the parent window (GnostrLogin is an AdwBin, not a GtkWindow) */
+  GtkWidget *win = gtk_widget_get_ancestor(GTK_WIDGET(self), GTK_TYPE_WINDOW);
+  if (win && GTK_IS_WINDOW(win)) {
+    gtk_window_close(GTK_WINDOW(win));
+  }
 }
 
 /* ---- NIP-46 Relay Listener for Remote Signer Responses ---- */
