@@ -209,7 +209,7 @@ headerbar button:hover image {
 .note-card {
 	border-radius: 16px;
 	margin: 8px 12px;
-	max-width: 640px;
+	/* Note: max-width not supported in GTK4 CSS; width constraints handled by container */
 	background: @theme_bg_color;
 	border: 1px solid alpha(@theme_fg_color, 0.08);
 	box-shadow: 0 1px 3px alpha(black, 0.04), 0 2px 8px alpha(black, 0.02);
@@ -305,9 +305,8 @@ headerbar button:hover image {
 	font-size: 15px;
 	color: @theme_fg_color;
 	min-width: 0;
-	word-wrap: break-word;
-	overflow-wrap: break-word;
-	word-break: break-word;
+	/* Note: word-wrap/overflow-wrap/word-break not supported in GTK4 CSS */
+	/* Text wrapping is handled by GtkLabel wrap properties */
 }
 
 /* Clickable links in note content */
@@ -363,9 +362,7 @@ label a:visited {
 .note-avatar {
 	border-radius: 50%;
 	min-width: 48px;
-	max-width: 48px;
 	min-height: 48px;
-	max-height: 48px;
 	/* Force the overlay to maintain size even without image */
 	-gtk-icon-size: 24px;
 	/* Default fallback gradient for avatars without images */
@@ -387,17 +384,13 @@ label a:visited {
 .note-avatar picture {
 	border-radius: 50%;
 	min-width: 48px;
-	max-width: 48px;
 	min-height: 48px;
-	max-height: 48px;
 }
 
 .note-avatar-image {
 	border-radius: 50%;
 	min-width: 48px;
-	max-width: 48px;
 	min-height: 48px;
-	max-height: 48px;
 }
 
 /* Profile Pane Styles */
@@ -1724,9 +1717,7 @@ button.zapped image {
 /* Profile row avatar - constrained to 48x48 */
 .profile-row-avatar {
 	min-width: 48px;
-	max-width: 48px;
 	min-height: 48px;
-	max-height: 48px;
 	border-radius: 50%;
 	background: linear-gradient(
 		135deg,
@@ -1746,9 +1737,7 @@ button.zapped image {
 /* Profile row avatar initials - constrained to 48x48 */
 .profile-row-avatar .avatar-initials {
 	min-width: 48px;
-	max-width: 48px;
 	min-height: 48px;
-	max-height: 48px;
 	font-size: 18px;
 	font-weight: 600;
 }
@@ -2067,7 +2056,7 @@ profile-row.muted .profile-row-avatar {
 .article-full-view {
 	background: @theme_bg_color;
 	padding: 24px;
-	margin: 0 auto;
+	/* Note: margin: auto not supported in GTK4 CSS; centering handled by container */
 }
 
 .article-full-view .article-title {
@@ -2695,12 +2684,12 @@ profile-row.muted .profile-row-avatar {
 /* Vertical video specific styles */
 .video-vertical .video-thumbnail-overlay {
 	min-height: 350px;
-	max-height: 500px;
+	/* Note: max-height not supported in GTK4 CSS */
 }
 
 .video-vertical .note-media-video {
 	min-height: 350px;
-	max-height: 500px;
+	/* Note: max-height not supported in GTK4 CSS */
 }
 
 .video-vertical .video-play-btn {

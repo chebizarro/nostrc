@@ -29,7 +29,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
     nostr
-    nip47
+    nostr_nip47_core
     nip04
 )
 

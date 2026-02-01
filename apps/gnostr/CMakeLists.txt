@@ -263,7 +263,8 @@ target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBPEAS)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBPEAS=1)
 
 # ---- Bundled plugins ----
-add_subdirectory(plugins/nip47-nwc)
+# TODO: nip47-nwc disabled - uses unimplemented gnostr_plugin_context_* API
+# add_subdirectory(plugins/nip47-nwc)
 add_subdirectory(plugins/nip98-httpauth)
 add_subdirectory(plugins/nip46-connect)
 add_subdirectory(plugins/nip17-dms)
