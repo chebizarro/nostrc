@@ -1670,6 +1670,11 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   /* Get read-capable relay URLs for fetching (NIP-65) */
   GPtrArray *relay_arr = gnostr_get_read_relay_urls();
 
+  g_message("[THREAD_VIEW] fetch_thread_from_relays: got %u relay URLs", relay_arr->len);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    g_message("[THREAD_VIEW]   Relay %u: %s", i, (const char *)g_ptr_array_index(relay_arr, i));
+  }
+
   const char **urls = g_new0(const char*, relay_arr->len);
   for (guint i = 0; i < relay_arr->len; i++) {
     urls[i] = g_ptr_array_index(relay_arr, i);
