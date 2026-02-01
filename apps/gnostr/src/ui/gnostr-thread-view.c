@@ -1701,6 +1701,10 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     urls[i] = g_ptr_array_index(all_relays, i);
   }
 
+  g_message("[THREAD_VIEW] ====== STARTING RELAY QUERIES ======");
+  g_message("[THREAD_VIEW] root=%.16s... focus=%.16s...", root, focus ? focus : "(same)");
+  g_message("[THREAD_VIEW] Querying %u relays", all_relays->len);
+
   /* Query 1: Fetch all replies and comments (events with #e tag referencing root)
    * NIP-22: kind 1111 is for comments, which use E tag (uppercase) for root reference */
   NostrFilter *filter_replies = nostr_filter_new();

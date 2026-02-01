@@ -904,9 +904,13 @@ static gpointer query_single_thread(gpointer user_data) {
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
 
-        if (got_eose && ctx->results->len > 0) {
-            break;  // Got results from this relay, no need to try other relays
-        }
+        /* NOTE: We intentionally do NOT break early here even if we got results.
+         * For thread fetching, different relays may have different events
+         * (e.g., the root event might only be on one relay, replies on another).
+         * We query ALL relays and deduplicate later. The thread view handles
+         * deduplication via events_by_id hash table. */
+        g_debug("query_single: relay %s returned %s, continuing to next relay",
+                url, got_eose ? "EOSE" : "timeout");
     }
 
     // Cleanup only relays we created that weren't added to pool
