@@ -326,6 +326,11 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   nostr_nip46_session_get_remote_pubkey(ctx->service->nip46_session, &signer_pubkey);
   nostr_nip46_session_get_relays(ctx->service->nip46_session, &relays, &n_relays);
 
+  g_debug("[SIGNER_SERVICE] Session has %zu relays", n_relays);
+  for (size_t i = 0; i < n_relays; i++) {
+    g_debug("[SIGNER_SERVICE] Session relay[%zu]: %s", i, relays[i] ? relays[i] : "(null)");
+  }
+
   if (!client_secret || !signer_pubkey) {
     g_warning("[SIGNER_SERVICE] NIP-46 session missing credentials");
     free(client_secret);

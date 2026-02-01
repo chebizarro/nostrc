@@ -230,18 +230,21 @@ int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubk
         char *dup = (char*)malloc(n+1); if (!dup) return -1; memcpy(dup, s->client_pubkey_hex, n+1);
         *out_user_pubkey_hex = dup; return 0;
     }
-    /* If we have our secret, derive the x-only user pubkey via libnostr. */
+    /* For bunker:// URIs, the remote_pubkey_hex IS the user's pubkey (the signer's key).
+     * The secret= parameter in bunker URIs is an auth token, NOT a private key.
+     * So we should return remote_pubkey_hex BEFORE trying to derive from secret. */
+    if (s->remote_pubkey_hex) {
+        size_t n = strlen(s->remote_pubkey_hex);
+        char *dup = (char*)malloc(n+1); if (!dup) return -1; memcpy(dup, s->remote_pubkey_hex, n+1);
+        *out_user_pubkey_hex = dup; return 0;
+    }
+    /* If we have our secret (and no remote pubkey), derive the x-only user pubkey.
+     * This only applies when the session was initialized with set_secret() directly. */
     if (s->secret) {
         char *pk = nostr_key_get_public(s->secret);
         if (!pk) return -1;
         *out_user_pubkey_hex = pk; /* already allocated */
         return 0;
-    }
-    /* Fallback: if only a bunker remote pubkey is known, return it (temporary until handshake). */
-    if (s->remote_pubkey_hex) {
-        size_t n = strlen(s->remote_pubkey_hex);
-        char *dup = (char*)malloc(n+1); if (!dup) return -1; memcpy(dup, s->remote_pubkey_hex, n+1);
-        *out_user_pubkey_hex = dup; return 0;
     }
     return -1;
 }
