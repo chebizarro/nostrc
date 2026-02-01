@@ -859,7 +859,7 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   self->loop = g_settings_get_boolean(self->settings, "video-loop");
   self->volume = 1.0;
   self->muted = FALSE;
-  self->controls_visible = TRUE;
+  self->controls_visible = FALSE;
 
   /* Listen for settings changes */
   self->settings_changed_handler = g_signal_connect(self->settings, "changed",
@@ -889,8 +889,7 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   /* Create controls overlay */
   create_controls_overlay(self, self->overlay, &self->controls_box);
 
-  /* Add controls-visible class since controls_visible starts as TRUE */
-  gtk_widget_add_css_class(self->controls_box, "controls-visible");
+  /* Controls start hidden, shown on mouse hover (CSS handles opacity transition) */
 
   /* Motion controller for showing/hiding controls */
   self->motion_controller = gtk_event_controller_motion_new();
