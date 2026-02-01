@@ -1194,8 +1194,64 @@ static void build_thread_graph(GnostrThreadView *self) {
     g_message("[THREAD_VIEW]   Root %u: %.16s...", i, rid);
   }
 
-  /* Sort roots: prefer thread_root_id first, then focus_id, then by timestamp */
-  /* For now just render from each root */
+  /* nostrc-kry: Sort roots to ensure correct ordering:
+   * 1. thread_root_id first (the known root of the thread)
+   * 2. focus_id second (the event user clicked on)
+   * 3. Then by timestamp (oldest first) for any orphan roots
+   * This ensures the root event always displays at the top. */
+  if (root_ids->len > 1) {
+    /* Sort using a custom comparison that considers priority and timestamp */
+    for (guint i = 0; i < root_ids->len - 1; i++) {
+      for (guint j = i + 1; j < root_ids->len; j++) {
+        const char *id_a = g_ptr_array_index(root_ids, i);
+        const char *id_b = g_ptr_array_index(root_ids, j);
+
+        gboolean a_is_root = self->thread_graph->root_id &&
+                             g_strcmp0(id_a, self->thread_graph->root_id) == 0;
+        gboolean b_is_root = self->thread_graph->root_id &&
+                             g_strcmp0(id_b, self->thread_graph->root_id) == 0;
+        gboolean a_is_focus = self->thread_graph->focus_id &&
+                              g_strcmp0(id_a, self->thread_graph->focus_id) == 0;
+        gboolean b_is_focus = self->thread_graph->focus_id &&
+                              g_strcmp0(id_b, self->thread_graph->focus_id) == 0;
+
+        gboolean swap = FALSE;
+
+        /* Priority: root > focus > older timestamp */
+        if (b_is_root && !a_is_root) {
+          swap = TRUE;
+        } else if (!a_is_root && !b_is_root) {
+          if (b_is_focus && !a_is_focus) {
+            swap = TRUE;
+          } else if (!a_is_focus && !b_is_focus) {
+            /* Neither is root or focus - sort by timestamp (oldest first) */
+            ThreadNode *node_a = g_hash_table_lookup(self->thread_graph->nodes, id_a);
+            ThreadNode *node_b = g_hash_table_lookup(self->thread_graph->nodes, id_b);
+            if (node_a && node_b && node_a->event && node_b->event) {
+              if (node_b->event->created_at < node_a->event->created_at) {
+                swap = TRUE;
+              }
+            }
+          }
+        }
+
+        if (swap) {
+          /* Swap pointers in the array */
+          gpointer tmp = root_ids->pdata[i];
+          root_ids->pdata[i] = root_ids->pdata[j];
+          root_ids->pdata[j] = tmp;
+        }
+      }
+    }
+
+    g_message("[THREAD_VIEW] Sorted roots order:");
+    for (guint i = 0; i < root_ids->len; i++) {
+      const char *rid = g_ptr_array_index(root_ids, i);
+      g_message("[THREAD_VIEW]   Sorted root %u: %.16s...", i, rid);
+    }
+  }
+
+  /* Render from each root in sorted order */
   for (guint i = 0; i < root_ids->len; i++) {
     const char *root_id = g_ptr_array_index(root_ids, i);
     add_subtree_to_render_order(self, root_id);
