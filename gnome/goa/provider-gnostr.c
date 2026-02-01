@@ -29,7 +29,7 @@ static gboolean provider_add_account(GoaProvider *provider,
                                      GCancellable *cancellable) {
   (void)params; (void)cancellable;
 
-  // TODO: Load goa-add-account.ui and offer choices. For now, pick first existing key from Secret Service.
+  // nostrc-mh77: Load goa-add-account.ui and offer choices. For now, pick first existing key.
   GError *err = NULL;
   GHashTable *all = gnostr_secret_store_find_all(&err);
   const gchar *chosen_npub = NULL;
