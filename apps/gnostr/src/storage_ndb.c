@@ -310,25 +310,69 @@ void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_o
 uint64_t storage_ndb_subscribe(const char *filter_json)
 {
   struct ndb *ndb = get_ndb();
-  if (!ndb || !filter_json) return 0;
+  if (!ndb || !filter_json) {
+    g_warning("storage_ndb_subscribe: ndb=%p filter_json=%p", (void*)ndb, (void*)filter_json);
+    return 0;
+  }
 
   struct ndb_filter filter;
-  if (!ndb_filter_init(&filter)) return 0;
+  if (!ndb_filter_init(&filter)) {
+    g_warning("storage_ndb_subscribe: ndb_filter_init failed");
+    return 0;
+  }
 
   unsigned char *tmpbuf = (unsigned char *)malloc(4096);
   if (!tmpbuf) {
+    g_warning("storage_ndb_subscribe: malloc failed");
     ndb_filter_destroy(&filter);
     return 0;
   }
 
+  /* ndb_filter_from_json expects a plain object {...}, but callers often pass
+   * array-wrapped filters [{...}]. Handle both formats. */
+  const char *json_ptr = filter_json;
   int len = (int)strlen(filter_json);
-  if (!ndb_filter_from_json(filter_json, len, &filter, tmpbuf, 4096)) {
+
+  /* Skip leading whitespace */
+  while (len > 0 && (*json_ptr == ' ' || *json_ptr == '\t' || *json_ptr == '\n')) {
+    json_ptr++;
+    len--;
+  }
+
+  /* If wrapped in array, skip the outer brackets to get the first filter object */
+  if (len > 2 && json_ptr[0] == '[') {
+    json_ptr++;  /* skip '[' */
+    len -= 2;    /* account for '[' and ']' */
+
+    /* Skip whitespace after '[' */
+    while (len > 0 && (*json_ptr == ' ' || *json_ptr == '\t' || *json_ptr == '\n')) {
+      json_ptr++;
+      len--;
+    }
+
+    /* Find the end of the first object (we only support single-filter arrays for now) */
+    int brace_count = 0;
+    int obj_len = 0;
+    for (int i = 0; i < len; i++) {
+      if (json_ptr[i] == '{') brace_count++;
+      else if (json_ptr[i] == '}') brace_count--;
+      obj_len++;
+      if (brace_count == 0) break;
+    }
+    len = obj_len;
+  }
+
+  if (!ndb_filter_from_json(json_ptr, len, &filter, tmpbuf, 4096)) {
+    g_warning("storage_ndb_subscribe: ndb_filter_from_json failed for: %.*s", len, json_ptr);
     ndb_filter_destroy(&filter);
     free(tmpbuf);
     return 0;
   }
 
   uint64_t subid = ndb_subscribe(ndb, &filter, 1);
+  if (subid == 0) {
+    g_warning("storage_ndb_subscribe: ndb_subscribe returned 0");
+  }
 
   ndb_filter_destroy(&filter);
   free(tmpbuf);
