@@ -131,7 +131,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         if (go_channel_try_receive(conn->send_channel, (void **)&msg) == 0 && msg) {
             // Validate message structure before use
             if (!msg->data || msg->length == 0 || msg->length > 1024*1024) {
-                fprintf(stderr, "Invalid message: data=%p length=%zu\n", msg->data, msg->length);
+                fprintf(stderr, "Invalid message: data=%p length=%zu\n", (void*)msg->data, msg->length);
                 if (msg->data) free(msg->data);
                 free(msg);
                 return -1;
