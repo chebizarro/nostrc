@@ -136,6 +136,7 @@ typedef struct {
   char *npub;
   char *signer_pubkey_hex;  /* nostrc-rrfr: signer pubkey for session */
   char *nostrconnect_uri;   /* nostrc-rrfr: URI for session secret/relays */
+  char *nostrconnect_secret; /* nostrc-1wfi: client private key for GSettings persistence */
 } Nip46SuccessCtx;
 
 static void nip46_success_ctx_free(gpointer data) {
@@ -145,6 +146,11 @@ static void nip46_success_ctx_free(gpointer data) {
     g_free(ctx->npub);
     g_free(ctx->signer_pubkey_hex);
     g_free(ctx->nostrconnect_uri);
+    /* nostrc-1wfi: Securely clear the secret before freeing */
+    if (ctx->nostrconnect_secret) {
+      memset(ctx->nostrconnect_secret, 0, strlen(ctx->nostrconnect_secret));
+      g_free(ctx->nostrconnect_secret);
+    }
     g_free(ctx);
   }
 }
@@ -189,14 +195,14 @@ static gboolean nip46_success_on_main(gpointer data) {
   }
 
   /* nostrc-1wfi: Persist NIP-46 credentials to GSettings for app restart survival */
-  if (self->nostrconnect_secret && ctx->signer_pubkey_hex) {
+  if (ctx->nostrconnect_secret && ctx->signer_pubkey_hex) {
     const char *relay_url = "wss://relay.nsec.app"; /* Default NIP-46 relay */
-    save_nip46_credentials_to_settings(self->nostrconnect_secret,
+    save_nip46_credentials_to_settings(ctx->nostrconnect_secret,
                                         ctx->signer_pubkey_hex,
                                         relay_url);
   } else {
     g_warning("[NIP46_LOGIN] Cannot persist credentials: secret=%s, pubkey=%s",
-              self->nostrconnect_secret ? "set" : "NULL",
+              ctx->nostrconnect_secret ? "set" : "NULL",
               ctx->signer_pubkey_hex ? "set" : "NULL");
   }
 
@@ -1019,6 +1025,8 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
     /* nostrc-rrfr: Pass signer info to deferred handler for session population */
     ctx->signer_pubkey_hex = g_strdup(signer_pubkey_hex);
     ctx->nostrconnect_uri = g_strdup(self->nostrconnect_uri);
+    /* nostrc-1wfi: Copy secret to context so it survives until idle callback */
+    ctx->nostrconnect_secret = g_strdup(self->nostrconnect_secret);
 
     g_free(signer_pubkey_hex);
     free(npub);

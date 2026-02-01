@@ -259,6 +259,11 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     fprintf(stderr, "[nip46] sign_event: encrypting request to peer %s\n", peer);
     fprintf(stderr, "[nip46] sign_event: session secret length: %zu\n",
             s->secret ? strlen(s->secret) : 0);
+    /* nostrc-1wfi: Log first/last chars of secret to verify it looks like hex */
+    if (s->secret && strlen(s->secret) >= 8) {
+        fprintf(stderr, "[nip46] sign_event: secret preview: %.4s...%s\n",
+                s->secret, s->secret + strlen(s->secret) - 4);
+    }
 
     char *cipher = NULL; char *err = NULL;
     /* secure encrypt using binary secret */

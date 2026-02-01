@@ -224,29 +224,59 @@ static int nip04_kdf_aead(const char *peer_pub_hex, const char *self_seckey_hex,
 
 static int nip04_kdf_aead_bin(const char *peer_pub_hex, const unsigned char sk_bin[32],
                               unsigned char key32[32], unsigned char nonce12[12]) {
-    if (!peer_pub_hex || !sk_bin) return -1;
+    if (!peer_pub_hex || !sk_bin) {
+        fprintf(stderr, "[nip04] kdf_aead_bin: NULL input (peer=%p, sk=%p)\n",
+                (void*)peer_pub_hex, (void*)sk_bin);
+        return -1;
+    }
     unsigned char pk_bin[65];
     size_t pk_bin_len;
     size_t hexlen = strlen(peer_pub_hex);
+    fprintf(stderr, "[nip04] kdf_aead_bin: peer pubkey len=%zu\n", hexlen);
     if (hexlen == 64) {
         /* x-only pubkey (Nostr format): convert to compressed */
         unsigned char x32[32];
-        if (!nostr_hex2bin(x32, peer_pub_hex, 32)) return -1;
+        if (!nostr_hex2bin(x32, peer_pub_hex, 32)) {
+            fprintf(stderr, "[nip04] kdf_aead_bin: failed to decode peer pubkey hex\n");
+            return -1;
+        }
         xonly_to_compressed(x32, pk_bin);
         pk_bin_len = 33;
     } else if (hexlen == 66 || hexlen == 130) {
         pk_bin_len = hexlen / 2;
-        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) return -1;
+        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) {
+            fprintf(stderr, "[nip04] kdf_aead_bin: failed to decode compressed/uncompressed pubkey\n");
+            return -1;
+        }
     } else {
+        fprintf(stderr, "[nip04] kdf_aead_bin: invalid pubkey length %zu\n", hexlen);
         return -1;
     }
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
-    if (!ctx) return -1;
-    if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); return -1; }
+    if (!ctx) {
+        fprintf(stderr, "[nip04] kdf_aead_bin: failed to create secp256k1 context\n");
+        return -1;
+    }
+    if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) {
+        fprintf(stderr, "[nip04] kdf_aead_bin: secret key verification FAILED\n");
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+    fprintf(stderr, "[nip04] kdf_aead_bin: secret key verified OK\n");
     secp256k1_pubkey pub;
-    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) { secp256k1_context_destroy(ctx); return -1; }
+    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) {
+        fprintf(stderr, "[nip04] kdf_aead_bin: pubkey parse FAILED\n");
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+    fprintf(stderr, "[nip04] kdf_aead_bin: pubkey parsed OK\n");
     unsigned char x[32];
-    if (!secp256k1_ecdh(ctx, x, &pub, sk_bin, ecdh_hash_xcopy, NULL)) { secp256k1_context_destroy(ctx); return -1; }
+    if (!secp256k1_ecdh(ctx, x, &pub, sk_bin, ecdh_hash_xcopy, NULL)) {
+        fprintf(stderr, "[nip04] kdf_aead_bin: ECDH operation FAILED\n");
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+    fprintf(stderr, "[nip04] kdf_aead_bin: ECDH succeeded\n");
     secp256k1_context_destroy(ctx);
     int rc = nip04_kdf_aead_from_x(x, key32, nonce12);
     secure_bzero((void*)x, sizeof x);
