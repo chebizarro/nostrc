@@ -236,6 +236,52 @@ template $GnostrZapDialog: Window {
         vexpand: true;
       }
 
+      Box qr_box {
+        orientation: vertical;
+        spacing: 8;
+        halign: center;
+        visible: false;
+
+        Label lbl_qr_title {
+          label: "Scan to Pay";
+
+          styles [
+            "heading",
+          ]
+        }
+
+        Frame qr_frame {
+          halign: center;
+
+          Picture qr_picture {
+            width-request: 200;
+            height-request: 200;
+            content-fit: contain;
+          }
+        }
+
+        Label lbl_invoice {
+          label: "";
+          ellipsize: middle;
+          max-width-chars: 30;
+          selectable: true;
+
+          styles [
+            "caption",
+            "monospace",
+          ]
+        }
+
+        Button btn_copy_invoice {
+          label: "Copy Invoice";
+          halign: center;
+
+          styles [
+            "flat",
+          ]
+        }
+      }
+
       Box status_box {
         orientation: horizontal;
         spacing: 8;

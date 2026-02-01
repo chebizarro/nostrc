@@ -68,6 +68,26 @@ void gnostr_zap_dialog_set_event(GnostrZapDialog *self,
 void gnostr_zap_dialog_set_relays(GnostrZapDialog *self,
                                   const gchar * const *relays);
 
+/**
+ * gnostr_zap_dialog_show:
+ * @parent: (nullable): Parent window
+ * @pubkey_hex: Recipient's public key (hex)
+ * @lud16: Recipient's lightning address
+ * @event_id: (nullable): Event ID being zapped (hex), or NULL for profile zap
+ *
+ * Convenience function to create, configure, and present a zap dialog.
+ * This is the primary entry point for initiating a zap from anywhere in the app.
+ *
+ * If NWC (Nostr Wallet Connect) is configured, the dialog will automatically
+ * pay the invoice. If not, it will display a QR code for external wallet payment.
+ *
+ * Returns: (transfer full): The presented zap dialog
+ */
+GnostrZapDialog *gnostr_zap_dialog_show(GtkWindow *parent,
+                                        const gchar *pubkey_hex,
+                                        const gchar *lud16,
+                                        const gchar *event_id);
+
 G_END_DECLS
 
 #endif /* GNOSTR_ZAP_DIALOG_H */

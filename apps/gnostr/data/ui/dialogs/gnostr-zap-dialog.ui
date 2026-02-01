@@ -252,6 +252,55 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="GtkBox" id="qr_box">
+                <property name="orientation">1</property>
+                <property name="spacing">8</property>
+                <property name="halign">3</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_qr_title">
+                    <property name="label">Scan to Pay</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFrame" id="qr_frame">
+                    <property name="halign">3</property>
+                    <child>
+                      <object class="GtkPicture" id="qr_picture">
+                        <property name="width-request">200</property>
+                        <property name="height-request">200</property>
+                        <property name="content-fit">1</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_invoice">
+                    <property name="label"></property>
+                    <property name="ellipsize">2</property>
+                    <property name="max-width-chars">30</property>
+                    <property name="selectable">true</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="monospace"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_copy_invoice">
+                    <property name="label">Copy Invoice</property>
+                    <property name="halign">3</property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
               <object class="GtkBox" id="status_box">
                 <property name="orientation">0</property>
                 <property name="spacing">8</property>

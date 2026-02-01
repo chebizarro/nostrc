@@ -12,6 +12,11 @@
 #include <glib/gi18n.h>
 #include <nostr/nip19/nip19.h>
 
+/* QR code generation - using qrencode if available */
+#ifdef HAVE_QRENCODE
+#include <qrencode.h>
+#endif
+
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-zap-dialog.ui"
 
 struct _GnostrZapDialog {
@@ -39,6 +44,12 @@ struct _GnostrZapDialog {
   GtkWidget *lbl_status;
   GtkWidget *btn_zap;
   GtkWidget *lbl_zap_button;
+  GtkWidget *qr_box;
+  GtkWidget *qr_frame;
+  GtkWidget *qr_picture;
+  GtkWidget *lbl_qr_title;
+  GtkWidget *lbl_invoice;
+  GtkWidget *btn_copy_invoice;
 
   /* State */
   gchar *recipient_pubkey;
@@ -49,6 +60,8 @@ struct _GnostrZapDialog {
   gchar **relays;
   gint64 selected_amount_sats;
   gboolean is_processing;
+  gboolean use_qr_fallback;    /* TRUE when NWC not available, show QR code */
+  gchar *current_invoice;      /* BOLT11 invoice for copy button */
 
   /* Async context */
   GCancellable *cancellable;
@@ -69,8 +82,51 @@ static guint signals[N_SIGNALS];
 static void on_cancel_clicked(GtkButton *btn, gpointer user_data);
 static void on_zap_clicked(GtkButton *btn, gpointer user_data);
 static void on_amount_toggled(GtkToggleButton *btn, gpointer user_data);
+static void on_copy_invoice_clicked(GtkButton *btn, gpointer user_data);
 static void update_zap_button_label(GnostrZapDialog *self);
 static void set_processing(GnostrZapDialog *self, gboolean processing, const gchar *status);
+static void show_qr_invoice(GnostrZapDialog *self, const gchar *bolt11_invoice);
+
+#ifdef HAVE_QRENCODE
+static GdkTexture *generate_qr_texture(const char *data) {
+  QRcode *qr = QRcode_encodeString(data, 0, QR_ECLEVEL_M, QR_MODE_8, 1);
+  if (!qr) return NULL;
+
+  /* Create a pixbuf with border */
+  int border = 4;
+  int scale = 4;
+  int size = (qr->width + border * 2) * scale;
+
+  guchar *pixels = g_malloc(size * size * 3);
+  memset(pixels, 255, size * size * 3); /* white background */
+
+  for (int y = 0; y < qr->width; y++) {
+    for (int x = 0; x < qr->width; x++) {
+      if (qr->data[y * qr->width + x] & 1) {
+        /* Black module */
+        for (int sy = 0; sy < scale; sy++) {
+          for (int sx = 0; sx < scale; sx++) {
+            int px = (x + border) * scale + sx;
+            int py = (y + border) * scale + sy;
+            int idx = (py * size + px) * 3;
+            pixels[idx] = 0;
+            pixels[idx + 1] = 0;
+            pixels[idx + 2] = 0;
+          }
+        }
+      }
+    }
+  }
+
+  QRcode_free(qr);
+
+  GBytes *bytes = g_bytes_new_take(pixels, size * size * 3);
+  GdkTexture *texture = gdk_memory_texture_new(size, size, GDK_MEMORY_R8G8B8, bytes, size * 3);
+  g_bytes_unref(bytes);
+
+  return texture;
+}
+#endif
 
 static void show_toast(GnostrZapDialog *self, const gchar *msg) {
   if (!self->toast_label || !self->toast_revealer) return;
@@ -104,6 +160,7 @@ static void gnostr_zap_dialog_finalize(GObject *obj) {
   g_clear_pointer(&self->recipient_name, g_free);
   g_clear_pointer(&self->lud16, g_free);
   g_clear_pointer(&self->event_id, g_free);
+  g_clear_pointer(&self->current_invoice, g_free);
   g_strfreev(self->relays);
 
   G_OBJECT_CLASS(gnostr_zap_dialog_parent_class)->finalize(obj);
@@ -140,6 +197,12 @@ static void gnostr_zap_dialog_class_init(GnostrZapDialogClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, lbl_status);
   gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, btn_zap);
   gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, lbl_zap_button);
+  gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, qr_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, qr_frame);
+  gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, qr_picture);
+  gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, lbl_qr_title);
+  gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, lbl_invoice);
+  gtk_widget_class_bind_template_child(wclass, GnostrZapDialog, btn_copy_invoice);
 
   /* Bind template callbacks */
   gtk_widget_class_bind_template_callback(wclass, on_cancel_clicked);
@@ -191,6 +254,9 @@ static void gnostr_zap_dialog_init(GnostrZapDialog *self) {
   /* Connect custom amount entry change */
   g_signal_connect_swapped(self->entry_custom_amount, "changed",
                            G_CALLBACK(update_zap_button_label), self);
+
+  /* Connect copy invoice button */
+  g_signal_connect(self->btn_copy_invoice, "clicked", G_CALLBACK(on_copy_invoice_clicked), self);
 
   update_zap_button_label(self);
 }
@@ -422,6 +488,72 @@ static void on_payment_finish(GObject *source, GAsyncResult *result, gpointer us
   g_object_unref(self);
 }
 
+/* Copy invoice to clipboard */
+static void on_copy_invoice_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrZapDialog *self = GNOSTR_ZAP_DIALOG(user_data);
+
+  if (!self->current_invoice) return;
+
+  GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+  gdk_clipboard_set_text(clipboard, self->current_invoice);
+  show_toast(self, "Invoice copied!");
+}
+
+/* Show invoice as QR code for external wallet payment */
+static void show_qr_invoice(GnostrZapDialog *self, const gchar *bolt11_invoice) {
+  g_clear_pointer(&self->current_invoice, g_free);
+  self->current_invoice = g_strdup(bolt11_invoice);
+
+  /* Show QR code section, hide zap button and amount presets */
+  if (GTK_IS_WIDGET(self->qr_box)) {
+    gtk_widget_set_visible(self->qr_box, TRUE);
+  }
+  if (GTK_IS_WIDGET(self->btn_zap)) {
+    gtk_widget_set_visible(self->btn_zap, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->preset_flow)) {
+    gtk_widget_set_visible(self->preset_flow, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->custom_amount_box)) {
+    gtk_widget_set_visible(self->custom_amount_box, FALSE);
+  }
+
+  /* Show truncated invoice */
+  if (GTK_IS_LABEL(self->lbl_invoice) && bolt11_invoice) {
+    gsize len = strlen(bolt11_invoice);
+    if (len > 20) {
+      gchar *truncated = g_strdup_printf("%.10s...%.10s", bolt11_invoice, bolt11_invoice + len - 10);
+      gtk_label_set_text(GTK_LABEL(self->lbl_invoice), truncated);
+      g_free(truncated);
+    } else {
+      gtk_label_set_text(GTK_LABEL(self->lbl_invoice), bolt11_invoice);
+    }
+  }
+
+#ifdef HAVE_QRENCODE
+  /* Generate and display QR code - uppercase for better QR density */
+  gchar *upper_invoice = g_ascii_strup(bolt11_invoice, -1);
+  GdkTexture *texture = generate_qr_texture(upper_invoice);
+  g_free(upper_invoice);
+
+  if (texture && GTK_IS_PICTURE(self->qr_picture)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->qr_picture), GDK_PAINTABLE(texture));
+    g_object_unref(texture);
+  }
+#else
+  /* No QR code library - just show invoice text */
+  if (GTK_IS_LABEL(self->lbl_qr_title)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_qr_title), "Copy Invoice");
+  }
+  if (GTK_IS_WIDGET(self->qr_frame)) {
+    gtk_widget_set_visible(self->qr_frame, FALSE);
+  }
+#endif
+
+  set_processing(self, FALSE, NULL);
+}
+
 /* Invoice callback */
 static void on_invoice_received(const gchar *bolt11_invoice, GError *error, gpointer user_data) {
   GnostrZapDialog *self = GNOSTR_ZAP_DIALOG(user_data);
@@ -431,6 +563,13 @@ static void on_invoice_received(const gchar *bolt11_invoice, GError *error, gpoi
     const gchar *msg = error ? error->message : "Failed to get invoice";
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
     show_toast(self, msg);
+    g_object_unref(self);
+    return;
+  }
+
+  /* Check if we're in QR fallback mode (no NWC) */
+  if (self->use_qr_fallback) {
+    show_qr_invoice(self, bolt11_invoice);
     g_object_unref(self);
     return;
   }
@@ -710,12 +849,9 @@ static void on_zap_clicked(GtkButton *btn, gpointer user_data) {
     return;
   }
 
-  /* Check NWC is connected */
+  /* Check NWC is connected - if not, use QR fallback mode */
   GnostrNwcService *nwc = gnostr_nwc_service_get_default();
-  if (!gnostr_nwc_service_is_connected(nwc)) {
-    show_toast(self, "Connect your wallet first (Settings > Wallet)");
-    return;
-  }
+  self->use_qr_fallback = !gnostr_nwc_service_is_connected(nwc);
 
   /* Validate amount */
   gint64 amount = get_selected_amount_sats(self);
@@ -739,4 +875,36 @@ static void on_zap_clicked(GtkButton *btn, gpointer user_data) {
 
   gnostr_zap_fetch_lnurl_info_async(self->lud16, on_lnurl_info_received, self,
                                     self->cancellable);
+}
+
+/**
+ * gnostr_zap_dialog_show:
+ * @parent: Parent window
+ * @pubkey_hex: Recipient's public key (hex)
+ * @lud16: Recipient's lightning address (e.g., "user@domain.com")
+ * @event_id: (nullable): Event ID being zapped (hex), or NULL for profile zap
+ *
+ * Convenience function to create, configure, and present a zap dialog.
+ * This is the primary entry point for initiating a zap from anywhere in the app.
+ *
+ * Returns: (transfer full): The presented zap dialog
+ */
+GnostrZapDialog *gnostr_zap_dialog_show(GtkWindow *parent,
+                                        const gchar *pubkey_hex,
+                                        const gchar *lud16,
+                                        const gchar *event_id) {
+  g_return_val_if_fail(pubkey_hex != NULL, NULL);
+  g_return_val_if_fail(lud16 != NULL, NULL);
+
+  GnostrZapDialog *dialog = gnostr_zap_dialog_new(parent);
+
+  gnostr_zap_dialog_set_recipient(dialog, pubkey_hex, NULL, lud16);
+
+  if (event_id && *event_id) {
+    gnostr_zap_dialog_set_event(dialog, event_id, 1); /* kind 1 = text note */
+  }
+
+  gtk_window_present(GTK_WINDOW(dialog));
+
+  return dialog;
 }

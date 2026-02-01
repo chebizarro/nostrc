@@ -277,7 +277,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="spacing">16</property>
                         <property name="margin-start">24</property>
                         <property name="margin-end">24</property>
-                        <property name="margin-top">24</property>
+                        <property name="margin-top">16</property>
                         <property name="margin-bottom">24</property>
                         <child>
                           <object class="GtkButton" id="btn_back_bunker">
@@ -309,9 +309,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="halign">3</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label">Scan with Mobile Signer</property>
+                                <property name="label">Connect Remote Signer</property>
                                 <style>
                                   <class name="title-3"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Scan the QR code with your mobile signer app, or paste a connection URI below.</property>
+                                <property name="wrap">true</property>
+                                <property name="max-width-chars">45</property>
+                                <property name="justify">2</property>
+                                <style>
+                                  <class name="dim-label"/>
                                 </style>
                               </object>
                             </child>
@@ -329,22 +340,21 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkPicture" id="qr_picture">
                                         <property name="content-fit">1</property>
-                                        <property name="width-request">200</property>
-                                        <property name="height-request">200</property>
+                                        <property name="width-request">180</property>
+                                        <property name="height-request">180</property>
                                       </object>
                                     </child>
                                   </object>
                                 </child>
                               </object>
                             </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label">or enter bunker:// URI manually</property>
-                                <style>
-                                  <class name="dim-label"/>
-                                </style>
-                              </object>
-                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkSeparator">
+                            <property name="orientation">0</property>
+                            <property name="margin-top">4</property>
+                            <property name="margin-bottom">4</property>
                           </object>
                         </child>
                         <child>
@@ -353,10 +363,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">8</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label">Bunker URI</property>
+                                <property name="label">Or paste connection URI</property>
                                 <property name="xalign">0</property>
                                 <style>
-                                  <class name="dim-label"/>
+                                  <class name="heading"/>
                                 </style>
                               </object>
                             </child>
@@ -366,7 +376,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="spacing">8</property>
                                 <child>
                                   <object class="GtkEntry" id="entry_bunker_uri">
-                                    <property name="placeholder-text">bunker://...</property>
+                                    <property name="placeholder-text">bunker://... or nostrconnect://...</property>
                                     <property name="hexpand">true</property>
                                     <property name="input-purpose">5</property>
                                   </object>
@@ -382,13 +392,91 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label">Get this URI from your signer app (e.g., Amber, nsec.app)</property>
+                                <property name="label">Supported formats: bunker:// (Amber, Nostr Signer) or nostrconnect:// (nsec.app)</property>
                                 <property name="xalign">0</property>
                                 <property name="wrap">true</property>
                                 <style>
                                   <class name="caption"/>
                                   <class name="dim-label"/>
                                 </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkFrame" id="status_frame">
+                            <property name="visible">false</property>
+                            <style>
+                              <class name="view"/>
+                            </style>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">0</property>
+                                <property name="spacing">12</property>
+                                <property name="margin-start">12</property>
+                                <property name="margin-end">12</property>
+                                <property name="margin-top">10</property>
+                                <property name="margin-bottom">10</property>
+                                <child>
+                                  <object class="GtkStack" id="status_icon_stack">
+                                    <child>
+                                      <object class="GtkSpinner" id="spinner_bunker">
+                                        <property name="spinning">true</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkImage" id="status_icon_success">
+                                        <property name="icon-name">emblem-ok-symbolic</property>
+                                        <style>
+                                          <class name="success"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkImage" id="status_icon_error">
+                                        <property name="icon-name">dialog-error-symbolic</property>
+                                        <style>
+                                          <class name="error"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkImage" id="status_icon_waiting">
+                                        <property name="icon-name">appointment-soon-symbolic</property>
+                                        <style>
+                                          <class name="accent"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">1</property>
+                                    <property name="spacing">2</property>
+                                    <property name="hexpand">true</property>
+                                    <property name="valign">3</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_bunker_status">
+                                        <property name="label"></property>
+                                        <property name="xalign">0</property>
+                                        <property name="wrap">true</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_bunker_status_detail">
+                                        <property name="label"></property>
+                                        <property name="xalign">0</property>
+                                        <property name="wrap">true</property>
+                                        <property name="visible">false</property>
+                                        <style>
+                                          <class name="caption"/>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                           </object>
@@ -410,21 +498,28 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
-                              <object class="GtkSpinner" id="spinner_bunker">
+                              <object class="GtkButton" id="btn_cancel_bunker">
+                                <property name="label">Cancel</property>
                                 <property name="visible">false</property>
-                                <property name="spinning">true</property>
+                                <property name="tooltip-text">Cancel connection</property>
+                                <signal name="clicked" handler="on_cancel_bunker_clicked"/>
+                                <style>
+                                  <class name="pill"/>
+                                </style>
                               </object>
                             </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="lbl_bunker_status">
-                            <property name="label"></property>
-                            <property name="wrap">true</property>
-                            <property name="halign">3</property>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
+                            <child>
+                              <object class="GtkButton" id="btn_retry_bunker">
+                                <property name="label">Retry</property>
+                                <property name="visible">false</property>
+                                <property name="tooltip-text">Try connecting again</property>
+                                <signal name="clicked" handler="on_retry_bunker_clicked"/>
+                                <style>
+                                  <class name="suggested-action"/>
+                                  <class name="pill"/>
+                                </style>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>
