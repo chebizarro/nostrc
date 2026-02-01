@@ -8,6 +8,7 @@
 #include "util/gnostr_paths.h"
 #include "util/gnostr_e2e.h"
 #include "util/cache_prune.h"
+#include "util/utils.h"
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -67,6 +68,9 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 
   /* Clean up tray icon */
   g_clear_object(&g_tray_icon);
+
+  /* Clean up shared SoupSession - cancels pending requests */
+  gnostr_cleanup_shared_soup_session();
 
   storage_ndb_shutdown();
 }
