@@ -615,6 +615,16 @@ if (BUILD_TESTING)
     TIMEOUT 60
     LABELS "nip46;e2e;gnostr")
 
+  # Thread graph unit tests (nostrc-v5d)
+  add_executable(gnostr-test-thread-graph tests/test_thread_graph.c)
+  target_compile_features(gnostr-test-thread-graph PRIVATE c_std_11)
+  target_link_libraries(gnostr-test-thread-graph PRIVATE PkgConfig::GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-thread-graph)
+  add_test(NAME gnostr-test-thread-graph COMMAND gnostr-test-thread-graph)
+  set_tests_properties(gnostr-test-thread-graph PROPERTIES
+    TIMEOUT 30
+    LABELS "thread;graph;unit;gnostr")
+
 endif()
 
 # ---- GSettings schema compilation (development builds) ----
