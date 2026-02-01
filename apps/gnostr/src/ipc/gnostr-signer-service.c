@@ -5,8 +5,19 @@
 #include "gnostr-signer-service.h"
 #include "signer_ipc.h"
 #include "nostr/nip46/nip46_client.h"
+#include "nostr/nip46/nip46_msg.h"
+#include "nostr/nip46/nip46_types.h"
+#include "nostr/nip04.h"
 #include "nostr-keys.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
+#include "nostr-tag.h"
+#include "nostr-simple-pool.h"
+#include "secure_buf.h"
 #include <string.h>
+#include <time.h>
+#include <pthread.h>
+#include <errno.h>
 
 /* Forward declaration for nostrc-1wfi */
 void gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self);
@@ -219,7 +230,88 @@ on_nip55l_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
   sign_context_free(ctx);
 }
 
-/* NIP-46 signing (runs in thread) */
+/* nostrc-stsz: NIP-46 signing relay round-trip context */
+typedef struct {
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  char *response_content;     /* Encrypted response from signer */
+  char *response_sender_pk;   /* Sender pubkey for decryption */
+  char *expected_client_pk;   /* Our pubkey to filter responses */
+  gboolean response_received;
+} Nip46SignRoundtripCtx;
+
+/* Global context pointer for event middleware callback.
+ * Note: We use a regular global (not __thread) because the callback
+ * runs on the pool's worker thread, not our signing thread. */
+static Nip46SignRoundtripCtx *g_nip46_roundtrip_ctx = NULL;
+static pthread_mutex_t g_nip46_ctx_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Callback for NIP-46 response events - runs from pool thread */
+static void
+nip46_sign_event_middleware(NostrIncomingEvent *incoming)
+{
+  if (!incoming || !incoming->event) return;
+
+  /* Get context under lock */
+  pthread_mutex_lock(&g_nip46_ctx_mutex);
+  Nip46SignRoundtripCtx *ctx = g_nip46_roundtrip_ctx;
+  pthread_mutex_unlock(&g_nip46_ctx_mutex);
+
+  if (!ctx) return;
+
+  NostrEvent *ev = incoming->event;
+  int kind = nostr_event_get_kind(ev);
+  if (kind != NOSTR_EVENT_KIND_NIP46) return;
+
+  /* Check if this is for us (p-tag matches our client pubkey) */
+  NostrTags *tags = nostr_event_get_tags(ev);
+  if (!tags) return;
+
+  gboolean is_for_us = FALSE;
+  size_t tag_count = nostr_tags_size(tags);
+  for (size_t i = 0; i < tag_count; i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 2) continue;
+    const char *key = nostr_tag_get(tag, 0);
+    const char *value = nostr_tag_get(tag, 1);
+    if (key && value && strcmp(key, "p") == 0 &&
+        ctx->expected_client_pk &&
+        strcmp(value, ctx->expected_client_pk) == 0) {
+      is_for_us = TRUE;
+      break;
+    }
+  }
+
+  if (!is_for_us) return;
+
+  /* Got a response! Store it and signal */
+  const char *content = nostr_event_get_content(ev);
+  const char *sender = nostr_event_get_pubkey(ev);
+
+  pthread_mutex_lock(&ctx->mutex);
+  if (!ctx->response_received && content && sender) {
+    ctx->response_content = g_strdup(content);
+    ctx->response_sender_pk = g_strdup(sender);
+    ctx->response_received = TRUE;
+    pthread_cond_signal(&ctx->cond);
+  }
+  pthread_mutex_unlock(&ctx->mutex);
+}
+
+/* Helper to convert hex string to bytes */
+static int
+hex_to_bytes(const char *hex, uint8_t *out, size_t out_len)
+{
+  if (!hex || !out || strlen(hex) != out_len * 2) return -1;
+  for (size_t i = 0; i < out_len; i++) {
+    unsigned int byte;
+    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return -1;
+    out[i] = (uint8_t)byte;
+  }
+  return 0;
+}
+
+/* NIP-46 signing (runs in thread) - nostrc-stsz: Complete relay round-trip */
 static void
 nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable)
 {
@@ -228,9 +320,7 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   (void)cancellable;
 
   if (!ctx->service->nip46_session) {
-    /* nostrc-rrfr: Log when session is missing */
-    g_warning("[SIGNER_SERVICE] NIP-46 sign failed: session is NULL - "
-              "user may not be logged in or session was not persisted after login");
+    g_warning("[SIGNER_SERVICE] NIP-46 sign failed: session is NULL");
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
                             "NIP-46 session not available - please sign in again");
     return;
@@ -238,23 +328,260 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
 
   g_debug("[SIGNER_SERVICE] NIP-46 signing event: %.80s...", ctx->event_json);
 
-  char *signed_event_json = NULL;
-  int rc = nostr_nip46_client_sign_event(ctx->service->nip46_session,
-                                          ctx->event_json,
-                                          &signed_event_json);
+  /* Get session info */
+  char *client_secret = NULL;
+  char *signer_pubkey = NULL;
+  char **relays = NULL;
+  size_t n_relays = 0;
 
-  if (rc != 0 || !signed_event_json) {
-    /* nostrc-rrfr: Log with more context about the error */
-    g_warning("[SIGNER_SERVICE] NIP-46 sign failed with rc=%d - "
-              "check stderr for [nip46] sign_event details", rc);
+  nostr_nip46_session_get_secret(ctx->service->nip46_session, &client_secret);
+  nostr_nip46_session_get_remote_pubkey(ctx->service->nip46_session, &signer_pubkey);
+  nostr_nip46_session_get_relays(ctx->service->nip46_session, &relays, &n_relays);
+
+  if (!client_secret || !signer_pubkey) {
+    g_warning("[SIGNER_SERVICE] NIP-46 session missing credentials");
+    free(client_secret);
+    free(signer_pubkey);
+    if (relays) { for (size_t i = 0; i < n_relays; i++) free(relays[i]); free(relays); }
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "NIP-46 signing failed (error %d) - check logs for details", rc);
+                            "NIP-46 session credentials not configured");
     return;
   }
 
-  g_debug("[SIGNER_SERVICE] NIP-46 sign succeeded, got encrypted response");
+  /* Get relay URL from settings if not in session */
+  char *relay_url = NULL;
+  if (n_relays > 0 && relays && relays[0]) {
+    relay_url = g_strdup(relays[0]);
+  } else {
+    GSettings *settings = g_settings_new("org.gnostr.Client");
+    if (settings) {
+      relay_url = g_settings_get_string(settings, "nip46-relay");
+      g_object_unref(settings);
+    }
+    if (!relay_url || !*relay_url) {
+      g_free(relay_url);
+      relay_url = g_strdup("wss://relay.nsec.app");
+    }
+  }
 
-  g_task_return_pointer(task, signed_event_json, g_free);
+  /* Derive client pubkey for subscription filter */
+  char *client_pubkey = nostr_key_get_public(client_secret);
+  if (!client_pubkey) {
+    g_warning("[SIGNER_SERVICE] Failed to derive client pubkey");
+    free(client_secret);
+    free(signer_pubkey);
+    g_free(relay_url);
+    if (relays) { for (size_t i = 0; i < n_relays; i++) free(relays[i]); free(relays); }
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to derive client pubkey");
+    return;
+  }
+
+  g_debug("[SIGNER_SERVICE] NIP-46 round-trip: relay=%s, client=%.16s..., signer=%.16s...",
+          relay_url, client_pubkey, signer_pubkey);
+
+  /* Build NIP-46 sign_event request */
+  char req_id[32];
+  snprintf(req_id, sizeof(req_id), "sign_%ld", (long)time(NULL));
+
+  const char *params[1] = { ctx->event_json };
+  char *request_json = nostr_nip46_request_build(req_id, "sign_event", params, 1);
+  if (!request_json) {
+    g_warning("[SIGNER_SERVICE] Failed to build NIP-46 request");
+    goto cleanup;
+  }
+
+  g_debug("[SIGNER_SERVICE] NIP-46 request: %.100s...", request_json);
+
+  /* Encrypt request using NIP-04 */
+  nostr_secure_buf sb = secure_alloc(32);
+  if (!sb.ptr || hex_to_bytes(client_secret, (uint8_t*)sb.ptr, 32) != 0) {
+    g_warning("[SIGNER_SERVICE] Failed to parse client secret");
+    secure_free(&sb);
+    free(request_json);
+    goto cleanup;
+  }
+
+  char *encrypted_request = NULL;
+  char *encrypt_err = NULL;
+  if (nostr_nip04_encrypt_secure(request_json, signer_pubkey, &sb, &encrypted_request, &encrypt_err) != 0) {
+    g_warning("[SIGNER_SERVICE] NIP-04 encryption failed: %s", encrypt_err ? encrypt_err : "unknown");
+    secure_free(&sb);
+    free(request_json);
+    free(encrypt_err);
+    goto cleanup;
+  }
+  free(request_json);
+
+  /* Create kind 24133 wrapper event */
+  NostrEvent *wrapper = nostr_event_new();
+  nostr_event_set_kind(wrapper, NOSTR_EVENT_KIND_NIP46);
+  nostr_event_set_pubkey(wrapper, client_pubkey);
+  nostr_event_set_content(wrapper, encrypted_request);
+  nostr_event_set_created_at(wrapper, (int64_t)time(NULL));
+
+  /* Add p-tag for signer */
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("p", signer_pubkey, NULL));
+  nostr_event_set_tags(wrapper, tags);
+
+  /* Sign wrapper event with client key */
+  if (nostr_event_sign_secure(wrapper, &sb) != 0) {
+    g_warning("[SIGNER_SERVICE] Failed to sign wrapper event");
+    secure_free(&sb);
+    nostr_event_free(wrapper);
+    free(encrypted_request);
+    goto cleanup;
+  }
+
+  /* Set up response capture context */
+  Nip46SignRoundtripCtx roundtrip = {
+    .response_content = NULL,
+    .response_sender_pk = NULL,
+    .expected_client_pk = client_pubkey,
+    .response_received = FALSE
+  };
+  pthread_mutex_init(&roundtrip.mutex, NULL);
+  pthread_cond_init(&roundtrip.cond, NULL);
+
+  /* Set global context pointer for callback (protected by mutex) */
+  pthread_mutex_lock(&g_nip46_ctx_mutex);
+  g_nip46_roundtrip_ctx = &roundtrip;
+  pthread_mutex_unlock(&g_nip46_ctx_mutex);
+
+  /* Create pool and subscribe for response */
+  NostrSimplePool *pool = nostr_simple_pool_new();
+  if (!pool) {
+    g_warning("[SIGNER_SERVICE] Failed to create relay pool");
+    pthread_mutex_lock(&g_nip46_ctx_mutex);
+    g_nip46_roundtrip_ctx = NULL;
+    pthread_mutex_unlock(&g_nip46_ctx_mutex);
+    pthread_mutex_destroy(&roundtrip.mutex);
+    pthread_cond_destroy(&roundtrip.cond);
+    secure_free(&sb);
+    nostr_event_free(wrapper);
+    free(encrypted_request);
+    goto cleanup;
+  }
+
+  /* Set event middleware to capture responses */
+  nostr_simple_pool_set_event_middleware(pool, nip46_sign_event_middleware);
+
+  /* Subscribe for response events (kind 24133, p-tag = client_pubkey) */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_tags_append(filter, "p", client_pubkey, NULL);
+
+  NostrFilters *filters = nostr_filters_new();
+  nostr_filters_add(filters, filter);
+
+  const char *relay_urls[] = { relay_url, NULL };
+  nostr_simple_pool_ensure_relay(pool, relay_url);
+  nostr_simple_pool_subscribe(pool, relay_urls, 1, *filters, true);
+  nostr_simple_pool_start(pool);
+
+  /* Give relay time to connect */
+  g_usleep(500000); /* 500ms */
+
+  /* Publish the request */
+  pthread_mutex_lock(&pool->pool_mutex);
+  for (size_t i = 0; i < pool->relay_count; i++) {
+    NostrRelay *relay = pool->relays[i];
+    if (relay && nostr_relay_is_connected(relay)) {
+      nostr_relay_publish(relay, wrapper);
+      g_debug("[SIGNER_SERVICE] Published NIP-46 request to %s", nostr_relay_get_url_const(relay));
+    }
+  }
+  pthread_mutex_unlock(&pool->pool_mutex);
+
+  nostr_event_free(wrapper);
+  free(encrypted_request);
+  nostr_filters_free(filters);
+
+  /* Wait for response with timeout */
+  char *signed_event_json = NULL;
+  struct timespec timeout_ts;
+  clock_gettime(CLOCK_REALTIME, &timeout_ts);
+  timeout_ts.tv_sec += 30; /* 30 second timeout */
+
+  pthread_mutex_lock(&roundtrip.mutex);
+  while (!roundtrip.response_received) {
+    int rc = pthread_cond_timedwait(&roundtrip.cond, &roundtrip.mutex, &timeout_ts);
+    if (rc == ETIMEDOUT) {
+      g_warning("[SIGNER_SERVICE] NIP-46 sign timed out waiting for response");
+      break;
+    }
+  }
+
+  if (roundtrip.response_received && roundtrip.response_content && roundtrip.response_sender_pk) {
+    g_debug("[SIGNER_SERVICE] Got NIP-46 response from %s", roundtrip.response_sender_pk);
+
+    /* Decrypt the response */
+    char *plaintext = NULL;
+    char *decrypt_err = NULL;
+    if (nostr_nip04_decrypt_secure(roundtrip.response_content, roundtrip.response_sender_pk,
+                                    &sb, &plaintext, &decrypt_err) == 0 && plaintext) {
+      g_debug("[SIGNER_SERVICE] Decrypted NIP-46 response: %.100s...", plaintext);
+
+      /* Parse the NIP-46 response */
+      NostrNip46Response resp = {0};
+      if (nostr_nip46_response_parse(plaintext, &resp) == 0) {
+        if (resp.error) {
+          g_warning("[SIGNER_SERVICE] NIP-46 signer error: %s", resp.error);
+        } else if (resp.result) {
+          /* Success! The result is the signed event JSON */
+          signed_event_json = g_strdup(resp.result);
+          g_debug("[SIGNER_SERVICE] Got signed event: %.100s...", signed_event_json);
+        }
+        nostr_nip46_response_free(&resp);
+      } else {
+        g_warning("[SIGNER_SERVICE] Failed to parse NIP-46 response JSON");
+      }
+      free(plaintext);
+    } else {
+      g_warning("[SIGNER_SERVICE] Failed to decrypt NIP-46 response: %s",
+                decrypt_err ? decrypt_err : "unknown");
+      free(decrypt_err);
+    }
+  }
+  pthread_mutex_unlock(&roundtrip.mutex);
+
+  /* Cleanup */
+  pthread_mutex_lock(&g_nip46_ctx_mutex);
+  g_nip46_roundtrip_ctx = NULL;
+  pthread_mutex_unlock(&g_nip46_ctx_mutex);
+  nostr_simple_pool_stop(pool);
+  nostr_simple_pool_free(pool);
+  pthread_mutex_destroy(&roundtrip.mutex);
+  pthread_cond_destroy(&roundtrip.cond);
+  g_free(roundtrip.response_content);
+  g_free(roundtrip.response_sender_pk);
+  secure_free(&sb);
+
+  if (signed_event_json) {
+    g_debug("[SIGNER_SERVICE] NIP-46 sign succeeded");
+    g_task_return_pointer(task, signed_event_json, g_free);
+    goto cleanup_final;
+  }
+
+  g_warning("[SIGNER_SERVICE] NIP-46 sign failed - no valid response");
+  g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
+                          "Remote signer did not respond. Please try again.");
+  goto cleanup_final;
+
+cleanup:
+  g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                          "NIP-46 signing failed - check logs for details");
+
+cleanup_final:
+  free(client_secret);
+  free(signer_pubkey);
+  free(client_pubkey);
+  g_free(relay_url);
+  if (relays) {
+    for (size_t i = 0; i < n_relays; i++) free(relays[i]);
+    free(relays);
+  }
 }
 
 static void
