@@ -174,6 +174,24 @@ int nostr_nip46_client_connect(NostrNip46Session *s,
     return -1;
 }
 
+/* nostrc-rrfr: Set the signer's pubkey after receiving connect response */
+int nostr_nip46_client_set_signer_pubkey(NostrNip46Session *s, const char *signer_pubkey_hex) {
+    if (!s || !signer_pubkey_hex) return -1;
+    if (strlen(signer_pubkey_hex) != 64) {
+        fprintf(stderr, "[nip46] set_signer_pubkey: invalid pubkey length %zu (expected 64)\n",
+                strlen(signer_pubkey_hex));
+        return -1;
+    }
+    /* Free existing if any */
+    if (s->remote_pubkey_hex) {
+        free(s->remote_pubkey_hex);
+    }
+    s->remote_pubkey_hex = strdup(signer_pubkey_hex);
+    if (!s->remote_pubkey_hex) return -1;
+    fprintf(stderr, "[nip46] set_signer_pubkey: stored signer pubkey %s\n", signer_pubkey_hex);
+    return 0;
+}
+
 int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubkey_hex) {
     if (!s || !out_user_pubkey_hex) return -1;
     /* If a client pubkey was provided (nostrconnect://), prefer it. */

@@ -131,6 +131,8 @@ static gboolean hide_toast_on_main(gpointer user_data) {
 typedef struct {
   GnostrLogin *self;
   char *npub;
+  char *signer_pubkey_hex;  /* nostrc-rrfr: signer pubkey for session */
+  char *nostrconnect_uri;   /* nostrc-rrfr: URI for session secret/relays */
 } Nip46SuccessCtx;
 
 static void nip46_success_ctx_free(gpointer data) {
@@ -138,6 +140,8 @@ static void nip46_success_ctx_free(gpointer data) {
   if (ctx) {
     g_clear_object(&ctx->self);
     g_free(ctx->npub);
+    g_free(ctx->signer_pubkey_hex);
+    g_free(ctx->nostrconnect_uri);
     g_free(ctx);
   }
 }
@@ -158,6 +162,25 @@ static gboolean nip46_success_on_main(gpointer data) {
     nostr_nip46_session_free(self->nip46_session);
   }
   self->nip46_session = nostr_nip46_client_new();
+
+  /* nostrc-rrfr: Populate session with connection info from the nostrconnect URI */
+  if (ctx->nostrconnect_uri) {
+    int rc = nostr_nip46_client_connect(self->nip46_session, ctx->nostrconnect_uri, NULL);
+    if (rc != 0) {
+      g_warning("[NIP46_LOGIN] Failed to populate session from URI: %d", rc);
+    } else {
+      g_message("[NIP46_LOGIN] Session populated with secret and relays from URI");
+    }
+  }
+
+  /* nostrc-rrfr: Store the signer's pubkey in the session - critical for signing */
+  if (ctx->signer_pubkey_hex) {
+    if (nostr_nip46_client_set_signer_pubkey(self->nip46_session, ctx->signer_pubkey_hex) != 0) {
+      g_warning("[NIP46_LOGIN] Failed to set signer pubkey in session");
+    } else {
+      g_message("[NIP46_LOGIN] Signer pubkey stored in session: %s", ctx->signer_pubkey_hex);
+    }
+  }
 
   /* Save to settings and show success */
   save_npub_to_settings(ctx->npub);
@@ -948,14 +971,17 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
       continue;
     }
 
-    g_free(signer_pubkey_hex);
-
     /* Defer the stop/success operations to after this callback completes.
      * Stopping the listener from within the signal callback can cause issues
      * since we're modifying the signal handler list during emission. */
     Nip46SuccessCtx *ctx = g_new0(Nip46SuccessCtx, 1);
     ctx->self = g_object_ref(self);
     ctx->npub = g_strdup(npub);
+    /* nostrc-rrfr: Pass signer info to deferred handler for session population */
+    ctx->signer_pubkey_hex = g_strdup(signer_pubkey_hex);
+    ctx->nostrconnect_uri = g_strdup(self->nostrconnect_uri);
+
+    g_free(signer_pubkey_hex);
     free(npub);
 
     g_idle_add_full(G_PRIORITY_HIGH, nip46_success_on_main, ctx, nip46_success_ctx_free);

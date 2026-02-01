@@ -17,6 +17,10 @@ int nostr_nip46_client_connect(NostrNip46Session *s,
                                const char *requested_perms_csv);
 
 int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubkey_hex);
+
+/* Set the remote signer's pubkey (received after connect handshake) */
+int nostr_nip46_client_set_signer_pubkey(NostrNip46Session *s, const char *signer_pubkey_hex);
+
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json);
 int nostr_nip46_client_ping(NostrNip46Session *s);
 
