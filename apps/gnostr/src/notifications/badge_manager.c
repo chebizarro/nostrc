@@ -18,6 +18,7 @@
 #define KIND_LEGACY_DM        4
 #define KIND_TEXT_NOTE        1
 #define KIND_REPOST           6
+#define KIND_REACTION         7
 #define KIND_NIP17_RUMOR      14
 #define KIND_ZAP_RECEIPT      9735
 #define KIND_GIFT_WRAP        1059
@@ -55,6 +56,7 @@ struct _GnostrBadgeManager {
   uint64_t sub_mentions;
   uint64_t sub_zaps;
   uint64_t sub_reposts;
+  uint64_t sub_reactions;
 
   /* GSettings for persistence */
   GSettings *settings;
@@ -73,6 +75,8 @@ static void on_zap_events(uint64_t subid, const uint64_t *note_keys,
                           guint n_keys, gpointer user_data);
 static void on_repost_events(uint64_t subid, const uint64_t *note_keys,
                              guint n_keys, gpointer user_data);
+static void on_reaction_events(uint64_t subid, const uint64_t *note_keys,
+                               guint n_keys, gpointer user_data);
 static void emit_changed(GnostrBadgeManager *self);
 static void load_settings(GnostrBadgeManager *self);
 static void save_settings(GnostrBadgeManager *self);
@@ -180,6 +184,10 @@ load_settings(GnostrBadgeManager *self)
     g_settings_get_boolean(self->settings, "badge-reply-enabled");
   self->enabled[GNOSTR_NOTIFICATION_ZAP] =
     g_settings_get_boolean(self->settings, "badge-zap-enabled");
+  self->enabled[GNOSTR_NOTIFICATION_REPOST] =
+    g_settings_get_boolean(self->settings, "badge-repost-enabled");
+  self->enabled[GNOSTR_NOTIFICATION_REACTION] =
+    g_settings_get_boolean(self->settings, "badge-reaction-enabled");
 
   /* Load display mode */
   gchar *mode_str = g_settings_get_string(self->settings, "badge-display-mode");
@@ -201,10 +209,14 @@ load_settings(GnostrBadgeManager *self)
     g_settings_get_int64(self->settings, "last-read-reply");
   self->last_read[GNOSTR_NOTIFICATION_ZAP] =
     g_settings_get_int64(self->settings, "last-read-zap");
+  self->last_read[GNOSTR_NOTIFICATION_REPOST] =
+    g_settings_get_int64(self->settings, "last-read-repost");
+  self->last_read[GNOSTR_NOTIFICATION_REACTION] =
+    g_settings_get_int64(self->settings, "last-read-reaction");
 
-  g_debug("Loaded settings: dm=%d mention=%d reply=%d zap=%d mode=%d",
+  g_debug("Loaded settings: dm=%d mention=%d reply=%d zap=%d repost=%d reaction=%d mode=%d",
           self->enabled[0], self->enabled[1], self->enabled[2], self->enabled[3],
-          self->display_mode);
+          self->enabled[4], self->enabled[5], self->display_mode);
 }
 
 static void
@@ -220,6 +232,10 @@ save_settings(GnostrBadgeManager *self)
                           self->enabled[GNOSTR_NOTIFICATION_REPLY]);
   g_settings_set_boolean(self->settings, "badge-zap-enabled",
                           self->enabled[GNOSTR_NOTIFICATION_ZAP]);
+  g_settings_set_boolean(self->settings, "badge-repost-enabled",
+                          self->enabled[GNOSTR_NOTIFICATION_REPOST]);
+  g_settings_set_boolean(self->settings, "badge-reaction-enabled",
+                          self->enabled[GNOSTR_NOTIFICATION_REACTION]);
 
   const char *mode_str = "count";
   switch (self->display_mode) {
@@ -237,6 +253,10 @@ save_settings(GnostrBadgeManager *self)
                         self->last_read[GNOSTR_NOTIFICATION_REPLY]);
   g_settings_set_int64(self->settings, "last-read-zap",
                         self->last_read[GNOSTR_NOTIFICATION_ZAP]);
+  g_settings_set_int64(self->settings, "last-read-repost",
+                        self->last_read[GNOSTR_NOTIFICATION_REPOST]);
+  g_settings_set_int64(self->settings, "last-read-reaction",
+                        self->last_read[GNOSTR_NOTIFICATION_REACTION]);
 }
 
 /* ============== Lifecycle ============== */
@@ -772,6 +792,59 @@ on_repost_events(uint64_t subid, const uint64_t *note_keys,
   }
 }
 
+static void
+on_reaction_events(uint64_t subid, const uint64_t *note_keys,
+                   guint n_keys, gpointer user_data)
+{
+  (void)subid;
+  GnostrBadgeManager *self = GNOSTR_BADGE_MANAGER(user_data);
+
+  if (!self->enabled[GNOSTR_NOTIFICATION_REACTION]) return;
+
+  /* Get transaction to access notes */
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+    g_warning("Failed to begin query for reaction notifications");
+    return;
+  }
+
+  guint new_count = 0;
+  gint64 last_read = self->last_read[GNOSTR_NOTIFICATION_REACTION];
+
+  for (guint i = 0; i < n_keys; i++) {
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
+    if (!note) continue;
+
+    gint64 created_at = (gint64)storage_ndb_note_created_at(note);
+    if (created_at > last_read) {
+      new_count++;
+
+      /* Emit event for first reaction only to avoid notification spam */
+      if (new_count == 1 && self->event_callback) {
+        const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+        const unsigned char *id_bin = storage_ndb_note_id(note);
+        const char *content = storage_ndb_note_content(note);
+
+        char pubkey_hex[65], id_hex[65];
+        storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+        storage_ndb_hex_encode(id_bin, id_hex);
+
+        /* Content is typically the reaction emoji ("+", "-", or custom emoji) */
+        emit_event(self, GNOSTR_NOTIFICATION_REACTION, pubkey_hex, NULL, content, id_hex, 0);
+
+        g_debug("Reaction notification from %.16s... content=%s", pubkey_hex, content ? content : "+");
+      }
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  if (new_count > 0) {
+    gnostr_badge_manager_increment(self, GNOSTR_NOTIFICATION_REACTION, new_count);
+    g_debug("Reaction notification: +%u new", new_count);
+  }
+}
+
 /* ============== Relay Subscription Integration ============== */
 
 void
@@ -816,10 +889,17 @@ gnostr_badge_manager_start_subscriptions(GnostrBadgeManager *self)
   self->sub_reposts = gn_ndb_subscribe(repost_filter, on_repost_events, self, NULL);
   g_free(repost_filter);
 
-  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu, reposts=%lu)",
+  /* Subscribe to reactions (kind 7 with #p tag matching user per NIP-25) */
+  gchar *reaction_filter = g_strdup_printf(
+    "[{\"kinds\":[%d],\"#p\":[\"%s\"]}]",
+    KIND_REACTION, self->user_pubkey);
+  self->sub_reactions = gn_ndb_subscribe(reaction_filter, on_reaction_events, self, NULL);
+  g_free(reaction_filter);
+
+  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu, reposts=%lu, reactions=%lu)",
           self->user_pubkey, (unsigned long)self->sub_dm,
           (unsigned long)self->sub_mentions, (unsigned long)self->sub_zaps,
-          (unsigned long)self->sub_reposts);
+          (unsigned long)self->sub_reposts, (unsigned long)self->sub_reactions);
 }
 
 void
@@ -845,6 +925,11 @@ gnostr_badge_manager_stop_subscriptions(GnostrBadgeManager *self)
   if (self->sub_reposts) {
     gn_ndb_unsubscribe(self->sub_reposts);
     self->sub_reposts = 0;
+  }
+
+  if (self->sub_reactions) {
+    gn_ndb_unsubscribe(self->sub_reactions);
+    self->sub_reactions = 0;
   }
 
   g_debug("Stopped notification subscriptions");

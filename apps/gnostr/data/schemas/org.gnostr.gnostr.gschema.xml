@@ -263,6 +263,20 @@
         Whether to show notifications for received zaps.
       </description>
     </key>
+    <key name="notify-repost-enabled" type="b">
+      <default>true</default>
+      <summary>Repost notifications enabled</summary>
+      <description>
+        Whether to show notifications when your notes are reposted.
+      </description>
+    </key>
+    <key name="notify-reaction-enabled" type="b">
+      <default>true</default>
+      <summary>Reaction notifications enabled</summary>
+      <description>
+        Whether to show notifications for reactions to your notes.
+      </description>
+    </key>
     <!-- Notification presentation options -->
     <key name="sound-enabled" type="b">
       <default>true</default>
@@ -314,6 +328,20 @@
         Whether to show badge count for zap receipts.
       </description>
     </key>
+    <key name="badge-repost-enabled" type="b">
+      <default>true</default>
+      <summary>Badge for reposts enabled</summary>
+      <description>
+        Whether to show badge count for reposts of your notes.
+      </description>
+    </key>
+    <key name="badge-reaction-enabled" type="b">
+      <default>true</default>
+      <summary>Badge for reactions enabled</summary>
+      <description>
+        Whether to show badge count for reactions to your notes.
+      </description>
+    </key>
     <key name="badge-display-mode" type="s">
       <default>'count'</default>
       <summary>Badge display mode</summary>
@@ -348,6 +376,20 @@
       <summary>Last read zap timestamp</summary>
       <description>
         Unix timestamp of when zaps were last viewed.
+      </description>
+    </key>
+    <key name="last-read-repost" type="x">
+      <default>0</default>
+      <summary>Last read repost timestamp</summary>
+      <description>
+        Unix timestamp of when reposts were last viewed.
+      </description>
+    </key>
+    <key name="last-read-reaction" type="x">
+      <default>0</default>
+      <summary>Last read reaction timestamp</summary>
+      <description>
+        Unix timestamp of when reactions were last viewed.
       </description>
     </key>
   </schema>
