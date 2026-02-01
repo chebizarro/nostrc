@@ -12,8 +12,9 @@
 #include <string.h>
 #include <stdio.h>
 
-/* Maximum profiles to load at once */
-#define PROFILE_LOAD_LIMIT 500
+/* Maximum profiles to load - set high to get all cached profiles.
+ * nostrc-v6sx: Increased from 500 to 50000 to show all nostrdb-cached profiles. */
+#define PROFILE_LOAD_LIMIT 50000
 #define PROFILE_BATCH_SIZE 50
 
 /* Profile entry for internal storage */
