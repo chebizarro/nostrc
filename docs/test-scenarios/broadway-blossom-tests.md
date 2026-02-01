@@ -13,7 +13,7 @@
  * - Error handling (server errors, auth failures)
  *
  * NOTE: Tests requiring multi-server support (kind 10063 management, server
- * selection, fallback behavior) are documented but marked as TODO pending
+ * selection, fallback behavior) are documented but skipped pending
  * nostrc-i1t implementation.
  */
 
@@ -94,7 +94,7 @@ test.describe("Blossom Settings Integration", () => {
  * These tests are documented here for future implementation when nostrc-i1t
  * (multi-server support) is completed.
  *
- * TODO: Enable these tests when nostrc-i1t lands
+ * nostrc-i1t: Enable these tests when multi-server support lands
  */
 test.describe.skip("Blossom Multi-Server Support [Pending nostrc-i1t]", () => {
   test("settings shows list of configured Blossom servers", async ({ page }, testInfo) => {
