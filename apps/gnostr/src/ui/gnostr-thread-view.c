@@ -50,6 +50,7 @@ typedef struct {
   char *parent_id;
   char *root_relay_hint;   /* NIP-10 relay hint for root event */
   char *parent_relay_hint; /* NIP-10 relay hint for parent event */
+  GPtrArray *mentioned_pubkeys; /* nostrc-hb7c: p-tag pubkeys for NIP-65 fetch */
   gint64 created_at;
   guint depth;
   /* Profile info (resolved asynchronously) */
@@ -124,6 +125,7 @@ static void thread_event_item_free(ThreadEventItem *item) {
   g_free(item->parent_id);
   g_free(item->root_relay_hint);
   g_free(item->parent_relay_hint);
+  if (item->mentioned_pubkeys) g_ptr_array_unref(item->mentioned_pubkeys);
   g_free(item->display_name);
   g_free(item->handle);
   g_free(item->avatar_url);
@@ -385,6 +387,57 @@ static void parse_nip10_from_json_full(const char *json_str, char **root_id, cha
 /* Parse NIP-10 tags from a nostr event to get root and reply IDs (legacy wrapper) */
 static void parse_nip10_from_json(const char *json_str, char **root_id, char **reply_id) {
   parse_nip10_from_json_full(json_str, root_id, reply_id, NULL, NULL);
+}
+
+/* nostrc-hb7c: Callback for extracting p-tags (mentioned pubkeys) */
+static bool parse_ptag_callback(const char *tag_json, void *user_data) {
+  GPtrArray *pubkeys = (GPtrArray *)user_data;
+  if (!tag_json || !pubkeys) return true;
+
+  /* Check if this is a p-tag */
+  char *tag_type = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_type) != 0 || !tag_type) {
+    return true;
+  }
+  if (strcmp(tag_type, "p") != 0 && strcmp(tag_type, "P") != 0) {
+    free(tag_type);
+    return true;
+  }
+  free(tag_type);
+
+  /* Get the pubkey (second element) */
+  char *pubkey = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 1, &pubkey) != 0 || !pubkey) {
+    return true;
+  }
+
+  /* Validate pubkey length */
+  if (strlen(pubkey) != 64) {
+    free(pubkey);
+    return true;
+  }
+
+  /* Check for duplicates */
+  for (guint i = 0; i < pubkeys->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(pubkeys, i), pubkey) == 0) {
+      free(pubkey);
+      return true;
+    }
+  }
+
+  g_ptr_array_add(pubkeys, g_strdup(pubkey));
+  free(pubkey);
+  return true;
+}
+
+/* nostrc-hb7c: Extract p-tag pubkeys from event JSON */
+static GPtrArray *extract_ptags_from_json(const char *json_str) {
+  GPtrArray *pubkeys = g_ptr_array_new_with_free_func(g_free);
+  if (!json_str || !nostr_json_is_valid(json_str)) {
+    return pubkeys;
+  }
+  nostr_json_array_foreach(json_str, "tags", parse_ptag_callback, pubkeys);
+  return pubkeys;
 }
 
 /* Dispose */
@@ -754,6 +807,9 @@ static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *
   /* Parse NIP-10 tags with relay hints */
   parse_nip10_from_json_full(json_str, &item->root_id, &item->parent_id,
                               &item->root_relay_hint, &item->parent_relay_hint);
+
+  /* nostrc-hb7c: Extract p-tags for NIP-65 relay lookup of missing authors */
+  item->mentioned_pubkeys = extract_ptags_from_json(json_str);
 
   nostr_event_free(evt);
 
@@ -1482,15 +1538,16 @@ static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
   nip65_fetch_ctx_free(ctx);
 }
 
-/* nostrc-hl6: Fetch NIP-65 relay lists for authors of missing events.
- * When root/parent events are not found, we try to fetch the author's
- * relay list (kind 10002) and query their write relays. */
+/* nostrc-hl6, nostrc-hb7c: Fetch NIP-65 relay lists for authors of missing events.
+ * When root/parent events are not found, we extract p-tags from reply events
+ * to find the pubkeys of authors we're replying to, then fetch their NIP-65
+ * relay lists (kind 10002) and query their write relays for missing events. */
 static void fetch_nip65_for_missing_authors(GnostrThreadView *self) {
   if (!self || !self->events_by_id) return;
 
   /* Collect pubkeys of authors we should query for NIP-65 relay lists.
-   * We look at reply events and extract the pubkey of who they're replying to
-   * (often tagged with p-tag) */
+   * nostrc-hb7c: Use p-tags from events that reference missing parents/roots.
+   * The p-tags typically contain the pubkey of the author being replied to. */
   GPtrArray *pubkeys_to_fetch = g_ptr_array_new_with_free_func(g_free);
 
   GHashTableIter iter;
@@ -1499,25 +1556,36 @@ static void fetch_nip65_for_missing_authors(GnostrThreadView *self) {
   while (g_hash_table_iter_next(&iter, &key, &value)) {
     ThreadEventItem *item = (ThreadEventItem *)value;
 
-    /* If this event references a missing root, try to find root author pubkey */
-    if (item->root_id && !g_hash_table_contains(self->events_by_id, item->root_id)) {
-      /* Check if item has p-tags that might reference the root author */
-      /* For now, we use the focus event's root - if we have any event from the root
-       * author, we can get their pubkey from there */
+    /* Check if this event references missing parent or root */
+    gboolean has_missing_parent = item->parent_id &&
+        !g_hash_table_contains(self->events_by_id, item->parent_id);
+    gboolean has_missing_root = item->root_id &&
+        g_strcmp0(item->root_id, item->parent_id) != 0 &&
+        !g_hash_table_contains(self->events_by_id, item->root_id);
 
-      /* Also: if this event itself IS the root (self-reference check), use its pubkey */
-      if (item->pubkey_hex &&
-          !g_hash_table_contains(self->nip65_pubkeys_fetched, item->pubkey_hex)) {
-        /* Check if not already in our list */
+    if (!has_missing_parent && !has_missing_root) continue;
+
+    /* nostrc-hb7c: Extract pubkeys from p-tags - these are the authors
+     * of events we're replying to (likely the missing parent/root authors) */
+    if (item->mentioned_pubkeys) {
+      for (guint i = 0; i < item->mentioned_pubkeys->len; i++) {
+        const gchar *pubkey = g_ptr_array_index(item->mentioned_pubkeys, i);
+        if (!pubkey || strlen(pubkey) != 64) continue;
+
+        /* Skip if already fetched or queued */
+        if (g_hash_table_contains(self->nip65_pubkeys_fetched, pubkey)) continue;
+
         gboolean found = FALSE;
-        for (guint i = 0; i < pubkeys_to_fetch->len; i++) {
-          if (g_strcmp0(g_ptr_array_index(pubkeys_to_fetch, i), item->pubkey_hex) == 0) {
+        for (guint j = 0; j < pubkeys_to_fetch->len; j++) {
+          if (g_strcmp0(g_ptr_array_index(pubkeys_to_fetch, j), pubkey) == 0) {
             found = TRUE;
             break;
           }
         }
         if (!found) {
-          g_ptr_array_add(pubkeys_to_fetch, g_strdup(item->pubkey_hex));
+          g_ptr_array_add(pubkeys_to_fetch, g_strdup(pubkey));
+          g_message("[THREAD_VIEW] NIP-65: Will fetch relay list for %.16s... (p-tag from %.16s...)",
+                    pubkey, item->id_hex);
         }
       }
     }
