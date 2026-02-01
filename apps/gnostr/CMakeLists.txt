@@ -626,6 +626,17 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "thread;graph;unit;gnostr")
 
+  # Timeline query unit tests (nostrc-whu3)
+  add_executable(gnostr-test-timeline-query tests/test_timeline_query.c src/model/gn-timeline-query.c)
+  target_compile_features(gnostr-test-timeline-query PRIVATE c_std_11)
+  target_include_directories(gnostr-test-timeline-query PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-timeline-query PRIVATE PkgConfig::GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-timeline-query)
+  add_test(NAME gnostr-test-timeline-query COMMAND gnostr-test-timeline-query)
+  set_tests_properties(gnostr-test-timeline-query PROPERTIES
+    TIMEOUT 30
+    LABELS "timeline;query;unit;gnostr")
+
 endif()
 
 # ---- GSettings schema compilation (development builds) ----

@@ -29,13 +29,15 @@ struct _GnTimelineQuery {
   gsize n_kinds;
   char **authors;           /* Array of pubkey hex strings (NULL = all authors) */
   gsize n_authors;
+  char **event_ids;         /* Array of event ID hex strings for #e tag filter */
+  gsize n_event_ids;
   gint64 since;             /* Unix timestamp lower bound (0 = no limit) */
   gint64 until;             /* Unix timestamp upper bound (0 = no limit) */
   guint limit;              /* Max items per query page (default: 50) */
   char *search;             /* Full-text search query (NULL = none) */
   gboolean include_replies; /* Whether to include reply notes */
   char *hashtag;            /* Filter by hashtag (NULL = none) */
-  
+
   /* Internal: cached JSON representation */
   char *_cached_json;
   guint _hash;
@@ -116,6 +118,7 @@ GnTimelineQueryBuilder *gn_timeline_query_builder_new(void);
 
 void gn_timeline_query_builder_add_kind(GnTimelineQueryBuilder *builder, gint kind);
 void gn_timeline_query_builder_add_author(GnTimelineQueryBuilder *builder, const char *pubkey);
+void gn_timeline_query_builder_add_event_id(GnTimelineQueryBuilder *builder, const char *event_id);
 void gn_timeline_query_builder_set_since(GnTimelineQueryBuilder *builder, gint64 since);
 void gn_timeline_query_builder_set_until(GnTimelineQueryBuilder *builder, gint64 until);
 void gn_timeline_query_builder_set_limit(GnTimelineQueryBuilder *builder, guint limit);

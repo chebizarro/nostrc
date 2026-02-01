@@ -14,6 +14,7 @@
 struct _GnTimelineQueryBuilder {
   GArray *kinds;
   GPtrArray *authors;
+  GPtrArray *event_ids;
   gint64 since;
   gint64 until;
   guint limit;
@@ -124,24 +125,22 @@ GnTimelineQuery *gn_timeline_query_new_for_hashtag(const char *hashtag) {
 
 GnTimelineQuery *gn_timeline_query_new_thread(const char *root_event_id) {
   g_return_val_if_fail(root_event_id != NULL, NULL);
-  
+
   GnTimelineQuery *q = query_alloc();
-  
+
   /* Thread view: kind 1 only */
   q->kinds = g_new(gint, 1);
   q->kinds[0] = 1;
   q->n_kinds = 1;
-  
+
   /* Include replies for thread view */
   q->include_replies = TRUE;
-  
-  /* nostrc-n63f: Thread queries use a tagged-reference filter convention.
-   * The "e:" prefix in hashtag field signals to the query executor that this
-   * is an event reference filter, not a hashtag. This allows reuse of existing
-   * infrastructure without adding a dedicated event_ids field to the struct.
-   * A future refactor could add proper #e/#p tag filter arrays. */
-  q->hashtag = g_strdup_printf("e:%s", root_event_id);
-  
+
+  /* Use proper #e tag filter for thread queries */
+  q->event_ids = g_new(char *, 1);
+  q->event_ids[0] = g_strdup(root_event_id);
+  q->n_event_ids = 1;
+
   return q;
 }
 
@@ -151,6 +150,7 @@ GnTimelineQueryBuilder *gn_timeline_query_builder_new(void) {
   GnTimelineQueryBuilder *b = g_new0(GnTimelineQueryBuilder, 1);
   b->kinds = g_array_new(FALSE, FALSE, sizeof(gint));
   b->authors = g_ptr_array_new_with_free_func(g_free);
+  b->event_ids = g_ptr_array_new_with_free_func(g_free);
   b->limit = DEFAULT_LIMIT;
   b->include_replies = TRUE;
   return b;
@@ -164,6 +164,11 @@ void gn_timeline_query_builder_add_kind(GnTimelineQueryBuilder *builder, gint ki
 void gn_timeline_query_builder_add_author(GnTimelineQueryBuilder *builder, const char *pubkey) {
   g_return_if_fail(builder != NULL && pubkey != NULL);
   g_ptr_array_add(builder->authors, g_strdup(pubkey));
+}
+
+void gn_timeline_query_builder_add_event_id(GnTimelineQueryBuilder *builder, const char *event_id) {
+  g_return_if_fail(builder != NULL && event_id != NULL);
+  g_ptr_array_add(builder->event_ids, g_strdup(event_id));
 }
 
 void gn_timeline_query_builder_set_since(GnTimelineQueryBuilder *builder, gint64 since) {
@@ -200,16 +205,16 @@ void gn_timeline_query_builder_set_hashtag(GnTimelineQueryBuilder *builder, cons
 
 GnTimelineQuery *gn_timeline_query_builder_build(GnTimelineQueryBuilder *builder) {
   g_return_val_if_fail(builder != NULL, NULL);
-  
+
   GnTimelineQuery *q = query_alloc();
-  
+
   /* Copy kinds */
   if (builder->kinds->len > 0) {
     q->n_kinds = builder->kinds->len;
     q->kinds = g_new(gint, q->n_kinds);
     memcpy(q->kinds, builder->kinds->data, q->n_kinds * sizeof(gint));
   }
-  
+
   /* Copy authors */
   if (builder->authors->len > 0) {
     q->n_authors = builder->authors->len;
@@ -218,24 +223,34 @@ GnTimelineQuery *gn_timeline_query_builder_build(GnTimelineQueryBuilder *builder
       q->authors[i] = g_strdup(g_ptr_array_index(builder->authors, i));
     }
   }
-  
+
+  /* Copy event_ids */
+  if (builder->event_ids->len > 0) {
+    q->n_event_ids = builder->event_ids->len;
+    q->event_ids = g_new(char *, q->n_event_ids);
+    for (gsize i = 0; i < q->n_event_ids; i++) {
+      q->event_ids[i] = g_strdup(g_ptr_array_index(builder->event_ids, i));
+    }
+  }
+
   q->since = builder->since;
   q->until = builder->until;
   q->limit = builder->limit;
   q->search = g_strdup(builder->search);
   q->include_replies = builder->include_replies;
   q->hashtag = g_strdup(builder->hashtag);
-  
+
   gn_timeline_query_builder_free(builder);
-  
+
   return q;
 }
 
 void gn_timeline_query_builder_free(GnTimelineQueryBuilder *builder) {
   if (!builder) return;
-  
+
   g_array_free(builder->kinds, TRUE);
   g_ptr_array_free(builder->authors, TRUE);
+  g_ptr_array_free(builder->event_ids, TRUE);
   g_free(builder->search);
   g_free(builder->hashtag);
   g_free(builder);
@@ -293,14 +308,24 @@ const char *gn_timeline_query_to_json(GnTimelineQuery *query) {
   /* Limit */
   if (!first) g_string_append_c(json, ',');
   g_string_append_printf(json, "\"limit\":%u", query->limit);
-  
+
+  /* Event IDs (as #e tag filter) */
+  if (query->n_event_ids > 0) {
+    g_string_append(json, ",\"#e\":[");
+    for (gsize i = 0; i < query->n_event_ids; i++) {
+      if (i > 0) g_string_append_c(json, ',');
+      g_string_append_printf(json, "\"%s\"", query->event_ids[i]);
+    }
+    g_string_append_c(json, ']');
+  }
+
   /* Hashtag (as #t tag) */
-  if (query->hashtag && !g_str_has_prefix(query->hashtag, "e:")) {
+  if (query->hashtag) {
     g_string_append_printf(json, ",\"#t\":[\"%s\"]", query->hashtag);
   }
-  
+
   g_string_append_c(json, '}');
-  
+
   query->_cached_json = g_string_free(json, FALSE);
   return query->_cached_json;
 }
@@ -351,49 +376,64 @@ char *gn_timeline_query_to_json_with_until(GnTimelineQuery *query, gint64 until)
   /* Limit */
   if (!first) g_string_append_c(json, ',');
   g_string_append_printf(json, "\"limit\":%u", query->limit);
-  
+
+  /* Event IDs (as #e tag filter) */
+  if (query->n_event_ids > 0) {
+    g_string_append(json, ",\"#e\":[");
+    for (gsize i = 0; i < query->n_event_ids; i++) {
+      if (i > 0) g_string_append_c(json, ',');
+      g_string_append_printf(json, "\"%s\"", query->event_ids[i]);
+    }
+    g_string_append_c(json, ']');
+  }
+
   /* Hashtag */
-  if (query->hashtag && !g_str_has_prefix(query->hashtag, "e:")) {
+  if (query->hashtag) {
     g_string_append_printf(json, ",\"#t\":[\"%s\"]", query->hashtag);
   }
-  
+
   g_string_append_c(json, '}');
-  
+
   return g_string_free(json, FALSE);
 }
 
 guint gn_timeline_query_hash(GnTimelineQuery *query) {
   g_return_val_if_fail(query != NULL, 0);
-  
+
   if (query->_hash != 0) {
     return query->_hash;
   }
-  
+
   guint hash = 0;
-  
+
   /* Hash kinds */
   for (gsize i = 0; i < query->n_kinds; i++) {
     hash = hash * 31 + (guint)query->kinds[i];
   }
-  
+
   /* Hash authors */
   for (gsize i = 0; i < query->n_authors; i++) {
     hash = hash * 31 + g_str_hash(query->authors[i]);
   }
-  
+
+  /* Hash event_ids */
+  for (gsize i = 0; i < query->n_event_ids; i++) {
+    hash = hash * 31 + g_str_hash(query->event_ids[i]);
+  }
+
   /* Hash other fields */
   hash = hash * 31 + (guint)(query->since & 0xFFFFFFFF);
   hash = hash * 31 + (guint)(query->until & 0xFFFFFFFF);
   hash = hash * 31 + query->limit;
   hash = hash * 31 + (query->include_replies ? 1 : 0);
-  
+
   if (query->search) {
     hash = hash * 31 + g_str_hash(query->search);
   }
   if (query->hashtag) {
     hash = hash * 31 + g_str_hash(query->hashtag);
   }
-  
+
   query->_hash = hash;
   return hash;
 }
@@ -401,44 +441,49 @@ guint gn_timeline_query_hash(GnTimelineQuery *query) {
 gboolean gn_timeline_query_equal(GnTimelineQuery *a, GnTimelineQuery *b) {
   if (a == b) return TRUE;
   if (!a || !b) return FALSE;
-  
+
   /* Quick hash check */
   if (gn_timeline_query_hash(a) != gn_timeline_query_hash(b)) {
     return FALSE;
   }
-  
+
   /* Detailed comparison */
   if (a->n_kinds != b->n_kinds) return FALSE;
   for (gsize i = 0; i < a->n_kinds; i++) {
     if (a->kinds[i] != b->kinds[i]) return FALSE;
   }
-  
+
   if (a->n_authors != b->n_authors) return FALSE;
   for (gsize i = 0; i < a->n_authors; i++) {
     if (g_strcmp0(a->authors[i], b->authors[i]) != 0) return FALSE;
   }
-  
+
+  if (a->n_event_ids != b->n_event_ids) return FALSE;
+  for (gsize i = 0; i < a->n_event_ids; i++) {
+    if (g_strcmp0(a->event_ids[i], b->event_ids[i]) != 0) return FALSE;
+  }
+
   if (a->since != b->since) return FALSE;
   if (a->until != b->until) return FALSE;
   if (a->limit != b->limit) return FALSE;
   if (a->include_replies != b->include_replies) return FALSE;
   if (g_strcmp0(a->search, b->search) != 0) return FALSE;
   if (g_strcmp0(a->hashtag, b->hashtag) != 0) return FALSE;
-  
+
   return TRUE;
 }
 
 GnTimelineQuery *gn_timeline_query_copy(GnTimelineQuery *query) {
   g_return_val_if_fail(query != NULL, NULL);
-  
+
   GnTimelineQuery *copy = query_alloc();
-  
+
   if (query->n_kinds > 0) {
     copy->n_kinds = query->n_kinds;
     copy->kinds = g_new(gint, copy->n_kinds);
     memcpy(copy->kinds, query->kinds, copy->n_kinds * sizeof(gint));
   }
-  
+
   if (query->n_authors > 0) {
     copy->n_authors = query->n_authors;
     copy->authors = g_new(char *, copy->n_authors);
@@ -446,29 +491,44 @@ GnTimelineQuery *gn_timeline_query_copy(GnTimelineQuery *query) {
       copy->authors[i] = g_strdup(query->authors[i]);
     }
   }
-  
+
+  if (query->n_event_ids > 0) {
+    copy->n_event_ids = query->n_event_ids;
+    copy->event_ids = g_new(char *, copy->n_event_ids);
+    for (gsize i = 0; i < copy->n_event_ids; i++) {
+      copy->event_ids[i] = g_strdup(query->event_ids[i]);
+    }
+  }
+
   copy->since = query->since;
   copy->until = query->until;
   copy->limit = query->limit;
   copy->search = g_strdup(query->search);
   copy->include_replies = query->include_replies;
   copy->hashtag = g_strdup(query->hashtag);
-  
+
   return copy;
 }
 
 void gn_timeline_query_free(GnTimelineQuery *query) {
   if (!query) return;
-  
+
   g_free(query->kinds);
-  
+
   if (query->authors) {
     for (gsize i = 0; i < query->n_authors; i++) {
       g_free(query->authors[i]);
     }
     g_free(query->authors);
   }
-  
+
+  if (query->event_ids) {
+    for (gsize i = 0; i < query->n_event_ids; i++) {
+      g_free(query->event_ids[i]);
+    }
+    g_free(query->event_ids);
+  }
+
   g_free(query->search);
   g_free(query->hashtag);
   g_free(query->_cached_json);
