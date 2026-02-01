@@ -471,7 +471,7 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   }
   gsize blen = 0; (void)g_bytes_get_data(bytes, &blen);
   s_avatar_metrics.http_ok++;
-  g_message("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
+  g_debug("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
 
   /* CRITICAL: Validate it's actually an image BEFORE caching, and decode at bounded size */
   GdkTexture *tex = avatar_texture_from_bytes_scaled(bytes, &error);
