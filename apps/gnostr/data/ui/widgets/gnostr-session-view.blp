@@ -180,6 +180,30 @@ template $GnostrSessionView: Adw.Bin {
                                     }
                                 };
                             }
+
+                            ListBoxRow row_repos {
+                                child: Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "folder-remote-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Git Repos");
+                                        xalign: 0;
+                                    }
+                                };
+                            }
                         };
                     };
                 };
@@ -419,6 +443,17 @@ template $GnostrSessionView: Adw.Bin {
                                         icon-name: "emblem-shopping-cart-symbolic";
 
                                         child: $GnostrClassifiedsView classifieds_view {
+                                            hexpand: true;
+                                            vexpand: true;
+                                        };
+                                    }
+
+                                    Adw.ViewStackPage {
+                                        name: "repos";
+                                        title: _("Git Repos");
+                                        icon-name: "folder-remote-symbolic";
+
+                                        child: $GnostrRepoBrowser repo_browser {
                                             hexpand: true;
                                             vexpand: true;
                                         };

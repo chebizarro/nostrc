@@ -6,6 +6,7 @@
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-notifications-view.h"
 #include "gnostr-profile-pane.h"
+#include "gnostr-repo-browser.h"
 #include "gnostr-thread-view.h"
 #include "gnostr-timeline-view.h"
 #include "page-discover.h"
@@ -61,6 +62,7 @@ struct _GnostrSessionView {
   GtkListBoxRow *row_messages;
   GtkListBoxRow *row_discover;
   GtkListBoxRow *row_classifieds;
+  GtkListBoxRow *row_repos;
 
   /* Content */
   AdwNavigationPage *content_page;
@@ -106,6 +108,7 @@ struct _GnostrSessionView {
   GtkWidget *dm_inbox;
   GtkWidget *discover_page;
   GtkWidget *classifieds_view;
+  GtkWidget *repo_browser;
 
   AdwViewSwitcherBar *bottom_bar;
 
@@ -127,6 +130,7 @@ static const char *page_name_for_row(GnostrSessionView *self, GtkListBoxRow *row
   if (row == self->row_messages) return "messages";
   if (row == self->row_discover) return "discover";
   if (row == self->row_classifieds) return "classifieds";
+  if (row == self->row_repos) return "repos";
   return NULL;
 }
 
@@ -137,6 +141,7 @@ static GtkListBoxRow *row_for_page_name(GnostrSessionView *self, const char *pag
   if (g_strcmp0(page_name, "messages") == 0) return self->row_messages;
   if (g_strcmp0(page_name, "discover") == 0) return self->row_discover;
   if (g_strcmp0(page_name, "classifieds") == 0) return self->row_classifieds;
+  if (g_strcmp0(page_name, "repos") == 0) return self->row_repos;
   return NULL;
 }
 
@@ -146,6 +151,7 @@ static const char *title_for_page_name(const char *page_name) {
   if (g_strcmp0(page_name, "messages") == 0) return _("Messages");
   if (g_strcmp0(page_name, "discover") == 0) return _("Discover");
   if (g_strcmp0(page_name, "classifieds") == 0) return _("Marketplace");
+  if (g_strcmp0(page_name, "repos") == 0) return _("Git Repos");
   return NULL;
 }
 
@@ -524,6 +530,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
   g_type_ensure(GNOSTR_TYPE_PAGE_DISCOVER);
   g_type_ensure(GNOSTR_TYPE_CLASSIFIEDS_VIEW);
+  g_type_ensure(GNOSTR_TYPE_REPO_BROWSER);
   g_type_ensure(GNOSTR_TYPE_PROFILE_PANE);
   g_type_ensure(GNOSTR_TYPE_THREAD_VIEW);
 
@@ -544,6 +551,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_messages);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_discover);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_classifieds);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_repos);
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, content_page);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, toolbar_view);
@@ -580,6 +588,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, dm_inbox);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, discover_page);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, classifieds_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, repo_browser);
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, bottom_bar);
 }
@@ -824,6 +833,11 @@ GtkWidget *gnostr_session_view_get_discover_page(GnostrSessionView *self) {
 GtkWidget *gnostr_session_view_get_classifieds_view(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
   return self->classifieds_view;
+}
+
+GtkWidget *gnostr_session_view_get_repo_browser(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
+  return self->repo_browser;
 }
 
 GtkWidget *gnostr_session_view_get_profile_pane(GnostrSessionView *self) {
