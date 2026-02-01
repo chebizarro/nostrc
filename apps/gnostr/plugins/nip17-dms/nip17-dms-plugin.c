@@ -37,9 +37,13 @@ static void gnostr_plugin_iface_init(GnostrPluginInterface *iface);
 /* Implement GnostrEventHandler interface */
 static void gnostr_event_handler_iface_init(GnostrEventHandlerInterface *iface);
 
+/* Implement GnostrUIExtension interface */
+static void gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface);
+
 G_DEFINE_TYPE_WITH_CODE(Nip17DmsPlugin, nip17_dms_plugin, G_TYPE_OBJECT,
                         G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_PLUGIN, gnostr_plugin_iface_init)
-                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_EVENT_HANDLER, gnostr_event_handler_iface_init))
+                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_EVENT_HANDLER, gnostr_event_handler_iface_init)
+                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_UI_EXTENSION, gnostr_ui_extension_iface_init))
 
 static void
 nip17_dms_plugin_dispose(GObject *object)
@@ -307,6 +311,89 @@ gnostr_event_handler_iface_init(GnostrEventHandlerInterface *iface)
 }
 
 /* ============================================================================
+ * GnostrUIExtension interface implementation - Settings page
+ * ============================================================================ */
+
+static GtkWidget *
+nip17_dms_plugin_create_settings_page(GnostrUIExtension   *extension,
+                                      GnostrPluginContext *context G_GNUC_UNUSED)
+{
+  (void)extension;
+
+  /* Create settings page container */
+  GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(page, 18);
+  gtk_widget_set_margin_end(page, 18);
+  gtk_widget_set_margin_top(page, 18);
+  gtk_widget_set_margin_bottom(page, 18);
+
+  /* Title */
+  GtkWidget *title = gtk_label_new("Private Direct Messages (NIP-17)");
+  gtk_widget_add_css_class(title, "title-2");
+  gtk_widget_set_halign(title, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(page), title);
+
+  /* Description */
+  GtkWidget *desc = gtk_label_new(
+    "End-to-end encrypted direct messages using gift-wrapped encryption.\n\n"
+    "Messages are wrapped in multiple layers of encryption:\n"
+    "• Kind 14 (rumor) - The actual message content\n"
+    "• Kind 13 (seal) - Signed wrapper hiding the sender\n"
+    "• Kind 1059 (gift wrap) - Final encrypted container");
+  gtk_label_set_wrap(GTK_LABEL(desc), TRUE);
+  gtk_label_set_xalign(GTK_LABEL(desc), 0);
+  gtk_box_append(GTK_BOX(page), desc);
+
+  /* DM Relay Preferences section */
+  GtkWidget *relay_frame = gtk_frame_new("DM Relay Preferences (Kind 10050)");
+  gtk_widget_set_margin_top(relay_frame, 12);
+
+  GtkWidget *relay_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_widget_set_margin_start(relay_box, 12);
+  gtk_widget_set_margin_end(relay_box, 12);
+  gtk_widget_set_margin_top(relay_box, 8);
+  gtk_widget_set_margin_bottom(relay_box, 12);
+
+  GtkWidget *relay_desc = gtk_label_new(
+    "Specify preferred relays for receiving DMs. Other users will check "
+    "your kind 10050 event to know where to send encrypted messages.");
+  gtk_label_set_wrap(GTK_LABEL(relay_desc), TRUE);
+  gtk_label_set_xalign(GTK_LABEL(relay_desc), 0);
+  gtk_widget_add_css_class(relay_desc, "dim-label");
+  gtk_box_append(GTK_BOX(relay_box), relay_desc);
+
+  /* Placeholder for relay list editor */
+  GtkWidget *relay_placeholder = gtk_label_new("(Relay list editor coming soon)");
+  gtk_widget_add_css_class(relay_placeholder, "dim-label");
+  gtk_widget_set_margin_top(relay_placeholder, 8);
+  gtk_box_append(GTK_BOX(relay_box), relay_placeholder);
+
+  gtk_frame_set_child(GTK_FRAME(relay_frame), relay_box);
+  gtk_box_append(GTK_BOX(page), relay_frame);
+
+  /* Status section */
+  GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_top(status_box, 12);
+
+  GtkWidget *status_label = gtk_label_new("Status:");
+  gtk_box_append(GTK_BOX(status_box), status_label);
+
+  GtkWidget *status_value = gtk_label_new("Plugin loaded (subscription pending login)");
+  gtk_widget_add_css_class(status_value, "dim-label");
+  gtk_box_append(GTK_BOX(status_box), status_value);
+
+  gtk_box_append(GTK_BOX(page), status_box);
+
+  return page;
+}
+
+static void
+gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface)
+{
+  iface->create_settings_page = nip17_dms_plugin_create_settings_page;
+}
+
+/* ============================================================================
  * Plugin registration for libpeas
  * ============================================================================ */
 
@@ -318,5 +405,8 @@ peas_register_types(PeasObjectModule *module)
                                               NIP17_TYPE_DMS_PLUGIN);
   peas_object_module_register_extension_type(module,
                                               GNOSTR_TYPE_EVENT_HANDLER,
+                                              NIP17_TYPE_DMS_PLUGIN);
+  peas_object_module_register_extension_type(module,
+                                              GNOSTR_TYPE_UI_EXTENSION,
                                               NIP17_TYPE_DMS_PLUGIN);
 }
