@@ -1,0 +1,10 @@
+[Plugin]
+Module=nip57-zaps
+Name=NIP-57 Lightning Zaps
+Description=Lightning Network zaps for sending and receiving payments on notes
+Authors=Gnostr Contributors
+Version=1.0
+Copyright=Copyright 2026 Gnostr Contributors
+Website=https://github.com/nostr-protocol/nips/blob/master/57.md
+Builtin=true
+Loader=c
