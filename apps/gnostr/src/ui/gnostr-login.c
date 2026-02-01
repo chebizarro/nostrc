@@ -17,6 +17,7 @@
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-kinds.h"
+#include "nostr-keys.h"
 #include <glib/gi18n.h>
 #include <json.h>
 #include <secp256k1.h>
@@ -838,12 +839,17 @@ static void on_paste_bunker_clicked(GtkButton *btn, gpointer user_data) {
 typedef struct {
   GnostrLogin *self;
   char *bunker_uri;
+  char *client_secret;  /* Generated ephemeral client key for this session */
 } BunkerConnectCtx;
 
 static void bunker_connect_ctx_free(gpointer data) {
   BunkerConnectCtx *ctx = (BunkerConnectCtx*)data;
   if (!ctx) return;
   g_free(ctx->bunker_uri);
+  if (ctx->client_secret) {
+    memset(ctx->client_secret, 0, strlen(ctx->client_secret));  /* Wipe secret */
+    free(ctx->client_secret);
+  }
   g_free(ctx);
 }
 
@@ -858,32 +864,110 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
     return;
   }
 
-  /* Create NIP-46 client session */
+  g_message("[NIP46_LOGIN] Starting bunker connect: %.40s...", ctx->bunker_uri);
+
+  /* Step 1: Parse bunker:// URI to extract signer pubkey, relays, and connect_secret */
+  NostrNip46BunkerURI parsed = {0};
+  if (nostr_nip46_uri_parse_bunker(ctx->bunker_uri, &parsed) != 0) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Invalid bunker URI format");
+    return;
+  }
+
+  if (!parsed.remote_signer_pubkey_hex || !parsed.relays || parsed.n_relays == 0) {
+    nostr_nip46_uri_bunker_free(&parsed);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Bunker URI missing required fields (pubkey or relay)");
+    return;
+  }
+
+  g_message("[NIP46_LOGIN] Parsed URI: signer=%.16s..., %zu relays, secret=%s",
+            parsed.remote_signer_pubkey_hex, parsed.n_relays,
+            parsed.secret ? "present" : "none");
+
+  /* Step 2: Generate ephemeral client keypair for this session */
+  char *client_secret = nostr_key_generate_private();
+  if (!client_secret) {
+    nostr_nip46_uri_bunker_free(&parsed);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to generate client keypair");
+    return;
+  }
+
+  /* Step 3: Create NIP-46 session and configure it */
   NostrNip46Session *session = nostr_nip46_client_new();
   if (!session) {
+    free(client_secret);
+    nostr_nip46_uri_bunker_free(&parsed);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
                             "Failed to create NIP-46 session");
     return;
   }
 
-  /* Connect to bunker */
+  /* Parse URI into session to set remote_pubkey_hex and relays */
   int rc = nostr_nip46_client_connect(session, ctx->bunker_uri, NULL);
   if (rc != 0) {
+    free(client_secret);
     nostr_nip46_session_free(session);
+    nostr_nip46_uri_bunker_free(&parsed);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "Failed to connect to bunker (error %d)", rc);
+                            "Failed to parse bunker URI into session");
     return;
   }
 
-  /* Get public key */
-  char *pubkey_hex = NULL;
-  rc = nostr_nip46_client_get_public_key(session, &pubkey_hex);
-  if (rc != 0 || !pubkey_hex) {
+  /* Set the CLIENT's secret key (not the URI's secret= which is the connect token) */
+  if (nostr_nip46_client_set_secret(session, client_secret) != 0) {
+    free(client_secret);
     nostr_nip46_session_free(session);
+    nostr_nip46_uri_bunker_free(&parsed);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "Failed to get public key from bunker");
+                            "Failed to set client secret");
     return;
   }
+
+  g_message("[NIP46_LOGIN] Session configured, sending connect RPC...");
+
+  /* Step 4: Send "connect" RPC to remote signer */
+  char *connect_result = NULL;
+  rc = nostr_nip46_client_connect_rpc(session, parsed.secret, "sign_event", &connect_result);
+  if (rc != 0) {
+    free(client_secret);
+    nostr_nip46_session_free(session);
+    nostr_nip46_uri_bunker_free(&parsed);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Connect RPC failed - signer did not respond");
+    return;
+  }
+
+  g_message("[NIP46_LOGIN] Connect RPC success: %s", connect_result);
+
+  /* Validate connect response (should be "ack" or the connect_secret) */
+  if (strcmp(connect_result, "ack") != 0 &&
+      (!parsed.secret || strcmp(connect_result, parsed.secret) != 0)) {
+    g_warning("[NIP46_LOGIN] Unexpected connect response: %s", connect_result);
+    /* Continue anyway - some signers may return different values */
+  }
+  free(connect_result);
+
+  /* Step 5: Send "get_public_key" RPC to get actual user pubkey */
+  g_message("[NIP46_LOGIN] Sending get_public_key RPC...");
+  char *pubkey_hex = NULL;
+  rc = nostr_nip46_client_get_public_key_rpc(session, &pubkey_hex);
+  if (rc != 0 || !pubkey_hex) {
+    free(client_secret);
+    nostr_nip46_session_free(session);
+    nostr_nip46_uri_bunker_free(&parsed);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to get public key from signer");
+    return;
+  }
+
+  g_message("[NIP46_LOGIN] Got user pubkey: %.16s...", pubkey_hex);
+
+  /* Store the client secret for later signing operations */
+  ctx->client_secret = client_secret; /* Transfer ownership */
+
+  nostr_nip46_uri_bunker_free(&parsed);
 
   /* Convert hex pubkey to npub */
   uint8_t pubkey_bytes[32];
@@ -893,7 +977,7 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
       free(pubkey_hex);
       nostr_nip46_session_free(session);
       g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                              "Invalid pubkey from bunker");
+                              "Invalid pubkey format from signer");
       return;
     }
     pubkey_bytes[i] = (uint8_t)byte;
@@ -906,6 +990,31 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
                             "Failed to encode npub");
     return;
+  }
+
+  g_message("[NIP46_LOGIN] Bunker connect SUCCESS: %s", npub);
+
+  /* Save credentials to settings for session persistence */
+  {
+    char *secret_hex = NULL;
+    char *signer_pubkey = NULL;
+    char **relays = NULL;
+    size_t n_relays = 0;
+
+    nostr_nip46_session_get_secret(session, &secret_hex);
+    nostr_nip46_session_get_remote_pubkey(session, &signer_pubkey);
+    nostr_nip46_session_get_relays(session, &relays, &n_relays);
+
+    const char *relay_url = (n_relays > 0 && relays && relays[0]) ? relays[0] : "wss://relay.nsec.app";
+
+    save_nip46_credentials_to_settings(secret_hex, signer_pubkey, relay_url);
+
+    free(secret_hex);
+    free(signer_pubkey);
+    if (relays) {
+      for (size_t i = 0; i < n_relays; i++) free(relays[i]);
+      free(relays);
+    }
   }
 
   /* Store session and return npub */

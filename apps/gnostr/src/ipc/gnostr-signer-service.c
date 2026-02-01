@@ -8,6 +8,7 @@
 #include "nostr/nip46/nip46_msg.h"
 #include "nostr/nip46/nip46_types.h"
 #include "nostr/nip04.h"
+#include "nostr/nip44/nip44.h"
 #include "nostr-keys.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
@@ -396,13 +397,25 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   }
 
   char *encrypted_request = NULL;
-  char *encrypt_err = NULL;
-  /* Use legacy NIP-04 format (AES-CBC with ?iv=) for compatibility with NIP-46 signers like nsec.app */
-  if (nostr_nip04_encrypt_legacy_secure(request_json, signer_pubkey, &sb, &encrypted_request, &encrypt_err) != 0) {
-    g_warning("[SIGNER_SERVICE] NIP-04 encryption failed: %s", encrypt_err ? encrypt_err : "unknown");
+  /* NIP-46 spec requires NIP-44 encryption for all messages */
+  unsigned char signer_pk_bytes[32];
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(signer_pubkey + i * 2, "%2x", &byte) != 1) {
+      g_warning("[SIGNER_SERVICE] Failed to parse signer pubkey");
+      secure_free(&sb);
+      free(request_json);
+      goto cleanup;
+    }
+    signer_pk_bytes[i] = (uint8_t)byte;
+  }
+
+  if (nostr_nip44_encrypt_v2((const uint8_t*)sb.ptr, signer_pk_bytes,
+                              (const uint8_t*)request_json, strlen(request_json),
+                              &encrypted_request) != 0 || !encrypted_request) {
+    g_warning("[SIGNER_SERVICE] NIP-44 encryption failed");
     secure_free(&sb);
     free(request_json);
-    free(encrypt_err);
     goto cleanup;
   }
   free(request_json);
@@ -583,37 +596,59 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
         if (content && sender) {
           g_debug("[SIGNER_SERVICE] Got NIP-46 response from %.16s...", sender);
 
-          /* Decrypt the response */
-          char *plaintext = NULL;
-          char *decrypt_err = NULL;
-          if (nostr_nip04_decrypt_secure(content, sender, &sb, &plaintext, &decrypt_err) == 0 && plaintext) {
-            g_debug("[SIGNER_SERVICE] Decrypted NIP-46 response: %.100s...", plaintext);
-
-            /* Parse the NIP-46 response */
-            NostrNip46Response resp = {0};
-            if (nostr_nip46_response_parse(plaintext, &resp) == 0) {
-              if (resp.error) {
-                g_warning("[SIGNER_SERVICE] NIP-46 signer error: %s", resp.error);
-                error_message = g_strdup_printf("Signer error: %s", resp.error);
-              } else if (resp.result) {
-                /* Success! */
-                signed_event_json = g_strdup(resp.result);
-                g_debug("[SIGNER_SERVICE] Got signed event: %.100s...", signed_event_json);
-              }
-              nostr_nip46_response_free(&resp);
+          /* Parse sender pubkey to bytes for NIP-44 decryption */
+          unsigned char sender_pk_bytes[32];
+          int parse_ok = 1;
+          for (int i = 0; i < 32 && parse_ok; i++) {
+            unsigned int byte;
+            if (sscanf(sender + i * 2, "%2x", &byte) != 1) {
+              parse_ok = 0;
             } else {
-              g_warning("[SIGNER_SERVICE] Failed to parse NIP-46 response JSON");
-              error_message = g_strdup("Invalid response from signer");
+              sender_pk_bytes[i] = (uint8_t)byte;
             }
-            free(plaintext);
-          } else {
-            g_warning("[SIGNER_SERVICE] Failed to decrypt NIP-46 response: %s",
-                      decrypt_err ? decrypt_err : "unknown");
-            error_message = g_strdup_printf("Failed to decrypt signer response: %s",
-                                             decrypt_err ? decrypt_err : "unknown");
-            free(decrypt_err);
           }
-          keep_waiting = FALSE;
+
+          if (!parse_ok) {
+            g_warning("[SIGNER_SERVICE] Failed to parse sender pubkey");
+            error_message = g_strdup("Invalid sender pubkey in response");
+            keep_waiting = FALSE;
+          } else {
+            /* Decrypt the response using NIP-44 */
+            uint8_t *plaintext_bytes = NULL;
+            size_t plaintext_len = 0;
+            if (nostr_nip44_decrypt_v2((const uint8_t*)sb.ptr, sender_pk_bytes,
+                                       content, &plaintext_bytes, &plaintext_len) == 0 && plaintext_bytes) {
+              /* Null-terminate the plaintext */
+              char *plaintext = g_malloc(plaintext_len + 1);
+              memcpy(plaintext, plaintext_bytes, plaintext_len);
+              plaintext[plaintext_len] = '\0';
+              free(plaintext_bytes);
+
+              g_debug("[SIGNER_SERVICE] Decrypted NIP-46 response: %.100s...", plaintext);
+
+              /* Parse the NIP-46 response */
+              NostrNip46Response resp = {0};
+              if (nostr_nip46_response_parse(plaintext, &resp) == 0) {
+                if (resp.error) {
+                  g_warning("[SIGNER_SERVICE] NIP-46 signer error: %s", resp.error);
+                  error_message = g_strdup_printf("Signer error: %s", resp.error);
+                } else if (resp.result) {
+                  /* Success! */
+                  signed_event_json = g_strdup(resp.result);
+                  g_debug("[SIGNER_SERVICE] Got signed event: %.100s...", signed_event_json);
+                }
+                nostr_nip46_response_free(&resp);
+              } else {
+                g_warning("[SIGNER_SERVICE] Failed to parse NIP-46 response JSON");
+                error_message = g_strdup("Invalid response from signer");
+              }
+              g_free(plaintext);
+            } else {
+              g_warning("[SIGNER_SERVICE] Failed to decrypt NIP-46 response with NIP-44");
+              error_message = g_strdup("Failed to decrypt signer response");
+            }
+            keep_waiting = FALSE;
+          }
         }
       }
       received_event = NULL; /* Reset for next iteration */

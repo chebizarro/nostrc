@@ -18,6 +18,22 @@ int nostr_nip46_client_connect(NostrNip46Session *s,
 
 int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubkey_hex);
 
+/* nostrc-nip46-rpc: Send connect RPC to remote signer.
+ * This must be called after parsing bunker:// URI but before other operations.
+ * The session must have: remote_pubkey_hex, secret (client key), relays.
+ * connect_secret: the secret= value from bunker URI (may be NULL)
+ * perms: requested permissions CSV (may be NULL)
+ * On success, out_result contains "ack" or the connect secret. Caller must free. */
+int nostr_nip46_client_connect_rpc(NostrNip46Session *s,
+                                   const char *connect_secret,
+                                   const char *perms,
+                                   char **out_result);
+
+/* nostrc-nip46-rpc: Send get_public_key RPC to remote signer.
+ * Returns the user's actual pubkey (may differ from remote_signer_pubkey).
+ * On success, out_user_pubkey_hex contains hex pubkey. Caller must free. */
+int nostr_nip46_client_get_public_key_rpc(NostrNip46Session *s, char **out_user_pubkey_hex);
+
 /* Set the remote signer's pubkey (received after connect handshake) */
 int nostr_nip46_client_set_signer_pubkey(NostrNip46Session *s, const char *signer_pubkey_hex);
 

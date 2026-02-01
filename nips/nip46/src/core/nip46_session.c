@@ -592,6 +592,326 @@ int nostr_nip46_client_ping(NostrNip46Session *s) {
     (void)s; return 0;
 }
 
+/* nostrc-nip46-rpc: Helper function to send an RPC request and wait for response.
+ * Returns the "result" field from the response on success, or NULL on error.
+ * Caller must free the returned string. */
+static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
+                            const char **params, size_t n_params) {
+    if (!s || !method) return NULL;
+
+    /* Validate session state */
+    const char *peer = s->remote_pubkey_hex;
+    if (!peer) {
+        fprintf(stderr, "[nip46] %s: ERROR: no remote pubkey in session\n", method);
+        return NULL;
+    }
+    if (!s->secret) {
+        fprintf(stderr, "[nip46] %s: ERROR: no secret key in session\n", method);
+        return NULL;
+    }
+    if (s->n_relays == 0 || !s->relays) {
+        fprintf(stderr, "[nip46] %s: ERROR: no relays in session\n", method);
+        return NULL;
+    }
+
+    fprintf(stderr, "[nip46] %s: building request\n", method);
+
+    /* Build request JSON */
+    char req_id[17];
+    snprintf(req_id, sizeof(req_id), "%lx", (unsigned long)time(NULL));
+    char *req = nostr_nip46_request_build(req_id, method, params, n_params);
+    if (!req) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to build request JSON\n", method);
+        return NULL;
+    }
+
+    fprintf(stderr, "[nip46] %s: encrypting request to peer %s\n", method, peer);
+
+    /* Encrypt request using NIP-44 */
+    unsigned char sk[32];
+    if (parse_sk32(s->secret, sk) != 0) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to parse secret key\n", method);
+        free(req);
+        return NULL;
+    }
+    unsigned char peer_pk[32];
+    if (parse_peer_xonly32(peer, peer_pk) != 0) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to parse peer pubkey\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(req);
+        return NULL;
+    }
+
+    char *cipher = NULL;
+    if (nostr_nip44_encrypt_v2(sk, peer_pk, (const uint8_t *)req, strlen(req), &cipher) != 0 || !cipher) {
+        fprintf(stderr, "[nip46] %s: ERROR: NIP-44 encryption failed\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(req);
+        return NULL;
+    }
+    free(req);
+
+    fprintf(stderr, "[nip46] %s: request encrypted successfully\n", method);
+
+    /* Derive our client pubkey from secret */
+    char *client_pubkey = nostr_key_get_public(s->secret);
+    if (!client_pubkey) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to derive client pubkey\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(cipher);
+        return NULL;
+    }
+
+    /* Build kind 24133 request event */
+    NostrEvent *req_ev = nostr_event_new();
+    nostr_event_set_kind(req_ev, NOSTR_EVENT_KIND_NIP46);
+    nostr_event_set_content(req_ev, cipher);
+    nostr_event_set_created_at(req_ev, (int64_t)time(NULL));
+    nostr_event_set_pubkey(req_ev, client_pubkey);
+
+    /* Add p-tag for signer's pubkey */
+    NostrTags *tags = nostr_tags_new(1, nostr_tag_new("p", peer, NULL));
+    nostr_event_set_tags(req_ev, tags);
+
+    /* Sign the request event with our client key */
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to allocate secure buffer\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        free(cipher);
+        nostr_event_free(req_ev);
+        return NULL;
+    }
+    memcpy(sb.ptr, sk, 32);
+
+    if (nostr_event_sign_secure(req_ev, &sb) != 0) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to sign request event\n", method);
+        secure_free(&sb);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        free(cipher);
+        nostr_event_free(req_ev);
+        return NULL;
+    }
+    secure_free(&sb);
+    free(cipher);
+
+    fprintf(stderr, "[nip46] %s: signed request event, publishing to %zu relay(s)\n", method, s->n_relays);
+
+    /* Initialize response context */
+    pthread_mutex_lock(&s_nip46_resp_mutex);
+    if (s_nip46_resp_ctx.response_content) free(s_nip46_resp_ctx.response_content);
+    if (s_nip46_resp_ctx.response_pubkey) free(s_nip46_resp_ctx.response_pubkey);
+    if (s_nip46_resp_ctx.expected_client_pk) free(s_nip46_resp_ctx.expected_client_pk);
+    s_nip46_resp_ctx.response_content = NULL;
+    s_nip46_resp_ctx.response_pubkey = NULL;
+    s_nip46_resp_ctx.expected_client_pk = strdup(client_pubkey);
+    s_nip46_resp_ctx.received = 0;
+    pthread_mutex_unlock(&s_nip46_resp_mutex);
+
+    /* Create relay pool for this request */
+    NostrSimplePool *pool = nostr_simple_pool_new();
+    if (!pool) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to create relay pool\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        nostr_event_free(req_ev);
+        return NULL;
+    }
+
+    nostr_simple_pool_set_event_middleware(pool, nip46_client_event_cb);
+
+    /* Connect to relays and subscribe for responses */
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter *f = nostr_filter_new();
+    int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
+    nostr_filter_set_kinds(f, kinds, 1);
+
+    /* Filter for events tagged with our pubkey */
+    NostrTags *filter_tags = nostr_tags_new(1, nostr_tag_new("p", client_pubkey, NULL));
+    nostr_filter_set_tags(f, filter_tags);
+
+    /* Only get events from after our request */
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 5);
+
+    NostrFilter f_copy = *f;
+    free(f);
+    nostr_filters_add(filters, &f_copy);
+
+    /* Ensure relays are connected */
+    for (size_t i = 0; i < s->n_relays; i++) {
+        nostr_simple_pool_ensure_relay(pool, s->relays[i]);
+    }
+
+    nostr_simple_pool_subscribe(pool, (const char **)s->relays, s->n_relays, *filters, true);
+    nostr_simple_pool_start(pool);
+
+    /* Publish the request to each relay */
+    for (size_t i = 0; i < s->n_relays; i++) {
+        fprintf(stderr, "[nip46] %s: publishing to %s\n", method, s->relays[i]);
+        for (size_t r = 0; r < pool->relay_count; r++) {
+            if (pool->relays[r] && pool->relays[r]->url &&
+                strcmp(pool->relays[r]->url, s->relays[i]) == 0) {
+                nostr_relay_publish(pool->relays[r], req_ev);
+                break;
+            }
+        }
+    }
+
+    nostr_event_free(req_ev);
+    nostr_filters_free(filters);
+
+    /* Wait for response */
+    pthread_mutex_lock(&s_nip46_resp_mutex);
+    while (!s_nip46_resp_ctx.received) {
+        pthread_cond_wait(&s_nip46_resp_cond, &s_nip46_resp_mutex);
+    }
+    char *response_content = s_nip46_resp_ctx.response_content;
+    char *response_pubkey = s_nip46_resp_ctx.response_pubkey;
+    s_nip46_resp_ctx.response_content = NULL;
+    s_nip46_resp_ctx.response_pubkey = NULL;
+    pthread_mutex_unlock(&s_nip46_resp_mutex);
+
+    nostr_simple_pool_stop(pool);
+    nostr_simple_pool_free(pool);
+
+    if (!response_content) {
+        fprintf(stderr, "[nip46] %s: ERROR: response content is NULL\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        if (response_pubkey) free(response_pubkey);
+        return NULL;
+    }
+
+    fprintf(stderr, "[nip46] %s: received response, decrypting...\n", method);
+
+    /* Decrypt response using NIP-44 */
+    unsigned char resp_pk[32];
+    if (parse_peer_xonly32(response_pubkey, resp_pk) != 0) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to parse response pubkey\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        free(response_content);
+        free(response_pubkey);
+        return NULL;
+    }
+
+    uint8_t *plaintext = NULL;
+    size_t plaintext_len = 0;
+    if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to decrypt response\n", method);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        free(response_content);
+        free(response_pubkey);
+        return NULL;
+    }
+    secure_wipe(sk, sizeof(sk));
+    free(client_pubkey);
+    free(response_content);
+    free(response_pubkey);
+
+    /* Null-terminate for JSON parsing */
+    char *response_json = (char *)malloc(plaintext_len + 1);
+    if (!response_json) {
+        free(plaintext);
+        return NULL;
+    }
+    memcpy(response_json, plaintext, plaintext_len);
+    response_json[plaintext_len] = '\0';
+    free(plaintext);
+
+    fprintf(stderr, "[nip46] %s: decrypted response: %.100s...\n", method, response_json);
+
+    /* Parse response and extract result */
+    if (!nostr_json_is_valid(response_json)) {
+        fprintf(stderr, "[nip46] %s: ERROR: invalid response JSON\n", method);
+        free(response_json);
+        return NULL;
+    }
+
+    /* Check for error */
+    char *err_msg = NULL;
+    if (nostr_json_has_key(response_json, "error") &&
+        nostr_json_get_type(response_json, "error") == NOSTR_JSON_STRING &&
+        nostr_json_get_string(response_json, "error", &err_msg) == 0 && err_msg && *err_msg) {
+        fprintf(stderr, "[nip46] %s: ERROR: signer error: %s\n", method, err_msg);
+        free(err_msg);
+        free(response_json);
+        return NULL;
+    }
+    free(err_msg);
+
+    /* Get the result */
+    char *result = NULL;
+    if (nostr_json_get_string(response_json, "result", &result) != 0 || !result) {
+        fprintf(stderr, "[nip46] %s: ERROR: no result in response\n", method);
+        free(response_json);
+        return NULL;
+    }
+    free(response_json);
+
+    fprintf(stderr, "[nip46] %s: SUCCESS - result: %.50s\n", method, result);
+    return result;
+}
+
+/* nostrc-nip46-rpc: Send connect RPC to remote signer.
+ * This must be called after parsing bunker:// URI but before other operations.
+ * The session must have: remote_pubkey_hex, secret (client key), relays.
+ * On success, returns "ack" or the connect secret. Caller must free. */
+int nostr_nip46_client_connect_rpc(NostrNip46Session *s,
+                                   const char *connect_secret,
+                                   const char *perms,
+                                   char **out_result) {
+    if (!s || !out_result) return -1;
+    *out_result = NULL;
+
+    /* Build connect params: [remote_signer_pubkey, optional_secret, optional_perms] */
+    const char *params[3];
+    size_t n_params = 0;
+
+    if (!s->remote_pubkey_hex) {
+        fprintf(stderr, "[nip46] connect_rpc: ERROR: no remote_pubkey_hex\n");
+        return -1;
+    }
+    params[n_params++] = s->remote_pubkey_hex;
+    params[n_params++] = connect_secret ? connect_secret : "";
+    params[n_params++] = perms ? perms : "";
+
+    char *result = nip46_rpc_call(s, "connect", params, n_params);
+    if (!result) {
+        return -1;
+    }
+
+    *out_result = result;
+    return 0;
+}
+
+/* nostrc-nip46-rpc: Send get_public_key RPC to remote signer.
+ * Returns the user's actual pubkey (may differ from remote_signer_pubkey).
+ * On success, returns hex pubkey. Caller must free. */
+int nostr_nip46_client_get_public_key_rpc(NostrNip46Session *s, char **out_user_pubkey_hex) {
+    if (!s || !out_user_pubkey_hex) return -1;
+    *out_user_pubkey_hex = NULL;
+
+    char *result = nip46_rpc_call(s, "get_public_key", NULL, 0);
+    if (!result) {
+        return -1;
+    }
+
+    /* Validate it looks like a pubkey (64 hex chars) */
+    size_t len = strlen(result);
+    if (len != 64) {
+        fprintf(stderr, "[nip46] get_public_key_rpc: ERROR: invalid pubkey length %zu\n", len);
+        free(result);
+        return -1;
+    }
+
+    *out_user_pubkey_hex = result;
+    return 0;
+}
+
 int nostr_nip46_client_nip04_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
     if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
     if (!s->secret) return -1;
