@@ -15,6 +15,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <property name="margin-bottom">6</property>
         <property name="margin-start">6</property>
         <property name="margin-end">6</property>
+        <property name="vexpand">true</property>
+        <property name="hexpand">true</property>
         <child>
           <object class="GtkBox" id="reply_indicator_box">
             <property name="orientation">0</property>
@@ -73,7 +75,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
-          <object class="GtkTextView" id="text_view"></object>
+          <object class="GtkScrolledWindow">
+            <property name="vexpand">true</property>
+            <property name="hexpand">true</property>
+            <property name="min-content-height">100</property>
+            <child>
+              <object class="GtkTextView" id="text_view">
+                <property name="wrap-mode">3</property>
+                <property name="left-margin">6</property>
+                <property name="right-margin">6</property>
+                <property name="top-margin">6</property>
+                <property name="bottom-margin">6</property>
+              </object>
+            </child>
+          </object>
         </child>
         <child>
           <object class="GtkBox" id="upload_progress_box">

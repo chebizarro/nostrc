@@ -80,14 +80,41 @@ int nostr_b32_encode(const char *hrp, const uint8_t *data5, size_t data5_len, ch
     return 0;
 }
 
+/* Check if character is valid bech32 data character (lowercase only checked post-HRP) */
+static int is_bech32_data_char(char c) {
+    /* Valid bech32 chars: a-z excluding b,i,o and 0-9 excluding 1 */
+    if (c >= 'a' && c <= 'z' && c != 'b' && c != 'i' && c != 'o') return 1;
+    if (c >= 'A' && c <= 'Z' && c != 'B' && c != 'I' && c != 'O') return 1;
+    if (c >= '0' && c <= '9' && c != '1') return 1;
+    return 0;
+}
+
 int nostr_b32_decode(const char *bech, char **out_hrp, uint8_t **out_data5, size_t *out_data5_len) {
     if (!bech || !out_hrp || !out_data5) return -1;
     *out_hrp = NULL; *out_data5 = NULL; if (out_data5_len) *out_data5_len = 0;
     ensure_rev_table();
-    size_t len = strlen(bech);
+
+    /* Find effective length by stopping at first non-bech32 character after data portion.
+     * HRP can be any printable ASCII (33-126), followed by '1', then bech32 data chars. */
+    size_t full_len = strlen(bech);
+
+    /* First find the last '1' separator (HRP cannot contain it) */
+    ssize_t pos1 = -1;
+    for (size_t i = 0; i < full_len; ++i) {
+        if (bech[i] == '1') pos1 = (ssize_t)i;
+    }
+    if (pos1 < 1) return -1; /* No valid separator found */
+
+    /* Now find effective length: scan from after '1' until first invalid bech32 data char */
+    size_t len = (size_t)pos1 + 1; /* Start after '1' */
+    while (len < full_len && is_bech32_data_char(bech[len])) {
+        len++;
+    }
+
     if (len < 8) return -1; // hrp(1)+'1'+data(1)+checksum(6)
     // Check case rules and find separator
-    int has_lower = 0, has_upper = 0; ssize_t pos1 = -1;
+    int has_lower = 0, has_upper = 0;
+    pos1 = -1; /* Reset and find again within effective length */
     for (size_t i = 0; i < len; ++i) {
         char c = bech[i];
         if (c >= 'a' && c <= 'z') has_lower = 1;

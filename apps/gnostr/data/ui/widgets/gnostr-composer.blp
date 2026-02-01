@@ -8,6 +8,8 @@ template $GnostrComposer: Widget {
     margin-bottom: 6;
     margin-start: 6;
     margin-end: 6;
+    vexpand: true;
+    hexpand: true;
 
     Box reply_indicator_box {
       orientation: horizontal;
@@ -63,7 +65,19 @@ template $GnostrComposer: Widget {
       }
     }
 
-    TextView text_view {}
+    ScrolledWindow {
+      vexpand: true;
+      hexpand: true;
+      min-content-height: 100;
+
+      TextView text_view {
+        wrap-mode: word_char;
+        left-margin: 6;
+        right-margin: 6;
+        top-margin: 6;
+        bottom-margin: 6;
+      }
+    }
 
     Box upload_progress_box {
       orientation: horizontal;
