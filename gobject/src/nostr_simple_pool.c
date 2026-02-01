@@ -573,6 +573,11 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                 if (it->eose_us < 0 && it->start_us > 0) {
                     it->eose_us = g_get_monotonic_time() - it->start_us;
                 }
+                const char *url = it->relay ? nostr_relay_get_url_const(it->relay) : "<unknown>";
+                const char *sid = nostr_subscription_get_id(it->sub);
+                g_message("[EOSE] relay=%s sid=%s latency=%.1fms",
+                          url, sid ? sid : "null",
+                          it->eose_us >= 0 ? it->eose_us / 1000.0 : -1.0);
             }
         }
 
@@ -616,6 +621,9 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         SubItem *it = (SubItem*)subs->pdata[i];
         if (it) {
             if (it->sub) {
+                const char *url = it->relay ? nostr_relay_get_url_const(it->relay) : "<unknown>";
+                const char *sid = nostr_subscription_get_id(it->sub);
+                g_message("[SUB_CLOSE] relay=%s sid=%s", url, sid ? sid : "null");
                 nostr_subscription_close(it->sub, NULL);
                 nostr_subscription_unsubscribe(it->sub);  /* Signal lifecycle thread to exit */
                 nostr_subscription_free(it->sub);
@@ -1408,10 +1416,13 @@ static void *fetch_profiles_goroutine(void *arg) {
                     item->eosed = TRUE;
                     guint eosed_count = 0;
                     for (guint i = 0; i < ctx->subs->len; i++) {
-                        SubItem *item = (SubItem*)ctx->subs->pdata[i];
-                        if (item && item->sub && item->eosed) eosed_count++;
+                        SubItem *it = (SubItem*)ctx->subs->pdata[i];
+                        if (it && it->sub && it->eosed) eosed_count++;
                     }
-                    g_debug("[GOROUTINE] EOSE received from %s", item->relay_url ? item->relay_url : "(null)");
+                    const char *sid = nostr_subscription_get_id(item->sub);
+                    g_message("[EOSE] relay=%s sid=%s",
+                              item->relay_url ? item->relay_url : "(null)",
+                              sid ? sid : "null");
                     any_activity = TRUE;
                 }
             }
@@ -1485,27 +1496,27 @@ cleanup_and_exit:
             
             /* Only cleanup subscriptions that have received EOSE */
             if (item->eosed) {
-                g_debug("[GOROUTINE] Cleanup for EOSED subscription sid=%s relay=%s", 
-                          sid_copy[0] ? sid_copy : "null", item->relay_url ? item->relay_url : "(null)");
+                g_message("[SUB_CLOSE] relay=%s sid=%s (completed)",
+                          item->relay_url ? item->relay_url : "(null)",
+                          sid_copy[0] ? sid_copy : "null");
 
                 /* Proper cleanup order for subscriptions that have completed:
                  * 1. Close (sends CLOSE message to relay)
                  * 2. Unsubscribe (cancels context, signals worker to exit)
                  * 3. Wait (ensures worker thread exits)
                  * 4. Free (releases resources) */
-                
+
                 nostr_subscription_close(item->sub, NULL);
                 nostr_subscription_unsubscribe(item->sub);
                 nostr_subscription_wait(item->sub);
                 nostr_subscription_free(item->sub);
-                
-                g_debug("[GOROUTINE] Cleanup complete for sid=%s", sid_copy[0] ? sid_copy : "null");
             } else {
                 /* Subscription didn't receive EOSE - keep it open but cancel context
                  * to stop it from processing more events */
-                g_debug("[PROFILE_FETCH] Subscription sid=%s relay=%s did not receive EOSE within timeout, closing (normal for slow relays)",
-                        sid_copy[0] ? sid_copy : "null", item->relay_url ? item->relay_url : "(null)");
-                
+                g_message("[SUB_CLOSE] relay=%s sid=%s (timeout, no EOSE)",
+                          item->relay_url ? item->relay_url : "(null)",
+                          sid_copy[0] ? sid_copy : "null");
+
                 /* Still need to cleanup even if no EOSE, but log it as abnormal */
                 nostr_subscription_close(item->sub, NULL);
                 nostr_subscription_unsubscribe(item->sub);
