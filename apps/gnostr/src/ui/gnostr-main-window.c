@@ -3123,6 +3123,50 @@ static void on_show_preferences_activated(GSimpleAction *action, GVariant *param
 /* Forward declaration for updating login UI state */
 static void update_login_ui_state(GnostrMainWindow *self);
 
+/* nostrc-51a.10: Callback for badge manager notification events.
+ * Populates the NotificationsView when new events arrive. */
+static void
+on_notification_event(GnostrBadgeManager *manager,
+                      GnostrNotificationType type,
+                      const char *sender_pubkey,
+                      const char *sender_name,
+                      const char *content,
+                      const char *event_id,
+                      guint64 amount_sats,
+                      gpointer user_data)
+{
+  (void)manager;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->session_view) return;
+
+  /* Get the notifications view from the session view */
+  GtkWidget *notif_widget = gnostr_session_view_get_notifications_view(self->session_view);
+  if (!notif_widget || !GNOSTR_IS_NOTIFICATIONS_VIEW(notif_widget)) return;
+
+  GnostrNotificationsView *notif_view = GNOSTR_NOTIFICATIONS_VIEW(notif_widget);
+
+  /* Create notification object */
+  GnostrNotification *notif = g_new0(GnostrNotification, 1);
+  notif->id = event_id ? g_strdup(event_id) : g_strdup_printf("notif-%" G_GINT64_FORMAT, g_get_real_time());
+  notif->type = type;
+  notif->actor_pubkey = sender_pubkey ? g_strdup(sender_pubkey) : NULL;
+  notif->actor_name = sender_name ? g_strdup(sender_name) : NULL;
+  notif->content_preview = content ? g_strdup(content) : NULL;
+  notif->target_note_id = event_id ? g_strdup(event_id) : NULL;
+  notif->created_at = g_get_real_time() / G_USEC_PER_SEC;
+  notif->is_read = FALSE;
+  notif->zap_amount_msats = amount_sats * 1000;  /* Convert sats to msats */
+
+  /* Add to the notifications view */
+  gnostr_notifications_view_add_notification(notif_view, notif);
+
+  /* The view takes ownership, but we need to free our copy */
+  gnostr_notification_free(notif);
+
+  g_debug("[NOTIFICATIONS] Added notification: type=%d from %.16s...",
+          type, sender_pubkey ? sender_pubkey : "(unknown)");
+}
+
 /* Signal handler for when user successfully signs in via login dialog */
 static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -3160,6 +3204,15 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
   /* Update UI to show signed-in state */
   update_login_ui_state(self);
+
+  /* nostrc-51a.10: Start notification subscriptions */
+  if (self->user_pubkey_hex) {
+    GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
+    gnostr_badge_manager_set_user_pubkey(badge_mgr, self->user_pubkey_hex);
+    gnostr_badge_manager_set_event_callback(badge_mgr, on_notification_event, self, NULL);
+    gnostr_badge_manager_start_subscriptions(badge_mgr);
+    g_debug("[AUTH] Started notification subscriptions for user %.16s...", self->user_pubkey_hex);
+  }
 
   /* Start gift wrap subscription for encrypted DMs */
   start_gift_wrap_subscription(self);
@@ -3222,6 +3275,11 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Stop gift wrap subscription when user signs out */
   stop_gift_wrap_subscription(self);
+
+  /* nostrc-51a.10: Stop notification subscriptions */
+  GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
+  gnostr_badge_manager_stop_subscriptions(badge_mgr);
+  gnostr_badge_manager_set_event_callback(badge_mgr, NULL, NULL, NULL);
 
   /* Clear the current npub from settings */
   GSettings *settings = g_settings_new("org.gnostr.Client");

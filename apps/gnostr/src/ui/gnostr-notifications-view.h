@@ -2,6 +2,7 @@
 #define GNOSTR_NOTIFICATIONS_VIEW_H
 
 #include <gtk/gtk.h>
+#include "../notifications/badge_manager.h"
 
 G_BEGIN_DECLS
 
@@ -19,18 +20,14 @@ G_DECLARE_FINAL_TYPE(GnostrNotificationsView, gnostr_notifications_view, GNOSTR,
 
 typedef struct _GnostrNotificationsView GnostrNotificationsView;
 
-/**
- * Notification types
- */
-typedef enum {
-    GNOSTR_NOTIFICATION_TYPE_MENTION,    /* Someone mentioned you in a note */
-    GNOSTR_NOTIFICATION_TYPE_REPLY,      /* Someone replied to your note */
-    GNOSTR_NOTIFICATION_TYPE_REPOST,     /* Someone reposted your note (kind 6) */
-    GNOSTR_NOTIFICATION_TYPE_REACTION,   /* Someone reacted to your note (kind 7) */
-    GNOSTR_NOTIFICATION_TYPE_ZAP,        /* Someone zapped your note (kind 9735) */
-    GNOSTR_NOTIFICATION_TYPE_FOLLOW,     /* Someone followed you */
-    GNOSTR_NOTIFICATION_TYPE_LIST,       /* Someone added you to a NIP-51 list */
-} GnostrNotificationType;
+/* Use GnostrNotificationType from badge_manager.h with compatibility aliases */
+#define GNOSTR_NOTIFICATION_TYPE_MENTION   GNOSTR_NOTIFICATION_MENTION
+#define GNOSTR_NOTIFICATION_TYPE_REPLY     GNOSTR_NOTIFICATION_REPLY
+#define GNOSTR_NOTIFICATION_TYPE_REPOST    GNOSTR_NOTIFICATION_REPOST
+#define GNOSTR_NOTIFICATION_TYPE_REACTION  GNOSTR_NOTIFICATION_REACTION
+#define GNOSTR_NOTIFICATION_TYPE_ZAP       GNOSTR_NOTIFICATION_ZAP
+#define GNOSTR_NOTIFICATION_TYPE_FOLLOW    GNOSTR_NOTIFICATION_FOLLOWER
+#define GNOSTR_NOTIFICATION_TYPE_LIST      GNOSTR_NOTIFICATION_LIST
 
 /**
  * Notification data structure
