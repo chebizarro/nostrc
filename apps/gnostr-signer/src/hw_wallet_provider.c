@@ -447,6 +447,7 @@ struct _GnHwWalletManager {
   GnHwWalletPromptCallback prompt_callback;
   gpointer prompt_callback_data;
   GHashTable *device_providers; /* device_id -> provider mapping */
+  GHashTable *previous_devices; /* device_id -> GnHwWalletDeviceInfo* from last enumeration */
 };
 
 enum {
@@ -474,6 +475,7 @@ gn_hw_wallet_manager_finalize(GObject *object)
   g_list_free_full(self->providers, g_object_unref);
   self->providers = NULL;
   g_hash_table_unref(self->device_providers);
+  g_hash_table_unref(self->previous_devices);
   g_mutex_unlock(&self->lock);
 
   g_mutex_clear(&self->lock);
@@ -572,6 +574,9 @@ gn_hw_wallet_manager_init(GnHwWalletManager *self)
   self->prompt_callback_data = NULL;
   self->device_providers = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                   g_free, NULL);
+  self->previous_devices = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                  g_free,
+                                                  (GDestroyNotify)gn_hw_wallet_device_info_free);
 }
 
 GnHwWalletManager *
@@ -689,7 +694,52 @@ monitor_devices_callback(gpointer user_data)
   }
 
   if (devices) {
-    /* TODO: Compare with previous enumeration and emit signals */
+    /* Build a set of current device IDs */
+    GHashTable *current_ids = g_hash_table_new(g_str_hash, g_str_equal);
+    for (guint i = 0; i < devices->len; i++) {
+      GnHwWalletDeviceInfo *info = g_ptr_array_index(devices, i);
+      g_hash_table_add(current_ids, info->device_id);
+    }
+
+    /* Check for disconnected devices (in previous but not current) */
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->previous_devices);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      const gchar *device_id = key;
+      if (!g_hash_table_contains(current_ids, device_id)) {
+        /* Device was disconnected */
+        g_signal_emit(self, manager_signals[SIGNAL_DEVICE_DISCONNECTED], 0, device_id);
+        g_message("Hardware wallet disconnected: %s", device_id);
+      }
+    }
+
+    /* Check for newly connected devices and state changes */
+    for (guint i = 0; i < devices->len; i++) {
+      GnHwWalletDeviceInfo *info = g_ptr_array_index(devices, i);
+      GnHwWalletDeviceInfo *prev_info = g_hash_table_lookup(self->previous_devices, info->device_id);
+
+      if (!prev_info) {
+        /* Newly connected device */
+        g_signal_emit(self, manager_signals[SIGNAL_DEVICE_CONNECTED], 0, info);
+        g_message("Hardware wallet connected: %s (%s)", info->device_id, info->product);
+      } else if (prev_info->state != info->state) {
+        /* State changed */
+        g_signal_emit(self, manager_signals[SIGNAL_DEVICE_STATE_CHANGED], 0,
+                      info->device_id, (gint)info->state);
+      }
+    }
+
+    /* Update previous_devices with current enumeration */
+    g_hash_table_remove_all(self->previous_devices);
+    for (guint i = 0; i < devices->len; i++) {
+      GnHwWalletDeviceInfo *info = g_ptr_array_index(devices, i);
+      g_hash_table_replace(self->previous_devices,
+                           g_strdup(info->device_id),
+                           gn_hw_wallet_device_info_copy(info));
+    }
+
+    g_hash_table_unref(current_ids);
     g_ptr_array_unref(devices);
   }
 

@@ -702,13 +702,40 @@ gboolean multisig_coordinator_connect_remote(MultisigCoordinator *coordinator,
     g_hash_table_replace(coordinator->remote_connections, g_strdup(npub), conn);
   }
 
-  conn->state = REMOTE_SIGNER_CONNECTING;
   conn->last_contact = (gint64)time(NULL);
 
   g_free(npub);
 
-  /* TODO: Actually establish NIP-46 connection here */
-  g_message("multisig_coordinator: initiated connection to remote signer");
+  /* Create NIP-46 client session and connect to bunker */
+  if (!conn->nip46_session) {
+    conn->nip46_session = nostr_nip46_client_new();
+    if (!conn->nip46_session) {
+      conn->state = REMOTE_SIGNER_ERROR;
+      conn->error_message = g_strdup("Failed to create NIP-46 session");
+      g_warning("multisig_coordinator: failed to create NIP-46 session");
+      g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_BACKEND,
+                  "Failed to create NIP-46 session");
+      return FALSE;
+    }
+
+    conn->state = REMOTE_SIGNER_CONNECTING;
+
+    /* Connect to the bunker - this initiates the NIP-46 handshake */
+    int rc = nostr_nip46_client_connect(conn->nip46_session, bunker_uri, NULL);
+    if (rc != 0) {
+      conn->state = REMOTE_SIGNER_ERROR;
+      conn->error_message = g_strdup("NIP-46 connection failed");
+      g_warning("multisig_coordinator: NIP-46 connect failed (rc=%d)", rc);
+      nostr_nip46_session_free(conn->nip46_session);
+      conn->nip46_session = NULL;
+      g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_BACKEND,
+                  "NIP-46 connection failed");
+      return FALSE;
+    }
+
+    conn->state = REMOTE_SIGNER_CONNECTED;
+    g_message("multisig_coordinator: connected to remote signer via NIP-46");
+  }
 
   return TRUE;
 }

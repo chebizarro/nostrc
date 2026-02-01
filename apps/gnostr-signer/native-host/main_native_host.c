@@ -18,6 +18,7 @@
 #include "native_messaging.h"
 
 #include <glib.h>
+#include <gio/gio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
@@ -90,9 +91,144 @@ static void print_version(void) {
   g_print("%s version %s\n", PROGRAM_NAME, VERSION);
 }
 
-/* Authorization callback - for now auto-approve
- * In a real implementation, this would communicate with the main
- * gnostr-signer UI to get user approval */
+/* D-Bus approval request context */
+typedef struct {
+  GMainLoop *loop;
+  gchar *request_id;
+  gboolean approved;
+  gboolean got_response;
+} ApprovalContext;
+
+/* D-Bus constants */
+#define SIGNER_DBUS_NAME "org.nostr.Signer"
+#define SIGNER_DBUS_PATH "/org/nostr/signer"
+#define SIGNER_DBUS_INTERFACE "org.nostr.Signer"
+
+/* Handle ApprovalCompleted signal */
+static void on_approval_completed(GDBusConnection *connection,
+                                  const gchar *sender_name,
+                                  const gchar *object_path,
+                                  const gchar *interface_name,
+                                  const gchar *signal_name,
+                                  GVariant *parameters,
+                                  gpointer user_data) {
+  (void)connection;
+  (void)sender_name;
+  (void)object_path;
+  (void)interface_name;
+  (void)signal_name;
+
+  ApprovalContext *ctx = user_data;
+  const gchar *request_id = NULL;
+  gboolean decision = FALSE;
+
+  g_variant_get(parameters, "(&sb)", &request_id, &decision);
+
+  if (g_strcmp0(request_id, ctx->request_id) == 0) {
+    ctx->approved = decision;
+    ctx->got_response = TRUE;
+    g_main_loop_quit(ctx->loop);
+  }
+}
+
+/* Timeout callback */
+static gboolean approval_timeout(gpointer user_data) {
+  ApprovalContext *ctx = user_data;
+  g_main_loop_quit(ctx->loop);
+  return G_SOURCE_REMOVE;
+}
+
+/* Request approval via D-Bus */
+static gboolean request_dbus_approval(const gchar *app_id,
+                                       const gchar *identity,
+                                       const gchar *kind,
+                                       const gchar *preview) {
+  GError *error = NULL;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+
+  if (!bus) {
+    g_printerr("[%s] Failed to connect to session bus: %s\n",
+               PROGRAM_NAME, error ? error->message : "unknown");
+    g_clear_error(&error);
+    return FALSE;
+  }
+
+  /* Generate unique request ID */
+  gchar *request_id = g_uuid_string_random();
+
+  /* Set up approval context */
+  ApprovalContext ctx = {
+    .loop = g_main_loop_new(NULL, FALSE),
+    .request_id = request_id,
+    .approved = FALSE,
+    .got_response = FALSE
+  };
+
+  /* Subscribe to ApprovalCompleted signal */
+  guint sub_id = g_dbus_connection_signal_subscribe(
+    bus,
+    SIGNER_DBUS_NAME,
+    SIGNER_DBUS_INTERFACE,
+    "ApprovalCompleted",
+    SIGNER_DBUS_PATH,
+    NULL,
+    G_DBUS_SIGNAL_FLAGS_NONE,
+    on_approval_completed,
+    &ctx,
+    NULL
+  );
+
+  /* Emit ApprovalRequested signal */
+  g_dbus_connection_emit_signal(
+    bus,
+    NULL, /* destination - broadcast */
+    SIGNER_DBUS_PATH,
+    SIGNER_DBUS_INTERFACE,
+    "ApprovalRequested",
+    g_variant_new("(sssss)",
+                  app_id ? app_id : "unknown",
+                  identity ? identity : "",
+                  kind ? kind : "event",
+                  preview ? preview : "",
+                  request_id),
+    &error
+  );
+
+  if (error) {
+    g_printerr("[%s] Failed to emit ApprovalRequested: %s\n",
+               PROGRAM_NAME, error->message);
+    g_clear_error(&error);
+    g_dbus_connection_signal_unsubscribe(bus, sub_id);
+    g_main_loop_unref(ctx.loop);
+    g_free(request_id);
+    g_object_unref(bus);
+    return FALSE;
+  }
+
+  /* Set 60 second timeout */
+  guint timeout_id = g_timeout_add_seconds(60, approval_timeout, &ctx);
+
+  /* Wait for response */
+  g_main_loop_run(ctx.loop);
+
+  /* Cleanup */
+  if (g_source_remove(timeout_id)) {
+    /* Timeout was still pending, source removed successfully */
+  }
+  g_dbus_connection_signal_unsubscribe(bus, sub_id);
+  g_main_loop_unref(ctx.loop);
+  g_free(request_id);
+  g_object_unref(bus);
+
+  if (!ctx.got_response) {
+    g_printerr("[%s] Approval request timed out\n", PROGRAM_NAME);
+    return FALSE;
+  }
+
+  return ctx.approved;
+}
+
+/* Authorization callback - requests approval via D-Bus to gnostr-signer UI */
 static gboolean auth_callback(const NativeMessagingRequest *req,
                               const gchar *preview,
                               gpointer user_data) {
@@ -102,14 +238,24 @@ static gboolean auth_callback(const NativeMessagingRequest *req,
     return TRUE;
   }
 
-  /* TODO: Implement proper UI approval via D-Bus to gnostr-signer */
-  /* For now, log the request and approve */
+  /* Log the request */
   g_printerr("[%s] Request: %s - %s\n", PROGRAM_NAME,
              req->method_str ? req->method_str : "unknown",
              preview ? preview : "");
 
-  /* Auto-approve for testing - production should prompt user */
-  return TRUE;
+  /* Request approval via D-Bus to gnostr-signer UI */
+  gboolean approved = request_dbus_approval(
+    req->origin,      /* app_id - browser extension origin */
+    NULL,             /* identity - use default */
+    req->method_str,  /* kind - the request type */
+    preview           /* preview - human-readable content */
+  );
+
+  if (!approved) {
+    g_printerr("[%s] Request denied by user\n", PROGRAM_NAME);
+  }
+
+  return approved;
 }
 
 int main(int argc, char **argv) {
