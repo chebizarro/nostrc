@@ -750,6 +750,9 @@ static void *message_loop(void *arg) {
         case NOSTR_ENVELOPE_NOTICE: {
             NostrNoticeEnvelope *ne = (NostrNoticeEnvelope *)envelope;
             if (r->priv->notice_handler) r->priv->notice_handler(ne->message);
+            /* nostrc-95c: Log NOTICE messages at INFO level for debugging relay issues */
+            fprintf(stderr, "[RELAY_NOTICE] relay=%s message=\"%s\"\n",
+                    r->url ? r->url : "unknown", ne->message ? ne->message : "");
             char tmp[256]; snprintf(tmp, sizeof(tmp), "NOTICE: %s", ne->message ? ne->message : "");
             relay_debug_emit(r, tmp);
             break; }
@@ -898,6 +901,11 @@ static void *message_loop(void *arg) {
             NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
             NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, nostr_sub_id_to_serial(env->subscription_id));
             if (subscription) nostr_subscription_dispatch_closed(subscription, env->reason);
+            /* nostrc-95c: Log CLOSED with reason to help debug subscription issues */
+            fprintf(stderr, "[RELAY_CLOSED] relay=%s subscription=%s reason=\"%s\"\n",
+                    r->url ? r->url : "unknown",
+                    env->subscription_id ? env->subscription_id : "",
+                    env->reason ? env->reason : "");
             char tmp[256]; snprintf(tmp, sizeof(tmp), "CLOSED sid=%s reason=%s",
                                    env->subscription_id ? env->subscription_id : "",
                                    env->reason ? env->reason : "");
@@ -905,6 +913,13 @@ static void *message_loop(void *arg) {
             break; }
         case NOSTR_ENVELOPE_OK: {
             NostrOKEnvelope *oe = (NostrOKEnvelope *)envelope;
+            /* nostrc-95c: Log OK failures at WARN level to surface publish rejections */
+            if (!oe->ok) {
+                fprintf(stderr, "[RELAY_OK_FAIL] relay=%s event=%s reason=\"%s\"\n",
+                        r->url ? r->url : "unknown",
+                        oe->event_id ? oe->event_id : "",
+                        oe->reason ? oe->reason : "");
+            }
             char tmp[256]; snprintf(tmp, sizeof(tmp), "OK id=%s ok=%s reason=%s",
                                    oe->event_id ? oe->event_id : "",
                                    oe->ok ? "true" : "false",
