@@ -2361,6 +2361,8 @@ static void load_thread(GnostrThreadView *self) {
   ThreadEventItem *focus_item = NULL;
   if (focus_id) {
     focus_item = load_event_by_id(self, focus_id);
+    g_message("[THREAD_VIEW] nostrdb lookup for focus %.16s: %s",
+              focus_id, focus_item ? "FOUND" : "NOT FOUND");
 
     /* If we found the focus event, extract root_id from it */
     if (focus_item && focus_item->root_id && !self->thread_root_id) {
@@ -2392,7 +2394,10 @@ static void load_thread(GnostrThreadView *self) {
 
     char **results = NULL;
     int count = 0;
-    if (storage_ndb_query(txn, filter_json, &results, &count) == 0 && results) {
+    int query_rc = storage_ndb_query(txn, filter_json, &results, &count);
+    g_message("[THREAD_VIEW] nostrdb query for root %.16s: rc=%d count=%d",
+              query_root, query_rc, count);
+    if (query_rc == 0 && results) {
       for (int i = 0; i < count; i++) {
         if (results[i]) {
           add_event_from_json(self, results[i]);
@@ -2423,8 +2428,12 @@ static void load_thread(GnostrThreadView *self) {
     storage_ndb_end_query(txn);
   }
 
+  /* Log total events loaded from nostrdb */
+  guint ndb_count = g_hash_table_size(self->events_by_id);
+  g_message("[THREAD_VIEW] Total events loaded from nostrdb: %u", ndb_count);
+
   /* Show what we have from local DB */
-  if (g_hash_table_size(self->events_by_id) > 0) {
+  if (ndb_count > 0) {
     rebuild_thread_ui(self);
   }
 
