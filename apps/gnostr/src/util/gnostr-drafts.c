@@ -516,11 +516,7 @@ void gnostr_drafts_save_async(GnostrDrafts *self,
   g_hash_table_replace(self->cache, g_strdup(draft->d_tag), gnostr_draft_copy(draft));
   g_mutex_unlock(&self->lock);
 
-  /* TODO: Optionally publish to relays with NIP-44 encryption
-   * This requires signer support for NIP-44 encryption which is
-   * not yet fully integrated into the unified signer service.
-   * For now, drafts are stored locally only.
-   */
+  /* Relay sync requires nostrc-n44s (NIP-44 signer integration) */
 
   if (callback) {
     callback(self, TRUE, NULL, user_data);
@@ -544,9 +540,7 @@ void gnostr_drafts_delete_async(GnostrDrafts *self,
   g_hash_table_remove(self->cache, d_tag);
   g_mutex_unlock(&self->lock);
 
-  /* TODO: Publish blanked event to relays to signal deletion
-   * This requires signer integration.
-   */
+  /* Relay deletion requires nostrc-n44s (NIP-44 signer integration) */
 
   if (callback) {
     callback(self, local_ok, local_ok ? NULL : "Draft not found", user_data);
@@ -560,14 +554,7 @@ void gnostr_drafts_load_from_relays_async(GnostrDrafts *self,
                                            gpointer user_data) {
   g_return_if_fail(GNOSTR_IS_DRAFTS(self));
 
-  /* TODO: Implement relay fetch for kind 31234 events
-   * This requires:
-   * 1. Subscribing to kind 31234 events from user's relays
-   * 2. NIP-44 decryption of content
-   * 3. Merging with local drafts
-   *
-   * For now, just return local drafts.
-   */
+  /* Relay fetch requires nostrc-n44s (NIP-44 signer integration) */
   GPtrArray *drafts = gnostr_drafts_load_local(self);
 
   if (callback) {
