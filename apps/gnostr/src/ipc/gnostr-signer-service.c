@@ -15,6 +15,7 @@
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
 #include "select.h"
+#include "context.h"
 #include "error.h"
 #include "secure_buf.h"
 #include <string.h>
@@ -474,7 +475,8 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   g_debug("[SIGNER_SERVICE] Relay %s connected", relay_url);
 
   /* Create subscription with accessible channels */
-  NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+  GoContext *sub_ctx = go_context_background();
+  NostrSubscription *sub = nostr_relay_prepare_subscription(relay, sub_ctx, filters);
   if (!sub) {
     g_warning("[SIGNER_SERVICE] Failed to create subscription");
     nostr_relay_free(relay);
