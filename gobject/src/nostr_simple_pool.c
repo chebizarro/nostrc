@@ -724,8 +724,10 @@ static void query_single_ctx_free(QuerySingleCtx *ctx) {
 }
 
 static gboolean query_single_complete_ok(gpointer data) {
+    g_debug("query_single_complete_ok: running on main thread");
     GTask *task = G_TASK(data);
     g_task_return_boolean(task, TRUE);
+    g_debug("query_single_complete_ok: task returned, callback should be invoked");
     /* Unref provided by destroy notify in invoke_full if set; be safe */
     return G_SOURCE_REMOVE;
 }
@@ -733,6 +735,8 @@ static gboolean query_single_complete_ok(gpointer data) {
 static gpointer query_single_thread(gpointer user_data) {
     QuerySingleCtx *ctx = (QuerySingleCtx *)user_data;
     GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+
+    g_debug("query_single_thread: starting, will query %zu relays", ctx->url_count);
 
     // Create results array
     ctx->results = g_ptr_array_new_with_free_func(g_free);
@@ -910,6 +914,9 @@ static gpointer query_single_thread(gpointer user_data) {
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
 
+        g_debug("query_single: relay %zu/%zu done (%s), total results so far: %u",
+                i + 1, ctx->url_count, url, ctx->results->len);
+
         /* NOTE: We intentionally do NOT break early here even if we got results.
          * For thread fetching, different relays may have different events
          * (e.g., the root event might only be on one relay, replies on another).
@@ -927,9 +934,14 @@ static gpointer query_single_thread(gpointer user_data) {
     }
     g_ptr_array_free(created_relays, TRUE);
 
+    g_debug("query_single: all relays queried, scheduling completion with %u results",
+            ctx->results ? ctx->results->len : 0);
+
     // Schedule completion on the main thread; task owns ctx via task_data
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, query_single_complete_ok,
                                g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
+
+    g_debug("query_single: completion scheduled");
     return NULL;
 }
 
