@@ -34,6 +34,41 @@ static gboolean s_config_initialized = FALSE;     /* env vars read */
 /* Metrics */
 static GnostrAvatarMetrics s_avatar_metrics = {0};
 
+/* --- Concurrent Request Limiter --- */
+#define AVATAR_MAX_CONCURRENT_FETCHES 12  /* Max simultaneous HTTP requests */
+
+typedef struct _PendingFetch {
+  char *url;
+  GWeakRef image_ref;
+  GWeakRef initials_ref;
+} PendingFetch;
+
+static guint s_active_fetches = 0;           /* Currently in-flight HTTP requests */
+static GQueue *s_pending_queue = NULL;       /* Queue of PendingFetch* waiting */
+static GMutex s_fetch_mutex;                 /* Protects active count and queue */
+static gboolean s_fetch_mutex_initialized = FALSE;
+
+static void pending_fetch_free(PendingFetch *pf) {
+  if (!pf) return;
+  g_free(pf->url);
+  g_weak_ref_clear(&pf->image_ref);
+  g_weak_ref_clear(&pf->initials_ref);
+  g_free(pf);
+}
+
+static void ensure_fetch_limiter(void) {
+  if (!s_fetch_mutex_initialized) {
+    g_mutex_init(&s_fetch_mutex);
+    s_fetch_mutex_initialized = TRUE;
+  }
+  if (!s_pending_queue) {
+    s_pending_queue = g_queue_new();
+  }
+}
+
+/* Forward declaration for queue processing */
+static void process_pending_fetch_queue(void);
+
 /* Read configuration from environment variables */
 static void avatar_init_config(void) {
   if (s_config_initialized) return;
@@ -79,6 +114,7 @@ static GdkTexture *try_load_avatar_from_disk(const char *url);
 static gboolean avatar_cache_log_cb(gpointer data);
 #ifdef HAVE_SOUP3
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWidget *initials);
 #endif
 
 /* Periodic logger for avatar cache */
@@ -86,7 +122,9 @@ static gboolean avatar_cache_log_cb(gpointer data) {
   (void)data;
   guint msz = avatar_texture_cache ? g_hash_table_size(avatar_texture_cache) : 0;
   guint lsz = s_avatar_lru_nodes ? g_hash_table_size(s_avatar_lru_nodes) : 0;
-  g_message("[AVATAR_CACHE] mem=%u lru=%u cap=%u size=%upx", msz, lsz, s_avatar_cap, s_avatar_size);
+  guint pending = s_pending_queue ? g_queue_get_length(s_pending_queue) : 0;
+  g_message("[AVATAR_CACHE] mem=%u lru=%u cap=%u size=%upx active_fetches=%u pending=%u max=%u",
+            msz, lsz, s_avatar_cap, s_avatar_size, s_active_fetches, pending, AVATAR_MAX_CONCURRENT_FETCHES);
   gnostr_avatar_metrics_log();
   return TRUE;
 }
@@ -356,7 +394,67 @@ static void avatar_ctx_free(AvatarCtx *c) {
   g_weak_ref_clear(&c->initials_ref);
   g_free(c->url);
   g_free(c);
-}  
+}
+
+#ifdef HAVE_SOUP3
+/* Internal: Actually start an HTTP fetch (assumes slot is available) */
+static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWidget *initials) {
+  SoupSession *sess = soup_session_new();
+  SoupMessage *msg = soup_message_new("GET", url);
+  AvatarCtx *ctx = g_new0(AvatarCtx, 1);
+  g_weak_ref_init(&ctx->image_ref, image);
+  g_weak_ref_init(&ctx->initials_ref, initials);
+  ctx->url = g_strdup(url);
+
+  g_debug("avatar fetch: starting HTTP for url=%s (active=%u)", url, s_active_fetches);
+  s_avatar_metrics.http_start++;
+
+  soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
+  g_object_unref(msg);
+  g_object_unref(sess);
+}
+
+/* Process pending fetch queue - called after a fetch completes */
+static void process_pending_fetch_queue(void) {
+  ensure_fetch_limiter();
+
+  g_mutex_lock(&s_fetch_mutex);
+
+  while (s_active_fetches < AVATAR_MAX_CONCURRENT_FETCHES && !g_queue_is_empty(s_pending_queue)) {
+    PendingFetch *pf = g_queue_pop_head(s_pending_queue);
+    if (!pf) break;
+
+    /* Check if widgets are still alive before starting fetch */
+    GtkWidget *image = g_weak_ref_get(&pf->image_ref);
+    GtkWidget *initials = g_weak_ref_get(&pf->initials_ref);
+
+    /* Even if widgets are gone, we might still want to cache the avatar */
+    gboolean has_ui = (image != NULL || initials != NULL);
+
+    if (has_ui || pf->url) {
+      s_active_fetches++;
+      g_mutex_unlock(&s_fetch_mutex);
+
+      start_avatar_fetch_internal(pf->url, image, initials);
+
+      /* Release refs obtained from g_weak_ref_get */
+      if (image) g_object_unref(image);
+      if (initials) g_object_unref(initials);
+
+      g_mutex_lock(&s_fetch_mutex);
+    }
+
+    pending_fetch_free(pf);
+  }
+
+  guint pending = g_queue_get_length(s_pending_queue);
+  g_mutex_unlock(&s_fetch_mutex);
+
+  if (pending > 0) {
+    g_debug("avatar fetch: queue has %u pending requests", pending);
+  }
+}
+#endif
 
 /* Public: prefetch and cache avatar by URL without any UI. No-op if cached or invalid. */
 void gnostr_avatar_prefetch(const char *url) {
@@ -382,18 +480,26 @@ void gnostr_avatar_prefetch(const char *url) {
       return;
     }
   #ifdef HAVE_SOUP3
-    /* Fetch asynchronously and store in cache */
-    SoupSession *sess = soup_session_new();
-    SoupMessage *msg = soup_message_new("GET", url);
-    AvatarCtx *ctx = g_new0(AvatarCtx, 1);
-    g_weak_ref_init(&ctx->image_ref, NULL);    /* no UI to update */
-    g_weak_ref_init(&ctx->initials_ref, NULL); /* no UI to update */
-    ctx->url = g_strdup(url);
-    g_debug("avatar prefetch: fetching via HTTP url=%s", url);
-    s_avatar_metrics.http_start++;
-    soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
-    g_object_unref(msg);
-    g_object_unref(sess);
+    /* Fetch asynchronously and store in cache, using the limiter */
+    ensure_fetch_limiter();
+
+    g_mutex_lock(&s_fetch_mutex);
+    if (s_active_fetches < AVATAR_MAX_CONCURRENT_FETCHES) {
+      s_active_fetches++;
+      g_mutex_unlock(&s_fetch_mutex);
+      g_debug("avatar prefetch: fetching via HTTP url=%s", url);
+      start_avatar_fetch_internal(url, NULL, NULL);
+    } else {
+      /* Queue the prefetch request */
+      PendingFetch *pf = g_new0(PendingFetch, 1);
+      pf->url = g_strdup(url);
+      g_weak_ref_init(&pf->image_ref, NULL);
+      g_weak_ref_init(&pf->initials_ref, NULL);
+      g_queue_push_tail(s_pending_queue, pf);
+      g_debug("avatar prefetch: queued url=%s (active=%u, pending=%u)",
+              url, s_active_fetches, g_queue_get_length(s_pending_queue));
+      g_mutex_unlock(&s_fetch_mutex);
+    }
   #else
     (void)url; /* libsoup not available; skip */
   #endif
@@ -429,27 +535,32 @@ GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
 
 /* Public: Download avatar asynchronously and update widgets when done.
  * CRITICAL: Uses GWeakRef for widgets to prevent use-after-free crashes
- * when GtkListView recycles rows during scrolling. */
+ * when GtkListView recycles rows during scrolling.
+ * Uses concurrent request limiter to prevent FD exhaustion. */
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
     #ifdef HAVE_SOUP3
       if (!url || !*url || !str_has_prefix_http(url)) return;
 
       s_avatar_metrics.requests_total++;
-      s_avatar_metrics.http_start++;
+      ensure_fetch_limiter();
 
-      SoupSession *sess = soup_session_new();
-      SoupMessage *msg = soup_message_new("GET", url);
-      AvatarCtx *ctx = g_new0(AvatarCtx, 1);
-      /* CRITICAL: Use weak refs instead of strong refs to prevent crash
-       * when widget is recycled before HTTP completes. When widget is
-       * disposed, weak ref becomes NULL and we skip the update. */
-      g_weak_ref_init(&ctx->image_ref, image);
-      g_weak_ref_init(&ctx->initials_ref, initials);
-      ctx->url = g_strdup(url);
-
-      soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
-      g_object_unref(msg);
-      g_object_unref(sess);
+      g_mutex_lock(&s_fetch_mutex);
+      if (s_active_fetches < AVATAR_MAX_CONCURRENT_FETCHES) {
+        /* Slot available - start immediately */
+        s_active_fetches++;
+        g_mutex_unlock(&s_fetch_mutex);
+        start_avatar_fetch_internal(url, image, initials);
+      } else {
+        /* Queue the request */
+        PendingFetch *pf = g_new0(PendingFetch, 1);
+        pf->url = g_strdup(url);
+        g_weak_ref_init(&pf->image_ref, image);
+        g_weak_ref_init(&pf->initials_ref, initials);
+        g_queue_push_tail(s_pending_queue, pf);
+        g_debug("avatar fetch: queued url=%s (active=%u, pending=%u)",
+                url, s_active_fetches, g_queue_get_length(s_pending_queue));
+        g_mutex_unlock(&s_fetch_mutex);
+      }
     #else
       (void)url; (void)image; (void)initials;
     #endif
@@ -466,6 +577,11 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
     g_debug("avatar http: fetch failed url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     g_clear_error(&error);
     avatar_ctx_free(ctx);
+    /* Decrement active count and process queue */
+    g_mutex_lock(&s_fetch_mutex);
+    if (s_active_fetches > 0) s_active_fetches--;
+    g_mutex_unlock(&s_fetch_mutex);
+    process_pending_fetch_queue();
     return;
   }
   gsize blen = 0; (void)g_bytes_get_data(bytes, &blen);
@@ -480,6 +596,11 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
     g_clear_error(&error);
     g_bytes_unref(bytes);
     avatar_ctx_free(ctx);
+    /* Decrement active count and process queue */
+    g_mutex_lock(&s_fetch_mutex);
+    if (s_active_fetches > 0) s_active_fetches--;
+    g_mutex_unlock(&s_fetch_mutex);
+    process_pending_fetch_queue();
     return;
   }
   g_debug("avatar http: decoded and scaled to %upx for url=%s", s_avatar_size, ctx->url);
@@ -532,6 +653,12 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
 
   g_object_unref(tex);
   avatar_ctx_free(ctx);
+
+  /* Decrement active count and process queue */
+  g_mutex_lock(&s_fetch_mutex);
+  if (s_active_fetches > 0) s_active_fetches--;
+  g_mutex_unlock(&s_fetch_mutex);
+  process_pending_fetch_queue();
 }
 #endif
 
