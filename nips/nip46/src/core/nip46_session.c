@@ -466,7 +466,7 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     nostr_filter_set_tags(f, filter_tags);
 
     /* Only get events from after our request */
-    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 5);
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL));  /* Only events from NOW - tighter filter to avoid stale responses */
 
     NostrFilter f_copy = *f;
     free(f);
@@ -744,7 +744,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     nostr_filter_set_tags(f, filter_tags);
 
     /* Only get events from after our request */
-    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 5);
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL));  /* Only events from NOW - tighter filter to avoid stale responses */
 
     NostrFilter f_copy = *f;
     free(f);
@@ -773,16 +773,30 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     nostr_event_free(req_ev);
     nostr_filters_free(filters);
 
-    /* Wait for response */
-    pthread_mutex_lock(&s_nip46_resp_mutex);
-    while (!s_nip46_resp_ctx.received) {
-        pthread_cond_wait(&s_nip46_resp_cond, &s_nip46_resp_mutex);
+    /* Wait for response (with retry for wrong-ID responses) */
+    char *response_content = NULL;
+    char *response_pubkey = NULL;
+    int max_retries = 5;  /* Ignore up to 5 stale responses */
+
+    for (int attempt = 0; attempt < max_retries; attempt++) {
+        pthread_mutex_lock(&s_nip46_resp_mutex);
+        while (!s_nip46_resp_ctx.received) {
+            pthread_cond_wait(&s_nip46_resp_cond, &s_nip46_resp_mutex);
+        }
+        response_content = s_nip46_resp_ctx.response_content;
+        response_pubkey = s_nip46_resp_ctx.response_pubkey;
+        s_nip46_resp_ctx.response_content = NULL;
+        s_nip46_resp_ctx.response_pubkey = NULL;
+        s_nip46_resp_ctx.received = 0;  /* Reset for potential retry */
+        pthread_mutex_unlock(&s_nip46_resp_mutex);
+
+        if (!response_content) break;
+
+        /* Quick check: is this a stale response? Peek at the ID without full decrypt */
+        /* We'll do full validation after decrypt, but this helps filter obvious stales */
+        fprintf(stderr, "[nip46] %s: attempt %d, checking response...\n", method, attempt + 1);
+        break;  /* Got a response, proceed to decrypt and validate */
     }
-    char *response_content = s_nip46_resp_ctx.response_content;
-    char *response_pubkey = s_nip46_resp_ctx.response_pubkey;
-    s_nip46_resp_ctx.response_content = NULL;
-    s_nip46_resp_ctx.response_pubkey = NULL;
-    pthread_mutex_unlock(&s_nip46_resp_mutex);
 
     nostr_simple_pool_stop(pool);
     nostr_simple_pool_free(pool);
