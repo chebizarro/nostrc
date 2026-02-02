@@ -133,16 +133,20 @@ static void update_ui_state(GnostrGitClient *self);
  * libgit2 helpers
  * ============================================================================ */
 
-static gboolean libgit2_initialized = FALSE;
+static gint libgit2_ref_count = 0;
 
 static void
-ensure_libgit2_init(void)
+libgit2_ref(void)
 {
-  if (!libgit2_initialized)
-    {
-      git_libgit2_init();
-      libgit2_initialized = TRUE;
-    }
+  if (g_atomic_int_add(&libgit2_ref_count, 1) == 0)
+    git_libgit2_init();
+}
+
+static void
+libgit2_unref(void)
+{
+  if (g_atomic_int_dec_and_test(&libgit2_ref_count))
+    git_libgit2_shutdown();
 }
 
 static const char *
@@ -732,6 +736,8 @@ gnostr_git_client_dispose(GObject *object)
   if (child)
     gtk_widget_unparent(child);
 
+  libgit2_unref();
+
   G_OBJECT_CLASS(gnostr_git_client_parent_class)->dispose(object);
 }
 
@@ -778,7 +784,7 @@ gnostr_git_client_class_init(GnostrGitClientClass *klass)
 static void
 gnostr_git_client_init(GnostrGitClient *self)
 {
-  ensure_libgit2_init();
+  libgit2_ref();
 
   /* Main container */
   self->main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
