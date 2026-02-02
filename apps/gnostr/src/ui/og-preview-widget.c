@@ -558,10 +558,10 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
 /* Widget lifecycle */
 static void og_preview_widget_dispose(GObject *object) {
   OgPreviewWidget *self = OG_PREVIEW_WIDGET(object);
-  
+
   /* Mark as disposed FIRST - this prevents callbacks from accessing widget state */
   self->disposed = TRUE;
-  
+
   /* Cancel any in-flight requests - this will trigger cleanup in libsoup.
    * Do NOT call g_clear_object on cancellables immediately - let them be
    * cleaned up naturally to avoid file descriptor corruption in GLib main loop.
@@ -569,27 +569,32 @@ static void og_preview_widget_dispose(GObject *object) {
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
   }
-  
+
   if (self->image_cancellable) {
     g_cancellable_cancel(self->image_cancellable);
   }
-  
+
   g_clear_pointer(&self->cache, g_hash_table_unref);
-  
-  /* Do NOT manipulate labels during disposal - any calls to gtk_label_set_text() or
-   * gtk_label_set_attributes() can trigger Pango layout recalculation which crashes
-   * when widgets are being disposed. GTK will handle all label and Pango cleanup
-   * automatically during finalization. */
-  
-  /* Do NOT explicitly unparent children during dispose (nostrc-oa9).
-   * Calling gtk_widget_unparent() during dispose triggers child disposal while
-   * Pango layouts are still active, causing crashes. GTK4 will automatically
-   * unparent and dispose children during widget finalization.
+
+  /* GTK4 widget lifecycle: unparent children in dispose(), BEFORE calling
+   * parent dispose. This is the correct pattern - dispose handles widget
+   * hierarchy cleanup, finalize handles non-widget resources.
    *
-   * Just clear the pointers to prevent async callbacks from accessing them. */
-  self->card_box = NULL;
-  self->spinner = NULL;
-  self->error_label = NULL;
+   * Previous code (nostrc-oa9) tried to unparent in finalize() which caused
+   * crashes because parent dispose() had already run, leaving the widget
+   * hierarchy in an inconsistent state where gtk_box_dispose would try to
+   * measure partially destroyed children (nostrc-14wu).
+   *
+   * The key insight: unparent children BEFORE parent dispose runs, not after.
+   * Use g_clear_pointer pattern which safely handles NULL and only unparents
+   * if the pointer is still valid. */
+  g_clear_pointer(&self->spinner, gtk_widget_unparent);
+  g_clear_pointer(&self->error_label, gtk_widget_unparent);
+  g_clear_pointer(&self->card_box, gtk_widget_unparent);
+
+  /* These are children of card_box/text_box, not direct children of self.
+   * They were already unparented when card_box was unparented above.
+   * Just clear the pointers to prevent stale access. */
   self->title_label = NULL;
   self->description_label = NULL;
   self->site_label = NULL;
@@ -608,15 +613,11 @@ static void og_preview_widget_finalize(GObject *object) {
   g_clear_object(&self->cancellable);
   g_clear_object(&self->image_cancellable);
 
+  /* Free non-widget resources only - child widgets were already unparented
+   * in dispose() which is the correct GTK4 pattern. Trying to unparent here
+   * caused crashes (nostrc-14wu) because the parent class dispose had already
+   * run, leaving the widget in an inconsistent state. */
   g_free(self->current_url);
-
-  /* Unparent children in finalize (not dispose) to avoid Pango crashes.
-   * GTK4's standard dispose-then-finalize cycle means we need to be careful
-   * about when we unparent widgets that contain Pango layouts. */
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self))) != NULL) {
-    gtk_widget_unparent(child);
-  }
 
   G_OBJECT_CLASS(og_preview_widget_parent_class)->finalize(object);
 }
