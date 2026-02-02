@@ -3,11 +3,21 @@
 
 set(PLUGIN_NAME nip34-git)
 
+# Find libgit2 for git client functionality
+pkg_check_modules(LIBGIT2 libgit2)
+
 # Plugin sources
 set(PLUGIN_SOURCES
     nip34-git-plugin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gnostr-plugin-api.c
 )
+
+# Add libgit2-dependent sources if libgit2 is found
+if(LIBGIT2_FOUND)
+    list(APPEND PLUGIN_SOURCES
+        gnostr-git-client.c
+    )
+endif()
 
 # Create shared library
 add_library(${PLUGIN_NAME} MODULE ${PLUGIN_SOURCES})
@@ -26,6 +36,12 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
 # Plugin build mode - excludes host-only code from gnostr-plugin-api.c
 target_compile_definitions(${PLUGIN_NAME} PRIVATE GNOSTR_PLUGIN_BUILD=1)
 
+# Add libgit2 compile definitions and includes if found
+if(LIBGIT2_FOUND)
+    target_compile_definitions(${PLUGIN_NAME} PRIVATE HAVE_LIBGIT2=1)
+    target_include_directories(${PLUGIN_NAME} PRIVATE ${LIBGIT2_INCLUDE_DIRS})
+endif()
+
 # Link libraries
 target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GTK4
@@ -42,6 +58,12 @@ endif()
 # Link NIP-34 library if available
 if (TARGET nostr_nip34_core)
     target_link_libraries(${PLUGIN_NAME} PRIVATE nostr_nip34_core)
+endif()
+
+# Link libgit2 if found
+if(LIBGIT2_FOUND)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE ${LIBGIT2_LIBRARIES})
+    target_link_directories(${PLUGIN_NAME} PRIVATE ${LIBGIT2_LIBRARY_DIRS})
 endif()
 
 # Allow undefined symbols - they're resolved when the plugin is loaded by the host app
