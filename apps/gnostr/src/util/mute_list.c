@@ -227,6 +227,89 @@ gboolean gnostr_mute_list_load_from_json(GnostrMuteList *self,
     return TRUE;
 }
 
+/* Merge entries from JSON without clearing existing data (for UNION strategy) */
+static gboolean mute_list_merge_from_json(GnostrMuteList *self,
+                                           const char *event_json,
+                                           gint64 *out_event_time) {
+    if (!self || !event_json) return FALSE;
+
+    g_mutex_lock(&self->lock);
+
+    NostrEvent *event = nostr_event_new();
+    int parse_rc = nostr_event_deserialize_compact(event, event_json);
+    if (parse_rc != 1) {
+        nostr_event_free(event);
+        g_mutex_unlock(&self->lock);
+        return FALSE;
+    }
+
+    int kind = nostr_event_get_kind(event);
+    if (kind != MUTE_LIST_KIND) {
+        nostr_event_free(event);
+        g_mutex_unlock(&self->lock);
+        return FALSE;
+    }
+
+    gint64 event_time = nostr_event_get_created_at(event);
+    if (out_event_time) *out_event_time = event_time;
+
+    /* Update timestamp if newer */
+    if (event_time > self->last_event_time) {
+        self->last_event_time = event_time;
+    }
+
+    /* Merge tags - add items that don't already exist */
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+    if (tags) {
+        size_t tag_count = nostr_tags_size(tags);
+        guint added = 0;
+        for (size_t idx = 0; idx < tag_count; idx++) {
+            NostrTag *tag = nostr_tags_get(tags, idx);
+            if (!tag || nostr_tag_size(tag) < 2) continue;
+
+            const char *tag_name = nostr_tag_get(tag, 0);
+            const char *value = nostr_tag_get(tag, 1);
+            if (!tag_name || !value) continue;
+
+            MuteEntry *entry = mute_entry_new(value, FALSE);
+            gboolean inserted = FALSE;
+
+            if (strcmp(tag_name, "p") == 0 && !g_hash_table_contains(self->muted_pubkeys, value)) {
+                g_hash_table_insert(self->muted_pubkeys, entry->value, entry);
+                inserted = TRUE;
+            } else if (strcmp(tag_name, "e") == 0 && !g_hash_table_contains(self->muted_events, value)) {
+                g_hash_table_insert(self->muted_events, entry->value, entry);
+                inserted = TRUE;
+            } else if (strcmp(tag_name, "t") == 0 && !g_hash_table_contains(self->muted_hashtags, value)) {
+                g_hash_table_insert(self->muted_hashtags, entry->value, entry);
+                inserted = TRUE;
+            } else if (strcmp(tag_name, "word") == 0 && !g_hash_table_contains(self->muted_words, value)) {
+                g_hash_table_insert(self->muted_words, entry->value, entry);
+                inserted = TRUE;
+            }
+
+            if (inserted) {
+                added++;
+            } else {
+                mute_entry_free(entry);
+            }
+        }
+        g_debug("mute_list: merged %u new entries", added);
+    }
+
+    nostr_event_free(event);
+    g_mutex_unlock(&self->lock);
+    return TRUE;
+}
+
+gint64 gnostr_mute_list_get_last_event_time(GnostrMuteList *self) {
+    if (!self) return 0;
+    g_mutex_lock(&self->lock);
+    gint64 time = self->last_event_time;
+    g_mutex_unlock(&self->lock);
+    return time;
+}
+
 /* ---- Async Fetch Implementation ---- */
 
 typedef struct {
@@ -234,6 +317,7 @@ typedef struct {
     GnostrMuteListFetchCallback callback;
     gpointer user_data;
     char *pubkey_hex;
+    GnostrMuteListMergeStrategy strategy;
 } FetchContext;
 
 static void fetch_context_free(FetchContext *ctx) {
@@ -474,15 +558,53 @@ static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer
         }
     }
 
-    /* Load the newest event */
+    /* Apply merge strategy */
     if (newest_event_json) {
-        if (gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json)) {
-            success = TRUE;
+        gint64 local_time = gnostr_mute_list_get_last_event_time(ctx->mute_list);
 
-            /* Decrypt private entries if present */
-            if (encrypted_content && *encrypted_content) {
-                decrypt_private_entries_async(ctx->mute_list, encrypted_content, ctx->pubkey_hex);
+        switch (ctx->strategy) {
+        case GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS:
+            /* Keep local if it exists and has data */
+            if (local_time > 0) {
+                g_debug("mute_list: LOCAL_WINS - keeping local data (time=%lld)", (long long)local_time);
+                success = TRUE;
+            } else {
+                /* No local data, load remote */
+                success = gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json);
             }
+            break;
+
+        case GNOSTR_MUTE_LIST_MERGE_LATEST:
+            /* Compare timestamps */
+            if (newest_created_at > local_time) {
+                g_debug("mute_list: LATEST - using remote (remote=%lld > local=%lld)",
+                        (long long)newest_created_at, (long long)local_time);
+                success = gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json);
+            } else {
+                g_debug("mute_list: LATEST - keeping local (local=%lld >= remote=%lld)",
+                        (long long)local_time, (long long)newest_created_at);
+                success = TRUE;
+            }
+            break;
+
+        case GNOSTR_MUTE_LIST_MERGE_UNION:
+            /* Merge without clearing - add new items */
+            g_debug("mute_list: UNION - merging remote into local");
+            success = mute_list_merge_from_json(ctx->mute_list, newest_event_json, NULL);
+            break;
+
+        case GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS:
+        default:
+            /* Replace local with remote (original behavior) */
+            g_debug("mute_list: REMOTE_WINS - replacing local with remote");
+            success = gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json);
+            break;
+        }
+
+        /* Decrypt private entries if we loaded/merged remote data */
+        if (success && encrypted_content && *encrypted_content &&
+            ctx->strategy != GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS) {
+            decrypt_private_entries_async(ctx->mute_list, encrypted_content, ctx->pubkey_hex);
         }
     }
 
@@ -526,6 +648,7 @@ void gnostr_mute_list_fetch_async(GnostrMuteList *self,
     ctx->callback = callback;
     ctx->user_data = user_data;
     ctx->pubkey_hex = g_strdup(pubkey_hex);
+    ctx->strategy = GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS;  /* Default: replace local */
 
     /* Build filter for kind 10000 by author */
     NostrFilter *filter = nostr_filter_new();
@@ -567,6 +690,82 @@ void gnostr_mute_list_fetch_async(GnostrMuteList *self,
         relay_arr->len,
         filter,
         NULL,  /* cancellable */
+        on_mute_list_query_done,
+        ctx
+    );
+
+    g_free(urls);
+    g_ptr_array_unref(relay_arr);
+    nostr_filter_free(filter);
+#endif
+}
+
+void gnostr_mute_list_fetch_with_strategy_async(GnostrMuteList *self,
+                                                 const char *pubkey_hex,
+                                                 const char * const *relays,
+                                                 GnostrMuteListMergeStrategy strategy,
+                                                 GnostrMuteListFetchCallback callback,
+                                                 gpointer user_data) {
+    if (!self || !pubkey_hex) {
+        if (callback) callback(self, FALSE, user_data);
+        return;
+    }
+
+    g_mutex_lock(&self->lock);
+    g_free(self->user_pubkey);
+    self->user_pubkey = g_strdup(pubkey_hex);
+    g_mutex_unlock(&self->lock);
+
+#ifdef GNOSTR_MUTE_LIST_TEST_ONLY
+    (void)relays;
+    (void)strategy;
+    g_message("mute_list: fetch with strategy requested for pubkey %s (test mode - stub)", pubkey_hex);
+    if (callback) callback(self, TRUE, user_data);
+#else
+    FetchContext *ctx = g_new0(FetchContext, 1);
+    ctx->mute_list = self;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+    ctx->pubkey_hex = g_strdup(pubkey_hex);
+    ctx->strategy = strategy;
+
+    /* Build filter for kind 10000 by author */
+    NostrFilter *filter = nostr_filter_new();
+    int kinds[1] = { MUTE_LIST_KIND };
+    nostr_filter_set_kinds(filter, kinds, 1);
+    const char *authors[1] = { pubkey_hex };
+    nostr_filter_set_authors(filter, authors, 1);
+    nostr_filter_set_limit(filter, 5);  /* Get a few to find newest */
+
+    /* Get relay URLs */
+    GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+
+    if (relays && relays[0]) {
+        for (const char * const *r = relays; *r; r++) {
+            g_ptr_array_add(relay_arr, g_strdup(*r));
+        }
+    } else {
+        gnostr_load_relays_into(relay_arr);
+    }
+
+    const char **urls = g_new0(const char*, relay_arr->len + 1);
+    for (guint i = 0; i < relay_arr->len; i++) {
+        urls[i] = g_ptr_array_index(relay_arr, i);
+    }
+
+    if (!s_mute_list_pool) {
+        s_mute_list_pool = gnostr_simple_pool_new();
+    }
+
+    g_message("mute_list: fetching kind %d for pubkey %.8s from %u relays (strategy=%d)",
+              MUTE_LIST_KIND, pubkey_hex, relay_arr->len, strategy);
+
+    gnostr_simple_pool_query_single_async(
+        s_mute_list_pool,
+        urls,
+        relay_arr->len,
+        filter,
+        NULL,
         on_mute_list_query_done,
         ctx
     );

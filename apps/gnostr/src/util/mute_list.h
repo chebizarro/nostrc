@@ -52,6 +52,20 @@ gboolean gnostr_mute_list_load_from_json(GnostrMuteList *self,
                                           const char *event_json);
 
 /**
+ * GnostrMuteListMergeStrategy:
+ * @GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS: Remote data replaces local
+ * @GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS: Local data is kept (skip remote if local exists)
+ * @GNOSTR_MUTE_LIST_MERGE_UNION: Merge lists (union of items)
+ * @GNOSTR_MUTE_LIST_MERGE_LATEST: Keep data with newest timestamp
+ */
+typedef enum {
+    GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS,
+    GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS,
+    GNOSTR_MUTE_LIST_MERGE_UNION,
+    GNOSTR_MUTE_LIST_MERGE_LATEST
+} GnostrMuteListMergeStrategy;
+
+/**
  * gnostr_mute_list_fetch_async:
  * @self: mute list instance
  * @pubkey_hex: user's public key (64 hex chars)
@@ -60,6 +74,7 @@ gboolean gnostr_mute_list_load_from_json(GnostrMuteList *self,
  * @user_data: user data for callback
  *
  * Fetches the user's mute list from relays asynchronously.
+ * Uses REMOTE_WINS strategy (replaces local with remote).
  */
 typedef void (*GnostrMuteListFetchCallback)(GnostrMuteList *self,
                                              gboolean success,
@@ -70,6 +85,35 @@ void gnostr_mute_list_fetch_async(GnostrMuteList *self,
                                    const char * const *relays,
                                    GnostrMuteListFetchCallback callback,
                                    gpointer user_data);
+
+/**
+ * gnostr_mute_list_fetch_with_strategy_async:
+ * @self: mute list instance
+ * @pubkey_hex: user's public key (64 hex chars)
+ * @relays: NULL-terminated array of relay URLs
+ * @strategy: merge strategy to use
+ * @callback: callback when fetch completes
+ * @user_data: user data for callback
+ *
+ * Fetches the user's mute list from relays asynchronously with
+ * the specified merge strategy.
+ */
+void gnostr_mute_list_fetch_with_strategy_async(GnostrMuteList *self,
+                                                 const char *pubkey_hex,
+                                                 const char * const *relays,
+                                                 GnostrMuteListMergeStrategy strategy,
+                                                 GnostrMuteListFetchCallback callback,
+                                                 gpointer user_data);
+
+/**
+ * gnostr_mute_list_get_last_event_time:
+ * @self: mute list instance
+ *
+ * Gets the timestamp of the last loaded mute list event.
+ *
+ * Returns: timestamp or 0 if never loaded
+ */
+gint64 gnostr_mute_list_get_last_event_time(GnostrMuteList *self);
 
 /* ---- Query Functions ---- */
 

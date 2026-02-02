@@ -626,21 +626,72 @@ void gnostr_app_data_manager_sync_on_login(const char *pubkey_hex) {
 
 /* ---- Individual Data Type Sync ---- */
 
+/* Helper: convert app-data merge strategy to mute-list merge strategy */
+static GnostrMuteListMergeStrategy
+app_strategy_to_mute_strategy(GnostrAppDataMergeStrategy strategy) {
+    switch (strategy) {
+    case GNOSTR_APP_DATA_MERGE_LOCAL_WINS:
+        return GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS;
+    case GNOSTR_APP_DATA_MERGE_UNION:
+        return GNOSTR_MUTE_LIST_MERGE_UNION;
+    case GNOSTR_APP_DATA_MERGE_LATEST:
+        return GNOSTR_MUTE_LIST_MERGE_LATEST;
+    case GNOSTR_APP_DATA_MERGE_REMOTE_WINS:
+    default:
+        return GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS;
+    }
+}
+
+/* Context for mute sync callback */
+typedef struct {
+    GnostrAppDataManager *manager;
+    GnostrAppDataManagerCallback callback;
+    gpointer user_data;
+} MuteSyncContext;
+
+static void on_mute_sync_done(GnostrMuteList *mute_list,
+                               gboolean success,
+                               gpointer user_data) {
+    (void)mute_list;
+    MuteSyncContext *ctx = (MuteSyncContext *)user_data;
+    if (!ctx) return;
+
+    if (ctx->callback) {
+        ctx->callback(ctx->manager, success,
+                      success ? NULL : "Mute list sync failed",
+                      ctx->user_data);
+    }
+
+    g_free(ctx);
+}
+
 void gnostr_app_data_manager_sync_mutes_async(GnostrAppDataManager *self,
                                                GnostrAppDataMergeStrategy strategy,
                                                GnostrAppDataManagerCallback callback,
                                                gpointer user_data) {
     g_return_if_fail(GNOSTR_IS_APP_DATA_MANAGER(self));
-    /* nostrc-n63f: Merge strategy param unused - underlying modules (mute_list,
-     * bookmarks) currently use "remote wins if newer" which maps to MERGE_LATEST.
-     * Full strategy support requires propagating to sync functions. */
-    (void)strategy;
 
-    /* Delegate to mute_list module which handles NIP-51 kind 10000 */
-    /* NIP-78 can be used as an alternative/backup sync mechanism */
-    g_message("app-data-manager: mutes sync via NIP-51 mute list");
+    if (!self->user_pubkey || !*self->user_pubkey) {
+        g_warning("app-data-manager: cannot sync mutes - user pubkey not set");
+        if (callback) callback(self, FALSE, "User pubkey not set", user_data);
+        return;
+    }
 
-    if (callback) callback(self, TRUE, NULL, user_data);
+    g_message("app-data-manager: mutes sync via NIP-51 mute list (strategy=%d)", strategy);
+
+    MuteSyncContext *ctx = g_new0(MuteSyncContext, 1);
+    ctx->manager = self;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    gnostr_mute_list_fetch_with_strategy_async(
+        gnostr_mute_list_get_default(),
+        self->user_pubkey,
+        NULL,  /* use default relays */
+        app_strategy_to_mute_strategy(strategy),
+        on_mute_sync_done,
+        ctx
+    );
 }
 
 void gnostr_app_data_manager_sync_bookmarks_async(GnostrAppDataManager *self,
