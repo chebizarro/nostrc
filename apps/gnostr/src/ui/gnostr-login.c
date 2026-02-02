@@ -621,6 +621,25 @@ NostrNip46Session *gnostr_login_take_nip46_session(GnostrLogin *self) {
 
   NostrNip46Session *session = self->nip46_session;
   self->nip46_session = NULL;
+
+  /* Debug: print relay count of session being returned */
+  if (session) {
+    char **relays = NULL;
+    size_t n_relays = 0;
+    nostr_nip46_session_get_relays(session, &relays, &n_relays);
+    fprintf(stderr, "\n*** LOGIN TAKE SESSION ***\n");
+    fprintf(stderr, "Session has %zu relays:\n", n_relays);
+    for (size_t i = 0; i < n_relays && relays; i++) {
+      fprintf(stderr, "  relay[%zu]: %s\n", i, relays[i] ? relays[i] : "(null)");
+    }
+    if (relays) {
+      for (size_t i = 0; i < n_relays; i++) free(relays[i]);
+      free(relays);
+    }
+  } else {
+    fprintf(stderr, "\n*** LOGIN TAKE SESSION: NULL ***\n");
+  }
+
   return session;
 }
 
