@@ -1404,8 +1404,9 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
 {
   ensure_cache_init();
 
-  /* query_single_async uses temporary connections that close after EOSE,
-   * so no FD accumulation issue with one-shot queries. */
+  /* Clean up any stale connections in the NIP-66 pool before starting.
+   * Even though query_single uses temporary connections, we ensure a clean state. */
+  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
 
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
@@ -1488,8 +1489,8 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
     return;
   }
 
-  /* query_single_async uses temporary connections that close after EOSE,
-   * so no FD accumulation issue with one-shot queries. */
+  /* Clean up any stale connections in the NIP-66 pool before starting. */
+  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
 
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
@@ -1692,8 +1693,11 @@ static gboolean on_streaming_timeout(gpointer user_data)
     ctx->monitors_found = NULL;
   }
 
-  /* Note: No need to call disconnect_all_relays here because
-   * query_single_streaming closes connections after EOSE (not pooled) */
+  /* Clean up any relay connections that might still be open if the query
+   * was cancelled before all relays sent EOSE. */
+  if (ctx->pool) {
+    gnostr_simple_pool_disconnect_all_relays(ctx->pool);
+  }
 
   nip66_streaming_ctx_free(ctx);
   return G_SOURCE_REMOVE;
@@ -1751,9 +1755,12 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
 {
   ensure_cache_init();
 
-  /* Get the NIP-66 pool - streaming queries create temporary connections
-   * that close after EOSE, so no FD accumulation issue. */
+  /* Get the NIP-66 pool and ensure any stale connections are cleaned up.
+   * Even though streaming queries create temporary connections, we clean up
+   * the pool in case previous queries left anything behind (e.g., if cancelled
+   * before all relays sent EOSE). */
   GnostrSimplePool *pool = get_nip66_pool();
+  gnostr_simple_pool_disconnect_all_relays(pool);
 
   Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
   ctx->on_relay_found = on_relay_found;
