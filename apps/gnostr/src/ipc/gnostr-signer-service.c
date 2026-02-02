@@ -122,6 +122,13 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
   if (session) {
     self->nip46_session = session;
     self->method = GNOSTR_SIGNER_METHOD_NIP46;
+    /* Debug: check what signer pubkey is in the session */
+    char *debug_signer_pk = NULL;
+    nostr_nip46_session_get_remote_pubkey(session, &debug_signer_pk);
+    fprintf(stderr, "\n*** SESSION SET ON SIGNER SERVICE ***\n");
+    fprintf(stderr, "Session signer_pubkey: %s\n",
+              debug_signer_pk ? debug_signer_pk : "(NULL)");
+    free(debug_signer_pk);
     g_debug("[SIGNER_SERVICE] Switched to NIP-46 remote signer");
   } else {
     /* Check if NIP-55L is available as fallback */
@@ -327,6 +334,11 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   nostr_nip46_session_get_remote_pubkey(ctx->service->nip46_session, &signer_pubkey);
   nostr_nip46_session_get_relays(ctx->service->nip46_session, &relays, &n_relays);
 
+  fprintf(stderr, "\n*** SIGN_EVENT DEBUG ***\n");
+  fprintf(stderr, "Session signer_pubkey (remote_pubkey_hex): %s\n",
+            signer_pubkey ? signer_pubkey : "(NULL)");
+  fprintf(stderr, "Session client_secret: %s\n",
+            client_secret ? "present (64 chars)" : "(NULL)");
   g_debug("[SIGNER_SERVICE] Session has %zu relays", n_relays);
   for (size_t i = 0; i < n_relays; i++) {
     g_debug("[SIGNER_SERVICE] Session relay[%zu]: %s", i, relays[i] ? relays[i] : "(null)");
@@ -925,7 +937,9 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
     return FALSE;
   }
 
-  g_message("[SIGNER_SERVICE] Restoring NIP-46 session from settings...");
+  fprintf(stderr, "\n*** RESTORING SESSION FROM SETTINGS ***\n");
+  fprintf(stderr, "signer_pubkey from settings: %s\n", signer_pubkey);
+  fprintf(stderr, "relay_url from settings: %s\n", relay_url ? relay_url : "(null)");
 
   /* Create a new NIP-46 session */
   NostrNip46Session *session = nostr_nip46_client_new();

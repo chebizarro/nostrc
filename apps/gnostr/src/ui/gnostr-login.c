@@ -475,6 +475,8 @@ static gboolean on_nip46_connect_success(gpointer data) {
     nostr_nip46_client_set_secret(self->nip46_session, ctx->nostrconnect_secret);
   }
   if (ctx->signer_pubkey_hex) {
+    fprintf(stderr, "\n*** LOGIN: SETTING SIGNER PUBKEY ON SESSION ***\n");
+    fprintf(stderr, "ctx->signer_pubkey_hex = %s\n", ctx->signer_pubkey_hex);
     nostr_nip46_client_set_signer_pubkey(self->nip46_session, ctx->signer_pubkey_hex);
   }
 
