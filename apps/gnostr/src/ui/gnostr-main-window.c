@@ -5389,7 +5389,18 @@ static void gnostr_main_window_dispose(GObject *object) {
     self->profile_batch_urls = NULL;
     self->profile_batch_url_count = 0;
   }
-  if (self->pool) { g_object_unref(self->pool); self->pool = NULL; }
+  if (self->pool) {
+    /* Disconnect signal handlers BEFORE unreffing to prevent use-after-free
+     * when pending main loop callbacks try to emit on the freed pool */
+    if (self->pool_events_handler) {
+      g_signal_handler_disconnect(self->pool, self->pool_events_handler);
+      self->pool_events_handler = 0;
+    }
+    /* Disconnect all remaining handlers from this instance (e.g., bg prefetch) */
+    g_signal_handlers_disconnect_by_data(self->pool, self);
+    g_object_unref(self->pool);
+    self->pool = NULL;
+  }
   if (self->seen_texts) { g_hash_table_unref(self->seen_texts); self->seen_texts = NULL; }
   if (self->event_model) { g_object_unref(self->event_model); self->event_model = NULL; }
   /* Avatar texture cache cleanup is handled by gnostr-avatar-cache module */
