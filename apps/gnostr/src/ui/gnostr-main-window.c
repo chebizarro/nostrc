@@ -3199,8 +3199,14 @@ on_notification_event(GnostrBadgeManager *manager,
 
 /* Signal handler for when user successfully signs in via login dialog */
 static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
+  fprintf(stderr, "\n*** ON_LOGIN_SIGNED_IN HANDLER CALLED ***\n");
+  fprintf(stderr, "npub: %s\n", npub ? npub : "(null)");
+
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+    fprintf(stderr, "ERROR: self is not a valid GnostrMainWindow!\n");
+    return;
+  }
 
   g_debug("[AUTH] User signed in: %s", npub ? npub : "(null)");
 
@@ -3209,9 +3215,11 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     nostr_nip46_session_free(self->nip46_session);
   }
   self->nip46_session = gnostr_login_take_nip46_session(login);
+  fprintf(stderr, "Session from login: %p\n", (void*)self->nip46_session);
 
   /* Configure the unified signer service with the NIP-46 session (or NULL for NIP-55L) */
   GnostrSignerService *signer = gnostr_signer_service_get_default();
+  fprintf(stderr, "Calling gnostr_signer_service_set_nip46_session...\n");
   gnostr_signer_service_set_nip46_session(signer, self->nip46_session);
   self->nip46_session = NULL; /* Signer service now owns the session */
 
