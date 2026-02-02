@@ -539,12 +539,27 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
   g_autofree char *client_secret = g_settings_get_string(settings, "nip46-client-secret");
   g_autofree char *signer_pubkey = g_settings_get_string(settings, "nip46-signer-pubkey");
 
-  /* Read relay array from settings */
+  /* Read relay array from settings (new key) */
   g_autoptr(GVariant) relays_variant = g_settings_get_value(settings, "nip46-relays");
   gsize n_relays = 0;
   const gchar **relay_urls = NULL;
+  g_autofree char *old_relay = NULL;
+
   if (relays_variant && g_variant_is_of_type(relays_variant, G_VARIANT_TYPE_STRING_ARRAY)) {
     relay_urls = g_variant_get_strv(relays_variant, &n_relays);
+  }
+
+  /* Migration: if new array is empty, try old single-relay key */
+  if (n_relays == 0) {
+    old_relay = g_settings_get_string(settings, "nip46-relay");
+    if (old_relay && *old_relay) {
+      /* Use old relay as a single-element array */
+      relay_urls = (const gchar **)g_new0(gchar*, 2);
+      ((gchar**)relay_urls)[0] = old_relay;
+      old_relay = NULL; /* Transfer ownership */
+      n_relays = 1;
+      g_message("[SIGNER_SERVICE] Migrated from old nip46-relay setting");
+    }
   }
 
   g_object_unref(settings);

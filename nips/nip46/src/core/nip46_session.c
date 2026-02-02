@@ -273,15 +273,25 @@ static void nip46_client_event_cb(NostrIncomingEvent *incoming) {
     if (!incoming || !incoming->event) return;
 
     NostrEvent *ev = incoming->event;
-    if (nostr_event_get_kind(ev) != NOSTR_EVENT_KIND_NIP46) return;
+    int kind = nostr_event_get_kind(ev);
+
+    /* Log ALL incoming events to see what we're receiving */
+    fprintf(stderr, "[nip46] EVENT CALLBACK: kind=%d\n", kind);
+
+    if (kind != NOSTR_EVENT_KIND_NIP46) return;
 
     const char *content = nostr_event_get_content(ev);
     const char *sender_pubkey = nostr_event_get_pubkey(ev);
+    fprintf(stderr, "[nip46] NIP46 event from %s\n", sender_pubkey ? sender_pubkey : "(null)");
+
     if (!content || !sender_pubkey) return;
 
     /* Check if this response is for us (has p-tag with our pubkey) */
     NostrTags *tags = nostr_event_get_tags(ev);
-    if (!tags) return;
+    if (!tags) {
+        fprintf(stderr, "[nip46] No tags in response\n");
+        return;
+    }
 
     int found_ptag = 0;
     size_t tag_count = nostr_tags_size(tags);
@@ -292,6 +302,8 @@ static void nip46_client_event_cb(NostrIncomingEvent *incoming) {
         const char *val = nostr_tag_get_value(tag);
         if (key && val && strcmp(key, "p") == 0) {
             pthread_mutex_lock(&s_nip46_resp_mutex);
+            fprintf(stderr, "[nip46] Response p-tag: %s, expected: %s\n",
+                    val, s_nip46_resp_ctx.expected_client_pk ? s_nip46_resp_ctx.expected_client_pk : "(null)");
             if (s_nip46_resp_ctx.expected_client_pk &&
                 strcmp(val, s_nip46_resp_ctx.expected_client_pk) == 0) {
                 found_ptag = 1;
@@ -301,7 +313,10 @@ static void nip46_client_event_cb(NostrIncomingEvent *incoming) {
         }
     }
 
-    if (!found_ptag) return;
+    if (!found_ptag) {
+        fprintf(stderr, "[nip46] p-tag mismatch, ignoring response\n");
+        return;
+    }
 
     fprintf(stderr, "[nip46] sign_event: received response from %s\n", sender_pubkey);
 
