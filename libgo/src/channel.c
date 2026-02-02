@@ -683,10 +683,18 @@ void go_select_waiter_init(GoSelectWaiter *w) {
     w->next = NULL;
 }
 
-/* Register a waiter with a channel (must hold channel mutex) */
+/* Register a waiter with a channel */
 void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (!chan || !w) return;
+    // Validate channel is still valid before accessing mutex
+    if (chan->magic != GO_CHANNEL_MAGIC) return;
+    if (chan->buffer == NULL) return;
     NLOCK(&chan->mutex);
+    // Double-check after acquiring lock
+    if (chan->magic != GO_CHANNEL_MAGIC || chan->buffer == NULL) {
+        NUNLOCK(&chan->mutex);
+        return;
+    }
     // Add to head of linked list
     w->next = chan->select_waiters;
     chan->select_waiters = w;
@@ -696,7 +704,15 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
 /* Unregister a waiter from a channel */
 void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (!chan || !w) return;
+    // Validate channel is still valid before accessing mutex (avoid use-after-free)
+    if (chan->magic != GO_CHANNEL_MAGIC) return;
+    if (chan->buffer == NULL) return;  // Channel being freed
     NLOCK(&chan->mutex);
+    // Double-check after acquiring lock (channel may have been freed while waiting)
+    if (chan->magic != GO_CHANNEL_MAGIC || chan->buffer == NULL) {
+        NUNLOCK(&chan->mutex);
+        return;
+    }
     // Remove from linked list
     GoSelectWaiter **pp = &chan->select_waiters;
     while (*pp) {
@@ -744,14 +760,16 @@ void go_channel_free(GoChannel *chan) {
         return;
     }
 
-    // Clear magic to detect use-after-free
-    chan->magic = 0;
-
     NLOCK(&chan->mutex);
     // Mark closed and wake all waiters to prevent further use
     atomic_store_explicit(&chan->closed, 1, memory_order_release);
+    // Signal select waiters BEFORE clearing magic so they can detect closure
+    signal_select_waiters_locked(chan);
+    chan->select_waiters = NULL;  // Clear list after signaling
     nsync_cv_broadcast(&chan->cond_full);
     nsync_cv_broadcast(&chan->cond_empty);
+    // Clear magic AFTER signaling but BEFORE freeing resources
+    chan->magic = 0;
     if (chan->buffer) {
         free(chan->buffer);
         chan->buffer = NULL;
