@@ -1199,11 +1199,18 @@ typedef struct {
   GCancellable *cancellable;
   GPtrArray *discovered_relays;  /* GnostrNip66RelayMeta* array */
   GHashTable *selected_urls;  /* URLs selected for addition */
+  GHashTable *seen_urls;  /* URLs already added (for deduplication) */
   RelayManagerCtx *relay_manager_ctx;  /* Parent relay manager context */
+  guint filter_timeout_id;  /* Debounce timer for filter updates */
+  gboolean filter_pending;  /* Flag indicating filter update is pending */
 } RelayDiscoveryCtx;
 
 static void relay_discovery_ctx_free(RelayDiscoveryCtx *ctx) {
   if (!ctx) return;
+  if (ctx->filter_timeout_id) {
+    g_source_remove(ctx->filter_timeout_id);
+    ctx->filter_timeout_id = 0;
+  }
   if (ctx->cancellable) {
     g_cancellable_cancel(ctx->cancellable);
     g_object_unref(ctx->cancellable);
@@ -1213,6 +1220,9 @@ static void relay_discovery_ctx_free(RelayDiscoveryCtx *ctx) {
   }
   if (ctx->selected_urls) {
     g_hash_table_destroy(ctx->selected_urls);
+  }
+  if (ctx->seen_urls) {
+    g_hash_table_destroy(ctx->seen_urls);
   }
   g_free(ctx);
 }
@@ -1484,10 +1494,47 @@ static void on_discovery_check_toggled(GtkCheckButton *check, gpointer user_data
   }
 }
 
+/* Debounce callback for filter updates during streaming */
+static gboolean relay_discovery_debounced_filter(gpointer user_data) {
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  if (!ctx) return G_SOURCE_REMOVE;
+
+  ctx->filter_timeout_id = 0;
+  ctx->filter_pending = FALSE;
+  relay_discovery_apply_filter(ctx);
+  return G_SOURCE_REMOVE;
+}
+
+/* Schedule a debounced filter update (100ms delay) */
+static void relay_discovery_schedule_filter_update(RelayDiscoveryCtx *ctx) {
+  if (!ctx) return;
+
+  /* Mark update as pending */
+  ctx->filter_pending = TRUE;
+
+  /* Reset timer if already scheduled */
+  if (ctx->filter_timeout_id) {
+    g_source_remove(ctx->filter_timeout_id);
+  }
+
+  /* Schedule update in 100ms - batches multiple relay arrivals */
+  ctx->filter_timeout_id = g_timeout_add(100, relay_discovery_debounced_filter, ctx);
+}
+
 /* Streaming callback: called for each relay as it's discovered */
 static void relay_discovery_on_relay_found(GnostrNip66RelayMeta *meta, gpointer user_data) {
   RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
-  if (!ctx || !ctx->builder || !meta) return;
+  if (!ctx || !ctx->builder || !meta || !meta->relay_url) return;
+
+  /* Deduplicate by URL at UI level (belt-and-suspenders with streaming dedup) */
+  if (ctx->seen_urls) {
+    gchar *url_lower = g_ascii_strdown(meta->relay_url, -1);
+    if (g_hash_table_contains(ctx->seen_urls, url_lower)) {
+      g_free(url_lower);
+      return;  /* Skip duplicate */
+    }
+    g_hash_table_add(ctx->seen_urls, url_lower);  /* Takes ownership */
+  }
 
   /* Copy the meta since we need to own it */
   GnostrNip66RelayMeta *meta_copy = g_new0(GnostrNip66RelayMeta, 1);
@@ -1523,8 +1570,8 @@ static void relay_discovery_on_relay_found(GnostrNip66RelayMeta *meta, gpointer 
     }
   }
 
-  /* Re-apply filter to update the list */
-  relay_discovery_apply_filter(ctx);
+  /* Schedule debounced filter update instead of updating immediately */
+  relay_discovery_schedule_filter_update(ctx);
 }
 
 static void relay_discovery_on_complete(GPtrArray *relays, GPtrArray *monitors,
@@ -1544,7 +1591,13 @@ static void relay_discovery_on_complete(GPtrArray *relays, GPtrArray *monitors,
     return;
   }
 
-  /* Final update - apply filter one more time */
+  /* Cancel any pending debounced update */
+  if (ctx->filter_timeout_id) {
+    g_source_remove(ctx->filter_timeout_id);
+    ctx->filter_timeout_id = 0;
+  }
+
+  /* Final update - apply filter immediately */
   relay_discovery_apply_filter(ctx);
 
   /* If no relays found, show empty state */
@@ -1654,6 +1707,12 @@ static void relay_discovery_start_fetch(RelayDiscoveryCtx *ctx) {
   GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "discovery_stack"));
   if (stack) gtk_stack_set_visible_child_name(stack, "loading");
 
+  /* Cancel any pending filter update */
+  if (ctx->filter_timeout_id) {
+    g_source_remove(ctx->filter_timeout_id);
+    ctx->filter_timeout_id = 0;
+  }
+
   /* Cancel any pending operation */
   if (ctx->cancellable) {
     g_cancellable_cancel(ctx->cancellable);
@@ -1664,6 +1723,11 @@ static void relay_discovery_start_fetch(RelayDiscoveryCtx *ctx) {
   /* Clear previous results for fresh fetch */
   if (ctx->discovered_relays) {
     g_ptr_array_set_size(ctx->discovered_relays, 0);
+  }
+
+  /* Clear seen URLs for deduplication */
+  if (ctx->seen_urls) {
+    g_hash_table_remove_all(ctx->seen_urls);
   }
 
   /* Start streaming discovery - relays appear as they're discovered */
@@ -1778,6 +1842,7 @@ static void relay_manager_on_discover_clicked(GtkButton *btn, gpointer user_data
   ctx->builder = builder;
   ctx->relay_manager_ctx = manager_ctx;
   ctx->selected_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  ctx->seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   ctx->discovered_relays = g_ptr_array_new_with_free_func(
     (GDestroyNotify)gnostr_nip66_relay_meta_free);
 

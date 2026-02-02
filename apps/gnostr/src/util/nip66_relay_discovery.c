@@ -1599,6 +1599,8 @@ static void on_streaming_events(GnostrSimplePool *pool, GPtrArray *events, gpoin
   Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
   if (!ctx || !events) return;
 
+  g_message("nip66 streaming: received batch of %u events", events->len);
+
   /* Check cancellation */
   if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) return;
 
@@ -1625,11 +1627,13 @@ static void on_streaming_events(GnostrSimplePool *pool, GPtrArray *events, gpoin
     /* Deduplicate by URL */
     gchar *url_lower = g_ascii_strdown(meta->relay_url, -1);
     if (g_hash_table_contains(ctx->seen_urls, url_lower)) {
+      g_debug("nip66 streaming: skipping duplicate %s", meta->relay_url);
       g_free(url_lower);
       gnostr_nip66_relay_meta_free(meta);
       continue;
     }
     g_hash_table_add(ctx->seen_urls, url_lower);
+    g_message("nip66 streaming: new relay %s (total: %u)", meta->relay_url, ctx->relays_found->len + 1);
 
     /* Cache it (parse a fresh copy for the cache) */
     char *cache_json = nostr_event_serialize(ev);
@@ -1642,7 +1646,10 @@ static void on_streaming_events(GnostrSimplePool *pool, GPtrArray *events, gpoin
     /* Invoke per-relay callback before adding to results
      * (callback receives the meta we're about to store) */
     if (ctx->on_relay_found) {
+      g_debug("nip66 streaming: invoking on_relay_found callback for %s", meta->relay_url);
       ctx->on_relay_found(meta, ctx->user_data);
+    } else {
+      g_warning("nip66 streaming: no on_relay_found callback set!");
     }
 
     /* Add to results */
@@ -1660,6 +1667,11 @@ static gboolean on_streaming_timeout(gpointer user_data)
 
   g_debug("nip66 streaming: timeout, completing with %u relays",
             ctx->relays_found ? ctx->relays_found->len : 0);
+
+  /* Cancel the subscription to stop the background thread */
+  if (ctx->cancellable) {
+    g_cancellable_cancel(ctx->cancellable);
+  }
 
   /* Disconnect signal handler */
   if (ctx->events_handler_id && ctx->pool) {
