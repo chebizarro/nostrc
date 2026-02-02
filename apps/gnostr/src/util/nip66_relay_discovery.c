@@ -1298,14 +1298,16 @@ static void start_phase2_relay_discovery(Nip66DiscoveryCtx *ctx)
 /* Phase 2 callback: collect relay metadata */
 static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
+  g_message("[NIP66-DEBUG] on_phase2_relay_meta_done: ENTERED");
+
   Nip66DiscoveryCtx *ctx = (Nip66DiscoveryCtx*)user_data;
   if (!ctx) {
-    g_warning("nip66 phase2: callback with NULL context!");
+    g_warning("[NIP66-DEBUG] nip66 phase2: callback with NULL context!");
     return;
   }
 
   ctx->pending_queries--;
-  g_message("nip66 phase2: callback fired, pending_queries=%d", ctx->pending_queries);
+  g_message("[NIP66-DEBUG] nip66 phase2: callback fired, pending_queries=%d", ctx->pending_queries);
 
   GError *err = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
