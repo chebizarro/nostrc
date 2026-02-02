@@ -1147,6 +1147,12 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
     nostr_nip46_session_get_remote_pubkey(session, &signer_pubkey);
     nostr_nip46_session_get_relays(session, &relays, &n_relays);
 
+    fprintf(stderr, "\n*** SAVING CREDENTIALS FROM BUNKER LOGIN ***\n");
+    fprintf(stderr, "Session has %zu relays before save:\n", n_relays);
+    for (size_t i = 0; i < n_relays && relays; i++) {
+      fprintf(stderr, "  relay[%zu]: %s\n", i, relays[i] ? relays[i] : "(null)");
+    }
+
     save_nip46_credentials_to_settings(secret_hex, signer_pubkey, relays, n_relays);
 
     free(secret_hex);

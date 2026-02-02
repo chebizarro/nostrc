@@ -161,6 +161,10 @@ int nostr_nip46_client_connect(NostrNip46Session *s,
         s->remote_pubkey_hex = u.remote_signer_pubkey_hex; u.remote_signer_pubkey_hex=NULL;
         s->secret = u.secret; u.secret=NULL;
         s->relays = u.relays; s->n_relays = u.n_relays; u.relays=NULL; u.n_relays=0;
+        fprintf(stderr, "[nip46] client_connect: parsed bunker URI, %zu relays:\n", s->n_relays);
+        for (size_t i = 0; i < s->n_relays && s->relays; i++) {
+            fprintf(stderr, "  relay[%zu]: %s\n", i, s->relays[i] ? s->relays[i] : "(null)");
+        }
         nostr_nip46_uri_bunker_free(&u);
         return 0;
     } else if (strncmp(bunker_uri, "nostrconnect://", 15) == 0) {
