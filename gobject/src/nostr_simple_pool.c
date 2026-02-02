@@ -741,11 +741,8 @@ static void query_single_ctx_free(QuerySingleCtx *ctx) {
 }
 
 static gboolean query_single_complete_ok(gpointer data) {
-    g_message("[NIP66-DEBUG] query_single_complete_ok: running on main thread");
     GTask *task = G_TASK(data);
     g_task_return_boolean(task, TRUE);
-    g_message("[NIP66-DEBUG] query_single_complete_ok: g_task_return_boolean called");
-    /* Unref provided by destroy notify in invoke_full if set; be safe */
     return G_SOURCE_REMOVE;
 }
 
@@ -958,14 +955,10 @@ static gpointer query_single_thread(gpointer user_data) {
     }
     g_ptr_array_free(created_relays, TRUE);
 
-    g_message("[NIP66-DEBUG] query_single: all %zu relays queried, scheduling completion with %u results",
-              ctx->url_count, ctx->results ? ctx->results->len : 0);
-
     // Schedule completion on the main thread; task owns ctx via task_data
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, query_single_complete_ok,
                                g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
 
-    g_message("[NIP66-DEBUG] query_single: completion scheduled, returning from thread");
     return NULL;
 }
 
