@@ -112,6 +112,43 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bunker_sign_event_acl_deny.c)
   add_test(NAME test_nip46_bunker_sign_event_acl_deny COMMAND test_nip46_bunker_sign_event_acl_deny)
 endif()
 
+# Comprehensive test suite (new)
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uri_comprehensive.c)
+  add_executable(test_nip46_uri_comprehensive tests/test_uri_comprehensive.c)
+  target_link_libraries(test_nip46_uri_comprehensive PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_uri_comprehensive COMMAND test_nip46_uri_comprehensive)
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_session_management.c)
+  add_executable(test_nip46_session_management tests/test_session_management.c)
+  target_link_libraries(test_nip46_session_management PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_session_management COMMAND test_nip46_session_management)
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_msg_comprehensive.c)
+  add_executable(test_nip46_msg_comprehensive tests/test_msg_comprehensive.c)
+  target_link_libraries(test_nip46_msg_comprehensive PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_msg_comprehensive COMMAND test_nip46_msg_comprehensive)
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_encryption_detection.c)
+  add_executable(test_nip46_encryption_detection tests/test_encryption_detection.c)
+  target_link_libraries(test_nip46_encryption_detection PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_encryption_detection COMMAND test_nip46_encryption_detection)
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rpc_flow_mock.c)
+  add_executable(test_nip46_rpc_flow_mock tests/test_rpc_flow_mock.c)
+  target_link_libraries(test_nip46_rpc_flow_mock PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_rpc_flow_mock COMMAND test_nip46_rpc_flow_mock)
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_response_validation.c)
+  add_executable(test_nip46_response_validation tests/test_response_validation.c)
+  target_link_libraries(test_nip46_response_validation PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_response_validation COMMAND test_nip46_response_validation)
+endif()
+
 # Examples
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nostr-nip46-client.c)
   add_executable(nostr-nip46-client examples/nostr-nip46-client.c)
