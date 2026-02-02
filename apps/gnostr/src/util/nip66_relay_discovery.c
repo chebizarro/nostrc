@@ -295,8 +295,8 @@ static GPtrArray *find_all_tag_values(const char *tags_json, const gchar *tag_na
 }
 
 /* Callback for parsing rtt (round-trip time) tags
- * Format: ["rtt", "<type>", "<milliseconds>"]
- * where type is "open", "read", or "write" */
+ * NIP-66 format: ["rtt-open", 234], ["rtt-read", 150], ["rtt-write", 200]
+ * The tag name includes the type, value is at index 1 */
 static bool parse_rtt_tag_cb(size_t idx, const char *element_json, void *user_data)
 {
   (void)idx;
@@ -304,46 +304,59 @@ static bool parse_rtt_tag_cb(size_t idx, const char *element_json, void *user_da
 
   if (!nostr_json_is_array_str(element_json)) return true;
 
-  /* Check if this is an rtt tag */
+  /* Get tag name */
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0) {
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
     return true;
   }
 
-  if (g_strcmp0(tag_name, "rtt") != 0) {
+  /* Check if this is an rtt-* tag */
+  if (!g_str_has_prefix(tag_name, "rtt")) {
     g_free(tag_name);
     return true;
   }
-  g_free(tag_name);
 
-  /* Get type (index 1) and value (index 2) */
-  char *rtt_type = NULL;
+  /* Get value at index 1 - can be string or number */
   char *rtt_val = NULL;
-
-  if (nostr_json_get_array_string(element_json, NULL, 1, &rtt_type) != 0 || !rtt_type) {
-    return true;
-  }
-
-  if (nostr_json_get_array_string(element_json, NULL, 2, &rtt_val) != 0 || !rtt_val) {
-    g_free(rtt_type);
+  if (nostr_json_get_array_string(element_json, NULL, 1, &rtt_val) != 0 || !rtt_val) {
+    g_free(tag_name);
     return true;
   }
 
   gint64 latency = g_ascii_strtoll(rtt_val, NULL, 10);
+  g_free(rtt_val);
 
-  if (g_strcmp0(rtt_type, "open") == 0) {
+  /* NIP-66 uses rtt-open, rtt-read, rtt-write as tag names */
+  if (g_strcmp0(tag_name, "rtt-open") == 0) {
     meta->latency_open_ms = latency;
-  } else if (g_strcmp0(rtt_type, "read") == 0) {
+    /* Use open latency as the primary latency if not set */
+    if (meta->latency_ms == 0) meta->latency_ms = latency;
+  } else if (g_strcmp0(tag_name, "rtt-read") == 0) {
     meta->latency_read_ms = latency;
-  } else if (g_strcmp0(rtt_type, "write") == 0) {
+  } else if (g_strcmp0(tag_name, "rtt-write") == 0) {
     meta->latency_write_ms = latency;
-  } else {
-    /* Generic latency */
-    meta->latency_ms = latency;
+  } else if (g_strcmp0(tag_name, "rtt") == 0) {
+    /* Legacy format: ["rtt", "<type>", "<ms>"] - try to parse */
+    char *rtt_type = NULL;
+    char *rtt_ms = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &rtt_type) == 0 && rtt_type) {
+      if (nostr_json_get_array_string(element_json, NULL, 2, &rtt_ms) == 0 && rtt_ms) {
+        gint64 legacy_latency = g_ascii_strtoll(rtt_ms, NULL, 10);
+        if (g_strcmp0(rtt_type, "open") == 0) {
+          meta->latency_open_ms = legacy_latency;
+          if (meta->latency_ms == 0) meta->latency_ms = legacy_latency;
+        } else if (g_strcmp0(rtt_type, "read") == 0) {
+          meta->latency_read_ms = legacy_latency;
+        } else if (g_strcmp0(rtt_type, "write") == 0) {
+          meta->latency_write_ms = legacy_latency;
+        }
+        g_free(rtt_ms);
+      }
+      g_free(rtt_type);
+    }
   }
 
-  g_free(rtt_type);
-  g_free(rtt_val);
+  g_free(tag_name);
   return true; /* Continue to find more rtt tags */
 }
 
