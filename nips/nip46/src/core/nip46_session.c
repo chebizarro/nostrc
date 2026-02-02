@@ -788,6 +788,9 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     }
 
     fprintf(stderr, "[nip46] %s: received response, decrypting...\n", method);
+    fprintf(stderr, "[nip46] %s: response_pubkey (event.pubkey) = %s\n", method, response_pubkey);
+    fprintf(stderr, "[nip46] %s: client_pubkey (our key) = %s\n", method, client_pubkey);
+    fprintf(stderr, "[nip46] %s: peer we sent TO = %s\n", method, peer);
 
     /* Decrypt response using NIP-44 */
     unsigned char resp_pk[32];
@@ -803,7 +806,9 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     uint8_t *plaintext = NULL;
     size_t plaintext_len = 0;
     if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
-        fprintf(stderr, "[nip46] %s: ERROR: failed to decrypt response\n", method);
+        fprintf(stderr, "[nip46] %s: ERROR -1: failed to decrypt response\n", method);
+        fprintf(stderr, "[nip46] %s: ECDH mismatch? We used client_sk + response_pubkey\n", method);
+        fprintf(stderr, "[nip46] %s: Signer should have used response_sk + client_pubkey\n", method);
         secure_wipe(sk, sizeof(sk));
         free(client_pubkey);
         free(response_content);
