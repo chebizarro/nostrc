@@ -1564,11 +1564,45 @@ typedef struct {
   NostrFilter *filter;  /* Single filter for query_single_streaming */
   char **urls;
   size_t url_count;
-  gboolean completed;  /* Prevents double-free race between timeout and query completion */
+  gint refcount;  /* Atomic refcount: timeout + query_complete each hold a ref */
+  gboolean completion_handled;  /* TRUE if on_complete callback already invoked */
 } Nip66StreamingCtx;
 
+/* Decrement refcount and free if zero. Returns TRUE if freed. */
+static gboolean nip66_streaming_ctx_unref(Nip66StreamingCtx *ctx)
+{
+  if (!ctx) return FALSE;
+  gint old = g_atomic_int_add(&ctx->refcount, -1);
+  if (old == 1) {
+    /* Last ref - safe to free */
+    if (ctx->events_handler_id && ctx->pool) {
+      g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
+      ctx->events_handler_id = 0;
+    }
+    if (ctx->timeout_source_id) {
+      g_source_remove(ctx->timeout_source_id);
+      ctx->timeout_source_id = 0;
+    }
+    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    if (ctx->relays_found) g_ptr_array_unref(ctx->relays_found);
+    if (ctx->monitors_found) g_ptr_array_unref(ctx->monitors_found);
+    if (ctx->seen_urls) g_hash_table_destroy(ctx->seen_urls);
+    if (ctx->filter) nostr_filter_free(ctx->filter);
+    if (ctx->urls) {
+      for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]);
+      g_free(ctx->urls);
+    }
+    g_free(ctx);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+/* Legacy free - now just calls unref for backwards compat with signal handlers */
 static void nip66_streaming_ctx_free(Nip66StreamingCtx *ctx)
 {
+  /* Note: This is only called from places that don't use refcounting.
+   * The streaming callbacks use nip66_streaming_ctx_unref instead. */
   if (!ctx) return;
   if (ctx->events_handler_id && ctx->pool) {
     g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
@@ -1671,19 +1705,25 @@ static gboolean on_streaming_timeout(gpointer user_data)
   Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
   if (!ctx) return G_SOURCE_REMOVE;
 
-  /* Prevent race with on_streaming_query_complete */
-  if (ctx->completed) return G_SOURCE_REMOVE;
-  ctx->completed = TRUE;
-
   ctx->timeout_source_id = 0;
 
-  g_debug("nip66 streaming: timeout, completing with %u relays",
-            ctx->relays_found ? ctx->relays_found->len : 0);
+  g_debug("nip66 streaming: timeout fired");
 
   /* Cancel the query to stop the background thread */
   if (ctx->cancellable) {
     g_cancellable_cancel(ctx->cancellable);
   }
+
+  /* Atomically check and set completion_handled to ensure on_complete called once */
+  if (!g_atomic_int_compare_and_exchange(&ctx->completion_handled, FALSE, TRUE)) {
+    /* Query completion already handled it - just drop our ref */
+    g_debug("nip66 streaming: timeout - completion already handled by query");
+    nip66_streaming_ctx_unref(ctx);
+    return G_SOURCE_REMOVE;
+  }
+
+  g_debug("nip66 streaming: timeout completing with %u relays",
+            ctx->relays_found ? ctx->relays_found->len : 0);
 
   /* Disconnect signal handler */
   if (ctx->events_handler_id && ctx->pool) {
@@ -1698,13 +1738,13 @@ static gboolean on_streaming_timeout(gpointer user_data)
     ctx->monitors_found = NULL;
   }
 
-  /* Clean up any relay connections that might still be open if the query
-   * was cancelled before all relays sent EOSE. */
+  /* Clean up any relay connections that might still be open */
   if (ctx->pool) {
     gnostr_simple_pool_disconnect_all_relays(ctx->pool);
   }
 
-  nip66_streaming_ctx_free(ctx);
+  /* Drop our ref - may free if query_complete already dropped its ref */
+  nip66_streaming_ctx_unref(ctx);
   return G_SOURCE_REMOVE;
 }
 
@@ -1728,11 +1768,15 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
    * Free it since we don't need duplicates. */
   if (results) g_ptr_array_unref(results);
 
-  /* Prevent race with on_streaming_timeout - if timeout already completed, just return */
-  if (ctx->completed) return;
-  ctx->completed = TRUE;
+  /* Atomically check and set completion_handled to ensure on_complete called once */
+  if (!g_atomic_int_compare_and_exchange(&ctx->completion_handled, FALSE, TRUE)) {
+    /* Timeout already handled completion - just drop our ref */
+    g_debug("nip66 streaming: query complete - completion already handled by timeout");
+    nip66_streaming_ctx_unref(ctx);
+    return;
+  }
 
-  /* Query complete (EOSE received from all relays). Cancel timeout and complete. */
+  /* Query complete (EOSE received from all relays). Cancel timeout. */
   if (ctx->timeout_source_id) {
     g_source_remove(ctx->timeout_source_id);
     ctx->timeout_source_id = 0;
@@ -1754,7 +1798,8 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     ctx->monitors_found = NULL;
   }
 
-  nip66_streaming_ctx_free(ctx);
+  /* Drop our ref - may free if timeout already dropped its ref */
+  nip66_streaming_ctx_unref(ctx);
 }
 
 void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback on_relay_found,
@@ -1780,6 +1825,8 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   ctx->monitors_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_monitor_free);
   ctx->seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   ctx->pool = pool;
+  ctx->refcount = 2;  /* One ref for timeout, one for query_complete */
+  ctx->completion_handled = FALSE;
 
   /* Collect relay URLs */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
