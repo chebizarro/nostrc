@@ -594,9 +594,12 @@ int nostr_nip46_client_ping(NostrNip46Session *s) {
 
 /* nostrc-nip46-rpc: Helper function to send an RPC request and wait for response.
  * Returns the "result" field from the response on success, or NULL on error.
- * Caller must free the returned string. */
+ * If out_response_pubkey is non-NULL, it receives the pubkey of the responding event.
+ * Caller must free the returned strings. */
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
-                            const char **params, size_t n_params) {
+                            const char **params, size_t n_params,
+                            char **out_response_pubkey) {
+    if (out_response_pubkey) *out_response_pubkey = NULL;
     if (!s || !method) return NULL;
 
     /* Validate session state */
@@ -810,7 +813,13 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     secure_wipe(sk, sizeof(sk));
     free(client_pubkey);
     free(response_content);
-    free(response_pubkey);
+
+    /* Return response pubkey if caller wants it, otherwise free */
+    if (out_response_pubkey) {
+        *out_response_pubkey = response_pubkey;
+    } else {
+        free(response_pubkey);
+    }
 
     /* Null-terminate for JSON parsing */
     char *response_json = (char *)malloc(plaintext_len + 1);
@@ -879,9 +888,26 @@ int nostr_nip46_client_connect_rpc(NostrNip46Session *s,
     params[n_params++] = connect_secret ? connect_secret : "";
     params[n_params++] = perms ? perms : "";
 
-    char *result = nip46_rpc_call(s, "connect", params, n_params);
+    /* Get response pubkey so we can update session for future RPCs */
+    char *response_pubkey = NULL;
+    char *result = nip46_rpc_call(s, "connect", params, n_params, &response_pubkey);
     if (!result) {
+        free(response_pubkey);
         return -1;
+    }
+
+    /* Update session's remote_pubkey to the actual responder's pubkey.
+     * This is critical: for custodial signers like nsec.app, the bunker URI
+     * contains the user's pubkey, but the signer may respond from the same
+     * or a different key. Future RPCs must target the actual responder. */
+    if (response_pubkey && *response_pubkey) {
+        fprintf(stderr, "[nip46] connect_rpc: updating remote_pubkey_hex from %s to %s\n",
+                s->remote_pubkey_hex ? s->remote_pubkey_hex : "(null)",
+                response_pubkey);
+        free(s->remote_pubkey_hex);
+        s->remote_pubkey_hex = response_pubkey;
+    } else {
+        free(response_pubkey);
     }
 
     *out_result = result;
@@ -895,7 +921,7 @@ int nostr_nip46_client_get_public_key_rpc(NostrNip46Session *s, char **out_user_
     if (!s || !out_user_pubkey_hex) return -1;
     *out_user_pubkey_hex = NULL;
 
-    char *result = nip46_rpc_call(s, "get_public_key", NULL, 0);
+    char *result = nip46_rpc_call(s, "get_public_key", NULL, 0, NULL);
     if (!result) {
         return -1;
     }
