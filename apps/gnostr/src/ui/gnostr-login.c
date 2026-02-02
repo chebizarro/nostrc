@@ -1194,7 +1194,11 @@ static void bunker_connect_complete(GObject *source, GAsyncResult *res, gpointer
   GnostrLogin *self = GNOSTR_LOGIN(user_data);
   (void)source;
 
-  if (!GNOSTR_IS_LOGIN(self)) return;
+  /* We hold a ref, so object is valid. But check if it's been disposed. */
+  if (!GNOSTR_IS_LOGIN(self)) {
+    g_object_unref(self);
+    return;
+  }
 
   self->connecting_bunker = FALSE;
 
@@ -1211,6 +1215,7 @@ static void bunker_connect_complete(GObject *source, GAsyncResult *res, gpointer
     }
     set_bunker_status(self, BUNKER_STATUS_ERROR, error->message, detail);
     g_error_free(error);
+    g_object_unref(self);
     return;
   }
 
@@ -1218,6 +1223,7 @@ static void bunker_connect_complete(GObject *source, GAsyncResult *res, gpointer
     set_bunker_status(self, BUNKER_STATUS_ERROR,
                       "Connection failed",
                       "The signer did not respond. Try again.");
+    g_object_unref(self);
     return;
   }
 
@@ -1237,6 +1243,8 @@ static void bunker_connect_complete(GObject *source, GAsyncResult *res, gpointer
   /* Show success */
   show_success(self, npub);
   g_free(npub);
+
+  g_object_unref(self);
 }
 
 static void on_connect_bunker_clicked(GtkButton *btn, gpointer user_data) {
@@ -1271,7 +1279,8 @@ static void on_connect_bunker_clicked(GtkButton *btn, gpointer user_data) {
   ctx->self = self;
   ctx->bunker_uri = g_strdup(uri);
 
-  GTask *task = g_task_new(NULL, self->cancellable, bunker_connect_complete, self);
+  /* Ref self to prevent use-after-free if dialog closes before task completes */
+  GTask *task = g_task_new(NULL, self->cancellable, bunker_connect_complete, g_object_ref(self));
   g_task_set_task_data(task, ctx, bunker_connect_ctx_free);
   g_task_run_in_thread(task, bunker_connect_thread);
   g_object_unref(task);
