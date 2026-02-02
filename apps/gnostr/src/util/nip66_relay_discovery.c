@@ -1326,6 +1326,33 @@ static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpoint
       /* Parse as relay metadata (kind 30166) */
       GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(json);
       if (meta) {
+        /* Filter out localhost/127.0.0.1 relays */
+        if (meta->relay_url &&
+            (g_str_has_prefix(meta->relay_url, "ws://127.0.0.1") ||
+             g_str_has_prefix(meta->relay_url, "wss://127.0.0.1") ||
+             g_str_has_prefix(meta->relay_url, "ws://localhost") ||
+             g_str_has_prefix(meta->relay_url, "wss://localhost") ||
+             g_str_has_prefix(meta->relay_url, "ws://[::1]") ||
+             g_str_has_prefix(meta->relay_url, "wss://[::1]"))) {
+          gnostr_nip66_relay_meta_free(meta);
+          continue;
+        }
+
+        /* Check for duplicate relay URLs */
+        gboolean is_duplicate = FALSE;
+        for (guint j = 0; j < ctx->relays_found->len; j++) {
+          GnostrNip66RelayMeta *existing = g_ptr_array_index(ctx->relays_found, j);
+          if (existing && existing->relay_url && meta->relay_url &&
+              g_ascii_strcasecmp(existing->relay_url, meta->relay_url) == 0) {
+            is_duplicate = TRUE;
+            break;
+          }
+        }
+        if (is_duplicate) {
+          gnostr_nip66_relay_meta_free(meta);
+          continue;
+        }
+
         parsed_count++;
         g_ptr_array_add(ctx->relays_found, meta);
         /* Cache it */
