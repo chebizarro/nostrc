@@ -736,6 +736,15 @@ struct _GnostrTimelineView {
   /* nostrc-lig9: NIP-65 reaction fetch tracking */
   GHashTable *reaction_nip65_fetched; /* pubkey_hex -> gboolean: authors we've fetched NIP-65 for */
   GCancellable *reaction_cancellable; /* cancellable for reaction fetch operations */
+
+  /* nostrc-y62r: Scroll position tracking for viewport-aware loading */
+  guint visible_range_start;          /* First visible item index */
+  guint visible_range_end;            /* Last visible item index (exclusive) */
+  gdouble last_scroll_value;          /* Previous scroll position for velocity calc */
+  gint64 last_scroll_time;            /* Timestamp of last scroll for velocity calc */
+  gdouble scroll_velocity;            /* Scroll velocity in pixels/ms */
+  gboolean is_fast_scrolling;         /* TRUE if user is scrolling fast (>threshold) */
+  guint scroll_idle_id;               /* Source ID for scroll idle timeout */
 };
 
 G_DEFINE_TYPE(GnostrTimelineView, gnostr_timeline_view, GTK_TYPE_WIDGET)
@@ -766,8 +775,15 @@ static void on_tabs_tab_selected(GnTimelineTabs *tabs, guint index, gpointer use
 
 static void gnostr_timeline_view_dispose(GObject *obj) {
   GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(obj);
-  g_warning("🔥🔥🔥 TIMELINE_VIEW DISPOSE STARTING: list_view=%p list_model=%p tree_model=%p", 
+  g_warning("🔥🔥🔥 TIMELINE_VIEW DISPOSE STARTING: list_view=%p list_model=%p tree_model=%p",
             (void*)self->list_view, (void*)self->list_model, (void*)self->tree_model);
+
+  /* nostrc-y62r: Cancel scroll idle timeout */
+  if (self->scroll_idle_id > 0) {
+    g_source_remove(self->scroll_idle_id);
+    self->scroll_idle_id = 0;
+  }
+
   /* CRITICAL: Clear models in correct order to avoid GTK trying to disconnect
    * signals from already-freed TimelineItem objects.
    * Order: detach from view → clear selection → clear tree → clear list */
@@ -2216,6 +2232,87 @@ static void ensure_list_model(GnostrTimelineView *self) {
   g_debug("ensure_list_model: list_model=%p selection_model=%p", (void*)self->list_model, (void*)self->selection_model);
 }
 
+/* nostrc-y62r: Scroll position tracking */
+#define FAST_SCROLL_THRESHOLD 2.0  /* pixels/ms - above this is "fast" scrolling */
+#define SCROLL_IDLE_TIMEOUT_MS 150 /* ms of no scroll activity before marking idle */
+#define ESTIMATED_ROW_HEIGHT 100   /* Estimated row height in pixels for range calculation */
+
+static gboolean scroll_idle_timeout_cb(gpointer user_data) {
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  self->is_fast_scrolling = FALSE;
+  self->scroll_velocity = 0.0;
+  self->scroll_idle_id = 0;
+  g_debug("[SCROLL] Scroll idle - fast_scroll=FALSE");
+  return G_SOURCE_REMOVE;
+}
+
+static void update_visible_range(GnostrTimelineView *self) {
+  if (!self->root_scroller || !GTK_IS_SCROLLED_WINDOW(self->root_scroller))
+    return;
+
+  GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->root_scroller));
+  if (!vadj) return;
+
+  gdouble value = gtk_adjustment_get_value(vadj);
+  gdouble page_size = gtk_adjustment_get_page_size(vadj);
+
+  /* Get model item count */
+  guint n_items = 0;
+  if (self->selection_model) {
+    GListModel *model = gtk_single_selection_get_model(GTK_SINGLE_SELECTION(self->selection_model));
+    if (model) n_items = g_list_model_get_n_items(model);
+  }
+
+  if (n_items == 0) {
+    self->visible_range_start = 0;
+    self->visible_range_end = 0;
+    return;
+  }
+
+  /* Estimate visible range based on scroll position and estimated row height */
+  guint start_idx = (guint)(value / ESTIMATED_ROW_HEIGHT);
+  guint visible_count = (guint)((page_size / ESTIMATED_ROW_HEIGHT) + 2); /* +2 for partial rows */
+
+  self->visible_range_start = MIN(start_idx, n_items);
+  self->visible_range_end = MIN(start_idx + visible_count, n_items);
+
+  g_debug("[SCROLL] visible_range=[%u, %u) of %u items (value=%.0f page=%.0f)",
+          self->visible_range_start, self->visible_range_end, n_items, value, page_size);
+}
+
+static void on_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+
+  gint64 now = g_get_monotonic_time();
+  gdouble value = gtk_adjustment_get_value(adj);
+
+  /* Calculate velocity */
+  if (self->last_scroll_time > 0) {
+    gint64 dt_us = now - self->last_scroll_time;
+    if (dt_us > 0) {
+      gdouble dt_ms = dt_us / 1000.0;
+      gdouble dv = ABS(value - self->last_scroll_value);
+      self->scroll_velocity = dv / dt_ms;
+      self->is_fast_scrolling = (self->scroll_velocity > FAST_SCROLL_THRESHOLD);
+    }
+  }
+
+  self->last_scroll_value = value;
+  self->last_scroll_time = now;
+
+  /* Update visible range */
+  update_visible_range(self);
+
+  /* Reset idle timeout */
+  if (self->scroll_idle_id > 0) {
+    g_source_remove(self->scroll_idle_id);
+  }
+  self->scroll_idle_id = g_timeout_add(SCROLL_IDLE_TIMEOUT_MS, scroll_idle_timeout_cb, self);
+
+  g_debug("[SCROLL] value=%.0f velocity=%.2f px/ms fast=%s",
+          value, self->scroll_velocity, self->is_fast_scrolling ? "YES" : "no");
+}
+
 static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
@@ -2259,6 +2356,15 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   /* nostrc-lig9: Initialize NIP-65 reaction fetch tracking */
   self->reaction_nip65_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->reaction_cancellable = g_cancellable_new();
+
+  /* nostrc-y62r: Connect scroll position tracking */
+  if (self->root_scroller && GTK_IS_SCROLLED_WINDOW(self->root_scroller)) {
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->root_scroller));
+    if (vadj) {
+      g_signal_connect(vadj, "value-changed", G_CALLBACK(on_scroll_value_changed), self);
+      g_debug("[SCROLL] Connected scroll tracking to vadj=%p", (void*)vadj);
+    }
+  }
 
   /* Install minimal CSS for thread indicator and avatar */
   static const char *css =
@@ -2523,4 +2629,35 @@ void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *p
 
   /* Switch to the new tab */
   gn_timeline_tabs_set_selected(GN_TIMELINE_TABS(self->tabs), index);
+}
+
+/* ============== nostrc-y62r: Scroll Position Tracking API ============== */
+
+gboolean gnostr_timeline_view_get_visible_range(GnostrTimelineView *self,
+                                                  guint *start,
+                                                  guint *end) {
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), FALSE);
+
+  if (start) *start = self->visible_range_start;
+  if (end) *end = self->visible_range_end;
+
+  return (self->visible_range_end > self->visible_range_start);
+}
+
+gboolean gnostr_timeline_view_is_item_visible(GnostrTimelineView *self, guint index) {
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), FALSE);
+
+  return (index >= self->visible_range_start && index < self->visible_range_end);
+}
+
+gboolean gnostr_timeline_view_is_fast_scrolling(GnostrTimelineView *self) {
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), FALSE);
+
+  return self->is_fast_scrolling;
+}
+
+gdouble gnostr_timeline_view_get_scroll_velocity(GnostrTimelineView *self) {
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), 0.0);
+
+  return self->scroll_velocity;
 }

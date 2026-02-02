@@ -66,6 +66,54 @@ void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *p
  *   The main window should connect to this signal to update the model query.
  */
 
+/* nostrc-y62r: Scroll position tracking for viewport-aware loading */
+
+/**
+ * gnostr_timeline_view_get_visible_range:
+ * @self: The timeline view
+ * @start: (out) (optional): First visible item index
+ * @end: (out) (optional): Last visible item index (exclusive)
+ *
+ * Get the currently visible item range based on scroll position.
+ *
+ * Returns: TRUE if there are visible items, FALSE if range is empty
+ */
+gboolean gnostr_timeline_view_get_visible_range(GnostrTimelineView *self,
+                                                  guint *start,
+                                                  guint *end);
+
+/**
+ * gnostr_timeline_view_is_item_visible:
+ * @self: The timeline view
+ * @index: Item index to check
+ *
+ * Check if an item at the given index is currently visible in the viewport.
+ *
+ * Returns: TRUE if the item is visible
+ */
+gboolean gnostr_timeline_view_is_item_visible(GnostrTimelineView *self, guint index);
+
+/**
+ * gnostr_timeline_view_is_fast_scrolling:
+ * @self: The timeline view
+ *
+ * Check if the user is currently scrolling fast. Useful for deferring
+ * expensive operations like metadata loading during rapid scroll.
+ *
+ * Returns: TRUE if scroll velocity exceeds threshold
+ */
+gboolean gnostr_timeline_view_is_fast_scrolling(GnostrTimelineView *self);
+
+/**
+ * gnostr_timeline_view_get_scroll_velocity:
+ * @self: The timeline view
+ *
+ * Get the current scroll velocity in pixels per millisecond.
+ *
+ * Returns: Scroll velocity (0 if not scrolling)
+ */
+gdouble gnostr_timeline_view_get_scroll_velocity(GnostrTimelineView *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_TIMELINE_VIEW_H */
