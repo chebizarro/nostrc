@@ -17,6 +17,14 @@
 #define NIP89_CACHE_MAX_RECOMMENDATIONS 1000
 #define NIP89_CACHE_TTL_SECONDS       (60 * 60 * 24)  /* 24 hours */
 
+/* GSettings schema for persisting preferences */
+#define NIP89_SETTINGS_SCHEMA "org.gnostr.Client"
+#define NIP89_SETTINGS_KEY_PREFERENCES "nip89-handler-preferences"
+
+/* Forward declarations for preference persistence */
+static void load_preferences_from_settings(void);
+static void save_preferences_to_settings(void);
+
 /* ============== Global Cache State ============== */
 
 static GHashTable *g_handler_cache = NULL;      /* key: "pubkey:d_tag", value: GnostrNip89HandlerInfo* */
@@ -428,6 +436,85 @@ static void ensure_cache_initialized(void)
 
   g_nip89_initialized = TRUE;
   g_debug("nip89: cache initialized");
+
+  /* Load persisted preferences from GSettings */
+  load_preferences_from_settings();
+}
+
+/* Load preferences from GSettings into the hash table */
+static void load_preferences_from_settings(void)
+{
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  if (!source) return;
+
+  GSettingsSchema *schema = g_settings_schema_source_lookup(source, NIP89_SETTINGS_SCHEMA, TRUE);
+  if (!schema) {
+    g_debug("nip89: settings schema %s not found, skipping preference load", NIP89_SETTINGS_SCHEMA);
+    return;
+  }
+  g_settings_schema_unref(schema);
+
+  GSettings *settings = g_settings_new(NIP89_SETTINGS_SCHEMA);
+  if (!settings) return;
+
+  gchar **prefs = g_settings_get_strv(settings, NIP89_SETTINGS_KEY_PREFERENCES);
+  if (prefs) {
+    for (gsize i = 0; prefs[i]; i++) {
+      /* Parse "kind:a_tag" format */
+      gchar *sep = strchr(prefs[i], ':');
+      if (sep && sep != prefs[i]) {
+        guint kind = (guint)g_ascii_strtoull(prefs[i], NULL, 10);
+        const gchar *a_tag = sep + 1;
+        if (kind > 0 && *a_tag) {
+          g_hash_table_insert(g_user_preferences,
+                              GUINT_TO_POINTER(kind),
+                              g_strdup(a_tag));
+          g_debug("nip89: loaded preference for kind %u: %s", kind, a_tag);
+        }
+      }
+    }
+    g_strfreev(prefs);
+  }
+
+  g_object_unref(settings);
+}
+
+/* Save preferences from hash table to GSettings */
+static void save_preferences_to_settings(void)
+{
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  if (!source) return;
+
+  GSettingsSchema *schema = g_settings_schema_source_lookup(source, NIP89_SETTINGS_SCHEMA, TRUE);
+  if (!schema) {
+    g_debug("nip89: settings schema %s not found, skipping preference save", NIP89_SETTINGS_SCHEMA);
+    return;
+  }
+  g_settings_schema_unref(schema);
+
+  GSettings *settings = g_settings_new(NIP89_SETTINGS_SCHEMA);
+  if (!settings) return;
+
+  /* Build string array from hash table */
+  guint n_prefs = g_hash_table_size(g_user_preferences);
+  gchar **prefs = g_new0(gchar*, n_prefs + 1);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  guint i = 0;
+
+  g_hash_table_iter_init(&iter, g_user_preferences);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    guint kind = GPOINTER_TO_UINT(key);
+    const gchar *a_tag = (const gchar*)value;
+    prefs[i++] = g_strdup_printf("%u:%s", kind, a_tag);
+  }
+
+  g_settings_set_strv(settings, NIP89_SETTINGS_KEY_PREFERENCES, (const gchar* const*)prefs);
+  g_debug("nip89: saved %u preferences to settings", n_prefs);
+
+  g_strfreev(prefs);
+  g_object_unref(settings);
 }
 
 void gnostr_nip89_cache_init(void)
@@ -656,11 +743,10 @@ void gnostr_nip89_set_preferred_handler(guint event_kind, const char *handler_a_
     g_debug("nip89: cleared preferred handler for kind %u", event_kind);
   }
 
-  g_mutex_unlock(&g_nip89_cache_mutex);
+  /* Persist to GSettings */
+  save_preferences_to_settings();
 
-  /* nostrc-n63f: Handler preferences are in-memory only. Persisting to GSettings
-   * or publishing kind 31990 (recommendation) events is a larger feature.
-   * See nostrc-89ps if a bead exists for NIP-89 persistence. */
+  g_mutex_unlock(&g_nip89_cache_mutex);
 }
 
 void gnostr_nip89_clear_all_preferences(void)
@@ -670,6 +756,9 @@ void gnostr_nip89_clear_all_preferences(void)
 
   g_hash_table_remove_all(g_user_preferences);
   g_debug("nip89: cleared all handler preferences");
+
+  /* Persist to GSettings */
+  save_preferences_to_settings();
 
   g_mutex_unlock(&g_nip89_cache_mutex);
 }

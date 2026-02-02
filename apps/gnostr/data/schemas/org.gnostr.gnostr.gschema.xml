@@ -240,6 +240,16 @@
         Set to 0 to disable automatic pruning.
       </description>
     </key>
+    <key name="nip89-handler-preferences" type="as">
+      <default>[]</default>
+      <summary>NIP-89 handler preferences</summary>
+      <description>
+        User's preferred handlers for different event kinds (NIP-89).
+        Each entry is "kind:a_tag" where kind is the event kind number
+        and a_tag is the handler's addressable identifier (31989:pubkey:d).
+        Example: ["1:31989:abc123...:primal", "1111:31989:def456...:nostrudel"]
+      </description>
+    </key>
     <key name="cache-prune-on-startup" type="b">
       <default>true</default>
       <summary>Prune cache on startup</summary>
