@@ -1020,15 +1020,17 @@ static void relay_manager_fetch_info(RelayManagerCtx *ctx, const gchar *url) {
   }
   ctx->fetch_cancellable = g_cancellable_new();
 
+  /* Copy url first since it might be ctx->selected_url (from retry button) */
+  gchar *url_copy = g_strdup(url);
   g_free(ctx->selected_url);
-  ctx->selected_url = g_strdup(url);
+  ctx->selected_url = url_copy;
 
   GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
   if (stack) gtk_stack_set_visible_child_name(stack, "loading");
 
   /* Take a reference for the async callback */
   relay_manager_ctx_ref(ctx);
-  gnostr_relay_info_fetch_async(url, ctx->fetch_cancellable, on_relay_info_fetched, ctx);
+  gnostr_relay_info_fetch_async(ctx->selected_url, ctx->fetch_cancellable, on_relay_info_fetched, ctx);
 }
 
 static void on_relay_selection_changed(GtkSelectionModel *model, guint position, guint n_items, gpointer user_data) {
