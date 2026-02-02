@@ -2106,8 +2106,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       guint zap_count = gn_nostr_event_item_get_zap_count(GN_NOSTR_EVENT_ITEM(obj));
       gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
 
-      /* nostrc-nke8: Skip expensive DB lookups and network fetches during fast scroll */
-      gboolean defer_metadata = self && gnostr_timeline_view_is_fast_scrolling(self);
+      /* nostrc-nke8: Skip expensive DB lookups and network fetches for off-screen items
+       * Defer if: (1) fast scrolling OR (2) item position is outside visible range */
+      guint item_position = gtk_list_item_get_position(item);
+      gboolean is_visible = gnostr_timeline_view_is_item_visible(self, item_position);
+      gboolean defer_metadata = self && (gnostr_timeline_view_is_fast_scrolling(self) || !is_visible);
 
       if (!defer_metadata) {
         /* If model doesn't have reaction data, fetch from local storage */
@@ -2147,9 +2150,12 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
         gtk_widget_remove_css_class(row, "needs-metadata-refresh");
       } else {
-        /* Mark for deferred refresh when scroll stops */
+        /* Mark for deferred refresh when scroll stops or item becomes visible */
         gtk_widget_add_css_class(row, "needs-metadata-refresh");
-        g_debug("[SCROLL] Deferring metadata load for item (fast scrolling)");
+        g_debug("[SCROLL] Deferring metadata load for item position=%u (fast=%s visible=%s)",
+                item_position,
+                gnostr_timeline_view_is_fast_scrolling(self) ? "Y" : "N",
+                is_visible ? "Y" : "N");
       }
 
       gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
