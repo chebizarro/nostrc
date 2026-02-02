@@ -1299,46 +1299,65 @@ static void start_phase2_relay_discovery(Nip66DiscoveryCtx *ctx)
 static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   Nip66DiscoveryCtx *ctx = (Nip66DiscoveryCtx*)user_data;
-  if (!ctx) return;
+  if (!ctx) {
+    g_warning("nip66 phase2: callback with NULL context!");
+    return;
+  }
 
   ctx->pending_queries--;
+  g_message("nip66 phase2: callback fired, pending_queries=%d", ctx->pending_queries);
 
   GError *err = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("nip66 phase2: query failed: %s", err->message);
+      g_warning("nip66 phase2: query failed: %s", err->message);
     }
     g_error_free(err);
   } else if (results && results->len > 0) {
-    g_debug("nip66 phase2: received %u relay metadata events", results->len);
+    g_message("nip66 phase2: received %u events from relays", results->len);
+    guint parsed_count = 0;
     for (guint i = 0; i < results->len; i++) {
       const gchar *json = g_ptr_array_index(results, i);
 
       /* Parse as relay metadata (kind 30166) */
       GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(json);
       if (meta) {
+        parsed_count++;
         g_ptr_array_add(ctx->relays_found, meta);
         /* Cache it */
         GnostrNip66RelayMeta *meta_copy = gnostr_nip66_parse_relay_meta(json);
         if (meta_copy) gnostr_nip66_cache_add_relay(meta_copy);
+      } else if (i < 3) {
+        /* Log first few parse failures to help debug */
+        g_warning("nip66 phase2: failed to parse event %u: %.200s...", i, json ? json : "(null)");
       }
     }
+    g_message("nip66 phase2: parsed %u/%u events as relay metadata", parsed_count, results->len);
+  } else {
+    g_warning("nip66 phase2: no results returned (results=%p, len=%u)",
+              (void*)results, results ? results->len : 0);
   }
 
   if (results) g_ptr_array_unref(results);
 
   /* All done - invoke callback */
   if (ctx->pending_queries <= 0) {
-    g_debug("nip66: discovery complete - %u relays, %u monitors",
-            ctx->relays_found->len, ctx->monitors_found->len);
+    g_message("nip66: discovery complete - %u relays found, %u monitors found",
+              ctx->relays_found ? ctx->relays_found->len : 0,
+              ctx->monitors_found ? ctx->monitors_found->len : 0);
     if (ctx->callback) {
+      g_message("nip66: invoking callback with results");
       ctx->callback(ctx->relays_found, ctx->monitors_found, NULL, ctx->user_data);
       ctx->relays_found = NULL;
       ctx->monitors_found = NULL;
+    } else {
+      g_warning("nip66: no callback set!");
     }
     nip66_discovery_ctx_free(ctx);
+  } else {
+    g_message("nip66: still waiting for %d queries", ctx->pending_queries);
   }
 }
 
@@ -1385,7 +1404,10 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  g_debug("nip66: querying %u relays for kind 30166 relay metadata (direct)", relay_urls->len);
+  g_message("nip66: querying %u relays for kind 30166 relay metadata (direct)", relay_urls->len);
+  for (guint i = 0; i < relay_urls->len && i < 5; i++) {
+    g_message("nip66:   relay[%u] = %s", i, (const gchar*)g_ptr_array_index(relay_urls, i));
+  }
 
   /* nostrc-q42: Simplified discovery - query kind 30166 directly WITHOUT author filter.
    * Relay metadata events are addressable (d-tag = relay URL) and don't need
