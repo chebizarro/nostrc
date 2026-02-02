@@ -531,6 +531,41 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     nostr_simple_pool_subscribe(pool, (const char **)s->relays, s->n_relays, *filters, true);
     nostr_simple_pool_start(pool);
 
+    /* Wait for relay connections before publishing.
+     * The pool starts connection asynchronously, so we need to wait for at least
+     * one relay to be connected before publishing the request. */
+    int max_wait_ms = 5000;  /* 5 second timeout for connection */
+    int wait_interval_ms = 50;
+    int waited_ms = 0;
+    int connected = 0;
+
+    while (waited_ms < max_wait_ms && !connected) {
+        for (size_t r = 0; r < pool->relay_count; r++) {
+            if (pool->relays[r] && nostr_relay_is_connected(pool->relays[r])) {
+                connected = 1;
+                break;
+            }
+        }
+        if (!connected) {
+            struct timespec ts = { 0, wait_interval_ms * 1000000 };
+            nanosleep(&ts, NULL);
+            waited_ms += wait_interval_ms;
+        }
+    }
+
+    if (!connected) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to connect to any relay within %d ms\n", method, max_wait_ms);
+        nostr_simple_pool_stop(pool);
+        nostr_simple_pool_free(pool);
+        nostr_event_free(req_ev);
+        nostr_filters_free(filters);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        return NULL;
+    }
+
+    fprintf(stderr, "[nip46] %s: relay connected after %d ms\n", method, waited_ms);
+
     /* Publish the request to each relay */
     for (size_t i = 0; i < s->n_relays; i++) {
         fprintf(stderr, "[nip46] %s: publishing to %s\n", method, s->relays[i]);
