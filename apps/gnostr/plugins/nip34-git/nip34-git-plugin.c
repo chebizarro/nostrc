@@ -18,6 +18,10 @@
 #include <libpeas.h>
 #include <json-glib/json-glib.h>
 
+#ifdef HAVE_LIBGIT2
+#include "gnostr-git-client.h"
+#endif
+
 /* NIP-34 Event Kinds */
 #define NIP34_KIND_REPOSITORY     30617  /* Addressable: repository announcement */
 #define NIP34_KIND_PATCH          1617   /* Patch proposal */
@@ -41,6 +45,11 @@ struct _Nip34GitPlugin
   /* UI state */
   gboolean browser_visible;
   gboolean client_visible;
+
+#ifdef HAVE_LIBGIT2
+  /* Git client window (lazily created) */
+  GtkWindow *git_client_window;
+#endif
 };
 
 /* Repository metadata */
@@ -380,6 +389,67 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
   g_bytes_unref(data);
 }
 
+#ifdef HAVE_LIBGIT2
+/* Action handler for "open-git-client" action */
+static void
+on_open_git_client_action(GnostrPluginContext *context,
+                           const char          *action_name,
+                           GVariant            *parameter,
+                           gpointer             user_data)
+{
+  Nip34GitPlugin *self = NIP34_GIT_PLUGIN(user_data);
+  (void)action_name;
+
+  /* Get clone URL from parameter if provided */
+  const char *clone_url = NULL;
+  if (parameter && g_variant_is_of_type(parameter, G_VARIANT_TYPE_STRING)) {
+    clone_url = g_variant_get_string(parameter, NULL);
+  }
+
+  /* Create window if needed */
+  if (!self->git_client_window) {
+    GtkWindow *parent = gnostr_plugin_context_get_main_window(context);
+
+    self->git_client_window = GTK_WINDOW(gtk_window_new());
+    gtk_window_set_title(self->git_client_window, "Git Client");
+    gtk_window_set_default_size(self->git_client_window, 800, 600);
+    if (parent) {
+      gtk_window_set_transient_for(self->git_client_window, parent);
+    }
+
+    /* Create git client widget */
+    GnostrGitClient *client = gnostr_git_client_new();
+    gtk_window_set_child(self->git_client_window, GTK_WIDGET(client));
+
+    /* Store client reference for later access */
+    g_object_set_data(G_OBJECT(self->git_client_window), "git-client", client);
+  }
+
+  /* If clone URL provided, initiate clone */
+  if (clone_url && *clone_url) {
+    GnostrGitClient *client = g_object_get_data(
+        G_OBJECT(self->git_client_window), "git-client");
+    if (client) {
+      /* For now, show the window and let user choose where to clone.
+       * A proper implementation would show a file chooser dialog. */
+      g_debug("[NIP-34] Clone requested for: %s", clone_url);
+
+      /* Show a message about the clone URL */
+      GtkWindow *parent = gnostr_plugin_context_get_main_window(context);
+      if (parent) {
+        /* Copy to clipboard as a temporary solution */
+        GdkClipboard *clipboard = gdk_display_get_clipboard(
+            gtk_widget_get_display(GTK_WIDGET(parent)));
+        gdk_clipboard_set_text(clipboard, clone_url);
+      }
+    }
+  }
+
+  gtk_window_present(self->git_client_window);
+  g_debug("[NIP-34] Git client window presented");
+}
+#endif
+
 static void
 nip34_git_plugin_activate(GnostrPlugin        *plugin,
                           GnostrPluginContext *context)
@@ -402,6 +472,13 @@ nip34_git_plugin_activate(GnostrPlugin        *plugin,
 
   /* Load cached repository list from plugin storage */
   load_cached_repositories(self, context);
+
+#ifdef HAVE_LIBGIT2
+  /* Register action handler for git client */
+  gnostr_plugin_context_register_action(context, "open-git-client",
+                                         on_open_git_client_action, self);
+  g_debug("[NIP-34] Registered 'open-git-client' action");
+#endif
 }
 
 /* Save repositories to plugin storage for persistence */
@@ -507,6 +584,19 @@ nip34_git_plugin_deactivate(GnostrPlugin        *plugin,
 
   /* Clear cached data */
   g_hash_table_remove_all(self->repositories);
+
+#ifdef HAVE_LIBGIT2
+  /* Unregister action handler */
+  if (context) {
+    gnostr_plugin_context_unregister_action(context, "open-git-client");
+  }
+
+  /* Close git client window if open */
+  if (self->git_client_window) {
+    gtk_window_destroy(self->git_client_window);
+    self->git_client_window = NULL;
+  }
+#endif
 
   self->active = FALSE;
   self->context = NULL;

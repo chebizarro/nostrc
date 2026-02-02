@@ -43,7 +43,25 @@ struct _GnostrPluginContext
   /* Event subscriptions */
   GHashTable     *subscriptions;  /* subid (guint64) -> PluginSubscription* */
   guint64         next_sub_id;
+
+  /* Action handlers */
+  GHashTable     *actions;  /* action_name (char*) -> PluginAction* */
 };
+
+typedef struct
+{
+  char                    *name;
+  GnostrPluginActionFunc   callback;
+  gpointer                 user_data;
+} PluginAction;
+
+static void
+plugin_action_free(PluginAction *action)
+{
+  if (!action) return;
+  g_free(action->name);
+  g_free(action);
+}
 
 typedef struct
 {
@@ -81,6 +99,8 @@ gnostr_plugin_context_new(GtkApplication *app, const char *plugin_id)
   ctx->plugin_id = g_strdup(plugin_id ? plugin_id : "unknown");
   ctx->subscriptions = g_hash_table_new_full(g_int64_hash, g_int64_equal,
                                               NULL, (GDestroyNotify)plugin_subscription_free);
+  ctx->actions = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                        NULL, (GDestroyNotify)plugin_action_free);
   ctx->next_sub_id = 1;
   return ctx;
 }
@@ -90,6 +110,7 @@ gnostr_plugin_context_free(GnostrPluginContext *ctx)
 {
   if (!ctx) return;
   g_hash_table_unref(ctx->subscriptions);
+  g_hash_table_unref(ctx->actions);
   g_free(ctx->plugin_id);
   g_free(ctx);
 }
@@ -814,6 +835,66 @@ gnostr_plugin_context_request_sign_event_finish(GnostrPluginContext *context,
   (void)context;
   g_return_val_if_fail(G_IS_TASK(result), NULL);
   return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+/* ============================================================================
+ * ACTION HANDLERS
+ * ============================================================================ */
+
+void
+gnostr_plugin_context_register_action(GnostrPluginContext    *context,
+                                       const char             *action_name,
+                                       GnostrPluginActionFunc  callback,
+                                       gpointer                user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(action_name != NULL);
+  g_return_if_fail(callback != NULL);
+
+  PluginAction *action = g_new0(PluginAction, 1);
+  action->name = g_strdup(action_name);
+  action->callback = callback;
+  action->user_data = user_data;
+
+  g_hash_table_replace(context->actions, action->name, action);
+
+  g_debug("[plugin-api] Plugin '%s' registered action '%s'",
+          context->plugin_id, action_name);
+}
+
+void
+gnostr_plugin_context_unregister_action(GnostrPluginContext *context,
+                                         const char          *action_name)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(action_name != NULL);
+
+  if (g_hash_table_remove(context->actions, action_name)) {
+    g_debug("[plugin-api] Plugin '%s' unregistered action '%s'",
+            context->plugin_id, action_name);
+  }
+}
+
+gboolean
+gnostr_plugin_context_dispatch_action(GnostrPluginContext *context,
+                                       const char          *action_name,
+                                       GVariant            *parameter)
+{
+  g_return_val_if_fail(context != NULL, FALSE);
+  g_return_val_if_fail(action_name != NULL, FALSE);
+
+  PluginAction *action = g_hash_table_lookup(context->actions, action_name);
+  if (!action) {
+    g_debug("[plugin-api] Plugin '%s' has no action '%s'",
+            context->plugin_id, action_name);
+    return FALSE;
+  }
+
+  g_debug("[plugin-api] Dispatching action '%s' to plugin '%s'",
+          action_name, context->plugin_id);
+
+  action->callback(context, action_name, parameter, action->user_data);
+  return TRUE;
 }
 
 #endif /* !GNOSTR_PLUGIN_BUILD */

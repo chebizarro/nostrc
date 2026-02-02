@@ -156,6 +156,23 @@ void gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
 GtkWidget *gnostr_plugin_manager_get_plugin_settings_widget(GnostrPluginManager *manager,
                                                             const char          *plugin_id);
 
+/**
+ * gnostr_plugin_manager_dispatch_action:
+ * @manager: The plugin manager
+ * @plugin_id: Target plugin identifier (e.g., "nip34-git")
+ * @action_name: Action to dispatch (e.g., "open-git-client")
+ * @parameter: (nullable): Action parameter as GVariant
+ *
+ * Dispatch an action to a specific plugin.
+ * The plugin must be loaded and have registered the action.
+ *
+ * Returns: %TRUE if the action was handled, %FALSE otherwise
+ */
+gboolean gnostr_plugin_manager_dispatch_action(GnostrPluginManager *manager,
+                                                const char          *plugin_id,
+                                                const char          *action_name,
+                                                GVariant            *parameter);
+
 G_END_DECLS
 
 #endif /* GNOSTR_PLUGIN_MANAGER_H */

@@ -40,11 +40,14 @@ struct _GnostrPluginManager
   PeasExtensionSet *extension_set;
 #endif
 
-  /* Plugin context (shared with all plugins) */
-  GnostrPluginContext *context;
+  /* Per-plugin contexts */
+  GHashTable *plugin_contexts; /* plugin_id -> GnostrPluginContext* */
 
   /* Track loaded plugins */
   GHashTable *loaded_plugins; /* plugin_id -> GnostrPlugin* */
+
+  /* Shared state for contexts */
+  GtkWindow *main_window;
 
   gboolean initialized;
   gboolean shutdown;
@@ -75,11 +78,8 @@ gnostr_plugin_manager_dispose(GObject *obj)
   g_clear_object(&self->settings);
   g_clear_pointer(&self->loaded_plugins, g_hash_table_unref);
 
-  /* Free plugin context */
-  if (self->context) {
-    gnostr_plugin_context_free(self->context);
-    self->context = NULL;
-  }
+  /* Free all plugin contexts */
+  g_clear_pointer(&self->plugin_contexts, g_hash_table_unref);
 
 #ifdef HAVE_LIBPEAS
   g_clear_object(&self->extension_set);
@@ -101,6 +101,8 @@ gnostr_plugin_manager_init(GnostrPluginManager *self)
 {
   self->loaded_plugins = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                g_free, g_object_unref);
+  self->plugin_contexts = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                 g_free, (GDestroyNotify)gnostr_plugin_context_free);
   self->initialized = FALSE;
   self->shutdown = FALSE;
 
@@ -143,9 +145,6 @@ gnostr_plugin_manager_init_with_app(GnostrPluginManager *manager,
 
   manager->app = app;
   manager->initialized = TRUE;
-
-  /* Create the shared plugin context */
-  manager->context = gnostr_plugin_context_new(app, "gnostr");
 
   g_debug("[PLUGIN] Plugin manager initialized with application");
 }
@@ -495,8 +494,15 @@ on_extension_added(PeasExtensionSet *set,
                         g_strdup(id),
                         g_object_ref(plugin));
 
-    /* Activate the plugin */
-    gnostr_plugin_activate(plugin, manager->context);
+    /* Create per-plugin context */
+    GnostrPluginContext *ctx = gnostr_plugin_context_new(manager->app, id);
+    if (manager->main_window) {
+      gnostr_plugin_context_set_main_window(ctx, manager->main_window);
+    }
+    g_hash_table_insert(manager->plugin_contexts, g_strdup(id), ctx);
+
+    /* Activate the plugin with its context */
+    gnostr_plugin_activate(plugin, ctx);
 
     g_debug("[PLUGIN] Activated plugin: %s (%s)",
             gnostr_plugin_get_name(plugin),
@@ -519,10 +525,16 @@ on_extension_removed(PeasExtensionSet *set,
   if (GNOSTR_IS_PLUGIN(exten)) {
     GnostrPlugin *plugin = GNOSTR_PLUGIN(exten);
 
-    /* Deactivate the plugin */
-    gnostr_plugin_deactivate(plugin, manager->context);
+    /* Get the plugin's context */
+    GnostrPluginContext *ctx = g_hash_table_lookup(manager->plugin_contexts, id);
 
-    /* Remove reference */
+    /* Deactivate the plugin */
+    if (ctx) {
+      gnostr_plugin_deactivate(plugin, ctx);
+    }
+
+    /* Remove context and plugin reference */
+    g_hash_table_remove(manager->plugin_contexts, id);
     g_hash_table_remove(manager->loaded_plugins, id);
 
     g_debug("[PLUGIN] Deactivated plugin: %s", id);
@@ -536,10 +548,19 @@ gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
 {
   g_return_if_fail(GNOSTR_IS_PLUGIN_MANAGER(manager));
 
-  if (manager->context) {
-    gnostr_plugin_context_set_main_window(manager->context, window);
-    g_debug("[PLUGIN] Set main window on plugin context");
+  manager->main_window = window;
+
+  /* Update all plugin contexts */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, manager->plugin_contexts);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    GnostrPluginContext *ctx = (GnostrPluginContext *)value;
+    gnostr_plugin_context_set_main_window(ctx, window);
   }
+
+  g_debug("[PLUGIN] Set main window on %u plugin contexts",
+          g_hash_table_size(manager->plugin_contexts));
 }
 
 GtkWidget *
@@ -550,8 +571,9 @@ gnostr_plugin_manager_get_plugin_settings_widget(GnostrPluginManager *manager,
   g_return_val_if_fail(plugin_id != NULL, NULL);
 
 #ifdef HAVE_LIBPEAS
-  if (!manager->context) {
-    g_warning("[PLUGIN] No context available for settings widget");
+  GnostrPluginContext *ctx = g_hash_table_lookup(manager->plugin_contexts, plugin_id);
+  if (!ctx) {
+    g_warning("[PLUGIN] No context available for plugin: %s", plugin_id);
     return NULL;
   }
 
@@ -583,7 +605,7 @@ gnostr_plugin_manager_get_plugin_settings_widget(GnostrPluginManager *manager,
   }
 
   GnostrUIExtension *ui_ext = GNOSTR_UI_EXTENSION(exten);
-  GtkWidget *widget = gnostr_ui_extension_create_settings_page(ui_ext, manager->context);
+  GtkWidget *widget = gnostr_ui_extension_create_settings_page(ui_ext, ctx);
 
   g_object_unref(exten);
   return widget;
@@ -592,6 +614,30 @@ gnostr_plugin_manager_get_plugin_settings_widget(GnostrPluginManager *manager,
   (void)plugin_id;
   return NULL;
 #endif
+}
+
+/* ============================================================================
+ * Action dispatch
+ * ============================================================================
+ */
+
+gboolean
+gnostr_plugin_manager_dispatch_action(GnostrPluginManager *manager,
+                                       const char          *plugin_id,
+                                       const char          *action_name,
+                                       GVariant            *parameter)
+{
+  g_return_val_if_fail(GNOSTR_IS_PLUGIN_MANAGER(manager), FALSE);
+  g_return_val_if_fail(plugin_id != NULL, FALSE);
+  g_return_val_if_fail(action_name != NULL, FALSE);
+
+  GnostrPluginContext *ctx = g_hash_table_lookup(manager->plugin_contexts, plugin_id);
+  if (!ctx) {
+    g_debug("[PLUGIN] No context for plugin: %s", plugin_id);
+    return FALSE;
+  }
+
+  return gnostr_plugin_context_dispatch_action(ctx, action_name, parameter);
 }
 
 /* ============================================================================

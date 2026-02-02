@@ -18,6 +18,7 @@
 #include "gnostr-search-results-view.h"
 #include "gnostr-classifieds-view.h"
 #include "gnostr-repo-browser.h"
+#include "../util/gnostr-plugin-manager.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
@@ -4278,13 +4279,22 @@ static void on_clone_requested(GnostrRepoBrowser *browser, const char *clone_url
 
   g_debug("[REPO] Clone requested: %s", clone_url);
 
-  /* Copy clone URL to clipboard for now.
-   * In the future with libgit2: show clone dialog, pick destination, clone repo */
-  GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
-  gdk_clipboard_set_text(clipboard, clone_url);
+  /* Dispatch to nip34-git plugin's git client */
+  GnostrPluginManager *manager = gnostr_plugin_manager_get_default();
+  GVariant *param = g_variant_new_string(clone_url);
 
-  if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
-    adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new("Clone URL copied to clipboard"));
+  if (gnostr_plugin_manager_dispatch_action(manager, "nip34-git",
+                                             "open-git-client", param)) {
+    g_debug("[REPO] Dispatched to nip34-git plugin");
+  } else {
+    /* Fallback: copy URL to clipboard if plugin not available */
+    GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+    gdk_clipboard_set_text(clipboard, clone_url);
+
+    if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+      adw_toast_overlay_add_toast(self->toast_overlay,
+                                   adw_toast_new("Clone URL copied to clipboard"));
+    }
   }
 }
 

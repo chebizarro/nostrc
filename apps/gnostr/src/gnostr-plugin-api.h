@@ -766,6 +766,70 @@ char *gnostr_plugin_context_request_sign_event_finish(GnostrPluginContext *conte
                                                       GAsyncResult        *result,
                                                       GError             **error);
 
+/* --- Action Handlers --- */
+
+/**
+ * GnostrPluginActionFunc:
+ * @context: The plugin context
+ * @action_name: Name of the action being invoked
+ * @parameter: (nullable): Action parameter as GVariant (may be NULL)
+ * @user_data: User data provided at registration
+ *
+ * Callback type for plugin action handlers.
+ * Actions allow the host application to invoke plugin functionality.
+ */
+typedef void (*GnostrPluginActionFunc)(GnostrPluginContext *context,
+                                        const char          *action_name,
+                                        GVariant            *parameter,
+                                        gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_register_action:
+ * @context: A #GnostrPluginContext
+ * @action_name: Action name (unique within this plugin)
+ * @callback: Handler function
+ * @user_data: (nullable): User data for callback
+ *
+ * Register an action handler that can be invoked by the host application.
+ * Use this to expose plugin functionality that the host can trigger.
+ *
+ * Example: A git plugin might register "open-git-client" action.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_register_action(GnostrPluginContext    *context,
+                                            const char             *action_name,
+                                            GnostrPluginActionFunc  callback,
+                                            gpointer                user_data);
+
+/**
+ * gnostr_plugin_context_unregister_action:
+ * @context: A #GnostrPluginContext
+ * @action_name: Action name to unregister
+ *
+ * Unregister a previously registered action handler.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_unregister_action(GnostrPluginContext *context,
+                                              const char          *action_name);
+
+/**
+ * gnostr_plugin_context_dispatch_action:
+ * @context: A #GnostrPluginContext
+ * @action_name: Action to dispatch
+ * @parameter: (nullable): Action parameter
+ *
+ * Dispatch an action to this plugin context.
+ * Called by host application or plugin manager.
+ *
+ * Returns: %TRUE if the action was handled, %FALSE if not registered
+ * @stability: Private (for host/manager use)
+ */
+gboolean gnostr_plugin_context_dispatch_action(GnostrPluginContext *context,
+                                                const char          *action_name,
+                                                GVariant            *parameter);
+
 /* ============================================================================
  * PLUGIN EVENT API
  * ============================================================================
