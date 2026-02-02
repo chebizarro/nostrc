@@ -484,8 +484,8 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     NostrTags *filter_tags = nostr_tags_new(1, nostr_tag_new("p", client_pubkey, NULL));
     nostr_filter_set_tags(f, filter_tags);
 
-    /* Only get events from after our request */
-    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 2);  /* 2-second buffer for clock skew while avoiding stale responses */
+    /* Only get events from recently - wide window for clock skew between client/signer/relays */
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 60);  /* 60-second buffer for clock skew */
 
     NostrFilter f_copy = *f;
     free(f);
@@ -783,8 +783,8 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     NostrTags *filter_tags = nostr_tags_new(1, nostr_tag_new("p", client_pubkey, NULL));
     nostr_filter_set_tags(f, filter_tags);
 
-    /* Only get events from after our request */
-    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 2);  /* 2-second buffer for clock skew while avoiding stale responses */
+    /* Only get events from recently - wide window for clock skew between client/signer/relays */
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 60);  /* 60-second buffer for clock skew */
 
     NostrFilter f_copy = *f;
     free(f);
