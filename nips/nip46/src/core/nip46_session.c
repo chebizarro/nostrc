@@ -805,15 +805,40 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
     uint8_t *plaintext = NULL;
     size_t plaintext_len = 0;
-    if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
-        fprintf(stderr, "[nip46] %s: ERROR -1: failed to decrypt response\n", method);
-        fprintf(stderr, "[nip46] %s: ECDH mismatch? We used client_sk + response_pubkey\n", method);
-        fprintf(stderr, "[nip46] %s: Signer should have used response_sk + client_pubkey\n", method);
-        secure_wipe(sk, sizeof(sk));
-        free(client_pubkey);
-        free(response_content);
-        free(response_pubkey);
-        return NULL;
+
+    /* Detect encryption format: NIP-04 contains "?iv=", NIP-44 does not */
+    int is_nip04 = (strstr(response_content, "?iv=") != NULL);
+    fprintf(stderr, "[nip46] %s: detected %s encryption\n", method, is_nip04 ? "NIP-04" : "NIP-44");
+
+    if (is_nip04) {
+        /* NIP-04 decrypt */
+        char *plaintext_str = NULL;
+        char *error_msg = NULL;
+        if (nostr_nip04_decrypt(response_content, response_pubkey, s->secret,
+                                &plaintext_str, &error_msg) != 0 || !plaintext_str) {
+            fprintf(stderr, "[nip46] %s: ERROR: NIP-04 decrypt failed: %s\n", method,
+                    error_msg ? error_msg : "unknown error");
+            free(error_msg);
+            secure_wipe(sk, sizeof(sk));
+            free(client_pubkey);
+            free(response_content);
+            free(response_pubkey);
+            return NULL;
+        }
+        free(error_msg);
+        plaintext_len = strlen(plaintext_str);
+        plaintext = (uint8_t *)plaintext_str;
+    } else {
+        /* NIP-44 decrypt */
+        if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
+            fprintf(stderr, "[nip46] %s: ERROR: NIP-44 decrypt failed\n", method);
+            fprintf(stderr, "[nip46] %s: ECDH mismatch? We used client_sk + response_pubkey\n", method);
+            secure_wipe(sk, sizeof(sk));
+            free(client_pubkey);
+            free(response_content);
+            free(response_pubkey);
+            return NULL;
+        }
     }
     secure_wipe(sk, sizeof(sk));
     free(client_pubkey);
