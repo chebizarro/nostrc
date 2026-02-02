@@ -637,6 +637,25 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "timeline;query;unit;gnostr")
 
+  # NIP-66 Relay Discovery unit tests
+  add_executable(gnostr-test-nip66-relay-discovery tests/test_nip66_relay_discovery.c)
+  target_compile_features(gnostr-test-nip66-relay-discovery PRIVATE c_std_11)
+  target_include_directories(gnostr-test-nip66-relay-discovery PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libjson/include
+    ${PROJECT_ROOT}/libgo/include
+    ${_NOSTR_CONFIG_DIR})
+  target_sources(gnostr-test-nip66-relay-discovery PRIVATE src/util/nip66_relay_discovery.c)
+  # Disable async discovery (avoids nostr_simple_pool and relay dependencies)
+  target_compile_definitions(gnostr-test-nip66-relay-discovery PRIVATE GNOSTR_NIP66_TEST_ONLY=1)
+  target_link_libraries(gnostr-test-nip66-relay-discovery PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_json libgo)
+  _gnostr_apply_sanitizers(gnostr-test-nip66-relay-discovery)
+  add_test(NAME gnostr-test-nip66-relay-discovery COMMAND gnostr-test-nip66-relay-discovery)
+  set_tests_properties(gnostr-test-nip66-relay-discovery PROPERTIES
+    TIMEOUT 30
+    LABELS "nip66;relay;discovery;unit;gnostr")
+
 endif()
 
 # ---- GSettings schema compilation (development builds) ----

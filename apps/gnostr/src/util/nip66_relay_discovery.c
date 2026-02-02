@@ -294,6 +294,59 @@ static GPtrArray *find_all_tag_values(const char *tags_json, const gchar *tag_na
   return values;
 }
 
+/* Callback for parsing rtt (round-trip time) tags
+ * Format: ["rtt", "<type>", "<milliseconds>"]
+ * where type is "open", "read", or "write" */
+static bool parse_rtt_tag_cb(size_t idx, const char *element_json, void *user_data)
+{
+  (void)idx;
+  GnostrNip66RelayMeta *meta = (GnostrNip66RelayMeta *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  /* Check if this is an rtt tag */
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0) {
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "rtt") != 0) {
+    g_free(tag_name);
+    return true;
+  }
+  g_free(tag_name);
+
+  /* Get type (index 1) and value (index 2) */
+  char *rtt_type = NULL;
+  char *rtt_val = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 1, &rtt_type) != 0 || !rtt_type) {
+    return true;
+  }
+
+  if (nostr_json_get_array_string(element_json, NULL, 2, &rtt_val) != 0 || !rtt_val) {
+    g_free(rtt_type);
+    return true;
+  }
+
+  gint64 latency = g_ascii_strtoll(rtt_val, NULL, 10);
+
+  if (g_strcmp0(rtt_type, "open") == 0) {
+    meta->latency_open_ms = latency;
+  } else if (g_strcmp0(rtt_type, "read") == 0) {
+    meta->latency_read_ms = latency;
+  } else if (g_strcmp0(rtt_type, "write") == 0) {
+    meta->latency_write_ms = latency;
+  } else {
+    /* Generic latency */
+    meta->latency_ms = latency;
+  }
+
+  g_free(rtt_type);
+  g_free(rtt_val);
+  return true; /* Continue to find more rtt tags */
+}
+
 /* Context for collecting int array */
 typedef struct {
   GArray *arr;
@@ -468,22 +521,11 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
       g_free(status_val);
     }
 
-    /* rtt tag = round-trip time / latency */
-    gchar *rtt_val = find_tag_value(tags_json, "rtt", 1);
-    if (rtt_val) {
-      gchar *rtt_type = find_tag_value(tags_json, "rtt", 2);
-      if (g_strcmp0(rtt_type, "open") == 0) {
-        meta->latency_open_ms = g_ascii_strtoll(rtt_val, NULL, 10);
-      } else if (g_strcmp0(rtt_type, "read") == 0) {
-        meta->latency_read_ms = g_ascii_strtoll(rtt_val, NULL, 10);
-      } else if (g_strcmp0(rtt_type, "write") == 0) {
-        meta->latency_write_ms = g_ascii_strtoll(rtt_val, NULL, 10);
-      } else {
-        meta->latency_ms = g_ascii_strtoll(rtt_val, NULL, 10);
-      }
-      g_free(rtt_type);
-      g_free(rtt_val);
-    }
+    /* rtt tags = round-trip time / latency
+     * Format: ["rtt", "<type>", "<milliseconds>"]
+     * where type is "open", "read", or "write"
+     * Need to iterate all rtt tags since there may be multiple */
+    nostr_json_array_foreach_root(tags_json, parse_rtt_tag_cb, meta);
 
     g_free(tags_json);
   }
