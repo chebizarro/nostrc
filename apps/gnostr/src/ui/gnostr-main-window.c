@@ -4856,7 +4856,13 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
           }
         }
       } else {
-        g_debug("[MAIN] No NIP-46 credentials to restore (may use NIP-55L)");
+        g_debug("[MAIN] No NIP-46 credentials to restore, checking NIP-55L fallback");
+      }
+
+      /* Verify signer is actually available after restore attempt */
+      if (!gnostr_signer_service_is_available(signer)) {
+        g_warning("[MAIN] Signer not available after restore - clearing signed-in state");
+        signed_in = FALSE;
       }
     }
 
