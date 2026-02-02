@@ -1564,6 +1564,7 @@ typedef struct {
   NostrFilter *filter;  /* Single filter for query_single_streaming */
   char **urls;
   size_t url_count;
+  gboolean completed;  /* Prevents double-free race between timeout and query completion */
 } Nip66StreamingCtx;
 
 static void nip66_streaming_ctx_free(Nip66StreamingCtx *ctx)
@@ -1670,6 +1671,10 @@ static gboolean on_streaming_timeout(gpointer user_data)
   Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
   if (!ctx) return G_SOURCE_REMOVE;
 
+  /* Prevent race with on_streaming_query_complete */
+  if (ctx->completed) return G_SOURCE_REMOVE;
+  ctx->completed = TRUE;
+
   ctx->timeout_source_id = 0;
 
   g_debug("nip66 streaming: timeout, completing with %u relays",
@@ -1722,6 +1727,10 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
   /* Results array returned here but we already processed events via signal.
    * Free it since we don't need duplicates. */
   if (results) g_ptr_array_unref(results);
+
+  /* Prevent race with on_streaming_timeout - if timeout already completed, just return */
+  if (ctx->completed) return;
+  ctx->completed = TRUE;
 
   /* Query complete (EOSE received from all relays). Cancel timeout and complete. */
   if (ctx->timeout_source_id) {
