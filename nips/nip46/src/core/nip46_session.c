@@ -893,26 +893,12 @@ int nostr_nip46_client_connect_rpc(NostrNip46Session *s,
     params[n_params++] = connect_secret ? connect_secret : "";
     params[n_params++] = perms ? perms : "";
 
-    /* Get response pubkey so we can update session for future RPCs */
-    char *response_pubkey = NULL;
-    char *result = nip46_rpc_call(s, "connect", params, n_params, &response_pubkey);
+    /* Note: Do NOT update remote_pubkey_hex here. For bunker:// flow,
+     * the signer listens for messages tagged with the URI's pubkey.
+     * Only nostrconnect:// flow should update the pubkey (done in login code). */
+    char *result = nip46_rpc_call(s, "connect", params, n_params, NULL);
     if (!result) {
-        free(response_pubkey);
         return -1;
-    }
-
-    /* Update session's remote_pubkey to the actual responder's pubkey.
-     * This is critical: for custodial signers like nsec.app, the bunker URI
-     * contains the user's pubkey, but the signer may respond from the same
-     * or a different key. Future RPCs must target the actual responder. */
-    if (response_pubkey && *response_pubkey) {
-        fprintf(stderr, "[nip46] connect_rpc: updating remote_pubkey_hex from %s to %s\n",
-                s->remote_pubkey_hex ? s->remote_pubkey_hex : "(null)",
-                response_pubkey);
-        free(s->remote_pubkey_hex);
-        s->remote_pubkey_hex = response_pubkey;
-    } else {
-        free(response_pubkey);
     }
 
     *out_result = result;
