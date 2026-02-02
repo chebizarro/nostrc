@@ -1404,6 +1404,9 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
 {
   ensure_cache_init();
 
+  /* Disconnect any existing relays in the NIP-66 pool to prevent FD accumulation */
+  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
+
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
   ctx->user_data = user_data;
@@ -1484,6 +1487,9 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
     gnostr_nip66_discover_relays_async(callback, user_data, cancellable);
     return;
   }
+
+  /* Disconnect any existing relays in the NIP-66 pool to prevent FD accumulation */
+  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
 
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
@@ -1686,6 +1692,13 @@ static gboolean on_streaming_timeout(gpointer user_data)
     ctx->monitors_found = NULL;
   }
 
+  /* Disconnect relay connections to free file descriptors.
+   * The background thread has been cancelled and will exit shortly,
+   * but relay connections stay open unless we explicitly disconnect. */
+  if (ctx->pool) {
+    gnostr_simple_pool_disconnect_all_relays(ctx->pool);
+  }
+
   nip66_streaming_ctx_free(ctx);
   return G_SOURCE_REMOVE;
 }
@@ -1714,6 +1727,11 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
 {
   ensure_cache_init();
 
+  /* Get the NIP-66 pool and disconnect any existing relays to prevent FD accumulation.
+   * Each discovery creates fresh connections; old ones should be cleaned up. */
+  GnostrSimplePool *pool = get_nip66_pool();
+  gnostr_simple_pool_disconnect_all_relays(pool);
+
   Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
   ctx->on_relay_found = on_relay_found;
   ctx->on_complete = on_complete;
@@ -1722,7 +1740,7 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   ctx->relays_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_meta_free);
   ctx->monitors_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_monitor_free);
   ctx->seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  ctx->pool = get_nip66_pool();
+  ctx->pool = pool;
 
   /* Collect relay URLs */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
