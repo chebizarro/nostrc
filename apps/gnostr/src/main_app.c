@@ -9,6 +9,7 @@
 #include "util/gnostr_e2e.h"
 #include "util/cache_prune.h"
 #include "util/utils.h"
+#include "util/gnostr-plugin-manager.h"
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -34,7 +35,18 @@ void gnostr_app_update_relay_status(int connected_count, int total_count) {
 
 static void on_activate(GApplication *app, gpointer user_data) {
   (void)user_data;
+
+  /* Initialize plugin manager */
+  GnostrPluginManager *plugin_manager = gnostr_plugin_manager_get_default();
+  gnostr_plugin_manager_init_with_app(plugin_manager, GTK_APPLICATION(app));
+  gnostr_plugin_manager_discover_plugins(plugin_manager);
+  gnostr_plugin_manager_load_enabled_plugins(plugin_manager);
+
   GnostrMainWindow *win = gnostr_main_window_new(ADW_APPLICATION(app));
+
+  /* Set main window on plugin manager for plugin UI access */
+  gnostr_plugin_manager_set_main_window(plugin_manager, GTK_WINDOW(win));
+
   gtk_window_present(GTK_WINDOW(win));
 
   /* Create system tray icon now that GTK is fully initialized.
@@ -67,6 +79,10 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
   (void)app; (void)user_data;
 
   g_message("gnostr: shutdown initiated");
+
+  /* Shutdown plugin manager first */
+  GnostrPluginManager *plugin_manager = gnostr_plugin_manager_get_default();
+  gnostr_plugin_manager_shutdown(plugin_manager);
 
   /* Clean up tray icon */
   g_clear_object(&g_tray_icon);
