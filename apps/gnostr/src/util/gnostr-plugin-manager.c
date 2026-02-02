@@ -114,7 +114,12 @@ gnostr_plugin_manager_init(GnostrPluginManager *self)
     if (schema) {
       self->settings = g_settings_new(PLUGIN_SETTINGS_SCHEMA);
       g_settings_schema_unref(schema);
+      g_debug("[PLUGIN] Settings schema found: %s", PLUGIN_SETTINGS_SCHEMA);
+    } else {
+      g_debug("[PLUGIN] Settings schema NOT found: %s", PLUGIN_SETTINGS_SCHEMA);
     }
+  } else {
+    g_debug("[PLUGIN] No GSettings schema source available");
   }
 
 #ifdef HAVE_LIBPEAS
@@ -229,12 +234,22 @@ gnostr_plugin_manager_load_enabled_plugins(GnostrPluginManager *manager)
   char **enabled = NULL;
   if (manager->settings) {
     enabled = g_settings_get_strv(manager->settings, PLUGIN_SETTINGS_KEY_ENABLED);
+    g_debug("[PLUGIN] Read enabled-plugins from settings");
+  } else {
+    g_warning("[PLUGIN] Cannot load enabled plugins - settings not available");
+    g_warning("[PLUGIN] Make sure GSETTINGS_SCHEMA_DIR is set to the build directory");
+    return;
   }
 
   if (!enabled || !*enabled) {
     g_debug("[PLUGIN] No plugins enabled in settings");
     g_strfreev(enabled);
     return;
+  }
+
+  /* Log what we're about to load */
+  for (char **id = enabled; *id; id++) {
+    g_debug("[PLUGIN] Will load: %s", *id);
   }
 
   /* Create extension set for GnostrPlugin interface */
@@ -322,7 +337,10 @@ gnostr_plugin_manager_enable_plugin(GnostrPluginManager *manager,
 
     g_settings_set_strv(manager->settings, PLUGIN_SETTINGS_KEY_ENABLED,
                         (const char *const *)new_enabled->pdata);
+    g_debug("[PLUGIN] Saved enabled plugins to settings");
     g_ptr_array_unref(new_enabled);
+  } else {
+    g_warning("[PLUGIN] Cannot save enabled plugins - settings not available");
   }
 
   g_debug("[PLUGIN] Enabled plugin: %s", plugin_id);
