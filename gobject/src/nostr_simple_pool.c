@@ -920,6 +920,8 @@ static gpointer query_single_thread(gpointer user_data) {
         }
 
         // Cleanup subscription (but NOT relay if from pool)
+        // Must unsubscribe first to cancel context and allow lifecycle worker to exit
+        nostr_subscription_unsubscribe(sub);
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
 
