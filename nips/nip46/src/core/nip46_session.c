@@ -256,7 +256,10 @@ static struct {
     char *response_pubkey;     /* Pubkey of response sender */
     volatile int received;     /* Flag set when response received */
     char *expected_client_pk;  /* Our client pubkey to filter responses */
+    char *expected_req_id;     /* Request ID to match responses */
 } s_nip46_resp_ctx;
+
+static unsigned int s_nip46_req_counter = 0; /* Counter for unique request IDs */
 
 static pthread_mutex_t s_nip46_resp_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_nip46_resp_cond = PTHREAD_COND_INITIALIZER;
@@ -432,9 +435,11 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     if (s_nip46_resp_ctx.response_content) free(s_nip46_resp_ctx.response_content);
     if (s_nip46_resp_ctx.response_pubkey) free(s_nip46_resp_ctx.response_pubkey);
     if (s_nip46_resp_ctx.expected_client_pk) free(s_nip46_resp_ctx.expected_client_pk);
+    if (s_nip46_resp_ctx.expected_req_id) free(s_nip46_resp_ctx.expected_req_id);
     s_nip46_resp_ctx.response_content = NULL;
     s_nip46_resp_ctx.response_pubkey = NULL;
     s_nip46_resp_ctx.expected_client_pk = strdup(client_pubkey);
+    s_nip46_resp_ctx.expected_req_id = strdup(req_id);
     s_nip46_resp_ctx.received = 0;
     pthread_mutex_unlock(&s_nip46_resp_mutex);
 
@@ -619,9 +624,10 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
     fprintf(stderr, "[nip46] %s: building request\n", method);
 
-    /* Build request JSON */
-    char req_id[17];
-    snprintf(req_id, sizeof(req_id), "%lx", (unsigned long)time(NULL));
+    /* Build request JSON with unique ID (timestamp + counter) */
+    char req_id[32];
+    snprintf(req_id, sizeof(req_id), "%lx_%u", (unsigned long)time(NULL), ++s_nip46_req_counter);
+    fprintf(stderr, "[nip46] %s: request id = %s\n", method, req_id);
     char *req = nostr_nip46_request_build(req_id, method, params, n_params);
     if (!req) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to build request JSON\n", method);
@@ -707,9 +713,11 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     if (s_nip46_resp_ctx.response_content) free(s_nip46_resp_ctx.response_content);
     if (s_nip46_resp_ctx.response_pubkey) free(s_nip46_resp_ctx.response_pubkey);
     if (s_nip46_resp_ctx.expected_client_pk) free(s_nip46_resp_ctx.expected_client_pk);
+    if (s_nip46_resp_ctx.expected_req_id) free(s_nip46_resp_ctx.expected_req_id);
     s_nip46_resp_ctx.response_content = NULL;
     s_nip46_resp_ctx.response_pubkey = NULL;
     s_nip46_resp_ctx.expected_client_pk = strdup(client_pubkey);
+    s_nip46_resp_ctx.expected_req_id = strdup(req_id);
     s_nip46_resp_ctx.received = 0;
     pthread_mutex_unlock(&s_nip46_resp_mutex);
 
@@ -868,6 +876,26 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         fprintf(stderr, "[nip46] %s: ERROR: invalid response JSON\n", method);
         free(response_json);
         return NULL;
+    }
+
+    /* Validate response ID matches our request ID */
+    char *resp_id = NULL;
+    if (nostr_json_get_string(response_json, "id", &resp_id) == 0 && resp_id) {
+        pthread_mutex_lock(&s_nip46_resp_mutex);
+        const char *expected_id = s_nip46_resp_ctx.expected_req_id;
+        int id_matches = expected_id && strcmp(resp_id, expected_id) == 0;
+        pthread_mutex_unlock(&s_nip46_resp_mutex);
+
+        if (!id_matches) {
+            fprintf(stderr, "[nip46] %s: WARNING: response id '%s' != expected '%s', ignoring stale response\n",
+                    method, resp_id, expected_id ? expected_id : "(null)");
+            free(resp_id);
+            free(response_json);
+            /* TODO: should retry waiting for correct response, for now just fail */
+            return NULL;
+        }
+        fprintf(stderr, "[nip46] %s: response id matches: %s\n", method, resp_id);
+        free(resp_id);
     }
 
     /* Check for error */
