@@ -1484,8 +1484,52 @@ static void on_discovery_check_toggled(GtkCheckButton *check, gpointer user_data
   }
 }
 
+/* Streaming callback: called for each relay as it's discovered */
+static void relay_discovery_on_relay_found(GnostrNip66RelayMeta *meta, gpointer user_data) {
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  if (!ctx || !ctx->builder || !meta) return;
+
+  /* Copy the meta since we need to own it */
+  GnostrNip66RelayMeta *meta_copy = g_new0(GnostrNip66RelayMeta, 1);
+  meta_copy->relay_url = g_strdup(meta->relay_url);
+  meta_copy->name = meta->name ? g_strdup(meta->name) : NULL;
+  meta_copy->description = meta->description ? g_strdup(meta->description) : NULL;
+  meta_copy->region = meta->region ? g_strdup(meta->region) : NULL;
+  meta_copy->country_code = meta->country_code ? g_strdup(meta->country_code) : NULL;
+  meta_copy->software = meta->software ? g_strdup(meta->software) : NULL;
+  meta_copy->version = meta->version ? g_strdup(meta->version) : NULL;
+  meta_copy->has_status = meta->has_status;
+  meta_copy->is_online = meta->is_online;
+  meta_copy->payment_required = meta->payment_required;
+  meta_copy->auth_required = meta->auth_required;
+  meta_copy->uptime_percent = meta->uptime_percent;
+  meta_copy->latency_ms = meta->latency_ms;
+  meta_copy->network = meta->network;
+  if (meta->supported_nips && meta->supported_nips_count > 0) {
+    meta_copy->supported_nips = g_new(gint, meta->supported_nips_count);
+    memcpy(meta_copy->supported_nips, meta->supported_nips, meta->supported_nips_count * sizeof(gint));
+    meta_copy->supported_nips_count = meta->supported_nips_count;
+  }
+
+  /* Add to discovered relays */
+  g_ptr_array_add(ctx->discovered_relays, meta_copy);
+
+  /* Switch from loading to results on first relay */
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "discovery_stack"));
+  if (stack) {
+    const gchar *current = gtk_stack_get_visible_child_name(stack);
+    if (g_strcmp0(current, "loading") == 0) {
+      gtk_stack_set_visible_child_name(stack, "results");
+    }
+  }
+
+  /* Re-apply filter to update the list */
+  relay_discovery_apply_filter(ctx);
+}
+
 static void relay_discovery_on_complete(GPtrArray *relays, GPtrArray *monitors,
                                          GError *error, gpointer user_data) {
+  (void)relays;  /* We already have relays from streaming callbacks */
   RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
   if (!ctx || !ctx->builder) return;
 
@@ -1500,14 +1544,13 @@ static void relay_discovery_on_complete(GPtrArray *relays, GPtrArray *monitors,
     return;
   }
 
-  /* Store discovered relays */
-  if (ctx->discovered_relays) {
-    g_ptr_array_unref(ctx->discovered_relays);
-  }
-  ctx->discovered_relays = relays ? g_ptr_array_ref(relays) : g_ptr_array_new();
-
-  /* Apply current filter */
+  /* Final update - apply filter one more time */
   relay_discovery_apply_filter(ctx);
+
+  /* If no relays found, show empty state */
+  if (ctx->discovered_relays->len == 0) {
+    gtk_stack_set_visible_child_name(stack, "empty");
+  }
 
   /* Clean up monitors array */
   if (monitors) g_ptr_array_unref(monitors);
@@ -1618,8 +1661,17 @@ static void relay_discovery_start_fetch(RelayDiscoveryCtx *ctx) {
   }
   ctx->cancellable = g_cancellable_new();
 
-  /* Start discovery */
-  gnostr_nip66_discover_relays_async(relay_discovery_on_complete, ctx, ctx->cancellable);
+  /* Clear previous results for fresh fetch */
+  if (ctx->discovered_relays) {
+    g_ptr_array_set_size(ctx->discovered_relays, 0);
+  }
+
+  /* Start streaming discovery - relays appear as they're discovered */
+  gnostr_nip66_discover_relays_streaming_async(
+    relay_discovery_on_relay_found,
+    relay_discovery_on_complete,
+    ctx,
+    ctx->cancellable);
 }
 
 static void relay_discovery_on_filter_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {

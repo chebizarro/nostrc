@@ -13,6 +13,7 @@
 #include "relays.h"
 #include "nostr_simple_pool.h"
 #include "nostr-filter.h"
+#include "nostr-event.h"
 #endif
 
 /* ============== Cache Configuration ============== */
@@ -1543,6 +1544,238 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
   g_free(urls);
   g_ptr_array_unref(relay_urls);
   nostr_filter_free(filter);
+}
+
+/* ============== Streaming Discovery Implementation ============== */
+
+/* Context for streaming discovery */
+typedef struct {
+  GnostrNip66RelayFoundCallback on_relay_found;
+  GnostrNip66DiscoveryCallback on_complete;
+  gpointer user_data;
+  GCancellable *cancellable;
+  GPtrArray *relays_found;
+  GPtrArray *monitors_found;
+  GHashTable *seen_urls;  /* For deduplication */
+  GnostrSimplePool *pool;
+  gulong events_handler_id;
+  guint timeout_source_id;
+  NostrFilters *filters;
+  char **urls;
+  size_t url_count;
+} Nip66StreamingCtx;
+
+static void nip66_streaming_ctx_free(Nip66StreamingCtx *ctx)
+{
+  if (!ctx) return;
+  if (ctx->events_handler_id && ctx->pool) {
+    g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
+  }
+  if (ctx->timeout_source_id) {
+    g_source_remove(ctx->timeout_source_id);
+  }
+  if (ctx->cancellable) g_object_unref(ctx->cancellable);
+  if (ctx->relays_found) g_ptr_array_unref(ctx->relays_found);
+  if (ctx->monitors_found) g_ptr_array_unref(ctx->monitors_found);
+  if (ctx->seen_urls) g_hash_table_destroy(ctx->seen_urls);
+  if (ctx->filters) nostr_filters_free(ctx->filters);
+  if (ctx->urls) {
+    for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]);
+    g_free(ctx->urls);
+  }
+  g_free(ctx);
+}
+
+/* Check if relay URL should be filtered out */
+static gboolean nip66_should_filter_url(const gchar *url)
+{
+  if (!url) return TRUE;
+  return (g_str_has_prefix(url, "ws://127.0.0.1") ||
+          g_str_has_prefix(url, "wss://127.0.0.1") ||
+          g_str_has_prefix(url, "ws://localhost") ||
+          g_str_has_prefix(url, "wss://localhost") ||
+          g_str_has_prefix(url, "ws://[::1]") ||
+          g_str_has_prefix(url, "wss://[::1]"));
+}
+
+/* Handle batch of events from pool signal */
+static void on_streaming_events(GnostrSimplePool *pool, GPtrArray *events, gpointer user_data)
+{
+  (void)pool;
+  Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
+  if (!ctx || !events) return;
+
+  /* Check cancellation */
+  if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) return;
+
+  for (guint i = 0; i < events->len; i++) {
+    NostrEvent *ev = g_ptr_array_index(events, i);
+    if (!ev) continue;
+
+    /* Get event JSON */
+    char *json = nostr_event_serialize(ev);
+    if (!json) continue;
+
+    /* Parse as relay metadata */
+    GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(json);
+    free(json);
+
+    if (!meta) continue;
+
+    /* Filter localhost */
+    if (nip66_should_filter_url(meta->relay_url)) {
+      gnostr_nip66_relay_meta_free(meta);
+      continue;
+    }
+
+    /* Deduplicate by URL */
+    gchar *url_lower = g_ascii_strdown(meta->relay_url, -1);
+    if (g_hash_table_contains(ctx->seen_urls, url_lower)) {
+      g_free(url_lower);
+      gnostr_nip66_relay_meta_free(meta);
+      continue;
+    }
+    g_hash_table_add(ctx->seen_urls, url_lower);
+
+    /* Cache it (parse a fresh copy for the cache) */
+    char *cache_json = nostr_event_serialize(ev);
+    if (cache_json) {
+      GnostrNip66RelayMeta *meta_copy = gnostr_nip66_parse_relay_meta(cache_json);
+      if (meta_copy) gnostr_nip66_cache_add_relay(meta_copy);
+      free(cache_json);
+    }
+
+    /* Invoke per-relay callback before adding to results
+     * (callback receives the meta we're about to store) */
+    if (ctx->on_relay_found) {
+      ctx->on_relay_found(meta, ctx->user_data);
+    }
+
+    /* Add to results */
+    g_ptr_array_add(ctx->relays_found, meta);
+  }
+}
+
+/* Timeout callback to finish streaming discovery */
+static gboolean on_streaming_timeout(gpointer user_data)
+{
+  Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
+  if (!ctx) return G_SOURCE_REMOVE;
+
+  ctx->timeout_source_id = 0;
+
+  g_message("nip66 streaming: timeout, completing with %u relays",
+            ctx->relays_found ? ctx->relays_found->len : 0);
+
+  /* Disconnect signal handler */
+  if (ctx->events_handler_id && ctx->pool) {
+    g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
+    ctx->events_handler_id = 0;
+  }
+
+  /* Invoke completion callback */
+  if (ctx->on_complete) {
+    ctx->on_complete(ctx->relays_found, ctx->monitors_found, NULL, ctx->user_data);
+    ctx->relays_found = NULL;
+    ctx->monitors_found = NULL;
+  }
+
+  nip66_streaming_ctx_free(ctx);
+  return G_SOURCE_REMOVE;
+}
+
+/* Subscription completion callback */
+static void on_streaming_subscribe_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
+  if (!ctx) return;
+
+  GError *error = NULL;
+  gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    g_warning("nip66 streaming: subscribe failed: %s", error->message);
+    g_error_free(error);
+  }
+
+  /* The streaming will continue via the events signal until timeout or cancellation */
+}
+
+void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback on_relay_found,
+                                                    GnostrNip66DiscoveryCallback on_complete,
+                                                    gpointer user_data,
+                                                    GCancellable *cancellable)
+{
+  ensure_cache_init();
+
+  Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
+  ctx->on_relay_found = on_relay_found;
+  ctx->on_complete = on_complete;
+  ctx->user_data = user_data;
+  ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+  ctx->relays_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_meta_free);
+  ctx->monitors_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_monitor_free);
+  ctx->seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  ctx->pool = get_nip66_pool();
+
+  /* Collect relay URLs */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+  for (const gchar **p = s_known_monitor_relays; *p; p++) {
+    g_ptr_array_add(relay_urls, g_strdup(*p));
+  }
+  gnostr_load_relays_into(relay_urls);
+
+  if (relay_urls->len == 0) {
+    g_ptr_array_unref(relay_urls);
+    if (on_complete) {
+      on_complete(ctx->relays_found, ctx->monitors_found, NULL, user_data);
+      ctx->relays_found = NULL;
+      ctx->monitors_found = NULL;
+    }
+    nip66_streaming_ctx_free(ctx);
+    return;
+  }
+
+  /* Copy URLs for ctx ownership */
+  ctx->url_count = relay_urls->len;
+  ctx->urls = g_new0(char*, relay_urls->len);
+  const gchar **url_ptrs = g_new0(const gchar*, relay_urls->len + 1);
+  for (guint i = 0; i < relay_urls->len; i++) {
+    ctx->urls[i] = g_strdup(g_ptr_array_index(relay_urls, i));
+    url_ptrs[i] = ctx->urls[i];
+  }
+
+  g_message("nip66 streaming: querying %zu relays for kind 30166", ctx->url_count);
+
+  /* Build filter */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[1] = { GNOSTR_NIP66_KIND_RELAY_META };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_set_limit(filter, 500);
+
+  ctx->filters = nostr_filters_new();
+  nostr_filters_add(ctx->filters, filter);
+
+  /* Connect to events signal for streaming updates */
+  ctx->events_handler_id = g_signal_connect(ctx->pool, "events",
+                                             G_CALLBACK(on_streaming_events), ctx);
+
+  /* Set timeout to complete discovery after 10 seconds */
+  ctx->timeout_source_id = g_timeout_add_seconds(10, on_streaming_timeout, ctx);
+
+  /* Start subscription */
+  gnostr_simple_pool_subscribe_many_async(
+    ctx->pool,
+    url_ptrs,
+    ctx->url_count,
+    ctx->filters,
+    ctx->cancellable,
+    on_streaming_subscribe_complete,
+    ctx
+  );
+
+  g_free(url_ptrs);
+  g_ptr_array_unref(relay_urls);
 }
 
 #endif /* GNOSTR_NIP66_TEST_ONLY */

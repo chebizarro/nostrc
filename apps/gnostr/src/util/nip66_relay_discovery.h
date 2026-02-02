@@ -322,12 +322,22 @@ gboolean gnostr_nip66_relay_supports_nip(const GnostrNip66RelayMeta *meta, gint 
  * @error: (nullable): Error if discovery failed
  * @user_data: User data
  *
- * Callback for async relay discovery operations.
+ * Callback for async relay discovery operations (fired at completion).
  */
 typedef void (*GnostrNip66DiscoveryCallback)(GPtrArray *relays,
                                               GPtrArray *monitors,
                                               GError *error,
                                               gpointer user_data);
+
+/**
+ * GnostrNip66RelayFoundCallback:
+ * @meta: (transfer none): Discovered relay metadata
+ * @user_data: User data
+ *
+ * Callback for streaming relay discovery - called for each relay as it's discovered.
+ */
+typedef void (*GnostrNip66RelayFoundCallback)(GnostrNip66RelayMeta *meta,
+                                               gpointer user_data);
 
 /**
  * gnostr_nip66_discover_relays_async:
@@ -342,6 +352,23 @@ typedef void (*GnostrNip66DiscoveryCallback)(GPtrArray *relays,
 void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
                                          gpointer user_data,
                                          GCancellable *cancellable);
+
+/**
+ * gnostr_nip66_discover_relays_streaming_async:
+ * @on_relay_found: (nullable): Callback for each relay as discovered (streaming)
+ * @on_complete: Callback when discovery completes
+ * @user_data: User data for callbacks
+ * @cancellable: (nullable): Optional cancellable
+ *
+ * Discovers relays with streaming updates. The @on_relay_found callback
+ * is invoked on the main thread for each relay as it's discovered,
+ * allowing the UI to update incrementally. The @on_complete callback
+ * is invoked when all relays have been discovered.
+ */
+void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback on_relay_found,
+                                                    GnostrNip66DiscoveryCallback on_complete,
+                                                    gpointer user_data,
+                                                    GCancellable *cancellable);
 
 /**
  * gnostr_nip66_discover_from_monitors_async:
