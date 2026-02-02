@@ -1404,8 +1404,8 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
 {
   ensure_cache_init();
 
-  /* Disconnect any existing relays in the NIP-66 pool to prevent FD accumulation */
-  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
+  /* query_single_async uses temporary connections that close after EOSE,
+   * so no FD accumulation issue with one-shot queries. */
 
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
@@ -1488,8 +1488,8 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
     return;
   }
 
-  /* Disconnect any existing relays in the NIP-66 pool to prevent FD accumulation */
-  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
+  /* query_single_async uses temporary connections that close after EOSE,
+   * so no FD accumulation issue with one-shot queries. */
 
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
@@ -1560,7 +1560,7 @@ typedef struct {
   GnostrSimplePool *pool;
   gulong events_handler_id;
   guint timeout_source_id;
-  NostrFilters *filters;
+  NostrFilter *filter;  /* Single filter for query_single_streaming */
   char **urls;
   size_t url_count;
 } Nip66StreamingCtx;
@@ -1578,7 +1578,7 @@ static void nip66_streaming_ctx_free(Nip66StreamingCtx *ctx)
   if (ctx->relays_found) g_ptr_array_unref(ctx->relays_found);
   if (ctx->monitors_found) g_ptr_array_unref(ctx->monitors_found);
   if (ctx->seen_urls) g_hash_table_destroy(ctx->seen_urls);
-  if (ctx->filters) nostr_filters_free(ctx->filters);
+  if (ctx->filter) nostr_filter_free(ctx->filter);
   if (ctx->urls) {
     for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]);
     g_free(ctx->urls);
@@ -1674,7 +1674,7 @@ static gboolean on_streaming_timeout(gpointer user_data)
   g_debug("nip66 streaming: timeout, completing with %u relays",
             ctx->relays_found ? ctx->relays_found->len : 0);
 
-  /* Cancel the subscription to stop the background thread */
+  /* Cancel the query to stop the background thread */
   if (ctx->cancellable) {
     g_cancellable_cancel(ctx->cancellable);
   }
@@ -1692,32 +1692,56 @@ static gboolean on_streaming_timeout(gpointer user_data)
     ctx->monitors_found = NULL;
   }
 
-  /* Disconnect relay connections to free file descriptors.
-   * The background thread has been cancelled and will exit shortly,
-   * but relay connections stay open unless we explicitly disconnect. */
-  if (ctx->pool) {
-    gnostr_simple_pool_disconnect_all_relays(ctx->pool);
-  }
+  /* Note: No need to call disconnect_all_relays here because
+   * query_single_streaming closes connections after EOSE (not pooled) */
 
   nip66_streaming_ctx_free(ctx);
   return G_SOURCE_REMOVE;
 }
 
-/* Subscription completion callback */
-static void on_streaming_subscribe_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+/* Query completion callback - streaming events already delivered via signal */
+static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
   if (!ctx) return;
 
   GError *error = NULL;
-  gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
 
   if (error) {
-    g_warning("nip66 streaming: subscribe failed: %s", error->message);
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("nip66 streaming: query failed: %s", error->message);
+    }
     g_error_free(error);
   }
 
-  /* The streaming will continue via the events signal until timeout or cancellation */
+  /* Results array returned here but we already processed events via signal.
+   * Free it since we don't need duplicates. */
+  if (results) g_ptr_array_unref(results);
+
+  /* Query complete (EOSE received from all relays). Cancel timeout and complete. */
+  if (ctx->timeout_source_id) {
+    g_source_remove(ctx->timeout_source_id);
+    ctx->timeout_source_id = 0;
+  }
+
+  /* Disconnect signal handler */
+  if (ctx->events_handler_id && ctx->pool) {
+    g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
+    ctx->events_handler_id = 0;
+  }
+
+  g_debug("nip66 streaming: query complete with %u relays",
+            ctx->relays_found ? ctx->relays_found->len : 0);
+
+  /* Invoke completion callback */
+  if (ctx->on_complete) {
+    ctx->on_complete(ctx->relays_found, ctx->monitors_found, NULL, ctx->user_data);
+    ctx->relays_found = NULL;
+    ctx->monitors_found = NULL;
+  }
+
+  nip66_streaming_ctx_free(ctx);
 }
 
 void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback on_relay_found,
@@ -1727,10 +1751,9 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
 {
   ensure_cache_init();
 
-  /* Get the NIP-66 pool and disconnect any existing relays to prevent FD accumulation.
-   * Each discovery creates fresh connections; old ones should be cleaned up. */
+  /* Get the NIP-66 pool - streaming queries create temporary connections
+   * that close after EOSE, so no FD accumulation issue. */
   GnostrSimplePool *pool = get_nip66_pool();
-  gnostr_simple_pool_disconnect_all_relays(pool);
 
   Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
   ctx->on_relay_found = on_relay_found;
@@ -1771,30 +1794,27 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
 
   g_debug("nip66 streaming: querying %zu relays for kind 30166", ctx->url_count);
 
-  /* Build filter */
-  NostrFilter *filter = nostr_filter_new();
+  /* Build filter - single filter for query_single_streaming */
+  ctx->filter = nostr_filter_new();
   int kinds[1] = { GNOSTR_NIP66_KIND_RELAY_META };
-  nostr_filter_set_kinds(filter, kinds, 1);
-  nostr_filter_set_limit(filter, 500);
-
-  ctx->filters = nostr_filters_new();
-  nostr_filters_add(ctx->filters, filter);
+  nostr_filter_set_kinds(ctx->filter, kinds, 1);
+  nostr_filter_set_limit(ctx->filter, 500);
 
   /* Connect to events signal for streaming updates */
   ctx->events_handler_id = g_signal_connect(ctx->pool, "events",
                                              G_CALLBACK(on_streaming_events), ctx);
 
-  /* Set timeout to complete discovery after 10 seconds */
+  /* Set timeout to complete discovery after 10 seconds (in case EOSE never arrives) */
   ctx->timeout_source_id = g_timeout_add_seconds(10, on_streaming_timeout, ctx);
 
-  /* Start subscription */
-  gnostr_simple_pool_subscribe_many_async(
+  /* Start streaming query - emits events via signal, closes connections after EOSE */
+  gnostr_simple_pool_query_single_streaming_async(
     ctx->pool,
     url_ptrs,
     ctx->url_count,
-    ctx->filters,
+    ctx->filter,
     ctx->cancellable,
-    on_streaming_subscribe_complete,
+    on_streaming_query_complete,
     ctx
   );
 

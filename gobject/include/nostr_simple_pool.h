@@ -46,6 +46,19 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
                                                  GAsyncResult *res,
                                                  GError **error);
 
+/* One-shot query with streaming events via "events" signal.
+ * Like query_single_async but emits events via the "events" signal as they
+ * arrive, instead of only returning them all at the end. Useful for discovery
+ * queries where you want to show results progressively. Connections are
+ * closed after EOSE (not pooled). */
+void gnostr_simple_pool_query_single_streaming_async(GnostrSimplePool *self,
+                                                      const char **urls,
+                                                      size_t url_count,
+                                                      const NostrFilter *filter,
+                                                      GCancellable *cancellable,
+                                                      GAsyncReadyCallback callback,
+                                                      gpointer user_data);
+
 /* Background paginator with interval (emits "events" signal with GPtrArray* batches).
  * Starts a background thread that repeatedly issues one-shot subscriptions using the
  * provided filter, advancing the filter's `until` based on the smallest created_at

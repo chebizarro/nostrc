@@ -721,6 +721,7 @@ typedef struct {
     GCancellable *cancellable;  /* borrowed */
     GTask *task;        /* owned ref to GTask for async completion */
     GPtrArray *results; /* collected results */
+    gboolean stream_events; /* If TRUE, emit events via "events" signal as they arrive */
 } QuerySingleCtx;
 
 /* Helper to free query context */
@@ -903,14 +904,31 @@ static gpointer query_single_thread(gpointer user_data) {
 
             /* Drain all available events first */
             NostrEvent *evt = NULL;
+            GPtrArray *batch = ctx->stream_events ?
+                g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free) : NULL;
+
             while (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
                 events_received++;
-                char *json = nostr_event_serialize(evt);
-                if (json) {
-                    g_ptr_array_add(ctx->results, json);
+                if (ctx->stream_events && batch) {
+                    /* Streaming mode: collect events for batch emission */
+                    g_ptr_array_add(batch, evt);
+                } else {
+                    /* Non-streaming mode: serialize to JSON for results array */
+                    char *json = nostr_event_serialize(evt);
+                    if (json) {
+                        g_ptr_array_add(ctx->results, json);
+                    }
+                    nostr_event_free(evt);
                 }
-                nostr_event_free(evt);
                 evt = NULL;
+            }
+
+            /* Emit batch via "events" signal if streaming and we have events */
+            if (ctx->stream_events && batch && batch->len > 0) {
+                emit_batch_sorted(ctx->self_obj, batch);
+                batch = NULL;  /* Ownership transferred to emit_batch_sorted */
+            } else if (batch) {
+                g_ptr_array_unref(batch);
             }
 
             /* Check for EOSE (normal completion) */
@@ -992,6 +1010,61 @@ void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
     // Start worker thread
     GThread *thread = g_thread_new("nostr-query-single", query_single_thread, g_steal_pointer(&ctx));
     g_thread_unref(thread);  // we don't need to join
+}
+
+/**
+ * gnostr_simple_pool_query_single_streaming_async:
+ * @self: a #GnostrSimplePool
+ * @urls: array of relay URLs to query
+ * @url_count: number of URLs
+ * @filter: the filter to apply
+ * @cancellable: (nullable): optional #GCancellable
+ * @callback: callback when complete
+ * @user_data: user data for callback
+ *
+ * Like query_single_async but emits events via the "events" signal as they
+ * arrive, enabling streaming updates. The callback is invoked when all
+ * relays have been queried (after EOSE from each).
+ *
+ * Key differences from subscribe_many_async:
+ * - One-shot query, not persistent subscription
+ * - Does NOT add relays to the pool (temporary connections)
+ * - Automatically cleans up relay connections after completion
+ * - Better for discovery/search where you don't need persistent connections
+ *
+ * Connect to the "events" signal before calling this to receive batches
+ * of NostrEvent* as they arrive from each relay.
+ */
+void gnostr_simple_pool_query_single_streaming_async(GnostrSimplePool *self,
+                                                      const char **urls,
+                                                      size_t url_count,
+                                                      const NostrFilter *filter,
+                                                      GCancellable *cancellable,
+                                                      GAsyncReadyCallback callback,
+                                                      gpointer user_data) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+    g_return_if_fail(urls != NULL || url_count == 0);
+    g_return_if_fail(filter != NULL);
+
+    // Create and populate context
+    QuerySingleCtx *ctx = g_new0(QuerySingleCtx, 1);
+    ctx->self_obj = g_object_ref(G_OBJECT(self));
+    ctx->urls = g_new0(char *, url_count);
+    ctx->url_count = url_count;
+    ctx->filter = nostr_filter_copy(filter);
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->task = g_task_new(G_OBJECT(self), cancellable, callback, user_data);
+    ctx->stream_events = TRUE;  /* Enable streaming via "events" signal */
+    g_task_set_task_data(ctx->task, ctx, (GDestroyNotify)query_single_ctx_free);
+
+    // Deep copy URLs
+    for (size_t i = 0; i < url_count; i++) {
+        ctx->urls[i] = g_strdup(urls[i]);
+    }
+
+    // Start worker thread
+    GThread *thread = g_thread_new("nostr-query-streaming", query_single_thread, g_steal_pointer(&ctx));
+    g_thread_unref(thread);
 }
 
 GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
