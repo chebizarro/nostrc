@@ -18,6 +18,7 @@
 #include "util/utils.h"
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
+#include "nostr-tag.h"
 #include "nostr-relay.h"
 #include "nostr-json.h"
 #include "ui/gnostr-main-window.h"
@@ -895,6 +896,211 @@ gnostr_plugin_context_dispatch_action(GnostrPluginContext *context,
 
   action->callback(context, action_name, parameter, action->user_data);
   return TRUE;
+}
+
+/* ============================================================================
+ * PLUGIN EVENT WRAPPER
+ * ============================================================================
+ * GnostrPluginEvent wraps the internal NostrEvent for plugin access.
+ */
+
+struct _GnostrPluginEvent
+{
+  NostrEvent *event;  /* Borrowed reference - caller owns lifecycle */
+};
+
+GnostrPluginEvent *
+gnostr_plugin_event_wrap(NostrEvent *event)
+{
+  if (!event) return NULL;
+
+  GnostrPluginEvent *wrapper = g_new0(GnostrPluginEvent, 1);
+  wrapper->event = event;
+  return wrapper;
+}
+
+void
+gnostr_plugin_event_free(GnostrPluginEvent *event)
+{
+  if (event) {
+    /* Note: we don't free event->event as it's borrowed */
+    g_free(event);
+  }
+}
+
+const char *
+gnostr_plugin_event_get_id(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+  return event->event->id;
+}
+
+const char *
+gnostr_plugin_event_get_pubkey(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+  return nostr_event_get_pubkey(event->event);
+}
+
+gint64
+gnostr_plugin_event_get_created_at(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, 0);
+  return nostr_event_get_created_at(event->event);
+}
+
+int
+gnostr_plugin_event_get_kind(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, 0);
+  return nostr_event_get_kind(event->event);
+}
+
+const char *
+gnostr_plugin_event_get_content(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+  return nostr_event_get_content(event->event);
+}
+
+const char *
+gnostr_plugin_event_get_sig(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+  return nostr_event_get_sig(event->event);
+}
+
+char *
+gnostr_plugin_event_get_tags_json(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+
+  NostrTags *tags = event->event->tags;
+  if (!tags || nostr_tags_size(tags) == 0) {
+    return g_strdup("[]");
+  }
+
+  /* Build JSON array of tags */
+  GString *json = g_string_new("[");
+  size_t count = nostr_tags_size(tags);
+
+  for (size_t i = 0; i < count; i++) {
+    if (i > 0) g_string_append_c(json, ',');
+
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag) continue;
+
+    g_string_append_c(json, '[');
+    size_t field_count = nostr_tag_size(tag);
+    for (size_t j = 0; j < field_count; j++) {
+      if (j > 0) g_string_append_c(json, ',');
+      const char *field = nostr_tag_get(tag, j);
+
+      /* JSON-escape the string */
+      g_string_append_c(json, '"');
+      if (field) {
+        for (const char *p = field; *p; p++) {
+          switch (*p) {
+            case '"':  g_string_append(json, "\\\""); break;
+            case '\\': g_string_append(json, "\\\\"); break;
+            case '\n': g_string_append(json, "\\n"); break;
+            case '\r': g_string_append(json, "\\r"); break;
+            case '\t': g_string_append(json, "\\t"); break;
+            default:   g_string_append_c(json, *p); break;
+          }
+        }
+      }
+      g_string_append_c(json, '"');
+    }
+    g_string_append_c(json, ']');
+  }
+
+  g_string_append_c(json, ']');
+  return g_string_free(json, FALSE);
+}
+
+const char *
+gnostr_plugin_event_get_tag_value(GnostrPluginEvent *event,
+                                  const char        *tag_name,
+                                  guint              index)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+  g_return_val_if_fail(tag_name != NULL, NULL);
+
+  NostrTags *tags = event->event->tags;
+  if (!tags) return NULL;
+
+  guint match_count = 0;
+  size_t count = nostr_tags_size(tags);
+
+  for (size_t i = 0; i < count; i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 1) continue;
+
+    const char *name = nostr_tag_get(tag, 0);
+    if (name && g_strcmp0(name, tag_name) == 0) {
+      if (match_count == index) {
+        /* Return the first value (index 1) */
+        if (nostr_tag_size(tag) > 1) {
+          return nostr_tag_get(tag, 1);
+        }
+        return NULL;
+      }
+      match_count++;
+    }
+  }
+
+  return NULL;
+}
+
+char **
+gnostr_plugin_event_get_tag_values(GnostrPluginEvent *event,
+                                   const char        *tag_name)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+  g_return_val_if_fail(tag_name != NULL, NULL);
+
+  NostrTags *tags = event->event->tags;
+  if (!tags) return NULL;
+
+  GPtrArray *values = g_ptr_array_new_with_free_func(g_free);
+  size_t count = nostr_tags_size(tags);
+
+  for (size_t i = 0; i < count; i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 2) continue;
+
+    const char *name = nostr_tag_get(tag, 0);
+    if (name && g_strcmp0(name, tag_name) == 0) {
+      const char *value = nostr_tag_get(tag, 1);
+      if (value) {
+        g_ptr_array_add(values, g_strdup(value));
+      }
+    }
+  }
+
+  if (values->len == 0) {
+    g_ptr_array_unref(values);
+    return NULL;
+  }
+
+  g_ptr_array_add(values, NULL);
+  return (char **)g_ptr_array_free(values, FALSE);
+}
+
+char *
+gnostr_plugin_event_to_json(GnostrPluginEvent *event)
+{
+  g_return_val_if_fail(event != NULL && event->event != NULL, NULL);
+
+  /* Use the fast-path compact serializer first */
+  char *json = nostr_event_serialize_compact(event->event);
+  if (json) {
+    return json;  /* Already allocated, caller must free */
+  }
+
+  /* Fallback: use standard serializer */
+  return nostr_event_serialize(event->event);
 }
 
 #endif /* !GNOSTR_PLUGIN_BUILD */

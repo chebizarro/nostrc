@@ -836,6 +836,33 @@ gboolean gnostr_plugin_context_dispatch_action(GnostrPluginContext *context,
  * Functions for accessing event data in a stable way.
  */
 
+/* Forward declaration for internal event type */
+struct _NostrEvent;
+typedef struct _NostrEvent NostrEvent;
+
+/**
+ * gnostr_plugin_event_wrap:
+ * @event: (transfer none): Internal NostrEvent to wrap
+ *
+ * Wrap an internal NostrEvent for plugin access.
+ * The wrapper holds a borrowed reference - the caller retains ownership
+ * of the underlying event.
+ *
+ * Returns: (transfer full) (nullable): New event wrapper, or %NULL
+ * @stability: Private (for host use only)
+ */
+GnostrPluginEvent *gnostr_plugin_event_wrap(NostrEvent *event);
+
+/**
+ * gnostr_plugin_event_free:
+ * @event: (transfer full) (nullable): Event wrapper to free
+ *
+ * Free an event wrapper. Does not free the underlying NostrEvent.
+ *
+ * @stability: Private (for host use only)
+ */
+void gnostr_plugin_event_free(GnostrPluginEvent *event);
+
 /**
  * gnostr_plugin_event_get_id:
  * @event: A #GnostrPluginEvent
