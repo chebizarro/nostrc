@@ -25,6 +25,7 @@
 #include <gio/gio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <json.h>
+#include <json-glib/json-glib.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -737,6 +738,11 @@ struct _GnostrTimelineView {
   GHashTable *reaction_nip65_fetched; /* pubkey_hex -> gboolean: authors we've fetched NIP-65 for */
   GCancellable *reaction_cancellable; /* cancellable for reaction fetch operations */
 
+  /* nostrc-x8z3.1: Batched NIP-65 relay list fetching */
+  GPtrArray *nip65_pending_authors;   /* Pending pubkeys for batch NIP-65 fetch */
+  GHashTable *nip65_pending_events;   /* pubkey_hex -> event_id_hex for callback context */
+  guint nip65_batch_timeout_id;       /* Debounce timeout for NIP-65 batch */
+
   /* nostrc-y62r: Scroll position tracking for viewport-aware loading */
   guint visible_range_start;          /* First visible item index */
   guint visible_range_end;            /* Last visible item index (exclusive) */
@@ -821,6 +827,14 @@ static void gnostr_timeline_view_dispose(GObject *obj) {
     g_clear_object(&self->reaction_cancellable);
   }
   g_clear_pointer(&self->reaction_nip65_fetched, g_hash_table_unref);
+
+  /* nostrc-x8z3.1: Clean up batched NIP-65 fetch state */
+  if (self->nip65_batch_timeout_id > 0) {
+    g_source_remove(self->nip65_batch_timeout_id);
+    self->nip65_batch_timeout_id = 0;
+  }
+  g_clear_pointer(&self->nip65_pending_authors, g_ptr_array_unref);
+  g_clear_pointer(&self->nip65_pending_events, g_hash_table_unref);
 
   /* Dispose template children before chaining up so they are unparented first */
   gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_TIMELINE_VIEW);
@@ -1713,7 +1727,248 @@ static void on_author_nip65_for_reactions(GPtrArray *relays, gpointer user_data)
   /* Note: ctx ownership transferred to on_reaction_query_done */
 }
 
-/* Initiate async fetch of reactions from post author's NIP-65 relays */
+/* ============== nostrc-x8z3.1: Batched NIP-65 Fetching ============== */
+
+/* Debounce delay for batching NIP-65 requests (milliseconds) */
+#define NIP65_BATCH_DEBOUNCE_MS 50
+
+/* Context for batched NIP-65 query */
+typedef struct {
+  GWeakRef view_ref;          /* weak ref to timeline view */
+  GPtrArray *authors;         /* array of author pubkeys (owned, copied from pending) */
+  GHashTable *author_events;  /* author_pubkey -> event_id mapping (owned, copied) */
+} Nip65BatchContext;
+
+static void nip65_batch_ctx_free(Nip65BatchContext *ctx) {
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->view_ref);
+  if (ctx->authors) g_ptr_array_unref(ctx->authors);
+  if (ctx->author_events) g_hash_table_unref(ctx->author_events);
+  g_free(ctx);
+}
+
+/* Forward declaration */
+static gboolean nip65_batch_dispatch(gpointer user_data);
+
+/* Callback when batched NIP-65 query completes */
+static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  Nip65BatchContext *ctx = (Nip65BatchContext *)user_data;
+  if (!ctx) return;
+
+  GnostrTimelineView *self = g_weak_ref_get(&ctx->view_ref);
+  if (!self) {
+    nip65_batch_ctx_free(ctx);
+    return;
+  }
+
+  GError *error = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("timeline_view: batched NIP-65 query error: %s", error->message);
+    }
+    g_error_free(error);
+    g_object_unref(self);
+    nip65_batch_ctx_free(ctx);
+    return;
+  }
+
+  if (!results || results->len == 0) {
+    g_debug("timeline_view: batched NIP-65 query returned no results for %u authors",
+            ctx->authors ? ctx->authors->len : 0);
+    if (results) g_ptr_array_unref(results);
+    g_object_unref(self);
+    nip65_batch_ctx_free(ctx);
+    return;
+  }
+
+  g_debug("timeline_view: batched NIP-65 query returned %u results", results->len);
+
+  /* Process each NIP-65 result and fetch reactions for the corresponding event */
+  for (guint i = 0; i < results->len; i++) {
+    const char *event_json = g_ptr_array_index(results, i);
+    if (!event_json) continue;
+
+    /* Extract author pubkey from the event JSON using json-glib */
+    JsonParser *parser = json_parser_new();
+    if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
+      g_object_unref(parser);
+      continue;
+    }
+
+    JsonNode *root_node = json_parser_get_root(parser);
+    if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
+      g_object_unref(parser);
+      continue;
+    }
+
+    JsonObject *root = json_node_get_object(root_node);
+    const char *author_pubkey = NULL;
+    if (json_object_has_member(root, "pubkey")) {
+      author_pubkey = json_object_get_string_member(root, "pubkey");
+    }
+
+    if (!author_pubkey || strlen(author_pubkey) != 64) {
+      g_object_unref(parser);
+      continue;
+    }
+
+    /* Look up the event ID for this author */
+    const char *event_id = g_hash_table_lookup(ctx->author_events, author_pubkey);
+    if (!event_id) {
+      g_object_unref(parser);
+      continue;
+    }
+
+    /* Parse NIP-65 relay list */
+    GPtrArray *relays = gnostr_nip65_parse_event(event_json, NULL);
+    if (!relays || relays->len == 0) {
+      g_object_unref(parser);
+      if (relays) g_ptr_array_unref(relays);
+      continue;
+    }
+
+    /* Get write relays for reaction query */
+    GPtrArray *write_relays = gnostr_nip65_get_write_relays(relays);
+    g_ptr_array_unref(relays);
+
+    if (!write_relays || write_relays->len == 0) {
+      g_object_unref(parser);
+      if (write_relays) g_ptr_array_unref(write_relays);
+      continue;
+    }
+
+    g_debug("timeline_view: querying %u author write relays for reactions to %.16s (author %.16s)",
+            write_relays->len, event_id, author_pubkey);
+
+    /* Create reaction fetch context */
+    ReactionFetchContext *rctx = g_new0(ReactionFetchContext, 1);
+    g_weak_ref_init(&rctx->view_ref, self);
+    rctx->event_id_hex = g_strdup(event_id);
+    rctx->author_pubkey_hex = g_strdup(author_pubkey);
+
+    /* Build filter for kind:7 reactions referencing this event */
+    NostrFilter *filter = nostr_filter_new();
+    int kinds[1] = { 7 };
+    nostr_filter_set_kinds(filter, kinds, 1);
+
+    NostrTag *e_tag = nostr_tag_new("e", event_id, NULL);
+    NostrTags *tags = nostr_tags_new(1, e_tag);
+    nostr_filter_set_tags(filter, tags);
+    nostr_filter_set_limit(filter, 100);
+
+    /* Build URL array */
+    const char **urls = g_new0(const char *, write_relays->len);
+    for (guint j = 0; j < write_relays->len; j++) {
+      urls[j] = g_ptr_array_index(write_relays, j);
+    }
+
+    /* Query author's relays for reactions */
+    gnostr_simple_pool_query_single_async(
+      gnostr_get_shared_query_pool(),
+      urls,
+      write_relays->len,
+      filter,
+      self->reaction_cancellable,
+      on_reaction_query_done,
+      rctx
+    );
+
+    g_free(urls);
+    g_ptr_array_unref(write_relays);
+    nostr_filter_free(filter);
+    g_object_unref(parser);
+  }
+
+  g_ptr_array_unref(results);
+  g_object_unref(self);
+  nip65_batch_ctx_free(ctx);
+}
+
+/* Dispatch batched NIP-65 request after debounce timeout */
+static gboolean nip65_batch_dispatch(gpointer user_data) {
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  if (!self) return G_SOURCE_REMOVE;
+
+  self->nip65_batch_timeout_id = 0;
+
+  if (!self->nip65_pending_authors || self->nip65_pending_authors->len == 0) {
+    return G_SOURCE_REMOVE;
+  }
+
+  guint author_count = self->nip65_pending_authors->len;
+  g_debug("timeline_view: dispatching batched NIP-65 fetch for %u authors", author_count);
+
+  /* Create batch context with copies of pending data */
+  Nip65BatchContext *ctx = g_new0(Nip65BatchContext, 1);
+  g_weak_ref_init(&ctx->view_ref, self);
+  ctx->authors = g_ptr_array_new_with_free_func(g_free);
+  ctx->author_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+
+  /* Copy pending authors and events */
+  for (guint i = 0; i < self->nip65_pending_authors->len; i++) {
+    const char *author = g_ptr_array_index(self->nip65_pending_authors, i);
+    const char *event = g_hash_table_lookup(self->nip65_pending_events, author);
+    if (author && event) {
+      g_ptr_array_add(ctx->authors, g_strdup(author));
+      g_hash_table_insert(ctx->author_events, g_strdup(author), g_strdup(event));
+    }
+  }
+
+  /* Clear pending state */
+  g_ptr_array_set_size(self->nip65_pending_authors, 0);
+  g_hash_table_remove_all(self->nip65_pending_events);
+
+  if (ctx->authors->len == 0) {
+    nip65_batch_ctx_free(ctx);
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Build multi-author filter for kind 10002 */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[1] = { 10002 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+
+  /* Set authors array */
+  const char **authors = g_new0(const char *, ctx->authors->len);
+  for (guint i = 0; i < ctx->authors->len; i++) {
+    authors[i] = g_ptr_array_index(ctx->authors, i);
+  }
+  nostr_filter_set_authors(filter, authors, ctx->authors->len);
+  g_free(authors);
+
+  /* Get configured relays */
+  GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(relay_arr);
+
+  const char **urls = g_new0(const char *, relay_arr->len);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    urls[i] = g_ptr_array_index(relay_arr, i);
+  }
+
+  /* Query all authors' NIP-65 in one request */
+  gnostr_simple_pool_query_single_async(
+    gnostr_get_shared_query_pool(),
+    urls,
+    relay_arr->len,
+    filter,
+    self->reaction_cancellable,
+    on_batch_nip65_query_done,
+    ctx
+  );
+
+  g_free(urls);
+  g_ptr_array_unref(relay_arr);
+  nostr_filter_free(filter);
+
+  return G_SOURCE_REMOVE;
+}
+
+/* ============== End nostrc-x8z3.1 ============== */
+
+/* Initiate async fetch of reactions from post author's NIP-65 relays.
+ * nostrc-x8z3.1: Now batches requests using multi-author filter to reduce N subscriptions to 1. */
 static void fetch_reactions_from_author_relays(GnostrTimelineView *self,
                                                 const char *event_id_hex,
                                                 const char *author_pubkey_hex) {
@@ -1730,20 +1985,22 @@ static void fetch_reactions_from_author_relays(GnostrTimelineView *self,
                       g_strdup(author_pubkey_hex),
                       GINT_TO_POINTER(1));
 
-  g_debug("timeline_view: initiating NIP-65 reaction fetch for author %.16s, event %.16s",
+  g_debug("timeline_view: queueing NIP-65 fetch for author %.16s, event %.16s",
           author_pubkey_hex, event_id_hex);
 
-  /* Create context for async callbacks */
-  ReactionFetchContext *ctx = g_new0(ReactionFetchContext, 1);
-  g_weak_ref_init(&ctx->view_ref, self);
-  ctx->event_id_hex = g_strdup(event_id_hex);
-  ctx->author_pubkey_hex = g_strdup(author_pubkey_hex);
+  /* Queue author for batched fetch */
+  g_ptr_array_add(self->nip65_pending_authors, g_strdup(author_pubkey_hex));
+  g_hash_table_insert(self->nip65_pending_events,
+                      g_strdup(author_pubkey_hex),
+                      g_strdup(event_id_hex));
 
-  /* Fetch author's NIP-65 relay list */
-  gnostr_nip65_fetch_relays_async(author_pubkey_hex,
-                                   self->reaction_cancellable,
-                                   on_author_nip65_for_reactions,
-                                   ctx);
+  /* Reset debounce timer */
+  if (self->nip65_batch_timeout_id > 0) {
+    g_source_remove(self->nip65_batch_timeout_id);
+  }
+  self->nip65_batch_timeout_id = g_timeout_add(NIP65_BATCH_DEBOUNCE_MS,
+                                                nip65_batch_dispatch,
+                                                self);
 }
 
 /* ============== End nostrc-lig9 ============== */
@@ -2467,6 +2724,11 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   /* nostrc-lig9: Initialize NIP-65 reaction fetch tracking */
   self->reaction_nip65_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->reaction_cancellable = g_cancellable_new();
+
+  /* nostrc-x8z3.1: Initialize batched NIP-65 fetch state */
+  self->nip65_pending_authors = g_ptr_array_new_with_free_func(g_free);
+  self->nip65_pending_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  self->nip65_batch_timeout_id = 0;
 
   /* nostrc-y62r: Connect scroll position tracking */
   if (self->root_scroller && GTK_IS_SCROLLED_WINDOW(self->root_scroller)) {
