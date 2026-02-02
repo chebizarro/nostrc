@@ -6,10 +6,13 @@
 
 #include "nip89_handlers.h"
 #include "../storage_ndb.h"
+#include "relays.h"
 #include <string.h>
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
+#include "nostr-filter.h"
+#include "nostr_simple_pool.h"
 
 /* ============== Cache Configuration ============== */
 
@@ -930,9 +933,35 @@ gboolean gnostr_nip89_is_addressable_kind(guint kind)
   return kind >= 30000 && kind < 40000;
 }
 
-/* ============== Async Query (placeholder - uses local cache for now) ============== */
+/* ============== Async Query with Relay Support ============== */
 
-/* Callback data for async query */
+/* NIP-89 event kinds */
+#define NIP89_KIND_HANDLER_INFO    31989
+#define NIP89_KIND_RECOMMENDATION  31990
+
+/* Static pool for NIP-89 queries */
+static GnostrSimplePool *s_nip89_pool = NULL;
+
+/* Context for relay query */
+typedef struct {
+  GnostrNip89QueryCallback callback;
+  gpointer user_data;
+  guint target_kind;
+  GCancellable *cancellable;
+  GPtrArray *handlers;       /* Accumulated handlers */
+  GPtrArray *recommendations; /* Accumulated recommendations */
+  gint pending_queries;      /* Number of pending relay queries */
+} Nip89QueryContext;
+
+static void nip89_query_context_free(Nip89QueryContext *ctx) {
+  if (!ctx) return;
+  if (ctx->handlers) g_ptr_array_unref(ctx->handlers);
+  if (ctx->recommendations) g_ptr_array_unref(ctx->recommendations);
+  if (ctx->cancellable) g_object_unref(ctx->cancellable);
+  g_free(ctx);
+}
+
+/* Callback for idle dispatch to main thread */
 typedef struct {
   GnostrNip89QueryCallback callback;
   gpointer user_data;
@@ -949,6 +978,84 @@ on_nip89_query_idle(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+/* Callback when relay query completes */
+static void on_nip89_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  Nip89QueryContext *ctx = (Nip89QueryContext *)user_data;
+  if (!ctx) return;
+
+  GError *err = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(
+      GNOSTR_SIMPLE_POOL(source), res, &err);
+
+  if (err) {
+    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("nip89: relay query error: %s", err->message);
+    }
+    g_error_free(err);
+  } else if (results && results->len > 0) {
+    g_debug("nip89: received %u events from relays", results->len);
+
+    /* Parse each event and add to results */
+    for (guint i = 0; i < results->len; i++) {
+      const char *json = g_ptr_array_index(results, i);
+      if (!json) continue;
+
+      /* Try parsing as handler info (kind 31989) */
+      GnostrNip89HandlerInfo *handler = gnostr_nip89_parse_handler_info(json);
+      if (handler) {
+        /* Check if it handles our target kind */
+        gboolean handles_target = FALSE;
+        if (handler->handled_kinds && handler->n_handled_kinds > 0) {
+          for (gsize k = 0; k < handler->n_handled_kinds; k++) {
+            if (handler->handled_kinds[k] == ctx->target_kind) {
+              handles_target = TRUE;
+              break;
+            }
+          }
+        }
+
+        if (handles_target) {
+          g_ptr_array_add(ctx->handlers, handler);
+          /* Also add to cache */
+          gnostr_nip89_cache_add_handler(handler);
+        } else {
+          gnostr_nip89_handler_info_free(handler);
+        }
+        continue;
+      }
+
+      /* Try parsing as recommendation (kind 31990) */
+      GnostrNip89Recommendation *rec = gnostr_nip89_parse_recommendation(json);
+      if (rec && rec->recommended_kind == ctx->target_kind) {
+        g_ptr_array_add(ctx->recommendations, rec);
+        /* Also add to cache */
+        gnostr_nip89_cache_add_recommendation(rec);
+      } else if (rec) {
+        gnostr_nip89_recommendation_free(rec);
+      }
+    }
+  }
+
+  if (results) g_ptr_array_unref(results);
+
+  /* Decrement pending count and check if done */
+  ctx->pending_queries--;
+  if (ctx->pending_queries <= 0) {
+    /* All queries complete - invoke callback */
+    Nip89QueryCallbackData *cb_data = g_new0(Nip89QueryCallbackData, 1);
+    cb_data->callback = ctx->callback;
+    cb_data->user_data = ctx->user_data;
+    /* Transfer ownership of arrays to callback */
+    cb_data->handlers = ctx->handlers;
+    cb_data->recommendations = ctx->recommendations;
+    ctx->handlers = NULL;
+    ctx->recommendations = NULL;
+
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, on_nip89_query_idle, cb_data, NULL);
+    nip89_query_context_free(ctx);
+  }
+}
+
 void gnostr_nip89_query_handlers_async(guint event_kind,
                                         GnostrNip89QueryCallback callback,
                                         gpointer user_data,
@@ -956,22 +1063,77 @@ void gnostr_nip89_query_handlers_async(guint event_kind,
 {
   if (!callback) return;
 
-  (void)cancellable;
+  /* Start with cached results */
+  GPtrArray *cached_handlers = gnostr_nip89_cache_get_handlers_for_kind(event_kind);
+  GPtrArray *cached_recommendations = gnostr_nip89_cache_get_recommendations_for_kind(event_kind, NULL);
 
-  /* nostrc-n63f: Currently returns cached results only. Live relay queries for
-   * kind 31989/31990 events would enable real-time handler discovery but adds
-   * complexity (relay selection, timeout handling, deduplication). The cache
-   * is populated at startup from storage_ndb queries. */
+  /* Get relay URLs */
+  GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+  gnostr_get_read_relay_urls_into(relay_arr);
 
-  GPtrArray *handlers = gnostr_nip89_cache_get_handlers_for_kind(event_kind);
-  GPtrArray *recommendations = gnostr_nip89_cache_get_recommendations_for_kind(event_kind, NULL);
+  if (relay_arr->len == 0) {
+    /* No relays configured - return cached results only */
+    g_ptr_array_unref(relay_arr);
+    Nip89QueryCallbackData *data = g_new0(Nip89QueryCallbackData, 1);
+    data->callback = callback;
+    data->user_data = user_data;
+    data->handlers = cached_handlers;
+    data->recommendations = cached_recommendations;
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, on_nip89_query_idle, data, NULL);
+    return;
+  }
 
-  /* Schedule callback on main thread */
-  Nip89QueryCallbackData *data = g_new0(Nip89QueryCallbackData, 1);
-  data->callback = callback;
-  data->user_data = user_data;
-  data->handlers = handlers;
-  data->recommendations = recommendations;
+  /* Create query context */
+  Nip89QueryContext *ctx = g_new0(Nip89QueryContext, 1);
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+  ctx->target_kind = event_kind;
+  ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
 
-  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, on_nip89_query_idle, data, NULL);
+  /* Initialize with cached results */
+  ctx->handlers = cached_handlers ? cached_handlers : g_ptr_array_new_with_free_func(
+      (GDestroyNotify)gnostr_nip89_handler_info_free);
+  ctx->recommendations = cached_recommendations ? cached_recommendations : g_ptr_array_new_with_free_func(
+      (GDestroyNotify)gnostr_nip89_recommendation_free);
+
+  /* Build filter for kind 31989 (handler info) events with "k" tag matching target kind */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[2] = { NIP89_KIND_HANDLER_INFO, NIP89_KIND_RECOMMENDATION };
+  nostr_filter_set_kinds(filter, kinds, 2);
+
+  /* Add #k tag filter for the target kind */
+  char kind_str[16];
+  g_snprintf(kind_str, sizeof(kind_str), "%u", event_kind);
+  nostr_filter_tags_append(filter, "k", kind_str, NULL);
+
+  nostr_filter_set_limit(filter, 50);
+
+  /* Build URL array */
+  const char **urls = g_new0(const char*, relay_arr->len);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    urls[i] = g_ptr_array_index(relay_arr, i);
+  }
+
+  /* Initialize pool */
+  if (!s_nip89_pool) {
+    s_nip89_pool = gnostr_simple_pool_new();
+  }
+
+  g_debug("nip89: querying %u relays for kind %u handlers", relay_arr->len, event_kind);
+
+  ctx->pending_queries = 1;
+
+  gnostr_simple_pool_query_single_async(
+      s_nip89_pool,
+      urls,
+      relay_arr->len,
+      filter,
+      ctx->cancellable,
+      on_nip89_relay_query_done,
+      ctx
+  );
+
+  g_free(urls);
+  g_ptr_array_unref(relay_arr);
+  nostr_filter_free(filter);
 }
