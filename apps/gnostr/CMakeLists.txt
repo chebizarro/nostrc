@@ -273,7 +273,7 @@ target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBPEAS=1)
 # nip47-nwc disabled pending nostrc-qdqf (gnostr_plugin_context API)
 # add_subdirectory(plugins/nip47-nwc)
 add_subdirectory(plugins/nip98-httpauth)
-add_subdirectory(plugins/nip46-connect)
+# nip46-connect removed - dead code, NIP-46 now handled by gnostr-signer-service
 add_subdirectory(plugins/nip17-dms)
 add_subdirectory(plugins/nip55-androidsigner)
 add_subdirectory(plugins/nip49-keyencrypt)
@@ -284,7 +284,6 @@ add_subdirectory(plugins/nip34-git)
 # Make gnostr depend on plugins so they're built together
 add_dependencies(${APP_CLIENT_BIN}
   nip98-httpauth
-  nip46-connect
   nip17-dms
   nip55-androidsigner
   nip49-keyencrypt

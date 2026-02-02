@@ -239,6 +239,7 @@ static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpoi
 static void on_show_preferences_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
 static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data);
+static void on_signer_state_changed(GnostrSignerService *signer, guint old_state, guint new_state, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
 /* Forward declarations for discover page signal handlers */
@@ -3346,6 +3347,37 @@ static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data) {
   open_login_dialog(self);
 }
 
+/* Handler for signer service state changes - updates UI dynamically */
+static void on_signer_state_changed(GnostrSignerService *signer,
+                                     guint old_state,
+                                     guint new_state,
+                                     gpointer user_data)
+{
+  (void)signer;
+  (void)old_state;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_debug("[MAIN] Signer state changed: %u -> %u", old_state, new_state);
+
+  /* Update UI based on new state */
+  gboolean is_connected = (new_state == GNOSTR_SIGNER_STATE_CONNECTED);
+
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    /* Only set authenticated to TRUE if we also have a valid npub */
+    if (is_connected) {
+      GSettings *settings = g_settings_new("org.gnostr.Client");
+      if (settings) {
+        g_autofree char *npub = g_settings_get_string(settings, "current-npub");
+        gnostr_session_view_set_authenticated(self->session_view, npub && *npub);
+        g_object_unref(settings);
+      }
+    } else {
+      gnostr_session_view_set_authenticated(self->session_view, FALSE);
+    }
+  }
+}
+
 static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -3444,7 +3476,10 @@ static void update_login_ui_state(GnostrMainWindow *self) {
   char *npub = g_settings_get_string(settings, "current-npub");
   g_object_unref(settings);
 
-  gboolean signed_in = (npub && *npub);
+  /* User is signed in only if both npub exists AND signer is ready */
+  gboolean has_npub = (npub && *npub);
+  gboolean signer_ready = gnostr_signer_service_is_ready(gnostr_signer_service_get_default());
+  gboolean signed_in = has_npub && signer_ready;
 
   /* SessionView owns auth gating for Notifications/Messages and internal navigation.
    * MainWindow only computes sign-in state and informs SessionView. */
@@ -4593,6 +4628,11 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     g_signal_connect(self->session_view, "compose-requested",
                      G_CALLBACK(on_compose_requested), self);
   }
+
+  /* Connect to signer service state-changed signal for dynamic UI updates */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  g_signal_connect(signer, "state-changed",
+                   G_CALLBACK(on_signer_state_changed), self);
 
   /* Connect profile pane and thread view close signals */
   {

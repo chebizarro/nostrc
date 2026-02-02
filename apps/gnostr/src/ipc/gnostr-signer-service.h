@@ -32,6 +32,15 @@ typedef enum {
 } GnostrSignerMethod;
 
 /**
+ * Signer state enum for state machine
+ */
+typedef enum {
+  GNOSTR_SIGNER_STATE_DISCONNECTED,  /* No active session */
+  GNOSTR_SIGNER_STATE_CONNECTING,    /* Login in progress */
+  GNOSTR_SIGNER_STATE_CONNECTED,     /* Ready to sign */
+} GnostrSignerState;
+
+/**
  * Callback for async signing operations
  */
 typedef void (*GnostrSignerCallback)(GnostrSignerService *service,
@@ -85,10 +94,71 @@ GnostrSignerMethod gnostr_signer_service_get_method(GnostrSignerService *self);
  * @self: The signer service
  *
  * Checks if any signing method is available.
+ * DEPRECATED: Use gnostr_signer_service_is_ready() instead.
  *
  * Returns: TRUE if signing is available
  */
 gboolean gnostr_signer_service_is_available(GnostrSignerService *self);
+
+/**
+ * gnostr_signer_service_get_state:
+ * @self: The signer service
+ *
+ * Gets the current state of the signer service.
+ *
+ * Returns: The current #GnostrSignerState
+ */
+GnostrSignerState gnostr_signer_service_get_state(GnostrSignerService *self);
+
+/**
+ * gnostr_signer_service_is_ready:
+ * @self: The signer service
+ *
+ * Checks if the signer is connected and ready to sign.
+ *
+ * Returns: TRUE if state is CONNECTED
+ */
+gboolean gnostr_signer_service_is_ready(GnostrSignerService *self);
+
+/**
+ * gnostr_signer_service_login_async:
+ * @self: The signer service
+ * @bunker_uri: A bunker:// or nostrconnect:// URI
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback for when login completes
+ * @user_data: User data for callback
+ *
+ * Initiates NIP-46 login asynchronously. The service takes ownership
+ * of the session internally. Emits "state-changed" signal on completion.
+ */
+void gnostr_signer_service_login_async(GnostrSignerService *self,
+                                        const char *bunker_uri,
+                                        GCancellable *cancellable,
+                                        GAsyncReadyCallback callback,
+                                        gpointer user_data);
+
+/**
+ * gnostr_signer_service_login_finish:
+ * @self: The signer service
+ * @result: The #GAsyncResult
+ * @error: (out) (optional): Location for error
+ *
+ * Finishes a login operation started with gnostr_signer_service_login_async().
+ *
+ * Returns: TRUE on success
+ */
+gboolean gnostr_signer_service_login_finish(GnostrSignerService *self,
+                                             GAsyncResult *result,
+                                             GError **error);
+
+/**
+ * gnostr_signer_service_logout:
+ * @self: The signer service
+ *
+ * Logs out and clears all session state. Emits "state-changed" signal.
+ * This is the preferred way to clear state (replaces gnostr_signer_service_clear).
+ */
+void gnostr_signer_service_logout(GnostrSignerService *self);
 
 /**
  * gnostr_signer_service_sign_event_async:

@@ -33,15 +33,32 @@ struct _GnostrSignerService {
   /* Current signing method */
   GnostrSignerMethod method;
 
+  /* State machine */
+  GnostrSignerState state;
+
   /* User's public key (hex) */
   char *pubkey_hex;
 
-  /* NIP-46 session (owned if method is NIP46) */
+  /* NIP-46 session (owned - sole owner) */
   NostrNip46Session *nip46_session;
 
   /* NIP-55L proxy (lazy initialized) */
   NostrSignerProxy *nip55l_proxy;
+
+  /* Mutex for thread-safe session access */
+  GMutex session_mutex;
+
+  /* Cancellable for pending operations */
+  GCancellable *pending_cancellable;
 };
+
+/* Signal IDs */
+enum {
+  SIGNAL_STATE_CHANGED,
+  N_SIGNALS
+};
+
+static guint signals[N_SIGNALS];
 
 G_DEFINE_TYPE(GnostrSignerService, gnostr_signer_service, G_TYPE_OBJECT)
 
@@ -53,10 +70,18 @@ gnostr_signer_service_dispose(GObject *object)
 {
   GnostrSignerService *self = GNOSTR_SIGNER_SERVICE(object);
 
+  /* Cancel any pending operations */
+  if (self->pending_cancellable) {
+    g_cancellable_cancel(self->pending_cancellable);
+    g_clear_object(&self->pending_cancellable);
+  }
+
+  g_mutex_lock(&self->session_mutex);
   if (self->nip46_session) {
     nostr_nip46_session_free(self->nip46_session);
     self->nip46_session = NULL;
   }
+  g_mutex_unlock(&self->session_mutex);
 
   /* Don't free the proxy - it's shared via signer_ipc */
   self->nip55l_proxy = NULL;
@@ -70,6 +95,7 @@ gnostr_signer_service_finalize(GObject *object)
   GnostrSignerService *self = GNOSTR_SIGNER_SERVICE(object);
 
   g_free(self->pubkey_hex);
+  g_mutex_clear(&self->session_mutex);
 
   G_OBJECT_CLASS(gnostr_signer_service_parent_class)->finalize(object);
 }
@@ -81,15 +107,39 @@ gnostr_signer_service_class_init(GnostrSignerServiceClass *klass)
 
   object_class->dispose = gnostr_signer_service_dispose;
   object_class->finalize = gnostr_signer_service_finalize;
+
+  /**
+   * GnostrSignerService::state-changed:
+   * @self: The signer service
+   * @old_state: The previous state
+   * @new_state: The new state
+   *
+   * Emitted when the signer state changes.
+   */
+  signals[SIGNAL_STATE_CHANGED] = g_signal_new(
+      "state-changed",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL, NULL,
+      NULL,
+      G_TYPE_NONE,
+      2,
+      G_TYPE_UINT, /* old_state */
+      G_TYPE_UINT  /* new_state */
+  );
 }
 
 static void
 gnostr_signer_service_init(GnostrSignerService *self)
 {
   self->method = GNOSTR_SIGNER_METHOD_NONE;
+  self->state = GNOSTR_SIGNER_STATE_DISCONNECTED;
   self->pubkey_hex = NULL;
   self->nip46_session = NULL;
   self->nip55l_proxy = NULL;
+  self->pending_cancellable = NULL;
+  g_mutex_init(&self->session_mutex);
 }
 
 GnostrSignerService *
@@ -107,11 +157,40 @@ gnostr_signer_service_get_default(void)
   return s_default_service;
 }
 
+/* Helper to transition state and emit signal */
+static void
+set_state(GnostrSignerService *self, GnostrSignerState new_state)
+{
+  GnostrSignerState old_state = self->state;
+  if (old_state == new_state) return;
+
+  self->state = new_state;
+  g_debug("[SIGNER_SERVICE] State: %d -> %d", old_state, new_state);
+
+  g_signal_emit(self, signals[SIGNAL_STATE_CHANGED], 0, old_state, new_state);
+}
+
+GnostrSignerState
+gnostr_signer_service_get_state(GnostrSignerService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), GNOSTR_SIGNER_STATE_DISCONNECTED);
+  return self->state;
+}
+
+gboolean
+gnostr_signer_service_is_ready(GnostrSignerService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), FALSE);
+  return self->state == GNOSTR_SIGNER_STATE_CONNECTED;
+}
+
 void
 gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
                                          NostrNip46Session *session)
 {
   g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+
+  g_mutex_lock(&self->session_mutex);
 
   /* Free old session if any */
   if (self->nip46_session) {
@@ -122,34 +201,23 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
   if (session) {
     self->nip46_session = session;
     self->method = GNOSTR_SIGNER_METHOD_NIP46;
-    /* Debug: check what signer pubkey is in the session */
-    char *debug_signer_pk = NULL;
-    char **debug_relays = NULL;
-    size_t debug_n_relays = 0;
-    nostr_nip46_session_get_remote_pubkey(session, &debug_signer_pk);
-    nostr_nip46_session_get_relays(session, &debug_relays, &debug_n_relays);
-    fprintf(stderr, "\n*** SESSION SET ON SIGNER SERVICE ***\n");
-    fprintf(stderr, "Session signer_pubkey: %s\n",
-              debug_signer_pk ? debug_signer_pk : "(NULL)");
-    fprintf(stderr, "Session relay count: %zu\n", debug_n_relays);
-    for (size_t i = 0; i < debug_n_relays && debug_relays; i++) {
-      fprintf(stderr, "  relay[%zu]: %s\n", i, debug_relays[i] ? debug_relays[i] : "(null)");
-    }
-    free(debug_signer_pk);
-    if (debug_relays) {
-      for (size_t i = 0; i < debug_n_relays; i++) free(debug_relays[i]);
-      free(debug_relays);
-    }
+    g_mutex_unlock(&self->session_mutex);
+
+    set_state(self, GNOSTR_SIGNER_STATE_CONNECTED);
     g_debug("[SIGNER_SERVICE] Switched to NIP-46 remote signer");
   } else {
+    g_mutex_unlock(&self->session_mutex);
+
     /* Check if NIP-55L is available as fallback */
     GError *error = NULL;
     self->nip55l_proxy = gnostr_signer_proxy_get(&error);
     if (self->nip55l_proxy) {
       self->method = GNOSTR_SIGNER_METHOD_NIP55L;
+      set_state(self, GNOSTR_SIGNER_STATE_CONNECTED);
       g_debug("[SIGNER_SERVICE] Using NIP-55L local signer");
     } else {
       self->method = GNOSTR_SIGNER_METHOD_NONE;
+      set_state(self, GNOSTR_SIGNER_STATE_DISCONNECTED);
       g_debug("[SIGNER_SERVICE] No signer available");
       if (error) g_error_free(error);
     }
@@ -192,10 +260,18 @@ gnostr_signer_service_clear(GnostrSignerService *self)
 {
   g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
 
+  /* Cancel pending operations first */
+  if (self->pending_cancellable) {
+    g_cancellable_cancel(self->pending_cancellable);
+    g_clear_object(&self->pending_cancellable);
+  }
+
+  g_mutex_lock(&self->session_mutex);
   if (self->nip46_session) {
     nostr_nip46_session_free(self->nip46_session);
     self->nip46_session = NULL;
   }
+  g_mutex_unlock(&self->session_mutex);
 
   g_free(self->pubkey_hex);
   self->pubkey_hex = NULL;
@@ -203,10 +279,18 @@ gnostr_signer_service_clear(GnostrSignerService *self)
   self->nip55l_proxy = NULL;
   self->method = GNOSTR_SIGNER_METHOD_NONE;
 
+  set_state(self, GNOSTR_SIGNER_STATE_DISCONNECTED);
+
   /* nostrc-1wfi: Also clear persisted credentials on logout */
   gnostr_signer_service_clear_saved_credentials(self);
 
   g_debug("[SIGNER_SERVICE] Cleared all authentication state");
+}
+
+void
+gnostr_signer_service_logout(GnostrSignerService *self)
+{
+  gnostr_signer_service_clear(self);
 }
 
 /* ---- Async Signing Implementation ---- */
@@ -326,19 +410,27 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   (void)source;
   (void)cancellable;
 
+  /* Lock mutex for session access */
+  g_mutex_lock(&ctx->service->session_mutex);
+
   if (!ctx->service->nip46_session) {
+    g_mutex_unlock(&ctx->service->session_mutex);
     g_warning("[SIGNER_SERVICE] NIP-46 sign failed: session is NULL");
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
                             "NIP-46 session not available - please sign in again");
     return;
   }
 
-  fprintf(stderr, "\n*** SIGN_EVENT using library RPC ***\n");
-  fprintf(stderr, "Event to sign: %.80s...\n", ctx->event_json);
+  /* Get session reference while holding lock */
+  NostrNip46Session *session = ctx->service->nip46_session;
+
+  g_mutex_unlock(&ctx->service->session_mutex);
+
+  g_debug("[SIGNER_SERVICE] Signing event via NIP-46 RPC...");
 
   /* Use the nip46 library's sign_event function - same code path as get_public_key */
   char *signed_event_json = NULL;
-  int rc = nostr_nip46_client_sign_event(ctx->service->nip46_session,
+  int rc = nostr_nip46_client_sign_event(session,
                                           ctx->event_json,
                                           &signed_event_json);
 
@@ -349,8 +441,7 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
     return;
   }
 
-  fprintf(stderr, "sign_event RPC succeeded!\n");
-  g_debug("[SIGNER_SERVICE] NIP-46 sign succeeded: %.100s...", signed_event_json);
+  g_debug("[SIGNER_SERVICE] NIP-46 sign succeeded");
   g_task_return_pointer(task, g_strdup(signed_event_json), g_free);
   free(signed_event_json);
 }
@@ -385,6 +476,16 @@ gnostr_signer_service_sign_event_async(GnostrSignerService *self,
   g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
   g_return_if_fail(event_json != NULL);
   g_return_if_fail(callback != NULL);
+
+  /* Check availability BEFORE dispatching to thread - this is the fix for
+   * the race condition where session could become NULL after dispatch */
+  if (self->state != GNOSTR_SIGNER_STATE_CONNECTED) {
+    GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                                 "Signer not connected - please sign in first");
+    callback(self, NULL, error, user_data);
+    g_error_free(error);
+    return;
+  }
 
   SignContext *ctx = g_new0(SignContext, 1);
   ctx->service = self;
@@ -727,7 +828,11 @@ nip46_nip44_thread(GTask *task, gpointer source, gpointer task_data, GCancellabl
   (void)source;
   (void)cancellable;
 
+  /* Lock mutex for session access */
+  g_mutex_lock(&ctx->service->session_mutex);
+
   if (!ctx->service->nip46_session) {
+    g_mutex_unlock(&ctx->service->session_mutex);
     g_warning("[SIGNER_SERVICE] NIP-44 %s failed: session is NULL",
               ctx->is_encrypt ? "encrypt" : "decrypt");
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -735,18 +840,23 @@ nip46_nip44_thread(GTask *task, gpointer source, gpointer task_data, GCancellabl
     return;
   }
 
+  /* Get session reference while holding lock */
+  NostrNip46Session *session = ctx->service->nip46_session;
+
+  g_mutex_unlock(&ctx->service->session_mutex);
+
   char *result = NULL;
   int rc;
 
   if (ctx->is_encrypt) {
     g_debug("[SIGNER_SERVICE] NIP-46 NIP-44 encrypting for %.16s...", ctx->peer_pubkey);
-    rc = nostr_nip46_client_nip44_encrypt(ctx->service->nip46_session,
+    rc = nostr_nip46_client_nip44_encrypt(session,
                                            ctx->peer_pubkey,
                                            ctx->data,
                                            &result);
   } else {
     g_debug("[SIGNER_SERVICE] NIP-46 NIP-44 decrypting from %.16s...", ctx->peer_pubkey);
-    rc = nostr_nip46_client_nip44_decrypt(ctx->service->nip46_session,
+    rc = nostr_nip46_client_nip44_decrypt(session,
                                            ctx->peer_pubkey,
                                            ctx->data,
                                            &result);
@@ -798,6 +908,15 @@ gnostr_signer_service_nip44_encrypt_async(GnostrSignerService *self,
   g_return_if_fail(peer_pubkey != NULL);
   g_return_if_fail(plaintext != NULL);
   g_return_if_fail(callback != NULL);
+
+  /* Check state before dispatching */
+  if (self->state != GNOSTR_SIGNER_STATE_CONNECTED) {
+    GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                                 "Signer not connected - please sign in first");
+    callback(self, NULL, error, user_data);
+    g_error_free(error);
+    return;
+  }
 
   Nip44Context *ctx = g_new0(Nip44Context, 1);
   ctx->service = self;
@@ -869,6 +988,15 @@ gnostr_signer_service_nip44_decrypt_async(GnostrSignerService *self,
   g_return_if_fail(peer_pubkey != NULL);
   g_return_if_fail(ciphertext != NULL);
   g_return_if_fail(callback != NULL);
+
+  /* Check state before dispatching */
+  if (self->state != GNOSTR_SIGNER_STATE_CONNECTED) {
+    GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                                 "Signer not connected - please sign in first");
+    callback(self, NULL, error, user_data);
+    g_error_free(error);
+    return;
+  }
 
   Nip44Context *ctx = g_new0(Nip44Context, 1);
   ctx->service = self;
