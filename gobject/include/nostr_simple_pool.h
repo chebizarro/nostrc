@@ -46,6 +46,37 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
                                                  GAsyncResult *res,
                                                  GError **error);
 
+/* NIP-45 COUNT query - returns event count from relays.
+ * @self: The pool
+ * @urls: Array of relay URLs to query
+ * @url_count: Number of URLs
+ * @filter: Filter for the count query
+ * @cancellable: Optional cancellable
+ * @callback: Async callback
+ * @user_data: User data for callback
+ *
+ * Unlike query_single which returns events, this returns only the count.
+ * Useful for displaying reaction counts without fetching full events.
+ * Requires relay support for NIP-45.
+ */
+void gnostr_simple_pool_count_async(GnostrSimplePool *self,
+                                    const char **urls,
+                                    size_t url_count,
+                                    const NostrFilter *filter,
+                                    GCancellable *cancellable,
+                                    GAsyncReadyCallback callback,
+                                    gpointer user_data);
+
+/* Returns the count from a NIP-45 COUNT query.
+ * @self: The pool
+ * @res: Async result
+ * @error: Error output
+ * Returns: Event count, or -1 on error
+ */
+gint64 gnostr_simple_pool_count_finish(GnostrSimplePool *self,
+                                       GAsyncResult *res,
+                                       GError **error);
+
 /* One-shot query with streaming events via "events" signal.
  * Like query_single_async but emits events via the "events" signal as they
  * arrive, instead of only returning them all at the end. Useful for discovery

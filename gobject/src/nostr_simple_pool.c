@@ -1096,6 +1096,165 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
     }
 }
 
+/* ================= NIP-45 COUNT query (nostrc-x8z3.2) ================= */
+
+typedef struct {
+    GObject *self_obj;
+    char **urls;
+    size_t url_count;
+    NostrFilter *filter;  /* owned copy */
+    GCancellable *cancellable;
+    GTask *task;
+    gint64 result_count;  /* -1 on error */
+} CountCtx;
+
+static void count_ctx_free(CountCtx *ctx) {
+    if (!ctx) return;
+    if (ctx->self_obj) g_object_unref(ctx->self_obj);
+    if (ctx->urls) {
+        for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]);
+        g_free(ctx->urls);
+    }
+    if (ctx->filter) nostr_filter_free(ctx->filter);
+    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    g_free(ctx);
+}
+
+static void *count_thread_func(void *arg) {
+    CountCtx *ctx = (CountCtx *)arg;
+    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    NostrSimplePool *pool = gobj_pool->pool;
+
+    g_debug("[COUNT] Starting count query on %zu relays", ctx->url_count);
+
+    /* Ensure relays are connected */
+    for (size_t i = 0; i < ctx->url_count; i++) {
+        const char *url = ctx->urls[i];
+        if (!url || !*url) continue;
+        nostr_simple_pool_ensure_relay(pool, url);
+    }
+
+    /* Try to get count from each relay, return first successful result */
+    gint64 count = -1;
+    for (size_t i = 0; i < ctx->url_count && count < 0; i++) {
+        const char *url = ctx->urls[i];
+        if (!url || !*url) continue;
+
+        /* Find the relay in the pool */
+        NostrRelay *relay = NULL;
+        for (size_t j = 0; j < pool->relay_count; j++) {
+            if (pool->relays[j] && g_strcmp0(pool->relays[j]->url, url) == 0) {
+                relay = pool->relays[j];
+                break;
+            }
+        }
+
+        if (!relay) {
+            g_debug("[COUNT] Relay %s not found in pool, skipping", url);
+            continue;
+        }
+
+        /* Check if relay supports NIP-45 (via NIP-11 info) */
+        /* For now, try the count and handle errors gracefully */
+
+        /* Create a cancellable context for the count query */
+        CancelContextResult cancel_ctx = go_context_with_cancel(go_context_background());
+        GoContext *query_ctx = cancel_ctx.context;
+        if (!query_ctx) {
+            g_debug("[COUNT] Failed to create context");
+            continue;
+        }
+
+        Error *err = NULL;
+        gint64 relay_count = nostr_relay_count(relay, query_ctx, ctx->filter, &err);
+
+        cancel_ctx.cancel(query_ctx);
+        go_context_unref(query_ctx);
+
+        if (err) {
+            g_debug("[COUNT] Relay %s count error: %s", url, err->message);
+            free(err);  /* Error is allocated with malloc */
+            continue;
+        }
+
+        if (relay_count >= 0) {
+            count = relay_count;
+            g_debug("[COUNT] Got count=%lld from relay %s", (long long)count, url);
+        }
+    }
+
+    ctx->result_count = count;
+
+    /* Complete the task on the main thread */
+    g_task_return_boolean(ctx->task, count >= 0);
+    g_object_unref(ctx->task);
+    count_ctx_free(ctx);
+
+    return NULL;
+}
+
+void gnostr_simple_pool_count_async(GnostrSimplePool *self,
+                                    const char **urls,
+                                    size_t url_count,
+                                    const NostrFilter *filter,
+                                    GCancellable *cancellable,
+                                    GAsyncReadyCallback callback,
+                                    gpointer user_data) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+    g_return_if_fail(urls != NULL || url_count == 0);
+    g_return_if_fail(filter != NULL);
+
+    CountCtx *ctx = g_new0(CountCtx, 1);
+    ctx->self_obj = g_object_ref(G_OBJECT(self));
+    ctx->urls = g_new0(char *, url_count);
+    ctx->url_count = url_count;
+    for (size_t i = 0; i < url_count; i++) {
+        ctx->urls[i] = g_strdup(urls[i]);
+    }
+    ctx->filter = nostr_filter_copy(filter);
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->result_count = -1;
+
+    ctx->task = g_task_new(self, cancellable, callback, user_data);
+    g_task_set_task_data(ctx->task, ctx, NULL);  /* ctx freed in thread */
+
+    /* Run count in a thread */
+    GThread *thread = g_thread_new("count-query", count_thread_func, ctx);
+    if (!thread) {
+        g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                "Failed to create count query thread");
+        g_object_unref(ctx->task);
+        count_ctx_free(ctx);
+        return;
+    }
+    g_thread_unref(thread);  /* Thread is detached */
+}
+
+gint64 gnostr_simple_pool_count_finish(GnostrSimplePool *self,
+                                       GAsyncResult *res,
+                                       GError **error) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), -1);
+    g_return_val_if_fail(g_task_is_valid(res, self), -1);
+
+    gpointer data = g_task_get_task_data(G_TASK(res));
+    if (!data) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Invalid task data in count_finish");
+        return -1;
+    }
+    CountCtx *ctx = data;
+
+    if (g_task_propagate_boolean(G_TASK(res), error)) {
+        return ctx->result_count;
+    } else {
+        if (error && *error == NULL) {
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                "Failed to complete count operation");
+        }
+        return -1;
+    }
+}
+
 /* ================= Batch fetch profiles by authors (kind 0) ================= */
 typedef struct {
     GObject *self_obj;      /* GnostrSimplePool* as GObject */
