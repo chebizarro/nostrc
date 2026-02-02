@@ -449,8 +449,11 @@ gboolean gnostr_simple_pool_paginate_with_interval_finish(GnostrSimplePool *self
 
 static gpointer subscribe_many_thread(gpointer user_data) {
     SubscribeManyCtx *ctx = (SubscribeManyCtx *)user_data;
-    /* For each URL, set up a subscription */
-    typedef struct { NostrRelay *relay; NostrSubscription *sub; gboolean eosed; guint64 emitted; gint64 start_us; gint64 eose_us; } SubItem;
+    /* For each URL, set up a subscription.
+     * CRITICAL: Store url_copy so we don't access relay after it might be freed by main thread.
+     * The relay pointer is only valid during the subscription loop; after cancellation,
+     * the main thread may remove/free relays via sync_relays(). */
+    typedef struct { NostrRelay *relay; NostrSubscription *sub; gchar *url_copy; gboolean eosed; guint64 emitted; gint64 start_us; gint64 eose_us; } SubItem;
     GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
 
     GoContext *bg = go_context_background();
@@ -542,7 +545,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             }
             continue;
         }
-        SubItem item = { .relay = relay, .sub = sub, .eosed = FALSE, .emitted = 0, .start_us = g_get_monotonic_time(), .eose_us = -1 };
+        SubItem item = { .relay = relay, .sub = sub, .url_copy = g_strdup(url), .eosed = FALSE, .emitted = 0, .start_us = g_get_monotonic_time(), .eose_us = -1 };
         g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
     }
 
@@ -590,10 +593,9 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                 if (it->eose_us < 0 && it->start_us > 0) {
                     it->eose_us = g_get_monotonic_time() - it->start_us;
                 }
-                const char *url = it->relay ? nostr_relay_get_url_const(it->relay) : "<unknown>";
                 const char *sid = nostr_subscription_get_id(it->sub);
                 g_message("[EOSE] relay=%s sid=%s latency=%.1fms",
-                          url, sid ? sid : "null",
+                          it->url_copy ? it->url_copy : "<unknown>", sid ? sid : "null",
                           it->eose_us >= 0 ? it->eose_us / 1000.0 : -1.0);
             }
         }
@@ -620,32 +622,31 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         if (!any) g_usleep(1000 * 5); /* 5ms idle sleep to reduce CPU */
     }
 
-    /* Print per-subscription stats */
+    /* Print per-subscription stats - use url_copy since relay may be freed by main thread */
     for (guint i = 0; i < subs->len; i++) {
         SubItem *it = (SubItem*)subs->pdata[i];
         if (!it || !it->sub) continue;
-        const char *url = it->relay ? nostr_relay_get_url_const(it->relay) : "<no-relay>";
         unsigned long long enq = nostr_subscription_events_enqueued(it->sub);
         unsigned long long drop = nostr_subscription_events_dropped(it->sub);
         double eose_ms = (it->eose_us >= 0) ? (it->eose_us / 1000.0) : -1.0;
         g_debug("simple_pool: stats url=%s enqueued=%llu emitted=%" G_GUINT64_FORMAT " dropped=%llu eose_ms=%.3f",
-                url ? url : "<null>", enq, it->emitted, drop, eose_ms);
+                it->url_copy ? it->url_copy : "<null>", enq, it->emitted, drop, eose_ms);
     }
 
-    /* Cleanup */
+    /* Cleanup - use url_copy for logging since relay may be freed by main thread */
     dedup_set_free(dedup);
     for (guint i = 0; i < subs->len; i++) {
         SubItem *it = (SubItem*)subs->pdata[i];
         if (it) {
             if (it->sub) {
-                const char *url = it->relay ? nostr_relay_get_url_const(it->relay) : "<unknown>";
                 const char *sid = nostr_subscription_get_id(it->sub);
-                g_message("[SUB_CLOSE] relay=%s sid=%s", url, sid ? sid : "null");
+                g_message("[SUB_CLOSE] relay=%s sid=%s", it->url_copy ? it->url_copy : "<unknown>", sid ? sid : "null");
                 nostr_subscription_close(it->sub, NULL);
                 nostr_subscription_unsubscribe(it->sub);  /* Signal lifecycle thread to exit */
                 nostr_subscription_free(it->sub);
             }
             /* DON'T free relay - it's from the pool and shared */
+            g_free(it->url_copy);  /* Free our owned copy of the URL */
             g_free(it);
         }
     }
