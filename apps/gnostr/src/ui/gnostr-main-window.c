@@ -3250,6 +3250,37 @@ on_notification_event(GnostrBadgeManager *manager,
           type, sender_pubkey ? sender_pubkey : "(unknown)");
 }
 
+/* Deferred loading callbacks to improve login responsiveness */
+static gboolean deferred_nip65_load(gpointer data) {
+  gchar *pubkey = (gchar *)data;
+  if (pubkey) {
+    g_debug("[AUTH] Deferred: Loading NIP-65 relay list for user %.*s...", 8, pubkey);
+    gnostr_nip65_load_on_login_async(pubkey, NULL, NULL);
+    g_free(pubkey);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean deferred_blossom_load(gpointer data) {
+  gchar *pubkey = (gchar *)data;
+  if (pubkey) {
+    g_debug("[AUTH] Deferred: Loading Blossom server list for user %.*s...", 8, pubkey);
+    gnostr_blossom_settings_load_from_relays_async(pubkey, NULL, NULL);
+    g_free(pubkey);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean deferred_nip51_sync(gpointer data) {
+  gchar *pubkey = (gchar *)data;
+  if (pubkey) {
+    g_debug("[AUTH] Deferred: Auto-syncing NIP-51 settings for user %.*s...", 8, pubkey);
+    gnostr_nip51_settings_auto_sync_on_login(pubkey);
+    g_free(pubkey);
+  }
+  return G_SOURCE_REMOVE;
+}
+
 /* Signal handler for when user successfully signs in via login dialog */
 static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
   fprintf(stderr, "\n*** ON_LOGIN_SIGNED_IN HANDLER CALLED ***\n");
@@ -3348,17 +3379,18 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
   /* Start gift wrap subscription for encrypted DMs */
   start_gift_wrap_subscription(self);
 
-  /* Load NIP-65 relay list for the user */
+  /* Defer non-critical loading to improve login responsiveness.
+   * These operations are async anyway but we stagger them to avoid
+   * overwhelming the relay pool at login time. */
   if (self->user_pubkey_hex) {
-    g_debug("[AUTH] Loading NIP-65 relay list for user %.*s...", 8, self->user_pubkey_hex);
-    gnostr_nip65_load_on_login_async(self->user_pubkey_hex, NULL, NULL);
+    /* NIP-65 relay list: defer 2 seconds - needed for relay switching but not immediate */
+    g_timeout_add_seconds(2, deferred_nip65_load, g_strdup(self->user_pubkey_hex));
 
-    /* Load Blossom server list (kind 10063) */
-    g_debug("[AUTH] Loading Blossom server list (kind 10063) for user %.*s...", 8, self->user_pubkey_hex);
-    gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);
+    /* Blossom settings: defer 5 seconds - only needed when uploading media */
+    g_timeout_add_seconds(5, deferred_blossom_load, g_strdup(self->user_pubkey_hex));
 
-    /* Auto-sync NIP-51 settings if enabled */
-    gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
+    /* NIP-51 settings sync: defer 10 seconds - background sync operation */
+    g_timeout_add_seconds(10, deferred_nip51_sync, g_strdup(self->user_pubkey_hex));
   }
 
   show_toast(self, "Signed in successfully");
