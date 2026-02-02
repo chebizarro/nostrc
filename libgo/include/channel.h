@@ -20,6 +20,9 @@
 // Magic number to detect valid vs freed/garbage channel pointers
 #define GO_CHANNEL_MAGIC 0xC4A77E10  // "CHANNEL0"
 
+/* Forward declaration for select waiter */
+struct GoSelectWaiter;
+
 typedef struct GoChannel {
     // Magic number for validation (must be first field)
     uint32_t magic;
@@ -42,6 +45,8 @@ typedef struct GoChannel {
     nsync_cv cond_empty;
     // Double-free guard: set to 1 when freed. Placed at end to avoid shifting aligned fields.
     _Atomic int freed;
+    // Linked list of select waiters (protected by mutex)
+    struct GoSelectWaiter *select_waiters;
 } __attribute__((aligned(NOSTR_CACHELINE))) GoChannel;
 
 // Compile-time checks to ensure hot fields start at cacheline boundaries.
