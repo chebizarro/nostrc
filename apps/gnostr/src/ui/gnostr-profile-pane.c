@@ -3128,11 +3128,212 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   fetch_user_status(self);
 }
 
+/* NIP-84 Highlights: Maximum highlights to fetch */
+#define HIGHLIGHTS_PAGE_SIZE 50
+
+/* Helper: Create a widget to display a single highlight */
+static GtkWidget *create_highlight_widget(const char *content, const char *context_url, gint64 created_at) {
+  GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_widget_add_css_class(card, "card");
+  gtk_widget_set_margin_start(card, 8);
+  gtk_widget_set_margin_end(card, 8);
+  gtk_widget_set_margin_top(card, 4);
+  gtk_widget_set_margin_bottom(card, 4);
+
+  /* Highlight content with quote styling */
+  GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_start(content_box, 12);
+  gtk_widget_set_margin_end(content_box, 12);
+  gtk_widget_set_margin_top(content_box, 12);
+  gtk_widget_set_margin_bottom(content_box, 8);
+
+  /* Quote bar (left border effect) */
+  GtkWidget *quote_bar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_widget_set_size_request(quote_bar, 3, -1);
+  gtk_widget_add_css_class(quote_bar, "accent");
+  gtk_box_append(GTK_BOX(content_box), quote_bar);
+
+  /* Highlighted text */
+  GtkWidget *text_label = gtk_label_new(content);
+  gtk_label_set_wrap(GTK_LABEL(text_label), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(text_label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_xalign(GTK_LABEL(text_label), 0);
+  gtk_label_set_selectable(GTK_LABEL(text_label), TRUE);
+  gtk_widget_set_hexpand(text_label, TRUE);
+  gtk_widget_add_css_class(text_label, "body");
+  gtk_box_append(GTK_BOX(content_box), text_label);
+
+  gtk_box_append(GTK_BOX(card), content_box);
+
+  /* Context/source info if available */
+  if (context_url && *context_url) {
+    GtkWidget *context_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_margin_start(context_box, 24);
+    gtk_widget_set_margin_end(context_box, 12);
+    gtk_widget_set_margin_bottom(context_box, 8);
+
+    GtkWidget *source_label = gtk_label_new(context_url);
+    gtk_label_set_ellipsize(GTK_LABEL(source_label), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_label_set_xalign(GTK_LABEL(source_label), 0);
+    gtk_widget_set_hexpand(source_label, TRUE);
+    gtk_widget_add_css_class(source_label, "dim-label");
+    gtk_widget_add_css_class(source_label, "caption");
+    gtk_box_append(GTK_BOX(context_box), source_label);
+
+    gtk_box_append(GTK_BOX(card), context_box);
+  }
+
+  /* Timestamp */
+  if (created_at > 0) {
+    GtkWidget *time_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_margin_start(time_box, 24);
+    gtk_widget_set_margin_end(time_box, 12);
+    gtk_widget_set_margin_bottom(time_box, 12);
+
+    GDateTime *dt = g_date_time_new_from_unix_local(created_at);
+    if (dt) {
+      char *time_str = g_date_time_format(dt, "%b %d, %Y");
+      GtkWidget *time_label = gtk_label_new(time_str);
+      gtk_widget_add_css_class(time_label, "dim-label");
+      gtk_widget_add_css_class(time_label, "caption");
+      gtk_box_append(GTK_BOX(time_box), time_label);
+      g_free(time_str);
+      g_date_time_unref(dt);
+    }
+
+    gtk_box_append(GTK_BOX(card), time_box);
+  }
+
+  return card;
+}
+
+/* Callback when NIP-84 highlights query completes */
+static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  GError *err = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+
+  /* Hide loading indicator */
+  if (GTK_IS_SPINNER(self->highlights_spinner)) {
+    gtk_spinner_stop(GTK_SPINNER(self->highlights_spinner));
+  }
+  if (GTK_IS_WIDGET(self->highlights_loading_box)) {
+    gtk_widget_set_visible(self->highlights_loading_box, FALSE);
+  }
+
+  if (err) {
+    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("profile_pane: highlights query error: %s", err->message);
+    }
+    g_error_free(err);
+
+    /* Show empty state on error */
+    if (GTK_IS_WIDGET(self->highlights_empty_box)) {
+      gtk_widget_set_visible(self->highlights_empty_box, TRUE);
+    }
+    return;
+  }
+
+  if (!results || results->len == 0) {
+    g_debug("profile_pane: no highlights found for pubkey %.8s",
+            self->current_pubkey ? self->current_pubkey : "(null)");
+    if (GTK_IS_WIDGET(self->highlights_empty_box)) {
+      gtk_widget_set_visible(self->highlights_empty_box, TRUE);
+    }
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  g_debug("profile_pane: received %u NIP-84 highlight events", results->len);
+
+  /* Clear existing highlights */
+  if (GTK_IS_BOX(self->highlights_list)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->highlights_list);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->highlights_list), child);
+      child = next;
+    }
+  }
+
+  guint added = 0;
+
+  /* Parse each highlight event and create widgets */
+  for (guint i = 0; i < results->len; i++) {
+    const char *json = g_ptr_array_index(results, i);
+    if (!json) continue;
+
+    NostrEvent *evt = nostr_event_new();
+    if (!evt || nostr_event_deserialize(evt, json) != 0) {
+      if (evt) nostr_event_free(evt);
+      continue;
+    }
+
+    const char *content = nostr_event_get_content(evt);
+    gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+
+    /* Skip empty highlights */
+    if (!content || !*content) {
+      nostr_event_free(evt);
+      continue;
+    }
+
+    /* Extract context URL from tags (NIP-84: "context" or "r" tag) */
+    const char *context_url = NULL;
+    NostrTags *tags = nostr_event_get_tags(evt);
+    if (tags) {
+      size_t tag_count = nostr_tags_size(tags);
+      for (size_t t = 0; t < tag_count; t++) {
+        NostrTag *tag = nostr_tags_get(tags, t);
+        if (!tag) continue;
+        size_t item_count = nostr_tag_size(tag);
+        if (item_count >= 2) {
+          const char *tag_name = nostr_tag_get_key(tag);
+          if (tag_name && (g_strcmp0(tag_name, "context") == 0 || g_strcmp0(tag_name, "r") == 0)) {
+            context_url = nostr_tag_get_value(tag);
+            break;
+          }
+        }
+      }
+    }
+
+    /* Create and add widget */
+    GtkWidget *widget = create_highlight_widget(content, context_url, created_at);
+    if (GTK_IS_BOX(self->highlights_list)) {
+      gtk_box_append(GTK_BOX(self->highlights_list), widget);
+      added++;
+    }
+
+    nostr_event_free(evt);
+  }
+
+  g_ptr_array_unref(results);
+
+  /* Show empty state if no valid highlights were added */
+  if (added == 0) {
+    if (GTK_IS_WIDGET(self->highlights_empty_box)) {
+      gtk_widget_set_visible(self->highlights_empty_box, TRUE);
+    }
+  } else {
+    g_debug("profile_pane: displayed %u highlights", added);
+  }
+}
+
 /* NIP-84: Load highlights for the current user */
 static void load_highlights(GnostrProfilePane *self) {
   if (!self || !self->current_pubkey || self->highlights_loaded) return;
 
   self->highlights_loaded = TRUE;
+
+  /* Cancel previous request */
+  if (self->highlights_cancellable) {
+    g_cancellable_cancel(self->highlights_cancellable);
+    g_clear_object(&self->highlights_cancellable);
+  }
+  self->highlights_cancellable = g_cancellable_new();
 
   /* Show loading state */
   if (GTK_IS_WIDGET(self->highlights_loading_box)) {
@@ -3145,21 +3346,54 @@ static void load_highlights(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->highlights_empty_box, FALSE);
   }
 
-  /* nostrc-n63f: NIP-84 highlights (kind 9802) fetching not implemented.
-   * This would require a SimplePool query for kind 9802 events authored by
-   * the displayed pubkey. For now, shows empty state. */
-  g_message("NIP-84: Highlights tab opened for pubkey %.8s...", self->current_pubkey);
+  g_debug("profile_pane: fetching NIP-84 highlights for pubkey %.8s...", self->current_pubkey);
 
-  /* Hide loading, show empty state for now (until relay fetching is implemented) */
-  if (GTK_IS_SPINNER(self->highlights_spinner)) {
-    gtk_spinner_stop(GTK_SPINNER(self->highlights_spinner));
+  /* Build filter for kind 9802 (NIP-84 highlights) events by this author */
+  NostrFilter *filter = nostr_filter_new();
+
+  int kinds[1] = { 9802 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+
+  const char *authors[1] = { self->current_pubkey };
+  nostr_filter_set_authors(filter, authors, 1);
+
+  nostr_filter_set_limit(filter, HIGHLIGHTS_PAGE_SIZE);
+
+  /* Get relay URLs - use NIP-65 if available or fall back to configured */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+
+  if (self->nip65_relays && self->nip65_relays->len > 0) {
+    GPtrArray *write_relays = gnostr_nip65_get_write_relays(self->nip65_relays);
+    for (guint i = 0; i < write_relays->len; i++) {
+      g_ptr_array_add(relay_urls, g_strdup(g_ptr_array_index(write_relays, i)));
+    }
+    g_ptr_array_unref(write_relays);
   }
-  if (GTK_IS_WIDGET(self->highlights_loading_box)) {
-    gtk_widget_set_visible(self->highlights_loading_box, FALSE);
+
+  if (relay_urls->len == 0) {
+    gnostr_get_read_relay_urls_into(relay_urls);
   }
-  if (GTK_IS_WIDGET(self->highlights_empty_box)) {
-    gtk_widget_set_visible(self->highlights_empty_box, TRUE);
+
+  /* Build URL array */
+  const char **urls = g_new0(const char*, relay_urls->len);
+  for (guint i = 0; i < relay_urls->len; i++) {
+    urls[i] = g_ptr_array_index(relay_urls, i);
   }
+
+  /* Start query */
+  gnostr_simple_pool_query_single_async(
+    gnostr_get_shared_query_pool(),
+    urls,
+    relay_urls->len,
+    filter,
+    self->highlights_cancellable,
+    on_highlights_query_done,
+    self
+  );
+
+  g_free(urls);
+  g_ptr_array_unref(relay_urls);
+  nostr_filter_free(filter);
 }
 
 /* Handle tab switch */
