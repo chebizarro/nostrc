@@ -763,12 +763,13 @@ void go_channel_free(GoChannel *chan) {
     NLOCK(&chan->mutex);
     // Mark closed and wake all waiters to prevent further use
     atomic_store_explicit(&chan->closed, 1, memory_order_release);
-    // Signal select waiters BEFORE clearing magic so they can detect closure
-    signal_select_waiters_locked(chan);
-    chan->select_waiters = NULL;  // Clear list after signaling
+    // DO NOT call signal_select_waiters_locked here - waiters may have already
+    // been destroyed (their stack frames reclaimed). Just clear the list.
+    // Select loops will detect the channel is freed via magic/buffer checks.
+    chan->select_waiters = NULL;
     nsync_cv_broadcast(&chan->cond_full);
     nsync_cv_broadcast(&chan->cond_empty);
-    // Clear magic AFTER signaling but BEFORE freeing resources
+    // Clear magic to help detect use-after-free
     chan->magic = 0;
     if (chan->buffer) {
         free(chan->buffer);
