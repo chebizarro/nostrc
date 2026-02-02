@@ -8,9 +8,6 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Forward declaration for select waiter signaling */
-static void signal_select_waiters_locked(GoChannel *chan);
-
 // TSAN-aware mutex/condvar helpers for nsync_mu/nsync_cv
 #if defined(__has_feature)
 #  if __has_feature(thread_sanitizer)
@@ -331,7 +328,6 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
                 nsync_cv_broadcast(&chan->cond_empty);
             }
 #endif
-            signal_select_waiters_locked(chan);
             NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
@@ -409,7 +405,6 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             nsync_cv_broadcast(&chan->cond_empty);
         }
 #endif
-        signal_select_waiters_locked(chan);
         // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
         NOSTR_EVENT_SEND();
@@ -501,7 +496,6 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
                 nsync_cv_broadcast(&chan->cond_full);
             }
 #endif
-            signal_select_waiters_locked(chan);
             NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
@@ -586,7 +580,6 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             nsync_cv_broadcast(&chan->cond_full);
         }
 #endif
-        signal_select_waiters_locked(chan);
         // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
         NOSTR_EVENT_SEND();
@@ -666,78 +659,7 @@ GoChannel *go_channel_create(size_t capacity) {
     nsync_cv_init(&chan->cond_full);
     nsync_cv_init(&chan->cond_empty);
     atomic_store_explicit(&chan->freed, 0, memory_order_relaxed);
-    chan->select_waiters = NULL;  // No select waiters initially
     return chan;
-}
-
-/* ========================================================================
- * Select Waiter Support - Efficient multi-channel waiting
- * ======================================================================== */
-
-/* Initialize a select waiter */
-void go_select_waiter_init(GoSelectWaiter *w) {
-    if (!w) return;
-    nsync_mu_init(&w->mutex);
-    nsync_cv_init(&w->cond);
-    atomic_store_explicit(&w->signaled, 0, memory_order_relaxed);
-    w->next = NULL;
-}
-
-/* Register a waiter with a channel */
-void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
-    if (!chan || !w) return;
-    // Validate channel is still valid before accessing mutex
-    if (chan->magic != GO_CHANNEL_MAGIC) return;
-    if (chan->buffer == NULL) return;
-    NLOCK(&chan->mutex);
-    // Double-check after acquiring lock
-    if (chan->magic != GO_CHANNEL_MAGIC || chan->buffer == NULL) {
-        NUNLOCK(&chan->mutex);
-        return;
-    }
-    // Add to head of linked list
-    w->next = chan->select_waiters;
-    chan->select_waiters = w;
-    NUNLOCK(&chan->mutex);
-}
-
-/* Unregister a waiter from a channel */
-void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
-    if (!chan || !w) return;
-    // Validate channel is still valid before accessing mutex (avoid use-after-free)
-    if (chan->magic != GO_CHANNEL_MAGIC) return;
-    if (chan->buffer == NULL) return;  // Channel being freed
-    NLOCK(&chan->mutex);
-    // Double-check after acquiring lock (channel may have been freed while waiting)
-    if (chan->magic != GO_CHANNEL_MAGIC || chan->buffer == NULL) {
-        NUNLOCK(&chan->mutex);
-        return;
-    }
-    // Remove from linked list
-    GoSelectWaiter **pp = &chan->select_waiters;
-    while (*pp) {
-        if (*pp == w) {
-            *pp = w->next;
-            w->next = NULL;
-            break;
-        }
-        pp = &(*pp)->next;
-    }
-    NUNLOCK(&chan->mutex);
-}
-
-/* Signal all select waiters (call when channel becomes ready).
- * Must be called while holding channel mutex. */
-static void signal_select_waiters_locked(GoChannel *chan) {
-    GoSelectWaiter *w = chan->select_waiters;
-    while (w) {
-        // Signal the waiter's condition variable
-        nsync_mu_lock(&w->mutex);
-        atomic_store_explicit(&w->signaled, 1, memory_order_release);
-        nsync_cv_signal(&w->cond);
-        nsync_mu_unlock(&w->mutex);
-        w = w->next;
-    }
 }
 
 /* Free the channel resources */
@@ -763,10 +685,6 @@ void go_channel_free(GoChannel *chan) {
     NLOCK(&chan->mutex);
     // Mark closed and wake all waiters to prevent further use
     atomic_store_explicit(&chan->closed, 1, memory_order_release);
-    // DO NOT call signal_select_waiters_locked here - waiters may have already
-    // been destroyed (their stack frames reclaimed). Just clear the list.
-    // Select loops will detect the channel is freed via magic/buffer checks.
-    chan->select_waiters = NULL;
     nsync_cv_broadcast(&chan->cond_full);
     nsync_cv_broadcast(&chan->cond_empty);
     // Clear magic to help detect use-after-free
@@ -933,7 +851,6 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         nsync_cv_broadcast(&chan->cond_empty);
     }
 #endif
-    signal_select_waiters_locked(chan);
     (void)was_empty; // suppress unused warning when REFINED_SIGNALING
     if (was_empty) {
         // On ARM with WFE/SEV, send event to nudge sleeping peers
@@ -1126,7 +1043,6 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         nsync_cv_broadcast(&chan->cond_full);
     }
 #endif
-    signal_select_waiters_locked(chan);
     // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
     NOSTR_EVENT_SEND();
@@ -1273,7 +1189,6 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         nsync_cv_broadcast(&chan->cond_empty);
     }
 #endif
-    signal_select_waiters_locked(chan);
     // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
     NOSTR_EVENT_SEND();
@@ -1476,7 +1391,6 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         nsync_cv_broadcast(&chan->cond_full);
     }
 #endif
-    signal_select_waiters_locked(chan);
     // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
     NOSTR_EVENT_SEND();
@@ -1498,7 +1412,6 @@ void go_channel_close(GoChannel *chan) {
         // Wake up all potential waiters so they can observe closed state
         nsync_cv_broadcast(&chan->cond_full);
         nsync_cv_broadcast(&chan->cond_empty);
-        signal_select_waiters_locked(chan);
         // Nudge ARM WFE sleepers
 #ifdef NOSTR_ARM_WFE
         NOSTR_EVENT_SEND();
