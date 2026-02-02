@@ -780,6 +780,8 @@ static gpointer query_single_thread(gpointer user_data) {
         if (!relay) {
             Error *err = NULL;
             GoContext *gctx = go_context_background();
+            g_debug("query_single: relay %zu/%zu creating new connection to %s",
+                    i + 1, ctx->url_count, url);
             relay = nostr_relay_new(gctx, url, &err);
             if (!relay) {
                 g_warning("query_single: Failed to create relay for %s: %s", url,
@@ -790,7 +792,9 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Skip signature verification - nostrdb handles this during ingestion */
             relay->assume_valid = true;
 
-            // Connect to the relay
+            // Connect to the relay with logging
+            g_debug("query_single: relay %zu/%zu connecting to %s...",
+                    i + 1, ctx->url_count, url);
             if (!nostr_relay_connect(relay, &err)) {
                 g_warning("query_single: Failed to connect to %s: %s", url,
                          err ? err->message : "unknown error");
@@ -798,13 +802,14 @@ static gpointer query_single_thread(gpointer user_data) {
                 nostr_relay_free(relay);
                 continue;
             }
+            g_debug("query_single: relay %zu/%zu connected to %s",
+                    i + 1, ctx->url_count, url);
 
             // DO NOT add hint relays to pool - they should be temporary connections
             // that are cleaned up after the query completes. Adding them to the pool
             // causes relay connection accumulation as users scroll through notes with
             // different relay hints. Only configured relays should stay in the pool.
             g_ptr_array_add(created_relays, relay);
-            g_debug("query_single: Created temporary relay %s (will disconnect after query)", url);
         }
 
         // Check if relay is connected
@@ -918,8 +923,8 @@ static gpointer query_single_thread(gpointer user_data) {
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
 
-        g_debug("query_single: relay %zu/%zu done (%s), total results so far: %u",
-                i + 1, ctx->url_count, url, ctx->results->len);
+        g_message("query_single: relay %zu/%zu done (%s), got %u events, total: %u",
+                  i + 1, ctx->url_count, url, events_received, ctx->results->len);
 
         /* NOTE: We intentionally do NOT break early here even if we got results.
          * For thread fetching, different relays may have different events
@@ -938,8 +943,8 @@ static gpointer query_single_thread(gpointer user_data) {
     }
     g_ptr_array_free(created_relays, TRUE);
 
-    g_debug("query_single: all relays queried, scheduling completion with %u results",
-            ctx->results ? ctx->results->len : 0);
+    g_message("query_single: all %zu relays queried, scheduling completion with %u results",
+              ctx->url_count, ctx->results ? ctx->results->len : 0);
 
     // Schedule completion on the main thread; task owns ctx via task_data
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, query_single_complete_ok,
