@@ -119,7 +119,8 @@ static void check_local_signer_availability(GnostrLogin *self);
 static void save_npub_to_settings(const char *npub);
 static void save_nip46_credentials_to_settings(const char *client_secret_hex,
                                                 const char *signer_pubkey_hex,
-                                                const char *relay_url);
+                                                char **relays,
+                                                size_t n_relays);
 static void show_success(GnostrLogin *self, const char *npub);
 static void start_nip46_listener(GnostrLogin *self, const char *relay_url);
 static void stop_nip46_listener(GnostrLogin *self);
@@ -323,17 +324,14 @@ static gboolean on_nip46_pubkey_result(gpointer data) {
   if (ctx->nostrconnect_secret && ctx->signer_pubkey_hex) {
     char **relays = NULL;
     size_t n_relays = 0;
-    const char *relay_url = "wss://relay.nsec.app";
 
-    if (self->nip46_session &&
-        nostr_nip46_session_get_relays(self->nip46_session, &relays, &n_relays) == 0 &&
-        n_relays > 0 && relays && relays[0]) {
-      relay_url = relays[0];
+    if (self->nip46_session) {
+      nostr_nip46_session_get_relays(self->nip46_session, &relays, &n_relays);
     }
 
     save_nip46_credentials_to_settings(ctx->nostrconnect_secret,
                                         ctx->signer_pubkey_hex,
-                                        relay_url);
+                                        relays, n_relays);
 
     if (relays) {
       for (size_t i = 0; i < n_relays; i++) free(relays[i]);
@@ -1149,9 +1147,7 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
     nostr_nip46_session_get_remote_pubkey(session, &signer_pubkey);
     nostr_nip46_session_get_relays(session, &relays, &n_relays);
 
-    const char *relay_url = (n_relays > 0 && relays && relays[0]) ? relays[0] : "wss://relay.nsec.app";
-
-    save_nip46_credentials_to_settings(secret_hex, signer_pubkey, relay_url);
+    save_nip46_credentials_to_settings(secret_hex, signer_pubkey, relays, n_relays);
 
     free(secret_hex);
     free(signer_pubkey);
@@ -1269,7 +1265,8 @@ static void save_npub_to_settings(const char *npub) {
 /* nostrc-1wfi: Save NIP-46 credentials for session persistence across app restarts */
 static void save_nip46_credentials_to_settings(const char *client_secret_hex,
                                                 const char *signer_pubkey_hex,
-                                                const char *relay_url) {
+                                                char **relays,
+                                                size_t n_relays) {
   GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
   if (!settings) return;
 
@@ -1277,12 +1274,21 @@ static void save_nip46_credentials_to_settings(const char *client_secret_hex,
                         client_secret_hex ? client_secret_hex : "");
   g_settings_set_string(settings, "nip46-signer-pubkey",
                         signer_pubkey_hex ? signer_pubkey_hex : "");
-  g_settings_set_string(settings, "nip46-relay",
-                        relay_url ? relay_url : "");
 
-  g_message("[NIP46_LOGIN] Saved NIP-46 credentials to settings (secret: %zu chars, pubkey: %s)",
+  /* Build GVariant array of relay strings */
+  GVariantBuilder builder;
+  g_variant_builder_init(&builder, G_VARIANT_TYPE_STRING_ARRAY);
+  for (size_t i = 0; i < n_relays && relays; i++) {
+    if (relays[i] && *relays[i]) {
+      g_variant_builder_add(&builder, "s", relays[i]);
+    }
+  }
+  g_settings_set_value(settings, "nip46-relays", g_variant_builder_end(&builder));
+
+  g_message("[NIP46_LOGIN] Saved NIP-46 credentials to settings (secret: %zu chars, pubkey: %s, relays: %zu)",
             client_secret_hex ? strlen(client_secret_hex) : 0,
-            signer_pubkey_hex ? signer_pubkey_hex : "(null)");
+            signer_pubkey_hex ? signer_pubkey_hex : "(null)",
+            n_relays);
 
   g_object_unref(settings);
 }

@@ -149,12 +149,12 @@
         This is the ECDH peer for encrypting requests to the signer.
       </description>
     </key>
-    <key name="nip46-relay" type="s">
-      <default>''</default>
-      <summary>NIP-46 relay URL</summary>
+    <key name="nip46-relays" type="as">
+      <default>[]</default>
+      <summary>NIP-46 relay URLs</summary>
       <description>
-        The relay URL used for NIP-46 communication with the signer.
-        Empty string means use default relay.
+        The relay URLs used for NIP-46 communication with the signer.
+        Empty array means use default relay.
       </description>
     </key>
     <key name="nwc-connection-uri" type="s">

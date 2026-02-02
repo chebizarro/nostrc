@@ -1553,6 +1553,35 @@ int nostr_nip46_session_get_client_pubkey(const NostrNip46Session *s, char **out
 int nostr_nip46_session_get_secret(const NostrNip46Session *s, char **out_secret){ if(!s||!out_secret) return -1; *out_secret = dupstr(s->secret); return 0; }
 int nostr_nip46_session_get_relays(const NostrNip46Session *s, char ***out_relays, size_t *out_n){ if(!s||!out_relays||!out_n) return -1; *out_relays=NULL; *out_n=0; if(!s->relays||s->n_relays==0) return 0; char **arr=(char**)malloc(sizeof(char*)*s->n_relays); if(!arr) return -1; for(size_t i=0;i<s->n_relays;++i){ arr[i]=dupstr(s->relays[i]); if(!arr[i]){ for(size_t j=0;j<i;++j) free(arr[j]); free(arr); return -1; } } *out_relays=arr; *out_n=s->n_relays; return 0; }
 
+/* Set relays on a session directly (takes ownership of the relay strings) */
+int nostr_nip46_session_set_relays(NostrNip46Session *s, const char *const *relays, size_t n_relays) {
+    if (!s) return -1;
+    /* Free existing relays */
+    if (s->relays) {
+        for (size_t i = 0; i < s->n_relays; i++) free(s->relays[i]);
+        free(s->relays);
+        s->relays = NULL;
+        s->n_relays = 0;
+    }
+    if (!relays || n_relays == 0) return 0;
+    /* Copy relays */
+    s->relays = (char **)malloc(n_relays * sizeof(char *));
+    if (!s->relays) return -1;
+    for (size_t i = 0; i < n_relays; i++) {
+        s->relays[i] = dupstr(relays[i]);
+        if (!s->relays[i]) {
+            for (size_t j = 0; j < i; j++) free(s->relays[j]);
+            free(s->relays);
+            s->relays = NULL;
+            s->n_relays = 0;
+            return -1;
+        }
+    }
+    s->n_relays = n_relays;
+    fprintf(stderr, "[nip46] set_relays: set %zu relays\n", n_relays);
+    return 0;
+}
+
 int nostr_nip46_session_take_last_reply_json(NostrNip46Session *s, char **out_json){ if(!s||!out_json) return -1; *out_json=NULL; if(!s->last_reply_json) return 0; *out_json = s->last_reply_json; s->last_reply_json=NULL; return 0; }
 
 /* --- ACL helpers --- */

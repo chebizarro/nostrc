@@ -34,6 +34,7 @@ int  nostr_nip46_session_get_remote_pubkey(const NostrNip46Session *s, char **ou
 int  nostr_nip46_session_get_client_pubkey(const NostrNip46Session *s, char **out_hex);
 int  nostr_nip46_session_get_secret(const NostrNip46Session *s, char **out_secret);
 int  nostr_nip46_session_get_relays(const NostrNip46Session *s, char ***out_relays, size_t *out_n);
+int  nostr_nip46_session_set_relays(NostrNip46Session *s, const char *const *relays, size_t n_relays);
 int  nostr_nip46_session_take_last_reply_json(NostrNip46Session *s, char **out_json);
 
 #ifdef __cplusplus

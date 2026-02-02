@@ -124,11 +124,22 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
     self->method = GNOSTR_SIGNER_METHOD_NIP46;
     /* Debug: check what signer pubkey is in the session */
     char *debug_signer_pk = NULL;
+    char **debug_relays = NULL;
+    size_t debug_n_relays = 0;
     nostr_nip46_session_get_remote_pubkey(session, &debug_signer_pk);
+    nostr_nip46_session_get_relays(session, &debug_relays, &debug_n_relays);
     fprintf(stderr, "\n*** SESSION SET ON SIGNER SERVICE ***\n");
     fprintf(stderr, "Session signer_pubkey: %s\n",
               debug_signer_pk ? debug_signer_pk : "(NULL)");
+    fprintf(stderr, "Session relay count: %zu\n", debug_n_relays);
+    for (size_t i = 0; i < debug_n_relays && debug_relays; i++) {
+      fprintf(stderr, "  relay[%zu]: %s\n", i, debug_relays[i] ? debug_relays[i] : "(null)");
+    }
     free(debug_signer_pk);
+    if (debug_relays) {
+      for (size_t i = 0; i < debug_n_relays; i++) free(debug_relays[i]);
+      free(debug_relays);
+    }
     g_debug("[SIGNER_SERVICE] Switched to NIP-46 remote signer");
   } else {
     /* Check if NIP-55L is available as fallback */
@@ -527,13 +538,21 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
 
   g_autofree char *client_secret = g_settings_get_string(settings, "nip46-client-secret");
   g_autofree char *signer_pubkey = g_settings_get_string(settings, "nip46-signer-pubkey");
-  g_autofree char *relay_url = g_settings_get_string(settings, "nip46-relay");
+
+  /* Read relay array from settings */
+  g_autoptr(GVariant) relays_variant = g_settings_get_value(settings, "nip46-relays");
+  gsize n_relays = 0;
+  const gchar **relay_urls = NULL;
+  if (relays_variant && g_variant_is_of_type(relays_variant, G_VARIANT_TYPE_STRING_ARRAY)) {
+    relay_urls = g_variant_get_strv(relays_variant, &n_relays);
+  }
 
   g_object_unref(settings);
 
   /* Check if we have valid credentials */
   if (!client_secret || !*client_secret || !signer_pubkey || !*signer_pubkey) {
     g_debug("[SIGNER_SERVICE] No saved NIP-46 credentials found");
+    g_free(relay_urls);
     return FALSE;
   }
 
@@ -541,6 +560,7 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
   if (strlen(client_secret) != 64) {
     g_warning("[SIGNER_SERVICE] Invalid saved client secret length: %zu",
               strlen(client_secret));
+    g_free(relay_urls);
     return FALSE;
   }
 
@@ -548,53 +568,30 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
   if (strlen(signer_pubkey) != 64) {
     g_warning("[SIGNER_SERVICE] Invalid saved signer pubkey length: %zu",
               strlen(signer_pubkey));
+    g_free(relay_urls);
     return FALSE;
   }
 
   fprintf(stderr, "\n*** RESTORING SESSION FROM SETTINGS ***\n");
   fprintf(stderr, "signer_pubkey from settings: %s\n", signer_pubkey);
-  fprintf(stderr, "relay_url from settings: %s\n", relay_url ? relay_url : "(null)");
+  fprintf(stderr, "relay count from settings: %zu\n", n_relays);
+  for (gsize i = 0; i < n_relays && relay_urls; i++) {
+    fprintf(stderr, "  relay[%zu]: %s\n", i, relay_urls[i] ? relay_urls[i] : "(null)");
+  }
 
   /* Create a new NIP-46 session */
   NostrNip46Session *session = nostr_nip46_client_new();
   if (!session) {
     g_warning("[SIGNER_SERVICE] Failed to create NIP-46 session");
+    g_free(relay_urls);
     return FALSE;
   }
 
-  /* Build a nostrconnect:// URI to populate the session.
-   * We need to derive the client pubkey from the secret, but for simplicity
-   * we'll just set the fields directly on the session.
-   * First, use the connect function with a synthetic URI. */
-  const char *default_relay = (relay_url && *relay_url) ? relay_url : "wss://relay.nsec.app";
-
-  /* Derive client pubkey from secret for the URI */
-  char *client_pubkey = nostr_key_get_public(client_secret);
-  if (!client_pubkey) {
-    g_warning("[SIGNER_SERVICE] Failed to derive client pubkey from secret");
-    nostr_nip46_session_free(session);
-    return FALSE;
-  }
-
-  /* Build synthetic nostrconnect:// URI */
-  g_autofree char *connect_uri = g_strdup_printf(
-    "nostrconnect://%s?relay=%s&secret=%s",
-    client_pubkey, default_relay, client_secret);
-  free(client_pubkey);
-
-  /* Parse URI to populate session with relays */
-  int rc = nostr_nip46_client_connect(session, connect_uri, NULL);
-  if (rc != 0) {
-    g_warning("[SIGNER_SERVICE] Failed to restore session from URI: %d", rc);
-    nostr_nip46_session_free(session);
-    return FALSE;
-  }
-
-  /* nostrc-1wfi: Set the REAL client secret key for ECDH encryption.
-   * The URI's secret= param is just an auth token, NOT the crypto key. */
+  /* Set the client secret key for ECDH encryption */
   if (nostr_nip46_client_set_secret(session, client_secret) != 0) {
     g_warning("[SIGNER_SERVICE] Failed to set client secret for ECDH");
     nostr_nip46_session_free(session);
+    g_free(relay_urls);
     return FALSE;
   }
 
@@ -602,14 +599,27 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
   if (nostr_nip46_client_set_signer_pubkey(session, signer_pubkey) != 0) {
     g_warning("[SIGNER_SERVICE] Failed to set signer pubkey");
     nostr_nip46_session_free(session);
+    g_free(relay_urls);
     return FALSE;
   }
+
+  /* Set relays directly on the session */
+  if (n_relays > 0 && relay_urls) {
+    nostr_nip46_session_set_relays(session, relay_urls, n_relays);
+  } else {
+    /* Fallback to default relay if none saved */
+    const char *default_relay = "wss://relay.nsec.app";
+    nostr_nip46_session_set_relays(session, &default_relay, 1);
+    g_warning("[SIGNER_SERVICE] No relays in settings, using default: %s", default_relay);
+  }
+
+  g_free(relay_urls);
 
   /* Install the session */
   gnostr_signer_service_set_nip46_session(self, session);
 
-  g_message("[SIGNER_SERVICE] NIP-46 session restored successfully (signer: %.16s...)",
-            signer_pubkey);
+  g_message("[SIGNER_SERVICE] NIP-46 session restored successfully (signer: %.16s..., relays: %zu)",
+            signer_pubkey, n_relays);
 
   return TRUE;
 }
@@ -624,7 +634,10 @@ gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self)
 
   g_settings_set_string(settings, "nip46-client-secret", "");
   g_settings_set_string(settings, "nip46-signer-pubkey", "");
-  g_settings_set_string(settings, "nip46-relay", "");
+  /* Clear relay array */
+  GVariantBuilder builder;
+  g_variant_builder_init(&builder, G_VARIANT_TYPE_STRING_ARRAY);
+  g_settings_set_value(settings, "nip46-relays", g_variant_builder_end(&builder));
 
   g_object_unref(settings);
 
