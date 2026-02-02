@@ -797,7 +797,11 @@ static void *message_loop(void *arg) {
             relay_debug_emit(r, tmp);
             break; }
         case NOSTR_ENVELOPE_AUTH: {
-            r->priv->challenge = ((NostrAuthEnvelope *)envelope)->challenge;
+            // Free previous challenge if any
+            if (r->priv->challenge) { free(r->priv->challenge); r->priv->challenge = NULL; }
+            // Copy challenge string (don't alias envelope's string that will be freed)
+            const char *ch = ((NostrAuthEnvelope *)envelope)->challenge;
+            r->priv->challenge = ch ? strdup(ch) : NULL;
             char tmp[256]; snprintf(tmp, sizeof(tmp), "AUTH challenge=%s", r->priv->challenge ? r->priv->challenge : "");
             relay_debug_emit(r, tmp);
             break; }

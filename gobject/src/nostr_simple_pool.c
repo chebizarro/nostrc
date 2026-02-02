@@ -464,12 +464,12 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         /* CRITICAL: Check if relay already exists in pool - reuse it instead of creating duplicate! */
         NostrRelay *relay = NULL;
         gboolean relay_is_from_pool = FALSE;
-        
+
         if (gobj_pool && gobj_pool->pool) {
             pthread_mutex_lock(&gobj_pool->pool->pool_mutex);
             for (size_t j = 0; j < gobj_pool->pool->relay_count; j++) {
-                if (gobj_pool->pool->relays[j] && 
-                    gobj_pool->pool->relays[j]->url && 
+                if (gobj_pool->pool->relays[j] &&
+                    gobj_pool->pool->relays[j]->url &&
                     strcmp(gobj_pool->pool->relays[j]->url, url) == 0) {
                     relay = gobj_pool->pool->relays[j];
                     relay_is_from_pool = TRUE;
@@ -479,7 +479,20 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             }
             pthread_mutex_unlock(&gobj_pool->pool->pool_mutex);
         }
-        
+
+        /* If relay found in pool, ensure it's connected */
+        if (relay && relay_is_from_pool && !nostr_relay_is_connected(relay)) {
+            g_debug("simple_pool: Relay %s from pool is disconnected, reconnecting...", url);
+            Error *err = NULL;
+            if (!nostr_relay_connect(relay, &err)) {
+                g_warning("simple_pool: reconnect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+                if (err) free_error(err);
+                /* Skip this relay but don't remove from pool - it may connect later */
+                continue;
+            }
+            g_debug("simple_pool: Relay %s reconnected successfully", url);
+        }
+
         /* Only create new relay if not found in pool */
         if (!relay) {
             Error *err = NULL;
