@@ -177,34 +177,30 @@ static void set_bunker_status(GnostrLogin *self, BunkerStatusState state,
     gtk_widget_set_visible(self->lbl_bunker_status_detail, detail && *detail);
   }
 
-  /* Set icon based on state */
-  const char *icon_child = "spinner_bunker";
+  /* Set icon based on state - use widget pointers directly since
+   * GtkStack children aren't wrapped in named StackPages */
+  GtkWidget *icon_widget = NULL;
   switch (state) {
     case BUNKER_STATUS_IDLE:
-      icon_child = "spinner_bunker";
-      break;
     case BUNKER_STATUS_CONNECTING:
-      icon_child = "spinner_bunker";
+      icon_widget = self->spinner_bunker;
       if (self->spinner_bunker) {
         gtk_spinner_start(GTK_SPINNER(self->spinner_bunker));
       }
       break;
     case BUNKER_STATUS_WAITING:
-      icon_child = "status_icon_waiting";
+      icon_widget = self->status_icon_waiting;
       break;
     case BUNKER_STATUS_SUCCESS:
-      icon_child = "status_icon_success";
+      icon_widget = self->status_icon_success;
       break;
     case BUNKER_STATUS_ERROR:
-      icon_child = "status_icon_error";
+      icon_widget = self->status_icon_error;
       break;
   }
 
-  if (self->status_icon_stack) {
-    GtkWidget *child = gtk_stack_get_child_by_name(GTK_STACK(self->status_icon_stack), icon_child);
-    if (child) {
-      gtk_stack_set_visible_child(GTK_STACK(self->status_icon_stack), child);
-    }
+  if (self->status_icon_stack && icon_widget) {
+    gtk_stack_set_visible_child(GTK_STACK(self->status_icon_stack), icon_widget);
   }
 
   /* Update button visibility */
@@ -910,14 +906,14 @@ static void on_remote_signer_clicked(GtkButton *btn, gpointer user_data) {
   /* Switch to bunker page */
   gtk_stack_set_visible_child(GTK_STACK(self->stack), self->page_bunker);
 
-  /* Start listening for NIP-46 responses on the relay */
+  /* Start listening for NIP-46 responses in background (for QR flow)
+   * but don't show intrusive "Waiting" status - let the QR speak for itself */
   const char *relay = "wss://relay.nsec.app";
   start_nip46_listener(self, relay);
 
-  /* Update status to waiting state */
-  set_bunker_status(self, BUNKER_STATUS_WAITING,
-                    "Waiting for approval...",
-                    "Scan the QR code with your signer app (Amber, nsec.app, etc.)");
+  /* Keep status hidden - user sees the QR and the URI entry field
+   * Status only appears when they click Connect or an error occurs */
+  set_bunker_status(self, BUNKER_STATUS_IDLE, "", NULL);
 }
 
 static void on_back_clicked(GtkButton *btn, gpointer user_data) {
@@ -1328,14 +1324,14 @@ static void save_nip46_credentials_to_settings(const char *client_secret_hex,
 }
 
 static void show_success(GnostrLogin *self, const char *npub) {
-  if (self->lbl_success_npub) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_success_npub), npub ? npub : "");
-  }
-
-  gtk_stack_set_visible_child(GTK_STACK(self->stack), self->page_success);
-
-  /* Emit signed-in signal */
+  /* Emit signed-in signal first */
   g_signal_emit(self, signals[SIGNAL_SIGNED_IN], 0, npub);
+
+  /* Close the dialog automatically - user doesn't need to click "Done" */
+  GtkWidget *win = gtk_widget_get_ancestor(GTK_WIDGET(self), GTK_TYPE_WINDOW);
+  if (win && GTK_IS_WINDOW(win)) {
+    gtk_window_close(GTK_WINDOW(win));
+  }
 }
 
 static void on_close_clicked(GtkButton *btn, gpointer user_data) {
