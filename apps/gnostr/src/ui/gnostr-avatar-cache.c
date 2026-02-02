@@ -397,10 +397,22 @@ static void avatar_ctx_free(AvatarCtx *c) {
 }
 
 #ifdef HAVE_SOUP3
-/* Internal: Actually start an HTTP fetch (assumes slot is available) */
+/* Internal: Actually start an HTTP fetch (assumes slot is available).
+ * IMPORTANT: Caller must have already incremented s_active_fetches.
+ * On early return (error), we decrement it and process queue. */
 static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWidget *initials) {
-  SoupSession *sess = soup_session_new();
+  if (!url || !*url) {
+    g_warning("avatar fetch: NULL or empty URL");
+    goto error_decrement;
+  }
+
   SoupMessage *msg = soup_message_new("GET", url);
+  if (!msg) {
+    g_warning("avatar fetch: failed to create message for url=%s", url);
+    goto error_decrement;
+  }
+
+  SoupSession *sess = soup_session_new();
   AvatarCtx *ctx = g_new0(AvatarCtx, 1);
   g_weak_ref_init(&ctx->image_ref, image);
   g_weak_ref_init(&ctx->initials_ref, initials);
@@ -412,6 +424,14 @@ static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWi
   soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
   g_object_unref(msg);
   g_object_unref(sess);
+  return;
+
+error_decrement:
+  /* Decrement counter since we didn't actually start the fetch */
+  g_mutex_lock(&s_fetch_mutex);
+  if (s_active_fetches > 0) s_active_fetches--;
+  g_mutex_unlock(&s_fetch_mutex);
+  process_pending_fetch_queue();
 }
 
 /* Process pending fetch queue - called after a fetch completes */
