@@ -588,6 +588,14 @@ static void og_preview_widget_dispose(GObject *object) {
    * The key insight: unparent children BEFORE parent dispose runs, not after.
    * Use g_clear_pointer pattern which safely handles NULL and only unparents
    * if the pointer is still valid. */
+
+  /* CRITICAL FIX (nostrc-14wu): Clear the layout manager BEFORE unparenting
+   * children. The box layout manager may try to measure children during
+   * destruction, causing NULL pointer dereference in pango when labels
+   * have already been partially destroyed. Setting layout manager to NULL
+   * prevents any measurement attempts during the disposal process. */
+  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+
   g_clear_pointer(&self->spinner, gtk_widget_unparent);
   g_clear_pointer(&self->error_label, gtk_widget_unparent);
   g_clear_pointer(&self->card_box, gtk_widget_unparent);
