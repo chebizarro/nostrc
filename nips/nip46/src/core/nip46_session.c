@@ -526,26 +526,47 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
 
     fprintf(stderr, "[nip46] sign_event: received response, decrypting...\n");
 
-    /* Decrypt response using NIP-44 */
-    unsigned char resp_pk[32];
-    if (parse_peer_xonly32(response_pubkey, resp_pk) != 0) {
-        fprintf(stderr, "[nip46] sign_event: ERROR -1: failed to parse response pubkey\n");
-        secure_wipe(sk, sizeof(sk));
-        free(client_pubkey);
-        free(response_content);
-        free(response_pubkey);
-        return -1;
-    }
+    /* Detect NIP-04 vs NIP-44 encryption based on content format */
+    int is_nip04 = (strstr(response_content, "?iv=") != NULL);
+    fprintf(stderr, "[nip46] sign_event: detected %s encryption\n", is_nip04 ? "NIP-04" : "NIP-44");
 
     uint8_t *plaintext = NULL;
     size_t plaintext_len = 0;
-    if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
-        fprintf(stderr, "[nip46] sign_event: ERROR -1: failed to decrypt response\n");
-        secure_wipe(sk, sizeof(sk));
-        free(client_pubkey);
-        free(response_content);
-        free(response_pubkey);
-        return -1;
+
+    if (is_nip04) {
+        /* NIP-04 decryption using session secret and response pubkey */
+        char *plain = NULL;
+        if (nostr_nip04_decrypt(response_content, response_pubkey, s->secret,
+                                &plain, NULL) != 0 || !plain) {
+            fprintf(stderr, "[nip46] sign_event: ERROR -1: NIP-04 decrypt failed\n");
+            secure_wipe(sk, sizeof(sk));
+            free(client_pubkey);
+            free(response_content);
+            free(response_pubkey);
+            return -1;
+        }
+        plaintext_len = strlen(plain);
+        plaintext = (uint8_t *)plain;
+    } else {
+        /* NIP-44 decryption */
+        unsigned char resp_pk[32];
+        if (parse_peer_xonly32(response_pubkey, resp_pk) != 0) {
+            fprintf(stderr, "[nip46] sign_event: ERROR -1: failed to parse response pubkey\n");
+            secure_wipe(sk, sizeof(sk));
+            free(client_pubkey);
+            free(response_content);
+            free(response_pubkey);
+            return -1;
+        }
+
+        if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
+            fprintf(stderr, "[nip46] sign_event: ERROR -1: NIP-44 decrypt failed\n");
+            secure_wipe(sk, sizeof(sk));
+            free(client_pubkey);
+            free(response_content);
+            free(response_pubkey);
+            return -1;
+        }
     }
     secure_wipe(sk, sizeof(sk));
     free(client_pubkey);
