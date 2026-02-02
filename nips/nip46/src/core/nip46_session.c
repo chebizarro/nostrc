@@ -813,12 +813,16 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     nostr_event_free(req_ev);
     nostr_filters_free(filters);
 
-    /* Wait for response (with retry for wrong-ID responses) */
+    /* Wait for response with retry loop for stale responses.
+     * Stale responses occur when relay delivers old events (e.g., "ack" from
+     * previous connect RPC) before the response we're waiting for. */
     char *response_content = NULL;
     char *response_pubkey = NULL;
-    int max_retries = 5;  /* Ignore up to 5 stale responses */
+    char *result = NULL;
+    int max_retries = 10;  /* Ignore up to 10 stale responses */
 
     for (int attempt = 0; attempt < max_retries; attempt++) {
+        /* Wait for a response */
         pthread_mutex_lock(&s_nip46_resp_mutex);
         while (!s_nip46_resp_ctx.received) {
             pthread_cond_wait(&s_nip46_resp_cond, &s_nip46_resp_mutex);
@@ -830,148 +834,152 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         s_nip46_resp_ctx.received = 0;  /* Reset for potential retry */
         pthread_mutex_unlock(&s_nip46_resp_mutex);
 
-        if (!response_content) break;
+        if (!response_content) {
+            fprintf(stderr, "[nip46] %s: attempt %d: no response content\n", method, attempt + 1);
+            continue;
+        }
 
-        /* Quick check: is this a stale response? Peek at the ID without full decrypt */
-        /* We'll do full validation after decrypt, but this helps filter obvious stales */
-        fprintf(stderr, "[nip46] %s: attempt %d, checking response...\n", method, attempt + 1);
-        break;  /* Got a response, proceed to decrypt and validate */
+        fprintf(stderr, "[nip46] %s: attempt %d, decrypting response...\n", method, attempt + 1);
+
+        /* Decrypt response */
+        unsigned char resp_pk[32];
+        if (parse_peer_xonly32(response_pubkey, resp_pk) != 0) {
+            fprintf(stderr, "[nip46] %s: attempt %d: failed to parse response pubkey, retrying\n", method, attempt + 1);
+            free(response_content);
+            free(response_pubkey);
+            response_content = NULL;
+            response_pubkey = NULL;
+            continue;
+        }
+
+        uint8_t *plaintext = NULL;
+        size_t plaintext_len = 0;
+
+        /* Detect encryption format: NIP-04 contains "?iv=", NIP-44 does not */
+        int is_nip04 = (strstr(response_content, "?iv=") != NULL);
+
+        if (is_nip04) {
+            char *plaintext_str = NULL;
+            char *error_msg = NULL;
+            if (nostr_nip04_decrypt(response_content, response_pubkey, s->secret,
+                                    &plaintext_str, &error_msg) != 0 || !plaintext_str) {
+                fprintf(stderr, "[nip46] %s: attempt %d: NIP-04 decrypt failed, retrying\n", method, attempt + 1);
+                free(error_msg);
+                free(response_content);
+                free(response_pubkey);
+                response_content = NULL;
+                response_pubkey = NULL;
+                continue;
+            }
+            free(error_msg);
+            plaintext_len = strlen(plaintext_str);
+            plaintext = (uint8_t *)plaintext_str;
+        } else {
+            if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
+                fprintf(stderr, "[nip46] %s: attempt %d: NIP-44 decrypt failed, retrying\n", method, attempt + 1);
+                free(response_content);
+                free(response_pubkey);
+                response_content = NULL;
+                response_pubkey = NULL;
+                continue;
+            }
+        }
+
+        free(response_content);
+        response_content = NULL;
+
+        /* Null-terminate for JSON parsing */
+        char *response_json = (char *)malloc(plaintext_len + 1);
+        if (!response_json) {
+            free(plaintext);
+            free(response_pubkey);
+            response_pubkey = NULL;
+            continue;
+        }
+        memcpy(response_json, plaintext, plaintext_len);
+        response_json[plaintext_len] = '\0';
+        free(plaintext);
+
+        fprintf(stderr, "[nip46] %s: decrypted response: %.100s...\n", method, response_json);
+
+        /* Parse response and validate ID */
+        if (!nostr_json_is_valid(response_json)) {
+            fprintf(stderr, "[nip46] %s: attempt %d: invalid JSON, retrying\n", method, attempt + 1);
+            free(response_json);
+            free(response_pubkey);
+            response_pubkey = NULL;
+            continue;
+        }
+
+        /* Validate response ID matches our request ID */
+        char *resp_id = NULL;
+        if (nostr_json_get_string(response_json, "id", &resp_id) == 0 && resp_id) {
+            pthread_mutex_lock(&s_nip46_resp_mutex);
+            const char *expected_id = s_nip46_resp_ctx.expected_req_id;
+            int id_matches = expected_id && strcmp(resp_id, expected_id) == 0;
+            pthread_mutex_unlock(&s_nip46_resp_mutex);
+
+            if (!id_matches) {
+                fprintf(stderr, "[nip46] %s: attempt %d: stale response id '%s' != expected '%s', retrying\n",
+                        method, attempt + 1, resp_id, expected_id ? expected_id : "(null)");
+                free(resp_id);
+                free(response_json);
+                free(response_pubkey);
+                response_pubkey = NULL;
+                continue;  /* RETRY instead of fail */
+            }
+            fprintf(stderr, "[nip46] %s: response id matches: %s\n", method, resp_id);
+            free(resp_id);
+        }
+
+        /* Check for error in response */
+        char *err_msg = NULL;
+        if (nostr_json_has_key(response_json, "error") &&
+            nostr_json_get_type(response_json, "error") == NOSTR_JSON_STRING &&
+            nostr_json_get_string(response_json, "error", &err_msg) == 0 && err_msg && *err_msg) {
+            fprintf(stderr, "[nip46] %s: ERROR: signer error: %s\n", method, err_msg);
+            free(err_msg);
+            free(response_json);
+            free(response_pubkey);
+            nostr_simple_pool_stop(pool);
+            nostr_simple_pool_free(pool);
+            secure_wipe(sk, sizeof(sk));
+            free(client_pubkey);
+            return NULL;
+        }
+        free(err_msg);
+
+        /* Get the result */
+        if (nostr_json_get_string(response_json, "result", &result) != 0 || !result) {
+            fprintf(stderr, "[nip46] %s: ERROR: no result in response\n", method);
+            free(response_json);
+            free(response_pubkey);
+            nostr_simple_pool_stop(pool);
+            nostr_simple_pool_free(pool);
+            secure_wipe(sk, sizeof(sk));
+            free(client_pubkey);
+            return NULL;
+        }
+        free(response_json);
+
+        /* Success! Return response pubkey if caller wants it */
+        if (out_response_pubkey) {
+            *out_response_pubkey = response_pubkey;
+        } else {
+            free(response_pubkey);
+        }
+        break;  /* Got valid response, exit retry loop */
     }
 
     nostr_simple_pool_stop(pool);
     nostr_simple_pool_free(pool);
-
-    if (!response_content) {
-        fprintf(stderr, "[nip46] %s: ERROR: response content is NULL\n", method);
-        secure_wipe(sk, sizeof(sk));
-        free(client_pubkey);
-        if (response_pubkey) free(response_pubkey);
-        return NULL;
-    }
-
-    fprintf(stderr, "[nip46] %s: received response, decrypting...\n", method);
-    fprintf(stderr, "[nip46] %s: response_pubkey (event.pubkey) = %s\n", method, response_pubkey);
-    fprintf(stderr, "[nip46] %s: client_pubkey (our key) = %s\n", method, client_pubkey);
-    fprintf(stderr, "[nip46] %s: peer we sent TO = %s\n", method, peer);
-
-    /* Decrypt response using NIP-44 */
-    unsigned char resp_pk[32];
-    if (parse_peer_xonly32(response_pubkey, resp_pk) != 0) {
-        fprintf(stderr, "[nip46] %s: ERROR: failed to parse response pubkey\n", method);
-        secure_wipe(sk, sizeof(sk));
-        free(client_pubkey);
-        free(response_content);
-        free(response_pubkey);
-        return NULL;
-    }
-
-    uint8_t *plaintext = NULL;
-    size_t plaintext_len = 0;
-
-    /* Detect encryption format: NIP-04 contains "?iv=", NIP-44 does not */
-    int is_nip04 = (strstr(response_content, "?iv=") != NULL);
-    fprintf(stderr, "[nip46] %s: detected %s encryption\n", method, is_nip04 ? "NIP-04" : "NIP-44");
-
-    if (is_nip04) {
-        /* NIP-04 decrypt */
-        char *plaintext_str = NULL;
-        char *error_msg = NULL;
-        if (nostr_nip04_decrypt(response_content, response_pubkey, s->secret,
-                                &plaintext_str, &error_msg) != 0 || !plaintext_str) {
-            fprintf(stderr, "[nip46] %s: ERROR: NIP-04 decrypt failed: %s\n", method,
-                    error_msg ? error_msg : "unknown error");
-            free(error_msg);
-            secure_wipe(sk, sizeof(sk));
-            free(client_pubkey);
-            free(response_content);
-            free(response_pubkey);
-            return NULL;
-        }
-        free(error_msg);
-        plaintext_len = strlen(plaintext_str);
-        plaintext = (uint8_t *)plaintext_str;
-    } else {
-        /* NIP-44 decrypt */
-        if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
-            fprintf(stderr, "[nip46] %s: ERROR: NIP-44 decrypt failed\n", method);
-            fprintf(stderr, "[nip46] %s: ECDH mismatch? We used client_sk + response_pubkey\n", method);
-            secure_wipe(sk, sizeof(sk));
-            free(client_pubkey);
-            free(response_content);
-            free(response_pubkey);
-            return NULL;
-        }
-    }
     secure_wipe(sk, sizeof(sk));
     free(client_pubkey);
-    free(response_content);
 
-    /* Return response pubkey if caller wants it, otherwise free */
-    if (out_response_pubkey) {
-        *out_response_pubkey = response_pubkey;
-    } else {
-        free(response_pubkey);
-    }
-
-    /* Null-terminate for JSON parsing */
-    char *response_json = (char *)malloc(plaintext_len + 1);
-    if (!response_json) {
-        free(plaintext);
+    if (!result) {
+        fprintf(stderr, "[nip46] %s: ERROR: exhausted retries waiting for response\n", method);
         return NULL;
     }
-    memcpy(response_json, plaintext, plaintext_len);
-    response_json[plaintext_len] = '\0';
-    free(plaintext);
-
-    fprintf(stderr, "[nip46] %s: decrypted response: %.100s...\n", method, response_json);
-
-    /* Parse response and extract result */
-    if (!nostr_json_is_valid(response_json)) {
-        fprintf(stderr, "[nip46] %s: ERROR: invalid response JSON\n", method);
-        free(response_json);
-        return NULL;
-    }
-
-    /* Validate response ID matches our request ID */
-    char *resp_id = NULL;
-    if (nostr_json_get_string(response_json, "id", &resp_id) == 0 && resp_id) {
-        pthread_mutex_lock(&s_nip46_resp_mutex);
-        const char *expected_id = s_nip46_resp_ctx.expected_req_id;
-        int id_matches = expected_id && strcmp(resp_id, expected_id) == 0;
-        pthread_mutex_unlock(&s_nip46_resp_mutex);
-
-        if (!id_matches) {
-            fprintf(stderr, "[nip46] %s: WARNING: response id '%s' != expected '%s', ignoring stale response\n",
-                    method, resp_id, expected_id ? expected_id : "(null)");
-            free(resp_id);
-            free(response_json);
-            /* TODO: should retry waiting for correct response, for now just fail */
-            return NULL;
-        }
-        fprintf(stderr, "[nip46] %s: response id matches: %s\n", method, resp_id);
-        free(resp_id);
-    }
-
-    /* Check for error */
-    char *err_msg = NULL;
-    if (nostr_json_has_key(response_json, "error") &&
-        nostr_json_get_type(response_json, "error") == NOSTR_JSON_STRING &&
-        nostr_json_get_string(response_json, "error", &err_msg) == 0 && err_msg && *err_msg) {
-        fprintf(stderr, "[nip46] %s: ERROR: signer error: %s\n", method, err_msg);
-        free(err_msg);
-        free(response_json);
-        return NULL;
-    }
-    free(err_msg);
-
-    /* Get the result */
-    char *result = NULL;
-    if (nostr_json_get_string(response_json, "result", &result) != 0 || !result) {
-        fprintf(stderr, "[nip46] %s: ERROR: no result in response\n", method);
-        free(response_json);
-        return NULL;
-    }
-    free(response_json);
 
     fprintf(stderr, "[nip46] %s: SUCCESS - result: %.50s\n", method, result);
     return result;
