@@ -276,13 +276,24 @@ struct _GnostrNoteCardRow {
   GPtrArray *external_ids;            /* Array of GnostrExternalContentId* */
   /* Disposal state - prevents async callbacks from accessing widget after dispose starts */
   gboolean disposed;
-  
+
+  /* Binding lifecycle tracking (nostrc-534d):
+   * Each time the row is bound to a list item, it gets a unique binding_id.
+   * When unbound, binding_id is set to 0. Async callbacks capture the binding_id
+   * at creation time and check it before modifying the widget - if the IDs don't
+   * match, the row was recycled for a different item and the callback is stale. */
+  guint64 binding_id;
+
   /* Shared cancellable for ALL async operations (avatar, og-preview, note-embed, etc.)
    * When this widget is disposed, cancelling this single cancellable stops all child operations */
   GCancellable *async_cancellable;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
+
+/* Static counter for generating unique binding IDs (nostrc-534d).
+ * Starts at 1 so that 0 can represent "unbound" state. */
+static guint64 binding_id_counter = 1;
 
 enum {
   SIGNAL_OPEN_NOSTR_TARGET,
@@ -2222,6 +2233,8 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   /* nostrc-8456: Don't touch labels during/after disposal - causes Pango layout corruption */
   if (self->disposed) return;
+  /* nostrc-534d: Don't modify unbound row (defensive check) */
+  if (self->binding_id == 0) return;
   if (GTK_IS_LABEL(self->lbl_display)) gtk_label_set_text(GTK_LABEL(self->lbl_display), (display_name && *display_name) ? display_name : (handle ? handle : _("Anonymous")));
   if (GTK_IS_LABEL(self->lbl_handle))  gtk_label_set_text(GTK_LABEL(self->lbl_handle), (handle && *handle) ? handle : "@anon");
   g_clear_pointer(&self->avatar_url, g_free);
@@ -2308,6 +2321,7 @@ static gboolean update_timestamp_tick(gpointer user_data) {
 void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
   if (self->disposed) return;  /* nostrc-8456 */
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   /* Store the created_at timestamp */
   self->created_at = created_at;
@@ -2815,6 +2829,7 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
   /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying label */
   if (self->disposed) return;
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   /* Store plain text content for clipboard operations */
   g_clear_pointer(&self->content_text, g_free);
@@ -3684,6 +3699,7 @@ static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data
 void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, const char *pubkey_hex) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   /* Clear previous state */
   if (self->nip05_cancellable) {
@@ -3802,6 +3818,7 @@ void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked) 
 void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   self->like_count = count;
 
@@ -3921,6 +3938,7 @@ void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *
 void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count, gint64 total_msat) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   self->zap_count = zap_count;
   self->zap_total_msat = total_msat;
@@ -3968,6 +3986,7 @@ void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count
 void gnostr_note_card_row_set_reply_count(GnostrNoteCardRow *self, guint count) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   self->reply_count = count;
   self->is_thread_root = (count > 0);
@@ -4057,6 +4076,7 @@ void gnostr_note_card_row_set_repost_info(GnostrNoteCardRow *self,
                                            gint64 repost_created_at) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   g_clear_pointer(&self->reposter_pubkey, g_free);
   g_clear_pointer(&self->reposter_display_name, g_free);
@@ -4127,6 +4147,7 @@ void gnostr_note_card_row_set_is_repost(GnostrNoteCardRow *self, gboolean is_rep
 void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
+  if (self->binding_id == 0) return;  /* nostrc-534d */
 
   self->repost_count = count;
 
@@ -5681,6 +5702,11 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
   /* Reset disposed flag - widget is being reused */
   self->disposed = FALSE;
 
+  /* Assign unique binding ID (nostrc-534d). Async callbacks capture this ID
+   * and check it before modifying the widget. If IDs don't match, the row
+   * was recycled and the callback should be ignored. */
+  self->binding_id = binding_id_counter++;
+
   /* Create fresh cancellable since the old one was cancelled during unbind.
    * GCancellable cannot be reused after cancellation. */
   if (self->async_cancellable) {
@@ -5725,6 +5751,11 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
 
   /* Mark as disposed FIRST to prevent any async callbacks from running */
   self->disposed = TRUE;
+
+  /* Clear binding ID (nostrc-534d) - marks row as unbound.
+   * Any in-flight async callbacks with a captured binding_id will see the
+   * mismatch and bail out before modifying the widget. */
+  self->binding_id = 0;
 
   /* Do NOT call gtk_picture_set_paintable(NULL) here - it can trigger
    * gtk_image_definition_unref crashes if the GtkPicture is already in
@@ -5811,4 +5842,29 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
 gboolean gnostr_note_card_row_is_disposed(GnostrNoteCardRow *self) {
   g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), TRUE);
   return self->disposed;
+}
+
+/**
+ * gnostr_note_card_row_is_bound:
+ *
+ * Returns TRUE if the row is currently bound to a list item.
+ * A row is bound between prepare_for_bind() and prepare_for_unbind() calls.
+ * nostrc-534d: Binding lifecycle tracking.
+ */
+gboolean gnostr_note_card_row_is_bound(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+  return self->binding_id != 0;
+}
+
+/**
+ * gnostr_note_card_row_get_binding_id:
+ *
+ * Returns the current binding ID, or 0 if unbound.
+ * Async callbacks should capture this ID at creation time and compare it
+ * before modifying the widget - if IDs don't match, the row was recycled.
+ * nostrc-534d: Binding lifecycle tracking.
+ */
+guint64 gnostr_note_card_row_get_binding_id(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), 0);
+  return self->binding_id;
 }

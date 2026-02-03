@@ -354,6 +354,23 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self);
  */
 gboolean gnostr_note_card_row_is_disposed(GnostrNoteCardRow *self);
 
+/**
+ * gnostr_note_card_row_is_bound:
+ *
+ * Returns TRUE if the row is currently bound to a list item.
+ * A row is bound between prepare_for_bind() and prepare_for_unbind() calls.
+ */
+gboolean gnostr_note_card_row_is_bound(GnostrNoteCardRow *self);
+
+/**
+ * gnostr_note_card_row_get_binding_id:
+ *
+ * Returns the current binding ID, or 0 if unbound.
+ * Async callbacks should capture this ID at creation time and compare it
+ * before modifying the widget - if IDs don't match, the row was recycled.
+ */
+guint64 gnostr_note_card_row_get_binding_id(GnostrNoteCardRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */
