@@ -27,6 +27,58 @@ typedef struct {
 static GType community_post_item_get_type(void);
 G_DEFINE_TYPE(CommunityPostItem, community_post_item, G_TYPE_OBJECT)
 
+/* Property IDs for CommunityPostItem */
+enum {
+    POST_ITEM_PROP_0,
+    POST_ITEM_PROP_AUTHOR_NAME,
+    POST_ITEM_PROP_AUTHOR_AVATAR,
+    POST_ITEM_N_PROPS
+};
+
+static GParamSpec *post_item_props[POST_ITEM_N_PROPS];
+
+static void
+community_post_item_get_property(GObject *object,
+                                  guint property_id,
+                                  GValue *value,
+                                  GParamSpec *pspec)
+{
+    CommunityPostItem *self = (CommunityPostItem *)object;
+
+    switch (property_id) {
+    case POST_ITEM_PROP_AUTHOR_NAME:
+        g_value_set_string(value, self->author_name);
+        break;
+    case POST_ITEM_PROP_AUTHOR_AVATAR:
+        g_value_set_string(value, self->author_avatar);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
+    }
+}
+
+static void
+community_post_item_set_property(GObject *object,
+                                  guint property_id,
+                                  const GValue *value,
+                                  GParamSpec *pspec)
+{
+    CommunityPostItem *self = (CommunityPostItem *)object;
+
+    switch (property_id) {
+    case POST_ITEM_PROP_AUTHOR_NAME:
+        g_free(self->author_name);
+        self->author_name = g_value_dup_string(value);
+        break;
+    case POST_ITEM_PROP_AUTHOR_AVATAR:
+        g_free(self->author_avatar);
+        self->author_avatar = g_value_dup_string(value);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
+    }
+}
+
 static void
 community_post_item_finalize(GObject *object)
 {
@@ -41,7 +93,23 @@ community_post_item_finalize(GObject *object)
 static void
 community_post_item_class_init(CommunityPostItemClass *klass)
 {
-    G_OBJECT_CLASS(klass)->finalize = community_post_item_finalize;
+    GObjectClass *object_class = G_OBJECT_CLASS(klass);
+
+    object_class->finalize = community_post_item_finalize;
+    object_class->get_property = community_post_item_get_property;
+    object_class->set_property = community_post_item_set_property;
+
+    post_item_props[POST_ITEM_PROP_AUTHOR_NAME] =
+        g_param_spec_string("author-name", NULL, NULL,
+                            NULL,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    post_item_props[POST_ITEM_PROP_AUTHOR_AVATAR] =
+        g_param_spec_string("author-avatar", NULL, NULL,
+                            NULL,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    g_object_class_install_properties(object_class, POST_ITEM_N_PROPS, post_item_props);
 }
 
 static void
@@ -417,10 +485,38 @@ bind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user
     /* Set login state */
     gnostr_note_card_row_set_logged_in(row, self->user_pubkey != NULL);
 
-    /* Connect signals */
-    g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
-    g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_open_thread), self);
-    g_signal_connect(row, "zap-requested", G_CALLBACK(on_note_zap_requested), self);
+    /* Connect signals (store handler IDs for unbind cleanup) */
+    gulong h1 = g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
+    gulong h2 = g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_open_thread), self);
+    gulong h3 = g_signal_connect(row, "zap-requested", G_CALLBACK(on_note_zap_requested), self);
+
+    /* Store handler IDs on the list_item for cleanup in unbind */
+    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", GUINT_TO_POINTER(h1));
+    g_object_set_data(G_OBJECT(list_item), "handler-view-thread", GUINT_TO_POINTER(h2));
+    g_object_set_data(G_OBJECT(list_item), "handler-zap", GUINT_TO_POINTER(h3));
+}
+
+static void
+unbind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
+    if (!row) return;
+
+    /* Disconnect signal handlers */
+    gulong h1 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
+    gulong h2 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-view-thread"));
+    gulong h3 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-zap"));
+
+    if (h1 > 0) g_signal_handler_disconnect(row, h1);
+    if (h2 > 0) g_signal_handler_disconnect(row, h2);
+    if (h3 > 0) g_signal_handler_disconnect(row, h3);
+
+    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", NULL);
+    g_object_set_data(G_OBJECT(list_item), "handler-view-thread", NULL);
+    g_object_set_data(G_OBJECT(list_item), "handler-zap", NULL);
 }
 
 static void
@@ -483,9 +579,16 @@ bind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     /* Set timestamp */
     gnostr_note_card_row_set_timestamp(row, post->created_at, NULL);
 
-    /* Set author info from cache */
-    const char *author_name = g_hash_table_lookup(self->author_profiles, post->author_pubkey);
-    const char *author_avatar = g_hash_table_lookup(self->author_avatars, post->author_pubkey);
+    /* Set author info from item cache first, then hash table fallback */
+    const char *author_name = item->author_name;
+    const char *author_avatar = item->author_avatar;
+
+    if (!author_name) {
+        author_name = g_hash_table_lookup(self->author_profiles, post->author_pubkey);
+    }
+    if (!author_avatar) {
+        author_avatar = g_hash_table_lookup(self->author_avatars, post->author_pubkey);
+    }
 
     if (author_name) {
         gnostr_note_card_row_set_author(row, author_name, NULL, author_avatar);
@@ -503,15 +606,46 @@ bind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
                            g_strdup(post->event_id), g_free);
     g_object_set_data_full(G_OBJECT(btn_approve), "author",
                            g_strdup(post->author_pubkey), g_free);
-    g_signal_connect(btn_approve, "clicked", G_CALLBACK(on_approve_clicked), NULL);
+    gulong h_approve = g_signal_connect(btn_approve, "clicked", G_CALLBACK(on_approve_clicked), NULL);
 
     g_object_set_data(G_OBJECT(btn_reject), "view", self);
     g_object_set_data_full(G_OBJECT(btn_reject), "event_id",
                            g_strdup(post->event_id), g_free);
-    g_signal_connect(btn_reject, "clicked", G_CALLBACK(on_reject_clicked), NULL);
+    gulong h_reject = g_signal_connect(btn_reject, "clicked", G_CALLBACK(on_reject_clicked), NULL);
 
-    /* Connect signals */
-    g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
+    /* Connect signals (store handler IDs for unbind cleanup) */
+    gulong h_profile = g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
+
+    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", GUINT_TO_POINTER(h_profile));
+    g_object_set_data(G_OBJECT(list_item), "handler-approve", GUINT_TO_POINTER(h_approve));
+    g_object_set_data(G_OBJECT(list_item), "handler-reject", GUINT_TO_POINTER(h_reject));
+}
+
+static void
+unbind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GtkWidget *box = gtk_list_item_get_child(list_item);
+    if (!box) return;
+
+    GnostrNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
+    GtkWidget *btn_approve = g_object_get_data(G_OBJECT(box), "btn_approve");
+    GtkWidget *btn_reject = g_object_get_data(G_OBJECT(box), "btn_reject");
+
+    /* Disconnect signal handlers */
+    gulong h_profile = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
+    gulong h_approve = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-approve"));
+    gulong h_reject = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-reject"));
+
+    if (row && h_profile > 0) g_signal_handler_disconnect(row, h_profile);
+    if (btn_approve && h_approve > 0) g_signal_handler_disconnect(btn_approve, h_approve);
+    if (btn_reject && h_reject > 0) g_signal_handler_disconnect(btn_reject, h_reject);
+
+    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", NULL);
+    g_object_set_data(G_OBJECT(list_item), "handler-approve", NULL);
+    g_object_set_data(G_OBJECT(list_item), "handler-reject", NULL);
 }
 
 static void
@@ -653,6 +787,7 @@ build_ui(GnostrCommunityView *self)
     GtkListItemFactory *approved_factory = gtk_signal_list_item_factory_new();
     g_signal_connect(approved_factory, "setup", G_CALLBACK(setup_post_row), self);
     g_signal_connect(approved_factory, "bind", G_CALLBACK(bind_post_row), self);
+    g_signal_connect(approved_factory, "unbind", G_CALLBACK(unbind_post_row), self);
 
     self->approved_list = gtk_list_view_new(GTK_SELECTION_MODEL(approved_selection), approved_factory);
     gtk_widget_add_css_class(self->approved_list, "navigation-sidebar");
@@ -675,6 +810,7 @@ build_ui(GnostrCommunityView *self)
     GtkListItemFactory *pending_factory = gtk_signal_list_item_factory_new();
     g_signal_connect(pending_factory, "setup", G_CALLBACK(setup_pending_row), self);
     g_signal_connect(pending_factory, "bind", G_CALLBACK(bind_pending_row), self);
+    g_signal_connect(pending_factory, "unbind", G_CALLBACK(unbind_pending_row), self);
 
     self->pending_list = gtk_list_view_new(GTK_SELECTION_MODEL(pending_selection), pending_factory);
     gtk_widget_add_css_class(self->pending_list, "navigation-sidebar");
@@ -1144,7 +1280,8 @@ gnostr_community_view_update_author_profile(GnostrCommunityView *self,
         g_hash_table_insert(self->author_avatars, g_strdup(pubkey), g_strdup(avatar_url));
     }
 
-    /* Refresh rows matching this pubkey (more efficient than refreshing all) */
+    /* Refresh rows matching this pubkey by updating item properties.
+     * Using g_object_set() triggers notify signals which cause GTK to rebind rows. */
     GListStore *stores[] = { self->approved_posts, self->pending_posts };
     for (guint s = 0; s < G_N_ELEMENTS(stores); s++) {
         if (!stores[s]) continue;
@@ -1152,10 +1289,12 @@ gnostr_community_view_update_author_profile(GnostrCommunityView *self,
         for (guint i = 0; i < n_items; i++) {
             CommunityPostItem *item = g_list_model_get_item(G_LIST_MODEL(stores[s]), i);
             if (item && item->post && g_strcmp0(item->post->author_pubkey, pubkey) == 0) {
-                g_free(item->author_name);
-                g_free(item->author_avatar);
-                item->author_name = display_name ? g_strdup(display_name) : NULL;
-                item->author_avatar = avatar_url ? g_strdup(avatar_url) : NULL;
+                /* Update properties via g_object_set to emit notify signals */
+                g_object_set(item,
+                             "author-name", display_name,
+                             "author-avatar", avatar_url,
+                             NULL);
+                /* Also emit items-changed to ensure list view rebinds the row */
                 g_list_model_items_changed(G_LIST_MODEL(stores[s]), i, 1, 1);
             }
             g_clear_object(&item);
