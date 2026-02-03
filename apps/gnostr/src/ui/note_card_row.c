@@ -2220,6 +2220,8 @@ static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPictur
 
 void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  /* nostrc-8456: Don't touch labels during/after disposal - causes Pango layout corruption */
+  if (self->disposed) return;
   if (GTK_IS_LABEL(self->lbl_display)) gtk_label_set_text(GTK_LABEL(self->lbl_display), (display_name && *display_name) ? display_name : (handle ? handle : _("Anonymous")));
   if (GTK_IS_LABEL(self->lbl_handle))  gtk_label_set_text(GTK_LABEL(self->lbl_handle), (handle && *handle) ? handle : "@anon");
   g_clear_pointer(&self->avatar_url, g_free);
@@ -2305,6 +2307,7 @@ static gboolean update_timestamp_tick(gpointer user_data) {
 
 void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
+  if (self->disposed) return;  /* nostrc-8456 */
 
   /* Store the created_at timestamp */
   self->created_at = created_at;
@@ -3680,6 +3683,7 @@ static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data
 /* Set NIP-05 and trigger async verification */
 void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, const char *pubkey_hex) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;  /* nostrc-8456 */
 
   /* Clear previous state */
   if (self->nip05_cancellable) {
@@ -3797,6 +3801,7 @@ void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked) 
 /* Set like count and update display (NIP-25 reactions) */
 void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;  /* nostrc-8456 */
 
   self->like_count = count;
 
@@ -3915,6 +3920,7 @@ void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *
 /* Update zap statistics display */
 void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count, gint64 total_msat) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;  /* nostrc-8456 */
 
   self->zap_count = zap_count;
   self->zap_total_msat = total_msat;
@@ -3961,6 +3967,7 @@ void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count
 /* Set the reply count for thread root indicator */
 void gnostr_note_card_row_set_reply_count(GnostrNoteCardRow *self, guint count) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;  /* nostrc-8456 */
 
   self->reply_count = count;
   self->is_thread_root = (count > 0);
@@ -4049,6 +4056,7 @@ void gnostr_note_card_row_set_repost_info(GnostrNoteCardRow *self,
                                            const char *reposter_display_name,
                                            gint64 repost_created_at) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;  /* nostrc-8456 */
 
   g_clear_pointer(&self->reposter_pubkey, g_free);
   g_clear_pointer(&self->reposter_display_name, g_free);
@@ -4118,6 +4126,7 @@ void gnostr_note_card_row_set_is_repost(GnostrNoteCardRow *self, gboolean is_rep
 /* NIP-18: Update the repost count display */
 void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;  /* nostrc-8456 */
 
   self->repost_count = count;
 
