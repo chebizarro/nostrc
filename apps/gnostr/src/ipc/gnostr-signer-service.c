@@ -626,6 +626,9 @@ gnostr_sign_event_finish(GAsyncResult *res,
 
 #define SETTINGS_SCHEMA_CLIENT "org.gnostr.Client"
 
+/* Default NIP-46 relay used as fallback when no relays are saved in settings */
+#define NIP46_DEFAULT_RELAY "wss://relay.nsec.app"
+
 gboolean
 gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
 {
@@ -710,7 +713,7 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
     nostr_nip46_session_set_relays(session, relay_urls, n_relays);
   } else {
     /* Fallback to default relay if none saved */
-    const char *default_relay = "wss://relay.nsec.app";
+    const char *default_relay = NIP46_DEFAULT_RELAY;
     nostr_nip46_session_set_relays(session, &default_relay, 1);
     g_warning("[SIGNER_SERVICE] No relays in settings, using default: %s", default_relay);
   }

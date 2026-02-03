@@ -30,6 +30,10 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-login.ui"
 
+/* Default NIP-46 relay used when generating nostrconnect:// URIs for QR codes.
+ * This is the relay the client will listen on for signer responses. */
+#define NIP46_DEFAULT_RELAY "wss://relay.nsec.app"
+
 /* Settings schema and key names */
 #define SETTINGS_SCHEMA_CLIENT "org.gnostr.Client"
 #define SETTINGS_KEY_CURRENT_NPUB "current-npub"
@@ -875,7 +879,7 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
   /* Build nostrconnect:// URI with relay and metadata
    * Format: nostrconnect://<client-pubkey>?relay=...&secret=...&name=...
    */
-  const char *relay = "wss://relay.nsec.app";
+  const char *relay = NIP46_DEFAULT_RELAY;
 
   /* Create the nostrconnect URI with the computed client pubkey */
   g_free(self->nostrconnect_uri);
@@ -908,7 +912,7 @@ static void on_remote_signer_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Start listening for NIP-46 responses in background (for QR flow)
    * but don't show intrusive "Waiting" status - let the QR speak for itself */
-  const char *relay = "wss://relay.nsec.app";
+  const char *relay = NIP46_DEFAULT_RELAY;
   start_nip46_listener(self, relay);
 
   /* Keep status hidden - user sees the QR and the URI entry field
@@ -962,7 +966,7 @@ static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data) {
   /* Re-generate nostrconnect URI and restart listener */
   generate_nostrconnect_uri(self);
 
-  const char *relay = "wss://relay.nsec.app";
+  const char *relay = NIP46_DEFAULT_RELAY;
   start_nip46_listener(self, relay);
 
   /* Set waiting status */
@@ -1513,7 +1517,21 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
     ctx->signer_pubkey_hex = g_strdup(sender_pubkey);
     ctx->nostrconnect_uri = g_strdup(self->nostrconnect_uri);
     ctx->nostrconnect_secret = g_strdup(self->nostrconnect_secret);
-    ctx->relay_url = g_strdup("wss://relay.nsec.app"); /* Default relay */
+
+    /* Extract relay URL from the nostrconnect URI, fall back to default */
+    ctx->relay_url = NULL;
+    if (self->nostrconnect_uri) {
+      NostrNip46ConnectURI parsed_uri = {0};
+      if (nostr_nip46_uri_parse_connect(self->nostrconnect_uri, &parsed_uri) == 0) {
+        if (parsed_uri.n_relays > 0 && parsed_uri.relays && parsed_uri.relays[0]) {
+          ctx->relay_url = g_strdup(parsed_uri.relays[0]);
+        }
+        nostr_nip46_uri_connect_free(&parsed_uri);
+      }
+    }
+    if (!ctx->relay_url) {
+      ctx->relay_url = g_strdup(NIP46_DEFAULT_RELAY);
+    }
 
     g_idle_add_full(G_PRIORITY_HIGH, on_nip46_connect_success, ctx, NULL);
     return;
