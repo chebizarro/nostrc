@@ -5710,6 +5710,22 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
    * was recycled and the callback should be ignored. */
   self->binding_id = binding_id_counter++;
 
+  /* nostrc-NEW: Clear stale OG preview from previous binding.
+   * prepare_for_unbind sets self->og_preview=NULL but doesn't remove the widget
+   * from container. If the new event has no URL, the old preview stays visible
+   * showing content from a completely different event (e.g., a zip file link
+   * appearing on an unrelated Substack article). */
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->og_preview_container);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->og_preview_container), child);
+      child = next;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+  }
+  self->og_preview = NULL;
+
   /* Create fresh cancellable since the old one was cancelled during unbind.
    * GCancellable cannot be reused after cancellation. */
   if (self->async_cancellable) {
