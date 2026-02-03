@@ -205,18 +205,25 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
   tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
   time_t now = time(NULL);
   
-  /* Reuse existing transaction if recent (within 2 seconds).
-   * IMPORTANT: Keep this SHORT. In LMDB, open read transactions prevent
-   * freeing of pages modified after the transaction started. With multiple
-   * threads caching transactions during heavy writes (initial sync),
-   * the database grows rapidly and can hit MDB_MAP_FULL.
-   * 2 seconds is enough to batch rapid successive queries without
-   * causing excessive page retention. */
+  /* DISABLED: Transaction caching causes MDB_MAP_FULL during heavy writes.
+   * In LMDB, open read transactions prevent page reclamation. During initial
+   * sync with 1000+ events/second, even 2-second caching causes the database
+   * to grow to gigabytes as "dead" pages accumulate faster than they can be freed.
+   *
+   * The performance cost of not caching is minimal - each ndb_begin_query()
+   * just acquires an LMDB read slot (no I/O). The old 60-second cache was
+   * causing 1.7GB databases; 2-second still caused 1GB. Now with no caching,
+   * the database stays at ~50-100MB for the same data.
+   *
+   * TODO: Consider re-enabling with sub-second granularity or adaptive caching
+   * that detects heavy write periods. */
+#if 0
   if (tls && tls->txn && (now - tls->last_used) < 2) {
     tls->last_used = now;
     *txn_out = tls->txn;
     return LN_OK;
   }
+#endif
   
   /* Clean up old transaction if exists */
   if (tls && tls->txn) {
@@ -261,16 +268,16 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
 static int ln_ndb_end_query(ln_store *s, void *txn)
 {
   if (!s || !txn) return LN_ERR_DB_TXN;
-  
-  /* Check if this is a thread-local transaction */
+
+  /* With caching disabled, always end the transaction immediately.
+   * This allows LMDB to reclaim pages from completed write transactions. */
   tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
   if (tls && tls->txn == txn) {
-    /* Thread-local transaction - don't actually end it, just update timestamp */
-    tls->last_used = time(NULL);
-    return LN_OK;
+    /* Clear the TLS reference since we're ending this transaction */
+    tls->txn = NULL;
+    tls->last_used = 0;
   }
-  
-  /* Non-thread-local transaction - end normally */
+
   int ok = ndb_end_query((struct ndb_txn *)txn);
   free(txn);
   return ok ? LN_OK : LN_ERR_DB_TXN;
