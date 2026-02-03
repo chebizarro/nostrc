@@ -7,6 +7,8 @@
 #define G_LOG_DOMAIN "gnostr-repo-browser"
 
 #include "gnostr-repo-browser.h"
+#include "note_card_row.h"
+#include "gnostr-profile-provider.h"
 #include <adwaita.h>
 
 /* Repository data stored in list model */
@@ -120,77 +122,92 @@ on_refresh_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
 static GtkWidget *
 create_repo_row(GnostrRepoBrowser *self, RepoData *data)
 {
-  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-  gtk_widget_set_margin_start(row, 12);
-  gtk_widget_set_margin_end(row, 12);
-  gtk_widget_set_margin_top(row, 10);
-  gtk_widget_set_margin_bottom(row, 10);
+  /* Create note card for consistent display with timeline */
+  GnostrNoteCardRow *card = gnostr_note_card_row_new();
 
-  /* Header: name + clone button */
-  GtkWidget *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  /* Fetch maintainer profile for author display */
+  const char *display_name = NULL;
+  const char *handle = NULL;
+  const char *avatar_url = NULL;
+  GnostrProfileMeta *profile = NULL;
 
-  GtkWidget *name_label = gtk_label_new(data->name ? data->name : data->id);
-  gtk_widget_add_css_class(name_label, "heading");
-  gtk_widget_set_halign(name_label, GTK_ALIGN_START);
-  gtk_widget_set_hexpand(name_label, TRUE);
-  gtk_box_append(GTK_BOX(header), name_label);
-
-  if (data->clone_url)
+  if (data->maintainer_pubkey)
     {
-      GtkWidget *clone_btn = gtk_button_new_from_icon_name("folder-download-symbolic");
-      gtk_widget_set_tooltip_text(clone_btn, "Clone repository");
-      gtk_widget_add_css_class(clone_btn, "flat");
-      g_object_set_data_full(G_OBJECT(clone_btn), "clone-url",
-                             g_strdup(data->clone_url), g_free);
-      g_signal_connect(clone_btn, "clicked", G_CALLBACK(on_clone_clicked), self);
-      gtk_box_append(GTK_BOX(header), clone_btn);
+      profile = gnostr_profile_provider_get(data->maintainer_pubkey);
+      if (profile)
+        {
+          display_name = profile->display_name ? profile->display_name : profile->name;
+          handle = profile->name;
+          avatar_url = profile->picture;
+        }
     }
 
-  if (data->web_url)
-    {
-      GtkWidget *web_btn = gtk_button_new_from_icon_name("web-browser-symbolic");
-      gtk_widget_set_tooltip_text(web_btn, "Open in browser");
-      gtk_widget_add_css_class(web_btn, "flat");
-      gtk_box_append(GTK_BOX(header), web_btn);
-    }
+  /* Set author info (maintainer profile) */
+  gnostr_note_card_row_set_author(card, display_name, handle, avatar_url);
+  gnostr_note_card_row_set_ids(card, data->id, NULL, data->maintainer_pubkey);
+  gnostr_note_card_row_set_timestamp(card, data->updated_at, NULL);
 
-  gtk_box_append(GTK_BOX(row), header);
+  /* Build content: repo name (bold) + description + clone URL */
+  GString *content = g_string_new(NULL);
+
+  /* Repo name as title */
+  const char *repo_name = data->name ? data->name : data->id;
+  g_string_append_printf(content, "📦 %s\n", repo_name);
 
   /* Description */
   if (data->description && *data->description)
-    {
-      GtkWidget *desc = gtk_label_new(data->description);
-      gtk_label_set_wrap(GTK_LABEL(desc), TRUE);
-      gtk_label_set_wrap_mode(GTK_LABEL(desc), PANGO_WRAP_WORD_CHAR);
-      gtk_label_set_max_width_chars(GTK_LABEL(desc), 60);
-      gtk_label_set_xalign(GTK_LABEL(desc), 0);
-      gtk_widget_add_css_class(desc, "dim-label");
-      gtk_box_append(GTK_BOX(row), desc);
-    }
+    g_string_append_printf(content, "\n%s", data->description);
 
   /* Clone URL */
   if (data->clone_url)
+    g_string_append_printf(content, "\n\n🔗 %s", data->clone_url);
+
+  gnostr_note_card_row_set_content(card, content->str);
+  g_string_free(content, TRUE);
+
+  /* Free profile after we're done with it */
+  if (profile)
+    gnostr_profile_meta_free(profile);
+
+  /* Wrap in a container with action buttons */
+  GtkWidget *container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_box_append(GTK_BOX(container), GTK_WIDGET(card));
+
+  /* Action button row for clone/web */
+  if (data->clone_url || data->web_url)
     {
-      GtkWidget *url_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      GtkWidget *action_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+      gtk_widget_set_margin_start(action_row, 60);  /* Align with content after avatar */
+      gtk_widget_set_margin_bottom(action_row, 8);
+      gtk_widget_set_halign(action_row, GTK_ALIGN_START);
 
-      GtkWidget *icon = gtk_image_new_from_icon_name("terminal-symbolic");
-      gtk_widget_add_css_class(icon, "dim-label");
-      gtk_box_append(GTK_BOX(url_box), icon);
+      if (data->clone_url)
+        {
+          GtkWidget *clone_btn = gtk_button_new_from_icon_name("folder-download-symbolic");
+          gtk_button_set_label(GTK_BUTTON(clone_btn), "Clone");
+          gtk_widget_set_tooltip_text(clone_btn, "Clone repository");
+          gtk_widget_add_css_class(clone_btn, "flat");
+          g_object_set_data_full(G_OBJECT(clone_btn), "clone-url",
+                                 g_strdup(data->clone_url), g_free);
+          g_signal_connect(clone_btn, "clicked", G_CALLBACK(on_clone_clicked), self);
+          gtk_box_append(GTK_BOX(action_row), clone_btn);
+        }
 
-      GtkWidget *url_label = gtk_label_new(data->clone_url);
-      gtk_label_set_selectable(GTK_LABEL(url_label), TRUE);
-      gtk_label_set_ellipsize(GTK_LABEL(url_label), PANGO_ELLIPSIZE_MIDDLE);
-      gtk_widget_add_css_class(url_label, "monospace");
-      gtk_widget_add_css_class(url_label, "dim-label");
-      gtk_widget_set_halign(url_label, GTK_ALIGN_START);
-      gtk_box_append(GTK_BOX(url_box), url_label);
+      if (data->web_url)
+        {
+          GtkWidget *web_btn = gtk_button_new_from_icon_name("web-browser-symbolic");
+          gtk_button_set_label(GTK_BUTTON(web_btn), "Open");
+          gtk_widget_set_tooltip_text(web_btn, "Open in browser");
+          gtk_widget_add_css_class(web_btn, "flat");
+          gtk_box_append(GTK_BOX(action_row), web_btn);
+        }
 
-      gtk_box_append(GTK_BOX(row), url_box);
+      gtk_box_append(GTK_BOX(container), action_row);
     }
 
   /* Store ID on the row widget for selection handling */
   GtkWidget *list_row = gtk_list_box_row_new();
-  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(list_row), row);
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(list_row), container);
   g_object_set_data_full(G_OBJECT(list_row), "repo-id",
                          g_strdup(data->id), g_free);
 
@@ -337,7 +354,6 @@ gnostr_repo_browser_init(GnostrRepoBrowser *self)
 
   self->search_entry = gtk_search_entry_new();
   gtk_widget_set_hexpand(self->search_entry, TRUE);
-  gtk_entry_set_placeholder_text(GTK_ENTRY(self->search_entry), "Search repositories...");
   g_signal_connect(self->search_entry, "search-changed", G_CALLBACK(on_search_changed), self);
   gtk_box_append(GTK_BOX(self->header_box), self->search_entry);
 
