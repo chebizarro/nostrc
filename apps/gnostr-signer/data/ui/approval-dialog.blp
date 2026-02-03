@@ -1,0 +1,314 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrApprovalDialog: Adw.Dialog {
+  title: _("Approval Required");
+  content-width: 480;
+  content-height: -1;
+  width-request: 300;
+  can-close: true;
+  follows-content-size: true;
+
+  accessibility {
+    label: "Signature approval dialog";
+    description: "An application is requesting permission to sign an event. Review the details and approve or deny.";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Approval dialog header";
+      }
+
+      title-widget: Box {
+        orientation: horizontal;
+        spacing: 8;
+        halign: center;
+
+        Image header_icon {
+          icon-name: "dialog-question-symbolic";
+          pixel-size: 24;
+
+          accessibility {
+            label: "Question icon";
+            description: "Indicates a signature request requiring your decision";
+          }
+        }
+
+        Label header_title {
+          label: _("Signature Request");
+
+          styles [
+            "heading",
+          ]
+        }
+      };
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vscrollbar-policy: automatic;
+      propagate-natural-height: true;
+      max-content-height: 500;
+
+      Adw.Clamp {
+        maximum-size: 480;
+        tightening-threshold: 360;
+
+        Box {
+          orientation: vertical;
+          spacing: 16;
+          margin-top: 16;
+          margin-bottom: 16;
+          margin-start: 16;
+          margin-end: 16;
+
+          ListBox metadata_list {
+            selection-mode: none;
+
+            styles [
+              "boxed-list",
+            ]
+
+            accessibility {
+              label: "Request details";
+              description: "Information about the signature request including event type, requesting application, identity, and timestamp";
+            }
+
+            Adw.ActionRow row_event_type {
+              title: _("Event Type");
+              subtitle: _("Unknown");
+
+              accessibility {
+                description: "The type of Nostr event being signed";
+              }
+
+              [prefix]
+              Image event_type_icon {
+                icon-name: "mail-unread-symbolic";
+
+                accessibility {
+                  label: "Event type icon";
+                  description: "Decorative icon representing the event type";
+                }
+              }
+            }
+
+            Adw.ActionRow row_app {
+              title: _("From App");
+              subtitle: _("Unknown Application");
+
+              accessibility {
+                description: "The application requesting the signature";
+              }
+
+              [prefix]
+              Image {
+                icon-name: "application-x-executable-symbolic";
+
+                accessibility {
+                  label: "Application icon";
+                  description: "Decorative icon representing the requesting application";
+                }
+              }
+            }
+
+            Adw.ActionRow row_identity {
+              title: _("Identity");
+              subtitle: _("npub...");
+
+              accessibility {
+                description: "The Nostr identity that will be used for signing";
+              }
+
+              [prefix]
+              Image {
+                icon-name: "avatar-default-symbolic";
+
+                accessibility {
+                  label: "Identity icon";
+                  description: "Decorative icon representing user identity";
+                }
+              }
+            }
+
+            Adw.ActionRow row_timestamp {
+              title: _("Timestamp");
+              subtitle: _("Now");
+
+              accessibility {
+                description: "When this signature request was received";
+              }
+
+              [prefix]
+              Image {
+                icon-name: "preferences-system-time-symbolic";
+
+                accessibility {
+                  label: "Time icon";
+                  description: "Decorative icon representing timestamp";
+                }
+              }
+            }
+          }
+
+          Frame content_frame {
+            label: _("Content Preview");
+
+            accessibility {
+              label: "Event content preview";
+              description: "Preview of the event content that will be signed";
+            }
+
+            Box {
+              orientation: vertical;
+              spacing: 8;
+              margin-top: 8;
+              margin-bottom: 8;
+              margin-start: 8;
+              margin-end: 8;
+
+              Label content_preview {
+                wrap: true;
+                wrap-mode: word_char;
+                xalign: 0;
+                max-width-chars: 60;
+                ellipsize: end;
+                lines: 3;
+                selectable: true;
+
+                accessibility {
+                  label: "Event content";
+                  description: "The content of the event to be signed";
+                }
+
+                styles [
+                  "monospace",
+                ]
+              }
+
+              Button btn_expand {
+                label: _("Show More");
+                halign: start;
+                visible: false;
+
+                accessibility {
+                  label: "Show more content";
+                  description: "Click to expand and show the full event content";
+                }
+
+                styles [
+                  "flat",
+                  "link",
+                ]
+              }
+            }
+          }
+
+          Box identity_selector_box {
+            orientation: horizontal;
+            spacing: 12;
+            visible: false;
+
+            accessibility {
+              label: "Identity selector";
+              description: "Select which identity to use for signing when multiple accounts are available";
+            }
+
+            Label {
+              label: _("Sign as:");
+              halign: start;
+            }
+
+            DropDown identity_dropdown {
+              hexpand: true;
+
+              accessibility {
+                label: "Select signing identity";
+                description: "Choose which account to use for this signature";
+              }
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 12;
+
+            accessibility {
+              label: "Remember preference options";
+              description: "Options to remember this decision for future requests";
+            }
+
+            CheckButton chk_remember {
+              label: _("Remember this decision");
+
+              accessibility {
+                label: "Remember this decision";
+                description: "Check to remember your approval or denial for future similar requests";
+              }
+            }
+
+            DropDown ttl_dropdown {
+              sensitive: false;
+              halign: end;
+              hexpand: true;
+
+              accessibility {
+                label: "Duration to remember";
+                description: "Select how long to remember this decision";
+              }
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 12;
+            homogeneous: true;
+            margin-top: 8;
+
+            accessibility {
+              label: "Action buttons";
+              description: "Approve or deny this signature request";
+            }
+
+            Button btn_deny {
+              label: _("_Deny");
+              use-underline: true;
+              hexpand: true;
+              focusable: true;
+              tooltip-text: _("Deny this request (Ctrl+D, Escape)");
+
+              accessibility {
+                label: "Deny signature request";
+                description: "Click to deny this signing request. The application will not receive a signature. Keyboard shortcut: Ctrl+D or Escape.";
+              }
+
+              styles [
+                "destructive-action",
+              ]
+            }
+
+            Button btn_approve {
+              label: _("_Approve");
+              use-underline: true;
+              hexpand: true;
+              focusable: true;
+              receives-default: true;
+              tooltip-text: _("Approve this request (Ctrl+A)");
+
+              accessibility {
+                label: "Approve signature request";
+                description: "Click to approve and sign this event with your private key. Keyboard shortcut: Ctrl+A.";
+              }
+
+              styles [
+                "suggested-action",
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

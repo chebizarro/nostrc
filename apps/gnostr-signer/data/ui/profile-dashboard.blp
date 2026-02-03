@@ -1,0 +1,381 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $ProfileDashboard: Adw.Bin {
+  accessibility {
+    label: "Profile dashboard";
+    description: "Dashboard showing your profile information and quick actions";
+  }
+
+  ScrolledWindow {
+    hscrollbar-policy: never;
+    vexpand: true;
+
+    Adw.Clamp {
+      maximum-size: 600;
+      tightening-threshold: 400;
+      margin-top: 16;
+      margin-bottom: 16;
+      margin-start: 12;
+      margin-end: 12;
+
+      Box {
+        orientation: vertical;
+        spacing: 20;
+        halign: fill;
+        valign: start;
+
+        Box header_box {
+          orientation: vertical;
+          spacing: 12;
+          halign: center;
+
+          styles [
+            "profile-header",
+          ]
+
+          accessibility {
+            label: "Profile header";
+            description: "Your profile avatar, display name, and public key";
+          }
+
+          Adw.Avatar avatar {
+            size: 96;
+            text: "?";
+            show-initials: true;
+            halign: center;
+
+            accessibility {
+              label: "Profile avatar";
+              description: "Your profile picture or initials";
+            }
+          }
+
+          Label lbl_display_name {
+            label: _("Anonymous");
+            halign: center;
+            selectable: false;
+
+            accessibility {
+              label: "Display name";
+              description: "Your profile display name";
+            }
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label lbl_npub {
+            label: "npub1...";
+            halign: center;
+            selectable: true;
+            tooltip-text: _("Click to copy full public key");
+
+            accessibility {
+              label: "Public key";
+              description: "Your Nostr public key in npub format. Select and copy to share.";
+            }
+
+            styles [
+              "dim-label",
+              "monospace",
+            ]
+          }
+        }
+
+        Separator {
+          orientation: horizontal;
+          margin-top: 12;
+          margin-bottom: 12;
+
+          accessibility {
+            label: "Section separator";
+            description: "Decorative separator between profile info and actions";
+          }
+        }
+
+        FlowBox action_grid {
+          selection-mode: none;
+          homogeneous: true;
+          min-children-per-line: 2;
+          max-children-per-line: 3;
+          row-spacing: 12;
+          column-spacing: 12;
+          halign: center;
+          valign: start;
+          activate-on-single-click: true;
+
+          accessibility {
+            label: "Quick actions";
+            description: "Grid of action buttons for common tasks. Use arrow keys to navigate.";
+          }
+
+          FlowBoxChild {
+            focusable: true;
+
+            Button btn_view_events {
+              width-request: 140;
+              height-request: 100;
+              tooltip-text: _("View event signing history");
+
+              accessibility {
+                label: "View Events";
+                description: "View your recent event signing history";
+              }
+
+              styles [
+                "flat",
+                "action-button",
+              ]
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                halign: center;
+                valign: center;
+
+                Image {
+                  icon-name: "document-open-recent-symbolic";
+                  pixel-size: 32;
+
+                  accessibility {
+                    label: "Events icon";
+                    description: "Decorative icon for viewing events";
+                  }
+                }
+
+                Label {
+                  label: _("View Events");
+                  wrap: true;
+                  max-width-chars: 12;
+                  justify: center;
+                }
+              }
+            }
+          }
+
+          FlowBoxChild {
+            focusable: true;
+
+            Button btn_manage_relays {
+              width-request: 140;
+              height-request: 100;
+              tooltip-text: _("Configure relay connections");
+
+              accessibility {
+                label: "Manage Relays";
+                description: "Configure your Nostr relay connections";
+              }
+
+              styles [
+                "flat",
+                "action-button",
+              ]
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                halign: center;
+                valign: center;
+
+                Image {
+                  icon-name: "network-server-symbolic";
+                  pixel-size: 32;
+
+                  accessibility {
+                    label: "Relays icon";
+                    description: "Decorative icon for relay management";
+                  }
+                }
+
+                Label {
+                  label: _("Manage Relays");
+                  wrap: true;
+                  max-width-chars: 12;
+                  justify: center;
+                }
+              }
+            }
+          }
+
+          FlowBoxChild {
+            focusable: true;
+
+            Button btn_backup_keys {
+              width-request: 140;
+              height-request: 100;
+              tooltip-text: _("Export and backup your keys");
+
+              accessibility {
+                label: "Backup Keys";
+                description: "Export and securely backup your private keys";
+              }
+
+              styles [
+                "flat",
+                "action-button",
+              ]
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                halign: center;
+                valign: center;
+
+                Image {
+                  icon-name: "document-save-symbolic";
+                  pixel-size: 32;
+
+                  accessibility {
+                    label: "Backup icon";
+                    description: "Decorative icon for key backup";
+                  }
+                }
+
+                Label {
+                  label: _("Backup Keys");
+                  wrap: true;
+                  max-width-chars: 12;
+                  justify: center;
+                }
+              }
+            }
+          }
+
+          FlowBoxChild {
+            focusable: true;
+
+            Button btn_change_password {
+              width-request: 140;
+              height-request: 100;
+              tooltip-text: _("Update your passphrase");
+
+              accessibility {
+                label: "Change Password";
+                description: "Update your encryption passphrase";
+              }
+
+              styles [
+                "flat",
+                "action-button",
+              ]
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                halign: center;
+                valign: center;
+
+                Image {
+                  icon-name: "dialog-password-symbolic";
+                  pixel-size: 32;
+
+                  accessibility {
+                    label: "Password icon";
+                    description: "Decorative icon for password change";
+                  }
+                }
+
+                Label {
+                  label: _("Change Password");
+                  wrap: true;
+                  max-width-chars: 12;
+                  justify: center;
+                }
+              }
+            }
+          }
+
+          FlowBoxChild {
+            focusable: true;
+
+            Button btn_sign_message {
+              width-request: 140;
+              height-request: 100;
+              tooltip-text: _("Manually sign a message or event");
+
+              accessibility {
+                label: "Sign Message";
+                description: "Manually sign a message or Nostr event";
+              }
+
+              styles [
+                "flat",
+                "action-button",
+              ]
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                halign: center;
+                valign: center;
+
+                Image {
+                  icon-name: "edit-symbolic";
+                  pixel-size: 32;
+
+                  accessibility {
+                    label: "Sign icon";
+                    description: "Decorative icon for message signing";
+                  }
+                }
+
+                Label {
+                  label: _("Sign Message");
+                  wrap: true;
+                  max-width-chars: 12;
+                  justify: center;
+                }
+              }
+            }
+          }
+
+          FlowBoxChild {
+            focusable: true;
+
+            Button btn_delegations {
+              width-request: 140;
+              height-request: 100;
+              tooltip-text: _("Manage signing delegations (NIP-26)");
+
+              accessibility {
+                label: "Delegations";
+                description: "Manage NIP-26 signing delegations allowing other keys to sign on your behalf";
+              }
+
+              styles [
+                "flat",
+                "action-button",
+              ]
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                halign: center;
+                valign: center;
+
+                Image {
+                  icon-name: "emblem-shared-symbolic";
+                  pixel-size: 32;
+
+                  accessibility {
+                    label: "Delegations icon";
+                    description: "Decorative icon for delegation management";
+                  }
+                }
+
+                Label {
+                  label: _("Delegations");
+                  wrap: true;
+                  max-width-chars: 12;
+                  justify: center;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

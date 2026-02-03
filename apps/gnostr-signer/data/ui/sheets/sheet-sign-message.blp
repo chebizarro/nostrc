@@ -1,0 +1,232 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetSignMessage: Adw.Dialog {
+  title: _("Sign Message");
+  content-width: 520;
+  content-height: -1;
+  follows-content-size: true;
+  can-close: true;
+
+  accessibility {
+    label: "Sign message dialog";
+    description: "Sign an arbitrary text message with your Nostr private key";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Sign message header";
+      }
+
+      title-widget: Label {
+        label: _("Sign Message");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("Cancel");
+
+        accessibility {
+          label: "Cancel";
+          description: "Close without signing";
+        }
+      }
+
+      [end]
+      Button btn_sign {
+        label: _("Sign");
+        sensitive: false;
+
+        accessibility {
+          label: "Sign message";
+          description: "Sign the message with your private key";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vexpand: true;
+      propagate-natural-height: true;
+
+      Adw.Clamp {
+        maximum-size: 560;
+        tightening-threshold: 400;
+
+        Box {
+          orientation: vertical;
+          spacing: 0;
+          vexpand: true;
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+            margin-top: 20;
+            margin-bottom: 16;
+            margin-start: 16;
+            margin-end: 16;
+
+            accessibility {
+              label: "Signing profile information";
+            }
+
+            Label {
+              label: _("Signing Profile:");
+              xalign: 0;
+              margin-bottom: 4;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Label lbl_profile {
+              label: "Alice";
+              xalign: 0;
+              selectable: true;
+
+              accessibility {
+                label: "Signing profile name";
+              }
+
+              styles [
+                "title-4",
+              ]
+            }
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+            margin-start: 16;
+            margin-end: 16;
+            margin-bottom: 16;
+            vexpand: true;
+
+            accessibility {
+              label: "Message input section";
+            }
+
+            Label {
+              label: _("Message to Sign:");
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            ScrolledWindow {
+              hscrollbar-policy: never;
+              vexpand: true;
+              min-content-height: 200;
+
+              accessibility {
+                label: "Message text container";
+              }
+
+              styles [
+                "card",
+              ]
+
+              TextView text_message {
+                wrap-mode: word_char;
+                left-margin: 12;
+                right-margin: 12;
+                top-margin: 12;
+                bottom-margin: 12;
+                accepts-tab: false;
+
+                accessibility {
+                  label: "Message to sign";
+                  description: "Enter the text message you want to sign with your Nostr private key";
+                }
+              }
+            }
+          }
+
+          Revealer revealer_result {
+            reveal-child: false;
+            transition-type: slide_down;
+
+            Box {
+              orientation: vertical;
+              spacing: 8;
+              margin-start: 16;
+              margin-end: 16;
+              margin-bottom: 16;
+
+              accessibility {
+                label: "Signature result section";
+              }
+
+              Label {
+                label: _("Signature:");
+                xalign: 0;
+
+                styles [
+                  "dim-label",
+                  "caption",
+                ]
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                styles [
+                  "card",
+                ]
+
+                Label lbl_signature {
+                  label: "Signature will appear here";
+                  selectable: true;
+                  wrap: true;
+                  wrap-mode: char;
+                  xalign: 0;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 12;
+                  margin-bottom: 12;
+                  hexpand: true;
+
+                  accessibility {
+                    label: "Generated signature";
+                  }
+
+                  styles [
+                    "monospace",
+                  ]
+                }
+
+                Button btn_copy_signature {
+                  icon-name: "edit-copy-symbolic";
+                  tooltip-text: _("Copy signature to clipboard");
+                  valign: center;
+                  margin-end: 8;
+
+                  accessibility {
+                    label: "Copy signature";
+                    description: "Copy the signature to clipboard";
+                  }
+
+                  styles [
+                    "flat",
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

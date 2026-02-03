@@ -1,0 +1,128 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetAddApplication: Adw.Dialog {
+  accessibility {
+    label: "Add application dialog";
+    description: "Add a new application for signing by pasting a URI, scanning a QR code, or adding a nsecbunker";
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 12;
+    margin-bottom: 12;
+
+    Label {
+      label: _("Add a new application");
+
+      accessibility {
+        label: "Add application heading";
+      }
+
+      styles [
+        "heading",
+      ]
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 12;
+
+      accessibility {
+        label: "Input methods";
+        description: "Choose how to add the application connection";
+      }
+
+      Button btn_paste {
+        label: _("Paste from _clipboard");
+        use-underline: true;
+        tooltip-text: _("Paste an application URI from the clipboard");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Paste from clipboard";
+          description: "Paste a nostr connect URI from your clipboard. Keyboard shortcut: Alt+C.";
+        }
+      }
+
+      Button btn_scan {
+        label: _("Scan a _QR Code");
+        use-underline: true;
+        tooltip-text: _("Scan an application QR code");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Scan QR code";
+          description: "Use your camera to scan an application QR code. Keyboard shortcut: Alt+Q.";
+        }
+      }
+
+      Button btn_add_bunker {
+        label: _("Add a _nsecbunker");
+        use-underline: true;
+        tooltip-text: _("Add a nsecbunker reference");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Add nsecbunker";
+          description: "Add a remote signer bunker connection. Keyboard shortcut: Alt+N.";
+        }
+      }
+    }
+
+    Frame {
+      label: _("Preview");
+
+      accessibility {
+        label: "Application preview";
+        description: "Preview of the application connection details";
+      }
+
+      Label preview_label {
+        wrap: true;
+        selectable: true;
+
+        accessibility {
+          label: "Application details preview";
+          description: "Shows the parsed application connection information";
+        }
+      }
+    }
+
+    Button btn_approve {
+      label: _("_Approve");
+      use-underline: true;
+      tooltip-text: _("Approve and add this application");
+      valign: center;
+      vexpand: false;
+
+      accessibility {
+        label: "Approve application";
+        description: "Add this application and allow it to request signatures. Keyboard shortcut: Alt+A.";
+      }
+
+      styles [
+        "suggested-action",
+      ]
+    }
+
+    Button btn_cancel {
+      label: _("_Cancel");
+      use-underline: true;
+      tooltip-text: _("Close without changes");
+      valign: center;
+      vexpand: false;
+
+      accessibility {
+        label: "Cancel";
+        description: "Close this dialog without adding the application. Keyboard shortcut: Alt+C or Escape.";
+      }
+    }
+  }
+}

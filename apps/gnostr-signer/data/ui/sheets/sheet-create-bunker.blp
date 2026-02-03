@@ -1,0 +1,110 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetCreateBunker: Adw.Dialog {
+  accessibility {
+    label: "Create nsecbunker dialog";
+    description: "Create a new nsecbunker connection with a name and relay URL";
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 12;
+    margin-bottom: 12;
+
+    Label {
+      label: _("Create nsecbunker");
+
+      accessibility {
+        label: "Create nsecbunker heading";
+      }
+
+      styles [
+        "heading",
+      ]
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Label {
+        label: _("_Name");
+        use-underline: true;
+        xalign: 0;
+        mnemonic-widget: entry_name;
+      }
+
+      Entry entry_name {
+        placeholder-text: _("Bunker name");
+        tooltip-text: _("Enter a display name");
+        valign: center;
+        vexpand: false;
+        hexpand: true;
+
+        accessibility {
+          label: "Bunker name";
+          description: "Enter a friendly name for this bunker connection";
+        }
+      }
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Label {
+        label: _("Relay _URL");
+        use-underline: true;
+        xalign: 0;
+        mnemonic-widget: entry_relay;
+      }
+
+      Entry entry_relay {
+        placeholder-text: _("Relay URL (wss://...)");
+        tooltip-text: _("Enter the bunker relay URL");
+        valign: center;
+        vexpand: false;
+        hexpand: true;
+
+        accessibility {
+          label: "Relay URL";
+          description: "Enter the WebSocket relay URL for this bunker, starting with wss://";
+        }
+      }
+    }
+
+    Button btn_create {
+      label: _("_Create");
+      use-underline: true;
+      tooltip-text: _("Create the bunker");
+      valign: center;
+      vexpand: false;
+
+      accessibility {
+        label: "Create bunker";
+        description: "Create the nsecbunker connection with the specified settings. Keyboard shortcut: Alt+C.";
+      }
+
+      styles [
+        "suggested-action",
+      ]
+    }
+
+    Button btn_cancel {
+      label: _("_Cancel");
+      use-underline: true;
+      tooltip-text: _("Close without changes");
+      valign: center;
+      vexpand: false;
+
+      accessibility {
+        label: "Cancel";
+        description: "Close this dialog without creating a bunker. Keyboard shortcut: Alt+C or Escape.";
+      }
+    }
+  }
+}

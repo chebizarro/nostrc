@@ -1,0 +1,93 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetOrbotSetup: Adw.Dialog {
+  accessibility {
+    label: "Orbot setup dialog";
+    description: "Configure Tor proxy settings for enhanced privacy through Orbot";
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 12;
+    margin-bottom: 12;
+
+    Label {
+      label: _("Connect through Orbot");
+
+      accessibility {
+        label: "Orbot connection heading";
+      }
+
+      styles [
+        "heading",
+      ]
+    }
+
+    Label {
+      wrap: true;
+      label: _("To use Tor, make sure Orbot is running and configured. You can paste your proxy address and port below.");
+
+      accessibility {
+        label: "Setup instructions";
+        description: "Instructions for configuring Tor proxy through Orbot";
+      }
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Label {
+        label: _("Proxy _URL");
+        use-underline: true;
+        xalign: 0;
+        mnemonic-widget: entry_proxy;
+      }
+
+      Entry entry_proxy {
+        placeholder-text: _("socks5h://127.0.0.1:9050");
+        tooltip-text: _("Enter your SOCKS5 proxy address");
+        valign: center;
+        vexpand: false;
+        hexpand: true;
+
+        accessibility {
+          label: "Proxy URL";
+          description: "Enter your SOCKS5 proxy address, typically socks5h://127.0.0.1:9050 for local Tor";
+        }
+      }
+
+      Button btn_save {
+        label: _("_Save");
+        use-underline: true;
+        tooltip-text: _("Save proxy settings");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Save proxy settings";
+          description: "Save the configured proxy URL. Keyboard shortcut: Alt+S.";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    Button btn_cancel {
+      label: _("_Cancel");
+      use-underline: true;
+      tooltip-text: _("Close without changes");
+
+      accessibility {
+        label: "Cancel";
+        description: "Close this dialog without saving changes. Keyboard shortcut: Alt+C or Escape.";
+      }
+    }
+  }
+}

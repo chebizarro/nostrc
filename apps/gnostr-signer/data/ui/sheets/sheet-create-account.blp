@@ -1,0 +1,779 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetCreateAccount: Adw.Dialog {
+  title: _("Create Account");
+  content-width: 500;
+  content-height: -1;
+  follows-content-size: true;
+  can-close: true;
+
+  accessibility {
+    label: "Create account wizard";
+    description: "Step-by-step wizard to create a new Nostr identity";
+  }
+
+  Adw.NavigationView nav_view {
+    accessibility {
+      label: "Account creation steps";
+      description: "Navigate through the steps to create your new Nostr account";
+    }
+
+    Adw.NavigationPage page_display_name {
+      title: _("Your Name");
+      tag: "step-display-name";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 1 of 5");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [end]
+          Button btn_step1_next {
+            label: _("_Next");
+            use-underline: true;
+
+            accessibility {
+              label: "Next step";
+              description: "Continue to the password step. Keyboard shortcut: Alt+N";
+            }
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 24;
+              valign: center;
+              vexpand: true;
+
+              Image {
+                icon-name: "avatar-default-symbolic";
+                pixel-size: 80;
+
+                accessibility {
+                  label: "Profile avatar icon";
+                }
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: _("What should we call you?");
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label {
+                wrap: true;
+                justify: center;
+                label: _("Choose a display name for your Nostr identity. This is optional and can be changed later.");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                Adw.EntryRow entry_display_name {
+                  title: _("Display Name");
+                  input-hints: spellcheck;
+
+                  accessibility {
+                    label: "Display name";
+                    description: "Enter a display name for your Nostr profile. This is optional and can be changed later.";
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Adw.NavigationPage page_password {
+      title: _("Password");
+      tag: "step-password";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 2 of 5");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [start]
+          Button btn_step2_back {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Go back");
+
+            accessibility {
+              label: "Go back";
+              description: "Return to the display name step";
+            }
+          }
+
+          [end]
+          Button btn_step2_next {
+            label: _("_Next");
+            use-underline: true;
+            sensitive: false;
+
+            accessibility {
+              label: "Next step";
+              description: "Continue to the seed phrase step. Keyboard shortcut: Alt+N";
+            }
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 24;
+
+              Image {
+                icon-name: "dialog-password-symbolic";
+                pixel-size: 64;
+                halign: center;
+
+                accessibility {
+                  label: "Password icon";
+                }
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: _("Create a Password");
+                halign: center;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label {
+                wrap: true;
+                justify: center;
+                label: _("This password protects your private key stored on this device. Use at least 8 characters with a mix of letters, numbers, and symbols.");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Password");
+
+                Label {
+                  label: _("Password");
+                  xalign: 0;
+                  margin-start: 4;
+                  margin-top: 8;
+
+                  styles [
+                    "caption",
+                    "dim-label",
+                  ]
+                }
+
+                Box box_password_container {
+                  orientation: vertical;
+                  margin-start: 4;
+                  margin-end: 4;
+                  margin-bottom: 8;
+
+                  accessibility {
+                    label: "Password entry";
+                    description: "Enter a strong password to protect your private key";
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 4;
+                  margin-start: 4;
+                  margin-end: 4;
+                  margin-bottom: 12;
+
+                  LevelBar password_strength {
+                    min-value: 0;
+                    max-value: 1;
+                    value: 0;
+                    mode: continuous;
+
+                    accessibility {
+                      label: "Password strength meter";
+                      description: "Indicates the strength of your password from weak to strong";
+                    }
+                  }
+
+                  Label lbl_password_hint {
+                    label: _("Enter a password");
+                    xalign: 0;
+
+                    styles [
+                      "caption",
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Label {
+                  label: _("Confirm Password");
+                  xalign: 0;
+                  margin-start: 4;
+                  margin-top: 8;
+
+                  styles [
+                    "caption",
+                    "dim-label",
+                  ]
+                }
+
+                Box box_confirm_container {
+                  orientation: vertical;
+                  margin-start: 4;
+                  margin-end: 4;
+                  margin-bottom: 4;
+
+                  accessibility {
+                    label: "Confirm password entry";
+                    description: "Re-enter your password to confirm";
+                  }
+                }
+
+                Label lbl_password_match {
+                  label: _("Passwords match");
+                  visible: false;
+                  xalign: 1;
+                  margin-end: 12;
+
+                  accessibility {
+                    label: "Password match status";
+                  }
+
+                  styles [
+                    "caption",
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Adw.NavigationPage page_seed_phrase {
+      title: _("Seed Phrase");
+      tag: "step-seed-phrase";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 3 of 5");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [start]
+          Button btn_step3_back {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Go back");
+          }
+
+          [end]
+          Button btn_step3_next {
+            label: _("_Next");
+            use-underline: true;
+            sensitive: false;
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+
+              Adw.Banner banner_seed_warning {
+                revealed: false;
+                title: "Seed phrase copied to clipboard";
+              }
+
+              Image {
+                icon-name: "document-edit-symbolic";
+                pixel-size: 64;
+                halign: center;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: _("Your Recovery Phrase");
+                halign: center;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label {
+                wrap: true;
+                justify: center;
+                label: _("Write down these words in order and keep them safe. This is the ONLY way to recover your identity if you lose access to this device.");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Frame {
+                margin-top: 8;
+
+                Box {
+                  orientation: vertical;
+                  spacing: 8;
+                  margin-top: 16;
+                  margin-bottom: 16;
+                  margin-start: 16;
+                  margin-end: 16;
+
+                  Label lbl_seed_phrase {
+                    label: "Loading...";
+                    wrap: true;
+                    selectable: true;
+                    xalign: 0;
+
+                    styles [
+                      "monospace",
+                    ]
+                  }
+                }
+              }
+
+              Button btn_copy_seed {
+                label: _("Copy to Clipboard");
+                halign: center;
+
+                Image {
+                  icon-name: "edit-copy-symbolic";
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                halign: center;
+
+                Image {
+                  icon-name: "dialog-warning-symbolic";
+
+                  styles [
+                    "warning",
+                  ]
+                }
+
+                Label {
+                  wrap: true;
+                  label: _("Never share these words with anyone!");
+
+                  styles [
+                    "warning",
+                  ]
+                }
+              }
+
+              CheckButton chk_seed_saved {
+                label: _("I have written down my recovery phrase and stored it safely");
+                margin-top: 16;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Adw.NavigationPage page_verify {
+      title: _("Verify");
+      tag: "step-verify";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 4 of 5");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [start]
+          Button btn_step4_back {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Go back");
+          }
+
+          [end]
+          Button btn_step4_next {
+            label: _("_Verify");
+            use-underline: true;
+            sensitive: false;
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 24;
+
+              Adw.Banner banner_verify_error {
+                revealed: false;
+                title: "Words don't match";
+
+                styles [
+                  "error",
+                ]
+              }
+
+              Image {
+                icon-name: "emblem-ok-symbolic";
+                pixel-size: 64;
+                halign: center;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: _("Verify Your Phrase");
+                halign: center;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label lbl_verify_instruction {
+                wrap: true;
+                justify: center;
+                label: _("Enter the following words from your recovery phrase to confirm you saved it correctly.");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+                  margin-bottom: 8;
+
+                  Label lbl_word1_position {
+                    label: "Word #1";
+                    width-chars: 10;
+                    xalign: 0;
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Adw.EntryRow entry_verify_word1 {
+                    title: _("Enter word");
+                    hexpand: true;
+                  }
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+                  margin-bottom: 8;
+
+                  Label lbl_word2_position {
+                    label: "Word #2";
+                    width-chars: 10;
+                    xalign: 0;
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Adw.EntryRow entry_verify_word2 {
+                    title: _("Enter word");
+                    hexpand: true;
+                  }
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+
+                  Label lbl_word3_position {
+                    label: "Word #3";
+                    width-chars: 10;
+                    xalign: 0;
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Adw.EntryRow entry_verify_word3 {
+                    title: _("Enter word");
+                    hexpand: true;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Adw.NavigationPage page_success {
+      title: _("Success");
+      tag: "step-success";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 5 of 5");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [end]
+          Button btn_finish {
+            label: _("_Done");
+            use-underline: true;
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 24;
+              valign: center;
+              vexpand: true;
+
+              Image {
+                icon-name: "emblem-ok-symbolic";
+                pixel-size: 80;
+
+                styles [
+                  "success",
+                ]
+              }
+
+              Label {
+                label: _("Account Created!");
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                halign: center;
+
+                Adw.Avatar avatar_success {
+                  size: 64;
+                  text: "User";
+                }
+
+                Label lbl_display_name_result {
+                  label: "Anonymous";
+
+                  styles [
+                    "title-3",
+                  ]
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Your Public Key");
+                description: _("Share this with others to let them find you on Nostr");
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+                  margin-top: 8;
+                  margin-bottom: 8;
+                  margin-start: 8;
+                  margin-end: 8;
+
+                  Label lbl_npub {
+                    label: "npub1...";
+                    hexpand: true;
+                    xalign: 0;
+                    selectable: true;
+                    ellipsize: middle;
+
+                    styles [
+                      "monospace",
+                    ]
+                  }
+
+                  Button btn_copy_npub {
+                    icon-name: "edit-copy-symbolic";
+                    tooltip-text: _("Copy to clipboard");
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+                }
+              }
+
+              Label {
+                wrap: true;
+                justify: center;
+                label: _("Your private key is securely stored on this device. Remember to keep your recovery phrase safe!");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  Box box_status {
+    visible: false;
+    orientation: horizontal;
+    spacing: 8;
+    halign: center;
+    valign: end;
+    margin-bottom: 16;
+
+    Spinner spinner_status {
+      spinning: false;
+    }
+
+    Label lbl_status {
+      label: "Status...";
+
+      styles [
+        "dim-label",
+      ]
+    }
+  }
+}

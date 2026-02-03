@@ -1,0 +1,139 @@
+/* gn-secure-entry.blp - Secure password entry widget template
+   SPDX-License-Identifier: GPL-3.0-or-later */
+using Gtk 4.0;
+
+template $GnSecureEntry: Widget {
+  Box box_main {
+    orientation: vertical;
+    spacing: 4;
+
+    Box {
+      orientation: horizontal;
+      spacing: 0;
+
+      styles [
+        "linked",
+      ]
+
+      Entry entry_password {
+        hexpand: true;
+        visibility: false;
+        input-purpose: password;
+        enable-emoji-completion: false;
+
+        accessibility {
+          label: _("Password");
+          description: _("Enter your password. Characters are hidden for security.");
+        }
+
+        styles [
+          "gn-secure-entry-field",
+        ]
+      }
+
+      Button btn_toggle_visibility {
+        tooltip-text: _("Show password");
+        valign: center;
+
+        accessibility {
+          label: _("Toggle password visibility");
+          description: _("Press to show or hide the password text");
+        }
+
+        styles [
+          "flat",
+        ]
+
+        Image img_visibility {
+          icon-name: "view-reveal-symbolic";
+        }
+      }
+    }
+
+    Box box_indicators {
+      orientation: vertical;
+      spacing: 4;
+      margin-start: 4;
+      margin-end: 4;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        LevelBar level_strength {
+          min-value: 0;
+          max-value: 5;
+          value: 0;
+          hexpand: true;
+          valign: center;
+          visible: false;
+
+          accessibility {
+            label: _("Password strength meter");
+            description: _("Indicates the strength of your password from weak to very strong");
+          }
+        }
+
+        Label lbl_strength {
+          label: _("Weak");
+          width-chars: 12;
+          xalign: 1;
+          visible: false;
+
+          styles [
+            "caption",
+          ]
+        }
+      }
+
+      Label lbl_length_indicator {
+        xalign: 0;
+        visible: false;
+
+        styles [
+          "caption",
+        ]
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 4;
+
+        Image {
+          icon-name: "dialog-warning-symbolic";
+          pixel-size: 16;
+
+          styles [
+            "warning",
+          ]
+        }
+
+        Label lbl_caps_warning {
+          label: _("Caps Lock is on");
+          xalign: 0;
+          visible: false;
+
+          accessibility {
+            label: _("Warning: Caps Lock is enabled");
+          }
+
+          styles [
+            "caption",
+            "warning",
+          ]
+        }
+      }
+
+      Label lbl_requirements {
+        wrap: true;
+        xalign: 0;
+        visible: false;
+
+        styles [
+          "caption",
+          "dim-label",
+        ]
+      }
+    }
+  }
+}

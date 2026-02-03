@@ -1,0 +1,163 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnLockScreen: Box {
+  orientation: vertical;
+  spacing: 0;
+  vexpand: true;
+  hexpand: true;
+
+  accessibility {
+    label: "Lock screen";
+    description: "The session is locked. Enter your password to unlock and access your keys.";
+  }
+
+  ScrolledWindow {
+    hscrollbar-policy: never;
+    vexpand: true;
+    propagate-natural-height: true;
+
+    Adw.Clamp {
+      maximum-size: 400;
+      tightening-threshold: 320;
+      margin-top: 32;
+      margin-bottom: 32;
+      margin-start: 16;
+      margin-end: 16;
+
+      Box {
+        orientation: vertical;
+        spacing: 24;
+        valign: center;
+        vexpand: true;
+
+        Box {
+          orientation: vertical;
+          spacing: 16;
+          halign: center;
+
+          Image icon_lock {
+            icon-name: "system-lock-screen-symbolic";
+            pixel-size: 64;
+
+            accessibility {
+              label: "Lock icon";
+              description: "Indicates the session is currently locked";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label lbl_title {
+            label: _("Session Locked");
+
+            accessibility {
+              description: "Title indicating the current lock state";
+            }
+
+            styles [
+              "title-1",
+            ]
+          }
+
+          Label lbl_subtitle {
+            label: _("Enter your password to unlock");
+            wrap: true;
+
+            accessibility {
+              description: "Instructions for unlocking the session";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 12;
+          hexpand: true;
+
+          Adw.PasswordEntryRow entry_password {
+            title: _("Password");
+
+            accessibility {
+              label: "Password entry";
+              description: "Enter your unlock password here";
+            }
+
+            styles [
+              "boxed-list",
+            ]
+          }
+
+          Label lbl_error {
+            visible: false;
+            wrap: true;
+            max-width-chars: 40;
+
+            accessibility {
+              label: "Error message";
+              description: "Displays error messages when unlock fails";
+            }
+
+            styles [
+              "error",
+            ]
+          }
+        }
+
+        Button btn_unlock {
+          label: _("_Unlock");
+          use-underline: true;
+          halign: center;
+          width-request: 200;
+          focusable: true;
+
+          accessibility {
+            label: "Unlock session";
+            description: "Click to unlock the session with the entered password. Press Enter or Alt+U.";
+          }
+
+          styles [
+            "suggested-action",
+            "pill",
+          ]
+        }
+
+        Box box_session_info {
+          orientation: vertical;
+          spacing: 4;
+          halign: center;
+          visible: false;
+
+          accessibility {
+            label: "Session information";
+            description: "Additional information about the locked session";
+          }
+
+          Label lbl_lock_reason {
+            label: _("Locked due to inactivity");
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+
+          Label lbl_locked_at {
+            label: _("Locked at 12:00");
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        }
+      }
+    }
+  }
+}

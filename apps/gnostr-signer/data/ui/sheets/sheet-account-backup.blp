@@ -1,0 +1,194 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetAccountBackup: Adw.Dialog {
+  title: _("Key Backup");
+  can-close: true;
+
+  accessibility {
+    label: "Key backup dialog";
+    description: "Backup your private key using various methods including seed words, copying, QR code, or encrypted backup";
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 12;
+    margin-bottom: 12;
+
+    Label {
+      label: _("Key Backup and Safety Tips");
+
+      accessibility {
+        label: "Key backup and safety tips heading";
+      }
+
+      styles [
+        "heading",
+      ]
+    }
+
+    Label {
+      wrap: true;
+      label: _("- Never share your nsec\n- Developers will never ask for it\n- Keep a secure offline backup");
+
+      accessibility {
+        label: "Safety tips";
+        description: "Important safety reminders: Never share your nsec, developers will never ask for it, keep a secure offline backup";
+      }
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      accessibility {
+        label: "Backup options";
+        description: "Choose how to view or export your private key";
+      }
+
+      Button btn_show_seed {
+        label: _("Show _seed words");
+        use-underline: true;
+        tooltip-text: _("Reveal mnemonic words");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Show seed words";
+          description: "Display your recovery seed phrase. Keyboard shortcut: Alt+S.";
+        }
+      }
+
+      Button btn_copy_secret {
+        label: _("_Copy my secret key");
+        use-underline: true;
+        tooltip-text: _("Copy nsec to clipboard");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Copy secret key";
+          description: "Copy your nsec private key to clipboard. Keyboard shortcut: Alt+C.";
+        }
+      }
+
+      Button btn_show_qr {
+        label: _("Show _QR Code");
+        use-underline: true;
+        tooltip-text: _("Display QR code for scanning");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Show QR code";
+          description: "Display a QR code of your private key for scanning. Keyboard shortcut: Alt+Q.";
+        }
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Create encrypted key (NIP-49)");
+
+      accessibility {
+        label: "Create encrypted backup";
+        description: "Create an encrypted backup of your key using NIP-49 format";
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 6;
+
+        Label {
+          label: _("_Password");
+          use-underline: true;
+          xalign: 0;
+          mnemonic-widget: entry_password;
+        }
+
+        PasswordEntry entry_password {
+          placeholder-text: _("Password");
+          tooltip-text: _("Enter a password for encryption");
+          valign: center;
+          vexpand: false;
+
+          accessibility {
+            label: "Encryption password";
+            description: "Enter a strong password to encrypt your backup";
+          }
+        }
+
+        Button btn_create_ncrypt {
+          label: _("_Create");
+          use-underline: true;
+          tooltip-text: _("Create an encrypted key");
+          valign: center;
+          vexpand: false;
+
+          accessibility {
+            label: "Create encrypted backup";
+            description: "Generate an encrypted backup string. Keyboard shortcut: Alt+C.";
+          }
+        }
+      }
+    }
+
+    Box box_result {
+      visible: false;
+      orientation: vertical;
+      spacing: 6;
+
+      accessibility {
+        label: "Backup result";
+        description: "Display area showing the generated backup data";
+      }
+
+      styles [
+        "card",
+      ]
+
+      Label lbl_result {
+        wrap: true;
+        selectable: true;
+        xalign: 0;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 12;
+        margin-bottom: 6;
+
+        accessibility {
+          label: "Backup result text";
+          description: "Your backup data. Select and copy or use the copy button.";
+        }
+      }
+
+      Button btn_copy_result {
+        label: _("_Copy to Clipboard");
+        use-underline: true;
+        halign: end;
+        margin-end: 12;
+        margin-bottom: 12;
+
+        accessibility {
+          label: "Copy result to clipboard";
+          description: "Copy the displayed backup data to your clipboard";
+        }
+      }
+    }
+
+    Button btn_back {
+      label: _("_Back to Settings");
+      use-underline: true;
+      tooltip-text: _("Close and return to Settings");
+      valign: center;
+      vexpand: false;
+
+      accessibility {
+        label: "Back to settings";
+        description: "Close this dialog and return to settings. Keyboard shortcut: Alt+B.";
+      }
+    }
+  }
+}
