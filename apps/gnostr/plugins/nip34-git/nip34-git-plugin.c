@@ -55,11 +55,12 @@ struct _Nip34GitPlugin
 /* Repository metadata */
 typedef struct {
   gchar *id;                    /* Event ID */
+  gchar *pubkey;                /* Event author pubkey (primary maintainer) */
   gchar *d_tag;                 /* Unique identifier (d tag) */
   gchar *name;                  /* Repository name */
   gchar *description;           /* Repository description */
   gchar *clone_url;             /* Git clone URL */
-  gchar **maintainers;          /* Array of maintainer pubkeys */
+  gchar **maintainers;          /* Array of additional maintainer pubkeys (p tags) */
   gchar **relays;               /* Preferred relays for this repo */
   gchar *web_url;               /* Optional web interface URL */
   gint64 created_at;            /* Creation timestamp */
@@ -87,6 +88,7 @@ repo_info_free(gpointer data)
   if (!info) return;
 
   g_free(info->id);
+  g_free(info->pubkey);
   g_free(info->d_tag);
   g_free(info->name);
   g_free(info->description);
@@ -157,6 +159,10 @@ parse_repository_event(const gchar *event_json)
   /* Get event ID */
   if (json_object_has_member(event, "id"))
     info->id = g_strdup(json_object_get_string_member(event, "id"));
+
+  /* Get event author pubkey (NIP-34: event author is the primary maintainer) */
+  if (json_object_has_member(event, "pubkey"))
+    info->pubkey = g_strdup(json_object_get_string_member(event, "pubkey"));
 
   /* Get created_at timestamp */
   if (json_object_has_member(event, "created_at"))
@@ -282,9 +288,9 @@ push_repo_to_browser(Nip34GitPlugin *self, RepoInfo *info)
   if (!self->context || !info)
     return;
 
-  /* Get first maintainer pubkey if available */
+  /* Get maintainer pubkey: prefer explicit maintainers tag, fall back to event author */
   const char *maintainer = (info->maintainers && info->maintainers[0])
-                             ? info->maintainers[0] : NULL;
+                             ? info->maintainers[0] : info->pubkey;
 
   gnostr_plugin_context_add_repository(self->context,
                                        info->d_tag,

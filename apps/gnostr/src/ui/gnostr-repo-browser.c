@@ -133,13 +133,25 @@ create_repo_row(GnostrRepoBrowser *self, RepoData *data)
 
   if (data->maintainer_pubkey)
     {
+      g_debug("[repo-browser] Looking up profile for maintainer: %s", data->maintainer_pubkey);
       profile = gnostr_profile_provider_get(data->maintainer_pubkey);
       if (profile)
         {
           display_name = profile->display_name ? profile->display_name : profile->name;
           handle = profile->name;
           avatar_url = profile->picture;
+          g_debug("[repo-browser] Found profile: name=%s, picture=%s",
+                  display_name ? display_name : "(null)",
+                  avatar_url ? avatar_url : "(null)");
         }
+      else
+        {
+          g_debug("[repo-browser] No profile found for pubkey %s", data->maintainer_pubkey);
+        }
+    }
+  else
+    {
+      g_debug("[repo-browser] No maintainer_pubkey for repo %s", data->id);
     }
 
   /* Set author info (maintainer profile) */
