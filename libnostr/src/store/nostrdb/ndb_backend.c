@@ -190,12 +190,14 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
     }
 
     free(txn);
+    fprintf(stderr, "[ndb] begin_query failed attempt %d/5\n", attempt + 1);
 
     if (attempt < 4) {
       usleep(5000);  /* 5ms between retries */
     }
   }
 
+  fprintf(stderr, "[ndb] begin_query FAILED after 5 attempts - reader slots exhausted?\n");
   return LN_ERR_DB_TXN;
 }
 

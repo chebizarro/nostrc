@@ -89,9 +89,15 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
   if (self->cached_event_id != NULL) return TRUE;  /* Already loaded */
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return FALSE;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("[ITEM] ensure_note_loaded: begin_query failed for key %lu", (unsigned long)self->note_key);
+    return FALSE;
+  }
 
   storage_ndb_note *note = storage_ndb_get_note_ptr(txn, self->note_key);
+  if (!note) {
+    g_warning("[ITEM] ensure_note_loaded: note not found in DB for key %lu", (unsigned long)self->note_key);
+  }
   if (note) {
     /* Cache event ID */
     const unsigned char *id = storage_ndb_note_id(note);
