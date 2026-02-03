@@ -73,6 +73,8 @@ g-ir-cpp-*.c
 # Ignore CLion files (if used)
 .idea/
 cmake-build-*/
+cmake-build/
+**/cmake-build/
 
 # Ignore Visual Studio build artifacts (if using MSVC)
 *.VC.db
