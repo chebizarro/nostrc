@@ -287,9 +287,8 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
   }
 
-  /* Set login state for auth-required buttons */
-  extern gboolean is_user_logged_in(void);
-  gnostr_note_card_row_set_logged_in(GNOSTR_NOTE_CARD_ROW(row), is_user_logged_in());
+  /* Note: Login state should be set by the view's custom bind callback
+   * since is_user_logged_in() is defined locally in each view file. */
 
   /* Cleanup */
   g_free(id_hex);

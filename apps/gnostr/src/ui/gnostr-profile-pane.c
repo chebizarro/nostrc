@@ -3,6 +3,7 @@
 #include "gnostr-status-dialog.h"
 #include "gnostr-image-viewer.h"
 #include "note_card_row.h"
+#include "note-card-factory.h"
 #include "gnostr-highlight-card.h"
 #include "../model/gn-follow-list-model.h"
 #include <glib.h>
@@ -632,51 +633,33 @@ static void on_load_more_clicked(GtkButton *btn, gpointer user_data) {
   load_posts(self);
 }
 
-/* Post row factory setup */
-static void posts_factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
-  (void)f; (void)data;
-  GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
-  gtk_list_item_set_child(item, row);
-}
-
-/* Post row factory bind */
-static void posts_factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
-  (void)f; (void)data;
-  GObject *obj = gtk_list_item_get_item(item);
-  if (!obj) return;
+/* nostrc-o7pp: Custom bind callback for profile posts using NoteCardFactory.
+ * This callback is called by NoteCardFactory after prepare_for_bind. */
+static void posts_bind_callback(GnostrNoteCardRow *row, GObject *obj, gpointer user_data) {
+  (void)user_data;
 
   ProfilePostItem *post = (ProfilePostItem*)obj;
-  GtkWidget *row = gtk_list_item_get_child(item);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(row)) return;
 
   /* Set author info from stored profile data */
-  gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+  gnostr_note_card_row_set_author(row,
                                    post->display_name,
                                    post->handle,
                                    post->avatar_url);
 
   /* Set timestamp */
-  gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), post->created_at, NULL);
+  gnostr_note_card_row_set_timestamp(row, post->created_at, NULL);
 
   /* Set content */
-  gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), post->content);
+  gnostr_note_card_row_set_content(row, post->content);
 
   /* Set IDs */
-  gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), post->id_hex, NULL, post->pubkey_hex);
+  gnostr_note_card_row_set_ids(row, post->id_hex, NULL, post->pubkey_hex);
 
   /* Set depth to 0 (top-level posts) */
-  gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), 0);
+  gnostr_note_card_row_set_depth(row, 0);
 
   /* Set login state for authentication-required buttons */
-  gnostr_note_card_row_set_logged_in(GNOSTR_NOTE_CARD_ROW(row), is_user_logged_in());
-
-  gtk_widget_set_visible(row, TRUE);
-}
-
-/* Post row factory unbind */
-static void posts_factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
-  (void)f; (void)item; (void)data;
-  /* No special cleanup needed */
+  gnostr_note_card_row_set_logged_in(row, is_user_logged_in());
 }
 
 /* Handle post activation (click) */
@@ -993,16 +976,17 @@ static void setup_posts_list(GnostrProfilePane *self) {
     self->posts_selection = GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(self->posts_model)));
   }
 
-  /* Create factory */
-  GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
-  g_signal_connect(factory, "setup", G_CALLBACK(posts_factory_setup_cb), NULL);
-  g_signal_connect(factory, "bind", G_CALLBACK(posts_factory_bind_cb), NULL);
-  g_signal_connect(factory, "unbind", G_CALLBACK(posts_factory_unbind_cb), NULL);
+  /* nostrc-o7pp: Use unified NoteCardFactory for proper lifecycle management.
+   * This ensures prepare_for_bind and prepare_for_unbind are called correctly. */
+  NoteCardFactory *note_factory = note_card_factory_new(NOTE_CARD_BIND_BASIC, NOTE_CARD_SIGNAL_NONE);
+  note_card_factory_set_bind_callback(note_factory, posts_bind_callback, NULL);
+  GtkListItemFactory *factory = note_card_factory_get_gtk_factory(note_factory);
 
   /* Set up list view */
   gtk_list_view_set_model(GTK_LIST_VIEW(self->posts_list), self->posts_selection);
   gtk_list_view_set_factory(GTK_LIST_VIEW(self->posts_list), factory);
-  g_object_unref(factory);
+  /* Note: Factory is owned by NoteCardFactory, don't unref separately.
+   * TODO: Store note_factory reference for proper cleanup in dispose. */
 
   /* Connect activation signal */
   g_signal_connect(self->posts_list, "activate", G_CALLBACK(on_posts_list_activate), self);
