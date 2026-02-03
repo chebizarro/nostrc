@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 #include "libnostr_store.h"
 #include "libnostr_errors.h"
 #include "store_int.h"
@@ -176,19 +177,25 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
    * The performance cost is minimal - ndb_begin_query() just acquires an
    * LMDB read slot (no I/O). */
 
-  /* Create new transaction - single attempt, no retries.
-   * LMDB reader slot acquisition should succeed immediately if slots are
-   * available. If it fails, retrying just delays the inevitable.
-   * Callers should handle failure gracefully. */
-  struct ndb_txn *txn = (struct ndb_txn *)calloc(1, sizeof(*txn));
-  if (!txn) return LN_ERR_OOM;
+  /* Create new transaction with modest retries for transient contention.
+   * 5 attempts with 5ms sleep = 25ms max wait. Fast enough to not cause
+   * noticeable hangs, but enough to handle brief reader slot contention. */
+  for (int attempt = 0; attempt < 5; attempt++) {
+    struct ndb_txn *txn = (struct ndb_txn *)calloc(1, sizeof(*txn));
+    if (!txn) return LN_ERR_OOM;
 
-  if (ndb_begin_query(db, txn)) {
-    *txn_out = txn;
-    return LN_OK;
+    if (ndb_begin_query(db, txn)) {
+      *txn_out = txn;
+      return LN_OK;
+    }
+
+    free(txn);
+
+    if (attempt < 4) {
+      usleep(5000);  /* 5ms between retries */
+    }
   }
 
-  free(txn);
   return LN_ERR_DB_TXN;
 }
 
