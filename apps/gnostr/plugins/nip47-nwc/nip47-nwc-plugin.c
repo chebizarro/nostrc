@@ -13,6 +13,7 @@
 #include <nostr/nip47/nwc.h>
 #include <nostr/nip04.h>
 #include <nostr-event.h>
+#include <nostr-tag.h>
 #include <json.h>
 #include <string.h>
 #include <time.h>
@@ -158,7 +159,7 @@ static gboolean nwc_request_timeout_cb(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-/* Build and sign a NWC request event */
+/* Build and sign a NWC request event using proper NostrEvent API */
 static gchar *build_nwc_request_json(Nip47NwcPlugin *self,
                                      const gchar *method,
                                      const gchar *params_json,
@@ -201,70 +202,56 @@ static gchar *build_nwc_request_json(Nip47NwcPlugin *self,
     return NULL;
   }
 
-  /* Build the unsigned event JSON */
-  gint64 created_at = (gint64)time(NULL);
-
-  /* We need to compute the event ID before signing, so build the canonical form */
-  GString *event_json = g_string_new("{");
-  g_string_append_printf(event_json, "\"kind\":%d,", NWC_KIND_REQUEST);
-  g_string_append_printf(event_json, "\"created_at\":%" G_GINT64_FORMAT ",", created_at);
-  g_string_append_printf(event_json, "\"pubkey\":\"%s\",", self->client_pubkey_hex);
-  g_string_append(event_json, "\"tags\":[[\"p\",\"");
-  g_string_append(event_json, self->wallet_pubkey_hex);
-  g_string_append(event_json, "\"]],\"content\":\"");
-
-  /* Escape the encrypted content for JSON */
-  for (const char *p = encrypted_content; *p; p++) {
-    switch (*p) {
-      case '"': g_string_append(event_json, "\\\""); break;
-      case '\\': g_string_append(event_json, "\\\\"); break;
-      case '\n': g_string_append(event_json, "\\n"); break;
-      case '\r': g_string_append(event_json, "\\r"); break;
-      case '\t': g_string_append(event_json, "\\t"); break;
-      default: g_string_append_c(event_json, *p); break;
-    }
+  /* Create NostrEvent using proper API */
+  NostrEvent *event = nostr_event_new();
+  if (!event) {
+    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
+                "Failed to create event");
+    free(encrypted_content);
+    return NULL;
   }
-  g_string_append(event_json, "\"}");
 
+  /* Set event fields */
+  nostr_event_set_kind(event, NWC_KIND_REQUEST);
+  nostr_event_set_created_at(event, (int64_t)time(NULL));
+  nostr_event_set_pubkey(event, self->client_pubkey_hex);
+  nostr_event_set_content(event, encrypted_content);
   free(encrypted_content);
 
-  /* Compute event ID and sign */
-  extern char *nostr_event_compute_id(const char *json);
-  extern char *nostr_sign_id(const char *id_hex, const char *sk_hex);
+  /* Create "p" tag for wallet pubkey */
+  NostrTag *p_tag = nostr_tag_new("p", self->wallet_pubkey_hex, NULL);
+  NostrTags *tags = nostr_tags_new(1, p_tag);
+  nostr_event_set_tags(event, tags);
 
-  char *event_id = nostr_event_compute_id(event_json->str);
-  if (!event_id) {
+  /* Sign the event */
+  int sign_result = nostr_event_sign(event, self->secret_hex);
+  if (sign_result != 0) {
     g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "Failed to compute event ID");
-    g_string_free(event_json, TRUE);
+                "Failed to sign event (code %d)", sign_result);
+    nostr_event_free(event);
     return NULL;
   }
 
-  char *sig = nostr_sign_id(event_id, self->secret_hex);
-  if (!sig) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "Failed to sign event");
-    free(event_id);
-    g_string_free(event_json, TRUE);
-    return NULL;
-  }
-
-  /* Build final signed event JSON */
-  GString *signed_json = g_string_new("{");
-  g_string_append_printf(signed_json, "\"id\":\"%s\",", event_id);
-  /* Insert the rest of the event JSON (skip the opening brace) */
-  g_string_append_len(signed_json, event_json->str + 1, event_json->len - 2);
-  g_string_append_printf(signed_json, ",\"sig\":\"%s\"}", sig);
-
+  /* Get event ID for tracking */
   if (out_event_id) {
-    *out_event_id = g_strdup(event_id);
+    const char *id = nostr_event_get_id(event);
+    *out_event_id = id ? g_strdup(id) : NULL;
   }
 
-  free(event_id);
-  free(sig);
-  g_string_free(event_json, TRUE);
+  /* Serialize to JSON */
+  char *json = nostr_event_serialize(event);
+  nostr_event_free(event);
 
-  return g_string_free(signed_json, FALSE);
+  if (!json) {
+    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
+                "Failed to serialize event");
+    return NULL;
+  }
+
+  /* Transfer ownership to GLib */
+  gchar *result = g_strdup(json);
+  free(json);
+  return result;
 }
 
 /* Parse and decrypt a NWC response */
