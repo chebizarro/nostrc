@@ -547,17 +547,51 @@ void gnostr_drafts_delete_async(GnostrDrafts *self,
   }
 }
 
-/* ---- Load from relays (stub) ---- */
+/* ---- Load from relays with strategy ---- */
 
-void gnostr_drafts_load_from_relays_async(GnostrDrafts *self,
-                                           GnostrDraftsLoadCallback callback,
-                                           gpointer user_data) {
+void gnostr_drafts_load_with_strategy_async(GnostrDrafts *self,
+                                             GnostrDraftsMergeStrategy strategy,
+                                             GnostrDraftsLoadCallback callback,
+                                             gpointer user_data) {
   g_return_if_fail(GNOSTR_IS_DRAFTS(self));
 
-  /* Relay fetch requires nostrc-n44s (NIP-44 signer integration) */
+  g_message("drafts: load with strategy %d", strategy);
+
+  /* Strategy-specific behavior */
+  switch (strategy) {
+  case GNOSTR_DRAFTS_MERGE_LOCAL_WINS:
+    /* Only load from local storage, skip relay fetch */
+    g_message("drafts: LOCAL_WINS - loading local only");
+    break;
+
+  case GNOSTR_DRAFTS_MERGE_REMOTE_WINS:
+    /* When relay fetch is implemented, would clear local first */
+    g_message("drafts: REMOTE_WINS - relay fetch not yet implemented, using local");
+    break;
+
+  case GNOSTR_DRAFTS_MERGE_UNION:
+    /* When relay fetch is implemented, would merge local + remote */
+    g_message("drafts: UNION - relay fetch not yet implemented, using local");
+    break;
+
+  case GNOSTR_DRAFTS_MERGE_LATEST:
+  default:
+    /* When relay fetch is implemented, would keep newest per d-tag */
+    g_message("drafts: LATEST - relay fetch not yet implemented, using local");
+    break;
+  }
+
+  /* For now, all strategies fall back to local loading.
+   * Relay fetch requires nostrc-n44s (NIP-44 signer integration). */
   GPtrArray *drafts = gnostr_drafts_load_local(self);
 
   if (callback) {
     callback(self, drafts, NULL, user_data);
   }
+}
+
+void gnostr_drafts_load_from_relays_async(GnostrDrafts *self,
+                                           GnostrDraftsLoadCallback callback,
+                                           gpointer user_data) {
+  gnostr_drafts_load_with_strategy_async(self, GNOSTR_DRAFTS_MERGE_LATEST, callback, user_data);
 }

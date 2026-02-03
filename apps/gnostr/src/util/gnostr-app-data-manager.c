@@ -694,17 +694,115 @@ void gnostr_app_data_manager_sync_mutes_async(GnostrAppDataManager *self,
     );
 }
 
+/* Helper: convert app-data merge strategy to bookmarks merge strategy */
+static GnostrBookmarksMergeStrategy
+app_strategy_to_bookmarks_strategy(GnostrAppDataMergeStrategy strategy) {
+    switch (strategy) {
+    case GNOSTR_APP_DATA_MERGE_LOCAL_WINS:
+        return GNOSTR_BOOKMARKS_MERGE_LOCAL_WINS;
+    case GNOSTR_APP_DATA_MERGE_UNION:
+        return GNOSTR_BOOKMARKS_MERGE_UNION;
+    case GNOSTR_APP_DATA_MERGE_LATEST:
+        return GNOSTR_BOOKMARKS_MERGE_LATEST;
+    case GNOSTR_APP_DATA_MERGE_REMOTE_WINS:
+    default:
+        return GNOSTR_BOOKMARKS_MERGE_REMOTE_WINS;
+    }
+}
+
+/* Helper: convert app-data merge strategy to drafts merge strategy */
+static GnostrDraftsMergeStrategy
+app_strategy_to_drafts_strategy(GnostrAppDataMergeStrategy strategy) {
+    switch (strategy) {
+    case GNOSTR_APP_DATA_MERGE_LOCAL_WINS:
+        return GNOSTR_DRAFTS_MERGE_LOCAL_WINS;
+    case GNOSTR_APP_DATA_MERGE_UNION:
+        return GNOSTR_DRAFTS_MERGE_UNION;
+    case GNOSTR_APP_DATA_MERGE_LATEST:
+        return GNOSTR_DRAFTS_MERGE_LATEST;
+    case GNOSTR_APP_DATA_MERGE_REMOTE_WINS:
+    default:
+        return GNOSTR_DRAFTS_MERGE_REMOTE_WINS;
+    }
+}
+
+/* Context for bookmarks sync callback */
+typedef struct {
+    GnostrAppDataManager *manager;
+    GnostrAppDataManagerCallback callback;
+    gpointer user_data;
+} BookmarksSyncContext;
+
+static void on_bookmarks_sync_done(GnostrBookmarks *bookmarks,
+                                    gboolean success,
+                                    gpointer user_data) {
+    (void)bookmarks;
+    BookmarksSyncContext *ctx = (BookmarksSyncContext *)user_data;
+    if (!ctx) return;
+
+    if (ctx->callback) {
+        ctx->callback(ctx->manager, success,
+                      success ? NULL : "Bookmarks sync failed",
+                      ctx->user_data);
+    }
+
+    g_free(ctx);
+}
+
 void gnostr_app_data_manager_sync_bookmarks_async(GnostrAppDataManager *self,
                                                    GnostrAppDataMergeStrategy strategy,
                                                    GnostrAppDataManagerCallback callback,
                                                    gpointer user_data) {
     g_return_if_fail(GNOSTR_IS_APP_DATA_MANAGER(self));
-    (void)strategy;
 
-    /* Delegate to bookmarks module which handles NIP-51 kind 10003 */
-    g_message("app-data-manager: bookmarks sync via NIP-51 bookmark list");
+    if (!self->user_pubkey || !*self->user_pubkey) {
+        g_warning("app-data-manager: cannot sync bookmarks - user pubkey not set");
+        if (callback) callback(self, FALSE, "User pubkey not set", user_data);
+        return;
+    }
 
-    if (callback) callback(self, TRUE, NULL, user_data);
+    g_message("app-data-manager: bookmarks sync via NIP-51 (strategy=%d)", strategy);
+
+    BookmarksSyncContext *ctx = g_new0(BookmarksSyncContext, 1);
+    ctx->manager = self;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    gnostr_bookmarks_fetch_with_strategy_async(
+        gnostr_bookmarks_get_default(),
+        self->user_pubkey,
+        NULL,  /* use default relays */
+        app_strategy_to_bookmarks_strategy(strategy),
+        on_bookmarks_sync_done,
+        ctx
+    );
+}
+
+/* Context for drafts sync callback */
+typedef struct {
+    GnostrAppDataManager *manager;
+    GnostrAppDataManagerCallback callback;
+    gpointer user_data;
+} DraftsSyncContext;
+
+static void on_drafts_sync_done(GnostrDrafts *drafts,
+                                 GPtrArray *draft_list,
+                                 GError *error,
+                                 gpointer user_data) {
+    (void)drafts;
+    DraftsSyncContext *ctx = (DraftsSyncContext *)user_data;
+    if (!ctx) return;
+
+    gboolean success = (error == NULL);
+
+    if (ctx->callback) {
+        ctx->callback(ctx->manager, success,
+                      error ? error->message : NULL,
+                      ctx->user_data);
+    }
+
+    if (draft_list) g_ptr_array_unref(draft_list);
+    g_free(ctx);
 }
 
 void gnostr_app_data_manager_sync_drafts_async(GnostrAppDataManager *self,
@@ -712,12 +810,30 @@ void gnostr_app_data_manager_sync_drafts_async(GnostrAppDataManager *self,
                                                 GnostrAppDataManagerCallback callback,
                                                 gpointer user_data) {
     g_return_if_fail(GNOSTR_IS_APP_DATA_MANAGER(self));
-    (void)strategy;
 
-    /* Delegate to drafts module which handles NIP-37 kind 31234 */
-    g_message("app-data-manager: drafts sync via NIP-37");
+    if (!self->user_pubkey || !*self->user_pubkey) {
+        g_warning("app-data-manager: cannot sync drafts - user pubkey not set");
+        if (callback) callback(self, FALSE, "User pubkey not set", user_data);
+        return;
+    }
 
-    if (callback) callback(self, TRUE, NULL, user_data);
+    g_message("app-data-manager: drafts sync via NIP-37 (strategy=%d)", strategy);
+
+    /* Set user pubkey on drafts manager */
+    GnostrDrafts *drafts = gnostr_drafts_get_default();
+    gnostr_drafts_set_user_pubkey(drafts, self->user_pubkey);
+
+    DraftsSyncContext *ctx = g_new0(DraftsSyncContext, 1);
+    ctx->manager = self;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    gnostr_drafts_load_with_strategy_async(
+        drafts,
+        app_strategy_to_drafts_strategy(strategy),
+        on_drafts_sync_done,
+        ctx
+    );
 }
 
 /* ---- Custom App Data ---- */

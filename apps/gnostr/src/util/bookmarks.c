@@ -203,6 +203,7 @@ typedef struct {
     GnostrBookmarksFetchCallback callback;
     gpointer user_data;
     char *pubkey_hex;
+    GnostrBookmarksMergeStrategy strategy;
 } FetchContext;
 
 static void fetch_context_free(FetchContext *ctx) {
@@ -362,10 +363,39 @@ static void decrypt_private_entries_async(GnostrBookmarks *self,
         ctx);
 }
 
-/* Internal: merge remote bookmarks into local, preferring most recent */
-static void bookmarks_merge_from_json_unlocked(GnostrBookmarks *self,
-                                                const char *event_json,
-                                                gint64 *out_created_at) {
+/* Internal helper: load bookmarks from event tags into hash table (does not clear first) */
+static void load_bookmarks_from_event_unlocked(GnostrBookmarks *self, NostrEvent *event) {
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+    if (!tags) return;
+
+    size_t tag_count = nostr_tags_size(tags);
+    for (size_t idx = 0; idx < tag_count; idx++) {
+        NostrTag *tag = nostr_tags_get(tags, idx);
+        if (!tag || nostr_tag_size(tag) < 2) continue;
+
+        const char *tag_name = nostr_tag_get_key(tag);
+        const char *value = nostr_tag_get_value(tag);
+        if (!tag_name || !value) continue;
+
+        if (strcmp(tag_name, "e") == 0 || strcmp(tag_name, "a") == 0) {
+            const char *relay_hint = NULL;
+            if (nostr_tag_size(tag) >= 3) {
+                relay_hint = nostr_tag_get(tag, 2);
+            }
+            /* Only insert if not already present (for UNION strategy) */
+            if (!g_hash_table_contains(self->bookmarks, value)) {
+                BookmarkEntry *entry = bookmark_entry_new(value, relay_hint, FALSE);
+                g_hash_table_insert(self->bookmarks, entry->event_id, entry);
+            }
+        }
+    }
+}
+
+/* Internal: merge remote bookmarks into local with strategy */
+static void bookmarks_merge_from_json_with_strategy_unlocked(GnostrBookmarks *self,
+                                                               const char *event_json,
+                                                               GnostrBookmarksMergeStrategy strategy,
+                                                               gint64 *out_created_at) {
     if (!self || !event_json) return;
 
     /* Parse event using NostrEvent API */
@@ -385,42 +415,62 @@ static void bookmarks_merge_from_json_unlocked(GnostrBookmarks *self,
     gint64 event_time = nostr_event_get_created_at(event);
     if (out_created_at) *out_created_at = event_time;
 
-    /* Parse tags and merge - remote event replaces local if newer */
-    if (event_time > self->last_event_time) {
-        /* Clear existing and load from remote (remote is newer) */
+    switch (strategy) {
+    case GNOSTR_BOOKMARKS_MERGE_LOCAL_WINS:
+        /* Keep local data, only update timestamp if remote is newer */
+        if (event_time > self->last_event_time) {
+            self->last_event_time = event_time;
+        }
+        g_debug("bookmarks: LOCAL_WINS - keeping local data");
+        break;
+
+    case GNOSTR_BOOKMARKS_MERGE_REMOTE_WINS:
+        /* Clear local and load from remote unconditionally */
         g_hash_table_remove_all(self->bookmarks);
         self->last_event_time = event_time;
-
-        NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
-        if (tags) {
-            size_t tag_count = nostr_tags_size(tags);
-            for (size_t idx = 0; idx < tag_count; idx++) {
-                NostrTag *tag = nostr_tags_get(tags, idx);
-                if (!tag || nostr_tag_size(tag) < 2) continue;
-
-                const char *tag_name = nostr_tag_get_key(tag);
-                const char *value = nostr_tag_get_value(tag);
-                if (!tag_name || !value) continue;
-
-                if (strcmp(tag_name, "e") == 0 || strcmp(tag_name, "a") == 0) {
-                    const char *relay_hint = NULL;
-                    if (nostr_tag_size(tag) >= 3) {
-                        relay_hint = nostr_tag_get(tag, 2);
-                    }
-                    BookmarkEntry *entry = bookmark_entry_new(value, relay_hint, FALSE);
-                    g_hash_table_insert(self->bookmarks, entry->event_id, entry);
-                }
-            }
-        }
-        self->dirty = FALSE; /* Synced with remote */
-        g_message("bookmarks: merged %u bookmarks from remote (remote newer)",
+        load_bookmarks_from_event_unlocked(self, event);
+        self->dirty = FALSE;
+        g_message("bookmarks: REMOTE_WINS - replaced with %u remote bookmarks",
                   g_hash_table_size(self->bookmarks));
-    } else {
-        /* Local is newer or same, keep local but mark as needing publish */
-        g_debug("bookmarks: local data is newer, keeping local");
+        break;
+
+    case GNOSTR_BOOKMARKS_MERGE_UNION:
+        /* Add remote bookmarks to local without removing existing */
+        load_bookmarks_from_event_unlocked(self, event);
+        if (event_time > self->last_event_time) {
+            self->last_event_time = event_time;
+        }
+        self->dirty = TRUE; /* Need to publish merged list */
+        g_message("bookmarks: UNION - now have %u bookmarks",
+                  g_hash_table_size(self->bookmarks));
+        break;
+
+    case GNOSTR_BOOKMARKS_MERGE_LATEST:
+    default:
+        /* Original behavior: prefer most recent by timestamp */
+        if (event_time > self->last_event_time) {
+            g_hash_table_remove_all(self->bookmarks);
+            self->last_event_time = event_time;
+            load_bookmarks_from_event_unlocked(self, event);
+            self->dirty = FALSE;
+            g_message("bookmarks: LATEST - loaded %u bookmarks (remote newer)",
+                      g_hash_table_size(self->bookmarks));
+        } else {
+            g_debug("bookmarks: LATEST - keeping local (local newer or same)");
+        }
+        break;
     }
 
     nostr_event_free(event);
+}
+
+/* Internal: merge remote bookmarks into local, preferring most recent (legacy) */
+static void bookmarks_merge_from_json_unlocked(GnostrBookmarks *self,
+                                                const char *event_json,
+                                                gint64 *out_created_at) {
+    bookmarks_merge_from_json_with_strategy_unlocked(self, event_json,
+                                                      GNOSTR_BOOKMARKS_MERGE_LATEST,
+                                                      out_created_at);
 }
 
 /* Callback when relay query completes */
@@ -478,11 +528,12 @@ static void on_bookmarks_query_done(GObject *source, GAsyncResult *res, gpointer
             nostr_event_free(event);
         }
 
-        /* Load the newest event */
+        /* Load the newest event with strategy */
         if (newest_event_json) {
             g_mutex_lock(&ctx->bookmarks->lock);
             gint64 created_at = 0;
-            bookmarks_merge_from_json_unlocked(ctx->bookmarks, newest_event_json, &created_at);
+            bookmarks_merge_from_json_with_strategy_unlocked(ctx->bookmarks, newest_event_json,
+                                                              ctx->strategy, &created_at);
             g_mutex_unlock(&ctx->bookmarks->lock);
             success = TRUE;
 
@@ -509,13 +560,21 @@ static void on_bookmarks_query_done(GObject *source, GAsyncResult *res, gpointer
 /* Singleton pool for bookmark queries */
 static GnostrSimplePool *s_bookmarks_pool = NULL;
 
-void gnostr_bookmarks_fetch_async(GnostrBookmarks *self,
-                                   const char *pubkey_hex,
-                                   const char * const *relays,
-                                   GnostrBookmarksFetchCallback callback,
-                                   gpointer user_data) {
+void gnostr_bookmarks_fetch_with_strategy_async(GnostrBookmarks *self,
+                                                 const char *pubkey_hex,
+                                                 const char * const *relays,
+                                                 GnostrBookmarksMergeStrategy strategy,
+                                                 GnostrBookmarksFetchCallback callback,
+                                                 gpointer user_data) {
     if (!self || !pubkey_hex) {
         if (callback) callback(self, FALSE, user_data);
+        return;
+    }
+
+    /* LOCAL_WINS: Skip fetch entirely, just return success */
+    if (strategy == GNOSTR_BOOKMARKS_MERGE_LOCAL_WINS) {
+        g_message("bookmarks: LOCAL_WINS strategy - skipping remote fetch");
+        if (callback) callback(self, TRUE, user_data);
         return;
     }
 
@@ -530,6 +589,7 @@ void gnostr_bookmarks_fetch_async(GnostrBookmarks *self,
     ctx->callback = callback;
     ctx->user_data = user_data;
     ctx->pubkey_hex = g_strdup(pubkey_hex);
+    ctx->strategy = strategy;
 
     /* Build filter for kind 10003 */
     NostrFilter *filter = nostr_filter_new();
@@ -585,14 +645,26 @@ void gnostr_bookmarks_fetch_async(GnostrBookmarks *self,
     nostr_filter_free(filter);
 }
 
-#else /* GNOSTR_BOOKMARKS_TEST_ONLY */
-
 void gnostr_bookmarks_fetch_async(GnostrBookmarks *self,
                                    const char *pubkey_hex,
                                    const char * const *relays,
                                    GnostrBookmarksFetchCallback callback,
                                    gpointer user_data) {
+    gnostr_bookmarks_fetch_with_strategy_async(self, pubkey_hex, relays,
+                                                GNOSTR_BOOKMARKS_MERGE_LATEST,
+                                                callback, user_data);
+}
+
+#else /* GNOSTR_BOOKMARKS_TEST_ONLY */
+
+void gnostr_bookmarks_fetch_with_strategy_async(GnostrBookmarks *self,
+                                                 const char *pubkey_hex,
+                                                 const char * const *relays,
+                                                 GnostrBookmarksMergeStrategy strategy,
+                                                 GnostrBookmarksFetchCallback callback,
+                                                 gpointer user_data) {
     (void)relays;
+    (void)strategy;
     if (!self || !pubkey_hex) {
         if (callback) callback(self, FALSE, user_data);
         return;
@@ -601,8 +673,18 @@ void gnostr_bookmarks_fetch_async(GnostrBookmarks *self,
     g_free(self->user_pubkey);
     self->user_pubkey = g_strdup(pubkey_hex);
     g_mutex_unlock(&self->lock);
-    g_message("bookmarks: fetch requested (test stub)");
+    g_message("bookmarks: fetch with strategy requested (test stub)");
     if (callback) callback(self, TRUE, user_data);
+}
+
+void gnostr_bookmarks_fetch_async(GnostrBookmarks *self,
+                                   const char *pubkey_hex,
+                                   const char * const *relays,
+                                   GnostrBookmarksFetchCallback callback,
+                                   gpointer user_data) {
+    gnostr_bookmarks_fetch_with_strategy_async(self, pubkey_hex, relays,
+                                                GNOSTR_BOOKMARKS_MERGE_LATEST,
+                                                callback, user_data);
 }
 
 #endif /* GNOSTR_BOOKMARKS_TEST_ONLY */

@@ -34,6 +34,20 @@ G_DECLARE_FINAL_TYPE(GnostrDrafts, gnostr_drafts, GNOSTR, DRAFTS, GObject)
 #define GNOSTR_DRAFT_DEFAULT_EXPIRATION_SECS (90 * 24 * 60 * 60)
 
 /**
+ * GnostrDraftsMergeStrategy:
+ * @GNOSTR_DRAFTS_MERGE_REMOTE_WINS: Remote data replaces local
+ * @GNOSTR_DRAFTS_MERGE_LOCAL_WINS: Local data is kept (skip remote if local exists)
+ * @GNOSTR_DRAFTS_MERGE_UNION: Merge lists (union of drafts by d-tag)
+ * @GNOSTR_DRAFTS_MERGE_LATEST: Keep data with newest timestamp per d-tag
+ */
+typedef enum {
+    GNOSTR_DRAFTS_MERGE_REMOTE_WINS,
+    GNOSTR_DRAFTS_MERGE_LOCAL_WINS,
+    GNOSTR_DRAFTS_MERGE_UNION,
+    GNOSTR_DRAFTS_MERGE_LATEST
+} GnostrDraftsMergeStrategy;
+
+/**
  * A single draft entry
  */
 typedef struct _GnostrDraft {
@@ -128,10 +142,25 @@ GPtrArray *gnostr_drafts_load_local(GnostrDrafts *self);
  * @user_data: User data for callback
  *
  * Fetches drafts from relays (kind 31234 events for current user).
+ * Uses LATEST merge strategy by default.
  */
 void gnostr_drafts_load_from_relays_async(GnostrDrafts *self,
                                            GnostrDraftsLoadCallback callback,
                                            gpointer user_data);
+
+/**
+ * gnostr_drafts_load_with_strategy_async:
+ * @self: The drafts manager
+ * @strategy: Merge strategy to use
+ * @callback: Callback when load completes
+ * @user_data: User data for callback
+ *
+ * Fetches drafts from relays with the specified merge strategy.
+ */
+void gnostr_drafts_load_with_strategy_async(GnostrDrafts *self,
+                                             GnostrDraftsMergeStrategy strategy,
+                                             GnostrDraftsLoadCallback callback,
+                                             gpointer user_data);
 
 /**
  * gnostr_drafts_delete_async:

@@ -61,6 +61,20 @@ gboolean gnostr_bookmarks_load_from_json(GnostrBookmarks *self,
                                           const char *event_json);
 
 /**
+ * GnostrBookmarksMergeStrategy:
+ * @GNOSTR_BOOKMARKS_MERGE_REMOTE_WINS: Remote data replaces local
+ * @GNOSTR_BOOKMARKS_MERGE_LOCAL_WINS: Local data is kept (skip remote if local exists)
+ * @GNOSTR_BOOKMARKS_MERGE_UNION: Merge lists (union of bookmarks)
+ * @GNOSTR_BOOKMARKS_MERGE_LATEST: Keep data with newest timestamp
+ */
+typedef enum {
+    GNOSTR_BOOKMARKS_MERGE_REMOTE_WINS,
+    GNOSTR_BOOKMARKS_MERGE_LOCAL_WINS,
+    GNOSTR_BOOKMARKS_MERGE_UNION,
+    GNOSTR_BOOKMARKS_MERGE_LATEST
+} GnostrBookmarksMergeStrategy;
+
+/**
  * gnostr_bookmarks_fetch_async:
  * @self: bookmark list instance
  * @pubkey_hex: user's public key (64 hex chars)
@@ -83,6 +97,25 @@ void gnostr_bookmarks_fetch_async(GnostrBookmarks *self,
                                    const char * const *relays,
                                    GnostrBookmarksFetchCallback callback,
                                    gpointer user_data);
+
+/**
+ * gnostr_bookmarks_fetch_with_strategy_async:
+ * @self: bookmark list instance
+ * @pubkey_hex: user's public key (64 hex chars)
+ * @relays: (nullable): NULL-terminated array of relay URLs, or NULL to use configured relays
+ * @strategy: merge strategy to use
+ * @callback: callback when fetch completes
+ * @user_data: user data for callback
+ *
+ * Fetches the user's bookmark list from relays asynchronously with
+ * the specified merge strategy.
+ */
+void gnostr_bookmarks_fetch_with_strategy_async(GnostrBookmarks *self,
+                                                 const char *pubkey_hex,
+                                                 const char * const *relays,
+                                                 GnostrBookmarksMergeStrategy strategy,
+                                                 GnostrBookmarksFetchCallback callback,
+                                                 gpointer user_data);
 
 /* ---- Query Functions ---- */
 
