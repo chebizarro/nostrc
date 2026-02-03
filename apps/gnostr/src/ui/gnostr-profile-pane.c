@@ -2998,6 +2998,18 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
 
     NostrEvent *evt = nostr_event_new();
     if (evt && nostr_event_deserialize(evt, event_json) == 0) {
+      /* nostrc-mawu: Validate pubkey matches current_pubkey to prevent race condition
+       * where stale fetch callback updates UI with wrong profile */
+      const char *event_pubkey = nostr_event_get_pubkey(evt);
+      if (!event_pubkey || !self->current_pubkey ||
+          strcmp(event_pubkey, self->current_pubkey) != 0) {
+        g_debug("profile_pane: skipping profile event with mismatched pubkey %.8s (wanted %.8s)",
+                event_pubkey ? event_pubkey : "(null)",
+                self->current_pubkey ? self->current_pubkey : "(null)");
+        nostr_event_free(evt);
+        continue;
+      }
+
       gint64 created_at = (gint64)nostr_event_get_created_at(evt);
       if (created_at > best_created_at) {
         best_created_at = created_at;
