@@ -106,11 +106,6 @@ struct _GnNostrEventModel {
 
   /* Deferred enforce_window to avoid nested items_changed signals */
   guint enforce_window_idle_id;
-
-  /* nostrc-slot: Batch mode for subscription callbacks.
-   * When in_batch > 0, signal emission is deferred to prevent reader slot
-   * exhaustion during batch processing. Each nested batch increments this. */
-  guint in_batch;
 };
 
 typedef struct {
@@ -750,29 +745,6 @@ static void schedule_deferred_flush(GnNostrEventModel *self) {
   self->debounce_source_id = g_timeout_add(DEBOUNCE_INTERVAL_MS, flush_deferred_notes_cb, self);
 }
 
-/* nostrc-slot: Begin batch mode to defer signal emission.
- * During batch processing (subscription callbacks), we defer all signal emission
- * to prevent cascading transactions that exhaust LMDB reader slots.
- * Each subscription callback opens one transaction. Without batching, each
- * items_changed signal triggers get_item -> ensure_note_loaded -> new transaction.
- * With 50+ items per batch, this quickly exhausts the 126 reader slot limit. */
-static void begin_batch(GnNostrEventModel *self) {
-  self->in_batch++;
-}
-
-/* nostrc-slot: End batch mode and schedule deferred flush.
- * The deferred flush will emit a single combined items_changed signal
- * after the batch transaction is closed. */
-static void end_batch(GnNostrEventModel *self) {
-  if (self->in_batch > 0) {
-    self->in_batch--;
-  }
-  if (self->in_batch == 0 && self->deferred_notes && self->deferred_notes->len > 0) {
-    /* Schedule flush after batch transaction is closed */
-    schedule_deferred_flush(self);
-  }
-}
-
 /* nostrc-yi2: Defer note insertion (when user is not at top) */
 static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at) {
   /* Check if already in main notes array - prevents duplicates */
@@ -831,15 +803,11 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
     }
   }
 
-  /* nostrc-slot: Defer insertion during batch processing to prevent reader slot
-   * exhaustion. During subscription batch callbacks, each items_changed signal
-   * triggers cascading transactions (get_item -> ensure_note_loaded -> new txn).
-   * By deferring all insertions and emitting one combined signal after the batch
-   * transaction closes, we avoid exhausting LMDB's 126 reader slot limit.
-   *
-   * nostrc-yi2: Also defer if user is scrolled down (calm timeline feature).
+  /* nostrc-yi2: Calm timeline - defer insertion if user is scrolled down reading
+   * This prevents jarring auto-scroll and visual churn while the user is reading.
+   * Notes are queued and a "N new notes" indicator is shown instead.
    * Skip deferral for thread views (they need immediate updates). */
-  if (!self->is_thread_view && (self->in_batch > 0 || !self->user_at_top)) {
+  if (!self->is_thread_view && !self->user_at_top) {
     defer_note_insertion(self, note_key, created_at);
     return;
   }
@@ -1204,14 +1172,8 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
-  /* nostrc-slot: Enter batch mode to defer signal emission */
-  begin_batch(self);
-
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
-    end_batch(self);
-    return;
-  }
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
 
   for (guint i = 0; i < n_keys; i++) {
     uint64_t note_key = note_keys[i];
@@ -1239,7 +1201,6 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
   }
 
   storage_ndb_end_query(txn);
-  end_batch(self);
 }
 
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
@@ -1247,14 +1208,9 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
-  /* nostrc-slot: Enter batch mode to defer signal emission.
-   * This prevents reader slot exhaustion during batch processing. */
-  begin_batch(self);
-
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("[TIMELINE] failed to begin query");
-    end_batch(self);
     return;
   }
 
@@ -1320,11 +1276,6 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   }
 
   storage_ndb_end_query(txn);
-
-  /* nostrc-slot: End batch mode and schedule deferred flush.
-   * Deferred notes will be flushed with a single combined signal
-   * after this function returns. */
-  end_batch(self);
 
   /* Enforce window size */
   enforce_window(self);
