@@ -386,6 +386,38 @@ static int test_connection_count(void) {
     return 1;
 }
 
+/* === Test: Signature Validation Config === */
+
+static int test_signature_validation_config(void) {
+    /* Test that validate_signatures config option is properly handled */
+    NostrMockRelayServerConfig cfg = nostr_mock_server_config_default();
+
+    /* Default should be false */
+    if (cfg.validate_signatures != false) return 0;
+
+    /* Enable validation */
+    cfg.validate_signatures = true;
+
+    NostrMockRelayServer *server = nostr_mock_server_new(&cfg);
+    if (!server) return 0;
+
+    /* Server should start successfully with validation enabled */
+    if (nostr_mock_server_start(server) != 0) {
+        nostr_mock_server_free(server);
+        return 0;
+    }
+
+    /* Server should be running */
+    uint16_t port = nostr_mock_server_get_port(server);
+    if (port == 0) {
+        nostr_mock_server_free(server);
+        return 0;
+    }
+
+    nostr_mock_server_free(server);
+    return 1;
+}
+
 /* === Main === */
 
 int main(void) {
@@ -401,6 +433,7 @@ int main(void) {
     TEST(test_multiple_servers);
     TEST(test_specific_port);
     TEST(test_connection_count);
+    TEST(test_signature_validation_config);
 
     printf("\n=== Results: %d/%d tests passed ===\n", tests_passed, tests_run);
 

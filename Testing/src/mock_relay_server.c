@@ -853,15 +853,30 @@ static void handle_event_envelope(NostrMockRelayServer *server, MockConnection *
     const char *event_id = json_string_value(json_object_get(event, "id"));
     if (!event_id) event_id = "unknown";
 
-    /* Optional: validate signature (nostrc-5iuk) */
+    /* Serialize event to JSON string */
+    char *event_str = json_dumps(event, JSON_COMPACT);
+
+    /* Validate signature if configured */
     bool valid = true;
-    if (server->config.validate_signatures) {
-        /* nostrc-5iuk: parse JSON to NostrEvent and call nostr_event_check_signature */
-        /* For now, accept all events */
+    if (server->config.validate_signatures && event_str) {
+        NostrEvent *nostr_event = nostr_event_new();
+        if (nostr_event) {
+            if (nostr_event_deserialize_compact(nostr_event, event_str) == 1) {
+                valid = nostr_event_check_signature(nostr_event);
+            } else {
+                valid = false;  /* Failed to parse event */
+            }
+            nostr_event_free(nostr_event);
+        } else {
+            valid = false;  /* Failed to allocate event */
+        }
     }
 
-    /* Store published event */
-    char *event_str = json_dumps(event, JSON_COMPACT);
+    /* Only store published event if valid (or validation disabled) */
+    if (!valid) {
+        free(event_str);
+        event_str = NULL;
+    }
 
     nsync_mu_lock(&server->mutex);
     if (server->published_count < MAX_EVENTS && event_str) {
