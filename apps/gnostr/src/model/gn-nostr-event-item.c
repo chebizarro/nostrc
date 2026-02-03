@@ -156,6 +156,56 @@ static void ensure_expiration_loaded(GnNostrEventItem *self)
   ensure_note_loaded(self);
 }
 
+/* nostrc-slot: Populate item data from an existing note pointer.
+ * This is called during batch processing while the transaction is still open,
+ * avoiding the need to open a new transaction later in ensure_note_loaded().
+ * This is the key optimization to prevent LMDB reader slot exhaustion. */
+void gn_nostr_event_item_populate_from_note(GnNostrEventItem *self, struct ndb_note *note)
+{
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  g_return_if_fail(note != NULL);
+
+  /* If already loaded, don't overwrite */
+  if (self->cached_event_id != NULL) return;
+
+  /* Cache event ID */
+  const unsigned char *id = storage_ndb_note_id((storage_ndb_note *)note);
+  if (id) {
+    self->cached_event_id = g_malloc(65);
+    storage_ndb_hex_encode(id, self->cached_event_id);
+  }
+
+  /* Cache pubkey */
+  const unsigned char *pk = storage_ndb_note_pubkey((storage_ndb_note *)note);
+  if (pk) {
+    self->cached_pubkey = g_malloc(65);
+    storage_ndb_hex_encode(pk, self->cached_pubkey);
+  }
+
+  /* Cache content */
+  const char *content = storage_ndb_note_content((storage_ndb_note *)note);
+  if (content) {
+    uint32_t len = storage_ndb_note_content_length((storage_ndb_note *)note);
+    self->cached_content = g_strndup(content, len);
+  }
+
+  /* Cache kind and created_at */
+  self->kind = (gint)storage_ndb_note_kind((storage_ndb_note *)note);
+  self->created_at = (gint64)storage_ndb_note_created_at((storage_ndb_note *)note);
+  self->is_repost = (self->kind == 6);
+
+  /* Cache tags JSON for NIP-92 imeta support */
+  /* DISABLED: Tag JSON generation causes heap corruption with malformed events */
+  self->cached_tags_json = NULL;
+
+  /* Extract hashtags directly */
+  self->cached_hashtags = storage_ndb_note_get_hashtags((storage_ndb_note *)note);
+
+  /* NIP-40: Cache expiration timestamp */
+  self->expiration = storage_ndb_note_get_expiration((storage_ndb_note *)note);
+  self->expiration_loaded = TRUE;
+}
+
 static void gn_nostr_event_item_finalize(GObject *object) {
   GnNostrEventItem *self = GN_NOSTR_EVENT_ITEM(object);
 

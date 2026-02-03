@@ -224,6 +224,28 @@ static void cache_add(GnNostrEventModel *self, uint64_t key, GnNostrEventItem *i
   }
 }
 
+/* nostrc-slot: Pre-create and cache an item during batch processing.
+ * This populates the item with data from the note pointer while the transaction
+ * is still open, avoiding a new transaction later when get_item is called.
+ * This is the key optimization to prevent LMDB reader slot exhaustion. */
+static void precache_item_from_note(GnNostrEventModel *self, uint64_t note_key,
+                                     gint64 created_at, storage_ndb_note *note) {
+  /* Already in cache? Nothing to do */
+  if (g_hash_table_contains(self->item_cache, &note_key)) {
+    return;
+  }
+
+  /* Create item and populate from note (no new transaction needed) */
+  GnNostrEventItem *item = gn_nostr_event_item_new_from_key(note_key, created_at);
+  gn_nostr_event_item_populate_from_note(item, (struct ndb_note *)note);
+
+  /* Add to cache */
+  cache_add(self, note_key, item);
+
+  /* Release our reference - cache now owns it */
+  g_object_unref(item);
+}
+
 /* Helper: remove a key from cache_lru (must be called before removing from item_cache) */
 static void cache_lru_remove_key(GnNostrEventModel *self, uint64_t note_key) {
   if (!self || !self->cache_lru) return;
@@ -948,6 +970,8 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
       storage_ndb_note *note = storage_ndb_get_note_ptr(txn, pe->note_key);
       if (note) {
         storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
+        /* nostrc-slot: Pre-cache item while txn is open to avoid new transaction later */
+        precache_item_from_note(self, pe->note_key, pe->created_at, note);
       }
     }
 
@@ -1246,6 +1270,8 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
 
     if (author_is_ready(self, pubkey_hex)) {
+      /* nostrc-slot: Pre-cache item while txn is open to avoid new transaction later */
+      precache_item_from_note(self, note_key, created_at, note);
       add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
       g_free(root_id);
       g_free(reply_id);
@@ -1257,6 +1283,8 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
     if (p) {
       (void)p;
+      /* nostrc-slot: Pre-cache item while txn is open to avoid new transaction later */
+      precache_item_from_note(self, note_key, created_at, note);
       add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
       g_free(root_id);
       g_free(reply_id);
