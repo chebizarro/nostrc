@@ -293,6 +293,48 @@ int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *
   return rc;
 }
 
+/* Convenience: fetch a note by key with internal transaction management.
+ * Uses ndb_note_json() for serialization. Caller must free *json_out. */
+int storage_ndb_get_note_json_by_key(uint64_t note_key, char **json_out, int *json_len)
+{
+  if (note_key == 0 || !json_out) return LN_ERR_QUERY;
+
+  void *txn = NULL;
+  int rc = storage_ndb_begin_query(&txn);
+  if (rc != 0 || !txn) {
+    return rc != 0 ? rc : LN_ERR_DB_TXN;
+  }
+
+  storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+  if (!note) {
+    storage_ndb_end_query(txn);
+    return LN_ERR_NOT_FOUND;
+  }
+
+  /* Allocate buffer and serialize note to JSON using ndb_note_json */
+  int bufsize = 4096;
+  char *buf = NULL;
+  for (;;) {
+    char *nb = (char *)realloc(buf, (size_t)bufsize);
+    if (!nb) { free(buf); storage_ndb_end_query(txn); return LN_ERR_OOM; }
+    buf = nb;
+    int n = ndb_note_json(note, buf, bufsize);
+    if (n > 0 && n < bufsize) {
+      buf[n] = '\0';
+      *json_out = buf;
+      if (json_len) *json_len = n;
+      storage_ndb_end_query(txn);
+      return 0;
+    }
+    bufsize *= 2;
+    if (bufsize > (16 * 1024 * 1024)) {
+      free(buf);
+      storage_ndb_end_query(txn);
+      return LN_ERR_OOM;
+    }
+  }
+}
+
 /* ============== Subscription API Implementation ============== */
 
 void storage_ndb_set_notify_callback(storage_ndb_notify_fn fn, void *ctx)

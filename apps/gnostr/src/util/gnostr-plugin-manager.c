@@ -242,9 +242,17 @@ gnostr_plugin_manager_load_enabled_plugins(GnostrPluginManager *manager)
   }
 
   if (!enabled || !*enabled) {
-    g_debug("[PLUGIN] No plugins enabled in settings");
-    g_strfreev(enabled);
-    return;
+    /* Check for GNOSTR_ENABLE_PLUGINS env var as fallback for development */
+    const char *env_plugins = g_getenv("GNOSTR_ENABLE_PLUGINS");
+    if (env_plugins && *env_plugins) {
+      g_strfreev(enabled);
+      enabled = g_strsplit(env_plugins, ",", -1);
+      g_debug("[PLUGIN] Loading plugins from GNOSTR_ENABLE_PLUGINS: %s", env_plugins);
+    } else {
+      g_debug("[PLUGIN] No plugins enabled in settings");
+      g_strfreev(enabled);
+      return;
+    }
   }
 
   /* Log what we're about to load */

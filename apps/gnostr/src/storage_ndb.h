@@ -45,6 +45,10 @@ int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], c
  * Returns 0 on success, nonzero on failure. Allocates *json_out owned by store (do not free). */
 int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *json_len);
 
+/* Convenience: fetch a note by key with internal transaction management.
+ * Returns 0 on success, nonzero on failure. Caller must free *json_out. */
+int storage_ndb_get_note_json_by_key(uint64_t note_key, char **json_out, int *json_len);
+
 /* Stats */
 int storage_ndb_stat_json(char **json_out);
 

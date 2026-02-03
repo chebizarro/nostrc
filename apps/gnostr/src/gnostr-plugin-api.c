@@ -21,6 +21,7 @@
 #include "nostr-tag.h"
 #include "nostr-relay.h"
 #include "nostr-json.h"
+#include "model/gn-ndb-sub-dispatcher.h"
 #include "ui/gnostr-main-window.h"
 #include "ui/gnostr-repo-browser.h"
 #include <json-glib/json-glib.h>
@@ -129,6 +130,15 @@ gnostr_plugin_context_set_pool(GnostrPluginContext *ctx, GnostrSimplePool *pool)
 }
 
 #endif /* !GNOSTR_PLUGIN_BUILD */
+
+/* ============================================================================
+ * INTERFACE IMPLEMENTATIONS
+ * ============================================================================
+ * These are only compiled in the host app, not in plugins.
+ * Plugins use -undefined dynamic_lookup (macOS) or --unresolved-symbols (Linux)
+ * to resolve these symbols from the host at runtime.
+ */
+#ifndef GNOSTR_PLUGIN_BUILD
 
 /* ============================================================================
  * GNOSTR_PLUGIN INTERFACE
@@ -312,6 +322,8 @@ gnostr_ui_extension_create_note_decoration(GnostrUIExtension   *extension,
  * ============================================================================ */
 
 G_DEFINE_QUARK(gnostr-plugin-error-quark, gnostr_plugin_error)
+
+#endif /* !GNOSTR_PLUGIN_BUILD - Interface implementations */
 
 /* ============================================================================
  * PLUGIN CONTEXT API IMPLEMENTATIONS
@@ -624,6 +636,42 @@ gnostr_plugin_context_get_event_by_id(GnostrPluginContext *context,
   return g_strndup(json_out, json_len);
 }
 
+/* Dispatcher callback adapter - converts note keys to JSON and calls plugin callback */
+static void
+plugin_subscription_dispatch(uint64_t             subid,
+                             const uint64_t      *note_keys,
+                             guint                n_keys,
+                             gpointer             user_data)
+{
+  PluginSubscription *sub = (PluginSubscription *)user_data;
+  if (!sub || !sub->callback)
+    return;
+
+  g_debug("[plugin-api] Subscription %lu received %u events", (unsigned long)subid, n_keys);
+
+  /* Cast callback to the expected signature */
+  typedef void (*PluginEventCallback)(const char *event_json, gpointer user_data);
+  PluginEventCallback plugin_cb = (PluginEventCallback)sub->callback;
+
+  /* Process each note key */
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t key = note_keys[i];
+
+    /* Fetch JSON for this note key */
+    char *json_out = NULL;
+    int json_len = 0;
+    int rc = storage_ndb_get_note_json_by_key(key, &json_out, &json_len);
+
+    if (rc == 0 && json_out && json_len > 0) {
+      char *json_copy = g_strndup(json_out, json_len);
+      plugin_cb(json_copy, sub->user_data);
+      g_free(json_copy);
+    } else {
+      g_debug("[plugin-api] Failed to fetch JSON for note key %lu", (unsigned long)key);
+    }
+  }
+}
+
 guint64
 gnostr_plugin_context_subscribe_events(GnostrPluginContext *context,
                                        const char          *filter_json,
@@ -635,22 +683,32 @@ gnostr_plugin_context_subscribe_events(GnostrPluginContext *context,
   g_return_val_if_fail(filter_json != NULL, 0);
   g_return_val_if_fail(callback != NULL, 0);
 
-  /* Create nostrdb subscription */
-  uint64_t ndb_sub = storage_ndb_subscribe(filter_json);
-  if (ndb_sub == 0) {
-    g_warning("Failed to create storage subscription");
-    return 0;
-  }
-
+  /* Create subscription struct first so we can pass it to the dispatcher */
   PluginSubscription *sub = g_new0(PluginSubscription, 1);
   sub->id = context->next_sub_id++;
-  sub->ndb_sub_id = ndb_sub;
   sub->filter_json = g_strdup(filter_json);
   sub->callback = callback;
   sub->user_data = user_data;
   sub->destroy_notify = destroy_notify;
 
+  /* Use the dispatcher for proper callback invocation.
+   * The dispatcher calls our adapter, which then calls the plugin callback. */
+  uint64_t ndb_sub = gn_ndb_subscribe(filter_json,
+                                       plugin_subscription_dispatch,
+                                       sub,
+                                       NULL);  /* We handle cleanup in unsubscribe */
+  if (ndb_sub == 0) {
+    g_warning("[plugin-api] Failed to create storage subscription");
+    g_free(sub->filter_json);
+    g_free(sub);
+    return 0;
+  }
+
+  sub->ndb_sub_id = ndb_sub;
   g_hash_table_insert(context->subscriptions, &sub->id, sub);
+
+  g_debug("[plugin-api] Created subscription %lu (ndb=%lu) for filter: %s",
+          (unsigned long)sub->id, (unsigned long)ndb_sub, filter_json);
 
   return sub->id;
 }
