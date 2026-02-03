@@ -1586,7 +1586,65 @@ static void reaction_fetch_ctx_free(ReactionFetchContext *ctx) {
   g_free(ctx);
 }
 
-/* Callback when reaction query from author's NIP-65 relays completes */
+/* nostrc-x8z3.2: Callback when NIP-45 COUNT query for reactions completes */
+static void on_reaction_count_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  ReactionFetchContext *ctx = (ReactionFetchContext *)user_data;
+  if (!ctx) return;
+
+  GError *error = NULL;
+  gint64 count = gnostr_simple_pool_count_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("timeline_view: reaction COUNT error: %s", error->message);
+    }
+    g_error_free(error);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  GnostrTimelineView *self = g_weak_ref_get(&ctx->view_ref);
+  if (!self) {
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  if (count <= 0) {
+    g_debug("timeline_view: COUNT returned %lld for %.16s", (long long)count, ctx->event_id_hex);
+    g_object_unref(self);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  g_debug("timeline_view: COUNT returned %lld reactions for %.16s", (long long)count, ctx->event_id_hex);
+
+  /* Update reaction count in model - find the event item and update it */
+  if (self->list_model) {
+    guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->list_model));
+    for (guint i = 0; i < n_items; i++) {
+      GObject *obj = g_list_model_get_item(G_LIST_MODEL(self->list_model), i);
+      if (obj && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+        gchar *item_id = NULL;
+        g_object_get(obj, "event-id", &item_id, NULL);
+        if (item_id && g_strcmp0(item_id, ctx->event_id_hex) == 0) {
+          guint old_count = gn_nostr_event_item_get_like_count(GN_NOSTR_EVENT_ITEM(obj));
+          if ((guint)count > old_count) {
+            g_debug("timeline_view: updating reaction count for %.16s: %u -> %lld",
+                    ctx->event_id_hex, old_count, (long long)count);
+            gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), (guint)count);
+          }
+        }
+        g_free(item_id);
+      }
+      if (obj) g_object_unref(obj);
+    }
+  }
+
+  g_object_unref(self);
+  reaction_fetch_ctx_free(ctx);
+}
+
+/* Callback when reaction query from author's NIP-65 relays completes (fallback for non-NIP-45 relays) */
 static void on_reaction_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   ReactionFetchContext *ctx = (ReactionFetchContext *)user_data;
   if (!ctx) return;
@@ -1839,8 +1897,8 @@ static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpoint
       continue;
     }
 
-    g_debug("timeline_view: querying %u author write relays for reactions to %.16s (author %.16s)",
-            write_relays->len, event_id, author_pubkey);
+    g_debug("timeline_view: using NIP-45 COUNT for reactions to %.16s (author %.16s, %u relays)",
+            event_id, author_pubkey, write_relays->len);
 
     /* Create reaction fetch context */
     ReactionFetchContext *rctx = g_new0(ReactionFetchContext, 1);
@@ -1856,7 +1914,7 @@ static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpoint
     NostrTag *e_tag = nostr_tag_new("e", event_id, NULL);
     NostrTags *tags = nostr_tags_new(1, e_tag);
     nostr_filter_set_tags(filter, tags);
-    nostr_filter_set_limit(filter, 100);
+    /* Note: No limit needed for COUNT - we just want the total */
 
     /* Build URL array */
     const char **urls = g_new0(const char *, write_relays->len);
@@ -1864,14 +1922,14 @@ static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpoint
       urls[j] = g_ptr_array_index(write_relays, j);
     }
 
-    /* Query author's relays for reactions */
-    gnostr_simple_pool_query_single_async(
+    /* nostrc-x8z3.2: Use NIP-45 COUNT for efficiency - just get the count, not full events */
+    gnostr_simple_pool_count_async(
       gnostr_get_shared_query_pool(),
       urls,
       write_relays->len,
       filter,
       self->reaction_cancellable,
-      on_reaction_query_done,
+      on_reaction_count_done,
       rctx
     );
 
