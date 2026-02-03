@@ -1740,7 +1740,8 @@ gnostr_nip7d_thread_view_scroll_to_reply(GnostrNip7dThreadView *self,
     /* Scroll the row into view */
     gtk_widget_grab_focus(row);
 
-    /* Also highlight it briefly */
+    /* LEGITIMATE TIMEOUT - Remove highlight CSS class after animation.
+     * nostrc-b0h: Audited - animation timing is appropriate. */
     gtk_widget_add_css_class(row, "highlighted");
     g_timeout_add(2000, (GSourceFunc)gtk_widget_remove_css_class, row);
 }

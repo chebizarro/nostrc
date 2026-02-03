@@ -1867,7 +1867,9 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   ctx->events_handler_id = g_signal_connect(ctx->pool, "events",
                                              G_CALLBACK(on_streaming_events), ctx);
 
-  /* Set timeout to complete discovery after 10 seconds (in case EOSE never arrives) */
+  /* LEGITIMATE TIMEOUT - Fallback timeout for streaming discovery.
+   * Completes discovery after 10s if EOSE never arrives (relay issue).
+   * nostrc-b0h: Audited - timeout for error handling is appropriate. */
   ctx->timeout_source_id = g_timeout_add_seconds(10, on_streaming_timeout, ctx);
 
   /* Start streaming query - emits events via signal, closes connections after EOSE */

@@ -406,7 +406,8 @@ static void schedule_hide_controls(GnostrVideoPlayer *self) {
     self->controls_hide_timer_id = 0;
   }
 
-  /* Schedule new hide timer */
+  /* LEGITIMATE TIMEOUT - Auto-hide controls after inactivity.
+   * nostrc-b0h: Audited - standard video player UX. */
   self->controls_hide_timer_id = g_timeout_add_seconds(CONTROLS_HIDE_TIMEOUT_SEC,
                                                         hide_controls_timeout, self);
 }
@@ -903,7 +904,8 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_key_pressed), self);
   gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
 
-  /* Start position update timer */
+  /* LEGITIMATE TIMEOUT - Position slider update during playback (250ms).
+   * nostrc-b0h: Audited - polling playback position is standard. */
   self->position_update_timer_id = g_timeout_add(250, position_update_tick, self);
 
   /* Make focusable for keyboard events */
@@ -960,7 +962,8 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
       /* Show loading spinner while video prepares */
       show_loading_state(self, TRUE);
 
-      /* Start loading timeout - show error if video doesn't prepare in time */
+      /* LEGITIMATE TIMEOUT - Loading timeout to detect stalled streams.
+       * nostrc-b0h: Audited - timeout for error handling is appropriate. */
       self->loading_timeout_id = g_timeout_add_seconds(LOADING_TIMEOUT_SEC,
                                                         loading_timeout_cb, self);
 

@@ -175,7 +175,8 @@ on_search_changed(GtkSearchEntry *entry, GnostrSearchResultsView *self)
         return;
     }
 
-    /* Debounce search */
+    /* LEGITIMATE TIMEOUT - Search input debounce (configurable, default 300ms).
+     * nostrc-b0h: Audited - debouncing user input is appropriate. */
     if (self->search_debounce_id > 0) {
         g_source_remove(self->search_debounce_id);
     }

@@ -838,9 +838,9 @@ void gnostr_poll_card_set_end_time(GnostrPollCard *self, gint64 end_time) {
 
   update_time_display(self);
 
-  /* Start timer to update time remaining if poll is not closed */
+  /* LEGITIMATE TIMEOUT - Periodic poll countdown update (30s intervals).
+   * nostrc-b0h: Audited - UI countdown timer is appropriate. */
   if (end_time > 0 && !gnostr_poll_card_is_closed(self)) {
-    /* Update every 30 seconds */
     self->time_update_timer = g_timeout_add_seconds(30, time_update_callback, self);
   }
 

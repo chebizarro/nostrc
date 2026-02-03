@@ -2125,7 +2125,8 @@ static void fetch_reactions_from_author_relays(GnostrTimelineView *self,
                       g_strdup(author_pubkey_hex),
                       g_strdup(event_id_hex));
 
-  /* Reset debounce timer */
+  /* LEGITIMATE TIMEOUT - Debounce NIP-65 relay discovery batching.
+   * nostrc-b0h: Audited - batching network requests is appropriate. */
   if (self->nip65_batch_timeout_id > 0) {
     g_source_remove(self->nip65_batch_timeout_id);
   }
@@ -2807,7 +2808,8 @@ static void on_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
   /* Update visible range */
   update_visible_range(self);
 
-  /* Reset idle timeout */
+  /* LEGITIMATE TIMEOUT - Detect scroll idle for deferred operations.
+   * nostrc-b0h: Audited - scroll idle detection is appropriate. */
   if (self->scroll_idle_id > 0) {
     g_source_remove(self->scroll_idle_id);
   }

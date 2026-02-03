@@ -141,7 +141,8 @@ static void ensure_avatar_cache(void) {
   if (!s_avatar_lru_nodes) s_avatar_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   if (!s_avatar_log_started) {
     s_avatar_log_started = TRUE;
-    /* Log every 60s */
+    /* LEGITIMATE TIMEOUT - Periodic cache stats logging (60s intervals).
+     * nostrc-b0h: Audited - diagnostic logging is appropriate. */
     g_timeout_add_seconds(60, avatar_cache_log_cb, NULL);
   }
 }

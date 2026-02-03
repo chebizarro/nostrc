@@ -340,7 +340,8 @@ static void ensure_emoji_cache(void) {
   }
   if (!s_emoji_log_started) {
     s_emoji_log_started = TRUE;
-    /* Log every 60s */
+    /* LEGITIMATE TIMEOUT - Periodic cache stats logging (60s intervals).
+     * nostrc-b0h: Audited - diagnostic logging is appropriate. */
     g_timeout_add_seconds(60, emoji_cache_log_cb, NULL);
   }
 }

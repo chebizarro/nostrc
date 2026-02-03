@@ -646,6 +646,7 @@ static void gn_timeline_view_init(GnTimelineView *self) {
   self->vadjustment_changed_id = g_signal_connect(adj, "value-changed",
                                                    G_CALLBACK(on_vadjustment_changed), self);
 
-  /* Start scroll position check */
+  /* LEGITIMATE TIMEOUT - Periodic scroll position check for "at top" detection.
+   * nostrc-b0h: Audited - polling scroll position is appropriate for this use. */
   self->scroll_check_id = g_timeout_add(100, check_scroll_position, self);
 }

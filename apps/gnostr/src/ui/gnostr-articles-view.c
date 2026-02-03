@@ -824,6 +824,8 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
   GnostrArticlesView *self = GNOSTR_ARTICLES_VIEW(user_data);
   (void)entry;
 
+  /* LEGITIMATE TIMEOUT - Search input debounce (300ms).
+   * nostrc-b0h: Audited - debouncing user input is appropriate. */
   if (self->search_debounce_id) {
     g_source_remove(self->search_debounce_id);
   }

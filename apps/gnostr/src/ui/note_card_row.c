@@ -2175,7 +2175,9 @@ static void on_picture_mapped(GtkWidget *widget, gpointer user_data) {
     ctx->timeout_id = 0;
   }
 
-  /* Schedule load after a short delay (150ms) to avoid loading during fast scrolling */
+  /* LEGITIMATE TIMEOUT - Debounce lazy loading to avoid loading during fast scrolling.
+   * 150ms delay ensures user has paused on this item before fetching media.
+   * nostrc-b0h: Audited - scroll debounce for lazy loading is appropriate. */
   ctx->timeout_id = g_timeout_add(150, on_lazy_load_timeout, ctx);
 }
 
@@ -2354,7 +2356,8 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
       g_source_remove(self->timestamp_timer_id);
     }
 
-    /* Add timer to update every 60 seconds */
+    /* LEGITIMATE TIMEOUT - Periodic timestamp update (60s intervals).
+     * nostrc-b0h: Audited - updating relative timestamps is appropriate. */
     self->timestamp_timer_id = g_timeout_add_seconds(60, update_timestamp_tick, self);
   } else {
     gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), fallback_ts ? fallback_ts : "now");

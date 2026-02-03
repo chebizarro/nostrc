@@ -1116,6 +1116,8 @@ void gnostr_chess_card_start_autoplay(GnostrChessCard *self, guint interval_ms) 
     gnostr_chess_card_stop_autoplay(self);
   }
 
+  /* LEGITIMATE TIMEOUT - Animation interval for chess move autoplay.
+   * nostrc-b0h: Audited - animation timing is appropriate. */
   self->autoplay_interval = interval_ms;
   self->autoplay_source = g_timeout_add(interval_ms, autoplay_tick, self);
 

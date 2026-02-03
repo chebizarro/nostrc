@@ -594,7 +594,8 @@ void gnostr_zap_goal_card_trigger_celebration(GnostrZapGoalCard *self) {
     gtk_widget_set_visible(self->celebration_overlay, TRUE);
     gtk_widget_add_css_class(GTK_WIDGET(self), "celebrating");
 
-    /* Hide after animation duration */
+    /* LEGITIMATE TIMEOUT - Hide celebration overlay after animation.
+     * nostrc-b0h: Audited - animation timing is appropriate. */
     g_timeout_add(CELEBRATION_DURATION_MS, (GSourceFunc)on_celebration_finished, self);
   }
 }
@@ -605,6 +606,8 @@ void gnostr_zap_goal_card_start_deadline_timer(GnostrZapGoalCard *self) {
   if (self->deadline_timer_id > 0) return;
   if (self->end_time <= 0) return;
 
+  /* LEGITIMATE TIMEOUT - Periodic deadline countdown update.
+   * nostrc-b0h: Audited - UI countdown timer is appropriate. */
   self->deadline_timer_id = g_timeout_add(DEADLINE_TIMER_INTERVAL_MS,
                                            on_deadline_timer,
                                            self);

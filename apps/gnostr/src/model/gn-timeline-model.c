@@ -338,7 +338,8 @@ static void gn_timeline_model_schedule_update(GnTimelineModel *self) {
   /* Skip if in batch mode - we'll emit signal when batch ends */
   if (self->in_batch_mode) return;
 
-  /* Cancel existing timer and start fresh */
+  /* LEGITIMATE TIMEOUT - Debounce model updates for batching.
+   * nostrc-b0h: Audited - batching UI updates is appropriate. */
   if (self->update_debounce_id > 0) {
     g_source_remove(self->update_debounce_id);
   }
@@ -913,6 +914,10 @@ static gboolean on_throttle_transfer_timeout(gpointer user_data) {
  *
  * Schedule a throttled transfer from incoming queue to staging buffer.
  * If a transfer is already scheduled, this is a no-op.
+ *
+ * LEGITIMATE TIMEOUT - Rate-limited queue processing to prevent UI stutter.
+ * Delay adapts based on queue depth (backpressure mechanism).
+ * nostrc-b0h: Audited - throttling for smooth UI is appropriate.
  */
 static void schedule_throttled_transfer(GnTimelineModel *self) {
   /* Already scheduled */
@@ -1018,7 +1023,8 @@ static void mark_key_revealing(GnTimelineModel *self, uint64_t key) {
   *key_copy = key;
   g_hash_table_add(self->revealing_keys, key_copy);
 
-  /* Schedule clearing of the revealing flag after animation completes */
+  /* LEGITIMATE TIMEOUT - Clear revealing flag after CSS animation completes.
+   * nostrc-b0h: Audited - animation timing is appropriate. */
   RevealingKeyData *data = g_new(RevealingKeyData, 1);
   data->model = self;
   data->note_key = key;
@@ -1147,7 +1153,8 @@ static gboolean on_reveal_timer_tick(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  /* Schedule next batch */
+  /* LEGITIMATE TIMEOUT - Staggered reveal animation timing.
+   * nostrc-b0h: Audited - animation timing is appropriate. */
   self->reveal_timer_id = g_timeout_add(REVEAL_STAGGER_MS,
                                          on_reveal_timer_tick,
                                          self);
@@ -1810,8 +1817,11 @@ void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
   self->reveal_complete_cb = complete_cb;
   self->reveal_complete_data = complete_data;
 
-  /* Start the reveal animation immediately (first batch processes now) */
-  self->reveal_timer_id = g_timeout_add(0, on_reveal_timer_tick, self);
+  /* Start the reveal animation immediately (first batch processes now).
+   * Use g_idle_add() instead of g_timeout_add(0, ...) - both run on next
+   * main loop iteration but g_idle_add() is more efficient and expresses
+   * intent more clearly. */
+  self->reveal_timer_id = g_idle_add(on_reveal_timer_tick, self);
 }
 
 /**

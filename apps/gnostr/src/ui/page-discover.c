@@ -582,6 +582,8 @@ on_search_changed(GtkSearchEntry *entry, GnostrPageDiscover *self)
 {
     (void)entry;
 
+    /* LEGITIMATE TIMEOUT - Search input debounce.
+     * nostrc-b0h: Audited - debouncing user input is appropriate. */
     if (self->search_debounce_id) {
         g_source_remove(self->search_debounce_id);
     }

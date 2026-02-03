@@ -759,7 +759,9 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-/* nostrc-yi2: Schedule a flush of deferred notes */
+/* nostrc-yi2: Schedule a flush of deferred notes.
+ * LEGITIMATE TIMEOUT - Debounce batching of note insertions.
+ * nostrc-b0h: Audited - batching UI updates is appropriate. */
 static void schedule_deferred_flush(GnNostrEventModel *self) {
   if (self->debounce_source_id > 0) {
     return;  /* Already scheduled */

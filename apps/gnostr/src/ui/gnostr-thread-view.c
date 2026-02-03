@@ -2792,6 +2792,8 @@ static gboolean on_rebuild_debounce_timeout(gpointer user_data) {
 }
 
 /* Schedule a debounced UI rebuild */
+/* LEGITIMATE TIMEOUT - Debounce thread rebuild to batch rapid updates.
+ * nostrc-b0h: Audited - debouncing expensive UI rebuilds is appropriate. */
 static void schedule_thread_rebuild(GnostrThreadView *self) {
   if (self->rebuild_pending_id > 0) {
     /* Already scheduled, don't reschedule */

@@ -499,7 +499,8 @@ void gnostr_poll_widget_set_closed_at(GnostrPollWidget *self, gint64 closed_at) 
 
   update_time_display(self);
 
-  /* Start timer to update time remaining if poll is not closed */
+  /* LEGITIMATE TIMEOUT - Periodic poll countdown update (30s intervals).
+   * nostrc-b0h: Audited - UI countdown timer is appropriate. */
   if (closed_at > 0 && !gnostr_poll_widget_is_closed(self)) {
     self->time_update_timer = g_timeout_add_seconds(30, time_update_callback, self);
   }

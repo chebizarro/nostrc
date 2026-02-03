@@ -482,6 +482,8 @@ on_search_changed(GtkSearchEntry *entry, GnostrAppsPage *self)
   g_free(self->search_text);
   self->search_text = g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry)));
 
+  /* LEGITIMATE TIMEOUT - Search input debounce (300ms).
+   * nostrc-b0h: Audited - debouncing user input is appropriate. */
   if (self->search_debounce_id) {
     g_source_remove(self->search_debounce_id);
   }

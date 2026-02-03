@@ -524,7 +524,8 @@ void gnostr_profile_service_request(gpointer service,
   svc->stats.pending_requests = g_hash_table_size(svc->pending_requests);
   svc->stats.pending_callbacks++;
 
-  /* Schedule debounce if not already scheduled */
+  /* LEGITIMATE TIMEOUT - Debounce profile fetching to batch requests.
+   * nostrc-b0h: Audited - batching network requests is appropriate. */
   if (!svc->debounce_source_id && !req->in_flight) {
     svc->debounce_source_id = g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
   }

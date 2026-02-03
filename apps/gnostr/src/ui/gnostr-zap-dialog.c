@@ -128,6 +128,8 @@ static GdkTexture *generate_qr_texture(const char *data) {
 }
 #endif
 
+/* LEGITIMATE TIMEOUT - Toast auto-hide after 3 seconds.
+ * nostrc-b0h: Audited - standard toast UX pattern. */
 static void show_toast(GnostrZapDialog *self, const gchar *msg) {
   if (!self->toast_label || !self->toast_revealer) return;
   gtk_label_set_text(GTK_LABEL(self->toast_label), msg);
@@ -475,7 +477,8 @@ static void on_payment_finish(GObject *source, GAsyncResult *result, gpointer us
     g_signal_emit(self, signals[SIGNAL_ZAP_SENT], 0, self->event_id, amount_msat);
     show_toast(self, "Zap sent!");
 
-    /* Close dialog after short delay */
+    /* LEGITIMATE TIMEOUT - Auto-close after success feedback.
+     * nostrc-b0h: Audited - brief delay for user to see success is appropriate. */
     g_timeout_add(1500, (GSourceFunc)gtk_window_close, GTK_WINDOW(self));
   } else {
     const gchar *msg = error ? error->message : "Payment failed";
