@@ -4,6 +4,8 @@
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
 #include "../model/gn-ndb-sub-dispatcher.h"
+#include "../model/gn-nostr-event-item.h"
+#include "../model/gn-nostr-profile.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
 #include "nostr-event.h"
@@ -142,8 +144,12 @@ struct _GnostrThreadView {
   GtkWidget *btn_close;
   GtkWidget *title_label;
   GtkWidget *scroll_window;
-  GtkWidget *thread_list_box;
+  GtkWidget *thread_list_view;  /* GtkListView for virtualized scrolling */
   GtkWidget *loading_box;
+
+  /* GtkListView model and selection (nostrc-evz1) */
+  GListStore *thread_model;
+  GtkSelectionModel *thread_selection;
   GtkWidget *loading_spinner;
   GtkWidget *empty_box;
   GtkWidget *empty_label;
@@ -208,6 +214,10 @@ static void fetch_children_from_relays(GnostrThreadView *self);
 static void build_thread_graph(GnostrThreadView *self);
 static void mark_focus_path(GnostrThreadView *self);
 static guint count_descendants(GnostrThreadView *self, const char *event_id);
+/* nostrc-evz1: GtkListView factory callbacks */
+static void thread_factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
+static void thread_factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
+static void thread_factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
 
 /* Helper: convert hex string to 32-byte binary */
 static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
@@ -486,6 +496,10 @@ static void gnostr_thread_view_dispose(GObject *obj) {
     self->sorted_events = NULL;
   }
 
+  /* nostrc-evz1: Clear GListStore and selection model */
+  g_clear_object(&self->thread_selection);
+  g_clear_object(&self->thread_model);
+
   /* Shared query pool is managed globally - do not clear here */
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_THREAD_VIEW);
@@ -553,7 +567,7 @@ static void gnostr_thread_view_class_init(GnostrThreadViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, btn_close);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, title_label);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, scroll_window);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, thread_list_box);
+  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, thread_list_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, loading_box);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, loading_spinner);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, empty_box);
@@ -610,6 +624,22 @@ static void gnostr_thread_view_init(GnostrThreadView *self) {
   /* nostrc-hl6: Track NIP-65 relay list fetches per author */
   self->nip65_pubkeys_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   /* Uses shared query pool from gnostr_get_shared_query_pool() */
+
+  /* nostrc-evz1: Set up GListStore and factory for GtkListView */
+  self->thread_model = g_list_store_new(GN_TYPE_NOSTR_EVENT_ITEM);
+  self->thread_selection = GTK_SELECTION_MODEL(gtk_no_selection_new(G_LIST_MODEL(self->thread_model)));
+
+  if (self->thread_list_view) {
+    /* Create and configure factory */
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(thread_factory_setup_cb), self);
+    g_signal_connect(factory, "bind", G_CALLBACK(thread_factory_bind_cb), self);
+    g_signal_connect(factory, "unbind", G_CALLBACK(thread_factory_unbind_cb), self);
+
+    gtk_list_view_set_factory(GTK_LIST_VIEW(self->thread_list_view), factory);
+    gtk_list_view_set_model(GTK_LIST_VIEW(self->thread_list_view), self->thread_selection);
+    g_object_unref(factory);
+  }
 
   /* Connect close button */
   if (self->btn_close) {
@@ -746,14 +776,9 @@ void gnostr_thread_view_clear(GnostrThreadView *self) {
     self->thread_graph = NULL;
   }
 
-  /* Clear UI */
-  if (self->thread_list_box) {
-    GtkWidget *child = gtk_widget_get_first_child(self->thread_list_box);
-    while (child) {
-      GtkWidget *next = gtk_widget_get_next_sibling(child);
-      gtk_box_remove(GTK_BOX(self->thread_list_box), child);
-      child = next;
-    }
+  /* Clear UI - use GListStore for GtkListView */
+  if (self->thread_model) {
+    g_list_store_remove_all(self->thread_model);
   }
 
   /* Clear IDs */
@@ -1405,17 +1430,152 @@ static void on_collapse_indicator_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+/* nostrc-evz1: Factory setup callback - creates GnostrNoteCardRow widgets */
+static void thread_factory_setup_cb(GtkSignalListItemFactory *factory,
+                                     GtkListItem *item,
+                                     gpointer user_data) {
+  (void)factory;
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  (void)self;
+
+  GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
+
+  /* Connect signals - these relay through GnostrThreadView */
+  g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), user_data);
+  g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_view_thread), user_data);
+  g_signal_connect(row, "report-note-requested", G_CALLBACK(on_note_report_requested), user_data);
+
+  gtk_list_item_set_child(item, row);
+}
+
+/* nostrc-evz1: Factory bind callback - binds GnNostrEventItem to GnostrNoteCardRow */
+static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
+                                    GtkListItem *item,
+                                    gpointer user_data) {
+  (void)factory;
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  GObject *obj = gtk_list_item_get_item(item);
+  GtkWidget *row = gtk_list_item_get_child(item);
+
+  if (!obj || !GN_IS_NOSTR_EVENT_ITEM(obj) || !GNOSTR_IS_NOTE_CARD_ROW(row)) {
+    return;
+  }
+
+  GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(obj);
+  GnostrNoteCardRow *card = GNOSTR_NOTE_CARD_ROW(row);
+
+  /* Get event data */
+  const char *event_id = gn_nostr_event_item_get_event_id(event_item);
+  const char *pubkey = gn_nostr_event_item_get_pubkey(event_item);
+  const char *content = gn_nostr_event_item_get_content(event_item);
+  gint64 created_at = gn_nostr_event_item_get_created_at(event_item);
+  guint depth = gn_nostr_event_item_get_reply_depth(event_item);
+  const char *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
+  const char *parent_id = gn_nostr_event_item_get_parent_id(event_item);
+
+  /* Get profile info - g_object_get returns newly allocated strings */
+  GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+  gchar *display_name = NULL;
+  gchar *handle = NULL;
+  gchar *avatar_url = NULL;
+  gchar *nip05 = NULL;
+
+  if (profile) {
+    g_object_get(profile,
+                 "display-name", &display_name,
+                 "name", &handle,
+                 "picture-url", &avatar_url,
+                 "nip05", &nip05,
+                 NULL);
+  }
+
+  /* Set author info with fallback */
+  if (!display_name && !handle && pubkey) {
+    char fallback[20];
+    snprintf(fallback, sizeof(fallback), "%.8s...", pubkey);
+    gnostr_note_card_row_set_author(card, fallback, NULL, avatar_url);
+  } else {
+    gnostr_note_card_row_set_author(card, display_name, handle, avatar_url);
+  }
+
+  /* Set content and metadata */
+  gnostr_note_card_row_set_timestamp(card, created_at, NULL);
+  gnostr_note_card_row_set_content(card, content);
+  gnostr_note_card_row_set_depth(card, depth);
+  gnostr_note_card_row_set_ids(card, event_id, root_id, pubkey);
+
+  gboolean is_reply = (parent_id != NULL);
+  gnostr_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
+
+  if (nip05 && pubkey) {
+    gnostr_note_card_row_set_nip05(card, nip05, pubkey);
+  }
+
+  gnostr_note_card_row_set_logged_in(card, is_user_logged_in());
+
+  /* Free profile strings from g_object_get */
+  g_free(display_name);
+  g_free(handle);
+  g_free(avatar_url);
+  g_free(nip05);
+
+  /* Apply depth-based CSS class */
+  char depth_class[16];
+  snprintf(depth_class, sizeof(depth_class), "depth-%u", depth);
+  gtk_widget_add_css_class(row, depth_class);
+
+  /* Look up ThreadNode for focus path and other styling */
+  if (self->thread_graph && event_id) {
+    ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id);
+    if (node) {
+      /* Highlight focus event */
+      if (self->focus_event_id && g_strcmp0(event_id, self->focus_event_id) == 0) {
+        gtk_widget_add_css_class(row, "thread-focus-note");
+      }
+
+      /* Focus path styling */
+      if (node->is_focus_path) {
+        gtk_widget_add_css_class(row, "thread-focus-path");
+      }
+
+      /* Root note styling */
+      if (self->thread_graph->root_id &&
+          g_strcmp0(event_id, self->thread_graph->root_id) == 0) {
+        gtk_widget_add_css_class(row, "thread-root-note");
+      }
+    }
+  }
+}
+
+/* nostrc-evz1: Factory unbind callback - cleans up CSS classes */
+static void thread_factory_unbind_cb(GtkSignalListItemFactory *factory,
+                                      GtkListItem *item,
+                                      gpointer user_data) {
+  (void)factory;
+  (void)user_data;
+  GtkWidget *row = gtk_list_item_get_child(item);
+
+  if (!GTK_IS_WIDGET(row)) return;
+
+  /* Remove dynamic CSS classes */
+  gtk_widget_remove_css_class(row, "thread-focus-note");
+  gtk_widget_remove_css_class(row, "thread-focus-path");
+  gtk_widget_remove_css_class(row, "thread-root-note");
+
+  /* Remove depth classes */
+  for (guint d = 0; d <= MAX_THREAD_DEPTH; d++) {
+    char depth_class[16];
+    snprintf(depth_class, sizeof(depth_class), "depth-%u", d);
+    gtk_widget_remove_css_class(row, depth_class);
+  }
+}
+
 /* Internal: rebuild UI from sorted events */
 static void rebuild_thread_ui(GnostrThreadView *self) {
-  if (!self->thread_list_box) return;
+  if (!self->thread_model) return;
 
-  /* Clear existing widgets */
-  GtkWidget *child = gtk_widget_get_first_child(self->thread_list_box);
-  while (child) {
-    GtkWidget *next = gtk_widget_get_next_sibling(child);
-    gtk_box_remove(GTK_BOX(self->thread_list_box), child);
-    child = next;
-  }
+  /* Clear existing model items */
+  g_list_store_remove_all(self->thread_model);
 
   /* Build thread graph for tree-structured rendering */
   build_thread_graph(self);
@@ -1438,35 +1598,57 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
     gtk_label_set_text(GTK_LABEL(self->title_label), title);
   }
 
-  /* Add note cards in tree order */
+  /* Add GnNostrEventItem objects to the model in tree order */
   for (guint i = 0; i < self->thread_graph->render_order->len; i++) {
     ThreadNode *node = g_ptr_array_index(self->thread_graph->render_order, i);
     if (!node || !node->event) continue;
 
+    ThreadEventItem *item = node->event;
+
     /* Update event depth from graph */
-    node->event->depth = node->depth;
+    item->depth = node->depth;
 
-    GtkWidget *card = create_note_card_for_item(self, node->event);
+    /* Fetch profile if not already done */
+    fetch_profile_for_event(self, item);
 
-    /* Add focus path styling */
-    if (node->is_focus_path) {
-      gtk_widget_add_css_class(card, "thread-focus-path");
+    /* Create GnNostrEventItem from ThreadEventItem data */
+    GnNostrEventItem *event_item = gn_nostr_event_item_new(item->id_hex);
+
+    /* Update with event data */
+    gn_nostr_event_item_update_from_event(event_item,
+                                           item->pubkey_hex,
+                                           item->created_at,
+                                           item->content,
+                                           1); /* kind 1 = text note */
+
+    /* Set thread info including depth */
+    gn_nostr_event_item_set_thread_info(event_item,
+                                         item->root_id,
+                                         item->parent_id,
+                                         item->depth);
+
+    /* Create and set profile if we have profile data */
+    if (item->display_name || item->handle || item->avatar_url || item->nip05) {
+      GnNostrProfile *profile = gn_nostr_profile_new(item->pubkey_hex);
+      if (item->display_name) {
+        g_object_set(profile, "display-name", item->display_name, NULL);
+      }
+      if (item->handle) {
+        g_object_set(profile, "name", item->handle, NULL);
+      }
+      if (item->avatar_url) {
+        g_object_set(profile, "picture-url", item->avatar_url, NULL);
+      }
+      if (item->nip05) {
+        g_object_set(profile, "nip05", item->nip05, NULL);
+      }
+      gn_nostr_event_item_set_profile(event_item, profile);
+      g_object_unref(profile);
     }
 
-    /* Add root note styling */
-    if (self->thread_graph->root_id &&
-        g_strcmp0(node->event->id_hex, self->thread_graph->root_id) == 0) {
-      gtk_widget_add_css_class(card, "thread-root-note");
-    }
-
-    gtk_box_append(GTK_BOX(self->thread_list_box), card);
-
-    /* If this node is collapsed and has children, show collapse indicator */
-    if (node->is_collapsed && node->child_count > 0) {
-      GtkWidget *indicator = create_collapse_indicator(self, node);
-      g_signal_connect(indicator, "clicked", G_CALLBACK(on_collapse_indicator_clicked), self);
-      gtk_box_append(GTK_BOX(self->thread_list_box), indicator);
-    }
+    /* Add to model */
+    g_list_store_append(self->thread_model, event_item);
+    g_object_unref(event_item);
   }
 
   /* Show the scroll window */
@@ -2559,25 +2741,19 @@ static void update_note_card_profile(GnostrNoteCardRow *row, ThreadEventItem *it
 void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
   g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
 
-  if (!self->thread_list_box || !self->sorted_events) return;
+  if (!self->thread_model || !self->sorted_events) return;
 
-  /* Iterate through displayed cards and update profile info */
-  GtkWidget *child = gtk_widget_get_first_child(self->thread_list_box);
-  guint idx = 0;
-
-  while (child && idx < self->sorted_events->len) {
-    if (GNOSTR_IS_NOTE_CARD_ROW(child)) {
-      ThreadEventItem *item = g_ptr_array_index(self->sorted_events, idx);
-      if (item) {
-        /* Re-fetch profile from cache */
-        update_item_profile_from_cache(item);
-        /* Update the card */
-        update_note_card_profile(GNOSTR_NOTE_CARD_ROW(child), item);
-      }
-      idx++;
+  /* Update profile data in sorted_events from cache */
+  for (guint i = 0; i < self->sorted_events->len; i++) {
+    ThreadEventItem *item = g_ptr_array_index(self->sorted_events, i);
+    if (item) {
+      /* Re-fetch profile from cache */
+      update_item_profile_from_cache(item);
     }
-    child = gtk_widget_get_next_sibling(child);
   }
+
+  /* Rebuild UI with updated profiles - the factory will pick up the new data */
+  rebuild_thread_ui(self);
 }
 
 /* ========== nostrc-50t: nostrdb subscription for live thread updates ========== */

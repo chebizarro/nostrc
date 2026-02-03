@@ -131,13 +131,13 @@ template $GnostrThreadView: Widget {
             vexpand: true;
             visible: true;
 
-            Box thread_list_box {
-                orientation: vertical;
-                spacing: 0;
+            ListView thread_list_view {
                 margin-start: 0;
                 margin-end: 0;
                 margin-top: 4;
                 margin-bottom: 4;
+                single-click-activate: false;
+                show-separators: false;
 
                 styles [
                     "thread-list",
