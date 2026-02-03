@@ -1576,6 +1576,7 @@ typedef struct {
   GWeakRef view_ref;        /* weak ref to timeline view */
   gchar *event_id_hex;      /* event ID to fetch reactions for */
   gchar *author_pubkey_hex; /* post author's pubkey */
+  GPtrArray *write_relays;  /* nostrc-0u5h: cached for COUNT fallback */
 } ReactionFetchContext;
 
 static void reaction_fetch_ctx_free(ReactionFetchContext *ctx) {
@@ -1583,7 +1584,54 @@ static void reaction_fetch_ctx_free(ReactionFetchContext *ctx) {
   g_weak_ref_clear(&ctx->view_ref);
   g_free(ctx->event_id_hex);
   g_free(ctx->author_pubkey_hex);
+  if (ctx->write_relays) g_ptr_array_unref(ctx->write_relays);
   g_free(ctx);
+}
+
+/* Forward declare for fallback */
+static void on_reaction_query_done(GObject *source, GAsyncResult *res, gpointer user_data);
+
+/* nostrc-0u5h: Issue regular subscription query as fallback when COUNT fails/unsupported */
+static void reaction_count_fallback_query(GnostrTimelineView *self, ReactionFetchContext *ctx) {
+  if (!ctx->write_relays || ctx->write_relays->len == 0) {
+    g_object_unref(self);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  g_debug("timeline_view: COUNT fallback - querying %u relays for reactions to %.16s",
+          ctx->write_relays->len, ctx->event_id_hex);
+
+  /* Build filter for kind:7 reactions referencing this event */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[1] = { 7 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+
+  NostrTag *e_tag = nostr_tag_new("e", ctx->event_id_hex, NULL);
+  NostrTags *tags = nostr_tags_new(1, e_tag);
+  nostr_filter_set_tags(filter, tags);
+  nostr_filter_set_limit(filter, 100);
+
+  /* Build URL array */
+  const char **urls = g_new0(const char *, ctx->write_relays->len);
+  for (guint i = 0; i < ctx->write_relays->len; i++) {
+    urls[i] = g_ptr_array_index(ctx->write_relays, i);
+  }
+
+  /* Query relays for reaction events */
+  gnostr_simple_pool_query_single_async(
+    gnostr_get_shared_query_pool(),
+    urls,
+    ctx->write_relays->len,
+    filter,
+    self->reaction_cancellable,
+    on_reaction_query_done,
+    ctx  /* transfer ownership */
+  );
+
+  g_free(urls);
+  nostr_filter_free(filter);
+  g_object_unref(self);
 }
 
 /* nostrc-x8z3.2: Callback when NIP-45 COUNT query for reactions completes */
@@ -1594,12 +1642,27 @@ static void on_reaction_count_done(GObject *source, GAsyncResult *res, gpointer 
   GError *error = NULL;
   gint64 count = gnostr_simple_pool_count_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
 
+  /* nostrc-0u5h: On error (relay may not support NIP-45), fall back to regular query */
   if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("timeline_view: reaction COUNT error: %s", error->message);
+    gboolean cancelled = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+    if (!cancelled) {
+      g_debug("timeline_view: COUNT error for %.16s, falling back to query: %s",
+              ctx->event_id_hex, error->message);
     }
     g_error_free(error);
-    reaction_fetch_ctx_free(ctx);
+
+    if (cancelled) {
+      reaction_fetch_ctx_free(ctx);
+      return;
+    }
+
+    /* Fallback to regular subscription query */
+    GnostrTimelineView *self = g_weak_ref_get(&ctx->view_ref);
+    if (!self) {
+      reaction_fetch_ctx_free(ctx);
+      return;
+    }
+    reaction_count_fallback_query(self, ctx);
     return;
   }
 
@@ -1609,8 +1672,17 @@ static void on_reaction_count_done(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  if (count <= 0) {
-    g_debug("timeline_view: COUNT returned %lld for %.16s", (long long)count, ctx->event_id_hex);
+  /* nostrc-0u5h: count < 0 means COUNT unsupported, fall back to regular query */
+  if (count < 0) {
+    g_debug("timeline_view: COUNT unsupported (returned %lld) for %.16s, falling back to query",
+            (long long)count, ctx->event_id_hex);
+    reaction_count_fallback_query(self, ctx);
+    return;
+  }
+
+  /* count == 0 means no reactions, no need to fallback */
+  if (count == 0) {
+    g_debug("timeline_view: COUNT returned 0 for %.16s", ctx->event_id_hex);
     g_object_unref(self);
     reaction_fetch_ctx_free(ctx);
     return;
@@ -1900,11 +1972,12 @@ static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpoint
     g_debug("timeline_view: using NIP-45 COUNT for reactions to %.16s (author %.16s, %u relays)",
             event_id, author_pubkey, write_relays->len);
 
-    /* Create reaction fetch context */
+    /* Create reaction fetch context - keep write_relays for fallback (nostrc-0u5h) */
     ReactionFetchContext *rctx = g_new0(ReactionFetchContext, 1);
     g_weak_ref_init(&rctx->view_ref, self);
     rctx->event_id_hex = g_strdup(event_id);
     rctx->author_pubkey_hex = g_strdup(author_pubkey);
+    rctx->write_relays = write_relays;  /* Transfer ownership for COUNT fallback */
 
     /* Build filter for kind:7 reactions referencing this event */
     NostrFilter *filter = nostr_filter_new();
@@ -1934,7 +2007,7 @@ static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpoint
     );
 
     g_free(urls);
-    g_ptr_array_unref(write_relays);
+    /* Note: write_relays ownership transferred to rctx for fallback, freed in reaction_fetch_ctx_free */
     nostr_filter_free(filter);
     g_object_unref(parser);
   }
