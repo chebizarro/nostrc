@@ -340,6 +340,7 @@ struct _GnostrProfilePane {
   GtkSelectionModel *follows_selection;
   GCancellable *follows_cancellable;
   gboolean follows_loaded;
+  gulong follows_loading_handler_id;
 
   /* State */
   char *current_pubkey;
@@ -488,6 +489,11 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   if (self->follows_cancellable) {
     g_cancellable_cancel(self->follows_cancellable);
     g_clear_object(&self->follows_cancellable);
+  }
+  /* nostrc-b0h: Disconnect loading signal before clearing model */
+  if (self->follows_loading_handler_id != 0 && self->follows_model) {
+    g_signal_handler_disconnect(self->follows_model, self->follows_loading_handler_id);
+    self->follows_loading_handler_id = 0;
   }
   if (self->follows_list && GTK_IS_LIST_VIEW(self->follows_list)) {
     gtk_list_view_set_model(GTK_LIST_VIEW(self->follows_list), NULL);
@@ -858,6 +864,44 @@ static void on_follows_scroll_value_changed(GtkAdjustment *adj, gpointer user_da
   update_follows_visible_range(self);
 }
 
+/* nostrc-b0h: Callback when follows model loading state changes.
+ * This replaces the previous hacky 500ms timeout with proper signal-based notification. */
+static void on_follows_model_loading_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  GnFollowListModel *model = GN_FOLLOW_LIST_MODEL(object);
+  gboolean is_loading = gn_follow_list_model_is_loading(model);
+
+  if (!is_loading) {
+    /* Loading complete - update UI */
+    /* Hide loading indicator */
+    if (self->follows_loading_box) {
+      gtk_widget_set_visible(self->follows_loading_box, FALSE);
+      if (self->follows_spinner) {
+        gtk_spinner_set_spinning(GTK_SPINNER(self->follows_spinner), FALSE);
+      }
+    }
+
+    /* Check if model has items */
+    guint n_items = g_list_model_get_n_items(G_LIST_MODEL(model));
+
+    if (n_items > 0) {
+      if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, TRUE);
+      if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, FALSE);
+
+      /* nostrc-1mzg: Trigger initial viewport-aware profile loading */
+      update_follows_visible_range(self);
+    } else {
+      if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, FALSE);
+      if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, TRUE);
+    }
+
+    g_debug("profile_pane: follows load complete, %u items", n_items);
+  }
+}
+
 /* nostrc-7447: Setup the follows list view */
 static void setup_follows_list(GnostrProfilePane *self) {
   if (!self->follows_list || !GTK_IS_LIST_VIEW(self->follows_list)) return;
@@ -896,37 +940,14 @@ static void setup_follows_list(GnostrProfilePane *self) {
                        G_CALLBACK(on_follows_scroll_value_changed), self);
     }
   }
-}
 
-/* nostrc-7447: Callback to update UI after follows load */
-static gboolean follows_load_ui_update_cb(gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
-
-  /* Hide loading */
-  if (self->follows_loading_box) {
-    gtk_widget_set_visible(self->follows_loading_box, FALSE);
-    if (self->follows_spinner) {
-      gtk_spinner_set_spinning(GTK_SPINNER(self->follows_spinner), FALSE);
-    }
+  /* nostrc-b0h: Connect to model's loading signal for proper async notification.
+   * This replaces the previous hacky 500ms timeout approach. */
+  if (self->follows_model && GN_IS_FOLLOW_LIST_MODEL(self->follows_model)) {
+    self->follows_loading_handler_id = g_signal_connect(
+        self->follows_model, "notify::is-loading",
+        G_CALLBACK(on_follows_model_loading_changed), self);
   }
-
-  /* Check if model has items */
-  guint n_items = self->follows_model ?
-      g_list_model_get_n_items(self->follows_model) : 0;
-
-  if (n_items > 0) {
-    if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, TRUE);
-    if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, FALSE);
-
-    /* nostrc-1mzg: Trigger initial viewport-aware profile loading */
-    update_follows_visible_range(self);
-  } else {
-    if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, FALSE);
-    if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, TRUE);
-  }
-
-  return G_SOURCE_REMOVE;
 }
 
 /* nostrc-7447: Load follows for the current profile */
@@ -951,16 +972,14 @@ static void load_follows(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->follows_scroll, FALSE);
   }
 
-  /* Load follows via model */
+  /* Load follows via model - UI will be updated via notify::is-loading signal
+   * connected in setup_follows_list (nostrc-b0h fix) */
   if (self->follows_model && GN_IS_FOLLOW_LIST_MODEL(self->follows_model)) {
     gn_follow_list_model_load_for_pubkey(GN_FOLLOW_LIST_MODEL(self->follows_model),
                                           self->current_pubkey);
   }
 
   self->follows_loaded = TRUE;
-
-  /* Update UI based on model state after a brief delay to allow loading */
-  g_timeout_add(500, follows_load_ui_update_cb, self);
 }
 
 static void setup_posts_list(GnostrProfilePane *self) {
