@@ -577,16 +577,40 @@ on_request_relay_events_done(GObject      *source,
   GTask *task = G_TASK(user_data);
   GError *error = NULL;
 
-  /* The streaming query doesn't return events directly - they come via the
-   * "events" signal and are ingested to nostrdb. We just need to propagate
-   * success/failure. */
-  gboolean ok = gnostr_simple_pool_subscribe_many_finish(
+  /* query_single returns events directly - we need to ingest them to nostrdb
+   * so that plugin subscriptions can fire. */
+  GPtrArray *events = gnostr_simple_pool_query_single_finish(
       GNOSTR_SIMPLE_POOL(source), res, &error);
 
-  if (ok) {
-    g_task_return_boolean(task, TRUE);
-  } else {
+  if (error) {
+    g_debug("[plugin-api] Relay request failed: %s", error->message);
     g_task_return_error(task, error);
+  } else {
+    guint count = events ? events->len : 0;
+    guint ingested = 0;
+
+    /* Ingest events to nostrdb */
+    for (guint i = 0; events && i < events->len; i++) {
+      NostrEvent *evt = g_ptr_array_index(events, i);
+      if (!evt) continue;
+
+      char *evt_json = nostr_event_serialize_compact(evt);
+      if (evt_json) {
+        int rc = storage_ndb_ingest_event_json(evt_json, NULL);
+        if (rc == 0) {
+          ingested++;
+        }
+        free(evt_json);
+      }
+    }
+
+    g_debug("[plugin-api] Relay request completed: %u events fetched, %u ingested",
+            count, ingested);
+    g_task_return_boolean(task, TRUE);
+
+    if (events) {
+      g_ptr_array_unref(events);
+    }
   }
 
   g_object_unref(task);
@@ -644,22 +668,19 @@ gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *context,
     nostr_filter_set_limit(filter, limit);
   }
 
-  /* Wrap in NostrFilters for subscribe_many */
-  NostrFilters *filters = nostr_filters_new();
-  nostr_filters_add(filters, filter);
-
   g_debug("[plugin-api] Requesting events from %zu relays, kinds=%d... limit=%d",
           url_count, kinds[0], limit);
 
-  /* Use subscribe_many for streaming query - events come via "events" signal
-   * which the main window handles by ingesting to nostrdb */
-  gnostr_simple_pool_subscribe_many_async(pool, urls, url_count, filters,
-                                          cancellable,
-                                          on_request_relay_events_done,
-                                          task);
+  /* Use query_single for one-shot query - waits for EOSE on all relays
+   * then returns all events. We ingest them to nostrdb in the callback
+   * so plugin subscriptions can fire. */
+  gnostr_simple_pool_query_single_async(pool, urls, url_count, filter,
+                                        cancellable,
+                                        on_request_relay_events_done,
+                                        task);
 
   /* Cleanup - pool copies what it needs */
-  nostr_filters_free(filters);
+  nostr_filter_free(filter);
   g_free(urls);
   g_ptr_array_unref(relay_arr);
 }
