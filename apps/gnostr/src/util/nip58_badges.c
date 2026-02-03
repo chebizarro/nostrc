@@ -463,10 +463,15 @@ on_profile_badges_fetched(GObject *source, GAsyncResult *res, gpointer user_data
   }
 
   /* Parse the first (most recent) profile badges event */
-  NostrEvent *event = g_ptr_array_index(events, 0);
-  gchar *event_json = nostr_event_serialize_compact(event);
+  /* Note: query_single returns array of JSON strings, not NostrEvent* */
+  const gchar *event_json = g_ptr_array_index(events, 0);
+  if (!event_json) {
+    g_debug("fetch_profile_badges: null event JSON at index 0");
+    g_ptr_array_unref(events);
+    badge_fetch_complete(ctx);
+    return;
+  }
   ctx->badges = gnostr_profile_badges_parse(event_json);
-  g_free(event_json);
   g_ptr_array_unref(events);
 
   if (!ctx->badges || ctx->badges->len == 0) {
@@ -569,28 +574,27 @@ on_badge_definition_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   }
 
   if (events && events->len > 0) {
-    NostrEvent *event = g_ptr_array_index(events, 0);
-    gchar *event_json = nostr_event_serialize_compact(event);
+    /* Note: query_single returns array of JSON strings, not NostrEvent* */
+    const gchar *event_json = g_ptr_array_index(events, 0);
+    if (event_json) {
+      /* Parse and update the badge definition */
+      GnostrBadgeDefinition *def = gnostr_badge_definition_parse(event_json);
+      if (def) {
+        /* Replace placeholder with full definition */
+        gnostr_badge_definition_free(badge->definition);
+        badge->definition = def;
 
-    /* Parse and update the badge definition */
-    GnostrBadgeDefinition *def = gnostr_badge_definition_parse(event_json);
-    if (def) {
-      /* Replace placeholder with full definition */
-      gnostr_badge_definition_free(badge->definition);
-      badge->definition = def;
+        /* Prefetch badge image */
+        if (def->thumb_url) {
+          gnostr_badge_prefetch_image(def->thumb_url);
+        } else if (def->image_url) {
+          gnostr_badge_prefetch_image(def->image_url);
+        }
 
-      /* Prefetch badge image */
-      if (def->thumb_url) {
-        gnostr_badge_prefetch_image(def->thumb_url);
-      } else if (def->image_url) {
-        gnostr_badge_prefetch_image(def->image_url);
+        g_debug("fetch_badge_definition: loaded '%s'",
+                def->name ? def->name : def->identifier);
       }
-
-      g_debug("fetch_badge_definition: loaded '%s'",
-              def->name ? def->name : def->identifier);
     }
-
-    g_free(event_json);
   }
 
   if (events) g_ptr_array_unref(events);
@@ -635,10 +639,11 @@ on_single_definition_fetched(GObject *source, GAsyncResult *res, gpointer user_d
     }
     g_error_free(error);
   } else if (events && events->len > 0) {
-    NostrEvent *event = g_ptr_array_index(events, 0);
-    gchar *event_json = nostr_event_serialize_compact(event);
-    def = gnostr_badge_definition_parse(event_json);
-    g_free(event_json);
+    /* Note: query_single returns array of JSON strings, not NostrEvent* */
+    const gchar *event_json = g_ptr_array_index(events, 0);
+    if (event_json) {
+      def = gnostr_badge_definition_parse(event_json);
+    }
   }
 
   if (events) g_ptr_array_unref(events);
