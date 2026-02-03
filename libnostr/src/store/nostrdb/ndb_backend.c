@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <time.h>
 #include "libnostr_store.h"
 #include "libnostr_errors.h"
 #include "store_int.h"
@@ -24,6 +26,44 @@
 #elif defined(__GNUC__)
 #  pragma GCC diagnostic pop
 #endif
+
+/* nostrc-slot: Thread-local storage for transaction reuse with reference counting.
+ * This is essential to prevent LMDB reader slot exhaustion. LMDB has a default
+ * limit of 126 concurrent readers. Without TLS caching, batch processing with
+ * signal handlers can easily open 100+ concurrent transactions.
+ *
+ * Reference counting fixes the use-after-free issue that occurred with the
+ * original TLS caching: when nested begin_query/end_query calls happen (e.g.,
+ * signal handler calls begin_query while outer code's transaction is active),
+ * end_query now only decrements the refcount instead of freeing. The transaction
+ * is only freed when refcount reaches 0. */
+typedef struct {
+    struct ndb_txn *txn;
+    int refcount;           /* Number of active begin_query calls using this txn */
+    time_t last_used;
+} tls_txn_t;
+
+static pthread_key_t tls_txn_key;
+static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
+
+/* Cleanup function for thread-local transactions */
+static void tls_txn_destructor(void *data)
+{
+    tls_txn_t *tls = (tls_txn_t*)data;
+    if (tls) {
+        if (tls->txn) {
+            ndb_end_query(tls->txn);
+            free(tls->txn);
+        }
+        free(tls);
+    }
+}
+
+/* Initialize thread-local storage */
+static void tls_init(void)
+{
+    pthread_key_create(&tls_txn_key, tls_txn_destructor);
+}
 
 /* very small helpers to parse minimal JSON-like key/values without deps */
 static int parse_kv_int(const char *json, const char *key, long long *out)
@@ -167,37 +207,71 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
   struct ndb *db = (struct ndb *)((struct ln_ndb_impl *)s->impl)->db;
   if (!db) return LN_ERR_DB_TXN;
 
-  /* No TLS caching - each caller gets their own transaction.
-   * This is required because:
-   * 1. Transaction caching causes MDB_MAP_FULL during heavy writes (LMDB
-   *    read transactions prevent page reclamation)
-   * 2. Signal handlers can trigger nested begin_query calls on the same thread,
-   *    causing use-after-free if TLS references are freed/reused
-   *
-   * The performance cost is minimal - ndb_begin_query() just acquires an
-   * LMDB read slot (no I/O). */
+  /* Initialize thread-local storage once */
+  pthread_once(&tls_init_once, tls_init);
 
-  /* Create new transaction with modest retries for transient contention.
-   * 5 attempts with 5ms sleep = 25ms max wait. Fast enough to not cause
-   * noticeable hangs, but enough to handle brief reader slot contention. */
-  for (int attempt = 0; attempt < 5; attempt++) {
+  /* Get or create thread-local transaction state */
+  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  time_t now = time(NULL);
+
+  /* nostrc-slot: Reuse existing transaction with reference counting.
+   * If we have a recent TLS transaction, just increment refcount and return it.
+   * This prevents reader slot exhaustion during batch processing where signal
+   * handlers trigger nested begin_query calls. */
+  if (tls && tls->txn && tls->refcount > 0) {
+    /* Existing active transaction - reuse it */
+    tls->refcount++;
+    tls->last_used = now;
+    *txn_out = tls->txn;
+    return LN_OK;
+  }
+
+  /* Also reuse if transaction is recent (within 2 seconds) even if refcount is 0.
+   * This handles rapid successive queries without holding transactions too long
+   * (which would cause MDB_MAP_FULL from page retention). */
+  if (tls && tls->txn && tls->refcount == 0 && (now - tls->last_used) < 2) {
+    tls->refcount = 1;
+    tls->last_used = now;
+    *txn_out = tls->txn;
+    return LN_OK;
+  }
+
+  /* Clean up old transaction if exists and not in use */
+  if (tls && tls->txn && tls->refcount == 0) {
+    ndb_end_query(tls->txn);
+    free(tls->txn);
+    tls->txn = NULL;
+  }
+
+  /* Create new thread-local storage if needed */
+  if (!tls) {
+    tls = calloc(1, sizeof(tls_txn_t));
+    if (!tls) return LN_ERR_OOM;
+    pthread_setspecific(tls_txn_key, tls);
+  }
+
+  /* Create new transaction with retries for transient contention */
+  for (int attempt = 0; attempt < 50; attempt++) {
     struct ndb_txn *txn = (struct ndb_txn *)calloc(1, sizeof(*txn));
     if (!txn) return LN_ERR_OOM;
 
     if (ndb_begin_query(db, txn)) {
+      tls->txn = txn;
+      tls->refcount = 1;
+      tls->last_used = now;
       *txn_out = txn;
       return LN_OK;
     }
 
     free(txn);
 
-    if (attempt < 4) {
-      usleep(5000);  /* 5ms between retries */
-    }
+    /* Exponential backoff for retries */
+    int backoff_ms = 10 * (1 << (attempt < 5 ? attempt : 5));
+    if (backoff_ms > 200) backoff_ms = 200;
+    usleep(backoff_ms * 1000);
   }
 
-  /* Only log when all retries exhausted - reduces noise */
-  fprintf(stderr, "[ndb] begin_query FAILED after 5 attempts - reader slots exhausted?\n");
+  fprintf(stderr, "[ndb] begin_query FAILED after 50 attempts - reader slots exhausted?\n");
   return LN_ERR_DB_TXN;
 }
 
@@ -206,16 +280,36 @@ static int ln_ndb_end_query(ln_store *s, void *txn)
   (void)s;
   if (!txn) return LN_ERR_DB_TXN;
 
-  /* Each transaction is owned by its caller - just end and free it */
+  /* nostrc-slot: Decrement reference count instead of immediately freeing.
+   * The transaction is only freed when refcount reaches 0 AND it's stale
+   * (handled in begin_query when creating a new transaction). */
+  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  if (tls && tls->txn == txn && tls->refcount > 0) {
+    tls->refcount--;
+    /* Don't actually end the transaction - keep it for reuse */
+    return LN_OK;
+  }
+
+  /* Fallback: if this isn't the TLS transaction, close it directly.
+   * This shouldn't normally happen but handles edge cases. */
   int ok = ndb_end_query((struct ndb_txn *)txn);
   free(txn);
   return ok ? LN_OK : LN_ERR_DB_TXN;
 }
 
-/* No-op: TLS caching removed, no cache to invalidate */
+/* Invalidate the thread-local transaction cache so next begin_query gets fresh data.
+ * This is needed after subscription callbacks since the cached transaction may not
+ * see newly committed notes. */
 static void ln_ndb_invalidate_txn_cache(ln_store *s)
 {
   (void)s;
+  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  if (tls && tls->txn && tls->refcount == 0) {
+    ndb_end_query(tls->txn);
+    free(tls->txn);
+    tls->txn = NULL;
+    tls->last_used = 0;
+  }
 }
 
 /* External entry point for storage_ndb to call */
