@@ -480,6 +480,32 @@ nip34_git_plugin_activate(GnostrPlugin        *plugin,
   /* Load cached repository list from plugin storage */
   load_cached_repositories(self, context);
 
+  /* Query existing repositories in the database */
+  GError *error = NULL;
+  const char *query_filter = "{\"kinds\":[30617],\"limit\":100}";
+  GPtrArray *events = gnostr_plugin_context_query_events(context, query_filter, &error);
+  if (error) {
+    g_debug("[NIP-34] Initial query failed: %s", error->message);
+    g_error_free(error);
+  } else if (events && events->len > 0) {
+    g_debug("[NIP-34] Found %u existing repository events", events->len);
+    for (guint i = 0; i < events->len; i++) {
+      const char *event_json = g_ptr_array_index(events, i);
+      if (event_json) {
+        RepoInfo *info = parse_repository_event(event_json);
+        if (info && info->d_tag) {
+          g_hash_table_replace(self->repositories, g_strdup(info->d_tag), info);
+          push_repo_to_browser(self, info);
+        } else {
+          repo_info_free(info);
+        }
+      }
+    }
+    g_ptr_array_unref(events);
+  } else {
+    g_debug("[NIP-34] No existing repositories in database");
+  }
+
 #ifdef HAVE_LIBGIT2
   /* Register action handler for git client */
   gnostr_plugin_context_register_action(context, "open-git-client",
