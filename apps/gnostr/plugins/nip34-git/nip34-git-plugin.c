@@ -302,22 +302,29 @@ on_repository_event(const char *event_json, gpointer user_data)
 {
   Nip34GitPlugin *self = NIP34_GIT_PLUGIN(user_data);
 
+  g_debug("[NIP-34] Received repository event from subscription");
+
   if (!self->active || !event_json)
-    return;
+    {
+      g_debug("[NIP-34] Ignoring event (active=%d, json=%s)",
+              self->active, event_json ? "yes" : "NULL");
+      return;
+    }
 
   RepoInfo *info = parse_repository_event(event_json);
   if (info && info->d_tag)
     {
       g_hash_table_replace(self->repositories,
                            g_strdup(info->d_tag), info);
-      g_debug("[NIP-34] Subscription: cached repository %s",
-              info->name ? info->name : info->d_tag);
+      g_debug("[NIP-34] Subscription: cached repository %s (%s)",
+              info->name ? info->name : "(unnamed)", info->d_tag);
 
       /* Push to browser UI */
       push_repo_to_browser(self, info);
     }
   else
     {
+      g_debug("[NIP-34] Failed to parse repository event");
       repo_info_free(info);
     }
 }
@@ -815,11 +822,14 @@ on_refresh_button_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
   SettingsPageData *data = user_data;
 
   gtk_label_set_text(data->status_label, "Refreshing...");
+  g_debug("[NIP-34] Refresh button clicked");
 
   /* Query local storage for repository events */
   if (data->plugin && data->plugin->context)
     {
       const char *filter = "{\"kinds\":[30617],\"limit\":100}";
+      g_debug("[NIP-34] Querying local storage with filter: %s", filter);
+
       GError *error = NULL;
       GPtrArray *events = gnostr_plugin_context_query_events(
           data->plugin->context, filter, &error);
@@ -827,16 +837,25 @@ on_refresh_button_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
       if (error)
         {
           g_warning("[NIP-34] Query failed: %s", error->message);
+          gtk_label_set_text(data->status_label, "Query failed");
           g_error_free(error);
         }
       else if (events)
         {
+          g_debug("[NIP-34] Query returned %u events", events->len);
+
+          if (events->len == 0) {
+            gtk_label_set_text(data->status_label,
+                "No repository events in local storage");
+          }
+
           for (guint i = 0; i < events->len; i++)
             {
               const char *event_json = g_ptr_array_index(events, i);
               RepoInfo *info = parse_repository_event(event_json);
               if (info && info->d_tag)
                 {
+                  g_debug("[NIP-34] Found repo: %s", info->name ? info->name : info->d_tag);
                   g_hash_table_replace(data->plugin->repositories,
                                        g_strdup(info->d_tag), info);
                   /* Push to browser UI */
@@ -851,6 +870,16 @@ on_refresh_button_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
                   g_hash_table_size(data->plugin->repositories));
           g_ptr_array_unref(events);
         }
+      else
+        {
+          g_debug("[NIP-34] Query returned NULL (no events)");
+          gtk_label_set_text(data->status_label, "No repositories found");
+        }
+    }
+  else
+    {
+      g_warning("[NIP-34] Plugin or context is NULL");
+      gtk_label_set_text(data->status_label, "Plugin not initialized");
     }
 
   update_repo_list(data);
