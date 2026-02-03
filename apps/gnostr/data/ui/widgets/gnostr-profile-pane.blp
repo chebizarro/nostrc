@@ -641,6 +641,78 @@ template $GnostrProfilePane: Widget {
                     }
                 };
             }
+
+            StackPage {
+                name: "follows";
+                title: "Follows";
+
+                child: Box follows_container {
+                    orientation: vertical;
+                    vexpand: true;
+
+                    ScrolledWindow follows_scroll {
+                        vexpand: true;
+                        hscrollbar-policy: never;
+
+                        ListView follows_list {
+                            single-click-activate: true;
+
+                            styles [
+                                "profile-follows-list",
+                            ]
+                        }
+                    }
+
+                    Box follows_loading_box {
+                        orientation: vertical;
+                        spacing: 8;
+                        halign: center;
+                        valign: center;
+                        vexpand: true;
+                        visible: false;
+
+                        Spinner follows_spinner {
+                            spinning: true;
+                            width-request: 32;
+                            height-request: 32;
+                        }
+
+                        Label {
+                            label: "Loading follows...";
+
+                            styles [
+                                "dim-label",
+                            ]
+                        }
+                    }
+
+                    Box follows_empty_box {
+                        orientation: vertical;
+                        spacing: 8;
+                        halign: center;
+                        valign: center;
+                        vexpand: true;
+                        visible: false;
+
+                        Image {
+                            icon-name: "system-users-symbolic";
+                            pixel-size: 48;
+
+                            styles [
+                                "dim-label",
+                            ]
+                        }
+
+                        Label follows_empty_label {
+                            label: "Not following anyone";
+
+                            styles [
+                                "dim-label",
+                            ]
+                        }
+                    }
+                };
+            }
         }
     }
 }

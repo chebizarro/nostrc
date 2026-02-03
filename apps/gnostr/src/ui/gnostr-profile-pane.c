@@ -4,6 +4,7 @@
 #include "gnostr-image-viewer.h"
 #include "note_card_row.h"
 #include "gnostr-highlight-card.h"
+#include "../model/gn-follow-list-model.h"
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
@@ -326,6 +327,19 @@ struct _GnostrProfilePane {
   GCancellable *highlights_cancellable;
   gboolean highlights_loaded;
 
+  /* nostrc-7447: Follows tab widgets */
+  GtkWidget *follows_container;
+  GtkWidget *follows_scroll;
+  GtkWidget *follows_list;
+  GtkWidget *follows_loading_box;
+  GtkWidget *follows_spinner;
+  GtkWidget *follows_empty_box;
+  GtkWidget *follows_empty_label;
+  GListModel *follows_model;
+  GtkSelectionModel *follows_selection;
+  GCancellable *follows_cancellable;
+  gboolean follows_loaded;
+
   /* State */
   char *current_pubkey;
   char *own_pubkey;              /* Current user's pubkey */
@@ -468,6 +482,17 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   }
   g_clear_object(&self->media_selection);
   g_clear_object(&self->media_model);
+
+  /* nostrc-7447: Cancel follows loading and clear model */
+  if (self->follows_cancellable) {
+    g_cancellable_cancel(self->follows_cancellable);
+    g_clear_object(&self->follows_cancellable);
+  }
+  if (self->follows_list && GTK_IS_LIST_VIEW(self->follows_list)) {
+    gtk_list_view_set_model(GTK_LIST_VIEW(self->follows_list), NULL);
+  }
+  g_clear_object(&self->follows_selection);
+  g_clear_object(&self->follows_model);
 
   /* Shared query pool is managed globally - do not clear here */
 
@@ -668,6 +693,241 @@ static void on_posts_list_activate(GtkListView *list_view, guint position, gpoin
   }
 }
 
+/* nostrc-7447: Follows row factory setup - creates a simple user card */
+static void follows_factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+  (void)f; (void)data;
+
+  /* Create a simple horizontal box for follow items */
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_set_margin_start(box, 12);
+  gtk_widget_set_margin_end(box, 12);
+  gtk_widget_set_margin_top(box, 8);
+  gtk_widget_set_margin_bottom(box, 8);
+
+  /* Avatar placeholder */
+  GtkWidget *avatar = gtk_image_new_from_icon_name("avatar-default-symbolic");
+  gtk_image_set_pixel_size(GTK_IMAGE(avatar), 48);
+  gtk_widget_set_name(avatar, "follow-avatar");
+  gtk_box_append(GTK_BOX(box), avatar);
+
+  /* Name/info box */
+  GtkWidget *info_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  gtk_widget_set_hexpand(info_box, TRUE);
+  gtk_widget_set_valign(info_box, GTK_ALIGN_CENTER);
+
+  GtkWidget *name_label = gtk_label_new(NULL);
+  gtk_widget_set_name(name_label, "follow-name");
+  gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
+  gtk_widget_add_css_class(name_label, "title-4");
+  gtk_box_append(GTK_BOX(info_box), name_label);
+
+  GtkWidget *nip05_label = gtk_label_new(NULL);
+  gtk_widget_set_name(nip05_label, "follow-nip05");
+  gtk_label_set_xalign(GTK_LABEL(nip05_label), 0.0);
+  gtk_widget_add_css_class(nip05_label, "dim-label");
+  gtk_widget_add_css_class(nip05_label, "caption");
+  gtk_box_append(GTK_BOX(info_box), nip05_label);
+
+  gtk_box_append(GTK_BOX(box), info_box);
+
+  gtk_list_item_set_child(item, box);
+}
+
+/* nostrc-7447: Follows row factory bind */
+static void follows_factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+  (void)f; (void)data;
+  GObject *obj = gtk_list_item_get_item(item);
+  if (!obj || !GN_IS_FOLLOW_LIST_ITEM(obj)) return;
+
+  GnFollowListItem *follow = GN_FOLLOW_LIST_ITEM(obj);
+  GtkWidget *box = gtk_list_item_get_child(item);
+  if (!box) return;
+
+  /* Find child widgets by name */
+  GtkWidget *avatar = NULL;
+  GtkWidget *name_label = NULL;
+  GtkWidget *nip05_label = NULL;
+
+  for (GtkWidget *child = gtk_widget_get_first_child(box); child; child = gtk_widget_get_next_sibling(child)) {
+    const char *name = gtk_widget_get_name(child);
+    if (g_strcmp0(name, "follow-avatar") == 0) {
+      avatar = child;
+    } else if (GTK_IS_BOX(child)) {
+      /* Info box - search for labels */
+      for (GtkWidget *inner = gtk_widget_get_first_child(child); inner; inner = gtk_widget_get_next_sibling(inner)) {
+        const char *inner_name = gtk_widget_get_name(inner);
+        if (g_strcmp0(inner_name, "follow-name") == 0) {
+          name_label = inner;
+        } else if (g_strcmp0(inner_name, "follow-nip05") == 0) {
+          nip05_label = inner;
+        }
+      }
+    }
+  }
+
+  /* Update display name */
+  const char *display_name = gn_follow_list_item_get_display_name(follow);
+  const char *pubkey = gn_follow_list_item_get_pubkey(follow);
+  if (name_label && GTK_IS_LABEL(name_label)) {
+    if (display_name && *display_name) {
+      gtk_label_set_text(GTK_LABEL(name_label), display_name);
+    } else if (pubkey) {
+      /* Show truncated pubkey as fallback */
+      char truncated[16];
+      snprintf(truncated, sizeof(truncated), "%.12s...", pubkey);
+      gtk_label_set_text(GTK_LABEL(name_label), truncated);
+    }
+  }
+
+  /* Update NIP-05 */
+  const char *nip05 = gn_follow_list_item_get_nip05(follow);
+  if (nip05_label && GTK_IS_LABEL(nip05_label)) {
+    if (nip05 && *nip05) {
+      gtk_label_set_text(GTK_LABEL(nip05_label), nip05);
+      gtk_widget_set_visible(nip05_label, TRUE);
+    } else {
+      gtk_widget_set_visible(nip05_label, FALSE);
+    }
+  }
+
+  /* Update avatar */
+  const char *picture_url = gn_follow_list_item_get_picture_url(follow);
+  if (avatar && GTK_IS_IMAGE(avatar)) {
+    if (picture_url && *picture_url) {
+      /* Use avatar cache if available */
+      GdkTexture *texture = gnostr_avatar_try_load_cached(picture_url);
+      if (texture) {
+        gtk_image_set_from_paintable(GTK_IMAGE(avatar), GDK_PAINTABLE(texture));
+      } else {
+        /* Fallback to default until loaded */
+        gtk_image_set_from_icon_name(GTK_IMAGE(avatar), "avatar-default-symbolic");
+        /* Queue avatar prefetch (async) */
+        gnostr_avatar_prefetch(picture_url);
+      }
+    } else {
+      gtk_image_set_from_icon_name(GTK_IMAGE(avatar), "avatar-default-symbolic");
+    }
+  }
+
+  gtk_widget_set_visible(box, TRUE);
+}
+
+/* nostrc-7447: Follows row factory unbind */
+static void follows_factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+  (void)f; (void)item; (void)data;
+  /* No special cleanup needed */
+}
+
+/* nostrc-7447: Handle follows list item activation (click to view profile) */
+static void on_follows_list_activate(GtkListView *list_view, guint position, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)list_view;
+
+  if (!self->follows_model) return;
+
+  GnFollowListItem *item = g_list_model_get_item(self->follows_model, position);
+  if (item) {
+    const char *pubkey = gn_follow_list_item_get_pubkey(item);
+    if (pubkey && *pubkey) {
+      /* Switch to viewing this profile */
+      gnostr_profile_pane_set_pubkey(self, pubkey);
+    }
+    g_object_unref(item);
+  }
+}
+
+/* nostrc-7447: Setup the follows list view */
+static void setup_follows_list(GnostrProfilePane *self) {
+  if (!self->follows_list || !GTK_IS_LIST_VIEW(self->follows_list)) return;
+
+  /* Create model if not exists */
+  if (!self->follows_model) {
+    self->follows_model = G_LIST_MODEL(gn_follow_list_model_new());
+  }
+
+  /* Create selection model */
+  if (!self->follows_selection) {
+    self->follows_selection = GTK_SELECTION_MODEL(
+        gtk_single_selection_new(g_object_ref(self->follows_model)));
+  }
+
+  /* Create factory */
+  GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+  g_signal_connect(factory, "setup", G_CALLBACK(follows_factory_setup_cb), NULL);
+  g_signal_connect(factory, "bind", G_CALLBACK(follows_factory_bind_cb), NULL);
+  g_signal_connect(factory, "unbind", G_CALLBACK(follows_factory_unbind_cb), NULL);
+
+  /* Set up list view */
+  gtk_list_view_set_model(GTK_LIST_VIEW(self->follows_list), self->follows_selection);
+  gtk_list_view_set_factory(GTK_LIST_VIEW(self->follows_list), factory);
+  g_object_unref(factory);
+
+  /* Connect activation signal */
+  g_signal_connect(self->follows_list, "activate", G_CALLBACK(on_follows_list_activate), self);
+}
+
+/* nostrc-7447: Callback to update UI after follows load */
+static gboolean follows_load_ui_update_cb(gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
+
+  /* Hide loading */
+  if (self->follows_loading_box) {
+    gtk_widget_set_visible(self->follows_loading_box, FALSE);
+    if (self->follows_spinner) {
+      gtk_spinner_set_spinning(GTK_SPINNER(self->follows_spinner), FALSE);
+    }
+  }
+
+  /* Check if model has items */
+  guint n_items = self->follows_model ?
+      g_list_model_get_n_items(self->follows_model) : 0;
+
+  if (n_items > 0) {
+    if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, TRUE);
+    if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, FALSE);
+  } else {
+    if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, FALSE);
+    if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, TRUE);
+  }
+
+  return G_SOURCE_REMOVE;
+}
+
+/* nostrc-7447: Load follows for the current profile */
+static void load_follows(GnostrProfilePane *self) {
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!self->current_pubkey) return;
+  if (self->follows_loaded) return;
+
+  g_debug("profile_pane: loading follows for %.8s...", self->current_pubkey);
+
+  /* Show loading state */
+  if (self->follows_loading_box) {
+    gtk_widget_set_visible(self->follows_loading_box, TRUE);
+    if (self->follows_spinner) {
+      gtk_spinner_set_spinning(GTK_SPINNER(self->follows_spinner), TRUE);
+    }
+  }
+  if (self->follows_empty_box) {
+    gtk_widget_set_visible(self->follows_empty_box, FALSE);
+  }
+  if (self->follows_scroll) {
+    gtk_widget_set_visible(self->follows_scroll, FALSE);
+  }
+
+  /* Load follows via model */
+  if (self->follows_model && GN_IS_FOLLOW_LIST_MODEL(self->follows_model)) {
+    gn_follow_list_model_load_for_pubkey(GN_FOLLOW_LIST_MODEL(self->follows_model),
+                                          self->current_pubkey);
+  }
+
+  self->follows_loaded = TRUE;
+
+  /* Update UI based on model state after a brief delay to allow loading */
+  g_timeout_add(500, follows_load_ui_update_cb, self);
+}
+
 static void setup_posts_list(GnostrProfilePane *self) {
   if (!self->posts_list || !GTK_IS_LIST_VIEW(self->posts_list)) return;
 
@@ -762,6 +1022,14 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_spinner);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_empty_box);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_empty_label);
+  /* nostrc-7447: Follows tab */
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_container);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_scroll);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_list);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_loading_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_spinner);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_empty_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_empty_label);
 
   gtk_widget_class_bind_template_callback(wclass, on_close_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_edit_profile_clicked);
@@ -816,6 +1084,9 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
 
   /* Setup posts list */
   setup_posts_list(self);
+
+  /* nostrc-7447: Setup follows list */
+  setup_follows_list(self);
 
 #ifdef HAVE_SOUP3
   /* Uses shared session from gnostr_get_shared_soup_session() */
@@ -1005,6 +1276,23 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->highlights_empty_box, FALSE);
   if (self->highlights_scroll)
     gtk_widget_set_visible(self->highlights_scroll, TRUE);
+
+  /* nostrc-7447: Clear follows state */
+  if (self->follows_cancellable) {
+    g_cancellable_cancel(self->follows_cancellable);
+    g_clear_object(&self->follows_cancellable);
+  }
+  if (self->follows_model && GN_IS_FOLLOW_LIST_MODEL(self->follows_model)) {
+    gn_follow_list_model_clear(GN_FOLLOW_LIST_MODEL(self->follows_model));
+  }
+  self->follows_loaded = FALSE;
+  /* Reset follows UI state */
+  if (self->follows_loading_box)
+    gtk_widget_set_visible(self->follows_loading_box, FALSE);
+  if (self->follows_empty_box)
+    gtk_widget_set_visible(self->follows_empty_box, FALSE);
+  if (self->follows_scroll)
+    gtk_widget_set_visible(self->follows_scroll, TRUE);
 
   /* Clear profile data for posts */
   g_clear_pointer(&self->current_display_name, g_free);
@@ -3425,6 +3713,9 @@ static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, g
   } else if (g_strcmp0(visible, "highlights") == 0 && !self->highlights_loaded) {
     /* Lazy load highlights on first tab switch */
     load_highlights(self);
+  } else if (g_strcmp0(visible, "follows") == 0 && !self->follows_loaded) {
+    /* nostrc-7447: Lazy load follows on first tab switch */
+    load_follows(self);
   }
 }
 
