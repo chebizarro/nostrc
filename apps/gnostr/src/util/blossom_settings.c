@@ -27,14 +27,40 @@
 /* Singleton instance */
 static GSettings *blossom_gsettings = NULL;
 
+/* Flag to track if we already tried and failed to init GSettings */
+static gboolean gsettings_init_attempted = FALSE;
+
 /* Cached server list from GSettings */
 static GPtrArray *cached_servers = NULL;
 
-/* Ensure GSettings is initialized */
-static void ensure_gsettings(void) {
-  if (!blossom_gsettings) {
-    blossom_gsettings = g_settings_new(BLOSSOM_SCHEMA_ID);
+/* Ensure GSettings is initialized. Returns TRUE if GSettings is available. */
+static gboolean ensure_gsettings(void) {
+  if (blossom_gsettings) {
+    return TRUE;
   }
+
+  if (gsettings_init_attempted) {
+    return FALSE;  /* Already tried and failed */
+  }
+
+  gsettings_init_attempted = TRUE;
+
+  /* Check if schema is installed before trying to create GSettings */
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  if (!source) {
+    g_debug("GSettings schema source not available - using defaults");
+    return FALSE;
+  }
+
+  GSettingsSchema *schema = g_settings_schema_source_lookup(source, BLOSSOM_SCHEMA_ID, TRUE);
+  if (!schema) {
+    g_debug("GSettings schema '%s' not installed - using defaults", BLOSSOM_SCHEMA_ID);
+    return FALSE;
+  }
+  g_settings_schema_unref(schema);
+
+  blossom_gsettings = g_settings_new(BLOSSOM_SCHEMA_ID);
+  return TRUE;
 }
 
 void gnostr_blossom_server_free(GnostrBlossomServer *server) {
@@ -44,21 +70,23 @@ void gnostr_blossom_server_free(GnostrBlossomServer *server) {
 }
 
 GObject *gnostr_blossom_settings_get_default(void) {
-  ensure_gsettings();
+  if (!ensure_gsettings()) {
+    return NULL;
+  }
   return G_OBJECT(blossom_gsettings);
 }
 
 const char *gnostr_blossom_settings_get_default_server(void) {
-  ensure_gsettings();
-
-  /* Check GSettings first */
-  g_autofree char *url = g_settings_get_string(blossom_gsettings, "blossom-server");
-  if (url && *url) {
-    /* Return from gsettings - we need to keep a static copy */
-    static char *cached_default = NULL;
-    g_free(cached_default);
-    cached_default = g_strdup(url);
-    return cached_default;
+  /* Check GSettings first if available */
+  if (ensure_gsettings()) {
+    g_autofree char *url = g_settings_get_string(blossom_gsettings, "blossom-server");
+    if (url && *url) {
+      /* Return from gsettings - we need to keep a static copy */
+      static char *cached_default = NULL;
+      g_free(cached_default);
+      cached_default = g_strdup(url);
+      return cached_default;
+    }
   }
 
   /* Fall back to default */
@@ -66,17 +94,21 @@ const char *gnostr_blossom_settings_get_default_server(void) {
 }
 
 void gnostr_blossom_settings_set_default_server(const char *url) {
-  ensure_gsettings();
+  if (!ensure_gsettings()) {
+    return;  /* GSettings not available, silently ignore */
+  }
   g_settings_set_string(blossom_gsettings, "blossom-server", url ? url : "");
 }
 
 static void load_servers_from_gsettings(void) {
-  ensure_gsettings();
-
   if (cached_servers) {
     g_ptr_array_unref(cached_servers);
   }
   cached_servers = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_blossom_server_free);
+
+  if (!ensure_gsettings()) {
+    return;  /* GSettings not available, use empty list */
+  }
 
   g_auto(GStrv) servers = g_settings_get_strv(blossom_gsettings, "blossom-servers");
   if (servers) {
@@ -100,7 +132,9 @@ static void load_servers_from_gsettings(void) {
 }
 
 static void save_servers_to_gsettings(void) {
-  ensure_gsettings();
+  if (!ensure_gsettings()) {
+    return;  /* GSettings not available, silently ignore */
+  }
 
   if (!cached_servers) {
     load_servers_from_gsettings();

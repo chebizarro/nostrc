@@ -240,6 +240,9 @@ test_rate_limiter_client_initial_allowed(RateLimiterFixture *fixture, gconstpoin
   (void)data;
   const gchar *client = "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab";
 
+  /* Reset any existing state for this client from previous test runs */
+  gn_rate_limiter_reset_client(fixture->limiter, client);
+
   guint remaining = 999;
   GnRateLimitStatus status = gn_rate_limiter_check_client(fixture->limiter, client, &remaining);
 
@@ -254,6 +257,9 @@ test_rate_limiter_client_track_failures(RateLimiterFixture *fixture, gconstpoint
   (void)data;
   const gchar *client = "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab";
 
+  /* Reset any existing state for this client from previous test runs */
+  gn_rate_limiter_reset_client(fixture->limiter, client);
+
   /* Record failed attempts */
   gn_rate_limiter_record_client_attempt(fixture->limiter, client, FALSE);
   g_assert_cmpuint(gn_rate_limiter_get_client_attempts_remaining(fixture->limiter, client), ==, 2);
@@ -267,6 +273,9 @@ test_rate_limiter_client_lockout(RateLimiterFixture *fixture, gconstpointer data
 {
   (void)data;
   const gchar *client = "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab";
+
+  /* Reset any existing state for this client from previous test runs */
+  gn_rate_limiter_reset_client(fixture->limiter, client);
 
   /* Record max attempts */
   gn_rate_limiter_record_client_attempt(fixture->limiter, client, FALSE);
@@ -292,6 +301,9 @@ test_rate_limiter_client_reset_on_success(RateLimiterFixture *fixture, gconstpoi
   (void)data;
   const gchar *client = "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab";
 
+  /* Reset any existing state for this client from previous test runs */
+  gn_rate_limiter_reset_client(fixture->limiter, client);
+
   /* Record some failed attempts */
   gn_rate_limiter_record_client_attempt(fixture->limiter, client, FALSE);
   gn_rate_limiter_record_client_attempt(fixture->limiter, client, FALSE);
@@ -311,6 +323,10 @@ test_rate_limiter_multiple_clients_independent(RateLimiterFixture *fixture, gcon
   const gchar *client1 = "1111111111111111111111111111111111111111111111111111111111111111";
   const gchar *client2 = "2222222222222222222222222222222222222222222222222222222222222222";
 
+  /* Reset any existing state for these clients from previous test runs */
+  gn_rate_limiter_reset_client(fixture->limiter, client1);
+  gn_rate_limiter_reset_client(fixture->limiter, client2);
+
   /* Lock out client1 */
   gn_rate_limiter_record_client_attempt(fixture->limiter, client1, FALSE);
   gn_rate_limiter_record_client_attempt(fixture->limiter, client1, FALSE);
@@ -328,6 +344,9 @@ test_rate_limiter_client_manual_reset(RateLimiterFixture *fixture, gconstpointer
 {
   (void)data;
   const gchar *client = "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab";
+
+  /* Reset any existing state for this client from previous test runs */
+  gn_rate_limiter_reset_client(fixture->limiter, client);
 
   /* Lock out client */
   gn_rate_limiter_record_client_attempt(fixture->limiter, client, FALSE);
@@ -469,6 +488,10 @@ test_rate_limiter_save_load(void)
 
   /* Create limiter and add some state */
   GnRateLimiter *limiter1 = gn_rate_limiter_new(5, 300, 1);
+
+  /* Reset any existing state for this client from previous test runs */
+  gn_rate_limiter_reset_client(limiter1, client);
+
   gn_rate_limiter_record_client_attempt(limiter1, client, FALSE);
   gn_rate_limiter_record_client_attempt(limiter1, client, FALSE);
 
@@ -529,6 +552,9 @@ test_rate_limiter_null_remaining(RateLimiterFixture *fixture, gconstpointer data
 {
   (void)data;
   const gchar *client = "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab";
+
+  /* Reset any existing state for this client from previous test runs */
+  gn_rate_limiter_reset_client(fixture->limiter, client);
 
   /* Should not crash when remaining is NULL */
   GnRateLimitStatus status = gn_rate_limiter_check_client(fixture->limiter, client, NULL);

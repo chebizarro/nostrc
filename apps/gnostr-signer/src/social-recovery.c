@@ -351,9 +351,10 @@ GnSSSShare *gn_sss_share_decode(const gchar *encoded, GError **error) {
   gchar *idx_str = g_strndup(rest, colon - rest);
   gchar *endptr;
   gulong idx = strtoul(idx_str, &endptr, 10);
+  gboolean parse_ok = (*endptr == '\0' && idx >= 1 && idx <= 255);
   g_free(idx_str);
 
-  if (*endptr != '\0' || idx == 0 || idx > 255) {
+  if (!parse_ok) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_INVALID_SHARE,
                 "Invalid share index (must be 1-255)");
     return NULL;

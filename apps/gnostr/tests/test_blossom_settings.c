@@ -9,6 +9,9 @@
  * - Default server handling
  */
 
+/* Must match G_LOG_DOMAIN in blossom_settings.c for g_test_expect_message */
+#define G_LOG_DOMAIN "gnostr-blossom-settings"
+
 #include <glib.h>
 #include <gio/gio.h>
 #include <json-glib/json-glib.h>
