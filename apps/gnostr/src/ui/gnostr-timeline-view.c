@@ -2209,6 +2209,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   GtkWidget *row = gtk_list_item_get_child(item);
   if (!GTK_IS_WIDGET(row)) return;
   if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
+    /* CRITICAL: Prepare row for binding - resets disposed flag and creates fresh
+     * cancellable. Must be called BEFORE populating the row with data.
+     * nostrc-o7pp: Matches NoteCardFactory pattern. */
+    gnostr_note_card_row_prepare_for_bind(GNOSTR_NOTE_CARD_ROW(row));
+
     /* Use pubkey prefix as fallback if no profile info available */
     gchar *display_fallback = NULL;
     if (!display && !handle && pubkey && strlen(pubkey) >= 8) {
