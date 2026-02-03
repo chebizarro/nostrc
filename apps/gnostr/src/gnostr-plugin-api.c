@@ -577,7 +577,7 @@ on_request_relay_events_done(GObject      *source,
   GTask *task = G_TASK(user_data);
   GError *error = NULL;
 
-  /* query_single returns events directly - we need to ingest them to nostrdb
+  /* query_single returns JSON strings - we need to ingest them to nostrdb
    * so that plugin subscriptions can fire. */
   GPtrArray *events = gnostr_simple_pool_query_single_finish(
       GNOSTR_SIMPLE_POOL(source), res, &error);
@@ -589,18 +589,14 @@ on_request_relay_events_done(GObject      *source,
     guint count = events ? events->len : 0;
     guint ingested = 0;
 
-    /* Ingest events to nostrdb */
+    /* Ingest event JSON strings to nostrdb */
     for (guint i = 0; events && i < events->len; i++) {
-      NostrEvent *evt = g_ptr_array_index(events, i);
-      if (!evt) continue;
+      const char *evt_json = g_ptr_array_index(events, i);
+      if (!evt_json) continue;
 
-      char *evt_json = nostr_event_serialize_compact(evt);
-      if (evt_json) {
-        int rc = storage_ndb_ingest_event_json(evt_json, NULL);
-        if (rc == 0) {
-          ingested++;
-        }
-        free(evt_json);
+      int rc = storage_ndb_ingest_event_json(evt_json, NULL);
+      if (rc == 0) {
+        ingested++;
       }
     }
 
