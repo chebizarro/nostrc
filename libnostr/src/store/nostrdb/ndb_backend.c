@@ -318,6 +318,29 @@ void ln_ndb_invalidate_txn_cache_ext(void)
   ln_ndb_invalidate_txn_cache(NULL);
 }
 
+/* nostrc-i26h: Force-close the TLS transaction regardless of refcount.
+ * This is essential for shutdown to prevent database balloon.
+ *
+ * During normal operation, transactions are held with refcount > 0 and
+ * reused for efficiency. But at shutdown, we must forcefully end all
+ * transactions so LMDB can reclaim pages. If transactions remain open
+ * when ndb_destroy() is called, LMDB cannot free those pages, causing
+ * the database file to balloon to gigabytes.
+ *
+ * Note: This only affects the calling thread's TLS cache. For a clean
+ * shutdown, call this from the main thread before storage_ndb_shutdown(). */
+void ln_ndb_force_close_txn_cache(void)
+{
+  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  if (tls && tls->txn) {
+    ndb_end_query(tls->txn);
+    free(tls->txn);
+    tls->txn = NULL;
+    tls->refcount = 0;
+    tls->last_used = 0;
+  }
+}
+
 static int ln_ndb_query(ln_store *s, void *txn, const char *filters_json, void **results, int *count)
 {
   if (!s || !s->impl || !txn || !filters_json || !results || !count) return LN_ERR_QUERY;

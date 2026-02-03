@@ -1464,6 +1464,11 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
   GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(obj);
   GnostrNoteCardRow *card = GNOSTR_NOTE_CARD_ROW(row);
 
+  /* nostrc-7t5x: CRITICAL - Prepare row for binding. Sets binding_id which gates
+   * all setter functions. Without this, set_content/set_author/etc return early
+   * and the card displays no content. Matches timeline-view pattern (nostrc-o7pp). */
+  gnostr_note_card_row_prepare_for_bind(card);
+
   /* Get event data */
   const char *event_id = gn_nostr_event_item_get_event_id(event_item);
   const char *pubkey = gn_nostr_event_item_get_pubkey(event_item);
@@ -1556,6 +1561,13 @@ static void thread_factory_unbind_cb(GtkSignalListItemFactory *factory,
   GtkWidget *row = gtk_list_item_get_child(item);
 
   if (!GTK_IS_WIDGET(row)) return;
+
+  /* nostrc-7t5x: CRITICAL - Prepare row for unbinding. Cancels async operations
+   * and clears binding_id to prevent stale callbacks from corrupting widget state.
+   * Must be called BEFORE CSS class cleanup. Matches timeline-view pattern. */
+  if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
+    gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(row));
+  }
 
   /* Remove dynamic CSS classes */
   gtk_widget_remove_css_class(row, "thread-focus-note");

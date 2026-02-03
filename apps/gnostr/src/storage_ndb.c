@@ -80,6 +80,18 @@ int storage_ndb_init(const char *dbdir, const char *opts_json)
 void storage_ndb_shutdown(void)
 {
   if (g_store) {
+    /* nostrc-i26h: Force-close any TLS-cached transaction before destroying
+     * the database. Without this, open read transactions pin LMDB pages,
+     * preventing page reclamation and causing the database to balloon.
+     *
+     * The TLS cache normally keeps transactions open with refcount for
+     * efficiency, but at shutdown we must forcefully end them. This call
+     * affects only the calling thread (main thread in our case). */
+#ifdef LIBNOSTR_WITH_NOSTRDB
+    extern void ln_ndb_force_close_txn_cache(void);
+    ln_ndb_force_close_txn_cache();
+#endif
+
     ln_store_close(g_store);
     g_store = NULL;
   }

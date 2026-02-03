@@ -112,10 +112,15 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
     g_debug("gnostr: drained %d pending main loop events", drain_iterations);
   }
 
+  /* Step 2.5 (nostrc-i26h): Invalidate TLS transaction cache after draining.
+   * Subscription callbacks during the drain may have opened transactions.
+   * Invalidate them now before storage shutdown to prevent page pinning. */
+  storage_ndb_invalidate_txn_cache();
+
   /* Step 3: Clean up shared SoupSession - now safe to destroy TLS state */
   gnostr_cleanup_shared_soup_session();
 
-  /* Step 4: Clean up storage */
+  /* Step 4: Clean up storage (nostrc-i26h: force-closes any remaining TLS txn) */
   storage_ndb_shutdown();
 
   g_message("gnostr: shutdown complete");
