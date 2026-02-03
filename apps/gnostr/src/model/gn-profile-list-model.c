@@ -7,6 +7,7 @@
 
 #include "gn-profile-list-model.h"
 #include "../storage_ndb.h"
+#include "../util/gnostr-profile-service.h"
 #include "gn-nostr-profile.h"
 #include <json.h>
 #include <string.h>
@@ -284,6 +285,15 @@ static void
 gn_profile_list_model_finalize(GObject *object)
 {
     GnProfileListModel *self = GN_PROFILE_LIST_MODEL(object);
+
+    /* nostrc-bzoj: Cancel any pending profile fetch callbacks that use this model */
+    gpointer svc = gnostr_profile_service_get_default();
+    if (svc) {
+        guint cancelled = gnostr_profile_service_cancel_for_user_data(svc, self);
+        if (cancelled > 0) {
+            g_debug("profile-list-model: Cancelled %u pending fetch callbacks on finalize", cancelled);
+        }
+    }
 
     if (self->all_profiles) {
         g_ptr_array_free(self->all_profiles, TRUE);
@@ -587,6 +597,125 @@ gn_profile_list_model_get_sort_mode(GnProfileListModel *self)
     return self->sort_mode;
 }
 
+/* nostrc-bzoj: Check if we have a profile for a pubkey in all_profiles */
+static gboolean
+has_profile_for_pubkey(GnProfileListModel *self, const char *pubkey)
+{
+    if (!pubkey) return FALSE;
+    for (guint i = 0; i < self->all_profiles->len; i++) {
+        ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
+        const char *pk = gn_nostr_profile_get_pubkey(entry->profile);
+        if (pk && g_strcmp0(pk, pubkey) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* nostrc-bzoj: Helper to escape a string for JSON */
+static char *
+json_escape_string(const char *str)
+{
+    if (!str) return NULL;
+    GString *out = g_string_new("");
+    for (const char *p = str; *p; p++) {
+        switch (*p) {
+            case '"':  g_string_append(out, "\\\""); break;
+            case '\\': g_string_append(out, "\\\\"); break;
+            case '\n': g_string_append(out, "\\n"); break;
+            case '\r': g_string_append(out, "\\r"); break;
+            case '\t': g_string_append(out, "\\t"); break;
+            default:   g_string_append_c(out, *p); break;
+        }
+    }
+    return g_string_free(out, FALSE);
+}
+
+/* nostrc-bzoj: Callback when a missing profile is fetched from network */
+static void
+on_missing_profile_fetched(const char *pubkey_hex,
+                           const GnostrProfileMeta *meta,
+                           gpointer user_data)
+{
+    GnProfileListModel *self = GN_PROFILE_LIST_MODEL(user_data);
+    if (!GN_IS_PROFILE_LIST_MODEL(self)) return;
+
+    /* Profile not found on network - nothing to add */
+    if (!meta) {
+        g_debug("profile-list-model: No profile found for followed user %s", pubkey_hex);
+        return;
+    }
+
+    /* Check we don't already have this profile (race condition check) */
+    if (has_profile_for_pubkey(self, pubkey_hex)) {
+        return;
+    }
+
+    /* Build JSON from meta fields for update_from_json */
+    GString *json = g_string_new("{");
+    gboolean first = TRUE;
+
+    if (meta->display_name) {
+        char *escaped = json_escape_string(meta->display_name);
+        g_string_append_printf(json, "%s\"display_name\":\"%s\"",
+                               first ? "" : ",", escaped);
+        g_free(escaped);
+        first = FALSE;
+    }
+    if (meta->name) {
+        char *escaped = json_escape_string(meta->name);
+        g_string_append_printf(json, "%s\"name\":\"%s\"",
+                               first ? "" : ",", escaped);
+        g_free(escaped);
+        first = FALSE;
+    }
+    if (meta->picture) {
+        char *escaped = json_escape_string(meta->picture);
+        g_string_append_printf(json, "%s\"picture\":\"%s\"",
+                               first ? "" : ",", escaped);
+        g_free(escaped);
+        first = FALSE;
+    }
+    if (meta->nip05) {
+        char *escaped = json_escape_string(meta->nip05);
+        g_string_append_printf(json, "%s\"nip05\":\"%s\"",
+                               first ? "" : ",", escaped);
+        g_free(escaped);
+        first = FALSE;
+    }
+    if (meta->lud16) {
+        char *escaped = json_escape_string(meta->lud16);
+        g_string_append_printf(json, "%s\"lud16\":\"%s\"",
+                               first ? "" : ",", escaped);
+        g_free(escaped);
+        first = FALSE;
+    }
+    g_string_append_c(json, '}');
+
+    /* Create a profile entry from the fetched metadata */
+    GnNostrProfile *profile = gn_nostr_profile_new(pubkey_hex);
+    gn_nostr_profile_update_from_json(profile, json->str);
+    g_string_free(json, TRUE);
+
+    ProfileEntry *entry = g_new0(ProfileEntry, 1);
+    entry->profile = profile;
+    entry->created_at = meta->created_at > 0 ? meta->created_at :
+                        (gint64)(g_get_real_time() / G_USEC_PER_SEC);
+    entry->is_following = g_hash_table_contains(self->following_set, pubkey_hex);
+    entry->is_muted = g_hash_table_contains(self->muted_set, pubkey_hex);
+
+    /* Add to all_profiles */
+    g_ptr_array_add(self->all_profiles, entry);
+    self->total_count = self->all_profiles->len;
+
+    g_debug("profile-list-model: Added network-fetched profile for %s (is_following=%d)",
+            pubkey_hex, entry->is_following);
+
+    /* Rebuild filtered list to show the new profile */
+    rebuild_filtered_list(self);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_TOTAL_COUNT]);
+}
+
 void
 gn_profile_list_model_set_following_set(GnProfileListModel *self, const char **pubkeys)
 {
@@ -607,6 +736,31 @@ gn_profile_list_model_set_following_set(GnProfileListModel *self, const char **p
         ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
         const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
         entry->is_following = pubkey && g_hash_table_contains(self->following_set, pubkey);
+    }
+
+    /* nostrc-bzoj: Request profiles for followed users we don't have locally.
+     * The profile service batches these requests with 150ms debounce. */
+    if (pubkeys) {
+        gpointer svc = gnostr_profile_service_get_default();
+        guint missing_count = 0;
+
+        for (const char **p = pubkeys; *p; p++) {
+            const char *pk = *p;
+            if (strlen(pk) != 64) continue;  /* Skip invalid pubkeys */
+
+            if (!has_profile_for_pubkey(self, pk)) {
+                /* Request this profile from network */
+                gnostr_profile_service_request(svc, pk,
+                                               on_missing_profile_fetched,
+                                               self);
+                missing_count++;
+            }
+        }
+
+        if (missing_count > 0) {
+            g_message("profile-list-model: Requested %u missing profiles for followed users",
+                      missing_count);
+        }
     }
 
     /* If sorting by following, re-sort */
