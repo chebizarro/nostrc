@@ -17,6 +17,7 @@
 #include "protocol_nip77.h"
 #include "nostr-relay-core.h"
 #include "nostr-storage.h"
+#include "nostr-filter.h"
 
 /* Send text over WebSocket */
 static void ws_send_text(struct lws *wsi, const char *s) {
@@ -72,11 +73,68 @@ static int extract_quoted_string(const char *start, char *out, size_t out_size) 
   return 0;
 }
 
+/* Extract JSON object from position (handles nested braces).
+ * Returns allocated string on success, NULL on failure. */
+static char *extract_json_object(const char *start) {
+  if (!start) return NULL;
+
+  /* Skip whitespace to find opening brace */
+  const char *p = start;
+  while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',')) p++;
+
+  if (*p != '{') return NULL;
+
+  const char *obj_start = p;
+  int depth = 0;
+  bool in_string = false;
+  bool escape = false;
+
+  while (*p) {
+    char c = *p;
+
+    if (escape) {
+      escape = false;
+      p++;
+      continue;
+    }
+
+    if (c == '\\' && in_string) {
+      escape = true;
+      p++;
+      continue;
+    }
+
+    if (c == '"') {
+      in_string = !in_string;
+    } else if (!in_string) {
+      if (c == '{') {
+        depth++;
+      } else if (c == '}') {
+        depth--;
+        if (depth == 0) {
+          /* Found matching close brace */
+          size_t len = (size_t)(p - obj_start + 1);
+          char *result = (char*)malloc(len + 1);
+          if (!result) return NULL;
+          memcpy(result, obj_start, len);
+          result[len] = '\0';
+          return result;
+        }
+      }
+    }
+    p++;
+  }
+
+  return NULL; /* Unbalanced braces */
+}
+
 /* Handle NEG-OPEN: ["NEG-OPEN", <sub_id>, <filter>, <initial_msg>] */
 static int handle_neg_open(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
                            const char *msg, size_t len) {
   char sub_id[128] = "";
   char msg_hex[8192] = "";
+  NostrFilter *filter = NULL;
+  (void)len;
 
   /* Parse subscription ID (second element) */
   const char *p = strchr(msg, ',');
@@ -100,20 +158,34 @@ static int handle_neg_open(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
     return 1;
   }
 
-  /* nostrc-n63f: Filter parsing not implemented - uses all events.
-   * Scoped negentropy requires storage backend support for filtered sets. */
+  /* Parse filter JSON (NIP-77 filter scope) */
+  char *filter_json = extract_json_object(p);
+  if (filter_json) {
+    filter = nostr_filter_new();
+    if (filter) {
+      if (nostr_filter_deserialize_compact(filter, filter_json) != 1) {
+        /* Parse failed, use NULL filter (all events) */
+        nostr_filter_free(filter);
+        filter = NULL;
+      }
+    }
+    free(filter_json);
+  }
+  /* If filter extraction/parsing fails, we proceed with NULL (all events) */
 
   /* Skip to message (fourth element) */
   p = strchr(p + 1, ',');
   if (!p) {
     char *err = build_neg_err(sub_id, "malformed: missing initial_message");
     if (err) { ws_send_text(wsi, err); free(err); }
+    nostr_filter_free(filter);
     return 1;
   }
 
   if (extract_quoted_string(p, msg_hex, sizeof(msg_hex)) != 0) {
     char *err = build_neg_err(sub_id, "malformed: invalid initial_message");
     if (err) { ws_send_text(wsi, err); free(err); }
+    nostr_filter_free(filter);
     return 1;
   }
 
@@ -127,10 +199,12 @@ static int handle_neg_open(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
   if (!ctx->storage || !ctx->storage->vt->set_digest) {
     char *err = build_neg_err(sub_id, "error: storage backend unavailable");
     if (err) { ws_send_text(wsi, err); free(err); }
+    nostr_filter_free(filter);
     return 1;
   }
 
-  int rc = ctx->storage->vt->set_digest(ctx->storage, NULL, &cs->neg_state);
+  int rc = ctx->storage->vt->set_digest(ctx->storage, filter, &cs->neg_state);
+  nostr_filter_free(filter); /* Storage backend copies if needed */
   if (rc != 0) {
     const char *reason = (rc == -ENOSYS) ? "error: negentropy not implemented" :
                          (rc == -ENOTSUP) ? "error: negentropy not supported" :
