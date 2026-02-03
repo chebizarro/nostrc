@@ -4,23 +4,29 @@
   <template class="GnostrAddAccountDialog" parent="GtkDialog">
     <property name="modal">true</property>
     <property name="title">Add Gnostr Account</property>
+    <property name="default-width">400</property>
+    <property name="default-height">360</property>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
         <property name="spacing">12</property>
-        <property name="margin-start">12</property>
-        <property name="margin-end">12</property>
-        <property name="margin-top">12</property>
-        <property name="margin-bottom">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
           <object class="GtkLabel">
             <property name="label">Choose a key source</property>
             <property name="xalign">0</property>
+            <style>
+              <class name="heading"/>
+            </style>
           </object>
         </child>
         <child>
           <object class="GtkBox">
             <property name="orientation">vertical</property>
+            <property name="spacing">4</property>
             <child>
               <object class="GtkCheckButton" id="rb_existing">
                 <property name="label">Use an existing key</property>
@@ -29,19 +35,69 @@
             </child>
             <child>
               <object class="GtkCheckButton" id="rb_generate">
-                <property name="label">Generate new</property>
+                <property name="label">Generate new key</property>
+                <property name="group">rb_existing</property>
               </object>
             </child>
             <child>
               <object class="GtkCheckButton" id="rb_import">
                 <property name="label">Import or bind hardware</property>
+                <property name="group">rb_existing</property>
               </object>
             </child>
           </object>
         </child>
+        <!-- Key selection list (visible when rb_existing is active) -->
         <child>
-          <object class="GtkButton" id="btn_ok">
-            <property name="label">Continue</property>
+          <object class="GtkFrame" id="frame_keys">
+            <property name="vexpand">true</property>
+            <child>
+              <object class="GtkScrolledWindow">
+                <property name="vexpand">true</property>
+                <property name="hscrollbar-policy">never</property>
+                <property name="min-content-height">120</property>
+                <child>
+                  <object class="GtkListBox" id="list_keys">
+                    <property name="selection-mode">single</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Empty state label -->
+        <child>
+          <object class="GtkLabel" id="lbl_no_keys">
+            <property name="label">No keys found. Use Gnostr Signer to create or import keys.</property>
+            <property name="wrap">true</property>
+            <property name="visible">false</property>
+            <style>
+              <class name="dim-label"/>
+            </style>
+          </object>
+        </child>
+        <!-- Button box -->
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="halign">end</property>
+            <child>
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label">Cancel</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_ok">
+                <property name="label">Add Account</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
           </object>
         </child>
       </object>

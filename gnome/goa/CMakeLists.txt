@@ -20,7 +20,10 @@ target_include_directories(goa-gnostr PRIVATE
   ${GOA_BACKEND_INCLUDE_DIRS}
 )
 
-target_compile_definitions(goa-gnostr PRIVATE GOA_API_IS_SUBJECT_TO_CHANGE=1)
+target_compile_definitions(goa-gnostr PRIVATE
+  GOA_API_IS_SUBJECT_TO_CHANGE=1
+  DATADIR="${CMAKE_INSTALL_FULL_DATADIR}"
+)
 
 set_target_properties(goa-gnostr PROPERTIES
   OUTPUT_NAME goa-gnostr
@@ -36,6 +39,10 @@ install(FILES gnostr.provider
 # GSettings schema (account prefs)
 install(FILES org.gnostr.goa.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
+
+# Add Account dialog UI
+install(FILES goa-add-account.ui
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/goa-1.0)
 
 # Small demo
 add_executable(goa-client-demo goa-client-demo.c)
