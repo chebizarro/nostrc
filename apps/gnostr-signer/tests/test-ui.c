@@ -2352,6 +2352,49 @@ static void test_auth_state_transition(TestUIFixture *fixture, gconstpointer use
  * =========================================================================== */
 
 int main(int argc, char *argv[]) {
+  /* Skip UI tests on headless systems where GTK4 would hang
+   * macOS Quartz backend requires a window server connection */
+
+  /* Allow explicit skip via environment variable */
+  const char *skip_env = g_getenv("GNOSTR_SKIP_UI_TESTS");
+  if (skip_env && *skip_env) {
+    g_print("TAP version 14\n1..0 # SKIP UI tests disabled via GNOSTR_SKIP_UI_TESTS\n");
+    return 0;
+  }
+
+#ifdef __APPLE__
+  /* On macOS, dialog tests hang without a window server connection.
+   * Check for headless indicators:
+   * - SSH session without X11 forwarding
+   * - CI environment (GITHUB_ACTIONS, CI, etc.)
+   * - tmux/screen session without TERM_PROGRAM indicating iTerm/Terminal.app */
+  const char *ssh_conn = g_getenv("SSH_CONNECTION");
+  const char *ci_env = g_getenv("CI");
+  const char *github_actions = g_getenv("GITHUB_ACTIONS");
+  const char *term_program = g_getenv("TERM_PROGRAM");
+
+  if (ssh_conn && !g_getenv("DISPLAY")) {
+    g_print("TAP version 14\n1..0 # SKIP UI tests require display (SSH without X11 forwarding)\n");
+    return 0;
+  }
+  if (ci_env || github_actions) {
+    g_print("TAP version 14\n1..0 # SKIP UI tests require display (CI environment)\n");
+    return 0;
+  }
+  /* tmux/screen without a terminal program suggests headless */
+  const char *tmux = g_getenv("TMUX");
+  if (tmux && !term_program) {
+    g_print("TAP version 14\n1..0 # SKIP UI tests require display (tmux without GUI terminal)\n");
+    return 0;
+  }
+#else
+  /* On Linux/other, check DISPLAY or WAYLAND_DISPLAY */
+  if (!g_getenv("DISPLAY") && !g_getenv("WAYLAND_DISPLAY")) {
+    g_print("TAP version 14\n1..0 # SKIP UI tests require display (DISPLAY/WAYLAND_DISPLAY not set)\n");
+    return 0;
+  }
+#endif
+
   /* Initialize GTK test framework */
   gtk_test_init(&argc, &argv, NULL);
 
