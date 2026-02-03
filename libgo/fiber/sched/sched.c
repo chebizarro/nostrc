@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 #include "sched.h"
+#include "../debug/debug.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -452,7 +453,8 @@ gof_fiber* gof_fiber_create(void (*fn)(void*), void *arg, size_t stack_bytes) {
   }
   LOGF("[gof] fiber_create id=%llu stack=[%p..+%zu]\n", (unsigned long long)f->id, base, size);
   atomic_fetch_add(&S.live_fibers, 1);
-  
+  gof_introspect_register(f);
+
   return f;
 }
 
@@ -596,6 +598,7 @@ static void* worker_main(void *arg) {
       rq_push(f);
     } else if (f->state == GOF_FINISHED) {
       LOGF("[gof] fiber %llu cleanup\n", (unsigned long long)f->id);
+      gof_introspect_unregister(f);
       gof_stack_free(&f->stack);
       free(f);
       atomic_fetch_sub(&S.live_fibers, 1);
