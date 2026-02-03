@@ -18,6 +18,10 @@ struct _NoteCardFactory {
   NoteCardFactorySignalFlags signal_flags;
   gpointer user_data;
 
+  /* Custom bind callback (optional - if set, used instead of default binding) */
+  NoteCardBindCallback bind_cb;
+  gpointer bind_cb_data;
+
   /* Custom signal handlers */
   GCallback open_profile_cb;
   gpointer open_profile_data;
@@ -138,6 +142,16 @@ note_card_factory_connect_search_hashtag(NoteCardFactory *self,
   self->search_hashtag_data = user_data;
 }
 
+void
+note_card_factory_set_bind_callback(NoteCardFactory *self,
+                                    NoteCardBindCallback callback,
+                                    gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->bind_cb = callback;
+  self->bind_cb_data = user_data;
+}
+
 /* ============================================================================
  * Factory Callbacks
  * ============================================================================ */
@@ -180,9 +194,16 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   GtkWidget *row = gtk_list_item_get_child(item);
   if (!GNOSTR_IS_NOTE_CARD_ROW(row)) return;
 
-  /* CRITICAL: Prepare row for binding - resets disposed flag and creates fresh
-   * cancellable. Must be called BEFORE populating the row with data. */
+  /* CRITICAL: Prepare row for binding - resets disposed flag, assigns binding_id,
+   * and creates fresh cancellable. Must be called BEFORE populating the row. */
   gnostr_note_card_row_prepare_for_bind(GNOSTR_NOTE_CARD_ROW(row));
+
+  /* If custom bind callback is set, use it instead of default binding */
+  if (self->bind_cb) {
+    self->bind_cb(GNOSTR_NOTE_CARD_ROW(row), obj, self->bind_cb_data);
+    gtk_widget_set_visible(row, TRUE);
+    return;
+  }
 
   /* Extract data from the model item */
   gchar *id_hex = NULL, *pubkey = NULL, *content = NULL;

@@ -13,6 +13,9 @@
 
 G_BEGIN_DECLS
 
+/* Forward declaration - full type in note_card_row.h */
+typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
+
 #define NOTE_CARD_TYPE_FACTORY (note_card_factory_get_type())
 
 G_DECLARE_FINAL_TYPE(NoteCardFactory, note_card_factory, NOTE_CARD, FACTORY, GObject)
@@ -158,6 +161,36 @@ void note_card_factory_connect_reply(NoteCardFactory *self,
 void note_card_factory_connect_search_hashtag(NoteCardFactory *self,
                                               GCallback callback,
                                               gpointer user_data);
+
+/**
+ * NoteCardBindCallback:
+ * @row: the NoteCardRow widget to populate
+ * @item: the model item (GObject) being bound
+ * @user_data: user data from note_card_factory_set_bind_callback
+ *
+ * Custom callback for populating NoteCardRow from model item.
+ * Called after prepare_for_bind but before visibility is set.
+ *
+ * Views with custom data models can use this to handle their own
+ * data binding logic instead of relying on the default binding.
+ */
+typedef void (*NoteCardBindCallback)(GnostrNoteCardRow *row,
+                                     GObject *item,
+                                     gpointer user_data);
+
+/**
+ * note_card_factory_set_bind_callback:
+ * @self: the factory
+ * @callback: custom bind callback, or NULL to use default binding
+ * @user_data: user data for callback
+ *
+ * Set a custom bind callback for populating rows from model items.
+ * If set, the factory will call this instead of the default binding logic.
+ * The callback is called after prepare_for_bind.
+ */
+void note_card_factory_set_bind_callback(NoteCardFactory *self,
+                                         NoteCardBindCallback callback,
+                                         gpointer user_data);
 
 G_END_DECLS
 
