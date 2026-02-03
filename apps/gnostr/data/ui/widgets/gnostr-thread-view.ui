@@ -143,13 +143,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="vexpand">true</property>
             <property name="visible">true</property>
             <child>
-              <object class="GtkBox" id="thread_list_box">
-                <property name="orientation">1</property>
-                <property name="spacing">0</property>
+              <object class="GtkListView" id="thread_list_view">
                 <property name="margin-start">0</property>
                 <property name="margin-end">0</property>
                 <property name="margin-top">4</property>
                 <property name="margin-bottom">4</property>
+                <property name="single-click-activate">false</property>
+                <property name="show-separators">false</property>
                 <style>
                   <class name="thread-list"/>
                 </style>
