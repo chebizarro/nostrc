@@ -414,7 +414,38 @@ on_refresh_relay_events_done(GObject      *source,
             error ? error->message : "unknown");
     g_clear_error(&error);
   } else {
-    g_debug("[NIP-34] Relay refresh completed - events will arrive via subscription");
+    g_debug("[NIP-34] Relay refresh completed - querying nostrdb for results");
+
+    /* Query nostrdb for all repository events and push to browser.
+     * This is more reliable than waiting for subscription callbacks. */
+    const char *query_filter = "{\"kinds\":[30617],\"limit\":500}";
+    GPtrArray *events = gnostr_plugin_context_query_events(self->context, query_filter, &error);
+    if (error) {
+      g_debug("[NIP-34] Post-refresh query failed: %s", error->message);
+      g_error_free(error);
+    } else if (events && events->len > 0) {
+      g_debug("[NIP-34] Found %u repository events after refresh", events->len);
+
+      /* Clear existing repos and repopulate */
+      gnostr_plugin_context_clear_repositories(self->context);
+      g_hash_table_remove_all(self->repositories);
+
+      for (guint i = 0; i < events->len; i++) {
+        const char *event_json = g_ptr_array_index(events, i);
+        if (event_json) {
+          RepoInfo *info = parse_repository_event(event_json);
+          if (info && info->d_tag) {
+            g_hash_table_replace(self->repositories, g_strdup(info->d_tag), info);
+            push_repo_to_browser(self, info);
+          } else {
+            repo_info_free(info);
+          }
+        }
+      }
+      g_ptr_array_unref(events);
+    } else {
+      g_debug("[NIP-34] No repository events found after refresh");
+    }
   }
 
   g_object_unref(self);
@@ -567,6 +598,12 @@ nip34_git_plugin_activate(GnostrPlugin        *plugin,
   gnostr_plugin_context_register_action(context, "nip34-refresh",
                                          on_refresh_action, self);
   g_debug("[NIP-34] Registered 'nip34-refresh' action");
+
+  /* Auto-fetch from relays on startup if no local repos found */
+  if (g_hash_table_size(self->repositories) == 0) {
+    g_debug("[NIP-34] No local repos - auto-fetching from relays");
+    on_refresh_action(context, "nip34-refresh", NULL, self);
+  }
 
 #ifdef HAVE_LIBGIT2
   /* Register action handler for git client */
