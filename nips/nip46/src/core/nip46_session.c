@@ -17,6 +17,8 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include <errno.h>
+#include <unistd.h>
 
 /* Forward prototypes for local helpers */
 static int csv_split(const char *csv, char ***out_vec, size_t *out_n);
@@ -257,28 +259,6 @@ int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubk
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey);
-
-/* Context for waiting on relay connection */
-typedef struct {
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-    volatile int connected;
-} Nip46ConnectWaitCtx;
-
-/* Callback to signal when relay connects */
-static void nip46_on_relay_connected(NostrRelay *relay,
-                                      NostrRelayConnectionState old_state,
-                                      NostrRelayConnectionState new_state,
-                                      void *user_data) {
-    (void)relay; (void)old_state;
-    Nip46ConnectWaitCtx *ctx = (Nip46ConnectWaitCtx *)user_data;
-    if (new_state == NOSTR_RELAY_STATE_CONNECTED) {
-        pthread_mutex_lock(&ctx->mutex);
-        ctx->connected = 1;
-        pthread_cond_signal(&ctx->cond);
-        pthread_mutex_unlock(&ctx->mutex);
-    }
-}
 
 /* nostrc-stsz: Static context for synchronous NIP-46 request-response
  * Using static global since middleware doesn't support user_data */
@@ -545,73 +525,55 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     free(f);
     nostr_filters_add(filters, &f_copy);
 
-    /* Ensure relays are connected */
+    /* Ensure relays exist in pool */
     for (size_t i = 0; i < s->n_relays; i++) {
         nostr_simple_pool_ensure_relay(pool, s->relays[i]);
     }
 
-    nostr_simple_pool_subscribe(pool, (const char **)s->relays, s->n_relays, *filters, true);
+    /* Start pool BEFORE subscribing - connection happens asynchronously */
     nostr_simple_pool_start(pool);
 
-    /* Wait for relay connection using state callback.
-     * The pool starts connection asynchronously, so we need to wait for at least
-     * one relay to be connected before publishing the request. */
-    Nip46ConnectWaitCtx conn_ctx;
-    pthread_mutex_init(&conn_ctx.mutex, NULL);
-    pthread_cond_init(&conn_ctx.cond, NULL);
-    conn_ctx.connected = 0;
+    /* Wait for relay connection BEFORE subscribing.
+     * The WebSocket handshake must complete (established flag set) before we can
+     * send the subscription REQ. Otherwise nostr_subscription_fire times out
+     * waiting for write confirmation on a socket that isn't ready yet.
+     *
+     * We poll nostr_relay_is_connected() which checks the established flag,
+     * ensuring the handshake is actually complete - not just that connection
+     * was initiated. */
+    int connected = 0;
+    int max_wait_ms = 5000;  /* 5 second timeout */
+    int poll_interval_ms = 50;  /* Check every 50ms */
+    int elapsed_ms = 0;
 
-    /* Set state callback on all relays */
-    for (size_t r = 0; r < pool->relay_count; r++) {
-        if (pool->relays[r]) {
-            /* Check if already connected */
-            if (nostr_relay_is_connected(pool->relays[r])) {
-                conn_ctx.connected = 1;
+    while (!connected && elapsed_ms < max_wait_ms) {
+        for (size_t r = 0; r < pool->relay_count; r++) {
+            if (pool->relays[r] && nostr_relay_is_connected(pool->relays[r])) {
+                connected = 1;
                 break;
             }
-            nostr_relay_set_state_callback(pool->relays[r], nip46_on_relay_connected, &conn_ctx);
+        }
+        if (!connected) {
+            usleep(poll_interval_ms * 1000);
+            elapsed_ms += poll_interval_ms;
         }
     }
 
-    /* Wait for connection with timeout */
-    if (!conn_ctx.connected) {
-        pthread_mutex_lock(&conn_ctx.mutex);
-        if (!conn_ctx.connected) {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += 5;  /* 5 second timeout */
-            int rc = pthread_cond_timedwait(&conn_ctx.cond, &conn_ctx.mutex, &ts);
-            if (rc != 0 && !conn_ctx.connected) {
-                pthread_mutex_unlock(&conn_ctx.mutex);
-                fprintf(stderr, "[nip46] %s: ERROR: relay connection timeout\n", method);
-                /* Clear callbacks before cleanup */
-                for (size_t r = 0; r < pool->relay_count; r++) {
-                    if (pool->relays[r]) {
-                        nostr_relay_set_state_callback(pool->relays[r], NULL, NULL);
-                    }
-                }
-                nostr_simple_pool_stop(pool);
-                nostr_simple_pool_free(pool);
-                nostr_event_free(req_ev);
-                nostr_filters_free(filters);
-                secure_wipe(sk, sizeof(sk));
-                free(client_pubkey);
-                pthread_mutex_destroy(&conn_ctx.mutex);
-                pthread_cond_destroy(&conn_ctx.cond);
-                return NULL;
-            }
-        }
-        pthread_mutex_unlock(&conn_ctx.mutex);
+    if (!connected) {
+        fprintf(stderr, "[nip46] %s: ERROR: relay connection timeout (handshake not complete)\n", method);
+        nostr_simple_pool_stop(pool);
+        nostr_simple_pool_free(pool);
+        nostr_event_free(req_ev);
+        nostr_filters_free(filters);
+        secure_wipe(sk, sizeof(sk));
+        free(client_pubkey);
+        return NULL;
     }
 
-    /* Clear callbacks now that we're connected */
-    for (size_t r = 0; r < pool->relay_count; r++) {
-        if (pool->relays[r]) {
-            nostr_relay_set_state_callback(pool->relays[r], NULL, NULL);
-        }
-    }
+    fprintf(stderr, "[nip46] %s: relay connected (handshake complete), now subscribing\n", method);
 
-    fprintf(stderr, "[nip46] %s: relay connected\n", method);
+    /* Subscribe AFTER connection is established - REQ can now be sent successfully */
+    nostr_simple_pool_subscribe(pool, (const char **)s->relays, s->n_relays, *filters, true);
 
     /* Publish the request to each relay */
     for (size_t i = 0; i < s->n_relays; i++) {

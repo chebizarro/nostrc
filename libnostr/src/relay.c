@@ -192,8 +192,9 @@ bool nostr_relay_is_connected(NostrRelay *relay) {
         if (relay->connection->priv->test_mode) {
             connected = true;
         } else {
-            /* Check if websocket is actually alive, not just if connection object exists */
-            connected = (relay->connection->priv->wsi != NULL);
+            /* Check both: wsi exists AND WebSocket handshake completed (established flag) */
+            connected = (relay->connection->priv->wsi != NULL &&
+                         relay->connection->priv->established);
         }
         nsync_mu_unlock(&relay->connection->priv->mutex);
     }

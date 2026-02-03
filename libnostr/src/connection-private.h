@@ -23,6 +23,7 @@ struct _NostrConnectionPrivate {
     uint64_t rx_window_start_ns;
     uint64_t rx_window_bytes;
     int writable_pending;
+    int established;  /* Set when WebSocket handshake completes (LWS_CALLBACK_CLIENT_ESTABLISHED) */
 };
 
 // Struct to hold WebSocket message

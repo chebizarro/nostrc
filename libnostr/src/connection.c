@@ -92,10 +92,13 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         printf("WebSocket connection established\n");
         // Initialize timers/progress trackers and arm periodic checks
         if (conn && conn->priv) {
+            nsync_mu_lock(&conn->priv->mutex);
+            conn->priv->established = 1;  /* Mark handshake complete */
             uint64_t now_us = (uint64_t)lws_now_usecs();
             conn->priv->last_rx_ns = now_us;
             conn->priv->rx_window_start_ns = now_us;
             conn->priv->rx_window_bytes = 0;
+            nsync_mu_unlock(&conn->priv->mutex);
         }
         // Arm a 1s timer for periodic timeout/progress checks
         lws_set_timer_usecs(wsi, 1000000);
@@ -183,6 +186,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             nsync_mu_lock(&conn->priv->mutex);
             conn->priv->wsi = NULL;
             conn->priv->writable_pending = 0;
+            conn->priv->established = 0;  /* Mark handshake as incomplete */
             nsync_mu_unlock(&conn->priv->mutex);
         }
         break;
