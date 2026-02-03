@@ -179,6 +179,9 @@ struct _GnostrThreadView {
 
   /* nostrc-hl6: Track pubkeys we've fetched NIP-65 relay lists for */
   GHashTable *nip65_pubkeys_fetched;  /* pubkey_hex -> gboolean */
+
+  /* nostrc-59nk: Disposal guard flag to prevent async callbacks from modifying widgets */
+  gboolean disposed;
 };
 
 G_DEFINE_TYPE(GnostrThreadView, gnostr_thread_view, GTK_TYPE_WIDGET)
@@ -445,6 +448,9 @@ static GPtrArray *extract_ptags_from_json(const char *json_str) {
 /* Dispose */
 static void gnostr_thread_view_dispose(GObject *obj) {
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(obj);
+
+  /* nostrc-59nk: Mark as disposed FIRST to prevent async callbacks from modifying widgets */
+  self->disposed = TRUE;
 
   /* nostrc-50t: Teardown nostrdb subscription */
   teardown_thread_subscription(self);
@@ -1547,6 +1553,11 @@ static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
   }
 
   GnostrThreadView *self = ctx->self;
+  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
+  if (self->disposed) {
+    nip65_fetch_ctx_free(ctx);
+    return;
+  }
 
   if (!relays || relays->len == 0) {
     g_debug("[THREAD_VIEW] NIP-65: No relays found for author %.16s...", ctx->pubkey_hex);
@@ -1661,6 +1672,8 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
 
   if (!GNOSTR_IS_THREAD_VIEW(self)) return;
+  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
+  if (self->disposed) return;
 
   GError *error = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
@@ -1719,6 +1732,11 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
     g_message("[THREAD_VIEW] on_root_fetch_done: self is not valid, aborting");
     return;
   }
+  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
+  if (self->disposed) {
+    g_message("[THREAD_VIEW] on_root_fetch_done: widget disposed, aborting");
+    return;
+  }
 
   GError *error = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
@@ -1768,6 +1786,8 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
 
   if (!GNOSTR_IS_THREAD_VIEW(self)) return;
+  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
+  if (self->disposed) return;
 
   GError *error = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
@@ -2189,6 +2209,8 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
 
   if (!GNOSTR_IS_THREAD_VIEW(self)) return;
+  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
+  if (self->disposed) return;
 
   GError *error = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
@@ -2567,6 +2589,8 @@ void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
 static gboolean on_rebuild_debounce_timeout(gpointer user_data) {
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
   if (!GNOSTR_IS_THREAD_VIEW(self)) return G_SOURCE_REMOVE;
+  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
+  if (self->disposed) return G_SOURCE_REMOVE;
 
   self->rebuild_pending_id = 0;
 
@@ -2596,6 +2620,8 @@ static void on_ndb_thread_batch(uint64_t subid, const uint64_t *note_keys,
   (void)subid;
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
   if (!GNOSTR_IS_THREAD_VIEW(self) || !note_keys || n_keys == 0) return;
+  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
+  if (self->disposed) return;
 
   g_debug("[THREAD_VIEW] Received %u events from nostrdb subscription", n_keys);
 
