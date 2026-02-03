@@ -126,6 +126,11 @@ create_repo_row(GnostrRepoBrowser *self, RepoData *data)
   /* Create note card for consistent display with timeline */
   GnostrNoteCardRow *card = gnostr_note_card_row_new();
 
+  /* CRITICAL: Call prepare_for_bind before populating the card.
+   * nostrc-NEW: This was missing, causing blank cards because the
+   * disposed flag and binding_id weren't properly initialized. */
+  gnostr_note_card_row_prepare_for_bind(card);
+
   /* Fetch maintainer profile for author display */
   const char *display_name = NULL;
   const char *handle = NULL;
