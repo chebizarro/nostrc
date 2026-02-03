@@ -154,6 +154,42 @@ const char *gn_nostr_profile_get_lud16(GnNostrProfile *self) {
   return self->lud16;
 }
 
+void gn_nostr_profile_set_display_name(GnNostrProfile *self, const char *display_name) {
+  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+  if (g_strcmp0(self->display_name, display_name) != 0) {
+    g_free(self->display_name);
+    self->display_name = g_strdup(display_name);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_DISPLAY_NAME]);
+  }
+}
+
+void gn_nostr_profile_set_name(GnNostrProfile *self, const char *name) {
+  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+  if (g_strcmp0(self->name, name) != 0) {
+    g_free(self->name);
+    self->name = g_strdup(name);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_NAME]);
+  }
+}
+
+void gn_nostr_profile_set_picture_url(GnNostrProfile *self, const char *picture_url) {
+  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+  if (g_strcmp0(self->picture_url, picture_url) != 0) {
+    g_free(self->picture_url);
+    self->picture_url = g_strdup(picture_url);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PICTURE_URL]);
+  }
+}
+
+void gn_nostr_profile_set_nip05(GnNostrProfile *self, const char *nip05) {
+  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+  if (g_strcmp0(self->nip05, nip05) != 0) {
+    g_free(self->nip05);
+    self->nip05 = g_strdup(nip05);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_NIP05]);
+  }
+}
+
 void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_str) {
   g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
   g_return_if_fail(json_str != NULL);

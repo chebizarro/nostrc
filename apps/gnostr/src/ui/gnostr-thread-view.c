@@ -1631,16 +1631,16 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
     if (item->display_name || item->handle || item->avatar_url || item->nip05) {
       GnNostrProfile *profile = gn_nostr_profile_new(item->pubkey_hex);
       if (item->display_name) {
-        g_object_set(profile, "display-name", item->display_name, NULL);
+        gn_nostr_profile_set_display_name(profile, item->display_name);
       }
       if (item->handle) {
-        g_object_set(profile, "name", item->handle, NULL);
+        gn_nostr_profile_set_name(profile, item->handle);
       }
       if (item->avatar_url) {
-        g_object_set(profile, "picture-url", item->avatar_url, NULL);
+        gn_nostr_profile_set_picture_url(profile, item->avatar_url);
       }
       if (item->nip05) {
-        g_object_set(profile, "nip05", item->nip05, NULL);
+        gn_nostr_profile_set_nip05(profile, item->nip05);
       }
       gn_nostr_event_item_set_profile(event_item, profile);
       g_object_unref(profile);
