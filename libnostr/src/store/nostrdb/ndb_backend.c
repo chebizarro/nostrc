@@ -1,8 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <pthread.h>
-#include <time.h>
 #include <unistd.h>
 #include "libnostr_store.h"
 #include "libnostr_errors.h"
@@ -26,35 +24,6 @@
 #elif defined(__GNUC__)
 #  pragma GCC diagnostic pop
 #endif
-
-/* Thread-local storage for managing LMDB read transactions */
-typedef struct {
-    struct ndb_txn *txn;
-    time_t last_used;
-    pthread_t thread_id;
-} tls_txn_t;
-
-static pthread_key_t tls_txn_key;
-static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
-
-/* Cleanup function for thread-local transactions */
-static void tls_txn_destructor(void *data)
-{
-    tls_txn_t *tls = (tls_txn_t*)data;
-    if (tls) {
-        if (tls->txn) {
-            ndb_end_query(tls->txn);
-            free(tls->txn);
-        }
-        free(tls);
-    }
-}
-
-/* Initialize thread-local storage */
-static void tls_init(void)
-{
-    pthread_key_create(&tls_txn_key, tls_txn_destructor);
-}
 
 /* very small helpers to parse minimal JSON-like key/values without deps */
 static int parse_kv_int(const char *json, const char *key, long long *out)
@@ -197,105 +166,55 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
   if (!s || !s->impl || !txn_out) return LN_ERR_DB_TXN;
   struct ndb *db = (struct ndb *)((struct ln_ndb_impl *)s->impl)->db;
   if (!db) return LN_ERR_DB_TXN;
-  
-  /* Initialize thread-local storage once */
-  pthread_once(&tls_init_once, tls_init);
-  
-  /* Get or create thread-local transaction */
-  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
-  time_t now = time(NULL);
-  
-  /* DISABLED: Transaction caching causes MDB_MAP_FULL during heavy writes.
-   * In LMDB, open read transactions prevent page reclamation. During initial
-   * sync with 1000+ events/second, even 2-second caching causes the database
-   * to grow to gigabytes as "dead" pages accumulate faster than they can be freed.
+
+  /* No TLS caching - each caller gets their own transaction.
+   * This is required because:
+   * 1. Transaction caching causes MDB_MAP_FULL during heavy writes (LMDB
+   *    read transactions prevent page reclamation)
+   * 2. Signal handlers can trigger nested begin_query calls on the same thread,
+   *    causing use-after-free if TLS references are freed/reused
    *
-   * The performance cost of not caching is minimal - each ndb_begin_query()
-   * just acquires an LMDB read slot (no I/O). The old 60-second cache was
-   * causing 1.7GB databases; 2-second still caused 1GB. Now with no caching,
-   * the database stays at ~50-100MB for the same data.
-   *
-   * TODO: Consider re-enabling with sub-second granularity or adaptive caching
-   * that detects heavy write periods. */
-#if 0
-  if (tls && tls->txn && (now - tls->last_used) < 2) {
-    tls->last_used = now;
-    *txn_out = tls->txn;
-    return LN_OK;
-  }
-#endif
-  
-  /* Clean up old transaction if exists */
-  if (tls && tls->txn) {
-    ndb_end_query(tls->txn);
-    free(tls->txn);
-    tls->txn = NULL;
-  }
-  
-  /* Create new thread-local storage if needed */
-  if (!tls) {
-    tls = calloc(1, sizeof(tls_txn_t));
-    if (!tls) return LN_ERR_OOM;
-    tls->thread_id = pthread_self();
-    pthread_setspecific(tls_txn_key, tls);
-  }
-  
-  /* Create new transaction with retries for rc=1003 */
+   * The performance cost is minimal - ndb_begin_query() just acquires an
+   * LMDB read slot (no I/O). */
+
+  /* Create new transaction with retries for LMDB reader slot contention */
   int attempts = 0;
   while (attempts < 50) {
     struct ndb_txn *txn = (struct ndb_txn *)calloc(1, sizeof(*txn));
     if (!txn) return LN_ERR_OOM;
-    
+
     if (ndb_begin_query(db, txn)) {
-      tls->txn = txn;
-      tls->last_used = now;
       *txn_out = txn;
       return LN_OK;
     }
-    
+
     free(txn);
-    
+
     /* Exponential backoff for retries */
     int backoff_ms = 10 * (1 << (attempts < 5 ? attempts : 5));
     if (backoff_ms > 200) backoff_ms = 200;
     usleep(backoff_ms * 1000);
     attempts++;
   }
-  
+
   return LN_ERR_DB_TXN;
 }
 
 static int ln_ndb_end_query(ln_store *s, void *txn)
 {
-  if (!s || !txn) return LN_ERR_DB_TXN;
+  (void)s;
+  if (!txn) return LN_ERR_DB_TXN;
 
-  /* With caching disabled, always end the transaction immediately.
-   * This allows LMDB to reclaim pages from completed write transactions. */
-  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
-  if (tls && tls->txn == txn) {
-    /* Clear the TLS reference since we're ending this transaction */
-    tls->txn = NULL;
-    tls->last_used = 0;
-  }
-
+  /* Each transaction is owned by its caller - just end and free it */
   int ok = ndb_end_query((struct ndb_txn *)txn);
   free(txn);
   return ok ? LN_OK : LN_ERR_DB_TXN;
 }
 
-/* Invalidate the thread-local transaction cache so next begin_query gets fresh data.
- * This is needed after subscription callbacks since the cached transaction may not
- * see newly committed notes. */
+/* No-op: TLS caching removed, no cache to invalidate */
 static void ln_ndb_invalidate_txn_cache(ln_store *s)
 {
   (void)s;
-  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
-  if (tls && tls->txn) {
-    ndb_end_query(tls->txn);
-    free(tls->txn);
-    tls->txn = NULL;
-    tls->last_used = 0;
-  }
 }
 
 /* External entry point for storage_ndb to call */
