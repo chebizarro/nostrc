@@ -205,8 +205,14 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
   tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
   time_t now = time(NULL);
   
-  /* Reuse existing transaction if recent (within 60 seconds) */
-  if (tls && tls->txn && (now - tls->last_used) < 60) {
+  /* Reuse existing transaction if recent (within 2 seconds).
+   * IMPORTANT: Keep this SHORT. In LMDB, open read transactions prevent
+   * freeing of pages modified after the transaction started. With multiple
+   * threads caching transactions during heavy writes (initial sync),
+   * the database grows rapidly and can hit MDB_MAP_FULL.
+   * 2 seconds is enough to batch rapid successive queries without
+   * causing excessive page retention. */
+  if (tls && tls->txn && (now - tls->last_used) < 2) {
     tls->last_used = now;
     *txn_out = tls->txn;
     return LN_OK;
