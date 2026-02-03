@@ -586,6 +586,37 @@ gboolean gnostr_plugin_context_publish_event_finish(GnostrPluginContext *context
                                                     GAsyncResult        *result,
                                                     GError             **error);
 
+/**
+ * gnostr_plugin_context_request_relay_events_async:
+ * @context: A #GnostrPluginContext
+ * @kinds: Array of event kinds to request
+ * @n_kinds: Number of kinds in array
+ * @limit: Maximum number of events to fetch (0 for relay default)
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when request completes
+ * @user_data: User data for callback
+ *
+ * Request events of the specified kinds from configured relays.
+ * Events are streamed into local storage as they arrive.
+ * Plugin subscriptions will fire when events are ingested.
+ *
+ * This is useful for on-demand fetching of event types not included
+ * in the main subscription (e.g., NIP-34 repository events).
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *context,
+                                                      const int           *kinds,
+                                                      gsize                n_kinds,
+                                                      int                  limit,
+                                                      GCancellable        *cancellable,
+                                                      GAsyncReadyCallback  callback,
+                                                      gpointer             user_data);
+
+gboolean gnostr_plugin_context_request_relay_events_finish(GnostrPluginContext *context,
+                                                           GAsyncResult        *result,
+                                                           GError             **error);
+
 /* --- Storage Access --- */
 
 /**

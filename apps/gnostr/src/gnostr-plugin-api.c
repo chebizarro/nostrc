@@ -21,6 +21,7 @@
 #include "nostr-tag.h"
 #include "nostr-relay.h"
 #include "nostr-json.h"
+#include "nostr-filter.h"
 #include "model/gn-ndb-sub-dispatcher.h"
 #include "ui/gnostr-main-window.h"
 #include "ui/gnostr-repo-browser.h"
@@ -560,6 +561,113 @@ gboolean
 gnostr_plugin_context_publish_event_finish(GnostrPluginContext *context,
                                            GAsyncResult        *result,
                                            GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+/* --- Relay Event Request --- */
+
+static void
+on_request_relay_events_done(GObject      *source,
+                             GAsyncResult *res,
+                             gpointer      user_data)
+{
+  GTask *task = G_TASK(user_data);
+  GError *error = NULL;
+
+  /* The streaming query doesn't return events directly - they come via the
+   * "events" signal and are ingested to nostrdb. We just need to propagate
+   * success/failure. */
+  gboolean ok = gnostr_simple_pool_subscribe_many_finish(
+      GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (ok) {
+    g_task_return_boolean(task, TRUE);
+  } else {
+    g_task_return_error(task, error);
+  }
+
+  g_object_unref(task);
+}
+
+void
+gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *context,
+                                                 const int           *kinds,
+                                                 gsize                n_kinds,
+                                                 int                  limit,
+                                                 GCancellable        *cancellable,
+                                                 GAsyncReadyCallback  callback,
+                                                 gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(kinds != NULL && n_kinds > 0);
+
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+
+  /* Get pool and relay URLs */
+  GnostrSimplePool *pool = context->pool;
+  if (!pool) {
+    pool = gnostr_get_shared_query_pool();
+  }
+  if (!pool) {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_NETWORK,
+                            "No relay pool available");
+    g_object_unref(task);
+    return;
+  }
+
+  /* Get read relay URLs */
+  GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+  gnostr_get_read_relay_urls_into(relay_arr);
+
+  if (relay_arr->len == 0) {
+    g_ptr_array_unref(relay_arr);
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_NETWORK,
+                            "No read relays configured");
+    g_object_unref(task);
+    return;
+  }
+
+  /* Build URL array for pool API */
+  const char **urls = g_new0(const char *, relay_arr->len + 1);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    urls[i] = g_ptr_array_index(relay_arr, i);
+  }
+  size_t url_count = relay_arr->len;
+
+  /* Build filter */
+  NostrFilter *filter = nostr_filter_new();
+  nostr_filter_set_kinds(filter, kinds, n_kinds);
+  if (limit > 0) {
+    nostr_filter_set_limit(filter, limit);
+  }
+
+  /* Wrap in NostrFilters for subscribe_many */
+  NostrFilters *filters = nostr_filters_new();
+  nostr_filters_add(filters, filter);
+
+  g_debug("[plugin-api] Requesting events from %zu relays, kinds=%d... limit=%d",
+          url_count, kinds[0], limit);
+
+  /* Use subscribe_many for streaming query - events come via "events" signal
+   * which the main window handles by ingesting to nostrdb */
+  gnostr_simple_pool_subscribe_many_async(pool, urls, url_count, filters,
+                                          cancellable,
+                                          on_request_relay_events_done,
+                                          task);
+
+  /* Cleanup - pool copies what it needs */
+  nostr_filters_free(filters);
+  g_free(urls);
+  g_ptr_array_unref(relay_arr);
+}
+
+gboolean
+gnostr_plugin_context_request_relay_events_finish(GnostrPluginContext *context,
+                                                  GAsyncResult        *result,
+                                                  GError             **error)
 {
   (void)context;
   g_return_val_if_fail(G_IS_TASK(result), FALSE);

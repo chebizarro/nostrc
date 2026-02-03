@@ -4305,12 +4305,24 @@ static void on_repo_refresh_requested(GnostrRepoBrowser *browser, gpointer user_
 
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_debug("[REPO] Refresh requested");
+  g_debug("[REPO] Refresh requested - dispatching to NIP-34 plugin");
 
-  /* Show feedback that refresh is happening.
-   * The NIP-34 plugin will push repositories when it receives events from subscriptions. */
-  if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
-    adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new("Refreshing repositories..."));
+  /* Dispatch refresh action to NIP-34 plugin to fetch from relays */
+  GnostrPluginManager *manager = gnostr_plugin_manager_get_default();
+  if (gnostr_plugin_manager_dispatch_action(manager, "nip34-git",
+                                             "nip34-refresh", NULL)) {
+    g_debug("[REPO] Dispatched nip34-refresh action to plugin");
+
+    /* Show feedback */
+    if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+      adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new("Fetching repositories from relays..."));
+    }
+  } else {
+    g_warning("[REPO] Failed to dispatch refresh - NIP-34 plugin not available");
+
+    if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+      adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new("NIP-34 plugin not available"));
+    }
   }
 }
 
@@ -7265,7 +7277,9 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
     if (!evt) continue;
 
     int kind = nostr_event_get_kind(evt);
-    if (!(kind == 0 || kind == 1 || kind == 5 || kind == 6 || kind == 7 || kind == 16 || kind == 1111)) {
+    /* Ingest timeline events and NIP-34 git events (30617 repos, 1617 patches, 1621 issues, 1622 replies) */
+    if (!(kind == 0 || kind == 1 || kind == 5 || kind == 6 || kind == 7 || kind == 16 || kind == 1111 ||
+          kind == 30617 || kind == 1617 || kind == 1621 || kind == 1622)) {
       continue;
     }
 

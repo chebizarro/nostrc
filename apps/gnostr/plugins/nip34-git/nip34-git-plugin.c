@@ -396,6 +396,63 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
   g_bytes_unref(data);
 }
 
+/* Callback for relay events request completion */
+static void
+on_refresh_relay_events_done(GObject      *source,
+                             GAsyncResult *res,
+                             gpointer      user_data)
+{
+  (void)source;
+  Nip34GitPlugin *self = NIP34_GIT_PLUGIN(user_data);
+  GError *error = NULL;
+
+  gboolean ok = gnostr_plugin_context_request_relay_events_finish(
+      self->context, res, &error);
+
+  if (!ok) {
+    g_debug("[NIP-34] Relay refresh failed: %s",
+            error ? error->message : "unknown");
+    g_clear_error(&error);
+  } else {
+    g_debug("[NIP-34] Relay refresh completed - events will arrive via subscription");
+  }
+
+  g_object_unref(self);
+}
+
+/* Action handler for "refresh" action - fetches NIP-34 events from relays */
+static void
+on_refresh_action(GnostrPluginContext *context,
+                  const char          *action_name,
+                  GVariant            *parameter,
+                  gpointer             user_data)
+{
+  Nip34GitPlugin *self = NIP34_GIT_PLUGIN(user_data);
+  (void)action_name;
+  (void)parameter;
+
+  g_debug("[NIP-34] Refresh action triggered - fetching from relays");
+
+  /* NIP-34 event kinds to fetch */
+  int kinds[] = {
+    NIP34_KIND_REPOSITORY,   /* 30617 */
+    NIP34_KIND_PATCH,        /* 1617 */
+    NIP34_KIND_ISSUE,        /* 1621 */
+    NIP34_KIND_ISSUE_REPLY   /* 1622 */
+  };
+
+  /* Request events from relays - they will be ingested to nostrdb,
+   * which will trigger our subscription callbacks */
+  gnostr_plugin_context_request_relay_events_async(
+      context,
+      kinds,
+      G_N_ELEMENTS(kinds),
+      100,  /* limit */
+      NULL, /* cancellable */
+      on_refresh_relay_events_done,
+      g_object_ref(self));
+}
+
 #ifdef HAVE_LIBGIT2
 /* Action handler for "open-git-client" action */
 static void
@@ -505,6 +562,11 @@ nip34_git_plugin_activate(GnostrPlugin        *plugin,
   } else {
     g_debug("[NIP-34] No existing repositories in database");
   }
+
+  /* Register refresh action for on-demand relay fetching */
+  gnostr_plugin_context_register_action(context, "nip34-refresh",
+                                         on_refresh_action, self);
+  g_debug("[NIP-34] Registered 'nip34-refresh' action");
 
 #ifdef HAVE_LIBGIT2
   /* Register action handler for git client */
