@@ -599,11 +599,9 @@ nip34_git_plugin_activate(GnostrPlugin        *plugin,
                                          on_refresh_action, self);
   g_debug("[NIP-34] Registered 'nip34-refresh' action");
 
-  /* Auto-fetch from relays on startup if no local repos found */
-  if (g_hash_table_size(self->repositories) == 0) {
-    g_debug("[NIP-34] No local repos - auto-fetching from relays");
-    on_refresh_action(context, "nip34-refresh", NULL, self);
-  }
+  /* Always auto-fetch from relays on startup to get latest repos */
+  g_debug("[NIP-34] Auto-fetching repositories from relays on startup");
+  on_refresh_action(context, "nip34-refresh", NULL, self);
 
 #ifdef HAVE_LIBGIT2
   /* Register action handler for git client */
