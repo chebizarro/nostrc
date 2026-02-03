@@ -4298,6 +4298,18 @@ static void on_clone_requested(GnostrRepoBrowser *browser, const char *clone_url
   }
 }
 
+/* Handler for need-profile signal from repo browser - fetches maintainer profiles */
+static void on_repo_browser_need_profile(GnostrRepoBrowser *browser, const char *pubkey_hex, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  (void)browser;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+  if (strlen(pubkey_hex) != 64) return;
+
+  g_debug("[REPO] Profile fetch requested for maintainer: %.16s...", pubkey_hex);
+  enqueue_profile_author(self, pubkey_hex);
+}
+
 /* Handler for refresh-requested signal from repo browser */
 static void on_repo_refresh_requested(GnostrRepoBrowser *browser, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -4837,6 +4849,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                        G_CALLBACK(on_clone_requested), self);
       g_signal_connect(repo_browser, "refresh-requested",
                        G_CALLBACK(on_repo_refresh_requested), self);
+      g_signal_connect(repo_browser, "need-profile",
+                       G_CALLBACK(on_repo_browser_need_profile), self);
     }
   }
 

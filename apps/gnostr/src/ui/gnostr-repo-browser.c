@@ -68,6 +68,7 @@ enum {
   SIGNAL_REPO_SELECTED,
   SIGNAL_CLONE_REQUESTED,
   SIGNAL_REFRESH_REQUESTED,
+  SIGNAL_NEED_PROFILE,
   N_SIGNALS
 };
 
@@ -146,7 +147,9 @@ create_repo_row(GnostrRepoBrowser *self, RepoData *data)
         }
       else
         {
-          g_debug("[repo-browser] No profile found for pubkey %s", data->maintainer_pubkey);
+          g_debug("[repo-browser] No profile found for pubkey %s, requesting fetch", data->maintainer_pubkey);
+          /* Request profile fetch from relays */
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, data->maintainer_pubkey);
         }
     }
   else
@@ -344,6 +347,13 @@ gnostr_repo_browser_class_init(GnostrRepoBrowserClass *klass)
                  G_SIGNAL_RUN_LAST,
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 0);
+
+  signals[SIGNAL_NEED_PROFILE] =
+    g_signal_new("need-profile",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void
