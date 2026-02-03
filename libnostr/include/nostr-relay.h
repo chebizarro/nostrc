@@ -158,9 +158,19 @@ int64_t     nostr_relay_count(NostrRelay *relay, GoContext *ctx, NostrFilter *fi
  * nostr_relay_is_connected:
  * @relay: (nullable): relay
  *
- * Returns: whether connected
+ * Returns: whether the relay has an active connection (may be in handshake)
  */
 bool        nostr_relay_is_connected(NostrRelay *relay);
+
+/**
+ * nostr_relay_is_established:
+ * @relay: (nullable): relay
+ *
+ * Returns: whether the WebSocket handshake has completed and the connection
+ *          is ready for message exchange. Use this when you need to ensure
+ *          the connection is fully established before sending messages.
+ */
+bool        nostr_relay_is_established(NostrRelay *relay);
 
 /**
  * nostr_relay_enable_debug_raw:

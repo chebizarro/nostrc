@@ -538,7 +538,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
      * send the subscription REQ. Otherwise nostr_subscription_fire times out
      * waiting for write confirmation on a socket that isn't ready yet.
      *
-     * We poll nostr_relay_is_connected() which checks the established flag,
+     * We poll nostr_relay_is_established() which checks the established flag,
      * ensuring the handshake is actually complete - not just that connection
      * was initiated. */
     int connected = 0;
@@ -548,7 +548,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
     while (!connected && elapsed_ms < max_wait_ms) {
         for (size_t r = 0; r < pool->relay_count; r++) {
-            if (pool->relays[r] && nostr_relay_is_connected(pool->relays[r])) {
+            if (pool->relays[r] && nostr_relay_is_established(pool->relays[r])) {
                 connected = 1;
                 break;
             }

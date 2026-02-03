@@ -192,14 +192,35 @@ bool nostr_relay_is_connected(NostrRelay *relay) {
         if (relay->connection->priv->test_mode) {
             connected = true;
         } else {
-            /* Check both: wsi exists AND WebSocket handshake completed (established flag) */
-            connected = (relay->connection->priv->wsi != NULL &&
-                         relay->connection->priv->established);
+            /* Check if wsi exists - this indicates an active connection attempt.
+             * Note: This returns true even before WebSocket handshake completes,
+             * which allows messages to be queued for sending. The handshake
+             * completes asynchronously and messages are sent once established. */
+            connected = (relay->connection->priv->wsi != NULL);
         }
         nsync_mu_unlock(&relay->connection->priv->mutex);
     }
     nsync_mu_unlock(&relay->priv->mutex);
     return connected;
+}
+
+bool nostr_relay_is_established(NostrRelay *relay) {
+    if (!relay) return false;
+    nsync_mu_lock(&relay->priv->mutex);
+    bool established = false;
+    if (relay->connection && relay->connection->priv) {
+        nsync_mu_lock(&relay->connection->priv->mutex);
+        if (relay->connection->priv->test_mode) {
+            established = true;
+        } else {
+            /* Check both: wsi exists AND WebSocket handshake completed */
+            established = (relay->connection->priv->wsi != NULL &&
+                          relay->connection->priv->established);
+        }
+        nsync_mu_unlock(&relay->connection->priv->mutex);
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+    return established;
 }
 
 /* GLib-style accessors (header: nostr-relay.h) */

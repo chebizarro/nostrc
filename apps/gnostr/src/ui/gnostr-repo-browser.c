@@ -376,6 +376,8 @@ gnostr_repo_browser_init(GnostrRepoBrowser *self)
 
   self->search_entry = gtk_search_entry_new();
   gtk_widget_set_hexpand(self->search_entry, TRUE);
+  /* GtkSearchEntry uses placeholder-text property, not GTK_ENTRY cast */
+  g_object_set(self->search_entry, "placeholder-text", "Search repositories...", NULL);
   g_signal_connect(self->search_entry, "search-changed", G_CALLBACK(on_search_changed), self);
   gtk_box_append(GTK_BOX(self->header_box), self->search_entry);
 
