@@ -840,35 +840,22 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
   GError *err = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
 
-  /* Check for cancellation FIRST before accessing user_data - the widget may be freed */
-  if (err) {
-    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_error_free(err);
-      if (results) g_ptr_array_unref(results);
-      return;  /* Widget was disposed, don't access user_data */
-    }
+  /* ASAN fix: We hold a ref on self during async, so it's always valid.
+   * Cast immediately - the ref ensures the object stays alive until we unref. */
+  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
+
+  /* Check for cancellation - widget may be disposing but we still hold a ref */
+  if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_error_free(err);
+    if (results) g_ptr_array_unref(results);
+    goto cleanup;
   }
 
-  /* CRITICAL: Check NULL before type-check macro. Type-check macros dereference
-   * the pointer which crashes if widget was recycled during async query.
-   * nostrc-ofq: Fix crash during fast scrolling with embedded notes. */
-  if (user_data == NULL) {
-    g_clear_error(&err);
-    if (results) g_ptr_array_unref(results);
-    return;
-  }
-  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
-  /* Check disposed flag BEFORE type-check macro */
+  /* Check disposed flag - widget is disposing, don't do work but still unref */
   if (self->disposed) {
     g_clear_error(&err);
     if (results) g_ptr_array_unref(results);
-    return;
-  }
-  /* Now safe to use type-check since disposed==FALSE means widget is valid */
-  if (!GNOSTR_IS_NOTE_EMBED(self)) {
-    g_clear_error(&err);
-    if (results) g_ptr_array_unref(results);
-    return;
+    goto cleanup;
   }
 
   if (err) {
@@ -877,11 +864,11 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
       g_debug("note_embed: hint relays failed, falling back to main pool");
       g_error_free(err);
       fetch_event_from_main_pool(self, self->target_id);
-      return;
+      goto cleanup;
     }
     gnostr_note_embed_set_error(self, "Network error");
     g_error_free(err);
-    return;
+    goto cleanup;
   }
 
   if (!results || results->len == 0) {
@@ -890,18 +877,18 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
       g_debug("note_embed: not found on hint relays, falling back to main pool");
       if (results) g_ptr_array_unref(results);
       fetch_event_from_main_pool(self, self->target_id);
-      return;
+      goto cleanup;
     }
     gnostr_note_embed_set_error(self, "Not found");
     if (results) g_ptr_array_unref(results);
-    return;
+    goto cleanup;
   }
 
   const char *json = (const char*)g_ptr_array_index(results, 0);
   if (!json) {
     gnostr_note_embed_set_error(self, "Empty result");
     g_ptr_array_unref(results);
-    return;
+    goto cleanup;
   }
 
   /* Ingest into local store */
@@ -930,6 +917,10 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
 
   if (evt) nostr_event_free(evt);
   g_ptr_array_unref(results);
+
+cleanup:
+  /* Release the ref we took when starting this async operation */
+  g_object_unref(self);
 }
 
 /* Shared pool for embed queries - initialized lazily with pre-connected relays */
@@ -1014,6 +1005,8 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
       url_arr[i] = (const char*)g_ptr_array_index(urls, i);
     }
 
+    /* Hold ref during async - callback will unref */
+    g_object_ref(self);
     gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
                                            get_effective_cancellable(self), on_relay_query_done, self);
 
@@ -1048,6 +1041,8 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
     url_arr[i] = (const char*)g_ptr_array_index(urls, i);
   }
 
+  /* Hold ref during async - callback will unref */
+  g_object_ref(self);
   gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
                                          get_effective_cancellable(self), on_relay_query_done, self);
 
@@ -1064,35 +1059,22 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
   GError *err = NULL;
   GPtrArray *results = gnostr_simple_pool_fetch_profiles_by_authors_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
 
-  /* Check for cancellation FIRST before accessing user_data - the widget may be freed */
-  if (err) {
-    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_error_free(err);
-      if (results) g_ptr_array_unref(results);
-      return;  /* Widget was disposed, don't access user_data */
-    }
+  /* ASAN fix: We hold a ref on self during async, so it's always valid.
+   * Cast immediately - the ref ensures the object stays alive until we unref. */
+  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
+
+  /* Check for cancellation - widget may be disposing but we still hold a ref */
+  if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_error_free(err);
+    if (results) g_ptr_array_unref(results);
+    goto cleanup;
   }
 
-  /* CRITICAL: Check NULL before type-check macro. Type-check macros dereference
-   * the pointer which crashes if widget was recycled during async query.
-   * nostrc-ofq: Fix crash during fast scrolling with embedded profiles. */
-  if (user_data == NULL) {
-    g_clear_error(&err);
-    if (results) g_ptr_array_unref(results);
-    return;
-  }
-  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
-  /* Check disposed flag BEFORE type-check macro */
+  /* Check disposed flag - widget is disposing, don't do work but still unref */
   if (self->disposed) {
     g_clear_error(&err);
     if (results) g_ptr_array_unref(results);
-    return;
-  }
-  /* Now safe to use type-check since disposed==FALSE means widget is valid */
-  if (!GNOSTR_IS_NOTE_EMBED(self)) {
-    g_clear_error(&err);
-    if (results) g_ptr_array_unref(results);
-    return;
+    goto cleanup;
   }
 
   if (err) {
@@ -1100,12 +1082,12 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
     if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
       g_error_free(err);
       fetch_profile_from_main_pool(self, self->target_id);
-      return;
+      goto cleanup;
     }
     /* Show basic profile with just pubkey on error */
     gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
     g_error_free(err);
-    return;
+    goto cleanup;
   }
 
   if (!results || results->len == 0) {
@@ -1113,19 +1095,19 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
     if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
       if (results) g_ptr_array_unref(results);
       fetch_profile_from_main_pool(self, self->target_id);
-      return;
+      goto cleanup;
     }
     /* Show basic profile with just pubkey */
     gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
     if (results) g_ptr_array_unref(results);
-    return;
+    goto cleanup;
   }
 
   const char *json = (const char*)g_ptr_array_index(results, 0);
   if (!json) {
     gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
     g_ptr_array_unref(results);
-    return;
+    goto cleanup;
   }
 
   /* Ingest into local store */
@@ -1180,6 +1162,10 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
   g_free(about);
   g_free(picture);
   g_ptr_array_unref(results);
+
+cleanup:
+  /* Release the ref we took when starting this async operation */
+  g_object_unref(self);
 }
 
 /* Fetch profile from relays - try hints first, then main pool */
@@ -1203,6 +1189,8 @@ static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_
 
     const char *authors[1] = { pubkey_hex };
 
+    /* Hold ref during async - callback will unref */
+    g_object_ref(self);
     gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, self->relay_hints_count,
                                                         authors, 1, 1,
                                                         get_effective_cancellable(self), on_profile_relay_query_done, self);
@@ -1230,6 +1218,8 @@ static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubk
 
   const char *authors[1] = { pubkey_hex };
 
+  /* Hold ref during async - callback will unref */
+  g_object_ref(self);
   gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, urls->len,
                                                       authors, 1, 1,
                                                       get_effective_cancellable(self), on_profile_relay_query_done, self);
