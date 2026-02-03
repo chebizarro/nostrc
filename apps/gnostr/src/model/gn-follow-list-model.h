@@ -118,6 +118,34 @@ const gchar *gn_follow_list_model_get_pubkey(GnFollowListModel *self);
  */
 guint gn_follow_list_model_get_total_count(GnFollowListModel *self);
 
+/**
+ * gn_follow_list_model_set_visible_range:
+ * @self: the follow list model
+ * @start: first visible item index
+ * @end: last visible item index (exclusive)
+ *
+ * Sets the visible range for viewport-aware profile loading.
+ * Only profiles for items in this range (plus a prefetch buffer)
+ * will be loaded. Call this when scroll position changes.
+ */
+void gn_follow_list_model_set_visible_range(GnFollowListModel *self,
+                                             guint start,
+                                             guint end);
+
+/**
+ * gn_follow_list_model_get_visible_range:
+ * @self: the follow list model
+ * @start: (out) (nullable): first visible item index
+ * @end: (out) (nullable): last visible item index (exclusive)
+ *
+ * Gets the current visible range.
+ *
+ * Returns: TRUE if there are visible items.
+ */
+gboolean gn_follow_list_model_get_visible_range(GnFollowListModel *self,
+                                                  guint *start,
+                                                  guint *end);
+
 G_END_DECLS
 
 #endif /* GN_FOLLOW_LIST_MODEL_H */

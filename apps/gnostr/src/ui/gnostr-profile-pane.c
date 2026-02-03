@@ -836,6 +836,45 @@ static void on_follows_list_activate(GtkListView *list_view, guint position, gpo
   }
 }
 
+/* nostrc-1mzg: Estimated row height for follows list items (profile row) */
+#define FOLLOWS_ROW_HEIGHT_ESTIMATE 72
+
+/* nostrc-1mzg: Update visible range for viewport-aware profile loading */
+static void update_follows_visible_range(GnostrProfilePane *self) {
+  if (!self->follows_scroll || !GTK_IS_SCROLLED_WINDOW(self->follows_scroll))
+    return;
+  if (!self->follows_model || !GN_IS_FOLLOW_LIST_MODEL(self->follows_model))
+    return;
+
+  GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(
+      GTK_SCROLLED_WINDOW(self->follows_scroll));
+  if (!vadj) return;
+
+  gdouble value = gtk_adjustment_get_value(vadj);
+  gdouble page_size = gtk_adjustment_get_page_size(vadj);
+
+  guint n_items = g_list_model_get_n_items(self->follows_model);
+  if (n_items == 0) return;
+
+  /* Calculate visible range based on scroll position */
+  guint start_idx = (guint)(value / FOLLOWS_ROW_HEIGHT_ESTIMATE);
+  guint visible_count = (guint)((page_size / FOLLOWS_ROW_HEIGHT_ESTIMATE) + 2);
+
+  guint visible_start = MIN(start_idx, n_items);
+  guint visible_end = MIN(start_idx + visible_count, n_items);
+
+  gn_follow_list_model_set_visible_range(
+      GN_FOLLOW_LIST_MODEL(self->follows_model),
+      visible_start, visible_end);
+}
+
+/* nostrc-1mzg: Scroll handler for viewport-aware profile loading */
+static void on_follows_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)adj;
+  update_follows_visible_range(self);
+}
+
 /* nostrc-7447: Setup the follows list view */
 static void setup_follows_list(GnostrProfilePane *self) {
   if (!self->follows_list || !GTK_IS_LIST_VIEW(self->follows_list)) return;
@@ -864,6 +903,16 @@ static void setup_follows_list(GnostrProfilePane *self) {
 
   /* Connect activation signal */
   g_signal_connect(self->follows_list, "activate", G_CALLBACK(on_follows_list_activate), self);
+
+  /* nostrc-1mzg: Connect scroll handler for viewport-aware profile loading */
+  if (self->follows_scroll && GTK_IS_SCROLLED_WINDOW(self->follows_scroll)) {
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(
+        GTK_SCROLLED_WINDOW(self->follows_scroll));
+    if (vadj) {
+      g_signal_connect(vadj, "value-changed",
+                       G_CALLBACK(on_follows_scroll_value_changed), self);
+    }
+  }
 }
 
 /* nostrc-7447: Callback to update UI after follows load */
@@ -886,6 +935,9 @@ static gboolean follows_load_ui_update_cb(gpointer user_data) {
   if (n_items > 0) {
     if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, TRUE);
     if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, FALSE);
+
+    /* nostrc-1mzg: Trigger initial viewport-aware profile loading */
+    update_follows_visible_range(self);
   } else {
     if (self->follows_scroll) gtk_widget_set_visible(self->follows_scroll, FALSE);
     if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, TRUE);

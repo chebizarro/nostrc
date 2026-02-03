@@ -226,6 +226,9 @@ gn_follow_list_item_set_profile(GnFollowListItem *self,
 
 /* ========== GnFollowListModel ========== */
 
+/* Prefetch buffer size - load profiles this many items ahead of visible range */
+#define PROFILE_PREFETCH_BUFFER 10
+
 struct _GnFollowListModel {
     GObject parent_instance;
 
@@ -240,6 +243,11 @@ struct _GnFollowListModel {
     gchar *filter_text;
     gboolean is_loading;
     GCancellable *cancellable;
+
+    /* Viewport-aware lazy loading (nostrc-1mzg) */
+    guint visible_start;       /* First visible item index */
+    guint visible_end;         /* Last visible item index (exclusive) */
+    GHashTable *profile_requested; /* pubkey_hex -> TRUE for items with pending/completed profile requests */
 };
 
 static void gn_follow_list_model_list_model_iface_init(GListModelInterface *iface);
@@ -381,6 +389,7 @@ gn_follow_list_model_finalize(GObject *object)
 
     g_clear_pointer(&self->all_items, g_ptr_array_unref);
     g_clear_pointer(&self->filtered_items, g_ptr_array_unref);
+    g_clear_pointer(&self->profile_requested, g_hash_table_destroy);
     g_free(self->pubkey);
     g_free(self->filter_text);
 
@@ -435,6 +444,9 @@ gn_follow_list_model_init(GnFollowListModel *self)
     self->all_items = g_ptr_array_new_with_free_func(g_object_unref);
     self->filtered_items = g_ptr_array_new();
     self->cancellable = g_cancellable_new();
+    self->profile_requested = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    self->visible_start = 0;
+    self->visible_end = 0;
 }
 
 /* Public API */
@@ -488,26 +500,19 @@ on_follow_list_loaded(GPtrArray *entries, gpointer user_data)
 
     guint old_len = self->filtered_items ? self->filtered_items->len : 0;
 
-    /* Clear existing items */
+    /* Clear existing items and profile request tracking */
     g_ptr_array_set_size(self->all_items, 0);
+    g_hash_table_remove_all(self->profile_requested);
 
     if (entries) {
-        gpointer profile_service = gnostr_profile_service_get_default();
-
+        /* nostrc-1mzg: Only add items to model, do NOT request profiles here.
+         * Profiles will be loaded lazily via set_visible_range() when items
+         * become visible in the viewport. This prevents O(n) profile requests
+         * for users with thousands of follows. */
         for (guint i = 0; i < entries->len; i++) {
             GnostrFollowEntry *entry = g_ptr_array_index(entries, i);
             GnFollowListItem *item = gn_follow_list_item_new_from_entry(entry);
             g_ptr_array_add(self->all_items, item);
-
-            /* Resolve profile metadata asynchronously via profile service */
-            if (profile_service) {
-                gnostr_profile_service_request(
-                    profile_service,
-                    item->pubkey,
-                    on_profile_resolved,
-                    g_object_ref(item)
-                );
-            }
         }
         g_ptr_array_unref(entries);
     }
@@ -518,6 +523,11 @@ on_follow_list_loaded(GPtrArray *entries, gpointer user_data)
     self->is_loading = FALSE;
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_IS_LOADING]);
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TOTAL_COUNT]);
+
+    /* Request profiles for initially visible items (if range is set) */
+    if (self->visible_end > self->visible_start) {
+        gn_follow_list_model_set_visible_range(self, self->visible_start, self->visible_end);
+    }
 
     (void)old_len;
 }
@@ -607,4 +617,78 @@ gn_follow_list_model_get_total_count(GnFollowListModel *self)
 {
     g_return_val_if_fail(GN_IS_FOLLOW_LIST_MODEL(self), 0);
     return self->all_items ? self->all_items->len : 0;
+}
+
+/* nostrc-1mzg: Request profiles for items in a range that haven't been requested yet */
+static void
+request_profiles_for_range(GnFollowListModel *self, guint start, guint end)
+{
+    if (!self->filtered_items || self->filtered_items->len == 0)
+        return;
+
+    gpointer profile_service = gnostr_profile_service_get_default();
+    if (!profile_service)
+        return;
+
+    /* Clamp range to valid indices */
+    guint n_items = self->filtered_items->len;
+    if (start >= n_items) return;
+    if (end > n_items) end = n_items;
+
+    guint requested_count = 0;
+
+    for (guint i = start; i < end; i++) {
+        GnFollowListItem *item = g_ptr_array_index(self->filtered_items, i);
+        if (!item || !item->pubkey)
+            continue;
+
+        /* Skip if already requested */
+        if (g_hash_table_contains(self->profile_requested, item->pubkey))
+            continue;
+
+        /* Mark as requested and fetch */
+        g_hash_table_insert(self->profile_requested, g_strdup(item->pubkey), GINT_TO_POINTER(1));
+        gnostr_profile_service_request(
+            profile_service,
+            item->pubkey,
+            on_profile_resolved,
+            g_object_ref(item)
+        );
+        requested_count++;
+    }
+
+    if (requested_count > 0) {
+        g_debug("[FOLLOW-LIST] Requested %u profiles for range [%u, %u)", requested_count, start, end);
+    }
+}
+
+void
+gn_follow_list_model_set_visible_range(GnFollowListModel *self, guint start, guint end)
+{
+    g_return_if_fail(GN_IS_FOLLOW_LIST_MODEL(self));
+
+    /* Update stored range */
+    self->visible_start = start;
+    self->visible_end = end;
+
+    if (start >= end)
+        return;
+
+    /* Calculate prefetch range (visible + buffer on both sides) */
+    guint prefetch_start = (start > PROFILE_PREFETCH_BUFFER) ? (start - PROFILE_PREFETCH_BUFFER) : 0;
+    guint prefetch_end = end + PROFILE_PREFETCH_BUFFER;
+
+    /* Request profiles for visible + prefetch range */
+    request_profiles_for_range(self, prefetch_start, prefetch_end);
+}
+
+gboolean
+gn_follow_list_model_get_visible_range(GnFollowListModel *self, guint *start, guint *end)
+{
+    g_return_val_if_fail(GN_IS_FOLLOW_LIST_MODEL(self), FALSE);
+
+    if (start) *start = self->visible_start;
+    if (end) *end = self->visible_end;
+
+    return (self->visible_end > self->visible_start);
 }
