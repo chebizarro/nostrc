@@ -138,21 +138,19 @@ GPtrArray *gnostr_follow_list_get_cached(const gchar *pubkey_hex)
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return NULL;
 
   /* Query for kind 3 from this author, limit 1 (most recent) */
-  gchar *filter = g_strdup_printf(
+  g_autofree gchar *filter = g_strdup_printf(
     "[{\"kinds\":[3],\"authors\":[\"%s\"],\"limit\":1}]",
     pubkey_hex);
 
   void *txn = NULL;
   int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
   if (rc != 0 || !txn) {
-    g_free(filter);
     return NULL;
   }
 
   char **results = NULL;
   int count = 0;
   rc = storage_ndb_query(txn, filter, &results, &count);
-  g_free(filter);
 
   if (rc != 0 || count == 0 || !results) {
     storage_ndb_end_query(txn);
@@ -162,10 +160,9 @@ GPtrArray *gnostr_follow_list_get_cached(const gchar *pubkey_hex)
 
   /* Parse p-tags from the contact list JSON */
   GPtrArray *entries = NULL;
-  char *tags_json = NULL;
+  g_autofree char *tags_json = NULL;
   if (nostr_json_get_raw(results[0], "tags", &tags_json) == 0 && tags_json) {
     entries = parse_p_tags_to_entries(tags_json);
-    g_free(tags_json);
   }
 
   storage_ndb_free_results(results, count);
@@ -236,10 +233,9 @@ static void on_follow_list_query_done(GObject *source, GAsyncResult *res, gpoint
       gint64 created_at = 0;
 
       /* Extract created_at */
-      gchar *created_at_str = NULL;
+      g_autofree gchar *created_at_str = NULL;
       if (nostr_json_get_raw(ev, "created_at", &created_at_str) == 0 && created_at_str) {
         created_at = g_ascii_strtoll(created_at_str, NULL, 10);
-        g_free(created_at_str);
       }
 
       if (created_at > best_created_at) {
@@ -250,10 +246,9 @@ static void on_follow_list_query_done(GObject *source, GAsyncResult *res, gpoint
 
     if (best_event) {
       /* Parse p-tags */
-      char *tags_json = NULL;
+      g_autofree char *tags_json = NULL;
       if (nostr_json_get_raw(best_event, "tags", &tags_json) == 0 && tags_json) {
         entries = parse_p_tags_to_entries(tags_json);
-        g_free(tags_json);
       }
 
       /* Cache in nostrdb via ingest */

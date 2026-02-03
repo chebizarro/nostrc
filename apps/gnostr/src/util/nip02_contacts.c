@@ -502,21 +502,19 @@ gboolean gnostr_contact_list_load_from_ndb(GnostrContactList *self,
     if (!self || !pubkey_hex || strlen(pubkey_hex) != 64) return FALSE;
 
     /* Query nostrdb for kind 3 from this author */
-    char *filter_json = g_strdup_printf(
+    g_autofree char *filter_json = g_strdup_printf(
         "[{\"kinds\":[3],\"authors\":[\"%s\"],\"limit\":1}]",
         pubkey_hex);
 
     void *txn = NULL;
     int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
     if (rc != 0 || !txn) {
-        g_free(filter_json);
         return FALSE;
     }
 
     char **results = NULL;
     int count = 0;
     rc = storage_ndb_query(txn, filter_json, &results, &count);
-    g_free(filter_json);
 
     if (rc != 0 || count == 0 || !results) {
         storage_ndb_end_query(txn);
