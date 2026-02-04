@@ -360,7 +360,11 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
       return;
     }
 
-  /* Parse JSON array of repository events */
+  /* Parse JSON array of cached repository data.
+   * Note: Cache format is simplified (d_tag, name, description, etc.)
+   * NOT the full NIP-34 event format with tags array.
+   * nostrc-FIX: Previously called parse_repository_event which expected
+   * tags array format, causing all cached repos to fail parsing. */
   JsonParser *parser = json_parser_new();
   if (json_parser_load_from_data(parser, json, size, NULL))
     {
@@ -374,13 +378,27 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
               JsonNode *node = json_array_get_element(arr, i);
               if (JSON_NODE_HOLDS_OBJECT(node))
                 {
-                  JsonGenerator *gen = json_generator_new();
-                  json_generator_set_root(gen, node);
-                  char *event_json = json_generator_to_data(gen, NULL);
-                  g_object_unref(gen);
+                  JsonObject *obj = json_node_get_object(node);
 
-                  RepoInfo *info = parse_repository_event(event_json);
-                  if (info && info->d_tag)
+                  /* Parse simplified cache format directly */
+                  RepoInfo *info = g_new0(RepoInfo, 1);
+
+                  if (json_object_has_member(obj, "id"))
+                    info->id = g_strdup(json_object_get_string_member(obj, "id"));
+                  if (json_object_has_member(obj, "d_tag"))
+                    info->d_tag = g_strdup(json_object_get_string_member(obj, "d_tag"));
+                  if (json_object_has_member(obj, "name"))
+                    info->name = g_strdup(json_object_get_string_member(obj, "name"));
+                  if (json_object_has_member(obj, "description"))
+                    info->description = g_strdup(json_object_get_string_member(obj, "description"));
+                  if (json_object_has_member(obj, "clone_url"))
+                    info->clone_url = g_strdup(json_object_get_string_member(obj, "clone_url"));
+                  if (json_object_has_member(obj, "web_url"))
+                    info->web_url = g_strdup(json_object_get_string_member(obj, "web_url"));
+                  if (json_object_has_member(obj, "pubkey"))
+                    info->pubkey = g_strdup(json_object_get_string_member(obj, "pubkey"));
+
+                  if (info->d_tag)
                     {
                       g_hash_table_replace(self->repositories,
                                            g_strdup(info->d_tag), info);
@@ -391,7 +409,6 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
                     {
                       repo_info_free(info);
                     }
-                  g_free(event_json);
                 }
             }
           g_debug("[NIP-34] Loaded %u cached repositories",
@@ -665,6 +682,16 @@ save_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
         {
           json_builder_set_member_name(builder, "description");
           json_builder_add_string_value(builder, info->description);
+        }
+      if (info->web_url)
+        {
+          json_builder_set_member_name(builder, "web_url");
+          json_builder_add_string_value(builder, info->web_url);
+        }
+      if (info->pubkey)
+        {
+          json_builder_set_member_name(builder, "pubkey");
+          json_builder_add_string_value(builder, info->pubkey);
         }
       json_builder_end_object(builder);
     }
