@@ -182,6 +182,52 @@ factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   gtk_list_item_set_child(item, row);
 }
 
+/* Callback for when profile property changes on a bound item.
+ * nostrc-NEW: Updates card when profile is fetched asynchronously. */
+static void
+on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+
+  if (!GNOSTR_IS_NOTE_CARD_ROW(row)) return;
+  if (gnostr_note_card_row_is_disposed(GNOSTR_NOTE_CARD_ROW(row))) return;
+
+  /* Get updated profile from model item */
+  GObject *profile = NULL;
+  g_object_get(obj, "profile", &profile, NULL);
+
+  if (profile) {
+    gchar *display_name = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
+    g_object_get(profile,
+                 "display-name", &display_name,
+                 "name", &handle,
+                 "picture-url", &avatar_url,
+                 "nip05", &nip05,
+                 NULL);
+    g_object_unref(profile);
+
+    /* Update card with new profile data */
+    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+                                     display_name, handle, avatar_url);
+
+    /* Update NIP-05 if available */
+    if (nip05) {
+      gchar *pubkey = NULL;
+      g_object_get(obj, "pubkey", &pubkey, NULL);
+      if (pubkey) {
+        gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
+        g_free(pubkey);
+      }
+    }
+
+    g_free(display_name);
+    g_free(handle);
+    g_free(avatar_url);
+    g_free(nip05);
+  }
+}
+
 static void
 factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 {
@@ -197,6 +243,13 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   /* CRITICAL: Prepare row for binding - resets disposed flag, assigns binding_id,
    * and creates fresh cancellable. Must be called BEFORE populating the row. */
   gnostr_note_card_row_prepare_for_bind(GNOSTR_NOTE_CARD_ROW(row));
+
+  /* nostrc-NEW: Connect to profile changes for async profile updates.
+   * Store signal handler ID on the row for disconnection during unbind. */
+  gulong handler_id = g_signal_connect(obj, "notify::profile",
+                                        G_CALLBACK(on_item_profile_changed), row);
+  g_object_set_data(G_OBJECT(row), "profile-handler-id", GUINT_TO_POINTER(handler_id));
+  g_object_set_data(G_OBJECT(row), "bound-item", obj);
 
   /* If custom bind callback is set, use it instead of default binding */
   if (self->bind_cb) {
@@ -310,6 +363,17 @@ factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
+
+  /* nostrc-NEW: Disconnect profile change handler to prevent callbacks to stale row */
+  if (row) {
+    gulong handler_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
+    GObject *bound_item = g_object_get_data(G_OBJECT(row), "bound-item");
+    if (handler_id > 0 && bound_item && G_IS_OBJECT(bound_item)) {
+      g_signal_handler_disconnect(bound_item, handler_id);
+    }
+    g_object_set_data(G_OBJECT(row), "profile-handler-id", NULL);
+    g_object_set_data(G_OBJECT(row), "bound-item", NULL);
+  }
 
   /* CRITICAL: Prepare row for unbinding BEFORE GTK disposes it.
    * This cancels all async operations, clears binding_id, and sets disposed flag
