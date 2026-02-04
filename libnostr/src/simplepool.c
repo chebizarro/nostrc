@@ -625,10 +625,14 @@ static int pool_seen(NostrSimplePool *pool, const char *id) {
 void *simple_pool_thread_func(void *arg) {
     NostrSimplePool *pool = (NostrSimplePool *)arg;
 
-    // Adaptive backoff between 2ms and 50ms
+    /* nostrc-wmg8: Increased throughput to prevent queue overflow.
+     * - Spin limit raised from 32 to 256 per subscription per cycle
+     * - Skip sleep entirely when spin limit hit (more work waiting)
+     * - Backoff only applies when no work done */
     unsigned backoff_us = 2000;
     const unsigned backoff_min = 2000;
     const unsigned backoff_max = 50000;
+    const int spin_limit = 256;  /* Events per subscription per cycle */
     size_t rr_start = 0; // round-robin start index for fairness
 
     while (pool->running) {
@@ -646,6 +650,7 @@ void *simple_pool_thread_func(void *arg) {
         NostrIncomingEvent *batch = NULL; size_t batch_len = 0; size_t batch_cap = 0;
 
         int did_work = 0; // any events processed or subs pruned
+        int hit_spin_limit = 0; // nostrc-wmg8: track if we need to drain more
 
         if (local_subs && local_count > 0) {
             // Fairness: start at rotating index
@@ -658,7 +663,7 @@ void *simple_pool_thread_func(void *arg) {
                 if (!ch) continue;
                 void *msg = NULL;
                 int spins = 0;
-                while (go_channel_try_receive(ch, &msg) == 0 && spins++ < 32) {
+                while (go_channel_try_receive(ch, &msg) == 0 && spins++ < spin_limit) {
                     if (!msg) break;
                     NostrEvent *ev = (NostrEvent *)msg;
                     char *eid = nostr_event_get_id(ev);
@@ -684,6 +689,8 @@ void *simple_pool_thread_func(void *arg) {
                     }
                     msg = NULL;
                 }
+                /* nostrc-wmg8: Track if we hit spin limit (more events likely waiting) */
+                if (spins >= spin_limit) hit_spin_limit = 1;
 
                 // Opportunistically prune CLOSED subscriptions (non-blocking)
                 GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
@@ -747,13 +754,19 @@ void *simple_pool_thread_func(void *arg) {
         free(batch);
         free(local_subs);
 
-        // Adaptive sleep/backoff
-        if (did_work) {
+        /* nostrc-wmg8: Adaptive sleep/backoff with spin limit awareness.
+         * Skip sleep entirely when we hit the spin limit to maximize throughput.
+         * This prevents queue overflow during high event rate periods. */
+        if (hit_spin_limit) {
+            /* More events likely waiting - loop immediately without sleep */
             backoff_us = backoff_min;
+        } else if (did_work) {
+            backoff_us = backoff_min;
+            usleep(backoff_us);
         } else {
             backoff_us = (backoff_us < backoff_max) ? (backoff_us * 2) : backoff_max;
+            usleep(backoff_us);
         }
-        usleep(backoff_us);
     }
 
     return NULL;
