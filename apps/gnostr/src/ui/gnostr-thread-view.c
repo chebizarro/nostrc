@@ -1101,7 +1101,9 @@ static GtkWidget *create_note_card_for_item(GnostrThreadView *self, ThreadEventI
   return GTK_WIDGET(row);
 }
 
-/* Internal: count all descendants of an event recursively */
+/* Internal: count all descendants of an event recursively and set child_count.
+ * This is a post-order traversal that sets child_count on each visited node,
+ * so it only needs to be called once per root (O(n) total instead of O(n²)). */
 static guint count_descendants(GnostrThreadView *self, const char *event_id) {
   if (!self->thread_graph || !event_id) return 0;
 
@@ -1113,6 +1115,8 @@ static guint count_descendants(GnostrThreadView *self, const char *event_id) {
     const char *child_id = g_ptr_array_index(node->child_ids, i);
     count += count_descendants(self, child_id);
   }
+  /* Set child_count on this node during traversal (post-order) */
+  node->child_count = count;
   return count;
 }
 
@@ -1288,17 +1292,13 @@ static void build_thread_graph(GnostrThreadView *self) {
     }
   }
 
-  /* Step 5: Mark focus path and calculate child counts */
+  /* Step 5: Mark focus path */
   mark_focus_path(self);
 
-  g_hash_table_iter_init(&iter, self->thread_graph->nodes);
-  while (g_hash_table_iter_next(&iter, &key, &value)) {
-    ThreadNode *node = (ThreadNode *)value;
-    node->child_count = count_descendants(self, (const char *)key);
-    /* All branches expanded by default - user can collapse manually if needed */
-  }
-
-  /* Step 6: Build render order (DFS from all roots) */
+  /* Step 6: Collect all root nodes and calculate child counts efficiently.
+   * We call count_descendants once per root, which traverses the tree and
+   * sets child_count on every node it visits. This is O(n) instead of the
+   * previous O(n²) approach of calling count_descendants for each node. */
   g_ptr_array_set_size(self->thread_graph->render_order, 0);
 
   /* Collect all root nodes (nodes without a parent in the graph) */
@@ -1309,6 +1309,12 @@ static void build_thread_graph(GnostrThreadView *self) {
     if (!node->parent_id || !g_hash_table_contains(self->thread_graph->nodes, node->parent_id)) {
       g_ptr_array_add(root_ids, (gpointer)key);
     }
+  }
+
+  /* Calculate child counts by traversing from each root (O(n) total) */
+  for (guint i = 0; i < root_ids->len; i++) {
+    const char *rid = g_ptr_array_index(root_ids, i);
+    count_descendants(self, rid);
   }
 
   /* Log what we found */
