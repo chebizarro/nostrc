@@ -1793,6 +1793,12 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   self->note_embed = NULL;
   self->og_preview = NULL;
 
+  /* nostrc-0acr: Initialize binding_id to 1 so rows work for direct creation
+   * (e.g., repo-browser) without needing prepare_for_bind. Factory-managed rows
+   * will get a unique binding_id from prepare_for_bind. The value 1 allows
+   * setters to work while still supporting the binding_id validation pattern. */
+  self->binding_id = 1;
+
   gtk_widget_init_template(GTK_WIDGET(self));
 
   /* Create shared cancellable for all async operations */
