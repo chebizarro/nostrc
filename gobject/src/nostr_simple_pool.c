@@ -1,6 +1,7 @@
 #define G_LOG_DOMAIN "gnostr-pool"
 
 #include "nostr_simple_pool.h"
+#include "nostr_query_batcher.h"  /* nostrc-ozlp: query batching */
 #include "nostr_relay.h"
 #include "nostr-subscription.h"
 #include "nostr-filter.h"
@@ -36,6 +37,13 @@ static void free_urls(char **urls, size_t count);
 
 static void nostr_simple_pool_finalize(GObject *object) {
     GnostrSimplePool *self = GNOSTR_SIMPLE_POOL(object);
+
+    /* nostrc-ozlp: Free query batcher first (it may have refs to pool) */
+    if (self->batcher) {
+        nostr_query_batcher_free(self->batcher);
+        self->batcher = NULL;
+    }
+
     /* nostrc-ey0f: Atomically exchange pool pointer with NULL to prevent
      * any possibility of double-free if finalize is somehow called twice
      * or from concurrent paths. */
@@ -991,6 +999,19 @@ void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
     g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
     g_return_if_fail(urls != NULL || url_count == 0);
     g_return_if_fail(filter != NULL);
+
+    /* nostrc-ozlp: Route through query batcher when batching is enabled.
+     * The batcher combines multiple queries to the same relay into a single
+     * subscription with OR'd filters, reducing subscription overhead. */
+    if (self->batching_enabled && self->batcher && url_count > 0) {
+        for (size_t i = 0; i < url_count; i++) {
+            if (urls[i] && *urls[i]) {
+                nostr_query_batcher_submit(self->batcher, urls[i], filter,
+                                           cancellable, callback, user_data);
+            }
+        }
+        return;
+    }
 
     // Create and populate context
     QuerySingleCtx *ctx = g_new0(QuerySingleCtx, 1);
@@ -2152,4 +2173,50 @@ void gnostr_simple_pool_get_queue_metrics(GnostrSimplePool *self, GnostrQueueMet
                     drop_rate, utilization, avg_latency_ms);
         }
     }
+}
+
+/* --- Query Batching API (nostrc-ozlp) --- */
+
+void gnostr_simple_pool_set_batching_enabled(GnostrSimplePool *self, gboolean enabled) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+
+    if (enabled && !self->batcher) {
+        /* Create batcher on first enable */
+        self->batcher = nostr_query_batcher_new(self);
+        g_info("[BATCHER] Query batching enabled with %ums window",
+               nostr_query_batcher_get_window_ms(self->batcher));
+    }
+
+    self->batching_enabled = enabled;
+
+    if (!enabled && self->batcher) {
+        /* Flush any pending batches when disabling */
+        nostr_query_batcher_flush(self->batcher);
+    }
+}
+
+gboolean gnostr_simple_pool_get_batching_enabled(GnostrSimplePool *self) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), FALSE);
+    return self->batching_enabled;
+}
+
+void gnostr_simple_pool_set_batch_window_ms(GnostrSimplePool *self, guint window_ms) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+
+    if (!self->batcher) {
+        /* Create batcher if not yet created */
+        self->batcher = nostr_query_batcher_new(self);
+    }
+
+    nostr_query_batcher_set_window_ms(self->batcher, window_ms);
+}
+
+guint gnostr_simple_pool_get_batch_window_ms(GnostrSimplePool *self) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), 0);
+
+    if (!self->batcher) {
+        return 75;  /* Default */
+    }
+
+    return nostr_query_batcher_get_window_ms(self->batcher);
 }

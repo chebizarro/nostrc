@@ -219,9 +219,11 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${SECP256K1_INCLUDE_DIRS})
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
+# nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
 target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
-  ${PROJECT_ROOT}/gobject/src/nostr_relay.c)
+  ${PROJECT_ROOT}/gobject/src/nostr_relay.c
+  ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)

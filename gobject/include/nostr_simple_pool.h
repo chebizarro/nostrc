@@ -6,13 +6,18 @@
 #include "nostr-simple-pool.h"
 #include "nostr_relay.h"
 
+/* Forward declaration for query batcher (nostrc-ozlp) */
+typedef struct _NostrQueryBatcher NostrQueryBatcher;
+
 /* Define GnostrSimplePool GObject (wrapper around core NostrSimplePool) */
 #define GNOSTR_TYPE_SIMPLE_POOL (gnostr_simple_pool_get_type())
 G_DECLARE_FINAL_TYPE(GnostrSimplePool, gnostr_simple_pool, GNOSTR, SIMPLE_POOL, GObject)
 
 struct _GnostrSimplePool {
     GObject parent_instance;
-    NostrSimplePool *pool; /* core handle */
+    NostrSimplePool *pool;              /* core handle */
+    NostrQueryBatcher *batcher;         /* nostrc-ozlp: query batcher */
+    gboolean batching_enabled;          /* nostrc-ozlp: whether batching is active */
 };
 
 /* GObject convenience API (prefixed with gnostr_ to avoid clashes with core
@@ -192,5 +197,48 @@ void gnostr_simple_pool_disconnect_all_relays(GnostrSimplePool *self);
  * @param urls      Array of relay URLs
  * @param url_count Number of URLs in array */
 void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, size_t url_count);
+
+/* --- Query Batching API (nostrc-ozlp) --- */
+
+/**
+ * gnostr_simple_pool_set_batching_enabled:
+ * @self: The pool
+ * @enabled: Whether to enable batching
+ *
+ * Enables or disables query batching. When enabled, multiple query_single_async
+ * calls to the same relay within a short window are batched into a single
+ * subscription with combined filters. Results are demultiplexed back to original
+ * callers. This reduces subscription overhead when multiple components query
+ * the same relays simultaneously (e.g., thread builder).
+ *
+ * Default: Disabled (for backward compatibility)
+ */
+void gnostr_simple_pool_set_batching_enabled(GnostrSimplePool *self, gboolean enabled);
+
+/**
+ * gnostr_simple_pool_get_batching_enabled:
+ * @self: The pool
+ *
+ * Returns: Whether batching is currently enabled
+ */
+gboolean gnostr_simple_pool_get_batching_enabled(GnostrSimplePool *self);
+
+/**
+ * gnostr_simple_pool_set_batch_window_ms:
+ * @self: The pool
+ * @window_ms: Batch window in milliseconds (1-1000, default: 75)
+ *
+ * Sets the batching time window. Requests arriving within this window
+ * are batched together. Requires batching to be enabled.
+ */
+void gnostr_simple_pool_set_batch_window_ms(GnostrSimplePool *self, guint window_ms);
+
+/**
+ * gnostr_simple_pool_get_batch_window_ms:
+ * @self: The pool
+ *
+ * Returns: The current batch window in milliseconds
+ */
+guint gnostr_simple_pool_get_batch_window_ms(GnostrSimplePool *self);
 
 #endif // NOSTR_SIMPLE_POOL_H
