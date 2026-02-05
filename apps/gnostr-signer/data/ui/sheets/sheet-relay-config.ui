@@ -7,185 +7,156 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SheetRelayConfig" parent="AdwDialog">
-    <property name="title" translatable="yes">Relay Configuration</property>
-    <property name="content-width">500</property>
-    <property name="content-height">550</property>
+    <property name="title" translatable="yes">Manage Relays</property>
+    <property name="content-width">400</property>
+    <property name="content-height">-1</property>
+    <property name="can-close">true</property>
+    <property name="follows-content-size">true</property>
     <accessibility>
       <property name="label">Relay configuration dialog</property>
-      <property name="description">Configure which Nostr relays to use for reading and writing events</property>
+      <property name="description">Configure which Nostr relays to use</property>
     </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
-            <accessibility>
-              <property name="label">Relay configuration header</property>
-            </accessibility>
-            <property name="title-widget">
-              <object class="GtkLabel">
-                <property name="label" translatable="yes">Relay Configuration</property>
-              </object>
-            </property>
-            <child type="start">
-              <object class="GtkButton" id="btn_cancel">
-                <property name="label" translatable="yes">Cancel</property>
-                <accessibility>
-                  <property name="label">Cancel</property>
-                  <property name="description">Close without saving changes</property>
-                </accessibility>
-              </object>
-            </child>
-            <child type="end">
-              <object class="GtkButton" id="btn_publish">
-                <property name="label" translatable="yes">Save &amp; Publish</property>
-                <accessibility>
-                  <property name="label">Save and publish</property>
-                  <property name="description">Save relay configuration and publish NIP-65 relay list</property>
-                </accessibility>
-                <style>
-                  <class name="suggested-action"/>
-                </style>
-              </object>
-            </child>
+            <property name="show-title">false</property>
+            <style>
+              <class name="flat"/>
+            </style>
           </object>
         </child>
         <child>
           <object class="GtkBox">
             <property name="orientation">1</property>
             <property name="spacing">16</property>
-            <property name="margin-top">16</property>
-            <property name="margin-bottom">16</property>
-            <property name="margin-start">16</property>
-            <property name="margin-end">16</property>
+            <property name="margin-start">20</property>
+            <property name="margin-end">20</property>
+            <property name="margin-bottom">20</property>
             <child>
-              <object class="GtkBox">
-                <property name="orientation">0</property>
-                <property name="spacing">8</property>
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Manage Relays</property>
+                <property name="halign">1</property>
+                <style>
+                  <class name="title-2"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkListBox" id="list_relays">
+                <property name="selection-mode">0</property>
                 <accessibility>
-                  <property name="label">Add relay</property>
-                  <property name="description">Add a new relay URL</property>
+                  <property name="label">Configured relays</property>
+                  <property name="description">List of relays. Check to enable, uncheck to disable.</property>
                 </accessibility>
+                <style>
+                  <class name="boxed-list"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="box_add_relay">
+                <property name="orientation">1</property>
+                <property name="spacing">8</property>
                 <child>
-                  <object class="GtkEntry" id="entry_url">
-                    <property name="placeholder-text" translatable="yes">wss://relay.example.com</property>
-                    <property name="hexpand">true</property>
+                  <object class="GtkButton" id="btn_add_relay">
+                    <property name="halign">1</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">0</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">list-add-symbolic</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Add Relay</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
                     <accessibility>
-                      <property name="label">Relay URL</property>
-                      <property name="description">Enter a WebSocket relay URL starting with wss://</property>
+                      <property name="label">Add new relay</property>
+                      <property name="description">Click to add a new relay URL</property>
                     </accessibility>
+                    <style>
+                      <class name="flat"/>
+                      <class name="link"/>
+                    </style>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_add">
-                    <property name="icon-name">list-add-symbolic</property>
+                  <object class="GtkBox" id="box_add_entry">
+                    <property name="orientation">0</property>
+                    <property name="spacing">8</property>
+                    <property name="visible">false</property>
+                    <child>
+                      <object class="GtkEntry" id="entry_url">
+                        <property name="placeholder-text" translatable="yes">wss://relay.example.com</property>
+                        <property name="hexpand">true</property>
+                        <accessibility>
+                          <property name="label">Relay URL</property>
+                          <property name="description">Enter a WebSocket relay URL</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_add">
+                        <property name="icon-name">list-add-symbolic</property>
+                        <accessibility>
+                          <property name="label">Add</property>
+                          <property name="description">Add the relay</property>
+                        </accessibility>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_cancel_add">
+                        <property name="icon-name">window-close-symbolic</property>
+                        <accessibility>
+                          <property name="label">Cancel</property>
+                          <property name="description">Cancel adding relay</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">0</property>
+                <property name="spacing">12</property>
+                <property name="homogeneous">true</property>
+                <property name="margin-top">12</property>
+                <child>
+                  <object class="GtkButton" id="btn_cancel">
+                    <property name="label" translatable="yes">Cancel</property>
+                    <property name="hexpand">true</property>
                     <accessibility>
-                      <property name="label">Add relay</property>
-                      <property name="description">Add the entered relay URL to your list</property>
+                      <property name="label">Cancel</property>
+                      <property name="description">Close without saving</property>
                     </accessibility>
                     <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_save">
+                    <property name="label" translatable="yes">Save</property>
+                    <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Save</property>
+                      <property name="description">Save relay configuration</property>
+                    </accessibility>
+                    <style>
+                      <class name="pill"/>
                       <class name="suggested-action"/>
-                    </style>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">0</property>
-                <property name="spacing">8</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Identity:</property>
-                    <style>
-                      <class name="dim-label"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="lbl_identity">
-                    <property name="label">Global</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                    <property name="selectable">true</property>
-                    <property name="ellipsize">2</property>
-                    <accessibility>
-                      <property name="label">Current identity</property>
-                      <property name="description">The identity whose relay list is being configured</property>
-                    </accessibility>
-                    <style>
-                      <class name="monospace"/>
-                    </style>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">0</property>
-                <property name="spacing">8</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Configure which relays to use for reading and writing events (NIP-65). Click "Fetch Info" to get relay metadata (NIP-11).</property>
-                    <property name="wrap">true</property>
-                    <property name="xalign">0</property>
-                    <property name="hexpand">true</property>
-                    <accessibility>
-                      <property name="label">Relay configuration instructions</property>
-                      <property name="description">Instructions for configuring relays and fetching relay information</property>
-                    </accessibility>
-                    <style>
-                      <class name="dim-label"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_reset_defaults">
-                    <property name="label" translatable="yes">Reset</property>
-                    <property name="tooltip-text" translatable="yes">Reset relay list to default relays</property>
-                    <accessibility>
-                      <property name="label">Reset to defaults</property>
-                      <property name="description">Reset the relay list to the default bootstrap relays</property>
-                    </accessibility>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_fetch_info">
-                    <property name="label" translatable="yes">Fetch Info</property>
-                    <property name="tooltip-text" translatable="yes">Fetch NIP-11 relay information for all relays</property>
-                    <accessibility>
-                      <property name="label">Fetch relay information</property>
-                      <property name="description">Fetch NIP-11 metadata from all configured relays</property>
-                    </accessibility>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_test_all">
-                    <property name="label" translatable="yes">Test All</property>
-                    <property name="tooltip-text" translatable="yes">Test connection to all relays</property>
-                    <accessibility>
-                      <property name="label">Test all relays</property>
-                      <property name="description">Test WebSocket connections to all configured relays</property>
-                    </accessibility>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkScrolledWindow">
-                <property name="vexpand">true</property>
-                <property name="hscrollbar-policy">2</property>
-                <accessibility>
-                  <property name="label">Relay list container</property>
-                </accessibility>
-                <child>
-                  <object class="GtkListBox" id="list_relays">
-                    <property name="selection-mode">0</property>
-                    <accessibility>
-                      <property name="label">Configured relays</property>
-                      <property name="description">List of configured relays. Toggle read and write permissions for each relay.</property>
-                    </accessibility>
-                    <style>
-                      <class name="boxed-list"/>
                     </style>
                   </object>
                 </child>

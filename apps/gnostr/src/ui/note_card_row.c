@@ -30,6 +30,17 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/note-card-row.ui"
 
+/* nostrc-0acr: Safe label update helper to prevent NULL PangoLayout crash.
+ * During widget allocation, the label's internal PangoLayout may not be
+ * initialized yet. This macro checks that the label is fully ready before
+ * updating text. Checks:
+ * 1. Widget pointer is not NULL
+ * 2. Widget is a valid GtkLabel
+ * 3. Widget is mapped (has completed allocation)
+ * If not safe, skip the update - content will be set on next valid opportunity. */
+#define LABEL_SAFE_TO_UPDATE(lbl) \
+  ((lbl) != NULL && GTK_IS_LABEL(lbl) && gtk_widget_get_mapped(GTK_WIDGET(lbl)))
+
 /* No longer using mutex - proper fix is at backend level */
 
 /* Context for async media image loading.
@@ -2320,7 +2331,10 @@ static gboolean update_timestamp_tick(gpointer user_data) {
     else if (diff < 3600) g_snprintf(buf, sizeof(buf), "%ldm", diff/60);
     else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
-    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
+    /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+    if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
+      gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
+    }
   }
 
   return G_SOURCE_CONTINUE;
@@ -2344,7 +2358,10 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
     else if (diff < 3600) g_snprintf(buf, sizeof(buf), "%ldm", diff/60);
     else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
-    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
+    /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+    if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
+      gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
+    }
 
     /* Set tooltip with full date/time */
     GDateTime *dt = g_date_time_new_from_unix_local(created_at);
@@ -2366,7 +2383,10 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
      * nostrc-b0h: Audited - updating relative timestamps is appropriate. */
     self->timestamp_timer_id = g_timeout_add_seconds(60, update_timestamp_tick, self);
   } else {
-    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), fallback_ts ? fallback_ts : "now");
+    /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+    if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
+      gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), fallback_ts ? fallback_ts : "now");
+    }
   }
 }
 
@@ -2953,8 +2973,11 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
   gboolean markup_allocated = (markup != NULL);
   if (!markup) markup = escape_markup(content);
-  gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-  gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
+  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
+    gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
+  }
   if (markup_allocated || markup) g_free(markup); /* Only free once */
 
   /* Media detection: detect images and videos in content and display them */
@@ -3261,8 +3284,11 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
   gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
   gboolean markup_allocated = (markup != NULL);
   if (!markup) markup = escape_markup(content);
-  gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-  gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
+  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
+    gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
+  }
   if (markup_allocated || markup) g_free(markup);
 
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
@@ -4829,7 +4855,8 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
   }
 
   /* Set summary as content (with markdown conversion) */
-  if (GTK_IS_LABEL(self->content_label)) {
+  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
     if (summary && *summary) {
       gchar *pango_summary = markdown_to_pango_summary(summary, 300);
       gtk_label_set_markup(GTK_LABEL(self->content_label), pango_summary);
@@ -4841,7 +4868,8 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
   }
 
   /* Update timestamp to show publication date */
-  if (published_at > 0 && GTK_IS_LABEL(self->lbl_timestamp)) {
+  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+  if (published_at > 0 && LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
     gchar *date_str = format_article_date(published_at);
     gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), date_str);
     g_free(date_str);
@@ -5212,7 +5240,8 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
   }
 
   /* Set summary as content if provided */
-  if (GTK_IS_LABEL(self->content_label)) {
+  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
     if (summary && *summary) {
       gtk_label_set_text(GTK_LABEL(self->content_label), summary);
       gtk_widget_add_css_class(self->content_label, "video-summary");

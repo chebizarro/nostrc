@@ -39,9 +39,7 @@ struct _GnostrApprovalDialog {
   AdwActionRow *row_app;
   AdwActionRow *row_identity;
   AdwActionRow *row_timestamp;
-  GtkImage *event_type_icon;
   GtkLabel *content_preview;
-  GtkButton *btn_expand;
   GtkFrame *content_frame;
   GtkBox *identity_selector_box;
   GtkDropDown *identity_dropdown;
@@ -56,6 +54,7 @@ struct _GnostrApprovalDialog {
   GtkStringList *identity_model;
   gchar *full_content;
   gboolean content_expanded;
+  int current_event_kind;
 
   /* Session integration */
   gchar *client_pubkey;    /* Client's public key for session management */
@@ -184,57 +183,6 @@ static void on_remember_toggled(GtkCheckButton *btn, gpointer user_data) {
   }
 }
 
-static void on_expand_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(user_data);
-  (void)btn;
-
-  self->content_expanded = !self->content_expanded;
-
-  if (self->content_expanded) {
-    gtk_label_set_text(self->content_preview, self->full_content);
-    gtk_label_set_ellipsize(self->content_preview, PANGO_ELLIPSIZE_NONE);
-    gtk_label_set_lines(self->content_preview, -1);
-    gtk_button_set_label(self->btn_expand, "Show Less");
-
-    /* Update accessibility for expanded state (nostrc-qfdg) */
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_expand),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Collapse and show less content",
-                                   -1);
-    gtk_accessible_update_state(GTK_ACCESSIBLE(self->btn_expand),
-                                GTK_ACCESSIBLE_STATE_EXPANDED, TRUE,
-                                -1);
-    gchar *accessible_desc = g_strdup_printf("Full event content: %s", self->full_content);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                   -1);
-    g_free(accessible_desc);
-  } else {
-    /* Re-truncate */
-    if (self->full_content && strlen(self->full_content) > PREVIEW_MAX_CHARS) {
-      gchar *truncated = g_strndup(self->full_content, PREVIEW_MAX_CHARS);
-      gchar *display = g_strdup_printf("%s...", truncated);
-      gtk_label_set_text(self->content_preview, display);
-      g_free(truncated);
-      g_free(display);
-    }
-    gtk_label_set_ellipsize(self->content_preview, PANGO_ELLIPSIZE_END);
-    gtk_label_set_lines(self->content_preview, 3);
-    gtk_button_set_label(self->btn_expand, "Show More");
-
-    /* Update accessibility for collapsed state (nostrc-qfdg) */
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_expand),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Show full event content",
-                                   -1);
-    gtk_accessible_update_state(GTK_ACCESSIBLE(self->btn_expand),
-                                GTK_ACCESSIBLE_STATE_EXPANDED, FALSE,
-                                -1);
-    gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total). Press Show More button to see full content.", strlen(self->full_content));
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                   -1);
-    g_free(accessible_desc);
-  }
-}
 
 static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
   gboolean remember = gtk_check_button_get_active(self->chk_remember);
@@ -365,11 +313,7 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        row_timestamp);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       event_type_icon);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        content_preview);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       btn_expand);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        content_frame);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
@@ -412,6 +356,7 @@ static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   self->identity_model = NULL;
   self->callback = NULL;
   self->user_data = NULL;
+  self->current_event_kind = 1;
 
   /* Setup TTL dropdown model */
   GtkStringList *ttl_model = gtk_string_list_new(NULL);
@@ -426,8 +371,6 @@ static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   /* Connect signals */
   g_signal_connect(self->chk_remember, "toggled",
                    G_CALLBACK(on_remember_toggled), self);
-  g_signal_connect(self->btn_expand, "clicked", G_CALLBACK(on_expand_clicked),
-                   self);
   g_signal_connect(self->btn_approve, "clicked", G_CALLBACK(on_approve_clicked),
                    self);
   g_signal_connect(self->btn_deny, "clicked", G_CALLBACK(on_deny_clicked),
@@ -490,24 +433,22 @@ GnostrApprovalDialog *gnostr_approval_dialog_new(void) {
 void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind) {
   g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
 
+  self->current_event_kind = kind;
   const char *type_name = get_event_type_name(kind);
   const char *icon_name = get_event_type_icon(kind);
 
-  gchar *subtitle = g_strdup_printf("%s (kind %d)", type_name, kind);
-  adw_action_row_set_subtitle(self->row_event_type, subtitle);
+  /* Format: "4 (Encrypted Direct Message)" */
+  gchar *display = g_strdup_printf("%d (%s)", kind, type_name);
+  adw_action_row_set_subtitle(self->row_event_type, display);
 
-  /* Update accessibility description for screen readers (nostrc-qfdg) */
+  /* Update accessibility description for screen readers */
   gchar *accessible_desc = g_strdup_printf("Event type: %s, kind number %d", type_name, kind);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_event_type),
                                  GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                  -1);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->event_type_icon),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL, type_name,
-                                 -1);
   g_free(accessible_desc);
-  g_free(subtitle);
+  g_free(display);
 
-  gtk_image_set_from_icon_name(self->event_type_icon, icon_name);
   gtk_image_set_from_icon_name(self->header_icon, icon_name);
 }
 
@@ -525,11 +466,7 @@ void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self,
   const char *display_name = app_name ? app_name : "Unknown Application";
   adw_action_row_set_subtitle(self->row_app, display_name);
 
-  gchar *title = g_strdup_printf("%s requests signature",
-                                 app_name ? app_name : "Application");
-  gtk_label_set_text(self->header_title, title);
-
-  /* Update accessibility for screen readers (nostrc-qfdg) */
+  /* Update accessibility for screen readers */
   gchar *accessible_desc = g_strdup_printf("Requesting application: %s", display_name);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_app),
                                  GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
@@ -543,7 +480,6 @@ void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self,
 
   g_free(accessible_desc);
   g_free(dialog_label);
-  g_free(title);
 }
 
 /**
@@ -568,7 +504,7 @@ void gnostr_approval_dialog_set_identity(GnostrApprovalDialog *self,
       adw_action_row_set_subtitle(self->row_identity, identity_npub);
     }
 
-    /* Update accessibility with full identity for screen readers (nostrc-qfdg) */
+    /* Update accessibility with full identity for screen readers */
     gchar *accessible_desc = g_strdup_printf("Signing identity: %s", identity_npub);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_identity),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
@@ -606,7 +542,7 @@ void gnostr_approval_dialog_set_timestamp(GnostrApprovalDialog *self,
  * @self: a #GnostrApprovalDialog
  * @content: the event content to preview
  *
- * Sets the content preview. Long content will be truncated with an expand option.
+ * Sets the content preview. Long content will be truncated.
  */
 void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
                                         const char *content) {
@@ -616,10 +552,9 @@ void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
 
   if (!content || !*content) {
     gtk_label_set_text(self->content_preview, "(No content)");
-    gtk_widget_set_visible(GTK_WIDGET(self->btn_expand), FALSE);
     gtk_widget_set_visible(GTK_WIDGET(self->content_frame), FALSE);
 
-    /* Update accessibility (nostrc-qfdg) */
+    /* Update accessibility */
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Event has no content",
                                    -1);
@@ -635,22 +570,17 @@ void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
     gtk_label_set_text(self->content_preview, display);
     g_free(truncated);
     g_free(display);
-    gtk_widget_set_visible(GTK_WIDGET(self->btn_expand), TRUE);
 
-    /* Update accessibility for truncated content (nostrc-qfdg) */
-    gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total). Press Show More button to see full content.", strlen(content));
+    /* Update accessibility for truncated content */
+    gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total)", strlen(content));
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                   -1);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_expand),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Show full event content",
                                    -1);
     g_free(accessible_desc);
   } else {
     gtk_label_set_text(self->content_preview, content);
-    gtk_widget_set_visible(GTK_WIDGET(self->btn_expand), FALSE);
 
-    /* Update accessibility for full content (nostrc-qfdg) */
+    /* Update accessibility for full content */
     gchar *accessible_desc = g_strdup_printf("Event content: %s", content);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
@@ -753,10 +683,11 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
   /* Show warning if selected identity is watch-only */
   if (selected_is_watch_only && count == 0) {
     /* Update header to show watch-only warning */
-    gtk_label_set_text(self->header_title, "Cannot sign (Watch-only account)");
+    gtk_label_set_text(self->header_title, "Cannot Sign (Watch-only)");
+    gtk_widget_remove_css_class(GTK_WIDGET(self->header_title), "pending-title");
     gtk_widget_add_css_class(GTK_WIDGET(self->header_title), "warning");
 
-    /* Announce watch-only warning to screen readers (nostrc-qfdg) */
+    /* Announce watch-only warning to screen readers */
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->header_title),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL,
                                    "Warning: Cannot sign. This is a watch-only account without signing capability.",

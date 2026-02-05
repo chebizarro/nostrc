@@ -14,26 +14,18 @@ struct _SheetEventDetails {
   AdwDialog parent_instance;
 
   /* Template children - Header */
-  GtkButton *btn_close;
+  GtkButton *btn_header_close;
 
-  /* Template children - Event Info */
+  /* Template children - Event Info Labels */
   GtkLabel *lbl_kind;
-  GtkLabel *lbl_kind_name;
-  GtkLabel *lbl_datetime;
-
-  /* Template children - Copyable fields */
-  AdwActionRow *row_pubkey;
-  AdwActionRow *row_event_id;
-  AdwActionRow *row_signature;
-  GtkButton *btn_copy_pubkey;
-  GtkButton *btn_copy_event_id;
-  GtkButton *btn_copy_signature;
-
-  /* Template children - Expandable sections */
-  GtkExpander *expander_content;
+  GtkLabel *lbl_pubkey;
+  GtkLabel *lbl_signature;
+  GtkLabel *lbl_timestamp;
   GtkLabel *lbl_content;
-  GtkExpander *expander_tags;
-  GtkListBox *list_tags;
+
+  /* Template children - Buttons */
+  GtkButton *btn_copy_event_id;
+  GtkButton *btn_close;
 
   /* State - full values for clipboard */
   gchar *pubkey_full;
@@ -118,19 +110,9 @@ static void on_close(GtkButton *btn, gpointer user_data) {
   adw_dialog_close(ADW_DIALOG(self));
 }
 
-static void on_copy_pubkey(GtkButton *btn, gpointer user_data) {
-  SheetEventDetails *self = user_data;
-  copy_to_clipboard(GTK_WIDGET(btn), self->pubkey_full);
-}
-
 static void on_copy_event_id(GtkButton *btn, gpointer user_data) {
   SheetEventDetails *self = user_data;
   copy_to_clipboard(GTK_WIDGET(btn), self->event_id_full);
-}
-
-static void on_copy_signature(GtkButton *btn, gpointer user_data) {
-  SheetEventDetails *self = user_data;
-  copy_to_clipboard(GTK_WIDGET(btn), self->signature_full);
 }
 
 /* Format Unix timestamp to human-readable datetime */
@@ -144,96 +126,6 @@ static gchar *format_datetime(gint64 timestamp) {
   gchar buf[64];
   strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm_info);
   return g_strdup(buf);
-}
-
-/* Create a row for a tag in the tags list */
-static GtkWidget *create_tag_row(JsonArray *tag_array) {
-  if (!tag_array) return NULL;
-
-  guint len = json_array_get_length(tag_array);
-  if (len == 0) return NULL;
-
-  GString *tag_str = g_string_new("[");
-
-  for (guint i = 0; i < len; i++) {
-    JsonNode *elem = json_array_get_element(tag_array, i);
-    if (json_node_get_value_type(elem) == G_TYPE_STRING) {
-      const gchar *val = json_node_get_string(elem);
-      if (i > 0) g_string_append(tag_str, ", ");
-      g_string_append_printf(tag_str, "\"%s\"", val ? val : "");
-    }
-  }
-  g_string_append(tag_str, "]");
-
-  GtkWidget *row = adw_action_row_new();
-  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), tag_str->str);
-  gtk_widget_add_css_class(row, "monospace");
-
-  gchar *result = g_string_free(tag_str, FALSE);
-  g_free(result);
-
-  return row;
-}
-
-/* Parse and display tags from JSON array string */
-static void display_tags(SheetEventDetails *self, const gchar *tags_json) {
-  if (!self->list_tags) return;
-
-  /* Clear existing rows */
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->list_tags))) != NULL) {
-    gtk_list_box_remove(self->list_tags, child);
-  }
-
-  if (!tags_json || !*tags_json) {
-    GtkWidget *empty_row = adw_action_row_new();
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(empty_row), "(no tags)");
-    gtk_list_box_append(self->list_tags, empty_row);
-    return;
-  }
-
-  JsonParser *parser = json_parser_new();
-  GError *error = NULL;
-
-  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
-    GtkWidget *error_row = adw_action_row_new();
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(error_row), "(invalid JSON)");
-    gtk_list_box_append(self->list_tags, error_row);
-    g_clear_error(&error);
-    g_object_unref(parser);
-    return;
-  }
-
-  JsonNode *root = json_parser_get_root(parser);
-  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
-    GtkWidget *error_row = adw_action_row_new();
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(error_row), "(not an array)");
-    gtk_list_box_append(self->list_tags, error_row);
-    g_object_unref(parser);
-    return;
-  }
-
-  JsonArray *tags = json_node_get_array(root);
-  guint tag_count = json_array_get_length(tags);
-
-  if (tag_count == 0) {
-    GtkWidget *empty_row = adw_action_row_new();
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(empty_row), "(no tags)");
-    gtk_list_box_append(self->list_tags, empty_row);
-  } else {
-    for (guint i = 0; i < tag_count; i++) {
-      JsonNode *tag_node = json_array_get_element(tags, i);
-      if (tag_node && JSON_NODE_HOLDS_ARRAY(tag_node)) {
-        JsonArray *tag_array = json_node_get_array(tag_node);
-        GtkWidget *row = create_tag_row(tag_array);
-        if (row) {
-          gtk_list_box_append(self->list_tags, row);
-        }
-      }
-    }
-  }
-
-  g_object_unref(parser);
 }
 
 static void sheet_event_details_finalize(GObject *obj) {
@@ -256,43 +148,32 @@ static void sheet_event_details_class_init(SheetEventDetailsClass *klass) {
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/sheets/sheet-event-details.ui");
 
   /* Header */
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, btn_close);
+  gtk_widget_class_bind_template_child(wc, SheetEventDetails, btn_header_close);
 
   /* Event info labels */
   gtk_widget_class_bind_template_child(wc, SheetEventDetails, lbl_kind);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, lbl_kind_name);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, lbl_datetime);
-
-  /* Copyable field rows */
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, row_pubkey);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, row_event_id);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, row_signature);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, btn_copy_pubkey);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, btn_copy_event_id);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, btn_copy_signature);
-
-  /* Expandable sections */
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, expander_content);
+  gtk_widget_class_bind_template_child(wc, SheetEventDetails, lbl_pubkey);
+  gtk_widget_class_bind_template_child(wc, SheetEventDetails, lbl_signature);
+  gtk_widget_class_bind_template_child(wc, SheetEventDetails, lbl_timestamp);
   gtk_widget_class_bind_template_child(wc, SheetEventDetails, lbl_content);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, expander_tags);
-  gtk_widget_class_bind_template_child(wc, SheetEventDetails, list_tags);
+
+  /* Buttons */
+  gtk_widget_class_bind_template_child(wc, SheetEventDetails, btn_copy_event_id);
+  gtk_widget_class_bind_template_child(wc, SheetEventDetails, btn_close);
 }
 
 static void sheet_event_details_init(SheetEventDetails *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
   /* Connect button handlers */
+  if (self->btn_header_close) {
+    g_signal_connect(self->btn_header_close, "clicked", G_CALLBACK(on_close), self);
+  }
   if (self->btn_close) {
     g_signal_connect(self->btn_close, "clicked", G_CALLBACK(on_close), self);
   }
-  if (self->btn_copy_pubkey) {
-    g_signal_connect(self->btn_copy_pubkey, "clicked", G_CALLBACK(on_copy_pubkey), self);
-  }
   if (self->btn_copy_event_id) {
     g_signal_connect(self->btn_copy_event_id, "clicked", G_CALLBACK(on_copy_event_id), self);
-  }
-  if (self->btn_copy_signature) {
-    g_signal_connect(self->btn_copy_signature, "clicked", G_CALLBACK(on_copy_signature), self);
   }
 }
 
@@ -309,6 +190,7 @@ void sheet_event_details_set_event(SheetEventDetails *self,
                                    const gchar *content,
                                    const gchar *tags_json) {
   g_return_if_fail(self != NULL);
+  (void)tags_json; /* Tags not displayed in simplified UI */
 
   /* Store full values for clipboard */
   g_free(self->pubkey_full);
@@ -321,47 +203,38 @@ void sheet_event_details_set_event(SheetEventDetails *self,
   self->signature_full = g_strdup(signature);
   self->content_full = g_strdup(content);
 
-  /* Update kind display */
+  /* Update kind display (combined format: "Kind 1 - Note") */
   if (self->lbl_kind) {
-    gchar *kind_str = g_strdup_printf("%d", kind);
+    gchar *kind_str = g_strdup_printf("Kind %d - %s", kind, get_kind_name(kind));
     gtk_label_set_text(self->lbl_kind, kind_str);
     g_free(kind_str);
   }
-  if (self->lbl_kind_name) {
-    gtk_label_set_text(self->lbl_kind_name, get_kind_name(kind));
+
+  /* Update pubkey with truncation */
+  if (self->lbl_pubkey) {
+    gchar *truncated = truncate_hex(pubkey, 8, 6);
+    gtk_label_set_text(self->lbl_pubkey, truncated);
+    g_free(truncated);
   }
 
-  /* Update datetime */
-  if (self->lbl_datetime) {
+  /* Update signature with truncation */
+  if (self->lbl_signature) {
+    gchar *truncated = truncate_hex(signature, 8, 6);
+    gtk_label_set_text(self->lbl_signature, truncated);
+    g_free(truncated);
+  }
+
+  /* Update timestamp */
+  if (self->lbl_timestamp) {
     gchar *dt = format_datetime(created_at);
-    gtk_label_set_text(self->lbl_datetime, dt);
+    gtk_label_set_text(self->lbl_timestamp, dt);
     g_free(dt);
-  }
-
-  /* Update copyable field rows with truncated display */
-  if (self->row_pubkey) {
-    gchar *truncated = truncate_hex(pubkey, 12, 8);
-    adw_action_row_set_subtitle(self->row_pubkey, truncated);
-    g_free(truncated);
-  }
-  if (self->row_event_id) {
-    gchar *truncated = truncate_hex(event_id, 12, 8);
-    adw_action_row_set_subtitle(self->row_event_id, truncated);
-    g_free(truncated);
-  }
-  if (self->row_signature) {
-    gchar *truncated = truncate_hex(signature, 12, 8);
-    adw_action_row_set_subtitle(self->row_signature, truncated);
-    g_free(truncated);
   }
 
   /* Update content */
   if (self->lbl_content) {
     gtk_label_set_text(self->lbl_content, content ? content : "(empty)");
   }
-
-  /* Update tags */
-  display_tags(self, tags_json);
 }
 
 void sheet_event_details_set_event_json(SheetEventDetails *self,

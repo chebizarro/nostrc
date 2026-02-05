@@ -7,503 +7,328 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SheetImportProfile" parent="AdwDialog">
-    <property name="title" translatable="yes">Import Profile</property>
-    <property name="content-width">520</property>
-    <property name="content-height">680</property>
+    <property name="title" translatable="yes">Import Existing Profile</property>
+    <property name="content-width">400</property>
+    <property name="content-height">-1</property>
     <property name="can-close">true</property>
+    <property name="follows-content-size">true</property>
     <accessibility>
       <property name="label">Import profile dialog</property>
-      <property name="description">Import an existing Nostr profile using encrypted backup, seed phrase, or hardware device</property>
+      <property name="description">Import an existing Nostr profile using encrypted backup, seed phrase, or private key</property>
     </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
-            <accessibility>
-              <property name="label">Import profile header</property>
-            </accessibility>
-            <property name="title-widget">
-              <object class="GtkLabel">
-                <property name="label" translatable="yes">Import Profile</property>
-              </object>
-            </property>
-            <child type="start">
-              <object class="GtkButton" id="btn_cancel">
-                <property name="label" translatable="yes">_Cancel</property>
-                <property name="use-underline">true</property>
-                <property name="focusable">true</property>
-                <accessibility>
-                  <property name="label">Cancel</property>
-                  <property name="description">Close without importing. Keyboard shortcut: Alt+C or Escape.</property>
-                </accessibility>
-              </object>
-            </child>
-            <child type="end">
-              <object class="GtkButton" id="btn_import">
-                <property name="label" translatable="yes">_Import</property>
-                <property name="use-underline">true</property>
-                <property name="tooltip-text" translatable="yes">Import the profile using the selected method (Alt+I)</property>
-                <property name="focusable">true</property>
-                <accessibility>
-                  <property name="label">Import profile</property>
-                  <property name="description">Import the profile using the selected method. Keyboard shortcut: Alt+I.</property>
-                </accessibility>
-                <style>
-                  <class name="suggested-action"/>
-                </style>
-              </object>
-            </child>
+            <property name="show-title">false</property>
+            <style>
+              <class name="flat"/>
+            </style>
           </object>
         </child>
         <child>
-          <object class="GtkScrolledWindow">
-            <property name="hscrollbar-policy">2</property>
-            <property name="vexpand">true</property>
-            <accessibility>
-              <property name="label">Import form container</property>
-            </accessibility>
+          <object class="GtkBox">
+            <property name="orientation">1</property>
+            <property name="spacing">16</property>
+            <property name="margin-start">20</property>
+            <property name="margin-end">20</property>
+            <property name="margin-bottom">20</property>
             <child>
-              <object class="AdwClamp">
-                <property name="maximum-size">500</property>
-                <property name="margin-top">16</property>
-                <property name="margin-bottom">16</property>
-                <property name="margin-start">16</property>
-                <property name="margin-end">16</property>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">4</property>
+                <property name="halign">3</property>
+                <property name="margin-bottom">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Import Existing Profile</property>
+                    <style>
+                      <class name="title-2"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Restore from an existing backup</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">12</property>
                 <child>
                   <object class="GtkBox">
-                    <property name="orientation">1</property>
-                    <property name="spacing">16</property>
+                    <property name="orientation">0</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkCheckButton" id="radio_nip49">
+                        <property name="active">true</property>
+                        <accessibility>
+                          <property name="label">NIP-49 Encrypted Backup</property>
+                          <property name="description">Import from an encrypted ncryptsec backup string</property>
+                        </accessibility>
+                      </object>
+                    </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="wrap">true</property>
+                        <property name="label" translatable="yes">NIP-49 Encrypted Backup</property>
                         <property name="xalign">0</property>
-                        <property name="label" translatable="yes">Import an existing Nostr profile using one of the methods below. Your private key will be stored securely.</property>
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">0</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkCheckButton" id="radio_mnemonic">
+                        <property name="group">radio_nip49</property>
                         <accessibility>
-                          <property name="label">Instructions</property>
-                          <property name="description">Choose an import method. Your key will be securely stored.</property>
+                          <property name="label">Mnemonic Seed Phrase</property>
+                          <property name="description">Import from a 12 or 24 word recovery phrase</property>
                         </accessibility>
-                        <style>
-                          <class name="dim-label"/>
-                        </style>
                       </object>
                     </child>
                     <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Import Method</property>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Mnemonic Seed Phrase</property>
+                        <property name="xalign">0</property>
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">0</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkCheckButton" id="radio_nsec">
+                        <property name="group">radio_nip49</property>
                         <accessibility>
-                          <property name="label">Import method selection</property>
-                          <property name="description">Choose how to import your profile</property>
+                          <property name="label">Raw nsec Key</property>
+                          <property name="description">Import from a raw nsec private key</property>
                         </accessibility>
-                        <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">NIP-49 Encrypted Backup</property>
-                            <property name="subtitle" translatable="yes">Import from an ncryptsec backup string</property>
-                            <accessibility>
-                              <property name="description">Select to import using an encrypted ncryptsec backup</property>
-                            </accessibility>
-                            <child type="prefix">
-                              <object class="GtkCheckButton" id="radio_nip49">
-                                <property name="valign">3</property>
-                                <property name="active">true</property>
-                                <accessibility>
-                                  <property name="label">NIP-49 encrypted backup</property>
-                                  <property name="description">Import from an encrypted backup string</property>
-                                </accessibility>
-                              </object>
-                            </child>
-                            <property name="activatable-widget">radio_nip49</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">Mnemonic Seed Phrase</property>
-                            <property name="subtitle" translatable="yes">Import from a 12 or 24 word recovery phrase</property>
-                            <accessibility>
-                              <property name="description">Select to import using a recovery seed phrase</property>
-                            </accessibility>
-                            <child type="prefix">
-                              <object class="GtkCheckButton" id="radio_mnemonic">
-                                <property name="valign">3</property>
-                                <property name="group">radio_nip49</property>
-                                <accessibility>
-                                  <property name="label">Mnemonic seed phrase</property>
-                                  <property name="description">Import from a 12 or 24 word recovery phrase</property>
-                                </accessibility>
-                              </object>
-                            </child>
-                            <property name="activatable-widget">radio_mnemonic</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">External Hardware Device</property>
-                            <property name="subtitle" translatable="yes">Import from a hardware security key (coming soon)</property>
-                            <accessibility>
-                              <property name="description">Select to import from a hardware security device. This feature is coming soon.</property>
-                            </accessibility>
-                            <child type="prefix">
-                              <object class="GtkCheckButton" id="radio_hardware">
-                                <property name="valign">3</property>
-                                <property name="group">radio_nip49</property>
-                                <accessibility>
-                                  <property name="label">Hardware device</property>
-                                  <property name="description">Import from a hardware security key</property>
-                                </accessibility>
-                              </object>
-                            </child>
-                            <property name="activatable-widget">radio_hardware</property>
-                          </object>
-                        </child>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkBox" id="box_nip49">
-                        <property name="orientation">1</property>
-                        <property name="spacing">12</property>
-                        <child>
-                          <object class="AdwPreferencesGroup">
-                            <property name="title" translatable="yes">Encrypted Backup</property>
-                            <property name="description" translatable="yes">Paste your ncryptsec1... backup string below</property>
-                            <accessibility>
-                              <property name="label">Encrypted backup input</property>
-                              <property name="description">Enter your ncryptsec encrypted backup string</property>
-                            </accessibility>
-                            <child>
-                              <object class="GtkFrame">
-                                <property name="margin-top">8</property>
-                                <child>
-                                  <object class="GtkScrolledWindow">
-                                    <property name="min-content-height">100</property>
-                                    <property name="max-content-height">150</property>
-                                    <child>
-                                      <object class="GtkTextView" id="text_ncryptsec">
-                                        <property name="wrap-mode">3</property>
-                                        <property name="accepts-tab">false</property>
-                                        <property name="top-margin">8</property>
-                                        <property name="bottom-margin">8</property>
-                                        <property name="left-margin">8</property>
-                                        <property name="right-margin">8</property>
-                                        <property name="monospace">true</property>
-                                        <accessibility>
-                                          <property name="label">Encrypted backup text</property>
-                                          <property name="description">Paste your ncryptsec1 encrypted backup string here</property>
-                                        </accessibility>
-                                        <style>
-                                          <class name="view"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Raw nsec Key</property>
+                        <property name="xalign">0</property>
+                        <property name="hexpand">true</property>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="box_nip49">
+                <property name="orientation">1</property>
+                <property name="spacing">8</property>
+                <property name="margin-top">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Encrypted Backup:</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFrame">
+                    <style>
+                      <class name="view"/>
+                    </style>
                     <child>
-                      <object class="GtkBox" id="box_mnemonic">
-                        <property name="visible">false</property>
-                        <property name="orientation">1</property>
-                        <property name="spacing">12</property>
+                      <object class="GtkScrolledWindow">
+                        <property name="min-content-height">80</property>
+                        <property name="max-content-height">120</property>
                         <child>
-                          <object class="AdwPreferencesGroup">
-                            <property name="title" translatable="yes">Seed Phrase</property>
-                            <property name="description" translatable="yes">Enter your recovery words separated by spaces</property>
+                          <object class="GtkTextView" id="text_ncryptsec">
+                            <property name="wrap-mode">3</property>
+                            <property name="accepts-tab">false</property>
+                            <property name="top-margin">8</property>
+                            <property name="bottom-margin">8</property>
+                            <property name="left-margin">8</property>
+                            <property name="right-margin">8</property>
+                            <property name="monospace">true</property>
                             <accessibility>
-                              <property name="label">Seed phrase input</property>
-                              <property name="description">Enter your recovery mnemonic words</property>
+                              <property name="label">Encrypted backup text</property>
+                              <property name="description">Paste your ncryptsec1 encrypted backup string here</property>
                             </accessibility>
-                            <child>
-                              <object class="AdwComboRow">
-                                <property name="title" translatable="yes">Word Count</property>
-                                <accessibility>
-                                  <property name="description">Select whether your seed phrase has 12 or 24 words</property>
-                                </accessibility>
-                                <property name="model">
-                                  <object class="GtkStringList">
-                                    <items>
-                                      <item translatable="yes">12 words</item>
-                                      <item translatable="yes">24 words</item>
-                                    </items>
-                                  </object>
-                                </property>
-                                <child>
-                                  <object class="GtkDropDown" id="dropdown_word_count">
-                                    <property name="visible">false</property>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkFrame">
-                                <property name="margin-top">8</property>
-                                <child>
-                                  <object class="GtkScrolledWindow">
-                                    <property name="min-content-height">100</property>
-                                    <property name="max-content-height">150</property>
-                                    <child>
-                                      <object class="GtkTextView" id="text_mnemonic">
-                                        <property name="wrap-mode">2</property>
-                                        <property name="accepts-tab">false</property>
-                                        <property name="top-margin">8</property>
-                                        <property name="bottom-margin">8</property>
-                                        <property name="left-margin">8</property>
-                                        <property name="right-margin">8</property>
-                                        <accessibility>
-                                          <property name="label">Seed phrase words</property>
-                                          <property name="description">Enter your recovery words separated by spaces</property>
-                                        </accessibility>
-                                        <style>
-                                          <class name="view"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
                           </object>
                         </child>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="box_mnemonic">
+                <property name="orientation">1</property>
+                <property name="spacing">8</property>
+                <property name="margin-top">8</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Seed Phrase:</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFrame">
+                    <style>
+                      <class name="view"/>
+                    </style>
                     <child>
-                      <object class="GtkBox" id="box_hardware">
-                        <property name="visible">false</property>
-                        <property name="orientation">1</property>
-                        <property name="spacing">12</property>
+                      <object class="GtkScrolledWindow">
+                        <property name="min-content-height">80</property>
+                        <property name="max-content-height">120</property>
                         <child>
-                          <object class="AdwBanner" id="banner_hsm_status">
-                            <property name="title" translatable="yes">Scanning for hardware devices...</property>
-                            <property name="revealed">true</property>
+                          <object class="GtkTextView" id="text_mnemonic">
+                            <property name="wrap-mode">2</property>
+                            <property name="accepts-tab">false</property>
+                            <property name="top-margin">8</property>
+                            <property name="bottom-margin">8</property>
+                            <property name="left-margin">8</property>
+                            <property name="right-margin">8</property>
                             <accessibility>
-                              <property name="label">HSM status banner</property>
-                              <property name="description">Shows the status of hardware device detection</property>
-                            </accessibility>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwPreferencesGroup" id="group_hsm_devices">
-                            <property name="title" translatable="yes">Available Devices</property>
-                            <property name="description" translatable="yes">Select a hardware security module to use</property>
-                            <accessibility>
-                              <property name="label">Hardware device selection</property>
-                              <property name="description">List of detected hardware security devices</property>
-                            </accessibility>
-                            <child>
-                              <object class="GtkListBox" id="listbox_hsm_devices">
-                                <property name="selection-mode">1</property>
-                                <property name="activate-on-single-click">true</property>
-                                <accessibility>
-                                  <property name="label">Device list</property>
-                                  <property name="description">Select a hardware security device from this list</property>
-                                </accessibility>
-                                <style>
-                                  <class name="boxed-list"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="btn_hsm_refresh">
-                                <property name="halign">2</property>
-                                <property name="margin-top">8</property>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="spacing">6</property>
-                                    <child>
-                                      <object class="GtkImage">
-                                        <property name="icon-name">view-refresh-symbolic</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="label" translatable="yes">Refresh Devices</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <accessibility>
-                                  <property name="label">Refresh device list</property>
-                                  <property name="description">Scan for hardware security devices again</property>
-                                </accessibility>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwPreferencesGroup" id="group_hsm_keys">
-                            <property name="title" translatable="yes">Keys on Device</property>
-                            <property name="description" translatable="yes">Select an existing key or generate a new one</property>
-                            <property name="visible">false</property>
-                            <accessibility>
-                              <property name="label">Key selection</property>
-                              <property name="description">Choose a key from the selected device</property>
-                            </accessibility>
-                            <child>
-                              <object class="GtkListBox" id="listbox_hsm_keys">
-                                <property name="selection-mode">1</property>
-                                <property name="activate-on-single-click">true</property>
-                                <accessibility>
-                                  <property name="label">Key list</property>
-                                  <property name="description">Select a key from the hardware device</property>
-                                </accessibility>
-                                <style>
-                                  <class name="boxed-list"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="btn_hsm_generate_key">
-                                <property name="halign">3</property>
-                                <property name="margin-top">12</property>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="spacing">6</property>
-                                    <child>
-                                      <object class="GtkImage">
-                                        <property name="icon-name">list-add-symbolic</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="label" translatable="yes">Generate New Key on Device</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <accessibility>
-                                  <property name="label">Generate new key</property>
-                                  <property name="description">Create a new Nostr key pair on the hardware device</property>
-                                </accessibility>
-                                <style>
-                                  <class name="suggested-action"/>
-                                </style>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwPreferencesGroup" id="group_hsm_pin">
-                            <property name="title" translatable="yes">Device PIN</property>
-                            <property name="description" translatable="yes">Enter your device PIN to access keys</property>
-                            <property name="visible">false</property>
-                            <accessibility>
-                              <property name="label">PIN entry</property>
-                              <property name="description">Enter the PIN for your hardware security device</property>
-                            </accessibility>
-                            <child>
-                              <object class="GtkBox" id="box_hsm_pin_container">
-                                <property name="orientation">1</property>
-                                <property name="margin-start">4</property>
-                                <property name="margin-end">4</property>
-                                <property name="margin-bottom">8</property>
-                                <accessibility>
-                                  <property name="label">PIN input container</property>
-                                </accessibility>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="btn_hsm_unlock">
-                                <property name="label" translatable="yes">Unlock Device</property>
-                                <property name="halign">2</property>
-                                <property name="margin-top">8</property>
-                                <accessibility>
-                                  <property name="label">Unlock device</property>
-                                  <property name="description">Authenticate with the hardware device using your PIN</property>
-                                </accessibility>
-                                <style>
-                                  <class name="suggested-action"/>
-                                </style>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwStatusPage" id="status_no_hsm">
-                            <property name="visible">false</property>
-                            <property name="icon-name">dialog-warning-symbolic</property>
-                            <property name="title" translatable="yes">No Devices Found</property>
-                            <property name="description" translatable="yes">No hardware security devices were detected. Make sure your device is connected and try refreshing.</property>
-                            <accessibility>
-                              <property name="label">No devices found</property>
-                              <property name="description">No hardware security devices are connected</property>
+                              <property name="label">Seed phrase words</property>
+                              <property name="description">Enter your 12 or 24 recovery words separated by spaces</property>
                             </accessibility>
                           </object>
                         </child>
                       </object>
                     </child>
-                    <child>
-                      <object class="GtkBox" id="box_passphrase">
-                        <property name="orientation">1</property>
-                        <property name="spacing">12</property>
-                        <child>
-                          <object class="AdwPreferencesGroup">
-                            <property name="title" translatable="yes">Decryption</property>
-                            <property name="description" translatable="yes">Enter the passphrase used to protect your backup</property>
-                            <accessibility>
-                              <property name="label">Decryption settings</property>
-                              <property name="description">Enter your passphrase to decrypt the backup</property>
-                            </accessibility>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Passphrase</property>
-                                <property name="xalign">0</property>
-                                <property name="margin-start">4</property>
-                                <property name="margin-top">8</property>
-                                <style>
-                                  <class name="caption"/>
-                                  <class name="dim-label"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkBox" id="box_passphrase_container">
-                                <property name="orientation">1</property>
-                                <property name="margin-start">4</property>
-                                <property name="margin-end">4</property>
-                                <property name="margin-bottom">8</property>
-                                <accessibility>
-                                  <property name="label">Passphrase input container</property>
-                                  <property name="description">Secure entry for your decryption passphrase</property>
-                                </accessibility>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkBox" id="box_status">
-                        <property name="visible">false</property>
-                        <property name="orientation">0</property>
-                        <property name="spacing">8</property>
-                        <property name="halign">3</property>
-                        <property name="margin-top">8</property>
-                        <accessibility>
-                          <property name="label">Import status</property>
-                          <property name="description">Status indicator for profile import</property>
-                        </accessibility>
-                        <child>
-                          <object class="GtkSpinner" id="spinner_status">
-                            <property name="spinning">false</property>
-                            <accessibility>
-                              <property name="label">Loading indicator</property>
-                            </accessibility>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="lbl_status">
-                            <property name="label" translatable="yes">Importing profile...</property>
-                            <accessibility>
-                              <property name="label">Status message</property>
-                            </accessibility>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="box_nsec">
+                <property name="orientation">1</property>
+                <property name="spacing">8</property>
+                <property name="margin-top">8</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Private Key:</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="box_nsec_container">
+                    <property name="orientation">1</property>
+                    <accessibility>
+                      <property name="label">Private key input container</property>
+                      <property name="description">Secure entry for your nsec private key</property>
+                    </accessibility>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="box_passphrase">
+                <property name="orientation">1</property>
+                <property name="spacing">8</property>
+                <property name="margin-top">4</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Passphrase:</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="box_passphrase_container">
+                    <property name="orientation">1</property>
+                    <accessibility>
+                      <property name="label">Passphrase input container</property>
+                      <property name="description">Secure entry for your decryption passphrase</property>
+                    </accessibility>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="box_status">
+                <property name="visible">false</property>
+                <property name="orientation">0</property>
+                <property name="spacing">8</property>
+                <property name="halign">3</property>
+                <property name="margin-top">8</property>
+                <accessibility>
+                  <property name="label">Import status</property>
+                  <property name="description">Status indicator for profile import</property>
+                </accessibility>
+                <child>
+                  <object class="GtkSpinner" id="spinner_status">
+                    <property name="spinning">false</property>
+                    <accessibility>
+                      <property name="label">Loading indicator</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_status">
+                    <property name="label" translatable="yes">Importing profile...</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">0</property>
+                <property name="spacing">12</property>
+                <property name="homogeneous">true</property>
+                <property name="margin-top">12</property>
+                <child>
+                  <object class="GtkButton" id="btn_cancel">
+                    <property name="label" translatable="yes">Cancel</property>
+                    <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Cancel</property>
+                      <property name="description">Close without importing</property>
+                    </accessibility>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_import">
+                    <property name="label" translatable="yes">Import</property>
+                    <property name="hexpand">true</property>
+                    <property name="sensitive">false</property>
+                    <accessibility>
+                      <property name="label">Import profile</property>
+                      <property name="description">Import the profile using the selected method</property>
+                    </accessibility>
+                    <style>
+                      <class name="pill"/>
+                      <class name="suggested-action"/>
+                    </style>
                   </object>
                 </child>
               </object>

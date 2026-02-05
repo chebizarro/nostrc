@@ -12,15 +12,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <property name="description">View recent signed events history</property>
     </accessibility>
     <child>
-      <object class="AdwToolbarView">
-        <child type="top">
+      <object class="GtkBox">
+        <property name="orientation">1</property>
+        <property name="vexpand">true</property>
+        <child>
           <object class="AdwHeaderBar">
             <accessibility>
               <property name="label">Events page header</property>
             </accessibility>
             <property name="title-widget">
-              <object class="AdwWindowTitle">
-                <property name="title" translatable="yes">Recent Events</property>
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Recent Events</property>
+                <style>
+                  <class name="title"/>
+                </style>
               </object>
             </property>
           </object>
@@ -56,27 +61,84 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkStackPage">
                 <property name="name">list</property>
                 <property name="child">
-                  <object class="GtkScrolledWindow">
-                    <property name="hscrollbar-policy">2</property>
+                  <object class="GtkBox">
+                    <property name="orientation">1</property>
                     <property name="vexpand">true</property>
-                    <property name="hexpand">true</property>
-                    <accessibility>
-                      <property name="label">Events list container</property>
-                      <property name="description">Scrollable container for the list of signed events</property>
-                    </accessibility>
                     <child>
-                      <object class="AdwClamp">
-                        <property name="maximum-size">600</property>
-                        <property name="tightening-threshold">400</property>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">2</property>
+                        <property name="vexpand">true</property>
+                        <property name="hexpand">true</property>
+                        <accessibility>
+                          <property name="label">Events list container</property>
+                          <property name="description">Scrollable container for the list of signed events</property>
+                        </accessibility>
                         <child>
-                          <object class="GtkListView" id="list_view">
-                            <property name="single-click-activate">true</property>
+                          <object class="AdwClamp">
+                            <property name="maximum-size">500</property>
+                            <property name="tightening-threshold">400</property>
+                            <property name="margin-top">12</property>
+                            <property name="margin-bottom">12</property>
+                            <property name="margin-start">16</property>
+                            <property name="margin-end">16</property>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">1</property>
+                                <property name="spacing">0</property>
+                                <child>
+                                  <object class="AdwPreferencesGroup">
+                                    <child>
+                                      <object class="GtkListView" id="list_view">
+                                        <property name="single-click-activate">true</property>
+                                        <accessibility>
+                                          <property name="label">Recent events list</property>
+                                          <property name="description">List of recently signed events. Use arrow keys to navigate, Enter to view details.</property>
+                                        </accessibility>
+                                        <style>
+                                          <class name="boxed-list"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="btn_view_full_log">
+                                    <property name="label" translatable="yes">View Full Event Log</property>
+                                    <property name="halign">3</property>
+                                    <property name="margin-top">16</property>
+                                    <accessibility>
+                                      <property name="label">View full event log</property>
+                                      <property name="description">Open the complete event signing history</property>
+                                    </accessibility>
+                                    <style>
+                                      <class name="flat"/>
+                                      <class name="link"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="margin-start">16</property>
+                        <property name="margin-end">16</property>
+                        <property name="margin-bottom">16</property>
+                        <child>
+                          <object class="GtkButton" id="btn_approve">
+                            <property name="label" translatable="yes">Approve</property>
+                            <property name="halign">0</property>
                             <accessibility>
-                              <property name="label">Recent events list</property>
-                              <property name="description">List of recently signed events. Use arrow keys to navigate, Enter to view details.</property>
+                              <property name="label">Approve</property>
+                              <property name="description">Approve pending signature requests</property>
                             </accessibility>
                             <style>
-                              <class name="navigation-sidebar"/>
+                              <class name="suggested-action"/>
+                              <class name="pill"/>
                             </style>
                           </object>
                         </child>

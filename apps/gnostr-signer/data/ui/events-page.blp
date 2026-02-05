@@ -7,18 +7,23 @@ template $EventsPage: Adw.Bin {
     description: "View recent signed events history";
   }
 
-  Adw.ToolbarView {
-    [top]
+  Box {
+    orientation: vertical;
+    vexpand: true;
+
+    /* Header */
     Adw.HeaderBar {
       accessibility {
         label: "Events page header";
       }
 
-      title-widget: Adw.WindowTitle {
-        title: _("Recent Events");
+      title-widget: Label {
+        label: _("Recent Events");
+        styles ["title"]
       };
     }
 
+    /* Content */
     Stack stack {
       transition-type: crossfade;
       vexpand: true;
@@ -49,31 +54,80 @@ template $EventsPage: Adw.Bin {
       StackPage {
         name: "list";
 
-        child: ScrolledWindow {
-          hscrollbar-policy: never;
+        child: Box {
+          orientation: vertical;
           vexpand: true;
-          hexpand: true;
 
-          accessibility {
-            label: "Events list container";
-            description: "Scrollable container for the list of signed events";
+          ScrolledWindow {
+            hscrollbar-policy: never;
+            vexpand: true;
+            hexpand: true;
+
+            accessibility {
+              label: "Events list container";
+              description: "Scrollable container for the list of signed events";
+            }
+
+            Adw.Clamp {
+              maximum-size: 500;
+              tightening-threshold: 400;
+              margin-top: 12;
+              margin-bottom: 12;
+              margin-start: 16;
+              margin-end: 16;
+
+              Box {
+                orientation: vertical;
+                spacing: 0;
+
+                /* Events List */
+                Adw.PreferencesGroup {
+                  ListView list_view {
+                    single-click-activate: true;
+
+                    accessibility {
+                      label: "Recent events list";
+                      description: "List of recently signed events. Use arrow keys to navigate, Enter to view details.";
+                    }
+
+                    styles ["boxed-list"]
+                  }
+                }
+
+                /* View Full Log Link */
+                Button btn_view_full_log {
+                  label: _("View Full Event Log");
+                  halign: center;
+                  margin-top: 16;
+
+                  accessibility {
+                    label: "View full event log";
+                    description: "Open the complete event signing history";
+                  }
+
+                  styles ["flat", "link"]
+                }
+              }
+            }
           }
 
-          Adw.Clamp {
-            maximum-size: 600;
-            tightening-threshold: 400;
+          /* Bottom Action */
+          Box {
+            orientation: vertical;
+            margin-start: 16;
+            margin-end: 16;
+            margin-bottom: 16;
 
-            ListView list_view {
-              single-click-activate: true;
+            Button btn_approve {
+              label: _("Approve");
+              halign: fill;
 
               accessibility {
-                label: "Recent events list";
-                description: "List of recently signed events. Use arrow keys to navigate, Enter to view details.";
+                label: "Approve";
+                description: "Approve pending signature requests";
               }
 
-              styles [
-                "navigation-sidebar",
-              ]
+              styles ["suggested-action", "pill"]
             }
           }
         };
@@ -81,4 +135,3 @@ template $EventsPage: Adw.Bin {
     }
   }
 }
-

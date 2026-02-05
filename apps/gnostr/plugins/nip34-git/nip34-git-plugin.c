@@ -45,6 +45,8 @@ struct _Nip34GitPlugin
   /* UI state */
   gboolean browser_visible;
   gboolean client_visible;
+  gboolean repos_pushed_to_browser;  /* nostrc-htdh: Track if repos pushed after main_window ready */
+  guint deferred_push_source_id;     /* nostrc-htdh: Idle source for deferred push */
 
 #ifdef HAVE_LIBGIT2
   /* Git client window (lazily created) */
@@ -123,6 +125,8 @@ nip34_git_plugin_init(Nip34GitPlugin *self)
                                               g_free, repo_info_free);
   self->browser_visible = FALSE;
   self->client_visible = FALSE;
+  self->repos_pushed_to_browser = FALSE;
+  self->deferred_push_source_id = 0;
 }
 
 /* ============================================================================
@@ -281,12 +285,78 @@ parse_repository_event(const gchar *event_json)
  * GnostrPlugin interface implementation
  * ============================================================================ */
 
+/* Forward declaration */
+static void push_repo_to_browser(Nip34GitPlugin *self, RepoInfo *info);
+
+/* nostrc-htdh: Idle callback to push all repositories to browser.
+ * This handles the case where plugins are activated before main_window is set.
+ * We keep retrying until main_window becomes available. */
+static gboolean
+deferred_push_repos_to_browser(gpointer user_data)
+{
+  Nip34GitPlugin *self = NIP34_GIT_PLUGIN(user_data);
+
+  if (!self->active || !self->context)
+    {
+      self->deferred_push_source_id = 0;
+      return G_SOURCE_REMOVE;
+    }
+
+  /* Check if main_window is available yet */
+  GtkWindow *win = gnostr_plugin_context_get_main_window(self->context);
+  if (!win)
+    {
+      /* Keep trying - main_window not ready yet */
+      g_debug("[NIP-34] Waiting for main_window to push %u repos...",
+              g_hash_table_size(self->repositories));
+      return G_SOURCE_CONTINUE;
+    }
+
+  /* Main window is ready - push all repositories */
+  if (!self->repos_pushed_to_browser)
+    {
+      g_debug("[NIP-34] Main window ready, pushing %u repos to browser",
+              g_hash_table_size(self->repositories));
+
+      GHashTableIter iter;
+      gpointer key, value;
+      g_hash_table_iter_init(&iter, self->repositories);
+      while (g_hash_table_iter_next(&iter, &key, &value))
+        {
+          RepoInfo *info = (RepoInfo *)value;
+          push_repo_to_browser(self, info);
+        }
+      self->repos_pushed_to_browser = TRUE;
+    }
+
+  self->deferred_push_source_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+/* Schedule deferred push if not already scheduled */
+static void
+schedule_deferred_push(Nip34GitPlugin *self)
+{
+  if (self->deferred_push_source_id == 0 && !self->repos_pushed_to_browser)
+    {
+      self->deferred_push_source_id = g_timeout_add(100, deferred_push_repos_to_browser, self);
+    }
+}
+
 /* Push a repository to the main browser UI */
 static void
 push_repo_to_browser(Nip34GitPlugin *self, RepoInfo *info)
 {
   if (!self->context || !info)
     return;
+
+  /* nostrc-htdh: Check if main_window is available. If not, schedule deferred push. */
+  GtkWindow *win = gnostr_plugin_context_get_main_window(self->context);
+  if (!win)
+    {
+      schedule_deferred_push(self);
+      return;
+    }
 
   /* Get maintainer pubkey: prefer explicit maintainers tag, fall back to event author */
   const char *maintainer = (info->maintainers && info->maintainers[0])
@@ -731,6 +801,13 @@ nip34_git_plugin_deactivate(GnostrPlugin        *plugin,
   Nip34GitPlugin *self = NIP34_GIT_PLUGIN(plugin);
 
   g_debug("[NIP-34] Deactivating Git Repository plugin");
+
+  /* nostrc-htdh: Cancel deferred push if pending */
+  if (self->deferred_push_source_id > 0)
+    {
+      g_source_remove(self->deferred_push_source_id);
+      self->deferred_push_source_id = 0;
+    }
 
   /* Save cached repositories before deactivation */
   if (context)

@@ -4,7 +4,7 @@ using Adw 1;
 template $WelcomePage: Adw.Bin {
   accessibility {
     label: "Welcome page";
-    description: "Initial welcome screen for setting up GNostr Signer";
+    description: "Initial welcome screen for setting up Nostr Signer";
   }
 
   Adw.ToolbarView {
@@ -15,33 +15,17 @@ template $WelcomePage: Adw.Bin {
       accessibility {
         label: "Welcome page header";
       }
-
-      [end]
-      Button btn_settings {
-        icon-name: "emblem-system-symbolic";
-        tooltip-text: _("Settings");
-        valign: center;
-
-        accessibility {
-          label: "Settings";
-          description: "Open application settings";
-        }
-
-        styles [
-          "flat",
-        ]
-      }
     }
 
     Adw.StatusPage {
       icon-name: "security-high-symbolic";
-      title: _("Welcome to GNostr Signer");
-      description: _("Your secure key manager for Nostr. Keep your private keys safe while signing events for connected applications.");
+      title: _("Welcome to Nostr Signer!");
+      description: _("Securely sign Nostr events with your keys.");
       vexpand: true;
       valign: center;
 
       accessibility {
-        label: "Welcome to GNostr Signer";
+        label: "Welcome to Nostr Signer";
         description: "Welcome screen with options to create or import a Nostr profile";
       }
 
@@ -57,10 +41,8 @@ template $WelcomePage: Adw.Bin {
         }
 
         Button btn_create_profile {
-          label: _("_Create New Profile");
-          use-underline: true;
           halign: center;
-          width-request: 240;
+          width-request: 260;
           focusable: true;
           receives-default: true;
 
@@ -73,13 +55,17 @@ template $WelcomePage: Adw.Bin {
             "suggested-action",
             "pill",
           ]
+
+          Adw.ButtonContent {
+            icon-name: "contact-new-symbolic";
+            label: _("_Create New Profile");
+            use-underline: true;
+          }
         }
 
         Button btn_import_profile {
-          label: _("_Import Existing Profile");
-          use-underline: true;
           halign: center;
-          width-request: 240;
+          width-request: 260;
           focusable: true;
 
           accessibility {
@@ -90,6 +76,37 @@ template $WelcomePage: Adw.Bin {
           styles [
             "pill",
           ]
+
+          Adw.ButtonContent {
+            icon-name: "document-open-symbolic";
+            label: _("_Import Existing Profile");
+            use-underline: true;
+          }
+        }
+
+        Separator {
+          margin-top: 12;
+          margin-bottom: 12;
+          visible: false;
+        }
+
+        Button btn_settings {
+          halign: center;
+          tooltip-text: _("Settings");
+
+          accessibility {
+            label: "Settings";
+            description: "Open application settings";
+          }
+
+          styles [
+            "flat",
+            "circular",
+          ]
+
+          Adw.ButtonContent {
+            icon-name: "emblem-system-symbolic";
+          }
         }
       }
     }

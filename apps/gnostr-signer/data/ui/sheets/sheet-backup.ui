@@ -7,414 +7,104 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SheetBackup" parent="AdwDialog">
-    <property name="title" translatable="yes">Backup &amp; Recovery</property>
+    <property name="title" translatable="yes">Backup Keys</property>
     <property name="can-close">true</property>
-    <property name="content-width">500</property>
+    <property name="content-width">360</property>
     <property name="content-height">-1</property>
-    <property name="width-request">300</property>
     <property name="follows-content-size">true</property>
     <accessibility>
-      <property name="label">Backup and recovery dialog</property>
-      <property name="description">Backup your private key or recover from backup using NIP-49 encrypted format or BIP-39 mnemonic</property>
+      <property name="label">Backup keys dialog</property>
+      <property name="description">Backup your private key securely</property>
     </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
-            <child type="start">
-              <object class="GtkButton" id="btn_close">
-                <property name="icon-name">window-close-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Close dialog</property>
-                <accessibility>
-                  <property name="label">Close</property>
-                </accessibility>
-              </object>
-            </child>
+            <property name="show-title">true</property>
+            <style>
+              <class name="flat"/>
+            </style>
           </object>
         </child>
-        <property name="content">
-          <object class="AdwViewStack" id="view_stack">
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">2</property>
+            <property name="vexpand">true</property>
             <child>
-              <object class="AdwViewStackPage">
-                <property name="name">backup</property>
-                <property name="title" translatable="yes">Backup</property>
-                <property name="icon-name">document-save-symbolic</property>
-                <property name="child">
-                  <object class="GtkScrolledWindow">
-                    <property name="hscrollbar-policy">2</property>
-                    <property name="vscrollbar-policy">1</property>
+              <object class="AdwClamp">
+                <property name="maximum-size">340</property>
+                <property name="tightening-threshold">300</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">16</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">1</property>
+                    <property name="spacing">16</property>
                     <child>
-                      <object class="AdwClamp">
-                        <property name="maximum-size">450</property>
-                        <property name="tightening-threshold">360</property>
+                      <object class="AdwBanner" id="banner_warning">
+                        <property name="title" translatable="yes">Store these securely. Please keep confidential and do not share to anyone.</property>
+                        <property name="revealed">true</property>
+                        <style>
+                          <class name="warning"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
                         <child>
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">18</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <property name="margin-top">18</property>
-                            <property name="margin-bottom">18</property>
-                            <child>
-                              <object class="AdwBanner" id="banner_warning">
-                                <property name="title" translatable="yes">Never share your secret key. Developers will never ask for it.</property>
-                                <property name="revealed">true</property>
+                          <object class="AdwActionRow" id="row_account">
+                            <property name="title" translatable="yes">Public Key</property>
+                            <property name="subtitle" translatable="yes">npub1...</property>
+                            <property name="subtitle-selectable">true</property>
+                            <child type="suffix">
+                              <object class="GtkButton" id="btn_copy_backup">
+                                <property name="icon-name">edit-copy-symbolic</property>
+                                <property name="tooltip-text" translatable="yes">Copy public key</property>
+                                <property name="valign">3</property>
+                                <accessibility>
+                                  <property name="label">Copy public key to clipboard</property>
+                                </accessibility>
                                 <style>
-                                  <class name="warning"/>
+                                  <class name="flat"/>
                                 </style>
                               </object>
                             </child>
-                            <child>
-                              <object class="AdwPreferencesGroup">
-                                <property name="title" translatable="yes">Account</property>
-                                <child>
-                                  <object class="AdwActionRow" id="row_account">
-                                    <property name="title" translatable="yes">npub1...</property>
-                                    <property name="subtitle" translatable="yes">Selected identity</property>
-                                    <property name="activatable">false</property>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="AdwPreferencesGroup">
-                                <property name="title" translatable="yes">NIP-49 Encrypted Backup</property>
-                                <property name="description" translatable="yes">Create a password-protected backup string that can be imported into any NIP-49 compatible wallet.</property>
-                                <child>
-                                  <object class="AdwPasswordEntryRow" id="entry_backup_password">
-                                    <property name="title" translatable="yes">Encryption Password</property>
-                                    <accessibility>
-                                      <property name="description">Enter a strong password to encrypt your backup</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwPasswordEntryRow" id="entry_backup_password_confirm">
-                                    <property name="title" translatable="yes">Confirm Password</property>
-                                    <accessibility>
-                                      <property name="description">Re-enter the password to confirm</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwComboRow" id="combo_security">
-                                    <property name="title" translatable="yes">Security Level</property>
-                                    <property name="subtitle" translatable="yes">Higher security takes longer to encrypt/decrypt</property>
-                                    <property name="model">
-                                      <object class="GtkStringList">
-                                        <items>
-                                          <item translatable="yes">Normal (~1s)</item>
-                                          <item translatable="yes">High (~4s)</item>
-                                          <item translatable="yes">Maximum (~8s)</item>
-                                        </items>
-                                      </object>
-                                    </property>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow" id="row_copy_nsec">
+                            <property name="title" translatable="yes">Private Key</property>
+                            <property name="subtitle" translatable="yes">nsec1...</property>
+                            <property name="subtitle-selectable">false</property>
+                            <child type="suffix">
                               <object class="GtkBox">
-                                <property name="orientation">0</property>
-                                <property name="spacing">12</property>
-                                <property name="halign">3</property>
+                                <property name="spacing">4</property>
                                 <child>
-                                  <object class="GtkButton" id="btn_create_backup">
-                                    <property name="label" translatable="yes">Create Backup</property>
-                                    <property name="tooltip-text" translatable="yes">Generate encrypted backup string</property>
+                                  <object class="GtkButton" id="btn_show_qr">
+                                    <property name="icon-name">view-reveal-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Show/hide private key</property>
+                                    <property name="valign">3</property>
+                                    <accessibility>
+                                      <property name="label">Toggle private key visibility</property>
+                                    </accessibility>
                                     <style>
-                                      <class name="suggested-action"/>
+                                      <class name="flat"/>
                                     </style>
-                                    <accessibility>
-                                      <property name="label">Create encrypted backup</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="btn_save_to_file">
-                                    <property name="label" translatable="yes">Save to File...</property>
-                                    <property name="tooltip-text" translatable="yes">Save encrypted backup to a file</property>
-                                    <accessibility>
-                                      <property name="label">Save backup to file</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="AdwPreferencesGroup" id="group_backup_result">
-                                <property name="visible">false</property>
-                                <property name="title" translatable="yes">Encrypted Backup</property>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">12</property>
-                                    <property name="margin-top">12</property>
-                                    <property name="margin-bottom">12</property>
-                                    <property name="margin-start">12</property>
-                                    <property name="margin-end">12</property>
-                                    <child>
-                                      <object class="GtkLabel" id="lbl_backup_result">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="selectable">true</property>
-                                        <property name="xalign">0</property>
-                                        <style>
-                                          <class name="monospace"/>
-                                        </style>
-                                        <accessibility>
-                                          <property name="label">Backup result</property>
-                                          <property name="description">Your encrypted backup string. Copy this and store it safely.</property>
-                                        </accessibility>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkBox">
-                                        <property name="orientation">0</property>
-                                        <property name="spacing">12</property>
-                                        <property name="halign">3</property>
-                                        <child>
-                                          <object class="GtkButton" id="btn_copy_backup">
-                                            <property name="label" translatable="yes">Copy</property>
-                                            <property name="icon-name">edit-copy-symbolic</property>
-                                            <accessibility>
-                                              <property name="label">Copy backup to clipboard</property>
-                                            </accessibility>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="GtkButton" id="btn_show_qr">
-                                            <property name="label" translatable="yes">Show QR</property>
-                                            <property name="icon-name">qr-code-symbolic</property>
-                                            <property name="tooltip-text" translatable="yes">Display QR code for scanning</property>
-                                            <accessibility>
-                                              <property name="label">Show QR code</property>
-                                            </accessibility>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkBox" id="box_qr_display">
-                                <property name="visible">false</property>
-                                <property name="orientation">1</property>
-                                <property name="spacing">12</property>
-                                <property name="halign">3</property>
-                                <child>
-                                  <object class="GtkPicture" id="picture_qr">
-                                    <property name="width-request">256</property>
-                                    <property name="height-request">256</property>
-                                    <property name="content-fit">1</property>
-                                    <accessibility>
-                                      <property name="label">QR code image</property>
-                                      <property name="description">QR code containing your encrypted backup. Scan with a compatible wallet.</property>
-                                    </accessibility>
                                   </object>
                                 </child>
                                 <child>
                                   <object class="GtkButton" id="btn_hide_qr">
-                                    <property name="label" translatable="yes">Hide QR Code</property>
+                                    <property name="icon-name">edit-copy-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Copy private key</property>
+                                    <property name="valign">3</property>
                                     <accessibility>
-                                      <property name="label">Hide QR code</property>
+                                      <property name="label">Copy private key to clipboard</property>
                                     </accessibility>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="AdwPreferencesGroup">
-                                <property name="title" translatable="yes">Advanced</property>
-                                <child>
-                                  <object class="AdwActionRow" id="row_copy_nsec">
-                                    <property name="title" translatable="yes">Copy Raw Secret Key</property>
-                                    <property name="subtitle" translatable="yes">Not recommended. Use encrypted backup instead.</property>
-                                    <property name="activatable">true</property>
-                                    <child type="suffix">
-                                      <object class="GtkImage">
-                                        <property name="icon-name">dialog-warning-symbolic</property>
-                                        <style>
-                                          <class name="warning"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                  </object>
-                </property>
-              </object>
-            </child>
-            <child>
-              <object class="AdwViewStackPage">
-                <property name="name">recovery</property>
-                <property name="title" translatable="yes">Recovery</property>
-                <property name="icon-name">view-refresh-symbolic</property>
-                <property name="child">
-                  <object class="GtkScrolledWindow">
-                    <property name="hscrollbar-policy">2</property>
-                    <property name="vscrollbar-policy">1</property>
-                    <child>
-                      <object class="AdwClamp">
-                        <property name="maximum-size">450</property>
-                        <property name="tightening-threshold">360</property>
-                        <child>
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">18</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <property name="margin-top">18</property>
-                            <property name="margin-bottom">18</property>
-                            <child>
-                              <object class="AdwPreferencesGroup">
-                                <property name="title" translatable="yes">Recovery Method</property>
-                                <child>
-                                  <object class="AdwComboRow" id="combo_recovery_method">
-                                    <property name="title" translatable="yes">Import From</property>
-                                    <property name="model">
-                                      <object class="GtkStringList">
-                                        <items>
-                                          <item translatable="yes">NIP-49 Encrypted Backup (ncryptsec)</item>
-                                          <item translatable="yes">BIP-39 Mnemonic Phrase</item>
-                                        </items>
-                                      </object>
-                                    </property>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="AdwPreferencesGroup" id="group_ncryptsec_recovery">
-                                <property name="title" translatable="yes">Import Encrypted Backup</property>
-                                <property name="description" translatable="yes">Enter your ncryptsec1... string and the password used to encrypt it.</property>
-                                <child>
-                                  <object class="AdwEntryRow" id="entry_ncryptsec">
-                                    <property name="title" translatable="yes">Encrypted Backup String</property>
-                                    <accessibility>
-                                      <property name="description">Paste your ncryptsec1... backup string here</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwPasswordEntryRow" id="entry_decrypt_password">
-                                    <property name="title" translatable="yes">Decryption Password</property>
-                                    <accessibility>
-                                      <property name="description">Enter the password used when creating the backup</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwActionRow">
-                                    <property name="activatable">false</property>
-                                    <child type="suffix">
-                                      <object class="GtkButton" id="btn_load_from_file">
-                                        <property name="label" translatable="yes">Load from File...</property>
-                                        <property name="valign">3</property>
-                                        <accessibility>
-                                          <property name="label">Load backup from file</property>
-                                        </accessibility>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="AdwPreferencesGroup" id="group_mnemonic_recovery">
-                                <property name="visible">false</property>
-                                <property name="title" translatable="yes">Import from Mnemonic</property>
-                                <property name="description" translatable="yes">Enter your 12, 15, 18, 21, or 24 word recovery phrase.</property>
-                                <child>
-                                  <object class="AdwEntryRow" id="entry_mnemonic">
-                                    <property name="title" translatable="yes">Recovery Phrase</property>
-                                    <accessibility>
-                                      <property name="description">Enter your BIP-39 mnemonic words separated by spaces</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwPasswordEntryRow" id="entry_mnemonic_passphrase">
-                                    <property name="title" translatable="yes">Optional Passphrase</property>
-                                    <property name="show-apply-button">false</property>
-                                    <accessibility>
-                                      <property name="description">Enter optional BIP-39 passphrase if one was used</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwSpinRow" id="spin_account_index">
-                                    <property name="title" translatable="yes">Account Index</property>
-                                    <property name="subtitle" translatable="yes">Usually 0 for the first account</property>
-                                    <property name="adjustment">
-                                      <object class="GtkAdjustment">
-                                        <property name="lower">0</property>
-                                        <property name="upper">999</property>
-                                        <property name="value">0</property>
-                                        <property name="step-increment">1</property>
-                                        <property name="page-increment">10</property>
-                                      </object>
-                                    </property>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="AdwPreferencesGroup" id="group_preview">
-                                <property name="visible">false</property>
-                                <property name="title" translatable="yes">Preview</property>
-                                <property name="description" translatable="yes">Verify this is the correct identity before importing.</property>
-                                <child>
-                                  <object class="AdwActionRow" id="row_preview_npub">
-                                    <property name="title" translatable="yes">Public Key</property>
-                                    <property name="subtitle">npub1...</property>
-                                    <property name="subtitle-selectable">true</property>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="AdwStatusPage" id="status_verification">
-                                <property name="visible">false</property>
-                                <property name="icon-name">emblem-ok-symbolic</property>
-                                <property name="title" translatable="yes">Key Verified</property>
-                                <property name="description" translatable="yes">The backup was successfully decrypted.</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkBox">
-                                <property name="orientation">0</property>
-                                <property name="spacing">12</property>
-                                <property name="halign">3</property>
-                                <property name="margin-top">12</property>
-                                <child>
-                                  <object class="GtkButton" id="btn_verify">
-                                    <property name="label" translatable="yes">Verify</property>
-                                    <property name="tooltip-text" translatable="yes">Decrypt and preview without importing</property>
-                                    <accessibility>
-                                      <property name="label">Verify backup</property>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkButton" id="btn_import">
-                                    <property name="label" translatable="yes">Import Key</property>
-                                    <property name="sensitive">false</property>
-                                    <property name="tooltip-text" translatable="yes">Add this key to your wallet</property>
                                     <style>
-                                      <class name="suggested-action"/>
+                                      <class name="flat"/>
                                     </style>
-                                    <accessibility>
-                                      <property name="label">Import recovered key</property>
-                                    </accessibility>
                                   </object>
                                 </child>
                               </object>
@@ -423,16 +113,216 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                       </object>
                     </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">0</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkCheckButton" id="chk_encrypt_passphrase">
+                            <property name="label" translatable="yes">Enable encryption with passphrase</property>
+                            <accessibility>
+                              <property name="label">Enable encryption</property>
+                              <property name="description">When checked, backup will be encrypted with a passphrase</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup" id="group_backup_result">
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="AdwPasswordEntryRow" id="entry_backup_password">
+                            <property name="title" translatable="yes">Encryption Password</property>
+                            <accessibility>
+                              <property name="description">Enter a strong password to encrypt your backup</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPasswordEntryRow" id="entry_backup_password_confirm">
+                            <property name="title" translatable="yes">Confirm Password</property>
+                            <accessibility>
+                              <property name="description">Re-enter the password to confirm</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="lbl_backup_result">
+                        <property name="visible">false</property>
+                        <property name="wrap">true</property>
+                        <property name="wrap-mode">2</property>
+                        <property name="selectable">true</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="monospace"/>
+                          <class name="caption"/>
+                        </style>
+                        <accessibility>
+                          <property name="label">Backup result</property>
+                          <property name="description">Your encrypted backup string.</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">0</property>
+                        <property name="spacing">12</property>
+                        <property name="halign">2</property>
+                        <property name="margin-top">16</property>
+                        <child>
+                          <object class="GtkButton" id="btn_close">
+                            <property name="label" translatable="yes">Cancel</property>
+                            <accessibility>
+                              <property name="label">Cancel</property>
+                              <property name="description">Close without saving backup</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_create_backup">
+                            <property name="label" translatable="yes">Save Backup</property>
+                            <style>
+                              <class name="suggested-action"/>
+                            </style>
+                            <accessibility>
+                              <property name="label">Save backup</property>
+                              <property name="description">Create and save the backup</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwViewStack" id="view_stack">
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwViewSwitcherBar" id="view_switcher">
+                        <property name="visible">false</property>
+                        <property name="stack">view_stack</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_save_to_file">
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="box_qr_display">
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="GtkPicture" id="picture_qr">
+                            <property name="width-request">1</property>
+                            <property name="height-request">1</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="combo_security">
+                        <property name="visible">false</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item translatable="yes">Normal</item>
+                            </items>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="combo_recovery_method">
+                        <property name="visible">false</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item translatable="yes">NIP-49</item>
+                            </items>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup" id="group_ncryptsec_recovery">
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_ncryptsec">
+                            <property name="title" translatable="yes">Encrypted Backup</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPasswordEntryRow" id="entry_decrypt_password">
+                            <property name="title" translatable="yes">Password</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_load_from_file">
+                            <property name="label" translatable="yes">Load</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup" id="group_mnemonic_recovery">
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_mnemonic">
+                            <property name="title" translatable="yes">Mnemonic</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPasswordEntryRow" id="entry_mnemonic_passphrase">
+                            <property name="title" translatable="yes">Passphrase</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwSpinRow" id="spin_account_index">
+                            <property name="title" translatable="yes">Index</property>
+                            <property name="adjustment">
+                              <object class="GtkAdjustment">
+                                <property name="lower">0</property>
+                                <property name="upper">999</property>
+                                <property name="value">0</property>
+                                <property name="step-increment">1</property>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup" id="group_preview">
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="AdwActionRow" id="row_preview_npub">
+                            <property name="title" translatable="yes">Public Key</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwStatusPage" id="status_verification">
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_verify">
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_import">
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
                   </object>
-                </property>
+                </child>
               </object>
             </child>
-          </object>
-        </property>
-        <child type="bottom">
-          <object class="AdwViewSwitcherBar" id="view_switcher">
-            <property name="stack">view_stack</property>
-            <property name="reveal">true</property>
           </object>
         </child>
       </object>

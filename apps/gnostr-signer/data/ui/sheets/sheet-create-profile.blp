@@ -2,8 +2,8 @@ using Gtk 4.0;
 using Adw 1;
 
 template $SheetCreateProfile: Adw.Dialog {
-  title: _("Create Profile");
-  content-width: 480;
+  title: _("Create New Profile");
+  content-width: 360;
   content-height: -1;
   follows-content-size: true;
   can-close: true;
@@ -16,42 +16,15 @@ template $SheetCreateProfile: Adw.Dialog {
   Adw.ToolbarView {
     [top]
     Adw.HeaderBar {
+      show-title: true;
+
       accessibility {
         label: "Create profile header";
       }
 
-      title-widget: Label {
-        label: _("Create Profile");
-      };
-
-      [start]
-      Button btn_cancel {
-        label: _("_Cancel");
-        use-underline: true;
-        focusable: true;
-
-        accessibility {
-          label: "Cancel";
-          description: "Close without creating a profile. Keyboard shortcut: Alt+C or Escape.";
-        }
-      }
-
-      [end]
-      Button btn_create {
-        label: _("C_reate");
-        use-underline: true;
-        tooltip-text: _("Create a new profile with this passphrase (Alt+R)");
-        focusable: true;
-
-        accessibility {
-          label: "Create profile";
-          description: "Create a new profile with the entered information. Keyboard shortcut: Alt+R.";
-        }
-
-        styles [
-          "suggested-action",
-        ]
-      }
+      styles [
+        "flat",
+      ]
     }
 
     ScrolledWindow {
@@ -63,12 +36,12 @@ template $SheetCreateProfile: Adw.Dialog {
       }
 
       Adw.Clamp {
-        maximum-size: 500;
-        tightening-threshold: 400;
-        margin-top: 16;
+        maximum-size: 340;
+        tightening-threshold: 300;
+        margin-top: 8;
         margin-bottom: 16;
-        margin-start: 12;
-        margin-end: 12;
+        margin-start: 16;
+        margin-end: 16;
 
         Box {
           orientation: vertical;
@@ -77,11 +50,11 @@ template $SheetCreateProfile: Adw.Dialog {
           Label {
             wrap: true;
             xalign: 0;
-            label: _("Create a new Nostr profile. Your private key will be encrypted with your passphrase and stored securely.");
+            label: _("Generate a new Nostr identity.");
 
             accessibility {
               label: "Instructions";
-              description: "Your private key will be encrypted and stored securely using your passphrase.";
+              description: "Generate a new Nostr identity with encrypted private key.";
             }
 
             styles [
@@ -90,11 +63,9 @@ template $SheetCreateProfile: Adw.Dialog {
           }
 
           Adw.PreferencesGroup {
-            title: _("Identity");
-
             accessibility {
-              label: "Identity settings";
-              description: "Set your display name";
+              label: "Profile form fields";
+              description: "Enter your profile details";
             }
 
             Adw.EntryRow entry_display_name {
@@ -105,96 +76,15 @@ template $SheetCreateProfile: Adw.Dialog {
                 description: "Your public display name that others will see";
               }
             }
-          }
 
-          Adw.PreferencesGroup {
-            title: _("Security");
-            description: _("Your passphrase protects your private key. Choose a strong passphrase that you can remember.");
-
-            accessibility {
-              label: "Security settings";
-              description: "Set a strong passphrase to encrypt your private key";
+            Adw.PasswordEntryRow entry_passphrase_placeholder {
+              title: _("Passphrase");
+              visible: false;
             }
 
-            Label {
-              label: _("Passphrase");
-              xalign: 0;
-              margin-start: 4;
-              margin-top: 8;
-
-              styles [
-                "caption",
-                "dim-label",
-              ]
-            }
-
-            Box box_passphrase_container {
-              orientation: vertical;
-              margin-start: 4;
-              margin-end: 4;
-              margin-bottom: 8;
-
-              accessibility {
-                label: "Passphrase input container";
-                description: "Secure entry for your encryption passphrase";
-              }
-            }
-
-            Label {
-              label: _("Confirm Passphrase");
-              xalign: 0;
-              margin-start: 4;
-              margin-top: 8;
-
-              styles [
-                "caption",
-                "dim-label",
-              ]
-            }
-
-            Box box_confirm_container {
-              orientation: vertical;
-              margin-start: 4;
-              margin-end: 4;
-              margin-bottom: 4;
-
-              accessibility {
-                label: "Confirm passphrase input container";
-                description: "Re-enter your passphrase to confirm";
-              }
-            }
-
-            Box {
-              orientation: horizontal;
-              spacing: 8;
-              margin-start: 12;
-              margin-end: 12;
-              margin-top: 4;
-              margin-bottom: 8;
-              halign: end;
-
-              Label lbl_passphrase_match {
-                label: _("Passphrases match");
-
-                accessibility {
-                  label: "Passphrase match status";
-                  description: "Indicates whether both passphrases match";
-                }
-
-                styles [
-                  "caption",
-                ]
-              }
-            }
-          }
-
-          Adw.PreferencesGroup {
-            title: _("Recovery");
-            description: _("A hint to help you remember your passphrase. This is stored unencrypted.");
-
-            accessibility {
-              label: "Recovery settings";
-              description: "Optional hint to help remember your passphrase";
+            Adw.PasswordEntryRow entry_confirm_placeholder {
+              title: _("Confirm Passphrase");
+              visible: false;
             }
 
             Adw.EntryRow entry_recovery_hint {
@@ -207,33 +97,60 @@ template $SheetCreateProfile: Adw.Dialog {
             }
           }
 
-          Adw.PreferencesGroup {
-            title: _("Advanced Options");
+          Box box_passphrase_container {
+            orientation: vertical;
+            spacing: 8;
+            visible: true;
 
             accessibility {
-              label: "Advanced options";
-              description: "Additional security options";
+              label: "Passphrase input container";
+              description: "Secure entry for your encryption passphrase";
             }
+          }
 
-            Adw.ActionRow {
-              title: _("Use Hardware Key");
-              subtitle: _("Store private key on a hardware security device (e.g., YubiKey)");
+          Box box_confirm_container {
+            orientation: vertical;
+            spacing: 8;
+            visible: true;
+
+            accessibility {
+              label: "Confirm passphrase input container";
+              description: "Re-enter your passphrase to confirm";
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+            halign: end;
+            visible: true;
+
+            Label lbl_passphrase_match {
+              label: _("Passphrases match");
+              visible: false;
 
               accessibility {
-                description: "Enable to store your private key on a hardware security device instead of in software";
+                label: "Passphrase match status";
+                description: "Indicates whether both passphrases match";
               }
 
-              [suffix]
-              CheckButton chk_hardware_key {
-                valign: center;
+              styles [
+                "caption",
+              ]
+            }
+          }
 
-                accessibility {
-                  label: "Use hardware key";
-                  description: "When checked, your private key will be stored on a hardware security device";
-                }
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+
+            CheckButton chk_hardware_key {
+              label: _("Encrypt with a hardware key");
+
+              accessibility {
+                label: "Use hardware key";
+                description: "When checked, your private key will be stored on a hardware security device";
               }
-
-              activatable-widget: chk_hardware_key;
             }
           }
 
@@ -266,6 +183,37 @@ template $SheetCreateProfile: Adw.Dialog {
 
               styles [
                 "dim-label",
+              ]
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 12;
+            halign: end;
+            margin-top: 16;
+
+            Button btn_cancel {
+              label: _("Cancel");
+              focusable: true;
+
+              accessibility {
+                label: "Cancel";
+                description: "Close without creating a profile.";
+              }
+            }
+
+            Button btn_create {
+              label: _("Create");
+              focusable: true;
+
+              accessibility {
+                label: "Create profile";
+                description: "Create a new profile with the entered information.";
+              }
+
+              styles [
+                "suggested-action",
               ]
             }
           }

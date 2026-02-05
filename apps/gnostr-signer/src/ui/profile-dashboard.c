@@ -35,7 +35,6 @@ struct _ProfileDashboard {
   gchar *avatar_url;
 
   /* Template children - Header */
-  AdwAvatar *avatar;
   GtkLabel *lbl_display_name;
   GtkLabel *lbl_npub;
 
@@ -45,7 +44,6 @@ struct _ProfileDashboard {
   GtkButton *btn_backup_keys;
   GtkButton *btn_change_password;
   GtkButton *btn_sign_message;
-  GtkButton *btn_delegations;
 };
 
 G_DEFINE_TYPE(ProfileDashboard, profile_dashboard, ADW_TYPE_BIN)
@@ -75,15 +73,6 @@ static void update_profile_ui(ProfileDashboard *self) {
     gtk_label_set_text(self->lbl_display_name, name);
   }
 
-  /* Update avatar */
-  if (self->avatar) {
-    const gchar *name = self->display_name && *self->display_name
-                        ? self->display_name
-                        : "?";
-    adw_avatar_set_text(self->avatar, name);
-    /* Note: Custom avatar image would need async loading from URL */
-  }
-
   /* Update truncated npub */
   if (self->lbl_npub) {
     gchar *truncated = truncate_npub(self->npub);
@@ -92,7 +81,7 @@ static void update_profile_ui(ProfileDashboard *self) {
   }
 }
 
-/* Button click handlers - emit signal with action name */
+/* Action button clicked handlers - emit signal with action name */
 static void on_view_events(GtkButton *btn, gpointer user_data) {
   (void)btn;
   ProfileDashboard *self = PROFILE_DASHBOARD(user_data);
@@ -121,12 +110,6 @@ static void on_sign_message(GtkButton *btn, gpointer user_data) {
   (void)btn;
   ProfileDashboard *self = PROFILE_DASHBOARD(user_data);
   g_signal_emit(self, signals[SIGNAL_ACTION_CLICKED], 0, "sign-message");
-}
-
-static void on_delegations(GtkButton *btn, gpointer user_data) {
-  (void)btn;
-  ProfileDashboard *self = PROFILE_DASHBOARD(user_data);
-  g_signal_emit(self, signals[SIGNAL_ACTION_CLICKED], 0, "delegations");
 }
 
 /* GObject property accessors */
@@ -224,7 +207,6 @@ static void profile_dashboard_class_init(ProfileDashboardClass *klass) {
       widget_class, APP_RESOURCE_PATH "/ui/profile-dashboard.ui");
 
   /* Bind template children - Header */
-  gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, avatar);
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, lbl_display_name);
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, lbl_npub);
 
@@ -234,7 +216,6 @@ static void profile_dashboard_class_init(ProfileDashboardClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_backup_keys);
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_change_password);
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_sign_message);
-  gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_delegations);
 }
 
 static void profile_dashboard_init(ProfileDashboard *self) {
@@ -244,7 +225,7 @@ static void profile_dashboard_init(ProfileDashboard *self) {
 
   gtk_widget_init_template(GTK_WIDGET(self));
 
-  /* Connect button signals */
+  /* Connect action button signals */
   if (self->btn_view_events)
     g_signal_connect(self->btn_view_events, "clicked",
                      G_CALLBACK(on_view_events), self);
@@ -260,9 +241,6 @@ static void profile_dashboard_init(ProfileDashboard *self) {
   if (self->btn_sign_message)
     g_signal_connect(self->btn_sign_message, "clicked",
                      G_CALLBACK(on_sign_message), self);
-  if (self->btn_delegations)
-    g_signal_connect(self->btn_delegations, "clicked",
-                     G_CALLBACK(on_delegations), self);
 
   /* Initial UI update */
   update_profile_ui(self);

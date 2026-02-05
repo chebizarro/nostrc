@@ -155,6 +155,8 @@ struct _EventsPage {
   GtkStack      *stack;
   GtkListView   *list_view;
   AdwStatusPage *empty_state;
+  GtkButton     *btn_view_full_log;
+  GtkButton     *btn_approve;
 
   /* Data model */
   GListStore          *event_store;
@@ -166,6 +168,8 @@ G_DEFINE_TYPE(EventsPage, events_page, ADW_TYPE_BIN)
 /* Signal IDs */
 enum {
   SIGNAL_EVENT_ACTIVATED,
+  SIGNAL_VIEW_FULL_LOG,
+  SIGNAL_APPROVE,
   N_SIGNALS
 };
 
@@ -539,6 +543,24 @@ on_list_view_activate(GtkListView *list_view,
   }
 }
 
+/* Button click handlers */
+
+static void
+on_view_full_log(GtkButton *btn, gpointer user_data)
+{
+  (void)btn;
+  EventsPage *self = EVENTS_PAGE(user_data);
+  g_signal_emit(self, signals[SIGNAL_VIEW_FULL_LOG], 0);
+}
+
+static void
+on_approve(GtkButton *btn, gpointer user_data)
+{
+  (void)btn;
+  EventsPage *self = EVENTS_PAGE(user_data);
+  g_signal_emit(self, signals[SIGNAL_APPROVE], 0);
+}
+
 /* Update stack visibility based on item count */
 
 static void
@@ -599,6 +621,8 @@ events_page_class_init(EventsPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, EventsPage, stack);
   gtk_widget_class_bind_template_child(widget_class, EventsPage, list_view);
   gtk_widget_class_bind_template_child(widget_class, EventsPage, empty_state);
+  gtk_widget_class_bind_template_child(widget_class, EventsPage, btn_view_full_log);
+  gtk_widget_class_bind_template_child(widget_class, EventsPage, btn_approve);
 
   /**
    * EventsPage::event-activated:
@@ -619,6 +643,34 @@ events_page_class_init(EventsPageClass *klass)
       G_TYPE_STRING,
       G_TYPE_UINT,
       G_TYPE_INT64);
+
+  /**
+   * EventsPage::view-full-log:
+   * @self: the #EventsPage instance
+   *
+   * Emitted when the user clicks the "View Full Event Log" link.
+   */
+  signals[SIGNAL_VIEW_FULL_LOG] = g_signal_new(
+      "view-full-log",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0, NULL, NULL,
+      NULL,
+      G_TYPE_NONE, 0);
+
+  /**
+   * EventsPage::approve:
+   * @self: the #EventsPage instance
+   *
+   * Emitted when the user clicks the "Approve" button.
+   */
+  signals[SIGNAL_APPROVE] = g_signal_new(
+      "approve",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0, NULL, NULL,
+      NULL,
+      G_TYPE_NONE, 0);
 }
 
 static void
@@ -649,6 +701,14 @@ events_page_init(EventsPage *self)
   /* Connect activation signal */
   g_signal_connect(self->list_view, "activate",
                    G_CALLBACK(on_list_view_activate), self);
+
+  /* Connect button signals */
+  if (self->btn_view_full_log)
+    g_signal_connect(self->btn_view_full_log, "clicked",
+                     G_CALLBACK(on_view_full_log), self);
+  if (self->btn_approve)
+    g_signal_connect(self->btn_approve, "clicked",
+                     G_CALLBACK(on_approve), self);
 
   /* Monitor item count for empty state */
   g_signal_connect(self->event_store, "items-changed",

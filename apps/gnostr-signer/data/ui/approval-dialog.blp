@@ -2,8 +2,8 @@ using Gtk 4.0;
 using Adw 1;
 
 template $GnostrApprovalDialog: Adw.Dialog {
-  title: _("Approval Required");
-  content-width: 480;
+  title: _("Signature Request");
+  content-width: 400;
   content-height: -1;
   width-request: 300;
   can-close: true;
@@ -17,198 +17,294 @@ template $GnostrApprovalDialog: Adw.Dialog {
   Adw.ToolbarView {
     [top]
     Adw.HeaderBar {
-      accessibility {
-        label: "Approval dialog header";
-      }
+      show-title: false;
 
-      title-widget: Box {
-        orientation: horizontal;
-        spacing: 8;
+      styles [
+        "flat",
+      ]
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 16;
+      margin-start: 20;
+      margin-end: 20;
+      margin-bottom: 20;
+
+      /* Status Banner */
+      Box status_banner {
+        orientation: vertical;
+        spacing: 4;
         halign: center;
 
-        Image header_icon {
-          icon-name: "dialog-question-symbolic";
-          pixel-size: 24;
+        styles [
+          "status-banner",
+          "pending",
+        ]
 
-          accessibility {
-            label: "Question icon";
-            description: "Indicates a signature request requiring your decision";
+        Box {
+          orientation: horizontal;
+          spacing: 8;
+          halign: center;
+
+          Image header_icon {
+            icon-name: "dialog-question-symbolic";
+            pixel-size: 20;
+
+            styles [
+              "pending-icon",
+            ]
+          }
+
+          Label header_title {
+            label: _("Pending Signature Request");
+
+            styles [
+              "title-3",
+              "pending-title",
+            ]
           }
         }
 
-        Label header_title {
-          label: _("Signature Request");
+        Label subtitle_label {
+          label: _("A client is requesting a signature");
 
           styles [
-            "heading",
+            "dim-label",
           ]
         }
-      };
-    }
+      }
 
-    ScrolledWindow {
-      hscrollbar-policy: never;
-      vscrollbar-policy: automatic;
-      propagate-natural-height: true;
-      max-content-height: 500;
+      /* Request Details - Simple key-value layout */
+      Box details_box {
+        orientation: vertical;
+        spacing: 12;
+        margin-top: 8;
 
-      Adw.Clamp {
-        maximum-size: 480;
-        tightening-threshold: 360;
-
+        /* Event Kind Row */
         Box {
-          orientation: vertical;
-          spacing: 16;
-          margin-top: 16;
-          margin-bottom: 16;
-          margin-start: 16;
-          margin-end: 16;
+          orientation: horizontal;
+          spacing: 8;
 
-          ListBox metadata_list {
-            selection-mode: none;
+          Label {
+            label: _("Event Kind:");
+            xalign: 0;
+            hexpand: false;
 
             styles [
-              "boxed-list",
+              "dim-label",
             ]
+          }
+
+          Label label_event_kind {
+            label: _("Unknown");
+            xalign: 0;
+            hexpand: true;
+            wrap: true;
 
             accessibility {
-              label: "Request details";
-              description: "Information about the signature request including event type, requesting application, identity, and timestamp";
+              description: "The type of Nostr event being signed";
             }
+          }
+        }
 
-            Adw.ActionRow row_event_type {
-              title: _("Event Type");
-              subtitle: _("Unknown");
+        /* From Row */
+        Box {
+          orientation: horizontal;
+          spacing: 8;
 
-              accessibility {
-                description: "The type of Nostr event being signed";
-              }
+          Label {
+            label: _("From:");
+            xalign: 0;
+            hexpand: false;
 
-              [prefix]
-              Image event_type_icon {
-                icon-name: "mail-unread-symbolic";
+            styles [
+              "dim-label",
+            ]
+          }
 
-                accessibility {
-                  label: "Event type icon";
-                  description: "Decorative icon representing the event type";
-                }
-              }
+          Label label_from {
+            label: _("Unknown Application");
+            xalign: 0;
+            hexpand: true;
+            ellipsize: end;
+
+            accessibility {
+              description: "The application requesting the signature";
             }
+          }
+        }
 
-            Adw.ActionRow row_app {
-              title: _("From App");
-              subtitle: _("Unknown Application");
+        /* Message Row */
+        Box {
+          orientation: vertical;
+          spacing: 4;
 
-              accessibility {
-                description: "The application requesting the signature";
-              }
+          Label {
+            label: _("Message:");
+            xalign: 0;
 
-              [prefix]
-              Image {
-                icon-name: "application-x-executable-symbolic";
-
-                accessibility {
-                  label: "Application icon";
-                  description: "Decorative icon representing the requesting application";
-                }
-              }
-            }
-
-            Adw.ActionRow row_identity {
-              title: _("Identity");
-              subtitle: _("npub...");
-
-              accessibility {
-                description: "The Nostr identity that will be used for signing";
-              }
-
-              [prefix]
-              Image {
-                icon-name: "avatar-default-symbolic";
-
-                accessibility {
-                  label: "Identity icon";
-                  description: "Decorative icon representing user identity";
-                }
-              }
-            }
-
-            Adw.ActionRow row_timestamp {
-              title: _("Timestamp");
-              subtitle: _("Now");
-
-              accessibility {
-                description: "When this signature request was received";
-              }
-
-              [prefix]
-              Image {
-                icon-name: "preferences-system-time-symbolic";
-
-                accessibility {
-                  label: "Time icon";
-                  description: "Decorative icon representing timestamp";
-                }
-              }
-            }
+            styles [
+              "dim-label",
+            ]
           }
 
           Frame content_frame {
-            label: _("Content Preview");
+            margin-top: 4;
 
-            accessibility {
-              label: "Event content preview";
-              description: "Preview of the event content that will be signed";
-            }
+            styles [
+              "view",
+            ]
 
-            Box {
-              orientation: vertical;
-              spacing: 8;
+            Label content_preview {
+              wrap: true;
+              wrap-mode: word_char;
+              xalign: 0;
+              yalign: 0;
+              max-width-chars: 50;
+              ellipsize: end;
+              lines: 3;
+              selectable: true;
               margin-top: 8;
               margin-bottom: 8;
               margin-start: 8;
               margin-end: 8;
 
-              Label content_preview {
-                wrap: true;
-                wrap-mode: word_char;
-                xalign: 0;
-                max-width-chars: 60;
-                ellipsize: end;
-                lines: 3;
-                selectable: true;
-
-                accessibility {
-                  label: "Event content";
-                  description: "The content of the event to be signed";
-                }
-
-                styles [
-                  "monospace",
-                ]
+              accessibility {
+                label: "Event content";
+                description: "The content of the event to be signed";
               }
 
-              Button btn_expand {
-                label: _("Show More");
-                halign: start;
-                visible: false;
+              styles [
+                "body",
+              ]
+            }
+          }
+        }
+      }
 
-                accessibility {
-                  label: "Show more content";
-                  description: "Click to expand and show the full event content";
-                }
+      /* Action Buttons */
+      Box {
+        orientation: horizontal;
+        spacing: 12;
+        homogeneous: true;
+        margin-top: 8;
 
-                styles [
-                  "flat",
-                  "link",
-                ]
+        accessibility {
+          label: "Action buttons";
+          description: "Approve or deny this signature request";
+        }
+
+        Button btn_approve {
+          label: _("Approve");
+          hexpand: true;
+          focusable: true;
+          receives-default: true;
+          tooltip-text: _("Approve this request (Ctrl+A)");
+
+          accessibility {
+            label: "Approve signature request";
+            description: "Click to approve and sign this event with your private key. Keyboard shortcut: Ctrl+A.";
+          }
+
+          styles [
+            "pill",
+            "approve-btn",
+          ]
+        }
+
+        Button btn_deny {
+          label: _("Deny");
+          hexpand: true;
+          focusable: true;
+          tooltip-text: _("Deny this request (Ctrl+D, Escape)");
+
+          accessibility {
+            label: "Deny signature request";
+            description: "Click to deny this signing request. The application will not receive a signature. Keyboard shortcut: Ctrl+D or Escape.";
+          }
+
+          styles [
+            "pill",
+            "deny-btn",
+          ]
+        }
+      }
+
+      /* Details Expander */
+      Expander details_expander {
+        label: _("Details");
+        margin-top: 4;
+
+        styles [
+          "details-expander",
+        ]
+
+        Box {
+          orientation: vertical;
+          spacing: 8;
+          margin-top: 8;
+
+          /* Identity Row */
+          Box identity_row {
+            orientation: horizontal;
+            spacing: 8;
+
+            Label {
+              label: _("Identity:");
+              xalign: 0;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label label_identity {
+              label: _("npub...");
+              xalign: 0;
+              hexpand: true;
+              ellipsize: middle;
+              selectable: true;
+
+              styles [
+                "monospace",
+              ]
+
+              accessibility {
+                description: "The Nostr identity that will be used for signing";
               }
             }
           }
 
+          /* Timestamp Row */
+          Box timestamp_row {
+            orientation: horizontal;
+            spacing: 8;
+
+            Label {
+              label: _("Time:");
+              xalign: 0;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label label_timestamp {
+              label: _("Now");
+              xalign: 0;
+              hexpand: true;
+
+              accessibility {
+                description: "When this signature request was received";
+              }
+            }
+          }
+
+          /* Identity Selector (multiple accounts) */
           Box identity_selector_box {
             orientation: horizontal;
-            spacing: 12;
+            spacing: 8;
             visible: false;
 
             accessibility {
@@ -218,7 +314,11 @@ template $GnostrApprovalDialog: Adw.Dialog {
 
             Label {
               label: _("Sign as:");
-              halign: start;
+              xalign: 0;
+
+              styles [
+                "dim-label",
+              ]
             }
 
             DropDown identity_dropdown {
@@ -231,9 +331,10 @@ template $GnostrApprovalDialog: Adw.Dialog {
             }
           }
 
+          /* Remember Decision */
           Box {
             orientation: horizontal;
-            spacing: 12;
+            spacing: 8;
 
             accessibility {
               label: "Remember preference options";
@@ -258,53 +359,6 @@ template $GnostrApprovalDialog: Adw.Dialog {
                 label: "Duration to remember";
                 description: "Select how long to remember this decision";
               }
-            }
-          }
-
-          Box {
-            orientation: horizontal;
-            spacing: 12;
-            homogeneous: true;
-            margin-top: 8;
-
-            accessibility {
-              label: "Action buttons";
-              description: "Approve or deny this signature request";
-            }
-
-            Button btn_deny {
-              label: _("_Deny");
-              use-underline: true;
-              hexpand: true;
-              focusable: true;
-              tooltip-text: _("Deny this request (Ctrl+D, Escape)");
-
-              accessibility {
-                label: "Deny signature request";
-                description: "Click to deny this signing request. The application will not receive a signature. Keyboard shortcut: Ctrl+D or Escape.";
-              }
-
-              styles [
-                "destructive-action",
-              ]
-            }
-
-            Button btn_approve {
-              label: _("_Approve");
-              use-underline: true;
-              hexpand: true;
-              focusable: true;
-              receives-default: true;
-              tooltip-text: _("Approve this request (Ctrl+A)");
-
-              accessibility {
-                label: "Approve signature request";
-                description: "Click to approve and sign this event with your private key. Keyboard shortcut: Ctrl+A.";
-              }
-
-              styles [
-                "suggested-action",
-              ]
             }
           }
         }

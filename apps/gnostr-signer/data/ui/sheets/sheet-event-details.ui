@@ -7,32 +7,39 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SheetEventDetails" parent="AdwDialog">
-    <property name="title" translatable="yes">Event Details</property>
-    <property name="content-width">520</property>
-    <property name="content-height">640</property>
+    <property name="title" translatable="yes">View Event Details</property>
+    <property name="content-width">400</property>
+    <property name="content-height">500</property>
     <accessibility>
       <property name="label">Event details dialog</property>
-      <property name="description">View detailed information about a signed Nostr event including type, timestamp, identifiers, content, and tags</property>
+      <property name="description">View detailed information about a signed Nostr event</property>
     </accessibility>
     <child>
-      <object class="AdwToolbarView">
-        <child type="top">
+      <object class="GtkBox">
+        <property name="orientation">1</property>
+        <child>
           <object class="AdwHeaderBar">
             <accessibility>
               <property name="label">Event details header</property>
             </accessibility>
             <property name="title-widget">
               <object class="GtkLabel">
-                <property name="label" translatable="yes">Event Details</property>
+                <property name="label" translatable="yes">View Event Details</property>
+                <style>
+                  <class name="title"/>
+                </style>
               </object>
             </property>
             <child type="start">
-              <object class="GtkButton" id="btn_close">
-                <property name="label" translatable="yes">Close</property>
+              <object class="GtkButton" id="btn_header_close">
+                <property name="icon-name">window-close-symbolic</property>
                 <accessibility>
                   <property name="label">Close</property>
                   <property name="description">Close this dialog</property>
                 </accessibility>
+                <style>
+                  <class name="flat"/>
+                </style>
               </object>
             </child>
           </object>
@@ -46,7 +53,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </accessibility>
             <child>
               <object class="AdwClamp">
-                <property name="maximum-size">600</property>
+                <property name="maximum-size">400</property>
                 <property name="margin-top">16</property>
                 <property name="margin-bottom">16</property>
                 <property name="margin-start">16</property>
@@ -57,22 +64,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="spacing">16</property>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Event Type</property>
-                        <accessibility>
-                          <property name="label">Event type information</property>
-                          <property name="description">The kind number and name of this event</property>
-                        </accessibility>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">0</property>
-                            <property name="spacing">12</property>
-                            <property name="margin-top">8</property>
+                            <property name="spacing">8</property>
                             <property name="margin-bottom">8</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Kind:</property>
+                                <property name="label" translatable="yes">Event Type:</property>
                                 <style>
                                   <class name="dim-label"/>
                                 </style>
@@ -80,69 +79,40 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkLabel" id="lbl_kind">
-                                <property name="label">0</property>
-                                <accessibility>
-                                  <property name="label">Event kind number</property>
-                                  <property name="description">The numeric kind identifier for this event</property>
-                                </accessibility>
-                                <style>
-                                  <class name="monospace"/>
-                                  <class name="title-3"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel" id="lbl_kind_name">
-                                <property name="label" translatable="yes">Metadata</property>
+                                <property name="label">Kind 1 - Note</property>
                                 <property name="hexpand">true</property>
                                 <property name="xalign">0</property>
                                 <accessibility>
-                                  <property name="label">Event kind name</property>
-                                  <property name="description">Human-readable name for this event type</property>
+                                  <property name="label">Event type</property>
+                                  <property name="description">The type and kind number of this event</property>
                                 </accessibility>
-                                <style>
-                                  <class name="dim-label"/>
-                                </style>
                               </object>
                             </child>
                           </object>
                         </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Date/Time</property>
-                        <accessibility>
-                          <property name="label">Event timestamp</property>
-                          <property name="description">When this event was created</property>
-                        </accessibility>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">0</property>
                             <property name="spacing">8</property>
-                            <property name="margin-top">8</property>
                             <property name="margin-bottom">8</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
                             <child>
-                              <object class="GtkImage">
-                                <property name="icon-name">appointment-symbolic</property>
-                                <accessibility>
-                                  <property name="label">Calendar icon</property>
-                                  <property name="description">Decorative calendar icon</property>
-                                </accessibility>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Public Key:</property>
                                 <style>
                                   <class name="dim-label"/>
                                 </style>
                               </object>
                             </child>
                             <child>
-                              <object class="GtkLabel" id="lbl_datetime">
-                                <property name="label">2024-01-01 12:00:00</property>
+                              <object class="GtkLabel" id="lbl_pubkey">
+                                <property name="label">npub1...</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                                <property name="ellipsize">3</property>
                                 <property name="selectable">true</property>
                                 <accessibility>
-                                  <property name="label">Event creation time</property>
-                                  <property name="description">The date and time when this event was signed</property>
+                                  <property name="label">Public key</property>
+                                  <property name="description">The public key of the signer</property>
                                 </accessibility>
                                 <style>
                                   <class name="monospace"/>
@@ -151,93 +121,58 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                           </object>
                         </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Identifiers</property>
-                        <property name="description" translatable="yes">Click copy buttons to copy full values</property>
-                        <accessibility>
-                          <property name="label">Event identifiers</property>
-                          <property name="description">Public key, event ID, and signature for this event</property>
-                        </accessibility>
                         <child>
-                          <object class="AdwActionRow" id="row_pubkey">
-                            <property name="title" translatable="yes">Public Key</property>
-                            <property name="subtitle">npub1...</property>
-                            <property name="subtitle-selectable">true</property>
-                            <accessibility>
-                              <property name="description">The public key of the signer</property>
-                            </accessibility>
-                            <style>
-                              <class name="property"/>
-                            </style>
-                            <child type="suffix">
-                              <object class="GtkButton" id="btn_copy_pubkey">
-                                <property name="icon-name">edit-copy-symbolic</property>
-                                <property name="tooltip-text" translatable="yes">Copy public key to clipboard</property>
-                                <property name="valign">3</property>
+                          <object class="GtkBox">
+                            <property name="orientation">0</property>
+                            <property name="spacing">8</property>
+                            <property name="margin-bottom">8</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Signature:</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_signature">
+                                <property name="label">sig1...</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                                <property name="ellipsize">3</property>
+                                <property name="selectable">true</property>
                                 <accessibility>
-                                  <property name="label">Copy public key</property>
-                                  <property name="description">Copy the full public key to clipboard</property>
+                                  <property name="label">Signature</property>
+                                  <property name="description">The cryptographic signature for this event</property>
                                 </accessibility>
                                 <style>
-                                  <class name="flat"/>
+                                  <class name="monospace"/>
                                 </style>
                               </object>
                             </child>
                           </object>
                         </child>
                         <child>
-                          <object class="AdwActionRow" id="row_event_id">
-                            <property name="title" translatable="yes">Event ID</property>
-                            <property name="subtitle">note1...</property>
-                            <property name="subtitle-selectable">true</property>
-                            <accessibility>
-                              <property name="description">The unique identifier for this event</property>
-                            </accessibility>
-                            <style>
-                              <class name="property"/>
-                            </style>
-                            <child type="suffix">
-                              <object class="GtkButton" id="btn_copy_event_id">
-                                <property name="icon-name">edit-copy-symbolic</property>
-                                <property name="tooltip-text" translatable="yes">Copy event ID to clipboard</property>
-                                <property name="valign">3</property>
-                                <accessibility>
-                                  <property name="label">Copy event ID</property>
-                                  <property name="description">Copy the full event ID to clipboard</property>
-                                </accessibility>
+                          <object class="GtkBox">
+                            <property name="orientation">0</property>
+                            <property name="spacing">8</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Timestamp:</property>
                                 <style>
-                                  <class name="flat"/>
+                                  <class name="dim-label"/>
                                 </style>
                               </object>
                             </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwActionRow" id="row_signature">
-                            <property name="title" translatable="yes">Signature</property>
-                            <property name="subtitle">sig...</property>
-                            <property name="subtitle-selectable">true</property>
-                            <accessibility>
-                              <property name="description">The cryptographic signature for this event</property>
-                            </accessibility>
-                            <style>
-                              <class name="property"/>
-                            </style>
-                            <child type="suffix">
-                              <object class="GtkButton" id="btn_copy_signature">
-                                <property name="icon-name">edit-copy-symbolic</property>
-                                <property name="tooltip-text" translatable="yes">Copy signature to clipboard</property>
-                                <property name="valign">3</property>
+                            <child>
+                              <object class="GtkLabel" id="lbl_timestamp">
+                                <property name="label">2024-01-01 12:00:00</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
                                 <accessibility>
-                                  <property name="label">Copy signature</property>
-                                  <property name="description">Copy the full signature to clipboard</property>
+                                  <property name="label">Timestamp</property>
+                                  <property name="description">When this event was created</property>
                                 </accessibility>
-                                <style>
-                                  <class name="flat"/>
-                                </style>
                               </object>
                             </child>
                           </object>
@@ -252,38 +187,30 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <property name="description">The content payload of this event</property>
                         </accessibility>
                         <child>
-                          <object class="GtkExpander" id="expander_content">
-                            <property name="label" translatable="yes">Show Content</property>
+                          <object class="GtkFrame">
                             <property name="margin-top">8</property>
-                            <property name="margin-bottom">8</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <accessibility>
-                              <property name="label">Show content</property>
-                              <property name="description">Expand to view the event content</property>
-                            </accessibility>
                             <child>
                               <object class="GtkScrolledWindow">
-                                <property name="hscrollbar-policy">1</property>
+                                <property name="hscrollbar-policy">2</property>
                                 <property name="vscrollbar-policy">1</property>
                                 <property name="min-content-height">60</property>
-                                <property name="max-content-height">200</property>
-                                <property name="margin-top">8</property>
+                                <property name="max-content-height">150</property>
                                 <child>
                                   <object class="GtkLabel" id="lbl_content">
-                                    <property name="label">(empty)</property>
+                                    <property name="label">Hello from Nostr! This is a signed note.</property>
                                     <property name="wrap">true</property>
                                     <property name="wrap-mode">2</property>
                                     <property name="selectable">true</property>
                                     <property name="xalign">0</property>
                                     <property name="yalign">0</property>
+                                    <property name="margin-top">12</property>
+                                    <property name="margin-bottom">12</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
                                     <accessibility>
                                       <property name="label">Event content text</property>
-                                      <property name="description">The full content of the event. Select to copy.</property>
+                                      <property name="description">The full content of the event</property>
                                     </accessibility>
-                                    <style>
-                                      <class name="monospace"/>
-                                    </style>
                                   </object>
                                 </child>
                               </object>
@@ -293,50 +220,41 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Tags</property>
+                      <object class="GtkButton" id="btn_copy_event_id">
+                        <property name="label" translatable="yes">Copy Event ID</property>
+                        <property name="halign">3</property>
                         <accessibility>
-                          <property name="label">Event tags</property>
-                          <property name="description">The tag array attached to this event</property>
+                          <property name="label">Copy event ID</property>
+                          <property name="description">Copy the full event ID to clipboard</property>
                         </accessibility>
-                        <child>
-                          <object class="GtkExpander" id="expander_tags">
-                            <property name="label" translatable="yes">Show Tags</property>
-                            <property name="margin-top">8</property>
-                            <property name="margin-bottom">8</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <accessibility>
-                              <property name="label">Show tags</property>
-                              <property name="description">Expand to view the event tags</property>
-                            </accessibility>
-                            <child>
-                              <object class="GtkScrolledWindow">
-                                <property name="hscrollbar-policy">2</property>
-                                <property name="vscrollbar-policy">1</property>
-                                <property name="min-content-height">60</property>
-                                <property name="max-content-height">200</property>
-                                <property name="margin-top">8</property>
-                                <child>
-                                  <object class="GtkListBox" id="list_tags">
-                                    <property name="selection-mode">0</property>
-                                    <accessibility>
-                                      <property name="label">Event tags list</property>
-                                      <property name="description">List of tags attached to this event</property>
-                                    </accessibility>
-                                    <style>
-                                      <class name="boxed-list"/>
-                                    </style>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
+                        <style>
+                          <class name="flat"/>
+                        </style>
                       </object>
                     </child>
                   </object>
                 </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">1</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-bottom">16</property>
+            <child>
+              <object class="GtkButton" id="btn_close">
+                <property name="label" translatable="yes">Close</property>
+                <property name="halign">0</property>
+                <accessibility>
+                  <property name="label">Close</property>
+                  <property name="description">Close this dialog</property>
+                </accessibility>
+                <style>
+                  <class name="pill"/>
+                </style>
               </object>
             </child>
           </object>

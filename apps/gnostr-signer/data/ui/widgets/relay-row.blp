@@ -1,24 +1,51 @@
 using Gtk 4.0;
-using Adw 1;
 
-template $RelayRow: Adw.ActionRow {
-  title: _("Relay URL");
-  subtitle: _("Status");
+template $RelayRow: Box {
+  orientation: horizontal;
+  spacing: 12;
+  margin-top: 8;
+  margin-bottom: 8;
+  margin-start: 12;
+  margin-end: 12;
 
   accessibility {
-    label: "Relay connection";
-    description: "A configured Nostr relay. Use the toggle to enable or disable this relay connection.";
+    label: "Relay entry";
+    description: "A configured Nostr relay with enable checkbox";
   }
 
-  [suffix]
-  Switch switch_enabled {
+  CheckButton chk_enabled {
     valign: center;
-    vexpand: false;
 
     accessibility {
       label: "Enable relay";
-      description: "Toggle to enable or disable this relay connection";
+      description: "Check to enable this relay connection";
     }
   }
-}
 
+  Label lbl_url {
+    label: _("wss://relay.example.com");
+    xalign: 0;
+    hexpand: true;
+    ellipsize: end;
+
+    accessibility {
+      description: "The relay WebSocket URL";
+    }
+  }
+
+  Button btn_remove {
+    icon-name: "edit-delete-symbolic";
+    valign: center;
+    visible: false;
+
+    accessibility {
+      label: "Remove relay";
+      description: "Remove this relay from the list";
+    }
+
+    styles [
+      "flat",
+      "circular",
+    ]
+  }
+}

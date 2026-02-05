@@ -80,6 +80,54 @@ static void factory_unbind_cb(GtkListItemFactory *factory, GtkListItem *list_ite
 
 /* ============== Factory Callbacks ============== */
 
+/* nostrc-7ycv: Callback for profile updates on bound items.
+ * When the profile property of an item changes (e.g., after fetching from relay),
+ * this updates the note card row with the new profile data. */
+static void on_item_profile_changed(GObject *item, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  if (!GTK_IS_LIST_ITEM(list_item)) return;
+
+  GtkWidget *child = gtk_list_item_get_child(list_item);
+  if (!GNOSTR_IS_NOTE_CARD_ROW(child)) return;
+
+  GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(child);
+  GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(item);
+
+  /* Get profile info */
+  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
+  gchar *pubkey = NULL;
+  GObject *profile = NULL;
+
+  g_object_get(G_OBJECT(event_item),
+               "pubkey", &pubkey,
+               "profile", &profile,
+               NULL);
+
+  if (profile) {
+    g_object_get(profile,
+                 "display-name", &display,
+                 "name", &handle,
+                 "picture-url", &avatar_url,
+                 "nip05", &nip05,
+                 NULL);
+    g_object_unref(profile);
+
+    /* Update the row with the new profile data */
+    gnostr_note_card_row_set_author(row, display, handle, avatar_url);
+
+    if (nip05 && pubkey) {
+      gnostr_note_card_row_set_nip05(row, nip05, pubkey);
+    }
+  }
+
+  g_free(display);
+  g_free(handle);
+  g_free(avatar_url);
+  g_free(nip05);
+  g_free(pubkey);
+}
+
 static void factory_setup_cb(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
   (void)factory;
   (void)user_data;
@@ -177,6 +225,18 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
     gtk_widget_remove_css_class(child, "note-revealing");
   }
 
+  /*
+   * nostrc-7ycv: Connect to item's profile notify signal.
+   * When profile data arrives later (async fetch), update the row.
+   * Store the handler ID on the list_item so we can disconnect on unbind.
+   */
+  gulong profile_handler_id = g_signal_connect(item, "notify::profile",
+                                                G_CALLBACK(on_item_profile_changed),
+                                                list_item);
+  g_object_set_data(G_OBJECT(list_item), "profile-handler-id",
+                    GUINT_TO_POINTER(profile_handler_id));
+  g_object_set_data(G_OBJECT(list_item), "bound-item", item);
+
   /* Cleanup */
   g_free(id_hex);
   g_free(pubkey);
@@ -198,6 +258,21 @@ static void factory_unbind_cb(GtkListItemFactory *factory, GtkListItem *list_ite
   if (!GNOSTR_IS_NOTE_CARD_ROW(child)) return;
 
   GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(child);
+
+  /*
+   * nostrc-7ycv: Disconnect profile notify signal handler.
+   * We stored the handler ID and item reference on bind.
+   */
+  gpointer handler_ptr = g_object_get_data(G_OBJECT(list_item), "profile-handler-id");
+  gpointer item_ptr = g_object_get_data(G_OBJECT(list_item), "bound-item");
+  if (handler_ptr && item_ptr && G_IS_OBJECT(item_ptr)) {
+    gulong handler_id = GPOINTER_TO_UINT(handler_ptr);
+    if (handler_id > 0) {
+      g_signal_handler_disconnect(item_ptr, handler_id);
+    }
+  }
+  g_object_set_data(G_OBJECT(list_item), "profile-handler-id", NULL);
+  g_object_set_data(G_OBJECT(list_item), "bound-item", NULL);
 
   /* nostrc-0hp Phase 3: Remove reveal animation CSS class on unbind */
   gtk_widget_remove_css_class(child, "note-revealing");

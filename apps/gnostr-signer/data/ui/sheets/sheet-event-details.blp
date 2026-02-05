@@ -2,34 +2,38 @@ using Gtk 4.0;
 using Adw 1;
 
 template $SheetEventDetails: Adw.Dialog {
-  title: _("Event Details");
-  content-width: 520;
-  content-height: 640;
+  title: _("View Event Details");
+  content-width: 400;
+  content-height: 500;
 
   accessibility {
     label: "Event details dialog";
-    description: "View detailed information about a signed Nostr event including type, timestamp, identifiers, content, and tags";
+    description: "View detailed information about a signed Nostr event";
   }
 
-  Adw.ToolbarView {
-    [top]
+  Box {
+    orientation: vertical;
+
     Adw.HeaderBar {
       accessibility {
         label: "Event details header";
       }
 
       title-widget: Label {
-        label: _("Event Details");
+        label: _("View Event Details");
+        styles ["title"]
       };
 
       [start]
-      Button btn_close {
-        label: _("Close");
+      Button btn_header_close {
+        icon-name: "window-close-symbolic";
 
         accessibility {
           label: "Close";
           description: "Close this dialog";
         }
+
+        styles ["flat"]
       }
     }
 
@@ -42,7 +46,7 @@ template $SheetEventDetails: Adw.Dialog {
       }
 
       Adw.Clamp {
-        maximum-size: 600;
+        maximum-size: 400;
         margin-top: 16;
         margin-bottom: 16;
         margin-start: 16;
@@ -52,206 +56,109 @@ template $SheetEventDetails: Adw.Dialog {
           orientation: vertical;
           spacing: 16;
 
+          /* Event Metadata */
           Adw.PreferencesGroup {
-            title: _("Event Type");
-
-            accessibility {
-              label: "Event type information";
-              description: "The kind number and name of this event";
-            }
-
+            /* Event Type Row */
             Box {
               orientation: horizontal;
-              spacing: 12;
-              margin-top: 8;
+              spacing: 8;
               margin-bottom: 8;
-              margin-start: 12;
-              margin-end: 12;
 
               Label {
-                label: _("Kind:");
-
-                styles [
-                  "dim-label",
-                ]
+                label: _("Event Type:");
+                styles ["dim-label"]
               }
 
               Label lbl_kind {
-                label: "0";
-
-                accessibility {
-                  label: "Event kind number";
-                  description: "The numeric kind identifier for this event";
-                }
-
-                styles [
-                  "monospace",
-                  "title-3",
-                ]
-              }
-
-              Label lbl_kind_name {
-                label: _("Metadata");
+                label: "Kind 1 - Note";
                 hexpand: true;
                 xalign: 0;
 
                 accessibility {
-                  label: "Event kind name";
-                  description: "Human-readable name for this event type";
+                  label: "Event type";
+                  description: "The type and kind number of this event";
                 }
-
-                styles [
-                  "dim-label",
-                ]
               }
             }
-          }
 
-          Adw.PreferencesGroup {
-            title: _("Date/Time");
-
-            accessibility {
-              label: "Event timestamp";
-              description: "When this event was created";
-            }
-
+            /* Public Key Row */
             Box {
               orientation: horizontal;
               spacing: 8;
-              margin-top: 8;
               margin-bottom: 8;
-              margin-start: 12;
-              margin-end: 12;
 
-              Image {
-                icon-name: "appointment-symbolic";
-
-                accessibility {
-                  label: "Calendar icon";
-                  description: "Decorative calendar icon";
-                }
-
-                styles [
-                  "dim-label",
-                ]
+              Label {
+                label: _("Public Key:");
+                styles ["dim-label"]
               }
 
-              Label lbl_datetime {
-                label: "2024-01-01 12:00:00";
+              Label lbl_pubkey {
+                label: "npub1...";
+                hexpand: true;
+                xalign: 0;
+                ellipsize: end;
                 selectable: true;
 
                 accessibility {
-                  label: "Event creation time";
-                  description: "The date and time when this event was signed";
+                  label: "Public key";
+                  description: "The public key of the signer";
                 }
 
-                styles [
-                  "monospace",
-                ]
+                styles ["monospace"]
+              }
+            }
+
+            /* Signature Row */
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+              margin-bottom: 8;
+
+              Label {
+                label: _("Signature:");
+                styles ["dim-label"]
+              }
+
+              Label lbl_signature {
+                label: "sig1...";
+                hexpand: true;
+                xalign: 0;
+                ellipsize: end;
+                selectable: true;
+
+                accessibility {
+                  label: "Signature";
+                  description: "The cryptographic signature for this event";
+                }
+
+                styles ["monospace"]
+              }
+            }
+
+            /* Timestamp Row */
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+
+              Label {
+                label: _("Timestamp:");
+                styles ["dim-label"]
+              }
+
+              Label lbl_timestamp {
+                label: "2024-01-01 12:00:00";
+                hexpand: true;
+                xalign: 0;
+
+                accessibility {
+                  label: "Timestamp";
+                  description: "When this event was created";
+                }
               }
             }
           }
 
-          Adw.PreferencesGroup {
-            title: _("Identifiers");
-            description: _("Click copy buttons to copy full values");
-
-            accessibility {
-              label: "Event identifiers";
-              description: "Public key, event ID, and signature for this event";
-            }
-
-            Adw.ActionRow row_pubkey {
-              title: _("Public Key");
-              subtitle: "npub1...";
-              subtitle-selectable: true;
-
-              accessibility {
-                description: "The public key of the signer";
-              }
-
-              styles [
-                "property",
-              ]
-
-              [suffix]
-              Button btn_copy_pubkey {
-                icon-name: "edit-copy-symbolic";
-                tooltip-text: _("Copy public key to clipboard");
-                valign: center;
-
-                accessibility {
-                  label: "Copy public key";
-                  description: "Copy the full public key to clipboard";
-                }
-
-                styles [
-                  "flat",
-                ]
-              }
-            }
-
-            Adw.ActionRow row_event_id {
-              title: _("Event ID");
-              subtitle: "note1...";
-              subtitle-selectable: true;
-
-              accessibility {
-                description: "The unique identifier for this event";
-              }
-
-              styles [
-                "property",
-              ]
-
-              [suffix]
-              Button btn_copy_event_id {
-                icon-name: "edit-copy-symbolic";
-                tooltip-text: _("Copy event ID to clipboard");
-                valign: center;
-
-                accessibility {
-                  label: "Copy event ID";
-                  description: "Copy the full event ID to clipboard";
-                }
-
-                styles [
-                  "flat",
-                ]
-              }
-            }
-
-            Adw.ActionRow row_signature {
-              title: _("Signature");
-              subtitle: "sig...";
-              subtitle-selectable: true;
-
-              accessibility {
-                description: "The cryptographic signature for this event";
-              }
-
-              styles [
-                "property",
-              ]
-
-              [suffix]
-              Button btn_copy_signature {
-                icon-name: "edit-copy-symbolic";
-                tooltip-text: _("Copy signature to clipboard");
-                valign: center;
-
-                accessibility {
-                  label: "Copy signature";
-                  description: "Copy the full signature to clipboard";
-                }
-
-                styles [
-                  "flat",
-                ]
-              }
-            }
-          }
-
+          /* Content Section */
           Adw.PreferencesGroup {
             title: _("Content");
 
@@ -260,91 +167,70 @@ template $SheetEventDetails: Adw.Dialog {
               description: "The content payload of this event";
             }
 
-            Expander expander_content {
-              label: _("Show Content");
+            Frame {
               margin-top: 8;
-              margin-bottom: 8;
-              margin-start: 12;
-              margin-end: 12;
-
-              accessibility {
-                label: "Show content";
-                description: "Expand to view the event content";
-              }
-
-              ScrolledWindow {
-                hscrollbar-policy: automatic;
-                vscrollbar-policy: automatic;
-                min-content-height: 60;
-                max-content-height: 200;
-                margin-top: 8;
-
-                Label lbl_content {
-                  label: "(empty)";
-                  wrap: true;
-                  wrap-mode: word_char;
-                  selectable: true;
-                  xalign: 0;
-                  yalign: 0;
-
-                  accessibility {
-                    label: "Event content text";
-                    description: "The full content of the event. Select to copy.";
-                  }
-
-                  styles [
-                    "monospace",
-                  ]
-                }
-              }
-            }
-          }
-
-          Adw.PreferencesGroup {
-            title: _("Tags");
-
-            accessibility {
-              label: "Event tags";
-              description: "The tag array attached to this event";
-            }
-
-            Expander expander_tags {
-              label: _("Show Tags");
-              margin-top: 8;
-              margin-bottom: 8;
-              margin-start: 12;
-              margin-end: 12;
-
-              accessibility {
-                label: "Show tags";
-                description: "Expand to view the event tags";
-              }
 
               ScrolledWindow {
                 hscrollbar-policy: never;
                 vscrollbar-policy: automatic;
                 min-content-height: 60;
-                max-content-height: 200;
-                margin-top: 8;
+                max-content-height: 150;
 
-                ListBox list_tags {
-                  selection-mode: none;
+                Label lbl_content {
+                  label: "Hello from Nostr! This is a signed note.";
+                  wrap: true;
+                  wrap-mode: word_char;
+                  selectable: true;
+                  xalign: 0;
+                  yalign: 0;
+                  margin-top: 12;
+                  margin-bottom: 12;
+                  margin-start: 12;
+                  margin-end: 12;
 
                   accessibility {
-                    label: "Event tags list";
-                    description: "List of tags attached to this event";
+                    label: "Event content text";
+                    description: "The full content of the event";
                   }
-
-                  styles [
-                    "boxed-list",
-                  ]
                 }
               }
             }
           }
+
+          /* Copy Event ID Button */
+          Button btn_copy_event_id {
+            label: _("Copy Event ID");
+            halign: center;
+
+            accessibility {
+              label: "Copy event ID";
+              description: "Copy the full event ID to clipboard";
+            }
+
+            styles ["flat"]
+          }
         }
+      }
+    }
+
+    /* Bottom Close Button */
+    Box {
+      orientation: vertical;
+      margin-start: 16;
+      margin-end: 16;
+      margin-bottom: 16;
+
+      Button btn_close {
+        label: _("Close");
+        halign: fill;
+
+        accessibility {
+          label: "Close";
+          description: "Close this dialog";
+        }
+
+        styles ["pill"]
       }
     }
   }
 }
-

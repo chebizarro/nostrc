@@ -7,372 +7,224 @@ template $ProfileDashboard: Adw.Bin {
     description: "Dashboard showing your profile information and quick actions";
   }
 
-  ScrolledWindow {
-    hscrollbar-policy: never;
+  Box {
+    orientation: vertical;
     vexpand: true;
 
-    Adw.Clamp {
-      maximum-size: 600;
-      tightening-threshold: 400;
-      margin-top: 16;
-      margin-bottom: 16;
-      margin-start: 12;
-      margin-end: 12;
+    /* Header */
+    Adw.HeaderBar {
+      title-widget: Label {
+        label: _("Profile & Keys");
+        styles ["title"]
+      };
 
-      Box {
-        orientation: vertical;
-        spacing: 20;
-        halign: fill;
-        valign: start;
+      [start]
+      Button btn_settings {
+        icon-name: "emblem-system-symbolic";
+        tooltip-text: _("Settings");
 
-        Box header_box {
+        accessibility {
+          label: "Settings";
+          description: "Open application settings";
+        }
+      }
+    }
+
+    /* Content */
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vexpand: true;
+
+      Adw.Clamp {
+        maximum-size: 500;
+        tightening-threshold: 400;
+        margin-top: 24;
+        margin-bottom: 24;
+        margin-start: 16;
+        margin-end: 16;
+
+        Box {
           orientation: vertical;
-          spacing: 12;
-          halign: center;
-
-          styles [
-            "profile-header",
-          ]
-
-          accessibility {
-            label: "Profile header";
-            description: "Your profile avatar, display name, and public key";
-          }
-
-          Adw.Avatar avatar {
-            size: 96;
-            text: "?";
-            show-initials: true;
-            halign: center;
-
-            accessibility {
-              label: "Profile avatar";
-              description: "Your profile picture or initials";
-            }
-          }
-
-          Label lbl_display_name {
-            label: _("Anonymous");
-            halign: center;
-            selectable: false;
-
-            accessibility {
-              label: "Display name";
-              description: "Your profile display name";
-            }
-
-            styles [
-              "title-2",
-            ]
-          }
-
-          Label lbl_npub {
-            label: "npub1...";
-            halign: center;
-            selectable: true;
-            tooltip-text: _("Click to copy full public key");
-
-            accessibility {
-              label: "Public key";
-              description: "Your Nostr public key in npub format. Select and copy to share.";
-            }
-
-            styles [
-              "dim-label",
-              "monospace",
-            ]
-          }
-        }
-
-        Separator {
-          orientation: horizontal;
-          margin-top: 12;
-          margin-bottom: 12;
-
-          accessibility {
-            label: "Section separator";
-            description: "Decorative separator between profile info and actions";
-          }
-        }
-
-        FlowBox action_grid {
-          selection-mode: none;
-          homogeneous: true;
-          min-children-per-line: 2;
-          max-children-per-line: 3;
-          row-spacing: 12;
-          column-spacing: 12;
-          halign: center;
+          spacing: 24;
+          halign: fill;
           valign: start;
-          activate-on-single-click: true;
 
-          accessibility {
-            label: "Quick actions";
-            description: "Grid of action buttons for common tasks. Use arrow keys to navigate.";
+          /* Profile Info Section */
+          Adw.PreferencesGroup {
+            Box {
+              orientation: vertical;
+              spacing: 8;
+
+              /* Profile Name Row */
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                Label {
+                  label: _("Profile:");
+                  styles ["dim-label"]
+                }
+
+                Label lbl_display_name {
+                  label: _("Anonymous");
+                  hexpand: true;
+                  xalign: 0;
+
+                  accessibility {
+                    label: "Display name";
+                    description: "Your profile display name";
+                  }
+                }
+              }
+
+              /* Public Key Row */
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                Label {
+                  label: _("Public Key:");
+                  styles ["dim-label"]
+                }
+
+                Label lbl_npub {
+                  label: "npub1...";
+                  hexpand: true;
+                  xalign: 0;
+                  selectable: true;
+                  ellipsize: end;
+                  tooltip-text: _("Click to copy full public key");
+
+                  accessibility {
+                    label: "Public key";
+                    description: "Your Nostr public key. Select and copy to share.";
+                  }
+
+                  styles ["monospace"]
+                }
+              }
+            }
           }
 
-          FlowBoxChild {
-            focusable: true;
-
-            Button btn_view_events {
-              width-request: 140;
-              height-request: 100;
-              tooltip-text: _("View event signing history");
+          /* Actions List */
+          Adw.PreferencesGroup {
+            Adw.ActionRow row_view_events {
+              title: _("View Events");
+              activatable: true;
 
               accessibility {
                 label: "View Events";
                 description: "View your recent event signing history";
               }
 
-              styles [
-                "flat",
-                "action-button",
-              ]
+              [prefix]
+              Image {
+                icon-name: "document-open-recent-symbolic";
 
-              Box {
-                orientation: vertical;
-                spacing: 8;
-                halign: center;
-                valign: center;
-
-                Image {
-                  icon-name: "document-open-recent-symbolic";
-                  pixel-size: 32;
-
-                  accessibility {
-                    label: "Events icon";
-                    description: "Decorative icon for viewing events";
-                  }
-                }
-
-                Label {
-                  label: _("View Events");
-                  wrap: true;
-                  max-width-chars: 12;
-                  justify: center;
+                accessibility {
+                  label: "Events icon";
                 }
               }
+
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+
+                styles ["dim-label"]
+              }
             }
-          }
 
-          FlowBoxChild {
-            focusable: true;
-
-            Button btn_manage_relays {
-              width-request: 140;
-              height-request: 100;
-              tooltip-text: _("Configure relay connections");
+            Adw.ActionRow row_manage_relays {
+              title: _("Manage Relays");
+              activatable: true;
 
               accessibility {
                 label: "Manage Relays";
                 description: "Configure your Nostr relay connections";
               }
 
-              styles [
-                "flat",
-                "action-button",
-              ]
+              [prefix]
+              Image {
+                icon-name: "network-server-symbolic";
 
-              Box {
-                orientation: vertical;
-                spacing: 8;
-                halign: center;
-                valign: center;
-
-                Image {
-                  icon-name: "network-server-symbolic";
-                  pixel-size: 32;
-
-                  accessibility {
-                    label: "Relays icon";
-                    description: "Decorative icon for relay management";
-                  }
-                }
-
-                Label {
-                  label: _("Manage Relays");
-                  wrap: true;
-                  max-width-chars: 12;
-                  justify: center;
+                accessibility {
+                  label: "Relays icon";
                 }
               }
+
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+
+                styles ["dim-label"]
+              }
             }
-          }
 
-          FlowBoxChild {
-            focusable: true;
-
-            Button btn_backup_keys {
-              width-request: 140;
-              height-request: 100;
-              tooltip-text: _("Export and backup your keys");
+            Adw.ActionRow row_backup_keys {
+              title: _("Backup Keys");
+              activatable: true;
 
               accessibility {
                 label: "Backup Keys";
                 description: "Export and securely backup your private keys";
               }
 
-              styles [
-                "flat",
-                "action-button",
-              ]
+              [prefix]
+              Image {
+                icon-name: "document-save-symbolic";
 
-              Box {
-                orientation: vertical;
-                spacing: 8;
-                halign: center;
-                valign: center;
-
-                Image {
-                  icon-name: "document-save-symbolic";
-                  pixel-size: 32;
-
-                  accessibility {
-                    label: "Backup icon";
-                    description: "Decorative icon for key backup";
-                  }
-                }
-
-                Label {
-                  label: _("Backup Keys");
-                  wrap: true;
-                  max-width-chars: 12;
-                  justify: center;
+                accessibility {
+                  label: "Backup icon";
                 }
               }
+
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+
+                styles ["dim-label"]
+              }
             }
-          }
 
-          FlowBoxChild {
-            focusable: true;
-
-            Button btn_change_password {
-              width-request: 140;
-              height-request: 100;
-              tooltip-text: _("Update your passphrase");
+            Adw.ActionRow row_change_password {
+              title: _("Change Password");
+              activatable: true;
 
               accessibility {
                 label: "Change Password";
                 description: "Update your encryption passphrase";
               }
 
-              styles [
-                "flat",
-                "action-button",
-              ]
+              [prefix]
+              Image {
+                icon-name: "dialog-password-symbolic";
 
-              Box {
-                orientation: vertical;
-                spacing: 8;
-                halign: center;
-                valign: center;
-
-                Image {
-                  icon-name: "dialog-password-symbolic";
-                  pixel-size: 32;
-
-                  accessibility {
-                    label: "Password icon";
-                    description: "Decorative icon for password change";
-                  }
+                accessibility {
+                  label: "Password icon";
                 }
+              }
 
-                Label {
-                  label: _("Change Password");
-                  wrap: true;
-                  max-width-chars: 12;
-                  justify: center;
-                }
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+
+                styles ["dim-label"]
               }
             }
           }
 
-          FlowBoxChild {
-            focusable: true;
+          /* Sign Message Button */
+          Button btn_sign_message {
+            label: _("Sign Message");
+            halign: fill;
+            tooltip-text: _("Manually sign a message or event");
 
-            Button btn_sign_message {
-              width-request: 140;
-              height-request: 100;
-              tooltip-text: _("Manually sign a message or event");
-
-              accessibility {
-                label: "Sign Message";
-                description: "Manually sign a message or Nostr event";
-              }
-
-              styles [
-                "flat",
-                "action-button",
-              ]
-
-              Box {
-                orientation: vertical;
-                spacing: 8;
-                halign: center;
-                valign: center;
-
-                Image {
-                  icon-name: "edit-symbolic";
-                  pixel-size: 32;
-
-                  accessibility {
-                    label: "Sign icon";
-                    description: "Decorative icon for message signing";
-                  }
-                }
-
-                Label {
-                  label: _("Sign Message");
-                  wrap: true;
-                  max-width-chars: 12;
-                  justify: center;
-                }
-              }
+            accessibility {
+              label: "Sign Message";
+              description: "Manually sign a message or Nostr event";
             }
-          }
 
-          FlowBoxChild {
-            focusable: true;
-
-            Button btn_delegations {
-              width-request: 140;
-              height-request: 100;
-              tooltip-text: _("Manage signing delegations (NIP-26)");
-
-              accessibility {
-                label: "Delegations";
-                description: "Manage NIP-26 signing delegations allowing other keys to sign on your behalf";
-              }
-
-              styles [
-                "flat",
-                "action-button",
-              ]
-
-              Box {
-                orientation: vertical;
-                spacing: 8;
-                halign: center;
-                valign: center;
-
-                Image {
-                  icon-name: "emblem-shared-symbolic";
-                  pixel-size: 32;
-
-                  accessibility {
-                    label: "Delegations icon";
-                    description: "Decorative icon for delegation management";
-                  }
-                }
-
-                Label {
-                  label: _("Delegations");
-                  wrap: true;
-                  max-width-chars: 12;
-                  justify: center;
-                }
-              }
-            }
+            styles ["suggested-action", "pill"]
           }
         }
       }

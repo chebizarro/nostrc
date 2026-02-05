@@ -6,21 +6,50 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="RelayRow" parent="AdwActionRow">
-    <property name="title" translatable="yes">Relay URL</property>
-    <property name="subtitle" translatable="yes">Status</property>
+  <template class="RelayRow" parent="GtkBox">
+    <property name="orientation">0</property>
+    <property name="spacing">12</property>
+    <property name="margin-top">8</property>
+    <property name="margin-bottom">8</property>
+    <property name="margin-start">12</property>
+    <property name="margin-end">12</property>
     <accessibility>
-      <property name="label">Relay connection</property>
-      <property name="description">A configured Nostr relay. Use the toggle to enable or disable this relay connection.</property>
+      <property name="label">Relay entry</property>
+      <property name="description">A configured Nostr relay with enable checkbox</property>
     </accessibility>
-    <child type="suffix">
-      <object class="GtkSwitch" id="switch_enabled">
+    <child>
+      <object class="GtkCheckButton" id="chk_enabled">
         <property name="valign">3</property>
-        <property name="vexpand">false</property>
         <accessibility>
           <property name="label">Enable relay</property>
-          <property name="description">Toggle to enable or disable this relay connection</property>
+          <property name="description">Check to enable this relay connection</property>
         </accessibility>
+      </object>
+    </child>
+    <child>
+      <object class="GtkLabel" id="lbl_url">
+        <property name="label" translatable="yes">wss://relay.example.com</property>
+        <property name="xalign">0</property>
+        <property name="hexpand">true</property>
+        <property name="ellipsize">3</property>
+        <accessibility>
+          <property name="description">The relay WebSocket URL</property>
+        </accessibility>
+      </object>
+    </child>
+    <child>
+      <object class="GtkButton" id="btn_remove">
+        <property name="icon-name">edit-delete-symbolic</property>
+        <property name="valign">3</property>
+        <property name="visible">false</property>
+        <accessibility>
+          <property name="label">Remove relay</property>
+          <property name="description">Remove this relay from the list</property>
+        </accessibility>
+        <style>
+          <class name="flat"/>
+          <class name="circular"/>
+        </style>
       </object>
     </child>
   </template>

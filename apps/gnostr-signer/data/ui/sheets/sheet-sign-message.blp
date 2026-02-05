@@ -3,7 +3,7 @@ using Adw 1;
 
 template $SheetSignMessage: Adw.Dialog {
   title: _("Sign Message");
-  content-width: 520;
+  content-width: 360;
   content-height: -1;
   follows-content-size: true;
   can-close: true;
@@ -16,61 +16,36 @@ template $SheetSignMessage: Adw.Dialog {
   Adw.ToolbarView {
     [top]
     Adw.HeaderBar {
+      show-title: true;
+
       accessibility {
         label: "Sign message header";
       }
 
-      title-widget: Label {
-        label: _("Sign Message");
-      };
-
-      [start]
-      Button btn_cancel {
-        label: _("Cancel");
-
-        accessibility {
-          label: "Cancel";
-          description: "Close without signing";
-        }
-      }
-
-      [end]
-      Button btn_sign {
-        label: _("Sign");
-        sensitive: false;
-
-        accessibility {
-          label: "Sign message";
-          description: "Sign the message with your private key";
-        }
-
-        styles [
-          "suggested-action",
-        ]
-      }
+      styles [
+        "flat",
+      ]
     }
 
     ScrolledWindow {
       hscrollbar-policy: never;
       vexpand: true;
-      propagate-natural-height: true;
 
       Adw.Clamp {
-        maximum-size: 560;
-        tightening-threshold: 400;
+        maximum-size: 340;
+        tightening-threshold: 300;
+        margin-top: 8;
+        margin-bottom: 16;
+        margin-start: 16;
+        margin-end: 16;
 
         Box {
           orientation: vertical;
-          spacing: 0;
-          vexpand: true;
+          spacing: 16;
 
           Box {
             orientation: vertical;
-            spacing: 8;
-            margin-top: 20;
-            margin-bottom: 16;
-            margin-start: 16;
-            margin-end: 16;
+            spacing: 4;
 
             accessibility {
               label: "Signing profile information";
@@ -79,7 +54,6 @@ template $SheetSignMessage: Adw.Dialog {
             Label {
               label: _("Signing Profile:");
               xalign: 0;
-              margin-bottom: 4;
 
               styles [
                 "dim-label",
@@ -105,17 +79,13 @@ template $SheetSignMessage: Adw.Dialog {
           Box {
             orientation: vertical;
             spacing: 8;
-            margin-start: 16;
-            margin-end: 16;
-            margin-bottom: 16;
-            vexpand: true;
 
             accessibility {
               label: "Message input section";
             }
 
             Label {
-              label: _("Message to Sign:");
+              label: _("Message to Sign");
               xalign: 0;
 
               styles [
@@ -126,8 +96,8 @@ template $SheetSignMessage: Adw.Dialog {
 
             ScrolledWindow {
               hscrollbar-policy: never;
-              vexpand: true;
-              min-content-height: 200;
+              min-content-height: 120;
+              max-content-height: 200;
 
               accessibility {
                 label: "Message text container";
@@ -160,9 +130,6 @@ template $SheetSignMessage: Adw.Dialog {
             Box {
               orientation: vertical;
               spacing: 8;
-              margin-start: 16;
-              margin-end: 16;
-              margin-bottom: 16;
 
               accessibility {
                 label: "Signature result section";
@@ -187,13 +154,13 @@ template $SheetSignMessage: Adw.Dialog {
                 ]
 
                 Label lbl_signature {
-                  label: "Signature will appear here";
+                  label: "";
                   selectable: true;
                   wrap: true;
                   wrap-mode: char;
                   xalign: 0;
                   margin-start: 12;
-                  margin-end: 12;
+                  margin-end: 4;
                   margin-top: 12;
                   margin-bottom: 12;
                   hexpand: true;
@@ -204,6 +171,7 @@ template $SheetSignMessage: Adw.Dialog {
 
                   styles [
                     "monospace",
+                    "caption",
                   ]
                 }
 
@@ -223,6 +191,36 @@ template $SheetSignMessage: Adw.Dialog {
                   ]
                 }
               }
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 12;
+            halign: end;
+            margin-top: 16;
+
+            Button btn_cancel {
+              label: _("Cancel");
+
+              accessibility {
+                label: "Cancel";
+                description: "Close without signing";
+              }
+            }
+
+            Button btn_sign {
+              label: _("Sign");
+              sensitive: false;
+
+              accessibility {
+                label: "Sign message";
+                description: "Sign the message with your private key";
+              }
+
+              styles [
+                "suggested-action",
+              ]
             }
           }
         }
