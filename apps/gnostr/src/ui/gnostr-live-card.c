@@ -356,16 +356,15 @@ update_display(GnostrLiveCard *self)
 
     /* Viewers */
     if (self->activity->current_viewers > 0) {
-        char *viewers_text = g_strdup_printf("%d watching", self->activity->current_viewers);
+        g_autofree char *viewers_text = g_strdup_printf("%d watching", self->activity->current_viewers);
         gtk_label_set_text(self->viewers_label, viewers_text);
         gtk_widget_set_visible(GTK_WIDGET(self->viewers_label), TRUE);
-        g_free(viewers_text);
     } else {
         gtk_widget_set_visible(GTK_WIDGET(self->viewers_label), FALSE);
     }
 
     /* Time info */
-    char *time_text = NULL;
+    g_autofree char *time_text = NULL;
     if (self->activity->status == GNOSTR_LIVE_STATUS_PLANNED) {
         time_text = gnostr_live_activity_format_time_until(self->activity);
     } else {
@@ -374,7 +373,6 @@ update_display(GnostrLiveCard *self)
     if (time_text) {
         gtk_label_set_text(self->time_label, time_text);
         gtk_widget_set_visible(GTK_WIDGET(self->time_label), TRUE);
-        g_free(time_text);
     } else {
         gtk_widget_set_visible(GTK_WIDGET(self->time_label), FALSE);
     }
@@ -388,11 +386,10 @@ update_display(GnostrLiveCard *self)
 
     if (self->activity->hashtags) {
         for (int i = 0; self->activity->hashtags[i] && i < 5; i++) {
-            char *tag_text = g_strdup_printf("#%s", self->activity->hashtags[i]);
+            g_autofree char *tag_text = g_strdup_printf("#%s", self->activity->hashtags[i]);
             GtkWidget *tag_label = gtk_label_new(tag_text);
             gtk_widget_add_css_class(tag_label, "live-hashtag");
             gtk_box_append(self->hashtags_box, tag_label);
-            g_free(tag_text);
         }
         gtk_widget_set_visible(GTK_WIDGET(self->hashtags_box), TRUE);
     } else {
@@ -521,11 +518,10 @@ update_speakers(GnostrLiveCard *self)
 
         /* Show "+N more" if there are more speakers */
         if (speaker_count > 4) {
-            char *more_text = g_strdup_printf("+%zu", speaker_count - 4);
+            g_autofree char *more_text = g_strdup_printf("+%zu", speaker_count - 4);
             GtkWidget *more_label = gtk_label_new(more_text);
             gtk_widget_add_css_class(more_label, "live-more-speakers");
             gtk_box_append(self->speakers_box, more_label);
-            g_free(more_text);
         }
 
         g_free(speakers);

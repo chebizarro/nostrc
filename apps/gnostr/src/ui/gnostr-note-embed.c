@@ -654,7 +654,7 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
   }
 
   if (GTK_IS_LABEL(self->handle_label)) {
-    char *handle_text = NULL;
+    g_autofree char *handle_text = NULL;
     if (author_handle && *author_handle) {
       if (author_handle[0] != '@') {
         handle_text = g_strdup_printf("@%s", author_handle);
@@ -663,7 +663,6 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
       }
     }
     gtk_label_set_text(GTK_LABEL(self->handle_label), handle_text ? handle_text : "");
-    g_free(handle_text);
   }
 
   if (GTK_IS_LABEL(self->timestamp_label)) {
@@ -671,9 +670,8 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
   }
 
   if (GTK_IS_LABEL(self->content_label)) {
-    char *truncated = truncate_content(content, 200);
+    g_autofree char *truncated = truncate_content(content, 200);
     gtk_label_set_text(GTK_LABEL(self->content_label), truncated);
-    g_free(truncated);
   }
 
   load_avatar(self, avatar_url, author_display, author_handle);
@@ -704,7 +702,7 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
   }
 
   if (GTK_IS_LABEL(self->handle_label)) {
-    char *handle_text = NULL;
+    g_autofree char *handle_text = NULL;
     if (handle && *handle) {
       if (handle[0] != '@') {
         handle_text = g_strdup_printf("@%s", handle);
@@ -715,13 +713,11 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
       handle_text = g_strdup_printf("%.8s...", self->target_id);
     }
     gtk_label_set_text(GTK_LABEL(self->handle_label), handle_text ? handle_text : "");
-    g_free(handle_text);
   }
 
   if (GTK_IS_LABEL(self->profile_about_label)) {
-    char *truncated = truncate_content(about, 150);
+    g_autofree char *truncated = truncate_content(about, 150);
     gtk_label_set_text(GTK_LABEL(self->profile_about_label), truncated ? truncated : "");
-    g_free(truncated);
   }
 
   load_avatar(self, avatar_url, display_name, handle);

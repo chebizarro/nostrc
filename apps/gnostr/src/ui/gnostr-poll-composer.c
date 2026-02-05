@@ -116,9 +116,8 @@ static void on_remove_option_clicked(GtkButton *btn, gpointer user_data) {
   /* Update placeholder numbers */
   for (guint i = 0; i < self->option_entries->len; i++) {
     GtkWidget *e = g_ptr_array_index(self->option_entries, i);
-    char *placeholder = g_strdup_printf("Option %u", i + 1);
+    g_autofree char *placeholder = g_strdup_printf("Option %u", i + 1);
     gtk_entry_set_placeholder_text(GTK_ENTRY(e), placeholder);
-    g_free(placeholder);
   }
 
   update_add_button_visibility(self);
@@ -140,18 +139,16 @@ static void add_option_entry(GnostrPollComposer *self) {
   gtk_widget_add_css_class(row, "poll-option-entry-row");
 
   /* Option number label */
-  char *label_text = g_strdup_printf("%u.", num);
+  g_autofree char *label_text = g_strdup_printf("%u.", num);
   GtkWidget *label = gtk_label_new(label_text);
   gtk_widget_add_css_class(label, "poll-option-number");
   gtk_widget_set_size_request(label, 24, -1);
-  g_free(label_text);
   gtk_box_append(GTK_BOX(row), label);
 
   /* Option text entry */
   GtkWidget *entry = gtk_entry_new();
-  char *placeholder = g_strdup_printf("Option %u", num);
+  g_autofree char *placeholder = g_strdup_printf("Option %u", num);
   gtk_entry_set_placeholder_text(GTK_ENTRY(entry), placeholder);
-  g_free(placeholder);
   gtk_entry_set_max_length(GTK_ENTRY(entry), 100);
   gtk_widget_set_hexpand(entry, TRUE);
   gtk_widget_add_css_class(entry, "poll-option-entry");

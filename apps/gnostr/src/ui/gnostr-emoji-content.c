@@ -132,7 +132,7 @@ static gchar *find_shortcode(const char *p, const char **end_pos) {
 static void add_text_segment(GnostrEmojiContent *self, const char *text, gsize len) {
   if (!text || len == 0) return;
 
-  gchar *segment = g_strndup(text, len);
+  g_autofree gchar *segment = g_strndup(text, len);
   GtkWidget *label = gtk_label_new(segment);
   gtk_label_set_wrap(GTK_LABEL(label), self->wrap);
   gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
@@ -141,7 +141,6 @@ static void add_text_segment(GnostrEmojiContent *self, const char *text, gsize l
   gtk_widget_add_css_class(label, "emoji-content-text");
 
   gtk_flow_box_append(GTK_FLOW_BOX(self->flow_box), label);
-  g_free(segment);
 }
 
 /**
