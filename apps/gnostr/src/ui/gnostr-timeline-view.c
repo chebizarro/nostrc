@@ -15,6 +15,7 @@
 #include "../util/bookmarks.h"
 #include "../util/nip32_labels.h"
 #include "../util/nip23.h"
+#include "../util/nip34.h"
 #include "../util/nip71.h"
 #include "nostr-filter.h"
 #include "nostr-tag.h"
@@ -2278,6 +2279,50 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         /* Debug logging removed - too verbose */
       } else {
         /* Fallback to regular note display if parsing fails */
+        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+      }
+    }
+    /* NIP-34: Handle git repository events (kind 30617) */
+    else if (gnostr_nip34_is_repo(event_kind) && tags_json) {
+      GnostrRepoMeta *repo_meta = gnostr_repo_parse_tags(tags_json);
+      if (repo_meta) {
+        gnostr_note_card_row_set_git_repo_mode(GNOSTR_NOTE_CARD_ROW(row),
+                                                repo_meta->name,
+                                                repo_meta->description,
+                                                (const char *const *)repo_meta->clone_urls,
+                                                (const char *const *)repo_meta->web_urls,
+                                                (const char *const *)repo_meta->topics,
+                                                repo_meta->maintainers_count,
+                                                repo_meta->license);
+        gnostr_repo_meta_free(repo_meta);
+      } else {
+        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+      }
+    }
+    /* NIP-34: Handle git patch events (kind 1617) */
+    else if (gnostr_nip34_is_patch(event_kind) && tags_json) {
+      GnostrPatchMeta *patch_meta = gnostr_patch_parse_tags(tags_json, content);
+      if (patch_meta) {
+        gnostr_note_card_row_set_git_patch_mode(GNOSTR_NOTE_CARD_ROW(row),
+                                                 patch_meta->title,
+                                                 NULL, /* TODO: resolve repo name from a-tag */
+                                                 patch_meta->commit_id);
+        gnostr_patch_meta_free(patch_meta);
+      } else {
+        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+      }
+    }
+    /* NIP-34: Handle git issue events (kind 1621) */
+    else if (gnostr_nip34_is_issue(event_kind) && tags_json) {
+      GnostrIssueMeta *issue_meta = gnostr_issue_parse_tags(tags_json, content);
+      if (issue_meta) {
+        gnostr_note_card_row_set_git_issue_mode(GNOSTR_NOTE_CARD_ROW(row),
+                                                 issue_meta->title,
+                                                 NULL, /* TODO: resolve repo name from a-tag */
+                                                 issue_meta->is_open,
+                                                 (const char *const *)issue_meta->labels);
+        gnostr_issue_meta_free(issue_meta);
+      } else {
         gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
       }
     } else if (tags_json) {

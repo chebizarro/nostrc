@@ -224,6 +224,48 @@ const char *gnostr_note_card_row_get_video_d_tag(GnostrNoteCardRow *self);
 /* NIP-71: Get the video URL */
 const char *gnostr_note_card_row_get_video_url(GnostrNoteCardRow *self);
 
+/* NIP-34 Git Repository: Transform this card into git repo display mode
+ * @self: note card row
+ * @name: Repository name
+ * @description: Repository description (optional)
+ * @clone_urls: Array of git clone URLs (optional, NULL-terminated)
+ * @web_urls: Array of web URLs (optional, NULL-terminated)
+ * @topics: Array of topics/tags (optional, NULL-terminated)
+ * @maintainer_count: Number of maintainers
+ * @license: License identifier (optional)
+ *
+ * When called, switches the card to repository display mode:
+ * - Shows repo name prominently with git icon
+ * - Displays description
+ * - Shows clone URL with copy button
+ * - Lists topics as chips
+ * - Shows maintainer count and license
+ */
+void gnostr_note_card_row_set_git_repo_mode(GnostrNoteCardRow *self,
+                                             const char *name,
+                                             const char *description,
+                                             const char *const *clone_urls,
+                                             const char *const *web_urls,
+                                             const char *const *topics,
+                                             gsize maintainer_count,
+                                             const char *license);
+
+/* NIP-34 Git Patch: Transform this card into patch display mode */
+void gnostr_note_card_row_set_git_patch_mode(GnostrNoteCardRow *self,
+                                              const char *title,
+                                              const char *repo_name,
+                                              const char *commit_id);
+
+/* NIP-34 Git Issue: Transform this card into issue display mode */
+void gnostr_note_card_row_set_git_issue_mode(GnostrNoteCardRow *self,
+                                              const char *title,
+                                              const char *repo_name,
+                                              gboolean is_open,
+                                              const char *const *labels);
+
+/* NIP-34: Check if this card is displaying a git event */
+gboolean gnostr_note_card_row_is_git_event(GnostrNoteCardRow *self);
+
 /* NIP-84 Highlights: Enable text selection mode for highlighting */
 void gnostr_note_card_row_enable_text_selection(GnostrNoteCardRow *self, gboolean enable);
 

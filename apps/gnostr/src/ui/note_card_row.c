@@ -5325,6 +5325,211 @@ const char *gnostr_note_card_row_get_video_url(GnostrNoteCardRow *self) {
   return self->video_url;
 }
 
+/* NIP-34: Transform card into git repository display mode */
+void gnostr_note_card_row_set_git_repo_mode(GnostrNoteCardRow *self,
+                                             const char *name,
+                                             const char *description,
+                                             const char *const *clone_urls,
+                                             const char *const *web_urls,
+                                             const char *const *topics,
+                                             gsize maintainer_count,
+                                             const char *license) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+
+  /* Add repo CSS class */
+  if (GTK_IS_WIDGET(self->root)) {
+    gtk_widget_add_css_class(self->root, "git-repo-card");
+  }
+
+  /* Build rich content display */
+  GString *content = g_string_new(NULL);
+
+  /* Repository name with icon */
+  g_string_append_printf(content, "<span weight='bold' size='large'>📦 %s</span>",
+                         (name && *name) ? name : "Unnamed Repository");
+
+  /* Description */
+  if (description && *description) {
+    g_string_append_printf(content, "\n\n%s", description);
+  }
+
+  /* Clone URL(s) */
+  if (clone_urls && clone_urls[0]) {
+    g_string_append(content, "\n\n<span weight='bold'>Clone:</span>");
+    for (int i = 0; clone_urls[i]; i++) {
+      g_string_append_printf(content, "\n<span font_family='monospace' size='small'>%s</span>",
+                             clone_urls[i]);
+    }
+  }
+
+  /* Web URL(s) */
+  if (web_urls && web_urls[0]) {
+    g_string_append(content, "\n\n<span weight='bold'>Web:</span>");
+    for (int i = 0; web_urls[i]; i++) {
+      g_string_append_printf(content, "\n<a href='%s'>%s</a>", web_urls[i], web_urls[i]);
+    }
+  }
+
+  /* Metadata line: maintainers and license */
+  GString *meta_line = g_string_new(NULL);
+  if (maintainer_count > 0) {
+    g_string_append_printf(meta_line, "👥 %zu maintainer%s",
+                           maintainer_count, maintainer_count == 1 ? "" : "s");
+  }
+  if (license && *license) {
+    if (meta_line->len > 0) g_string_append(meta_line, "  •  ");
+    g_string_append_printf(meta_line, "📄 %s", license);
+  }
+  if (meta_line->len > 0) {
+    g_string_append_printf(content, "\n\n<span size='small' foreground='gray'>%s</span>",
+                           meta_line->str);
+  }
+  g_string_free(meta_line, TRUE);
+
+  /* Set content with markup */
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+    gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
+    gtk_widget_add_css_class(self->content_label, "git-repo-content");
+  }
+  g_string_free(content, TRUE);
+
+  /* Display topics as hashtags */
+  if (topics && topics[0] && GTK_IS_FLOW_BOX(self->hashtags_box)) {
+    /* Clear existing */
+    GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->hashtags_box));
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_flow_box_remove(GTK_FLOW_BOX(self->hashtags_box), child);
+      child = next;
+    }
+
+    /* Add topic chips */
+    for (int i = 0; topics[i]; i++) {
+      GtkWidget *chip = gtk_button_new_with_label(topics[i]);
+      gtk_widget_add_css_class(chip, "topic-chip");
+      gtk_button_set_has_frame(GTK_BUTTON(chip), FALSE);
+      gtk_flow_box_append(GTK_FLOW_BOX(self->hashtags_box), chip);
+    }
+    gtk_widget_set_visible(GTK_WIDGET(self->hashtags_box), TRUE);
+  }
+
+  /* Hide standard note actions that don't apply to repos */
+  if (GTK_IS_WIDGET(self->btn_reply))
+    gtk_widget_set_visible(self->btn_reply, FALSE);
+  if (GTK_IS_WIDGET(self->btn_repost))
+    gtk_widget_set_visible(self->btn_repost, FALSE);
+
+  g_debug("NIP-34: Set git repo mode - name='%s' clone_count=%d",
+          name ? name : "(null)", clone_urls ? (int)g_strv_length((gchar**)clone_urls) : 0);
+}
+
+/* NIP-34: Transform card into git patch display mode */
+void gnostr_note_card_row_set_git_patch_mode(GnostrNoteCardRow *self,
+                                              const char *title,
+                                              const char *repo_name,
+                                              const char *commit_id) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+
+  if (GTK_IS_WIDGET(self->root)) {
+    gtk_widget_add_css_class(self->root, "git-patch-card");
+  }
+
+  GString *content = g_string_new(NULL);
+
+  /* Patch icon and title */
+  g_string_append_printf(content, "<span weight='bold'>🔧 %s</span>",
+                         (title && *title) ? title : "Untitled Patch");
+
+  /* Repository reference */
+  if (repo_name && *repo_name) {
+    g_string_append_printf(content, "\n<span size='small' foreground='gray'>for %s</span>",
+                           repo_name);
+  }
+
+  /* Commit reference */
+  if (commit_id && *commit_id) {
+    g_string_append_printf(content, "\n<span font_family='monospace' size='small'>%.8s</span>",
+                           commit_id);
+  }
+
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+    gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
+    gtk_widget_add_css_class(self->content_label, "git-patch-content");
+  }
+  g_string_free(content, TRUE);
+
+  g_debug("NIP-34: Set git patch mode - title='%s'", title ? title : "(null)");
+}
+
+/* NIP-34: Transform card into git issue display mode */
+void gnostr_note_card_row_set_git_issue_mode(GnostrNoteCardRow *self,
+                                              const char *title,
+                                              const char *repo_name,
+                                              gboolean is_open,
+                                              const char *const *labels) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+
+  if (GTK_IS_WIDGET(self->root)) {
+    gtk_widget_add_css_class(self->root, "git-issue-card");
+  }
+
+  GString *content = g_string_new(NULL);
+
+  /* Issue icon (open/closed) and title */
+  const char *icon = is_open ? "🟢" : "🔴";
+  g_string_append_printf(content, "<span weight='bold'>%s %s</span>",
+                         icon, (title && *title) ? title : "Untitled Issue");
+
+  /* Repository reference */
+  if (repo_name && *repo_name) {
+    g_string_append_printf(content, "\n<span size='small' foreground='gray'>in %s</span>",
+                           repo_name);
+  }
+
+  /* Status */
+  g_string_append_printf(content, "\n<span size='small'>%s</span>",
+                         is_open ? "Open" : "Closed");
+
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+    gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
+    gtk_widget_add_css_class(self->content_label, "git-issue-content");
+  }
+  g_string_free(content, TRUE);
+
+  /* Display labels if available */
+  if (labels && labels[0] && GTK_IS_FLOW_BOX(self->labels_box)) {
+    /* Clear existing */
+    GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->labels_box));
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_flow_box_remove(GTK_FLOW_BOX(self->labels_box), child);
+      child = next;
+    }
+
+    /* Add label chips */
+    for (int i = 0; labels[i]; i++) {
+      GtkWidget *chip = gtk_label_new(labels[i]);
+      gtk_widget_add_css_class(chip, "issue-label");
+      gtk_flow_box_append(GTK_FLOW_BOX(self->labels_box), chip);
+    }
+    gtk_widget_set_visible(GTK_WIDGET(self->labels_box), TRUE);
+  }
+
+  g_debug("NIP-34: Set git issue mode - title='%s' open=%d", title ? title : "(null)", is_open);
+}
+
+/* NIP-34: Check if this card is displaying a git event */
+gboolean gnostr_note_card_row_is_git_event(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+  if (!GTK_IS_WIDGET(self->root)) return FALSE;
+  return gtk_widget_has_css_class(self->root, "git-repo-card") ||
+         gtk_widget_has_css_class(self->root, "git-patch-card") ||
+         gtk_widget_has_css_class(self->root, "git-issue-card");
+}
+
 /* NIP-84: Enable text selection mode for highlighting */
 void gnostr_note_card_row_enable_text_selection(GnostrNoteCardRow *self, gboolean enable) {
   g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
