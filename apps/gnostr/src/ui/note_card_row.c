@@ -2976,8 +2976,10 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
   gboolean markup_allocated = (markup != NULL);
   if (!markup) markup = escape_markup(content);
-  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
+   * which is false during factory binding, causing content to be silently skipped.
+   * Setting label text doesn't require mapping; GTK stores it for later rendering. */
+  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
   }
@@ -3287,8 +3289,10 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
   gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
   gboolean markup_allocated = (markup != NULL);
   if (!markup) markup = escape_markup(content);
-  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
+   * which is false during factory binding, causing content to be silently skipped.
+   * Setting label text doesn't require mapping; GTK stores it for later rendering. */
+  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
   }
@@ -4858,8 +4862,9 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
   }
 
   /* Set summary as content (with markdown conversion) */
-  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
+   * which is false during factory binding, causing content to be silently skipped. */
+  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     if (summary && *summary) {
       gchar *pango_summary = markdown_to_pango_summary(summary, 300);
       gtk_label_set_markup(GTK_LABEL(self->content_label), pango_summary);
@@ -5243,8 +5248,9 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
   }
 
   /* Set summary as content if provided */
-  /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
+   * which is false during factory binding, causing content to be silently skipped. */
+  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     if (summary && *summary) {
       gtk_label_set_text(GTK_LABEL(self->content_label), summary);
       gtk_widget_add_css_class(self->content_label, "video-summary");
