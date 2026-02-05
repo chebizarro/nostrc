@@ -439,9 +439,14 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
   g_free(tmp);
 }
 
-/* Notify cached items that their "profile" property should be re-read by views. */
+/* Notify cached items that their "profile" property should be re-read by views.
+ * nostrc-80i1: Actually SET the profile on the item, not just notify. */
 static void notify_cached_items_for_pubkey(GnNostrEventModel *self, const char *pubkey_hex) {
   if (!self || !pubkey_hex || !self->item_cache) return;
+
+  /* Get the profile from the model's cache */
+  GnNostrProfile *profile = profile_cache_get(self, pubkey_hex);
+  if (!profile) return; /* No profile to set */
 
   GHashTableIter iter;
   gpointer key, value;
@@ -451,7 +456,8 @@ static void notify_cached_items_for_pubkey(GnNostrEventModel *self, const char *
     GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(value);
     const char *item_pubkey = gn_nostr_event_item_get_pubkey(item);
     if (item_pubkey && g_strcmp0(item_pubkey, pubkey_hex) == 0) {
-      g_object_notify(G_OBJECT(item), "profile");
+      /* Actually set the profile on the item - this will also notify */
+      gn_nostr_event_item_set_profile(item, profile);
     }
   }
 }
