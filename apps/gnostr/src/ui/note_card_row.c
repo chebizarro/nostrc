@@ -2461,7 +2461,9 @@ static GtkWidget *create_image_container(const char *url, int height, const char
   GtkWidget *container = gtk_overlay_new();
   gtk_widget_add_css_class(container, "media-image-container");
   gtk_widget_set_size_request(container, -1, height);
-  gtk_widget_set_hexpand(container, TRUE);
+  /* nostrc-1tn9: Don't use hexpand which can force window to grow.
+   * Use FILL alignment to fill available space without requesting more. */
+  gtk_widget_set_halign(container, GTK_ALIGN_FILL);
   gtk_widget_set_vexpand(container, FALSE);
 
   /* Create picture widget (visible but empty initially - needed for lazy loading map signal) */
@@ -2471,7 +2473,8 @@ static GtkWidget *create_image_container(const char *url, int height, const char
   gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
   gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
   gtk_widget_set_size_request(pic, -1, height);
-  gtk_widget_set_hexpand(pic, TRUE);
+  /* nostrc-1tn9: Don't use hexpand - fill parent width without expanding */
+  gtk_widget_set_halign(pic, GTK_ALIGN_FILL);
   gtk_widget_set_vexpand(pic, FALSE);
   /* Picture must be visible for lazy loading to work (map signal won't fire otherwise).
    * The spinner overlay covers it until loading completes. */

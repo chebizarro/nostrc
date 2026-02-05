@@ -238,7 +238,7 @@ template $GnostrNoteCardRow: Widget {
             Box content_column {
                 orientation: vertical;
                 spacing: 8;
-                hexpand: true;
+                /* nostrc-1tn9: Don't use hexpand which can force window to grow */
 
                 Overlay sensitive_content_overlay {
                     visible: false;

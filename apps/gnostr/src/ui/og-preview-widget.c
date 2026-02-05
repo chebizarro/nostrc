@@ -687,6 +687,9 @@ static void og_preview_widget_init(OgPreviewWidget *self) {
   gtk_widget_add_css_class(self->image_widget, "og-preview-image");
   gtk_widget_set_size_request(self->image_widget, -1, 200);
   gtk_picture_set_content_fit(GTK_PICTURE(self->image_widget), GTK_CONTENT_FIT_COVER);
+  /* nostrc-1tn9: Ensure image can shrink and doesn't force window expansion */
+  gtk_picture_set_can_shrink(GTK_PICTURE(self->image_widget), TRUE);
+  gtk_widget_set_halign(self->image_widget, GTK_ALIGN_FILL);
   gtk_widget_set_visible(self->image_widget, FALSE);
   gtk_box_append(GTK_BOX(self->card_box), self->image_widget);
   
