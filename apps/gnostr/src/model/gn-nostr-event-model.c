@@ -943,6 +943,47 @@ static gboolean add_pending(GnNostrEventModel *self, const char *pubkey_hex, uin
   return first;
 }
 
+/* nostrc-5r8b: Helper to insert note without emitting signal (for batching) */
+static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
+                                    const char *root_id, const char *parent_id, guint depth) {
+  if (has_note_key(self, note_key)) return FALSE;
+
+  /* Store thread info */
+  if (root_id || parent_id) {
+    if (!g_hash_table_contains(self->thread_info, &note_key)) {
+      ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+      tinfo->root_id = g_strdup(root_id);
+      tinfo->parent_id = g_strdup(parent_id);
+      tinfo->depth = depth;
+      uint64_t *key_copy = g_new(uint64_t, 1);
+      *key_copy = note_key;
+      g_hash_table_insert(self->thread_info, key_copy, tinfo);
+    }
+  }
+
+  /* nostrc-yi2: Defer if user is scrolled down (calm timeline) */
+  if (!self->is_thread_view && !self->user_at_top) {
+    defer_note_insertion(self, note_key, created_at);
+    return FALSE;  /* Deferred, not inserted */
+  }
+
+  /* Find sorted position and insert */
+  guint pos = find_sorted_position(self, created_at);
+  if (pos < self->visible_start || pos > self->visible_end) {
+    uint64_t *key_copy = g_new(uint64_t, 1);
+    *key_copy = note_key;
+    g_hash_table_insert(self->skip_animation_keys, key_copy, GINT_TO_POINTER(1));
+  }
+
+  NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+  g_array_insert_val(self->notes, pos, entry);
+  return TRUE;  /* Actually inserted */
+}
+
+/* nostrc-5r8b: Batched flush to avoid UI thread blocking.
+ * Instead of emitting items_changed for each note, we batch all insertions
+ * and emit a SINGLE signal at the end. This reduces O(N) layout recalculations
+ * to O(1), dramatically improving performance when many pending notes flush. */
 static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex) {
   if (!self || !pubkey_hex || !self->pending_by_author) return;
 
@@ -959,10 +1000,14 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
   GArray *arr = (GArray *)value;
   char *key_str = (char *)orig_key;
 
-  if (!arr) {
+  if (!arr || arr->len == 0) {
+    if (arr) g_array_unref(arr);
     g_free(key_str);
     return;
   }
+
+  guint old_len = self->notes->len;
+  guint inserted_count = 0;
 
   /* Open transaction to access note tags for NIP-10 parsing */
   void *txn = NULL;
@@ -983,7 +1028,10 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
       }
     }
 
-    add_note_internal(self, pe->note_key, pe->created_at, root_id, reply_id, 0);
+    /* Insert without emitting signal */
+    if (insert_note_silent(self, pe->note_key, pe->created_at, root_id, reply_id, 0)) {
+      inserted_count++;
+    }
     g_free(root_id);
     g_free(reply_id);
   }
@@ -994,6 +1042,15 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
 
   g_array_unref(arr);
   g_free(key_str);
+
+  /* Emit a SINGLE items_changed covering all insertions.
+   * We use (0, 0, new_len - old_len) which tells ListView to re-read
+   * items from position 0. This is more efficient than N individual signals. */
+  if (inserted_count > 0) {
+    guint new_len = self->notes->len;
+    g_debug("[FLUSH] Batched %u note insertions (%u -> %u items)", inserted_count, old_len, new_len);
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, new_len - old_len);
+  }
 
   enforce_window(self);
 }
