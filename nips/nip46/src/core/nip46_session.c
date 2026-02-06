@@ -10,6 +10,9 @@
 #include "nostr-relay.h"
 #include "nostr-filter.h"
 #include "nostr-tag.h"
+#include "nostr-subscription.h"
+#include "select.h"
+#include "error.h"
 #include "secure_buf.h"
 #include "json.h"
 #include <stdio.h>
@@ -25,6 +28,13 @@ static int csv_split(const char *csv, char ***out_vec, size_t *out_n);
 static void csv_free(char **vec, size_t n);
 static void acl_set_perms(NostrNip46Session *s, const char *client_pk, const char *perms_csv);
 static int acl_has_perm(const NostrNip46Session *s, const char *client_pk, const char *method);
+
+/* Pending RPC request entry - waiting for response from signer */
+typedef struct PendingRequest {
+    char *request_id;           /* RPC request ID to match response */
+    GoChannel *response_chan;   /* Channel to send response to waiting caller */
+    struct PendingRequest *next;
+} PendingRequest;
 
 struct NostrNip46Session {
     /* Session metadata */
@@ -47,12 +57,20 @@ struct NostrNip46Session {
     char *bunker_secret_hex;              /* our bunker identity secret key (hex) */
     int listening;                        /* whether bunker is actively listening */
     char *current_request_client_pubkey;  /* client pubkey for current request context */
+
+    /* Client mode transport: persistent pool and subscription for RPC */
+    NostrSimplePool *client_pool;         /* Persistent pool for client RPC calls */
+    int client_pool_started;              /* Whether client pool is running */
+    pthread_mutex_t pending_mutex;        /* Protects pending_requests */
+    PendingRequest *pending_requests;     /* Linked list of pending RPC requests */
+    char *derived_client_pubkey;          /* Client pubkey derived from secret */
 };
 
 /* Common helpers */
 static NostrNip46Session *session_new(const char *note) {
     NostrNip46Session *s = (NostrNip46Session *)calloc(1, sizeof(*s));
     if (!s) return NULL;
+    pthread_mutex_init(&s->pending_mutex, NULL);
     if (note) s->note = strdup(note);
     return s;
 }
@@ -138,6 +156,28 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     if (s->bunker_pubkey_hex) { free(s->bunker_pubkey_hex); }
     if (s->bunker_secret_hex) { memset(s->bunker_secret_hex, 0, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
     if (s->current_request_client_pubkey) { free(s->current_request_client_pubkey); }
+    /* free client mode transport */
+    if (s->client_pool) {
+        nostr_simple_pool_stop(s->client_pool);
+        nostr_simple_pool_free(s->client_pool);
+    }
+    /* cancel and free pending requests */
+    pthread_mutex_lock(&s->pending_mutex);
+    PendingRequest *pr = s->pending_requests;
+    while (pr) {
+        PendingRequest *next = pr->next;
+        if (pr->response_chan) {
+            go_channel_close(pr->response_chan);
+            go_channel_free(pr->response_chan);
+        }
+        free(pr->request_id);
+        free(pr);
+        pr = next;
+    }
+    s->pending_requests = NULL;
+    pthread_mutex_unlock(&s->pending_mutex);
+    pthread_mutex_destroy(&s->pending_mutex);
+    if (s->derived_client_pubkey) { free(s->derived_client_pubkey); }
     free(s);
 }
 
@@ -260,83 +300,8 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey);
 
-/* nostrc-stsz: Static context for synchronous NIP-46 request-response
- * Using static global since middleware doesn't support user_data */
-static struct {
-    char *response_content;    /* Encrypted response from signer */
-    char *response_pubkey;     /* Pubkey of response sender */
-    volatile int received;     /* Flag set when response received */
-    char *expected_client_pk;  /* Our client pubkey to filter responses */
-    char *expected_req_id;     /* Request ID to match responses */
-} s_nip46_resp_ctx;
-
-static unsigned int s_nip46_req_counter = 0; /* Counter for unique request IDs */
-
-static pthread_mutex_t s_nip46_resp_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t s_nip46_resp_cond = PTHREAD_COND_INITIALIZER;
-
-/* Callback for incoming NIP-46 sign responses */
-static void nip46_client_event_cb(NostrIncomingEvent *incoming) {
-    if (!incoming || !incoming->event) return;
-
-    NostrEvent *ev = incoming->event;
-    int kind = nostr_event_get_kind(ev);
-
-    /* Log ALL incoming events to see what we're receiving */
-    fprintf(stderr, "[nip46] EVENT CALLBACK: kind=%d\n", kind);
-
-    if (kind != NOSTR_EVENT_KIND_NIP46) return;
-
-    const char *content = nostr_event_get_content(ev);
-    const char *sender_pubkey = nostr_event_get_pubkey(ev);
-    fprintf(stderr, "[nip46] NIP46 event from %s\n", sender_pubkey ? sender_pubkey : "(null)");
-
-    if (!content || !sender_pubkey) return;
-
-    /* Check if this response is for us (has p-tag with our pubkey) */
-    NostrTags *tags = nostr_event_get_tags(ev);
-    if (!tags) {
-        fprintf(stderr, "[nip46] No tags in response\n");
-        return;
-    }
-
-    int found_ptag = 0;
-    size_t tag_count = nostr_tags_size(tags);
-    for (size_t i = 0; i < tag_count; i++) {
-        NostrTag *tag = nostr_tags_get(tags, i);
-        if (!tag || nostr_tag_size(tag) < 2) continue;
-        const char *key = nostr_tag_get_key(tag);
-        const char *val = nostr_tag_get_value(tag);
-        if (key && val && strcmp(key, "p") == 0) {
-            pthread_mutex_lock(&s_nip46_resp_mutex);
-            fprintf(stderr, "[nip46] Response p-tag: %s, expected: %s\n",
-                    val, s_nip46_resp_ctx.expected_client_pk ? s_nip46_resp_ctx.expected_client_pk : "(null)");
-            if (s_nip46_resp_ctx.expected_client_pk &&
-                strcmp(val, s_nip46_resp_ctx.expected_client_pk) == 0) {
-                found_ptag = 1;
-            }
-            pthread_mutex_unlock(&s_nip46_resp_mutex);
-            break;
-        }
-    }
-
-    if (!found_ptag) {
-        fprintf(stderr, "[nip46] p-tag mismatch, ignoring response\n");
-        return;
-    }
-
-    fprintf(stderr, "[nip46] sign_event: received response from %s\n", sender_pubkey);
-
-    /* Store the response for processing */
-    pthread_mutex_lock(&s_nip46_resp_mutex);
-    if (!s_nip46_resp_ctx.received) {
-        s_nip46_resp_ctx.response_content = strdup(content);
-        s_nip46_resp_ctx.response_pubkey = strdup(sender_pubkey);
-        s_nip46_resp_ctx.received = 1;
-        pthread_cond_signal(&s_nip46_resp_cond);
-    }
-    pthread_mutex_unlock(&s_nip46_resp_mutex);
-}
+/* Request ID counter for unique IDs */
+static unsigned int s_nip46_req_counter = 0;
 
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json) {
     if (!s) {
@@ -372,7 +337,17 @@ int nostr_nip46_client_ping(NostrNip46Session *s) {
     (void)s; return 0;
 }
 
-/* nostrc-nip46-rpc: Helper function to send an RPC request and wait for response.
+/* nostrc-nip46-rpc: Event-driven RPC helper using Go-style channel select.
+ *
+ * This function implements proper relay-based pub/sub messaging:
+ * 1. Subscribe FIRST to all relays for responses tagged to our pubkey
+ * 2. Publish the request to ALL relays
+ * 3. Wait for events using go_select_timeout on subscription channels
+ * 4. React to event PRESENCE (response arrived) or ABSENCE (EOSE with no match)
+ *
+ * This avoids treating relays like REST APIs with arbitrary timeouts.
+ * The presence or absence of events drives the flow, not wall-clock time.
+ *
  * Returns the "result" field from the response on success, or NULL on error.
  * If out_response_pubkey is non-NULL, it receives the pubkey of the responding event.
  * Caller must free the returned strings. */
@@ -399,7 +374,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
     fprintf(stderr, "[nip46] %s: building request\n", method);
 
-    /* Build request JSON with unique ID (timestamp + counter) */
+    /* Build request JSON with unique ID */
     char req_id[32];
     snprintf(req_id, sizeof(req_id), "%lx_%u", (unsigned long)time(NULL), ++s_nip46_req_counter);
     fprintf(stderr, "[nip46] %s: request id = %s\n", method, req_id);
@@ -409,9 +384,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         return NULL;
     }
 
-    fprintf(stderr, "[nip46] %s: encrypting request to peer %s\n", method, peer);
-
-    /* Encrypt request using NIP-44 */
+    /* Parse keys */
     unsigned char sk[32];
     if (parse_sk32(s->secret, sk) != 0) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to parse secret key\n", method);
@@ -426,6 +399,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         return NULL;
     }
 
+    /* Encrypt request using NIP-44 */
     char *cipher = NULL;
     if (nostr_nip44_encrypt_v2(sk, peer_pk, (const uint8_t *)req, strlen(req), &cipher) != 0 || !cipher) {
         fprintf(stderr, "[nip46] %s: ERROR: NIP-44 encryption failed\n", method);
@@ -435,9 +409,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     }
     free(req);
 
-    fprintf(stderr, "[nip46] %s: request encrypted successfully\n", method);
-
-    /* Derive our client pubkey from secret */
+    /* Derive our client pubkey */
     char *client_pubkey = nostr_key_get_public(s->secret);
     if (!client_pubkey) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to derive client pubkey\n", method);
@@ -453,11 +425,10 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     nostr_event_set_created_at(req_ev, (int64_t)time(NULL));
     nostr_event_set_pubkey(req_ev, client_pubkey);
 
-    /* Add p-tag for signer's pubkey */
     NostrTags *tags = nostr_tags_new(1, nostr_tag_new("p", peer, NULL));
     nostr_event_set_tags(req_ev, tags);
 
-    /* Sign the request event with our client key */
+    /* Sign the request event */
     nostr_secure_buf sb = secure_alloc(32);
     if (!sb.ptr) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to allocate secure buffer\n", method);
@@ -481,240 +452,237 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     secure_free(&sb);
     free(cipher);
 
-    fprintf(stderr, "[nip46] %s: signed request event, publishing to %zu relay(s)\n", method, s->n_relays);
+    fprintf(stderr, "[nip46] %s: signed request, connecting to %zu relay(s)\n", method, s->n_relays);
 
-    /* Initialize response context */
-    pthread_mutex_lock(&s_nip46_resp_mutex);
-    if (s_nip46_resp_ctx.response_content) free(s_nip46_resp_ctx.response_content);
-    if (s_nip46_resp_ctx.response_pubkey) free(s_nip46_resp_ctx.response_pubkey);
-    if (s_nip46_resp_ctx.expected_client_pk) free(s_nip46_resp_ctx.expected_client_pk);
-    if (s_nip46_resp_ctx.expected_req_id) free(s_nip46_resp_ctx.expected_req_id);
-    s_nip46_resp_ctx.response_content = NULL;
-    s_nip46_resp_ctx.response_pubkey = NULL;
-    s_nip46_resp_ctx.expected_client_pk = strdup(client_pubkey);
-    s_nip46_resp_ctx.expected_req_id = strdup(req_id);
-    s_nip46_resp_ctx.received = 0;
-    pthread_mutex_unlock(&s_nip46_resp_mutex);
-
-    /* Create relay pool for this request */
-    NostrSimplePool *pool = nostr_simple_pool_new();
-    if (!pool) {
-        fprintf(stderr, "[nip46] %s: ERROR: failed to create relay pool\n", method);
-        secure_wipe(sk, sizeof(sk));
-        free(client_pubkey);
-        nostr_event_free(req_ev);
-        return NULL;
-    }
-
-    nostr_simple_pool_set_event_middleware(pool, nip46_client_event_cb);
-
-    /* Connect to relays and subscribe for responses */
+    /* Build filter for responses: kind 24133 tagged to our pubkey */
     NostrFilters *filters = nostr_filters_new();
     NostrFilter *f = nostr_filter_new();
     int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
     nostr_filter_set_kinds(f, kinds, 1);
-
-    /* Filter for events tagged with our pubkey */
     NostrTags *filter_tags = nostr_tags_new(1, nostr_tag_new("p", client_pubkey, NULL));
     nostr_filter_set_tags(f, filter_tags);
-
-    /* Only get events from recently - wide window for clock skew between client/signer/relays */
-    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 60);  /* 60-second buffer for clock skew */
-
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 60);  /* 60s clock skew buffer */
     NostrFilter f_copy = *f;
     free(f);
     nostr_filters_add(filters, &f_copy);
 
-    /* Ensure relays exist in pool */
+    /* Create subscriptions for each relay and collect their channels */
+    NostrSubscription **subs = (NostrSubscription **)calloc(s->n_relays, sizeof(NostrSubscription *));
+    NostrRelay **relays = (NostrRelay **)calloc(s->n_relays, sizeof(NostrRelay *));
+    size_t active_count = 0;
+
     for (size_t i = 0; i < s->n_relays; i++) {
-        nostr_simple_pool_ensure_relay(pool, s->relays[i]);
+        Error *relay_err = NULL;
+        NostrRelay *relay = nostr_relay_new(NULL, s->relays[i], &relay_err);
+        if (!relay) {
+            if (relay_err) free_error(relay_err);
+            continue;
+        }
+
+        /* Connect to relay */
+        Error *conn_err = NULL;
+        if (!nostr_relay_connect(relay, &conn_err)) {
+            fprintf(stderr, "[nip46] %s: failed to connect to %s\n", method, s->relays[i]);
+            if (conn_err) free_error(conn_err);
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        /* Wait for handshake with small timeout */
+        int wait_ms = 0;
+        while (!nostr_relay_is_established(relay) && wait_ms < 3000) {
+            usleep(50000);
+            wait_ms += 50;
+        }
+        if (!nostr_relay_is_established(relay)) {
+            fprintf(stderr, "[nip46] %s: handshake timeout for %s\n", method, s->relays[i]);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        /* Create subscription on this relay */
+        NostrSubscription *sub = nostr_subscription_new(relay, filters);
+        if (!sub) {
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        /* Fire the subscription to start receiving events */
+        Error *err = NULL;
+        if (!nostr_subscription_fire(sub, &err)) {
+            fprintf(stderr, "[nip46] %s: subscription fire failed for %s\n", method, s->relays[i]);
+            nostr_subscription_free(sub);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        relays[active_count] = relay;
+        subs[active_count] = sub;
+        active_count++;
+        fprintf(stderr, "[nip46] %s: subscribed to %s\n", method, s->relays[i]);
     }
 
-    /* Start pool BEFORE subscribing - connection happens asynchronously */
-    nostr_simple_pool_start(pool);
+    nostr_filters_free(filters);
 
-    /* Wait for relay connection BEFORE subscribing.
-     * The WebSocket handshake must complete (established flag set) before we can
-     * send the subscription REQ. Otherwise nostr_subscription_fire times out
-     * waiting for write confirmation on a socket that isn't ready yet.
-     *
-     * We poll nostr_relay_is_established() which checks the established flag,
-     * ensuring the handshake is actually complete - not just that connection
-     * was initiated. */
-    int connected = 0;
-    int max_wait_ms = 5000;  /* 5 second timeout */
-    int poll_interval_ms = 50;  /* Check every 50ms */
-    int elapsed_ms = 0;
-
-    while (!connected && elapsed_ms < max_wait_ms) {
-        for (size_t r = 0; r < pool->relay_count; r++) {
-            if (pool->relays[r] && nostr_relay_is_established(pool->relays[r])) {
-                connected = 1;
-                break;
-            }
-        }
-        if (!connected) {
-            usleep(poll_interval_ms * 1000);
-            elapsed_ms += poll_interval_ms;
-        }
-    }
-
-    if (!connected) {
-        fprintf(stderr, "[nip46] %s: ERROR: relay connection timeout (handshake not complete)\n", method);
-        nostr_simple_pool_stop(pool);
-        nostr_simple_pool_free(pool);
+    if (active_count == 0) {
+        fprintf(stderr, "[nip46] %s: ERROR: no relays connected\n", method);
+        free(subs);
+        free(relays);
         nostr_event_free(req_ev);
-        nostr_filters_free(filters);
         secure_wipe(sk, sizeof(sk));
         free(client_pubkey);
         return NULL;
     }
 
-    fprintf(stderr, "[nip46] %s: relay connected (handshake complete), now subscribing\n", method);
+    /* Publish request to ALL connected relays */
+    for (size_t i = 0; i < active_count; i++) {
+        fprintf(stderr, "[nip46] %s: publishing to %s\n", method, nostr_relay_get_url_const(relays[i]));
+        nostr_relay_publish(relays[i], req_ev);
+    }
+    nostr_event_free(req_ev);
 
-    /* Subscribe AFTER connection is established - REQ can now be sent successfully */
-    nostr_simple_pool_subscribe(pool, (const char **)s->relays, s->n_relays, *filters, true);
+    /* Build select cases for all subscription event channels and EOSE channels */
+    size_t num_cases = active_count * 2;  /* events + eose for each relay */
+    GoSelectCase *cases = (GoSelectCase *)calloc(num_cases, sizeof(GoSelectCase));
+    void **recv_bufs = (void **)calloc(num_cases, sizeof(void *));
 
-    /* Publish the request to each relay */
-    for (size_t i = 0; i < s->n_relays; i++) {
-        fprintf(stderr, "[nip46] %s: publishing to %s\n", method, s->relays[i]);
-        for (size_t r = 0; r < pool->relay_count; r++) {
-            if (pool->relays[r] && pool->relays[r]->url &&
-                strcmp(pool->relays[r]->url, s->relays[i]) == 0) {
-                nostr_relay_publish(pool->relays[r], req_ev);
-                break;
-            }
-        }
+    for (size_t i = 0; i < active_count; i++) {
+        /* Events channel */
+        cases[i * 2].op = GO_SELECT_RECEIVE;
+        cases[i * 2].chan = nostr_subscription_get_events_channel(subs[i]);
+        cases[i * 2].recv_buf = &recv_bufs[i * 2];
+
+        /* EOSE channel */
+        cases[i * 2 + 1].op = GO_SELECT_RECEIVE;
+        cases[i * 2 + 1].chan = nostr_subscription_get_eose_channel(subs[i]);
+        cases[i * 2 + 1].recv_buf = &recv_bufs[i * 2 + 1];
     }
 
-    nostr_event_free(req_ev);
-    nostr_filters_free(filters);
-
-    /* Wait for response with retry loop for stale responses.
-     * Stale responses occur when relay delivers old events (e.g., "ack" from
-     * previous connect RPC) before the response we're waiting for. */
-    char *response_content = NULL;
-    char *response_pubkey = NULL;
+    /* Wait for events using go_select_timeout.
+     * We react to:
+     * - Event arrival: check if it matches our request ID
+     * - EOSE: relay has sent all stored events, new events may still arrive
+     * - Timeout: no response within reasonable time (only as last resort) */
     char *result = NULL;
-    int max_retries = 10;  /* Ignore up to 10 stale responses */
+    char *response_pubkey = NULL;
+    int eose_count = 0;
+    int max_events = 20;  /* Process up to 20 events before giving up */
 
-    for (int attempt = 0; attempt < max_retries; attempt++) {
-        /* Wait for a response with timeout (30 seconds per attempt).
-         * This prevents indefinite hangs if signer doesn't respond. */
-        pthread_mutex_lock(&s_nip46_resp_mutex);
-        while (!s_nip46_resp_ctx.received) {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += 30;  /* 30-second timeout */
-            int wait_rc = pthread_cond_timedwait(&s_nip46_resp_cond, &s_nip46_resp_mutex, &ts);
-            if (wait_rc == ETIMEDOUT) {
-                fprintf(stderr, "[nip46] %s: attempt %d: timeout waiting for response\n", method, attempt + 1);
-                pthread_mutex_unlock(&s_nip46_resp_mutex);
-                goto cleanup_and_fail;
+    for (int event_num = 0; event_num < max_events; event_num++) {
+        /* Use go_select_timeout to wait for any channel to be ready.
+         * After EOSE from all relays, use shorter timeout since we expect
+         * the response to arrive quickly as a new event. */
+        uint64_t timeout_ms = (eose_count >= (int)active_count) ? 5000 : 30000;
+
+        GoSelectResult sel = go_select_timeout(cases, num_cases, timeout_ms);
+
+        if (sel.selected_case == -1) {
+            /* Timeout - no events arrived */
+            if (eose_count >= (int)active_count) {
+                fprintf(stderr, "[nip46] %s: timeout after EOSE - no matching response\n", method);
+            } else {
+                fprintf(stderr, "[nip46] %s: timeout waiting for events\n", method);
             }
+            break;
         }
-        response_content = s_nip46_resp_ctx.response_content;
-        response_pubkey = s_nip46_resp_ctx.response_pubkey;
-        s_nip46_resp_ctx.response_content = NULL;
-        s_nip46_resp_ctx.response_pubkey = NULL;
-        s_nip46_resp_ctx.received = 0;  /* Reset for potential retry */
-        pthread_mutex_unlock(&s_nip46_resp_mutex);
 
-        if (!response_content) {
-            fprintf(stderr, "[nip46] %s: attempt %d: no response content\n", method, attempt + 1);
+        if (!sel.ok) {
+            /* Channel closed */
             continue;
         }
 
-        fprintf(stderr, "[nip46] %s: attempt %d, decrypting response...\n", method, attempt + 1);
+        size_t case_idx = (size_t)sel.selected_case;
+
+        /* Check if this is an EOSE notification */
+        if (case_idx % 2 == 1) {
+            eose_count++;
+            fprintf(stderr, "[nip46] %s: EOSE from relay %zu (%d/%zu)\n",
+                    method, case_idx / 2, eose_count, active_count);
+            continue;
+        }
+
+        /* This is an event - process it */
+        NostrEvent *ev = (NostrEvent *)recv_bufs[case_idx];
+        if (!ev) continue;
+
+        const char *content = nostr_event_get_content(ev);
+        const char *sender_pubkey = nostr_event_get_pubkey(ev);
+
+        if (!content || !sender_pubkey) {
+            nostr_event_free(ev);
+            continue;
+        }
+
+        fprintf(stderr, "[nip46] %s: received event from %s\n", method, sender_pubkey);
 
         /* Decrypt response */
         unsigned char resp_pk[32];
-        if (parse_peer_xonly32(response_pubkey, resp_pk) != 0) {
-            fprintf(stderr, "[nip46] %s: attempt %d: failed to parse response pubkey, retrying\n", method, attempt + 1);
-            free(response_content);
-            free(response_pubkey);
-            response_content = NULL;
-            response_pubkey = NULL;
+        if (parse_peer_xonly32(sender_pubkey, resp_pk) != 0) {
+            fprintf(stderr, "[nip46] %s: invalid sender pubkey, skipping\n", method);
+            nostr_event_free(ev);
             continue;
         }
 
         uint8_t *plaintext = NULL;
         size_t plaintext_len = 0;
 
-        /* Detect encryption format: NIP-04 contains "?iv=", NIP-44 does not */
-        int is_nip04 = (strstr(response_content, "?iv=") != NULL);
+        /* Detect encryption format: NIP-04 contains "?iv=" */
+        int is_nip04 = (strstr(content, "?iv=") != NULL);
 
         if (is_nip04) {
             char *plaintext_str = NULL;
             char *error_msg = NULL;
-            if (nostr_nip04_decrypt(response_content, response_pubkey, s->secret,
+            if (nostr_nip04_decrypt(content, sender_pubkey, s->secret,
                                     &plaintext_str, &error_msg) != 0 || !plaintext_str) {
-                fprintf(stderr, "[nip46] %s: attempt %d: NIP-04 decrypt failed, retrying\n", method, attempt + 1);
+                fprintf(stderr, "[nip46] %s: NIP-04 decrypt failed, skipping\n", method);
                 free(error_msg);
-                free(response_content);
-                free(response_pubkey);
-                response_content = NULL;
-                response_pubkey = NULL;
+                nostr_event_free(ev);
                 continue;
             }
             free(error_msg);
             plaintext_len = strlen(plaintext_str);
             plaintext = (uint8_t *)plaintext_str;
         } else {
-            if (nostr_nip44_decrypt_v2(sk, resp_pk, response_content, &plaintext, &plaintext_len) != 0 || !plaintext) {
-                fprintf(stderr, "[nip46] %s: attempt %d: NIP-44 decrypt failed, retrying\n", method, attempt + 1);
-                free(response_content);
-                free(response_pubkey);
-                response_content = NULL;
-                response_pubkey = NULL;
+            if (nostr_nip44_decrypt_v2(sk, resp_pk, content, &plaintext, &plaintext_len) != 0 || !plaintext) {
+                fprintf(stderr, "[nip46] %s: NIP-44 decrypt failed, skipping\n", method);
+                nostr_event_free(ev);
                 continue;
             }
         }
 
-        free(response_content);
-        response_content = NULL;
+        nostr_event_free(ev);
 
-        /* Null-terminate for JSON parsing */
+        /* Parse JSON response */
         char *response_json = (char *)malloc(plaintext_len + 1);
         if (!response_json) {
             free(plaintext);
-            free(response_pubkey);
-            response_pubkey = NULL;
             continue;
         }
         memcpy(response_json, plaintext, plaintext_len);
         response_json[plaintext_len] = '\0';
         free(plaintext);
 
-        fprintf(stderr, "[nip46] %s: decrypted response: %.100s...\n", method, response_json);
+        fprintf(stderr, "[nip46] %s: decrypted: %.100s...\n", method, response_json);
 
-        /* Parse response and validate ID */
         if (!nostr_json_is_valid(response_json)) {
-            fprintf(stderr, "[nip46] %s: attempt %d: invalid JSON, retrying\n", method, attempt + 1);
+            fprintf(stderr, "[nip46] %s: invalid JSON, skipping\n", method);
             free(response_json);
-            free(response_pubkey);
-            response_pubkey = NULL;
             continue;
         }
 
-        /* Validate response ID matches our request ID */
+        /* Check if response ID matches our request */
         char *resp_id = NULL;
         if (nostr_json_get_string(response_json, "id", &resp_id) == 0 && resp_id) {
-            pthread_mutex_lock(&s_nip46_resp_mutex);
-            const char *expected_id = s_nip46_resp_ctx.expected_req_id;
-            int id_matches = expected_id && strcmp(resp_id, expected_id) == 0;
-            pthread_mutex_unlock(&s_nip46_resp_mutex);
-
-            if (!id_matches) {
-                fprintf(stderr, "[nip46] %s: attempt %d: stale response id '%s' != expected '%s', retrying\n",
-                        method, attempt + 1, resp_id, expected_id ? expected_id : "(null)");
+            if (strcmp(resp_id, req_id) != 0) {
+                fprintf(stderr, "[nip46] %s: stale response id '%s' != expected '%s', skipping\n",
+                        method, resp_id, req_id);
                 free(resp_id);
                 free(response_json);
-                free(response_pubkey);
-                response_pubkey = NULL;
-                continue;  /* RETRY instead of fail */
+                continue;
             }
-            fprintf(stderr, "[nip46] %s: response id matches: %s\n", method, resp_id);
             free(resp_id);
         }
 
@@ -726,49 +694,47 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
             fprintf(stderr, "[nip46] %s: ERROR: signer error: %s\n", method, err_msg);
             free(err_msg);
             free(response_json);
-            free(response_pubkey);
-            nostr_simple_pool_stop(pool);
-            nostr_simple_pool_free(pool);
-            secure_wipe(sk, sizeof(sk));
-            free(client_pubkey);
-            return NULL;
+            /* This is a valid response (matching ID) but it's an error - stop processing */
+            break;
         }
         free(err_msg);
 
         /* Get the result */
         if (nostr_json_get_string(response_json, "result", &result) != 0 || !result) {
-            fprintf(stderr, "[nip46] %s: ERROR: no result in response\n", method);
+            fprintf(stderr, "[nip46] %s: no result field, skipping\n", method);
             free(response_json);
-            free(response_pubkey);
-            nostr_simple_pool_stop(pool);
-            nostr_simple_pool_free(pool);
-            secure_wipe(sk, sizeof(sk));
-            free(client_pubkey);
-            return NULL;
+            continue;
         }
         free(response_json);
 
-        /* Success! Return response pubkey if caller wants it */
-        if (out_response_pubkey) {
-            *out_response_pubkey = response_pubkey;
-        } else {
-            free(response_pubkey);
-        }
-        break;  /* Got valid response, exit retry loop */
+        /* Success! Save sender pubkey if caller wants it */
+        response_pubkey = strdup(sender_pubkey);
+        fprintf(stderr, "[nip46] %s: SUCCESS - result: %.50s\n", method, result);
+        break;
     }
 
-cleanup_and_fail:
-    nostr_simple_pool_stop(pool);
-    nostr_simple_pool_free(pool);
+    /* Cleanup */
+    free(cases);
+    free(recv_bufs);
+
+    for (size_t i = 0; i < active_count; i++) {
+        nostr_subscription_unsubscribe(subs[i]);
+        nostr_subscription_free(subs[i]);
+        nostr_relay_disconnect(relays[i]);
+        nostr_relay_free(relays[i]);
+    }
+    free(subs);
+    free(relays);
+
     secure_wipe(sk, sizeof(sk));
     free(client_pubkey);
 
-    if (!result) {
-        fprintf(stderr, "[nip46] %s: ERROR: exhausted retries waiting for response\n", method);
-        return NULL;
+    if (out_response_pubkey) {
+        *out_response_pubkey = response_pubkey;
+    } else {
+        free(response_pubkey);
     }
 
-    fprintf(stderr, "[nip46] %s: SUCCESS - result: %.50s\n", method, result);
     return result;
 }
 
