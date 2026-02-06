@@ -136,32 +136,24 @@ char *nostr_nip46_request_build(const char *id,
     char *eid = escape_json_string(id);
     char *emethod = escape_json_string(method);
     if (!eid || !emethod) { free(eid); free(emethod); return NULL; }
-    /* Prepare params: embed raw JSON (objects/arrays) without quoting; otherwise JSON-stringify */
-    char **eparams = NULL; /* escaped strings for non-raw */
-    int *is_raw = NULL;
-    size_t *plen = NULL; /* computed length contribution for each param in output */
+    /* Prepare params: ALL params are JSON strings per NIP-46 spec.
+     * Previously this code auto-detected JSON objects/arrays and embedded them
+     * raw, but NIP-46 requires params like sign_event to be JSON-stringified
+     * (e.g., params:["{\"kind\":7,...}"] not params:[{"kind":7,...}]). */
+    char **eparams = NULL;
+    size_t *plen = NULL;
     if (n_params > 0) {
         eparams = (char**)calloc(n_params, sizeof(char*));
-        is_raw = (int*)calloc(n_params, sizeof(int));
         plen = (size_t*)calloc(n_params, sizeof(size_t));
-        if (!eparams || !is_raw || !plen) { free(eparams); free(is_raw); free(plen); free(eid); free(emethod); return NULL; }
+        if (!eparams || !plen) { free(eparams); free(plen); free(eid); free(emethod); return NULL; }
         for (size_t i = 0; i < n_params; ++i) {
             const char *p = (params && params[i]) ? params[i] : "";
-            /* Trim leading whitespace to detect JSON object/array */
-            const char *t = p; while (*t && isspace((unsigned char)*t)) ++t;
-            if (*t == '{' || *t == '[') {
-                is_raw[i] = 1;
-                eparams[i] = NULL;
-                plen[i] = strlen(p); /* as-is, no surrounding quotes */
-            } else {
-                is_raw[i] = 0;
-                eparams[i] = escape_json_string(p);
-                if (!eparams[i]) {
-                    for (size_t j = 0; j < i; ++j) free(eparams[j]);
-                    free(eparams); free(is_raw); free(plen); free(eid); free(emethod); return NULL;
-                }
-                plen[i] = 2 + strlen(eparams[i]); /* quotes around escaped */
+            eparams[i] = escape_json_string(p);
+            if (!eparams[i]) {
+                for (size_t j = 0; j < i; ++j) free(eparams[j]);
+                free(eparams); free(plen); free(eid); free(emethod); return NULL;
             }
+            plen[i] = 2 + strlen(eparams[i]); /* quotes around escaped */
         }
     }
     size_t cap = 32 + strlen(eid) + strlen(emethod);
@@ -172,22 +164,18 @@ char *nostr_nip46_request_build(const char *id,
     }
     size_t buf_size = cap + 32;
     char *buf = (char*)malloc(buf_size);
-    if (!buf) { if (eparams){ for (size_t i=0;i<n_params;++i) free(eparams[i]); free(eparams);} free(is_raw); free(plen); free(eid); free(emethod); return NULL; }
+    if (!buf) { if (eparams){ for (size_t i=0;i<n_params;++i) free(eparams[i]); free(eparams);} free(plen); free(eid); free(emethod); return NULL; }
     char *q = buf;
     q += snprintf(q, buf_size, "{\"id\":\"%s\",\"method\":\"%s\",\"params\":[", eid, emethod);
     for (size_t i = 0; i < n_params; ++i) {
         if (i) *q++ = ',';
-        if (is_raw[i]) {
-            size_t l = strlen(params[i]); memcpy(q, params[i], l); q += l;
-        } else {
-            *q++ = '"';
-            size_t l = strlen(eparams[i]); memcpy(q, eparams[i], l); q += l;
-            *q++ = '"';
-        }
+        *q++ = '"';
+        size_t l = strlen(eparams[i]); memcpy(q, eparams[i], l); q += l;
+        *q++ = '"';
     }
     *q++ = ']'; *q++ = '}'; *q = '\0';
     for (size_t i = 0; i < n_params; ++i) free(eparams ? eparams[i] : NULL);
-    free(eparams); free(is_raw); free(plen);
+    free(eparams); free(plen);
     free(eid); free(emethod);
     return buf;
 }
