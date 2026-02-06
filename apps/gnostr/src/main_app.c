@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
   gnostr_cache_prune_init();
 
   /* Initialize NostrdB-backed storage in user cache directory */
-  gchar *dbdir = gnostr_get_db_dir();
+  g_autofree gchar *dbdir = gnostr_get_db_dir();
   g_message("Attempting to initialize storage at %s", dbdir);
   int mkdir_rc = g_mkdir_with_parents(dbdir, 0700);
   if (mkdir_rc != 0) {
@@ -175,7 +175,6 @@ int main(int argc, char **argv) {
       }
     }
   }
-  g_free(dbdir);
 
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);

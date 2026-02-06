@@ -166,13 +166,12 @@ gnostr_plugin_manager_discover_plugins(GnostrPluginManager *manager)
   }
 
   /* Set up user plugin directory */
-  char *user_plugin_dir = g_build_filename(g_get_user_data_dir(),
+  g_autofree char *user_plugin_dir = g_build_filename(g_get_user_data_dir(),
                                            "gnostr", "plugins", NULL);
 
   /* Add search paths */
   peas_engine_add_search_path(manager->engine, user_plugin_dir, NULL);
   g_debug("[PLUGIN] Added user plugin path: %s", user_plugin_dir);
-  g_free(user_plugin_dir);
 
   for (const char **path = &s_plugin_search_paths[1]; *path; path++) {
     peas_engine_add_search_path(manager->engine, *path, NULL);

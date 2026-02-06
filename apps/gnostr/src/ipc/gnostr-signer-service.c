@@ -306,7 +306,7 @@ static void
 sign_context_free(SignContext *ctx)
 {
   if (!ctx) return;
-  g_free(ctx->event_json);
+  g_clear_pointer(&ctx->event_json, g_free);
   g_free(ctx);
 }
 
@@ -764,8 +764,8 @@ static void
 nip44_context_free(Nip44Context *ctx)
 {
   if (!ctx) return;
-  g_free(ctx->peer_pubkey);
-  g_free(ctx->data);
+  g_clear_pointer(&ctx->peer_pubkey, g_free);
+  g_clear_pointer(&ctx->data, g_free);
   g_free(ctx);
 }
 

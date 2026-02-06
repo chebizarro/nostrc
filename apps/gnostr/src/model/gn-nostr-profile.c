@@ -32,15 +32,15 @@ static GParamSpec *properties[N_PROPS];
 
 static void gn_nostr_profile_finalize(GObject *object) {
   GnNostrProfile *self = GN_NOSTR_PROFILE(object);
-  
-  g_free(self->pubkey);
-  g_free(self->display_name);
-  g_free(self->name);
-  g_free(self->about);
-  g_free(self->picture_url);
-  g_free(self->nip05);
-  g_free(self->lud16);
-  
+
+  g_clear_pointer(&self->pubkey, g_free);
+  g_clear_pointer(&self->display_name, g_free);
+  g_clear_pointer(&self->name, g_free);
+  g_clear_pointer(&self->about, g_free);
+  g_clear_pointer(&self->picture_url, g_free);
+  g_clear_pointer(&self->nip05, g_free);
+  g_clear_pointer(&self->lud16, g_free);
+
   G_OBJECT_CLASS(gn_nostr_profile_parent_class)->finalize(object);
 }
 

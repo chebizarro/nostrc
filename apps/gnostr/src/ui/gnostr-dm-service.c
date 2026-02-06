@@ -35,11 +35,11 @@ typedef struct {
 
 static void dm_conversation_free(DmConversation *conv) {
     if (!conv) return;
-    g_free(conv->peer_pubkey);
-    g_free(conv->last_message);
-    g_free(conv->display_name);
-    g_free(conv->handle);
-    g_free(conv->avatar_url);
+    g_clear_pointer(&conv->peer_pubkey, g_free);
+    g_clear_pointer(&conv->last_message, g_free);
+    g_clear_pointer(&conv->display_name, g_free);
+    g_clear_pointer(&conv->handle, g_free);
+    g_clear_pointer(&conv->avatar_url, g_free);
     g_free(conv);
 }
 
@@ -402,11 +402,11 @@ struct _DecryptContext {
 
 static void decrypt_ctx_free(DecryptContext *ctx) {
     if (!ctx) return;
-    g_free(ctx->gift_wrap_id);
-    g_free(ctx->ephemeral_pubkey);
-    g_free(ctx->encrypted_seal);
-    g_free(ctx->seal_pubkey);
-    g_free(ctx->encrypted_rumor);
+    g_clear_pointer(&ctx->gift_wrap_id, g_free);
+    g_clear_pointer(&ctx->ephemeral_pubkey, g_free);
+    g_clear_pointer(&ctx->encrypted_seal, g_free);
+    g_clear_pointer(&ctx->seal_pubkey, g_free);
+    g_clear_pointer(&ctx->encrypted_rumor, g_free);
     g_free(ctx);
 }
 
@@ -800,8 +800,8 @@ typedef struct {
 
 static void recipient_relay_ctx_free(RecipientRelayCtx *ctx) {
     if (!ctx) return;
-    g_free(ctx->recipient_pubkey);
-    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    g_clear_pointer(&ctx->recipient_pubkey, g_free);
+    g_clear_object(&ctx->cancellable);
     g_free(ctx);
 }
 
@@ -920,10 +920,10 @@ typedef struct {
 
 static void dm_send_ctx_free(DmSendCtx *ctx) {
     if (!ctx) return;
-    g_free(ctx->recipient_pubkey);
-    g_free(ctx->content);
-    g_free(ctx->gift_wrap_json);
-    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    g_clear_pointer(&ctx->recipient_pubkey, g_free);
+    g_clear_pointer(&ctx->content, g_free);
+    g_clear_pointer(&ctx->gift_wrap_json, g_free);
+    g_clear_object(&ctx->cancellable);
     g_free(ctx);
 }
 

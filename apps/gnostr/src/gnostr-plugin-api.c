@@ -62,7 +62,7 @@ static void
 plugin_action_free(PluginAction *action)
 {
   if (!action) return;
-  g_free(action->name);
+  g_clear_pointer(&action->name, g_free);
   g_free(action);
 }
 
@@ -86,7 +86,7 @@ plugin_subscription_free(PluginSubscription *sub)
   if (sub->destroy_notify && sub->user_data) {
     sub->destroy_notify(sub->user_data);
   }
-  g_free(sub->filter_json);
+  g_clear_pointer(&sub->filter_json, g_free);
   g_free(sub);
 }
 
@@ -112,9 +112,9 @@ void
 gnostr_plugin_context_free(GnostrPluginContext *ctx)
 {
   if (!ctx) return;
-  g_hash_table_unref(ctx->subscriptions);
-  g_hash_table_unref(ctx->actions);
-  g_free(ctx->plugin_id);
+  g_clear_pointer(&ctx->subscriptions, g_hash_table_unref);
+  g_clear_pointer(&ctx->actions, g_hash_table_unref);
+  g_clear_pointer(&ctx->plugin_id, g_free);
   g_free(ctx);
 }
 
@@ -510,7 +510,7 @@ static void
 publish_async_data_free(PublishAsyncData *data)
 {
   if (!data) return;
-  g_free(data->event_json);
+  g_clear_pointer(&data->event_json, g_free);
   g_free(data);
 }
 
@@ -867,18 +867,14 @@ gnostr_plugin_context_store_data(GnostrPluginContext *context,
   g_return_val_if_fail(key != NULL, FALSE);
   g_return_val_if_fail(data != NULL, FALSE);
 
-  char *path = plugin_data_path(context, key);
-  char *dir = g_path_get_dirname(path);
+  g_autofree char *path = plugin_data_path(context, key);
+  g_autofree char *dir = g_path_get_dirname(path);
   g_mkdir_with_parents(dir, 0700);
-  g_free(dir);
 
   gsize len;
   gconstpointer bytes = g_bytes_get_data(data, &len);
 
-  gboolean ok = g_file_set_contents(path, bytes, len, error);
-  g_free(path);
-
-  return ok;
+  return g_file_set_contents(path, bytes, len, error);
 }
 
 GBytes *
@@ -889,16 +885,14 @@ gnostr_plugin_context_load_data(GnostrPluginContext *context,
   g_return_val_if_fail(context != NULL, NULL);
   g_return_val_if_fail(key != NULL, NULL);
 
-  char *path = plugin_data_path(context, key);
+  g_autofree char *path = plugin_data_path(context, key);
   char *contents = NULL;
   gsize len = 0;
 
   if (!g_file_get_contents(path, &contents, &len, error)) {
-    g_free(path);
     return NULL;
   }
 
-  g_free(path);
   return g_bytes_new_take(contents, len);
 }
 
@@ -909,13 +903,9 @@ gnostr_plugin_context_delete_data(GnostrPluginContext *context,
   g_return_val_if_fail(context != NULL, FALSE);
   g_return_val_if_fail(key != NULL, FALSE);
 
-  char *path = plugin_data_path(context, key);
-  GFile *file = g_file_new_for_path(path);
-  gboolean ok = g_file_delete(file, NULL, NULL);
-  g_object_unref(file);
-  g_free(path);
-
-  return ok;
+  g_autofree char *path = plugin_data_path(context, key);
+  g_autoptr(GFile) file = g_file_new_for_path(path);
+  return g_file_delete(file, NULL, NULL);
 }
 
 /* --- Settings Access --- */

@@ -308,7 +308,7 @@ typedef struct {
 
 static void profile_publish_context_free(ProfilePublishContext *ctx) {
   if (!ctx) return;
-  g_free(ctx->profile_content);
+  g_clear_pointer(&ctx->profile_content, g_free);
   g_free(ctx);
 }
 

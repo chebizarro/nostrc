@@ -90,15 +90,15 @@ GnostrDraft *gnostr_draft_new(void) {
 
 void gnostr_draft_free(GnostrDraft *draft) {
   if (!draft) return;
-  g_free(draft->d_tag);
-  g_free(draft->content);
-  g_free(draft->subject);
-  g_free(draft->reply_to_id);
-  g_free(draft->root_id);
-  g_free(draft->reply_to_pubkey);
-  g_free(draft->quote_id);
-  g_free(draft->quote_pubkey);
-  g_free(draft->quote_nostr_uri);
+  g_clear_pointer(&draft->d_tag, g_free);
+  g_clear_pointer(&draft->content, g_free);
+  g_clear_pointer(&draft->subject, g_free);
+  g_clear_pointer(&draft->reply_to_id, g_free);
+  g_clear_pointer(&draft->root_id, g_free);
+  g_clear_pointer(&draft->reply_to_pubkey, g_free);
+  g_clear_pointer(&draft->quote_id, g_free);
+  g_clear_pointer(&draft->quote_pubkey, g_free);
+  g_clear_pointer(&draft->quote_nostr_uri, g_free);
   g_free(draft);
 }
 
@@ -367,23 +367,18 @@ static char *get_drafts_dir(void) {
 }
 
 static char *get_draft_file_path(const char *d_tag) {
-  char *dir = get_drafts_dir();
+  g_autofree char *dir = get_drafts_dir();
   /* Sanitize d_tag for filesystem */
-  char *safe_tag = g_strdup(d_tag);
+  g_autofree char *safe_tag = g_strdup(d_tag);
   for (char *p = safe_tag; *p; p++) {
     if (*p == '/' || *p == '\\' || *p == ':') *p = '_';
   }
-  char *path = g_build_filename(dir, safe_tag, NULL);
-  g_free(dir);
-  g_free(safe_tag);
-  return path;
+  return g_build_filename(dir, safe_tag, NULL);
 }
 
 static gboolean ensure_drafts_dir(void) {
-  char *dir = get_drafts_dir();
-  int result = g_mkdir_with_parents(dir, 0700);
-  g_free(dir);
-  return result == 0;
+  g_autofree char *dir = get_drafts_dir();
+  return g_mkdir_with_parents(dir, 0700) == 0;
 }
 
 static gboolean save_draft_to_file(const GnostrDraft *draft) {
@@ -394,10 +389,10 @@ static gboolean save_draft_to_file(const GnostrDraft *draft) {
     return FALSE;
   }
 
-  char *json = gnostr_draft_to_json(draft);
+  g_autofree char *json = gnostr_draft_to_json(draft);
   if (!json) return FALSE;
 
-  char *path = get_draft_file_path(draft->d_tag);
+  g_autofree char *path = get_draft_file_path(draft->d_tag);
   GError *error = NULL;
   gboolean ok = g_file_set_contents(path, json, -1, &error);
 
@@ -408,8 +403,6 @@ static gboolean save_draft_to_file(const GnostrDraft *draft) {
     g_message("drafts: saved draft to %s", path);
   }
 
-  g_free(path);
-  g_free(json);
   return ok;
 }
 
@@ -434,25 +427,22 @@ GPtrArray *gnostr_drafts_load_local(GnostrDrafts *self) {
 
   GPtrArray *result = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_draft_free);
 
-  char *dir = get_drafts_dir();
+  g_autofree char *dir = get_drafts_dir();
   GDir *gdir = g_dir_open(dir, 0, NULL);
   if (!gdir) {
-    g_free(dir);
     return result;
   }
 
   const char *name;
   while ((name = g_dir_read_name(gdir)) != NULL) {
-    char *path = g_build_filename(dir, name, NULL);
+    g_autofree char *path = g_build_filename(dir, name, NULL);
     GnostrDraft *draft = load_draft_from_file(path);
     if (draft) {
       g_ptr_array_add(result, draft);
     }
-    g_free(path);
   }
 
   g_dir_close(gdir);
-  g_free(dir);
 
   g_message("drafts: loaded %u drafts from local storage", result->len);
   return result;
@@ -462,9 +452,8 @@ gboolean gnostr_drafts_delete_local(GnostrDrafts *self, const char *d_tag) {
   g_return_val_if_fail(GNOSTR_IS_DRAFTS(self), FALSE);
   g_return_val_if_fail(d_tag != NULL, FALSE);
 
-  char *path = get_draft_file_path(d_tag);
+  g_autofree char *path = get_draft_file_path(d_tag);
   int result = g_unlink(path);
-  g_free(path);
 
   if (result == 0) {
     g_message("drafts: deleted local draft: %s", d_tag);
@@ -484,7 +473,7 @@ typedef struct {
 
 static void save_context_free(SaveContext *ctx) {
   if (!ctx) return;
-  if (ctx->draft) gnostr_draft_free(ctx->draft);
+  g_clear_pointer(&ctx->draft, gnostr_draft_free);
   g_free(ctx);
 }
 

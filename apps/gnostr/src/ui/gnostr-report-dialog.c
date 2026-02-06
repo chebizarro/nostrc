@@ -260,8 +260,8 @@ typedef struct {
 
 static void report_context_free(ReportContext *ctx) {
   if (!ctx) return;
-  g_free(ctx->event_id_hex);
-  g_free(ctx->report_type);
+  g_clear_pointer(&ctx->event_id_hex, g_free);
+  g_clear_pointer(&ctx->report_type, g_free);
   g_free(ctx);
 }
 

@@ -97,7 +97,7 @@ static void gnostr_app_data_manager_finalize(GObject *object) {
     GnostrAppDataManager *self = GNOSTR_APP_DATA_MANAGER(object);
 
     g_mutex_lock(&self->lock);
-    g_free(self->user_pubkey);
+    g_clear_pointer(&self->user_pubkey, g_free);
     g_clear_object(&self->client_settings);
     g_clear_object(&self->display_settings);
     g_mutex_unlock(&self->lock);
