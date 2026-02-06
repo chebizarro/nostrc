@@ -1161,14 +1161,17 @@ static void *count_thread_func(void *arg) {
         const char *url = ctx->urls[i];
         if (!url || !*url) continue;
 
-        /* Find the relay in the pool */
+        /* Find the relay in the pool - MUST hold mutex during relay array access
+         * to prevent heap-use-after-free when ensure_relay reallocs the array */
         NostrRelay *relay = NULL;
+        pthread_mutex_lock(&pool->pool_mutex);
         for (size_t j = 0; j < pool->relay_count; j++) {
             if (pool->relays[j] && g_strcmp0(pool->relays[j]->url, url) == 0) {
                 relay = pool->relays[j];
                 break;
             }
         }
+        pthread_mutex_unlock(&pool->pool_mutex);
 
         if (!relay) {
             g_debug("[COUNT] Relay %s not found in pool, skipping", url);
