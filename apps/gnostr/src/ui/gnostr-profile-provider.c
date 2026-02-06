@@ -174,18 +174,20 @@ static GnostrProfileMeta *meta_from_db(const char *pk) {
   if (storage_ndb_begin_query(&txn) != 0 || !txn) return NULL;
   char *json = NULL; int len = 0;
   int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &len);
-  storage_ndb_end_query(txn);
   if (rc != 0 || !json) {
+    storage_ndb_end_query(txn);
     G_LOCK(profile_provider);
     s_stats.db_misses++;
     G_UNLOCK(profile_provider);
     return NULL;
   }
+  /* Parse JSON WHILE transaction is still open - json pointer is only valid during txn */
+  GnostrProfileMeta *m = meta_from_json(pk, json);
+  /* End transaction AFTER parsing - json memory is owned by nostrdb, do NOT free */
+  storage_ndb_end_query(txn);
   G_LOCK(profile_provider);
   s_stats.db_hits++;
   G_UNLOCK(profile_provider);
-  GnostrProfileMeta *m = meta_from_json(pk, json);
-  free(json);
   return m;
 }
 
