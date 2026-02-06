@@ -129,9 +129,20 @@ template $GnostrComposer: Widget {
         ]
       }
 
+      Button btn_save_draft {
+        icon-name: "document-save-symbolic";
+        tooltip-text: "Save as draft (NIP-37)";
+        has-frame: false;
+        clicked => $on_save_draft_clicked();
+
+        styles [
+          "flat",
+        ]
+      }
+
       MenuButton btn_drafts {
         icon-name: "document-open-recent-symbolic";
-        tooltip-text: "Drafts (NIP-37)";
+        tooltip-text: "Load draft (NIP-37)";
         has-frame: false;
 
         popover: Popover drafts_popover {
@@ -185,17 +196,6 @@ template $GnostrComposer: Widget {
 
       Box {
         hexpand: true;
-      }
-
-      Button btn_save_draft {
-        icon-name: "document-save-symbolic";
-        tooltip-text: "Save as draft (NIP-37)";
-        has-frame: false;
-        clicked => $on_save_draft_clicked();
-
-        styles [
-          "flat",
-        ]
       }
 
       Button btn_post {
