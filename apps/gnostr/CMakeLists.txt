@@ -439,8 +439,10 @@ target_include_directories(gnostr-live-log PRIVATE
   ${_NDB_VENDOR_DIR}/deps/flatcc/include)
 # Compile GI wrapper into the CLI as well
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
+# nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
 target_sources(gnostr-live-log PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
+  ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
@@ -511,6 +513,7 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nips/nip46/include
     ${PROJECT_ROOT}/libgo/include
     ${PROJECT_ROOT}/gobject/include)
+  # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
   target_sources(gnostr-test-blossom PRIVATE
     src/util/blossom.c
     src/util/blossom_settings.c
@@ -520,7 +523,8 @@ if (BUILD_TESTING)
     src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
     ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
-    ${PROJECT_ROOT}/gobject/src/nostr_relay.c)
+    ${PROJECT_ROOT}/gobject/src/nostr_relay.c
+    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
   if (TARGET nostr_nip46_core)
     target_link_libraries(gnostr-test-blossom PRIVATE nostr_nip46_core)
@@ -542,6 +546,7 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nips/nip46/include
     ${PROJECT_ROOT}/libgo/include
     ${PROJECT_ROOT}/gobject/include)
+  # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
   target_sources(gnostr-test-blossom-settings PRIVATE
     src/util/blossom_settings.c
     src/util/relays.c
@@ -550,7 +555,8 @@ if (BUILD_TESTING)
     src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
     ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
-    ${PROJECT_ROOT}/gobject/src/nostr_relay.c)
+    ${PROJECT_ROOT}/gobject/src/nostr_relay.c
+    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3
     nostr libgo)
