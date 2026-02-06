@@ -980,7 +980,16 @@ gnostr_plugin_context_delete_data(GnostrPluginContext *context,
 
   g_autofree char *path = plugin_data_path(context, key);
   g_autoptr(GFile) file = g_file_new_for_path(path);
-  return g_file_delete(file, NULL, NULL);
+  GError *error = NULL;
+  gboolean ok = g_file_delete(file, NULL, &error);
+  if (!ok && error) {
+    /* G_IO_ERROR_NOT_FOUND is expected if file doesn't exist */
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
+      g_warning("plugin: failed to delete data file %s: %s", path, error->message);
+    }
+    g_clear_error(&error);
+  }
+  return ok;
 }
 
 /* --- Settings Access --- */

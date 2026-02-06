@@ -118,9 +118,10 @@ void gnostr_blossom_delete_async(const char *server_url,
  *
  * @param file_path Path to the file
  * @param out_hash Output buffer for hex hash (must be at least 65 bytes)
+ * @param error Return location for error, or NULL
  * @return TRUE on success, FALSE on error
  */
-gboolean gnostr_blossom_sha256_file(const char *file_path, char out_hash[65]);
+gboolean gnostr_blossom_sha256_file(const char *file_path, char out_hash[65], GError **error);
 
 /**
  * Detect MIME type from file extension.

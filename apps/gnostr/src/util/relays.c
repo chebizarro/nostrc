@@ -529,8 +529,15 @@ void gnostr_save_dm_relays_from(GPtrArray *list) {
   /* Always maintain keyfile as fallback */
   gchar *cfg = gnostr_config_path();
   GKeyFile *kf = g_key_file_new();
-  /* Load existing config to preserve other sections */
-  g_key_file_load_from_file(kf, cfg, G_KEY_FILE_NONE, NULL);
+  /* Load existing config to preserve other sections.
+   * File may not exist on first run (G_FILE_ERROR_NOENT), which is normal. */
+  GError *load_err = NULL;
+  if (!g_key_file_load_from_file(kf, cfg, G_KEY_FILE_NONE, &load_err)) {
+    if (!g_error_matches(load_err, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+      g_warning("dm-relays: failed to load config %s: %s", cfg, load_err->message);
+    }
+    g_clear_error(&load_err);
+  }
   g_auto(GStrv) arr = g_new0(gchar*, list->len + 1);
   for (guint i = 0; i < list->len; i++) arr[i] = g_strdup((const gchar*)list->pdata[i]);
   g_key_file_set_string_list(kf, "dm-relays", "urls", (const gchar* const*)arr, list->len);

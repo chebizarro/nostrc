@@ -38,20 +38,28 @@ static void blob_array_free(GnostrBlossomBlob **blobs) {
   g_free(blobs);
 }
 
-gboolean gnostr_blossom_sha256_file(const char *file_path, char out_hash[65]) {
-  if (!file_path || !out_hash) return FALSE;
+gboolean gnostr_blossom_sha256_file(const char *file_path, char out_hash[65], GError **error) {
+  if (!file_path || !out_hash) {
+    g_set_error(error, GNOSTR_BLOSSOM_ERROR, GNOSTR_BLOSSOM_ERROR_FILE_READ,
+                "Invalid arguments: file_path or out_hash is NULL");
+    return FALSE;
+  }
 
   GFile *file = g_file_new_for_path(file_path);
-  GFileInputStream *stream = g_file_read(file, NULL, NULL);
+  GError *local_error = NULL;
+  GFileInputStream *stream = g_file_read(file, NULL, &local_error);
   g_object_unref(file);
 
-  if (!stream) return FALSE;
+  if (!stream) {
+    g_propagate_error(error, local_error);
+    return FALSE;
+  }
 
   GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
   guchar buffer[8192];
   gssize bytes_read;
 
-  while ((bytes_read = g_input_stream_read(G_INPUT_STREAM(stream), buffer, sizeof(buffer), NULL, NULL)) > 0) {
+  while ((bytes_read = g_input_stream_read(G_INPUT_STREAM(stream), buffer, sizeof(buffer), NULL, &local_error)) > 0) {
     g_checksum_update(checksum, buffer, bytes_read);
   }
 
@@ -59,6 +67,7 @@ gboolean gnostr_blossom_sha256_file(const char *file_path, char out_hash[65]) {
 
   if (bytes_read < 0) {
     g_checksum_free(checksum);
+    g_propagate_error(error, local_error);
     return FALSE;
   }
 
@@ -436,11 +445,14 @@ void gnostr_blossom_upload_async(const char *server_url,
 
   /* Compute hash */
   char sha256[65];
-  if (!gnostr_blossom_sha256_file(file_path, sha256)) {
+  GError *hash_error = NULL;
+  if (!gnostr_blossom_sha256_file(file_path, sha256, &hash_error)) {
     g_free(contents);
     GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
                                GNOSTR_BLOSSOM_ERROR_FILE_READ,
-                               "Failed to compute file hash");
+                               "Failed to compute file hash: %s",
+                               hash_error ? hash_error->message : "unknown error");
+    g_clear_error(&hash_error);
     if (callback) callback(NULL, err, user_data);
     g_error_free(err);
     return;

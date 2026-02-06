@@ -266,7 +266,12 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
       gchar *hex = g_malloc0(65);
       static const char *H="0123456789abcdef";
       for (int i=0;i<32;i++){ hex[i*2]=H[(rnd[i]>>4)&0xF]; hex[i*2+1]=H[rnd[i]&0xF]; }
-      g_file_set_contents(srv->token_path, hex, 64, NULL);
+      GError *write_err = NULL;
+      if (!g_file_set_contents(srv->token_path, hex, 64, &write_err)) {
+        g_warning("tcp: failed to write token file %s: %s",
+                  srv->token_path, write_err ? write_err->message : "unknown");
+        g_clear_error(&write_err);
+      }
       srv->token = hex;
       // chmod to 0600 best-effort
       (void)g_chmod(srv->token_path, 0600);
@@ -368,7 +373,12 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
         hex[i * 2] = H[(rnd[i] >> 4) & 0xF];
         hex[i * 2 + 1] = H[rnd[i] & 0xF];
       }
-      g_file_set_contents(srv->npipe_token_path, hex, 64, NULL);
+      GError *write_err = NULL;
+      if (!g_file_set_contents(srv->npipe_token_path, hex, 64, &write_err)) {
+        g_warning("npipe: failed to write token file %s: %s",
+                  srv->npipe_token_path, write_err ? write_err->message : "unknown");
+        g_clear_error(&write_err);
+      }
       srv->npipe_token = hex;
     }
 

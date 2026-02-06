@@ -72,7 +72,7 @@ test_sha256_file_basic(void)
   create_test_file("hello");
 
   char hash[65];
-  gboolean result = gnostr_blossom_sha256_file(test_file_path, hash);
+  gboolean result = gnostr_blossom_sha256_file(test_file_path, hash, NULL);
 
   g_assert_true(result);
   g_assert_cmpstr(hash, ==, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
@@ -89,7 +89,7 @@ test_sha256_file_empty(void)
   create_test_file("");
 
   char hash[65];
-  gboolean result = gnostr_blossom_sha256_file(test_file_path, hash);
+  gboolean result = gnostr_blossom_sha256_file(test_file_path, hash, NULL);
 
   g_assert_true(result);
   g_assert_cmpstr(hash, ==, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
@@ -110,7 +110,7 @@ test_sha256_file_binary(void)
   g_assert_no_error(error);
 
   char hash[65];
-  gboolean result = gnostr_blossom_sha256_file(test_file_path, hash);
+  gboolean result = gnostr_blossom_sha256_file(test_file_path, hash, NULL);
 
   g_assert_true(result);
   /* Just verify it returns a valid 64-char hex hash */
@@ -126,7 +126,7 @@ static void
 test_sha256_file_not_found(void)
 {
   char hash[65];
-  gboolean result = gnostr_blossom_sha256_file("/nonexistent/path/file.txt", hash);
+  gboolean result = gnostr_blossom_sha256_file("/nonexistent/path/file.txt", hash, NULL);
 
   g_assert_false(result);
 }
@@ -136,12 +136,12 @@ test_sha256_file_null_inputs(void)
 {
   char hash[65];
 
-  gboolean result1 = gnostr_blossom_sha256_file(NULL, hash);
+  gboolean result1 = gnostr_blossom_sha256_file(NULL, hash, NULL);
   g_assert_false(result1);
 
   setup_temp_dir();
   create_test_file("test");
-  gboolean result2 = gnostr_blossom_sha256_file(test_file_path, NULL);
+  gboolean result2 = gnostr_blossom_sha256_file(test_file_path, NULL, NULL);
   g_assert_false(result2);
   teardown_temp_dir();
 }
