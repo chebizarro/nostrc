@@ -3340,39 +3340,37 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
   }
 
   if (jsons && jsons->len > 0) {
-    /* Parse the first profile event */
+    /* Parse the first profile event using nostr_event_deserialize (same as profile pane) */
     const char *evt_json = g_ptr_array_index(jsons, 0);
     if (evt_json) {
-      char *content_str = NULL;
-      if (nostr_json_get_string(evt_json, "content", &content_str) == 0 && content_str) {
-        char *display_name = NULL;
-        char *name = NULL;
-        char *picture = NULL;
-        nostr_json_get_string(content_str, "display_name", &display_name);
-        nostr_json_get_string(content_str, "name", &name);
-        nostr_json_get_string(content_str, "picture", &picture);
+      NostrEvent *evt = nostr_event_new();
+      if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
+        const char *content = nostr_event_get_content(evt);
+        if (content && *content) {
+          /* Ingest into nostrdb for future use */
+          storage_ndb_ingest_event_json(evt_json, NULL);
 
-        const char *final_name = (display_name && *display_name) ? display_name : name;
-        if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-          gnostr_session_view_set_user_profile(self->session_view,
-                                                self->user_pubkey_hex,
-                                                final_name,
-                                                picture);
+          /* Update profile provider cache (this parses the JSON for us) */
+          if (self->user_pubkey_hex) {
+            gnostr_profile_provider_update(self->user_pubkey_hex, content);
+
+            /* Now get the parsed profile and update the UI */
+            GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
+            if (meta) {
+              const char *final_name = (meta->display_name && *meta->display_name)
+                                       ? meta->display_name : meta->name;
+              if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+                gnostr_session_view_set_user_profile(self->session_view,
+                                                      self->user_pubkey_hex,
+                                                      final_name,
+                                                      meta->picture);
+              }
+              gnostr_profile_meta_free(meta);
+            }
+          }
         }
-
-        /* Also ingest into nostrdb for future use */
-        storage_ndb_ingest_event_json(evt_json, NULL);
-
-        /* Update profile provider cache */
-        if (self->user_pubkey_hex) {
-          gnostr_profile_provider_update(self->user_pubkey_hex, content_str);
-        }
-
-        free(display_name);
-        free(name);
-        free(picture);
-        free(content_str);
       }
+      if (evt) nostr_event_free(evt);
     }
     g_ptr_array_unref(jsons);
   }
@@ -3466,52 +3464,25 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     gnostr_badge_manager_start_subscriptions(badge_mgr);
     g_debug("[AUTH] Started notification subscriptions for user %.16s...", self->user_pubkey_hex);
 
-    /* Fetch user's profile directly from nostrdb for account menu avatar/name */
-    void *txn = NULL;
-    gboolean profile_found = FALSE;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
-      uint8_t pk32[32];
-      if (hex_to_bytes32(self->user_pubkey_hex, pk32)) {
-        char *event_json = NULL;
-        int event_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len) == 0 && event_json) {
-          /* Parse profile JSON from kind-0 event content */
-          char *content_str = NULL;
-          if (nostr_json_get_string(event_json, "content", &content_str) == 0 && content_str) {
-            char *display_name = NULL;
-            char *name = NULL;
-            char *picture = NULL;
-            nostr_json_get_string(content_str, "display_name", &display_name);
-            nostr_json_get_string(content_str, "name", &name);
-            nostr_json_get_string(content_str, "picture", &picture);
-
-            const char *final_name = (display_name && *display_name) ? display_name : name;
-            if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-              gnostr_session_view_set_user_profile(self->session_view,
-                                                    self->user_pubkey_hex,
-                                                    final_name,
-                                                    picture);
-              profile_found = TRUE;
-            }
-            free(display_name);
-            free(name);
-            free(picture);
-            free(content_str);
-          }
-          /* event_json is owned by nostrdb, don't free */
-        }
+    /* Load user profile for account menu avatar/name using profile provider.
+     * This queries nostrdb (same as profile pane) and handles caching. */
+    GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
+    if (meta) {
+      const char *final_name = (meta->display_name && *meta->display_name)
+                               ? meta->display_name : meta->name;
+      if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+        gnostr_session_view_set_user_profile(self->session_view,
+                                              self->user_pubkey_hex,
+                                              final_name,
+                                              meta->picture);
       }
-      storage_ndb_end_query(txn);
-    }
-
-    if (!profile_found) {
-      /* Profile not in DB - fetch from relays using fallback relay list.
-       * At login time, NIP-65 relays may not be loaded yet, so we use
-       * well-known relays that are likely to have the user's profile. */
+      gnostr_profile_meta_free(meta);
+    } else {
+      /* Profile not in DB - fetch from relays using fallback relay list */
       GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
       gnostr_get_read_relay_urls_into(relay_urls);
 
-      /* If no relays configured yet, use popular fallback relays */
+      /* If no relays configured, use popular fallback relays */
       if (relay_urls->len == 0) {
         g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
         g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
@@ -3531,7 +3502,7 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
           gnostr_get_shared_query_pool(),
           urls, relay_urls->len,
           authors, 1,
-          1, /* limit - only need one profile */
+          1, /* limit */
           NULL, /* cancellable */
           on_user_profile_fetched,
           g_object_ref(self));
