@@ -300,7 +300,8 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey);
 
-/* Request ID counter for unique IDs */
+/* Request ID counter for unique IDs.
+ * Combined with timestamp and pid to prevent collision with stale responses. */
 static unsigned int s_nip46_req_counter = 0;
 
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json) {
@@ -374,9 +375,11 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
     fprintf(stderr, "[nip46] %s: building request\n", method);
 
-    /* Build request JSON with unique ID */
-    char req_id[32];
-    snprintf(req_id, sizeof(req_id), "%lx_%u", (unsigned long)time(NULL), ++s_nip46_req_counter);
+    /* Build request JSON with unique ID.
+     * Include pid to prevent collision with stale responses from previous sessions. */
+    char req_id[48];
+    snprintf(req_id, sizeof(req_id), "%lx_%x_%u",
+             (unsigned long)time(NULL), (unsigned)getpid(), ++s_nip46_req_counter);
     fprintf(stderr, "[nip46] %s: request id = %s\n", method, req_id);
     char *req = nostr_nip46_request_build(req_id, method, params, n_params);
     if (!req) {
@@ -569,9 +572,14 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
      * We react to:
      * - Event arrival: check if it matches our request ID
      * - EOSE: relay has sent all stored events, new events may still arrive
-     * - Timeout: no response within reasonable time (only as last resort) */
+     * - Timeout: no response within reasonable time (only as last resort)
+     *
+     * IMPORTANT: We may receive stale error responses from previous failed requests
+     * with similar IDs. We must NOT break on error - continue processing to see if
+     * a success response arrives. Only break on success. */
     char *result = NULL;
     char *response_pubkey = NULL;
+    char *last_error = NULL;  /* Track last error for reporting if no success */
     int eose_count = 0;
     int max_events = 20;  /* Process up to 20 events before giving up */
 
@@ -712,17 +720,19 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
             free(resp_id);
         }
 
-        /* Check for error in response */
+        /* Check for error in response - but DON'T break, there may be a success
+         * response following a stale error response from a previous request */
         char *err_msg = NULL;
         if (nostr_json_has_key(response_json, "error") &&
             nostr_json_get_type(response_json, "error") == NOSTR_JSON_STRING &&
             nostr_json_get_string(response_json, "error", &err_msg) == 0 && err_msg && *err_msg) {
-            fprintf(stderr, "[nip46] %s: ERROR: signer error: %s\n", method, err_msg);
-            free(err_msg);
+            fprintf(stderr, "[nip46] %s: received error response: %s (continuing to check for success)\n", method, err_msg);
+            /* Save the error but continue - a success response may follow */
+            if (last_error) free(last_error);
+            last_error = err_msg;  /* Take ownership */
             free(response_json);
             free(sender_pubkey);
-            /* This is a valid response (matching ID) but it's an error - stop processing */
-            break;
+            continue;  /* Don't break - keep looking for success response */
         }
         free(err_msg);
 
@@ -741,9 +751,16 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         break;
     }
 
+    /* Report final status */
+    if (!result && last_error) {
+        fprintf(stderr, "[nip46] %s: no success response received, last error was: %s\n",
+                method, last_error);
+    }
+
     /* Cleanup */
     free(cases);
     free(recv_bufs);
+    free(last_error);
 
     for (size_t i = 0; i < active_count; i++) {
         nostr_subscription_unsubscribe(subs[i]);
