@@ -188,10 +188,8 @@ endif()
 if (TARGET nip06)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE nip06)
 endif()
-# Link nostr core for BIP-39 and keys
-if (TARGET nostr)
-  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr)
-endif()
+# Note: nostr core is already transitively linked via nostr_nip46_core
+# Do NOT link nostr directly here - it causes ODR violation with nostr_json.so
 
 # Include project root so we can include gnome/seahorse/secret_store.h from the app
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
