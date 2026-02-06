@@ -32,15 +32,16 @@ G_DECLARE_FINAL_TYPE(GnostrApprovalDialog, gnostr_approval_dialog, GNOSTR,
 struct _GnostrApprovalDialog {
   AdwDialog parent_instance;
 
-  /* Template widgets */
+  /* Template widgets - matching approval-dialog.blp */
   GtkImage *header_icon;
   GtkLabel *header_title;
-  AdwActionRow *row_event_type;
-  AdwActionRow *row_app;
-  AdwActionRow *row_identity;
-  AdwActionRow *row_timestamp;
+  GtkLabel *label_event_kind;
+  GtkLabel *label_from;
+  GtkLabel *label_identity;
+  GtkLabel *label_timestamp;
   GtkLabel *content_preview;
   GtkFrame *content_frame;
+  GtkExpander *details_expander;
   GtkBox *identity_selector_box;
   GtkDropDown *identity_dropdown;
   GtkCheckButton *chk_remember;
@@ -53,7 +54,6 @@ struct _GnostrApprovalDialog {
   gpointer user_data;
   GtkStringList *identity_model;
   gchar *full_content;
-  gboolean content_expanded;
   int current_event_kind;
 
   /* Session integration */
@@ -222,8 +222,8 @@ static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
   if (decision && remember && self->client_pubkey && selected) {
     GnClientSessionManager *csm = gn_client_session_manager_get_default();
 
-    /* Get app name from row_app subtitle */
-    const char *app_name = adw_action_row_get_subtitle(self->row_app);
+    /* Get app name from label_from */
+    const char *app_name = gtk_label_get_text(self->label_from);
 
     /* Determine if session should be persistent (Forever option) */
     gboolean persistent = (ttl_seconds == 0);
@@ -305,17 +305,19 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        header_title);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       row_event_type);
+                                       label_event_kind);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       row_app);
+                                       label_from);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       row_identity);
+                                       label_identity);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       row_timestamp);
+                                       label_timestamp);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        content_preview);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        content_frame);
+  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
+                                       details_expander);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        identity_selector_box);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
@@ -351,7 +353,6 @@ static gboolean on_shortcut_deny(GtkWidget *widget, GVariant *args, gpointer use
 static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
-  self->content_expanded = FALSE;
   self->full_content = NULL;
   self->identity_model = NULL;
   self->callback = NULL;
@@ -439,11 +440,11 @@ void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind)
 
   /* Format: "4 (Encrypted Direct Message)" */
   gchar *display = g_strdup_printf("%d (%s)", kind, type_name);
-  adw_action_row_set_subtitle(self->row_event_type, display);
+  gtk_label_set_text(self->label_event_kind, display);
 
   /* Update accessibility description for screen readers */
   gchar *accessible_desc = g_strdup_printf("Event type: %s, kind number %d", type_name, kind);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_event_type),
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_event_kind),
                                  GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                  -1);
   g_free(accessible_desc);
@@ -464,11 +465,11 @@ void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self,
   g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
 
   const char *display_name = app_name ? app_name : "Unknown Application";
-  adw_action_row_set_subtitle(self->row_app, display_name);
+  gtk_label_set_text(self->label_from, display_name);
 
   /* Update accessibility for screen readers */
   gchar *accessible_desc = g_strdup_printf("Requesting application: %s", display_name);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_app),
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_from),
                                  GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                  -1);
 
@@ -498,21 +499,21 @@ void gnostr_approval_dialog_set_identity(GnostrApprovalDialog *self,
     if (strlen(identity_npub) > 20) {
       gchar *truncated = g_strdup_printf("%.12s...%.8s", identity_npub,
                                          identity_npub + strlen(identity_npub) - 8);
-      adw_action_row_set_subtitle(self->row_identity, truncated);
+      gtk_label_set_text(self->label_identity, truncated);
       g_free(truncated);
     } else {
-      adw_action_row_set_subtitle(self->row_identity, identity_npub);
+      gtk_label_set_text(self->label_identity, identity_npub);
     }
 
     /* Update accessibility with full identity for screen readers */
     gchar *accessible_desc = g_strdup_printf("Signing identity: %s", identity_npub);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_identity),
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_identity),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                    -1);
     g_free(accessible_desc);
   } else {
-    adw_action_row_set_subtitle(self->row_identity, "Not specified");
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_identity),
+    gtk_label_set_text(self->label_identity, "Not specified");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_identity),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Signing identity: Not specified",
                                    -1);
   }
@@ -534,7 +535,7 @@ void gnostr_approval_dialog_set_timestamp(GnostrApprovalDialog *self,
   char buffer[64];
   strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", tm_info);
 
-  adw_action_row_set_subtitle(self->row_timestamp, buffer);
+  gtk_label_set_text(self->label_timestamp, buffer);
 }
 
 /**
