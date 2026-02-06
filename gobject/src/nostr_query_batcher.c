@@ -264,10 +264,13 @@ static gpointer batch_drain_thread(gpointer user_data) {
     nostr_subscription_free(sub);
     batch->subscription = NULL;
 
-    /* Remove batch from pending and free */
-    g_mutex_lock(&batcher->mutex);
-    g_hash_table_remove(batcher->pending_batches, batch->relay_url);
-    g_mutex_unlock(&batcher->mutex);
+    /* Remove batch from pending and free (skip if batcher is disposing -
+     * the hash table will be destroyed by nostr_query_batcher_free) */
+    if (!batcher->disposing) {
+        g_mutex_lock(&batcher->mutex);
+        g_hash_table_remove(batcher->pending_batches, batch->relay_url);
+        g_mutex_unlock(&batcher->mutex);
+    }
 
     g_free(ctx);
     return NULL;
@@ -374,7 +377,7 @@ static void fire_batch(NostrQueryBatcher *batcher, RelayBatch *batch) {
     drain_ctx->batch = batch;
 
     batch->drain_thread = g_thread_new("batcher-drain", batch_drain_thread, drain_ctx);
-    g_thread_unref(batch->drain_thread);  /* We don't need to join */
+    /* Note: thread ref kept for joining during shutdown */
 }
 
 /*
@@ -467,19 +470,32 @@ void nostr_query_batcher_free(NostrQueryBatcher *batcher) {
         batcher->flush_timeout_id = 0;
     }
 
-    /* Complete all pending requests with cancellation */
+    /* Collect drain threads to join (must do outside of mutex to avoid deadlock) */
+    GPtrArray *threads_to_join = g_ptr_array_new();
+
     g_mutex_lock(&batcher->mutex);
     GHashTableIter iter;
     gpointer key, value;
     g_hash_table_iter_init(&iter, batcher->pending_batches);
     while (g_hash_table_iter_next(&iter, &key, &value)) {
         RelayBatch *batch = value;
+        if (batch->drain_thread) {
+            g_ptr_array_add(threads_to_join, g_thread_ref(batch->drain_thread));
+        }
+        /* Complete all pending requests with cancellation */
         GError *err = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
                                            "Batcher disposed");
         complete_all_requests(batch, err);
         g_error_free(err);
     }
     g_mutex_unlock(&batcher->mutex);
+
+    /* Wait for all drain threads to complete */
+    for (guint i = 0; i < threads_to_join->len; i++) {
+        GThread *thread = g_ptr_array_index(threads_to_join, i);
+        g_thread_join(thread);  /* This also unrefs the thread */
+    }
+    g_ptr_array_unref(threads_to_join);
 
     g_hash_table_destroy(batcher->pending_batches);
     g_mutex_clear(&batcher->mutex);
