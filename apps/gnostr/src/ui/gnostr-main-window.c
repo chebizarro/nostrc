@@ -84,6 +84,8 @@
 #include "nostr/nip46/nip46_client.h"
 /* Nostr utilities */
 #include "nostr-utils.h"
+/* Gnostr utilities (shared query pool) */
+#include "../util/utils.h"
 
 /* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
@@ -3320,47 +3322,68 @@ on_notification_event(GnostrBadgeManager *manager,
           type, sender_pubkey ? sender_pubkey : "(unknown)");
 }
 
-/* Deferred loading callbacks to improve login responsiveness */
-static gboolean deferred_nip65_load(gpointer data) {
-  gchar *pubkey = (gchar *)data;
-  if (pubkey) {
-    g_debug("[AUTH] Deferred: Loading NIP-65 relay list for user %.*s...", 8, pubkey);
-    gnostr_nip65_load_on_login_async(pubkey, NULL, NULL);
-    g_free(pubkey);
+/* Callback for user profile fetch at login */
+static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+    g_object_unref(self);
+    return;
   }
-  return G_SOURCE_REMOVE;
-}
 
-static gboolean deferred_blossom_load(gpointer data) {
-  gchar *pubkey = (gchar *)data;
-  if (pubkey) {
-    g_debug("[AUTH] Deferred: Loading Blossom server list for user %.*s...", 8, pubkey);
-    gnostr_blossom_settings_load_from_relays_async(pubkey, NULL, NULL);
-    g_free(pubkey);
-  }
-  return G_SOURCE_REMOVE;
-}
+  GError *error = NULL;
+  GPtrArray *jsons = gnostr_simple_pool_fetch_profiles_by_authors_finish(
+    GNOSTR_SIMPLE_POOL(source), res, &error);
 
-static gboolean deferred_nip51_sync(gpointer data) {
-  gchar *pubkey = (gchar *)data;
-  if (pubkey) {
-    g_debug("[AUTH] Deferred: Auto-syncing NIP-51 settings for user %.*s...", 8, pubkey);
-    gnostr_nip51_settings_auto_sync_on_login(pubkey);
-    g_free(pubkey);
+  if (error) {
+    g_warning("[AUTH] Profile fetch error: %s", error->message);
+    g_clear_error(&error);
   }
-  return G_SOURCE_REMOVE;
+
+  if (jsons && jsons->len > 0) {
+    /* Parse the first profile event */
+    const char *evt_json = g_ptr_array_index(jsons, 0);
+    if (evt_json) {
+      char *content_str = NULL;
+      if (nostr_json_get_string(evt_json, "content", &content_str) == 0 && content_str) {
+        char *display_name = NULL;
+        char *name = NULL;
+        char *picture = NULL;
+        nostr_json_get_string(content_str, "display_name", &display_name);
+        nostr_json_get_string(content_str, "name", &name);
+        nostr_json_get_string(content_str, "picture", &picture);
+
+        const char *final_name = (display_name && *display_name) ? display_name : name;
+        if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+          gnostr_session_view_set_user_profile(self->session_view,
+                                                self->user_pubkey_hex,
+                                                final_name,
+                                                picture);
+        }
+
+        /* Also ingest into nostrdb for future use */
+        storage_ndb_ingest_event_json(evt_json, NULL);
+
+        /* Update profile provider cache */
+        if (self->user_pubkey_hex) {
+          gnostr_profile_provider_update(self->user_pubkey_hex, content_str);
+        }
+
+        free(display_name);
+        free(name);
+        free(picture);
+        free(content_str);
+      }
+    }
+    g_ptr_array_unref(jsons);
+  }
+
+  g_object_unref(self);
 }
 
 /* Signal handler for when user successfully signs in via login dialog */
 static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
-  fprintf(stderr, "\n*** ON_LOGIN_SIGNED_IN HANDLER CALLED ***\n");
-  fprintf(stderr, "npub: %s\n", npub ? npub : "(null)");
-
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) {
-    fprintf(stderr, "ERROR: self is not a valid GnostrMainWindow!\n");
-    return;
-  }
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
   g_debug("[AUTH] User signed in: %s", npub ? npub : "(null)");
 
@@ -3369,11 +3392,9 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     nostr_nip46_session_free(self->nip46_session);
   }
   self->nip46_session = gnostr_login_take_nip46_session(login);
-  fprintf(stderr, "Session from login: %p\n", (void*)self->nip46_session);
 
   /* Configure the unified signer service with the NIP-46 session (or NULL for NIP-55L) */
   GnostrSignerService *signer = gnostr_signer_service_get_default();
-  fprintf(stderr, "Calling gnostr_signer_service_set_nip46_session...\n");
   gnostr_signer_service_set_nip46_session(signer, self->nip46_session);
   self->nip46_session = NULL; /* Signer service now owns the session */
 
@@ -3484,29 +3505,57 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     }
 
     if (!profile_found) {
-      /* Profile not in DB - fetch from relays (callback will update session view) */
-      enqueue_profile_author(self, self->user_pubkey_hex);
+      /* Profile not in DB - fetch from relays using fallback relay list.
+       * At login time, NIP-65 relays may not be loaded yet, so we use
+       * well-known relays that are likely to have the user's profile. */
+      GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+      gnostr_get_read_relay_urls_into(relay_urls);
+
+      /* If no relays configured yet, use popular fallback relays */
+      if (relay_urls->len == 0) {
+        g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
+        g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
+        g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
+        g_ptr_array_add(relay_urls, g_strdup("wss://relay.primal.net"));
+        g_ptr_array_add(relay_urls, g_strdup("wss://purplepag.es"));
+      }
+
+      if (relay_urls->len > 0) {
+        const char **urls = g_new0(const char*, relay_urls->len);
+        for (guint i = 0; i < relay_urls->len; i++) {
+          urls[i] = g_ptr_array_index(relay_urls, i);
+        }
+        const char *authors[1] = { self->user_pubkey_hex };
+
+        gnostr_simple_pool_fetch_profiles_by_authors_async(
+          gnostr_get_shared_query_pool(),
+          urls, relay_urls->len,
+          authors, 1,
+          1, /* limit - only need one profile */
+          NULL, /* cancellable */
+          on_user_profile_fetched,
+          g_object_ref(self));
+
+        g_free(urls);
+      }
+      g_ptr_array_unref(relay_urls);
     }
   }
 
   /* Start gift wrap subscription for encrypted DMs */
   start_gift_wrap_subscription(self);
 
-  /* LEGITIMATE TIMEOUTS - Deferred loading to improve login responsiveness.
-   * These operations are async anyway but we stagger them to avoid
-   * overwhelming the relay pool at login time. This is intentional
-   * load-spreading, not a "wait and hope" hack.
-   *
-   * nostrc-b0h: Audited - these are legitimate staggered initialization. */
+  /* Async initialization - dispatch immediately, pool handles load management.
+   * These are all async functions that return immediately. No reason to delay. */
   if (self->user_pubkey_hex) {
-    /* NIP-65 relay list: defer 2s - needed for relay switching but not immediate */
-    g_timeout_add_seconds(2, deferred_nip65_load, g_strdup(self->user_pubkey_hex));
+    /* NIP-65: fetch user's preferred relay list for live switching */
+    gnostr_nip65_load_on_login_async(self->user_pubkey_hex, NULL, NULL);
 
-    /* Blossom settings: defer 5s - only needed when uploading media */
-    g_timeout_add_seconds(5, deferred_blossom_load, g_strdup(self->user_pubkey_hex));
+    /* Blossom: fetch media server preferences for uploads */
+    gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);
 
-    /* NIP-51 settings sync: defer 10s - background sync operation */
-    g_timeout_add_seconds(10, deferred_nip51_sync, g_strdup(self->user_pubkey_hex));
+    /* NIP-51: sync mutes, follows, bookmarks from relays */
+    gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
   }
 
   show_toast(self, "Signed in successfully");
