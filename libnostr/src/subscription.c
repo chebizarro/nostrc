@@ -99,7 +99,8 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     if (!sub)
         return NULL;
 
-    sub->relay = relay;
+    /* Hold a reference to prevent relay from being freed while subscription is active */
+    sub->relay = nostr_relay_ref(relay);
     sub->filters = filters;
     sub->priv = (SubscriptionPrivate *)malloc(sizeof(SubscriptionPrivate));
     if (!sub->priv) {
@@ -226,6 +227,13 @@ void nostr_subscription_free(NostrSubscription *sub) {
     free(sub->priv->id);
     go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
+
+    /* Release reference to relay (may trigger relay free if last reference) */
+    if (sub->relay) {
+        nostr_relay_unref(sub->relay);
+        sub->relay = NULL;
+    }
+
     free(sub);
     nostr_metric_counter_add("sub_freed", 1);
 }
