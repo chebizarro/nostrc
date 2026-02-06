@@ -506,9 +506,12 @@ gboolean gn_nostr_event_item_get_is_muted(GnNostrEventItem *self) {
 void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GnNostrProfile *profile) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
 
-  if (g_set_object(&self->profile, profile)) {
-    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PROFILE]);
-  }
+  /* Always notify when setting profile, even if it's the same object pointer.
+   * The profile object is reused and updated in place by profile_cache_update_from_content,
+   * so g_set_object would return FALSE (no pointer change) and skip notification.
+   * This caused timeline profile display to not update when profiles arrived. */
+  g_set_object(&self->profile, profile);
+  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PROFILE]);
 }
 
 void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,
