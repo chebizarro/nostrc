@@ -1046,14 +1046,10 @@ gnostr_plugin_context_open_profile_panel(GnostrPluginContext *context,
   if (!GNOSTR_IS_MAIN_WINDOW(context->main_window))
     return;
 
-  /* TODO: Implement profile panel navigation in main window.
-   * This requires adding gnostr_main_window_show_profile() or similar.
-   * For now, emit a debug message so the call is visible in logs. */
-  g_debug("[plugin-api] Request to open profile panel for pubkey: %s", pubkey_hex);
+  g_debug("[plugin-api] Opening profile panel for pubkey: %s", pubkey_hex);
 
-  /* Enqueue the profile for prefetch so it's ready when panel is implemented */
-  gnostr_main_window_enqueue_profile_author(GNOSTR_MAIN_WINDOW(context->main_window),
-                                            pubkey_hex);
+  /* Navigate to the profile panel */
+  gnostr_main_window_open_profile(GTK_WIDGET(context->main_window), pubkey_hex);
 }
 
 /* Async sign context */
