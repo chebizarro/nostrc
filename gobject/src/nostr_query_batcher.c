@@ -319,8 +319,12 @@ static void fire_batch(NostrQueryBatcher *batcher, RelayBatch *batch) {
     NostrSimplePool *core_pool = batcher->pool->pool;
     nostr_simple_pool_ensure_relay(core_pool, batch->relay_url);
 
-    /* Find the relay in pool (note: potential race condition, see nostrc-pivi) */
+    /* Find the relay in pool - MUST hold mutex during relay array access
+     * to prevent heap-use-after-free when ensure_relay reallocs the array
+     * (nostrc-kii3: same fix pattern as nostrc-pivi) */
+    pthread_mutex_lock(&core_pool->pool_mutex);
     NostrRelay *relay = find_relay_in_pool(core_pool, batch->relay_url);
+    pthread_mutex_unlock(&core_pool->pool_mutex);
 
     if (!relay) {
         GError *gerr = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
