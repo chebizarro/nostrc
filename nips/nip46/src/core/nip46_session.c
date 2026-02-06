@@ -581,7 +581,13 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
          * the response to arrive quickly as a new event. */
         uint64_t timeout_ms = (eose_count >= (int)active_count) ? 5000 : 30000;
 
+        fprintf(stderr, "[nip46] %s: waiting for events (timeout=%lums, eose=%d/%zu)...\n",
+                method, (unsigned long)timeout_ms, eose_count, active_count);
+
         GoSelectResult sel = go_select_timeout(cases, num_cases, timeout_ms);
+
+        fprintf(stderr, "[nip46] %s: go_select returned: selected_case=%d, ok=%d\n",
+                method, sel.selected_case, sel.ok);
 
         if (sel.selected_case == -1) {
             /* Timeout - no events arrived */
@@ -595,6 +601,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
         if (!sel.ok) {
             /* Channel closed */
+            fprintf(stderr, "[nip46] %s: channel closed (case %d)\n", method, sel.selected_case);
             continue;
         }
 
@@ -610,6 +617,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
         /* This is an event - process it */
         NostrEvent *ev = (NostrEvent *)recv_bufs[case_idx];
+        fprintf(stderr, "[nip46] %s: got event from case %zu, ev=%p\n", method, case_idx, (void*)ev);
         if (!ev) continue;
 
         const char *content = nostr_event_get_content(ev);
@@ -1312,18 +1320,25 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
         }
         }
     } else if (strcmp(req.method, "connect") == 0) {
-        /* params: [client_pubkey_hex, perms_csv] */
+        /* NIP-46 connect params: [remote_signer_pubkey, secret, permissions]
+         * ACL should be set for the CLIENT'S pubkey (from event author), not params[0].
+         * params[0] = remote signer pubkey (ignored by bunker, it's our own pubkey)
+         * params[1] = optional connect secret
+         * params[2] = optional permissions CSV */
+        const char *perms = (req.n_params > 2 && req.params && req.params[2]) ? req.params[2] : NULL;
         int allowed = 1;
         if (s->cbs.authorize_cb) {
-            const char *pk = (req.n_params > 0 && req.params) ? req.params[0] : NULL;
-            const char *perms = (req.n_params > 1 && req.params) ? req.params[1] : NULL;
-            allowed = s->cbs.authorize_cb(pk, perms, s->cbs.user_data);
+            /* Pass the CLIENT's pubkey (from event) and requested permissions */
+            allowed = s->cbs.authorize_cb(client_pubkey_hex, perms, s->cbs.user_data);
         }
         if (allowed) {
-            const char *pk = (req.n_params > 0 && req.params) ? req.params[0] : NULL;
-            const char *perms = (req.n_params > 1 && req.params) ? req.params[1] : NULL;
-            if (pk && is_valid_pubkey_hex_relaxed(pk)) {
-                acl_set_perms(s, pk, perms);
+            /* Set ACL for the CLIENT's pubkey with the requested permissions */
+            if (is_valid_pubkey_hex_relaxed(client_pubkey_hex)) {
+                acl_set_perms(s, client_pubkey_hex, perms);
+                if (getenv("NOSTR_DEBUG")) {
+                    fprintf(stderr, "[nip46] connect: granted perms '%s' to client %s\n",
+                            perms ? perms : "(all)", client_pubkey_hex);
+                }
             }
             reply_json = nostr_nip46_response_build_ok(req.id, "\"ack\"");
         } else {
@@ -1410,6 +1425,50 @@ static int csv_split(const char *csv, char ***out_vec, size_t *out_n){ if(out_ve
     char **vec=(char**)calloc(n, sizeof(char*)); if(!vec) return -1; size_t idx=0; const char *start=csv; for(const char *p=csv; ; ++p){ if(*p==','||*p=='\0'){ size_t len=(size_t)(p-start); char *s=(char*)malloc(len+1); if(!s){ csv_free(vec, idx); return -1; } memcpy(s,start,len); s[len]='\0'; vec[idx++]=s; if(*p=='\0') break; start=p+1; } }
     *out_vec=vec; if(out_n) *out_n=idx; return 0; }
 static void csv_free(char **vec, size_t n){ if(!vec) return; for(size_t i=0;i<n;++i) free(vec[i]); free(vec); }
-static void acl_set_perms(NostrNip46Session *s, const char *client_pk, const char *perms_csv){ if(!s||!client_pk) return; /* remove existing */ struct PermEntry **pp=&s->acl_head; while(*pp){ if(strcmp((*pp)->client_pk, client_pk)==0){ struct PermEntry *old=*pp; *pp=old->next; if(old->methods) { for(size_t i=0;i<old->n_methods;++i) free(old->methods[i]); free(old->methods);} free(old->client_pk); free(old); break; } pp=&(*pp)->next; }
-    struct PermEntry *e=(struct PermEntry*)calloc(1,sizeof(*e)); if(!e) return; e->client_pk=strdup(client_pk); if(perms_csv && *perms_csv){ if(csv_split(perms_csv, &e->methods, &e->n_methods)!=0){ e->methods=NULL; e->n_methods=0; } } e->next=s->acl_head; s->acl_head=e; }
+static void acl_set_perms(NostrNip46Session *s, const char *client_pk, const char *perms_csv){
+    if(!s||!client_pk) return;
+    /* remove existing */
+    struct PermEntry **pp=&s->acl_head;
+    while(*pp){
+        if(strcmp((*pp)->client_pk, client_pk)==0){
+            struct PermEntry *old=*pp;
+            *pp=old->next;
+            if(old->methods) {
+                for(size_t i=0;i<old->n_methods;++i) free(old->methods[i]);
+                free(old->methods);
+            }
+            free(old->client_pk);
+            free(old);
+            break;
+        }
+        pp=&(*pp)->next;
+    }
+    struct PermEntry *e=(struct PermEntry*)calloc(1,sizeof(*e));
+    if(!e) return;
+    e->client_pk=strdup(client_pk);
+    if(perms_csv && *perms_csv){
+        /* Client requested specific permissions */
+        if(csv_split(perms_csv, &e->methods, &e->n_methods)!=0){
+            e->methods=NULL;
+            e->n_methods=0;
+        }
+    } else {
+        /* No permissions specified - grant standard NIP-46 methods as default.
+         * This matches behavior of most bunker implementations. */
+        static const char *default_perms[] = {
+            "sign_event", "get_public_key", "nip04_encrypt", "nip04_decrypt",
+            "nip44_encrypt", "nip44_decrypt"
+        };
+        size_t n_default = sizeof(default_perms)/sizeof(default_perms[0]);
+        e->methods = (char**)malloc(n_default * sizeof(char*));
+        if(e->methods){
+            e->n_methods = n_default;
+            for(size_t i=0;i<n_default;++i){
+                e->methods[i] = strdup(default_perms[i]);
+            }
+        }
+    }
+    e->next=s->acl_head;
+    s->acl_head=e;
+}
 static int acl_has_perm(const NostrNip46Session *s, const char *client_pk, const char *method){ if(!s||!client_pk||!method) return 0; for(const struct PermEntry *it=s->acl_head; it; it=it->next){ if(it->client_pk && strcmp(it->client_pk, client_pk)==0){ if(it->n_methods==0) return 0; for(size_t i=0;i<it->n_methods;++i){ if(it->methods[i] && strcmp(it->methods[i], method)==0) return 1; } return 0; } } return 0; }
