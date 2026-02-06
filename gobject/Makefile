@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Iinclude -lcrypto -lssl -lpthread -ljansson `pkg-config --cflags glib-2.0 gobject-2.0`
 LDFLAGS = `pkg-config --libs glib-2.0 gobject-2.0`
 
-SRCS = src/nostr_event.c src/nostr_filter.c src/nostr_relay.c src/nostr_subscription.c src/nostr_simple_pool.c src/nostr_pointer.c src/nostr_relay_store.c src/crypto_utils_gobject.c src/nostr_async.c
+SRCS = src/nostr_event.c src/nostr_filter.c src/nostr_relay.c src/nostr_subscription.c src/nostr_simple_pool.c src/nostr_pointer.c src/nostr_relay_store.c src/crypto_utils_gobject.c src/nostr_async.c src/nostr_query_batcher.c
 OBJS = $(SRCS:.c=.o)
 TARGET = libnostr.a
 
