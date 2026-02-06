@@ -30,16 +30,16 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/note-card-row.ui"
 
-/* nostrc-0acr: Safe label update helper to prevent NULL PangoLayout crash.
- * During widget allocation, the label's internal PangoLayout may not be
- * initialized yet. This macro checks that the label is fully ready before
- * updating text. Checks:
+/* nostrc-0acr: Safe label update helper to prevent NULL pointer crash.
+ * Checks:
  * 1. Widget pointer is not NULL
  * 2. Widget is a valid GtkLabel
- * 3. Widget is mapped (has completed allocation)
- * If not safe, skip the update - content will be set on next valid opportunity. */
+ * NOTE: Removed gtk_widget_get_mapped() check - it was causing timestamps
+ * and other labels to be skipped for items not yet scrolled into view.
+ * GTK labels can safely accept text even when not mapped. The original
+ * nostrc-0acr crash was likely due to NULL/invalid pointers, not unmapped state. */
 #define LABEL_SAFE_TO_UPDATE(lbl) \
-  ((lbl) != NULL && GTK_IS_LABEL(lbl) && gtk_widget_get_mapped(GTK_WIDGET(lbl)))
+  ((lbl) != NULL && GTK_IS_LABEL(lbl))
 
 /* No longer using mutex - proper fix is at backend level */
 
