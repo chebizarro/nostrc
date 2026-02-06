@@ -599,10 +599,19 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     int max_retries = 10;  /* Ignore up to 10 stale responses */
 
     for (int attempt = 0; attempt < max_retries; attempt++) {
-        /* Wait for a response */
+        /* Wait for a response with timeout (30 seconds per attempt).
+         * This prevents indefinite hangs if signer doesn't respond. */
         pthread_mutex_lock(&s_nip46_resp_mutex);
         while (!s_nip46_resp_ctx.received) {
-            pthread_cond_wait(&s_nip46_resp_cond, &s_nip46_resp_mutex);
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += 30;  /* 30-second timeout */
+            int wait_rc = pthread_cond_timedwait(&s_nip46_resp_cond, &s_nip46_resp_mutex, &ts);
+            if (wait_rc == ETIMEDOUT) {
+                fprintf(stderr, "[nip46] %s: attempt %d: timeout waiting for response\n", method, attempt + 1);
+                pthread_mutex_unlock(&s_nip46_resp_mutex);
+                goto cleanup_and_fail;
+            }
         }
         response_content = s_nip46_resp_ctx.response_content;
         response_pubkey = s_nip46_resp_ctx.response_pubkey;
@@ -748,6 +757,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         break;  /* Got valid response, exit retry loop */
     }
 
+cleanup_and_fail:
     nostr_simple_pool_stop(pool);
     nostr_simple_pool_free(pool);
     secure_wipe(sk, sizeof(sk));
