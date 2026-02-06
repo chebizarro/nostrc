@@ -299,6 +299,7 @@ struct _GnostrProfilePane {
   /* Posts model */
   GListStore *posts_model;
   GtkSelectionModel *posts_selection;
+  NoteCardFactory *posts_note_factory;  /* nostrc-brc4: Store for cleanup */
 
   /* Media tab widgets */
   GtkWidget *media_container;
@@ -469,9 +470,12 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   /* Clear posts model */
   if (self->posts_list && GTK_IS_LIST_VIEW(self->posts_list)) {
     gtk_list_view_set_model(GTK_LIST_VIEW(self->posts_list), NULL);
+    gtk_list_view_set_factory(GTK_LIST_VIEW(self->posts_list), NULL);
   }
   g_clear_object(&self->posts_selection);
   g_clear_object(&self->posts_model);
+  /* nostrc-brc4: Clean up NoteCardFactory */
+  g_clear_object(&self->posts_note_factory);
 
   /* Cancel media loading */
   if (self->media_cancellable) {
@@ -996,16 +1000,18 @@ static void setup_posts_list(GnostrProfilePane *self) {
   }
 
   /* nostrc-o7pp: Use unified NoteCardFactory for proper lifecycle management.
-   * This ensures prepare_for_bind and prepare_for_unbind are called correctly. */
-  NoteCardFactory *note_factory = note_card_factory_new(NOTE_CARD_BIND_BASIC, NOTE_CARD_SIGNAL_NONE);
-  note_card_factory_set_bind_callback(note_factory, posts_bind_callback, NULL);
-  GtkListItemFactory *factory = note_card_factory_get_gtk_factory(note_factory);
+   * This ensures prepare_for_bind and prepare_for_unbind are called correctly.
+   * nostrc-brc4: Store reference for cleanup in dispose. */
+  if (!self->posts_note_factory) {
+    self->posts_note_factory = note_card_factory_new(NOTE_CARD_BIND_BASIC, NOTE_CARD_SIGNAL_NONE);
+    note_card_factory_set_bind_callback(self->posts_note_factory, posts_bind_callback, NULL);
+  }
+  GtkListItemFactory *factory = note_card_factory_get_gtk_factory(self->posts_note_factory);
 
   /* Set up list view */
   gtk_list_view_set_model(GTK_LIST_VIEW(self->posts_list), self->posts_selection);
   gtk_list_view_set_factory(GTK_LIST_VIEW(self->posts_list), factory);
-  /* Note: Factory is owned by NoteCardFactory, don't unref separately.
-   * TODO: Store note_factory reference for proper cleanup in dispose. */
+  /* Note: Factory is owned by NoteCardFactory, don't unref separately. */
 
   /* Connect activation signal */
   g_signal_connect(self->posts_list, "activate", G_CALLBACK(on_posts_list_activate), self);
