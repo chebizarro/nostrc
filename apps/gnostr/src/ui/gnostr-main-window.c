@@ -330,6 +330,7 @@ static void free_urls_owned(const char **urls, size_t count);
 
 /* Avatar HTTP downloader (libsoup) helpers declared later, after struct definition */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
+static void refresh_thread_view_profiles_if_visible(GnostrMainWindow *self);
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
 static void on_bg_prefetch_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
@@ -407,7 +408,10 @@ static gboolean apply_profiles_idle(gpointer user_data) {
     update_meta_from_profile_json(self, it->pubkey_hex, it->content_json);
     applied++;
   }
-  (void)applied; /* Suppress unused warning; profile updates are routine */
+  /* nostrc-sk8o: Refresh thread view ONCE after all profiles applied (not per-profile) */
+  if (applied > 0) {
+    refresh_thread_view_profiles_if_visible(self);
+  }
   idle_apply_profiles_ctx_free(c);
   return G_SOURCE_REMOVE;
 }
@@ -426,7 +430,10 @@ static gboolean profile_apply_on_main(gpointer data) {
     GList *tops = gtk_window_list_toplevels();
     for (GList *l = tops; l; l = l->next) {
       if (GNOSTR_IS_MAIN_WINDOW(l->data)) {
-        update_meta_from_profile_json(GNOSTR_MAIN_WINDOW(l->data), c->pubkey_hex, c->content_json);
+        GnostrMainWindow *win = GNOSTR_MAIN_WINDOW(l->data);
+        update_meta_from_profile_json(win, c->pubkey_hex, c->content_json);
+        /* nostrc-sk8o: Refresh thread view after single profile update */
+        refresh_thread_view_profiles_if_visible(win);
         break;
       }
     }
@@ -4545,8 +4552,12 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
       }
     }
     storage_ndb_end_query(txn);
+    /* nostrc-sk8o: Refresh thread view ONCE after batch of cached profiles */
+    if (cached_applied > 0) {
+      refresh_thread_view_profiles_if_visible(self);
+    }
   }
-  
+
   (void)cached_applied; /* Used for DB cache optimization */
   
   /* NOTE: We still fetch ALL profiles from relays to check for updates.
@@ -7636,7 +7647,21 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
   return TRUE;
 }
 
-/* Parses content_json and stores in profile provider, then updates the event model */
+/* nostrc-sk8o: Helper to refresh thread view profiles once after batch updates */
+static void refresh_thread_view_profiles_if_visible(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+    if (is_panel_visible(self) && !gnostr_session_view_is_showing_profile(self->session_view)) {
+      gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
+    }
+  }
+}
+
+/* Parses content_json and stores in profile provider, then updates the event model.
+ * nostrc-sk8o: Does NOT update thread view - caller must call
+ * refresh_thread_view_profiles_if_visible() once after batch updates to avoid
+ * O(N*M) main thread blocking. */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json) {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !content_json) return;
 
@@ -7649,13 +7674,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
     gn_nostr_event_model_update_profile(G_OBJECT(self->event_model), pubkey_hex, content_json);
   }
 
-  /* Update thread view if visible */
-  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-    if (is_panel_visible(self) && !gnostr_session_view_is_showing_profile(self->session_view)) {
-      gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
-    }
-  }
+  /* nostrc-sk8o: Thread view update removed - now done once after batch in caller */
 
   /* nostrc-loed: Refresh login UI if this is the current user's profile */
   if (self->user_pubkey_hex && pubkey_hex &&

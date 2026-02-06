@@ -2823,17 +2823,44 @@ void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
 
   if (!self->thread_model || !self->sorted_events) return;
 
-  /* Update profile data in sorted_events from cache */
-  for (guint i = 0; i < self->sorted_events->len; i++) {
-    ThreadEventItem *item = g_ptr_array_index(self->sorted_events, i);
-    if (item) {
-      /* Re-fetch profile from cache */
-      update_item_profile_from_cache(item);
+  guint model_len = g_list_model_get_n_items(G_LIST_MODEL(self->thread_model));
+  if (model_len == 0) return;
+
+  /* nostrc-sk8o: Update profile data directly in model items instead of rebuilding.
+   * This avoids O(N) profile fetches that rebuild_thread_ui() would trigger. */
+  for (guint i = 0; i < model_len; i++) {
+    GnNostrEventItem *event_item = g_list_model_get_item(G_LIST_MODEL(self->thread_model), i);
+    if (!event_item) continue;
+
+    const char *event_id = gn_nostr_event_item_get_event_id(event_item);
+    if (!event_id) {
+      g_object_unref(event_item);
+      continue;
     }
+
+    /* Find matching ThreadEventItem by event ID */
+    ThreadEventItem *item = g_hash_table_lookup(self->events_by_id, event_id);
+    if (item) {
+      /* Update profile from cache */
+      update_item_profile_from_cache(item);
+
+      /* Update the GnNostrEventItem's profile */
+      if (item->display_name || item->handle || item->avatar_url || item->nip05) {
+        GnNostrProfile *profile = gn_nostr_profile_new(item->pubkey_hex);
+        if (item->display_name) gn_nostr_profile_set_display_name(profile, item->display_name);
+        if (item->handle) gn_nostr_profile_set_name(profile, item->handle);
+        if (item->avatar_url) gn_nostr_profile_set_picture_url(profile, item->avatar_url);
+        if (item->nip05) gn_nostr_profile_set_nip05(profile, item->nip05);
+        gn_nostr_event_item_set_profile(event_item, profile);
+        g_object_unref(profile);
+      }
+    }
+
+    g_object_unref(event_item);
   }
 
-  /* Rebuild UI with updated profiles - the factory will pick up the new data */
-  rebuild_thread_ui(self);
+  /* Signal that items have changed so factory rebinds with new data */
+  g_list_model_items_changed(G_LIST_MODEL(self->thread_model), 0, model_len, model_len);
 }
 
 /* ========== nostrc-50t: nostrdb subscription for live thread updates ========== */

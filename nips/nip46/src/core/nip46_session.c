@@ -613,9 +613,16 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         if (!ev) continue;
 
         const char *content = nostr_event_get_content(ev);
-        const char *sender_pubkey = nostr_event_get_pubkey(ev);
+        const char *ev_pubkey = nostr_event_get_pubkey(ev);
 
-        if (!content || !sender_pubkey) {
+        if (!content || !ev_pubkey) {
+            nostr_event_free(ev);
+            continue;
+        }
+
+        /* Copy sender pubkey before we free the event (use-after-free fix) */
+        char *sender_pubkey = strdup(ev_pubkey);
+        if (!sender_pubkey) {
             nostr_event_free(ev);
             continue;
         }
@@ -626,6 +633,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         unsigned char resp_pk[32];
         if (parse_peer_xonly32(sender_pubkey, resp_pk) != 0) {
             fprintf(stderr, "[nip46] %s: invalid sender pubkey, skipping\n", method);
+            free(sender_pubkey);
             nostr_event_free(ev);
             continue;
         }
@@ -643,6 +651,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                                     &plaintext_str, &error_msg) != 0 || !plaintext_str) {
                 fprintf(stderr, "[nip46] %s: NIP-04 decrypt failed, skipping\n", method);
                 free(error_msg);
+                free(sender_pubkey);
                 nostr_event_free(ev);
                 continue;
             }
@@ -652,17 +661,20 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         } else {
             if (nostr_nip44_decrypt_v2(sk, resp_pk, content, &plaintext, &plaintext_len) != 0 || !plaintext) {
                 fprintf(stderr, "[nip46] %s: NIP-44 decrypt failed, skipping\n", method);
+                free(sender_pubkey);
                 nostr_event_free(ev);
                 continue;
             }
         }
 
+        /* Event no longer needed after decryption (sender_pubkey was already copied) */
         nostr_event_free(ev);
 
         /* Parse JSON response */
         char *response_json = (char *)malloc(plaintext_len + 1);
         if (!response_json) {
             free(plaintext);
+            free(sender_pubkey);
             continue;
         }
         memcpy(response_json, plaintext, plaintext_len);
@@ -674,6 +686,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         if (!nostr_json_is_valid(response_json)) {
             fprintf(stderr, "[nip46] %s: invalid JSON, skipping\n", method);
             free(response_json);
+            free(sender_pubkey);
             continue;
         }
 
@@ -685,6 +698,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                         method, resp_id, req_id);
                 free(resp_id);
                 free(response_json);
+                free(sender_pubkey);
                 continue;
             }
             free(resp_id);
@@ -698,6 +712,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
             fprintf(stderr, "[nip46] %s: ERROR: signer error: %s\n", method, err_msg);
             free(err_msg);
             free(response_json);
+            free(sender_pubkey);
             /* This is a valid response (matching ID) but it's an error - stop processing */
             break;
         }
@@ -707,12 +722,13 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         if (nostr_json_get_string(response_json, "result", &result) != 0 || !result) {
             fprintf(stderr, "[nip46] %s: no result field, skipping\n", method);
             free(response_json);
+            free(sender_pubkey);
             continue;
         }
         free(response_json);
 
-        /* Success! Save sender pubkey if caller wants it */
-        response_pubkey = strdup(sender_pubkey);
+        /* Success! Transfer ownership of sender_pubkey to response_pubkey */
+        response_pubkey = sender_pubkey;  /* Already strdup'd, just transfer */
         fprintf(stderr, "[nip46] %s: SUCCESS - result: %.50s\n", method, result);
         break;
     }
