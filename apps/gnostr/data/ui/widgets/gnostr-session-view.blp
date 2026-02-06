@@ -204,6 +204,10 @@ template $GnostrSessionView: Adw.Bin {
                                     }
                                 };
                             }
+
+                            /* Plugin sidebar items are added dynamically after row_repos.
+                             * A separator is automatically inserted before the first plugin item.
+                             * See gnostr_session_view_add_plugin_sidebar_item() */
                         };
                     };
                 };

@@ -69,6 +69,7 @@ enum {
   SIGNAL_CLONE_REQUESTED,
   SIGNAL_REFRESH_REQUESTED,
   SIGNAL_NEED_PROFILE,
+  SIGNAL_OPEN_PROFILE,
   N_SIGNALS
 };
 
@@ -118,6 +119,17 @@ on_refresh_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
 {
   GnostrRepoBrowser *self = GNOSTR_REPO_BROWSER(user_data);
   g_signal_emit(self, signals[SIGNAL_REFRESH_REQUESTED], 0);
+}
+
+/* Handler for open-profile signal from note card rows */
+static void
+on_note_card_open_profile(GnostrNoteCardRow *card G_GNUC_UNUSED,
+                          const char        *pubkey_hex,
+                          gpointer           user_data)
+{
+  GnostrRepoBrowser *self = GNOSTR_REPO_BROWSER(user_data);
+  if (pubkey_hex && *pubkey_hex)
+    g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
 }
 
 static GtkWidget *
@@ -188,6 +200,9 @@ create_repo_row(GnostrRepoBrowser *self, RepoData *data)
   /* Free profile after we're done with it */
   if (profile)
     gnostr_profile_meta_free(profile);
+
+  /* Connect open-profile signal to relay clicks on author avatar/name */
+  g_signal_connect(card, "open-profile", G_CALLBACK(on_note_card_open_profile), self);
 
   /* Wrap in a container with action buttons */
   GtkWidget *container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -355,6 +370,13 @@ gnostr_repo_browser_class_init(GnostrRepoBrowserClass *klass)
 
   signals[SIGNAL_NEED_PROFILE] =
     g_signal_new("need-profile",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  signals[SIGNAL_OPEN_PROFILE] =
+    g_signal_new("open-profile",
                  G_TYPE_FROM_CLASS(klass),
                  G_SIGNAL_RUN_LAST,
                  0, NULL, NULL, NULL,

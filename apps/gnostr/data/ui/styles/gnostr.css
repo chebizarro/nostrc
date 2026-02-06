@@ -387,6 +387,17 @@ label a:visited {
 	font-weight: 600;
 }
 
+/* Large avatar for popover (48px) */
+.avatar-large {
+	border-radius: 50%;
+	min-width: 48px;
+	min-height: 48px;
+}
+
+.avatar-large picture {
+	border-radius: 50%;
+}
+
 .note-avatar picture {
 	border-radius: 50%;
 	min-width: 48px;

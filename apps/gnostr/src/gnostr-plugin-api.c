@@ -318,6 +318,81 @@ gnostr_ui_extension_create_note_decoration(GnostrUIExtension   *extension,
   return NULL;
 }
 
+GList *
+gnostr_ui_extension_get_sidebar_items(GnostrUIExtension   *extension,
+                                      GnostrPluginContext *context)
+{
+  g_return_val_if_fail(GNOSTR_IS_UI_EXTENSION(extension), NULL);
+
+  GnostrUIExtensionInterface *iface = GNOSTR_UI_EXTENSION_GET_IFACE(extension);
+  if (iface->get_sidebar_items)
+    return iface->get_sidebar_items(extension, context);
+  return NULL;
+}
+
+GtkWidget *
+gnostr_ui_extension_create_panel_widget(GnostrUIExtension   *extension,
+                                        GnostrPluginContext *context,
+                                        const char          *panel_id)
+{
+  g_return_val_if_fail(GNOSTR_IS_UI_EXTENSION(extension), NULL);
+  g_return_val_if_fail(panel_id != NULL, NULL);
+
+  GnostrUIExtensionInterface *iface = GNOSTR_UI_EXTENSION_GET_IFACE(extension);
+  if (iface->create_panel_widget)
+    return iface->create_panel_widget(extension, context, panel_id);
+  return NULL;
+}
+
+/* ============================================================================
+ * SIDEBAR ITEM FUNCTIONS
+ * ============================================================================ */
+
+GnostrSidebarItem *
+gnostr_sidebar_item_new(const char *id,
+                        const char *label,
+                        const char *icon_name)
+{
+  g_return_val_if_fail(id != NULL, NULL);
+  g_return_val_if_fail(label != NULL, NULL);
+
+  GnostrSidebarItem *item = g_new0(GnostrSidebarItem, 1);
+  item->id = g_strdup(id);
+  item->label = g_strdup(label);
+  item->icon_name = g_strdup(icon_name);
+  item->requires_auth = FALSE;
+  item->position = 0;
+
+  return item;
+}
+
+void
+gnostr_sidebar_item_free(GnostrSidebarItem *item)
+{
+  if (!item) return;
+
+  g_clear_pointer(&item->id, g_free);
+  g_clear_pointer(&item->label, g_free);
+  g_clear_pointer(&item->icon_name, g_free);
+  g_free(item);
+}
+
+void
+gnostr_sidebar_item_set_requires_auth(GnostrSidebarItem *item,
+                                      gboolean           requires_auth)
+{
+  g_return_if_fail(item != NULL);
+  item->requires_auth = requires_auth;
+}
+
+void
+gnostr_sidebar_item_set_position(GnostrSidebarItem *item,
+                                 int                position)
+{
+  g_return_if_fail(item != NULL);
+  item->position = position;
+}
+
 /* ============================================================================
  * ERROR DOMAIN
  * ============================================================================ */
@@ -947,6 +1022,29 @@ gnostr_plugin_context_is_logged_in(GnostrPluginContext *context)
 
   GnostrSignerService *signer = gnostr_signer_service_get_default();
   return gnostr_signer_service_is_available(signer);
+}
+
+void
+gnostr_plugin_context_open_profile_panel(GnostrPluginContext *context,
+                                         const char          *pubkey_hex)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(pubkey_hex != NULL);
+
+  if (!context->main_window)
+    return;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(context->main_window))
+    return;
+
+  /* TODO: Implement profile panel navigation in main window.
+   * This requires adding gnostr_main_window_show_profile() or similar.
+   * For now, emit a debug message so the call is visible in logs. */
+  g_debug("[plugin-api] Request to open profile panel for pubkey: %s", pubkey_hex);
+
+  /* Enqueue the profile for prefetch so it's ready when panel is implemented */
+  gnostr_main_window_enqueue_profile_author(GNOSTR_MAIN_WINDOW(context->main_window),
+                                            pubkey_hex);
 }
 
 /* Async sign context */

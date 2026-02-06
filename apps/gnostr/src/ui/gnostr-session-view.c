@@ -2,10 +2,13 @@
 
 #include "gnostr-session-view.h"
 
+#include "../gnostr-plugin-api.h"
 #include "gnostr-classifieds-view.h"
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-notifications-view.h"
 #include "gnostr-profile-pane.h"
+#include "gnostr-profile-provider.h"
+#include "gnostr-avatar-cache.h"
 #include "gnostr-repo-browser.h"
 #include "gnostr-thread-view.h"
 #include "gnostr-timeline-view.h"
@@ -14,6 +17,7 @@
 #include <gdk/gdkkeysyms.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+#include <nostr/nip19/nip19.h>
 
 /* This must match the compiled resource path for the blueprint template */
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-session-view.ui"
@@ -95,6 +99,15 @@ struct _GnostrSessionView {
   GtkWidget *account_separator;
   char *current_npub;  /* Cache for popover rebuild */
 
+  /* User avatar in popover */
+  GtkWidget *popover_avatar_image;    /* GtkPicture for user avatar */
+  GtkWidget *popover_avatar_initials; /* GtkLabel fallback with initials */
+  char *current_pubkey_hex;           /* Cached pubkey for profile lookups */
+
+  /* Header bar avatar button content */
+  GtkWidget *header_avatar_image;     /* GtkPicture for header avatar */
+  GtkWidget *header_avatar_initials;  /* GtkLabel fallback with initials */
+
   GtkOverlay *content_root;
 
   GtkRevealer *new_notes_revealer;
@@ -122,6 +135,15 @@ struct _GnostrSessionView {
   gboolean authenticated;
   gboolean showing_profile;
 
+  /* Plugin panels */
+  GHashTable *plugin_panels;      /* panel_id -> GtkWidget* */
+  GHashTable *plugin_rows;        /* panel_id -> GtkListBoxRow* */
+  GHashTable *plugin_extensions;  /* panel_id -> GnostrUIExtension* */
+  GHashTable *plugin_contexts;    /* panel_id -> GnostrPluginContext* */
+  GHashTable *plugin_labels;      /* panel_id -> char* (display label) */
+  GHashTable *plugin_auth_required; /* panel_id -> GINT_TO_POINTER(gboolean) */
+  GtkWidget *plugin_separator;    /* Separator before plugin items */
+
   /* Optional toast forwarding (weak) */
   GWeakRef toast_overlay_ref;
 };
@@ -136,6 +158,19 @@ static const char *page_name_for_row(GnostrSessionView *self, GtkListBoxRow *row
   if (row == self->row_discover) return "discover";
   if (row == self->row_classifieds) return "classifieds";
   if (row == self->row_repos) return "repos";
+
+  /* Check plugin rows */
+  if (self->plugin_rows) {
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->plugin_rows);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      if (GTK_LIST_BOX_ROW(value) == row) {
+        return (const char *)key;
+      }
+    }
+  }
+
   return NULL;
 }
 
@@ -147,16 +182,30 @@ static GtkListBoxRow *row_for_page_name(GnostrSessionView *self, const char *pag
   if (g_strcmp0(page_name, "discover") == 0) return self->row_discover;
   if (g_strcmp0(page_name, "classifieds") == 0) return self->row_classifieds;
   if (g_strcmp0(page_name, "repos") == 0) return self->row_repos;
+
+  /* Check plugin rows */
+  if (self->plugin_rows) {
+    GtkListBoxRow *row = g_hash_table_lookup(self->plugin_rows, page_name);
+    if (row) return row;
+  }
+
   return NULL;
 }
 
-static const char *title_for_page_name(const char *page_name) {
+static const char *title_for_page_name(GnostrSessionView *self, const char *page_name) {
   if (g_strcmp0(page_name, "timeline") == 0) return _("Timeline");
   if (g_strcmp0(page_name, "notifications") == 0) return _("Notifications");
   if (g_strcmp0(page_name, "messages") == 0) return _("Messages");
   if (g_strcmp0(page_name, "discover") == 0) return _("Discover");
   if (g_strcmp0(page_name, "classifieds") == 0) return _("Marketplace");
   if (g_strcmp0(page_name, "repos") == 0) return _("Git Repos");
+
+  /* Check plugin labels */
+  if (self && self->plugin_labels) {
+    const char *label = g_hash_table_lookup(self->plugin_labels, page_name);
+    if (label) return label;
+  }
+
   return NULL;
 }
 
@@ -173,6 +222,58 @@ static char *truncate_npub(const char *npub) {
   return g_strdup_printf("%.10s...%s", npub, npub + strlen(npub) - 4);
 }
 
+/* Helper: Convert npub to hex pubkey. Returns newly allocated string or NULL. */
+static char *npub_to_pubkey_hex(const char *npub) {
+  if (!npub || strncmp(npub, "npub1", 5) != 0) return NULL;
+  uint8_t pubkey_bytes[32];
+  if (nostr_nip19_decode_npub(npub, pubkey_bytes) != 0) return NULL;
+  char *hex = g_malloc(65);
+  for (int i = 0; i < 32; i++) {
+    sprintf(hex + i * 2, "%02x", pubkey_bytes[i]);
+  }
+  hex[64] = '\0';
+  return hex;
+}
+
+/* Helper: Generate initials from display name or handle */
+static void set_initials_label(GtkWidget *label, const char *display_name, const char *handle) {
+  if (!GTK_IS_LABEL(label)) return;
+  const char *src = (display_name && *display_name) ? display_name : (handle && *handle ? handle : "AN");
+  char initials[3] = {0};
+  int i = 0;
+  for (const char *p = src; *p && i < 2; p++) {
+    if (g_ascii_isalnum(*p)) initials[i++] = g_ascii_toupper(*p);
+  }
+  if (i == 0) { initials[0] = 'A'; initials[1] = 'N'; }
+  gtk_label_set_text(GTK_LABEL(label), initials);
+}
+
+/* Helper: Create avatar overlay with image and initials fallback for small (24px) avatars */
+static GtkWidget *create_small_avatar_overlay(GtkWidget **out_image, GtkWidget **out_initials) {
+  GtkWidget *overlay = gtk_overlay_new();
+  gtk_widget_set_size_request(overlay, 24, 24);
+
+  /* Initials fallback (shown when no avatar image) */
+  GtkWidget *initials = gtk_label_new("AN");
+  gtk_widget_add_css_class(initials, "avatar-initials");
+  gtk_widget_set_halign(initials, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(initials, GTK_ALIGN_CENTER);
+  gtk_overlay_set_child(GTK_OVERLAY(overlay), initials);
+
+  /* Avatar image (overlays initials when loaded) */
+  GtkWidget *image = gtk_picture_new();
+  gtk_widget_set_size_request(image, 24, 24);
+  gtk_picture_set_content_fit(GTK_PICTURE(image), GTK_CONTENT_FIT_COVER);
+  gtk_widget_add_css_class(image, "avatar");
+  gtk_widget_set_visible(image, FALSE);
+  gtk_overlay_add_overlay(GTK_OVERLAY(overlay), image);
+
+  if (out_image) *out_image = image;
+  if (out_initials) *out_initials = initials;
+
+  return overlay;
+}
+
 /* Helper: Create a row for an account in the account list */
 static GtkWidget *create_account_row(const char *npub, gboolean is_current) {
   GtkWidget *row = gtk_list_box_row_new();
@@ -182,20 +283,59 @@ static GtkWidget *create_account_row(const char *npub, gboolean is_current) {
   gtk_widget_set_margin_start(box, 4);
   gtk_widget_set_margin_end(box, 4);
 
-  /* Avatar placeholder - could be enhanced to show actual avatar */
-  GtkWidget *avatar = gtk_image_new_from_icon_name("avatar-default-symbolic");
-  gtk_box_append(GTK_BOX(box), avatar);
+  /* Create avatar overlay with image and initials */
+  GtkWidget *avatar_image = NULL;
+  GtkWidget *avatar_initials = NULL;
+  GtkWidget *avatar_overlay = create_small_avatar_overlay(&avatar_image, &avatar_initials);
+  gtk_box_append(GTK_BOX(box), avatar_overlay);
 
-  /* Truncated npub */
-  char *display = truncate_npub(npub);
-  GtkWidget *label = gtk_label_new(display);
+  /* Try to load profile and avatar for this account */
+  char *pubkey_hex = npub_to_pubkey_hex(npub);
+  const char *display_name = NULL;
+  if (pubkey_hex) {
+    GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+    if (meta) {
+      display_name = meta->display_name ? meta->display_name : meta->name;
+      set_initials_label(avatar_initials, display_name, NULL);
+
+      /* Load avatar image if available */
+      if (meta->picture && *meta->picture) {
+        GdkTexture *cached = gnostr_avatar_try_load_cached(meta->picture);
+        if (cached) {
+          gtk_picture_set_paintable(GTK_PICTURE(avatar_image), GDK_PAINTABLE(cached));
+          gtk_widget_set_visible(avatar_image, TRUE);
+          gtk_widget_set_visible(avatar_initials, FALSE);
+          g_object_unref(cached);
+        } else {
+          /* Download avatar asynchronously */
+          gnostr_avatar_download_async(meta->picture, avatar_image, avatar_initials);
+        }
+      }
+      gnostr_profile_meta_free(meta);
+    } else {
+      set_initials_label(avatar_initials, NULL, npub);
+    }
+    g_free(pubkey_hex);
+  } else {
+    set_initials_label(avatar_initials, NULL, npub);
+  }
+
+  /* Display name or truncated npub */
+  GtkWidget *label;
+  if (display_name && *display_name) {
+    label = gtk_label_new(display_name);
+  } else {
+    char *display = truncate_npub(npub);
+    label = gtk_label_new(display);
+    g_free(display);
+  }
   gtk_widget_set_hexpand(label, TRUE);
   gtk_label_set_xalign(GTK_LABEL(label), 0);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
   if (is_current) {
     gtk_widget_add_css_class(label, "heading");
   }
   gtk_box_append(GTK_BOX(box), label);
-  g_free(display);
 
   /* Checkmark for current account */
   if (is_current) {
@@ -254,6 +394,35 @@ static void rebuild_account_list(GnostrSessionView *self) {
   g_free(current_npub);
 }
 
+/* Helper: Create large avatar overlay for popover (48px) */
+static GtkWidget *create_large_avatar_overlay(GtkWidget **out_image, GtkWidget **out_initials) {
+  GtkWidget *overlay = gtk_overlay_new();
+  gtk_widget_set_size_request(overlay, 48, 48);
+  gtk_widget_set_halign(overlay, GTK_ALIGN_CENTER);
+
+  /* Initials fallback (shown when no avatar image) */
+  GtkWidget *initials = gtk_label_new("?");
+  gtk_widget_add_css_class(initials, "avatar-initials");
+  gtk_widget_add_css_class(initials, "title-2");
+  gtk_widget_set_halign(initials, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(initials, GTK_ALIGN_CENTER);
+  gtk_overlay_set_child(GTK_OVERLAY(overlay), initials);
+
+  /* Avatar image (overlays initials when loaded) */
+  GtkWidget *image = gtk_picture_new();
+  gtk_widget_set_size_request(image, 48, 48);
+  gtk_picture_set_content_fit(GTK_PICTURE(image), GTK_CONTENT_FIT_COVER);
+  gtk_widget_add_css_class(image, "avatar");
+  gtk_widget_add_css_class(image, "avatar-large");
+  gtk_widget_set_visible(image, FALSE);
+  gtk_overlay_add_overlay(GTK_OVERLAY(overlay), image);
+
+  if (out_image) *out_image = image;
+  if (out_initials) *out_initials = initials;
+
+  return overlay;
+}
+
 /* Create avatar popover lazily to avoid GTK4 crash on Linux */
 static void ensure_avatar_popover(GnostrSessionView *self) {
   if (!self || !self->btn_avatar || self->avatar_popover) return;
@@ -265,7 +434,13 @@ static void ensure_avatar_popover(GnostrSessionView *self) {
   gtk_widget_set_margin_bottom(box, 12);
   gtk_widget_set_margin_start(box, 12);
   gtk_widget_set_margin_end(box, 12);
-  gtk_widget_set_size_request(box, 200, -1);
+  gtk_widget_set_size_request(box, 220, -1);
+
+  /* User avatar section (shown when signed in) */
+  GtkWidget *avatar_overlay = create_large_avatar_overlay(
+      &self->popover_avatar_image, &self->popover_avatar_initials);
+  gtk_widget_set_margin_bottom(avatar_overlay, 4);
+  gtk_box_append(GTK_BOX(box), avatar_overlay);
 
   /* Status label (shown when not signed in) */
   self->lbl_signin_status = GTK_LABEL(gtk_label_new(_("Not signed in")));
@@ -274,15 +449,22 @@ static void ensure_avatar_popover(GnostrSessionView *self) {
 
   /* Profile name (shown when signed in) */
   self->lbl_profile_name = GTK_LABEL(gtk_label_new(""));
-  gtk_widget_add_css_class(GTK_WIDGET(self->lbl_profile_name), "heading");
+  gtk_widget_add_css_class(GTK_WIDGET(self->lbl_profile_name), "title-3");
+  gtk_label_set_ellipsize(GTK_LABEL(self->lbl_profile_name), PANGO_ELLIPSIZE_END);
   gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), FALSE);
   gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->lbl_profile_name));
+
+  /* Separator after profile section */
+  GtkWidget *profile_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_widget_set_margin_top(profile_separator, 8);
+  gtk_widget_set_margin_bottom(profile_separator, 4);
+  gtk_box_append(GTK_BOX(box), profile_separator);
 
   /* Account list for switching (hidden when empty) */
   GtkWidget *accounts_label = gtk_label_new(_("Accounts"));
   gtk_widget_add_css_class(accounts_label, "dim-label");
   gtk_label_set_xalign(GTK_LABEL(accounts_label), 0);
-  gtk_widget_set_margin_top(accounts_label, 8);
+  gtk_widget_set_margin_top(accounts_label, 4);
   gtk_widget_set_visible(accounts_label, FALSE);
   gtk_box_append(GTK_BOX(box), accounts_label);
 
@@ -338,6 +520,21 @@ static void update_auth_gating(GnostrSessionView *self) {
   if (self->row_messages)
     gtk_widget_set_sensitive(GTK_WIDGET(self->row_messages), self->authenticated);
 
+  /* Update plugin sidebar rows that require authentication */
+  if (self->plugin_auth_required && self->plugin_rows) {
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->plugin_auth_required);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      if (GPOINTER_TO_INT(value)) {
+        GtkWidget *row = g_hash_table_lookup(self->plugin_rows, key);
+        if (row) {
+          gtk_widget_set_sensitive(row, self->authenticated);
+        }
+      }
+    }
+  }
+
   /* Update signin status label in avatar popover if it exists */
   if (self->lbl_signin_status) {
     gtk_label_set_text(self->lbl_signin_status,
@@ -355,7 +552,18 @@ static void update_auth_gating(GnostrSessionView *self) {
   /* If we became unauthenticated while on a gated page, go back to timeline */
   if (!self->authenticated && self->stack) {
     const char *visible = adw_view_stack_get_visible_child_name(self->stack);
-    if (g_strcmp0(visible, "notifications") == 0 || g_strcmp0(visible, "messages") == 0) {
+    gboolean is_gated_page = (g_strcmp0(visible, "notifications") == 0 ||
+                              g_strcmp0(visible, "messages") == 0);
+
+    /* Also check if current page is a plugin page that requires auth */
+    if (!is_gated_page && self->plugin_auth_required) {
+      gpointer auth_value = g_hash_table_lookup(self->plugin_auth_required, visible);
+      if (GPOINTER_TO_INT(auth_value)) {
+        is_gated_page = TRUE;
+      }
+    }
+
+    if (is_gated_page) {
       gnostr_session_view_show_page(self, "timeline");
     }
   }
@@ -408,8 +616,19 @@ static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
   const char *page_name = page_name_for_row(self, row);
   if (!page_name) return;
 
-  if (!self->authenticated &&
-      (g_strcmp0(page_name, "notifications") == 0 || g_strcmp0(page_name, "messages") == 0)) {
+  /* Check if this is a built-in auth-gated page */
+  gboolean requires_auth = (g_strcmp0(page_name, "notifications") == 0 ||
+                            g_strcmp0(page_name, "messages") == 0);
+
+  /* Check if this is a plugin page that requires auth */
+  if (!requires_auth && self->plugin_auth_required) {
+    gpointer value = g_hash_table_lookup(self->plugin_auth_required, page_name);
+    if (GPOINTER_TO_INT(value)) {
+      requires_auth = TRUE;
+    }
+  }
+
+  if (!self->authenticated && requires_auth) {
     g_signal_emit(self, signals[SIGNAL_LOGIN_REQUESTED], 0);
     gnostr_session_view_show_toast(self, _("Sign in to view this page."));
     gnostr_session_view_show_page(self, "timeline");
@@ -532,6 +751,17 @@ static void gnostr_session_view_dispose(GObject *object) {
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(object);
 
   g_weak_ref_clear(&self->toast_overlay_ref);
+
+  /* Clean up cached pubkey */
+  g_clear_pointer(&self->current_pubkey_hex, g_free);
+
+  /* Clean up plugin hash tables */
+  g_clear_pointer(&self->plugin_panels, g_hash_table_unref);
+  g_clear_pointer(&self->plugin_rows, g_hash_table_unref);
+  g_clear_pointer(&self->plugin_extensions, g_hash_table_unref);
+  g_clear_pointer(&self->plugin_contexts, g_hash_table_unref);
+  g_clear_pointer(&self->plugin_labels, g_hash_table_unref);
+  g_clear_pointer(&self->plugin_auth_required, g_hash_table_unref);
 
   G_OBJECT_CLASS(gnostr_session_view_parent_class)->dispose(object);
 }
@@ -790,7 +1020,39 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
   self->authenticated = FALSE;
   self->showing_profile = TRUE;
 
+  /* Initialize plugin hash tables */
+  self->plugin_panels = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->plugin_rows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->plugin_extensions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+  self->plugin_contexts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->plugin_labels = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  self->plugin_auth_required = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->plugin_separator = NULL;
+
   gtk_widget_init_template(GTK_WIDGET(self));
+
+  /* Replace header avatar button icon with avatar overlay */
+  if (self->btn_avatar) {
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_widget_set_size_request(overlay, 24, 24);
+
+    /* Initials fallback (default to "?" for not signed in) */
+    self->header_avatar_initials = gtk_label_new("?");
+    gtk_widget_add_css_class(self->header_avatar_initials, "avatar-initials");
+    gtk_widget_set_halign(self->header_avatar_initials, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(self->header_avatar_initials, GTK_ALIGN_CENTER);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), self->header_avatar_initials);
+
+    /* Avatar image (overlays initials when loaded) */
+    self->header_avatar_image = gtk_picture_new();
+    gtk_widget_set_size_request(self->header_avatar_image, 24, 24);
+    gtk_picture_set_content_fit(GTK_PICTURE(self->header_avatar_image), GTK_CONTENT_FIT_COVER);
+    gtk_widget_add_css_class(self->header_avatar_image, "avatar");
+    gtk_widget_set_visible(self->header_avatar_image, FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), self->header_avatar_image);
+
+    gtk_menu_button_set_child(self->btn_avatar, overlay);
+  }
 
   /* Avatar popover created after template init to avoid GTK4 crash on Linux
    * where GtkPopover creation during template init causes gtk_widget_root
@@ -904,9 +1166,18 @@ void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_nam
 
   if (!self->stack) return;
 
+  /* Check if this is a plugin page that requires auth */
+  gboolean requires_auth = (g_strcmp0(page_name, "notifications") == 0 ||
+                            g_strcmp0(page_name, "messages") == 0);
+  if (!requires_auth && self->plugin_auth_required) {
+    gpointer value = g_hash_table_lookup(self->plugin_auth_required, page_name);
+    if (GPOINTER_TO_INT(value)) {
+      requires_auth = TRUE;
+    }
+  }
+
   /* If caller requests a gated page in guest mode, bounce to timeline */
-  if (!self->authenticated &&
-      (g_strcmp0(page_name, "notifications") == 0 || g_strcmp0(page_name, "messages") == 0)) {
+  if (!self->authenticated && requires_auth) {
     g_signal_emit(self, signals[SIGNAL_LOGIN_REQUESTED], 0);
     gnostr_session_view_show_toast(self, _("Sign in to view this page."));
     page_name = "timeline";
@@ -922,10 +1193,29 @@ void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_nam
     }
   }
 
+  /* Check if this is a plugin page and lazily create its panel if needed */
+  if (self->plugin_extensions && g_hash_table_contains(self->plugin_extensions, page_name)) {
+    GtkWidget *panel = g_hash_table_lookup(self->plugin_panels, page_name);
+    if (!panel) {
+      /* Lazily create the panel widget from the extension */
+      GnostrUIExtension *extension = g_hash_table_lookup(self->plugin_extensions, page_name);
+      GnostrPluginContext *context = g_hash_table_lookup(self->plugin_contexts, page_name);
+      if (extension && GNOSTR_IS_UI_EXTENSION(extension)) {
+        panel = gnostr_ui_extension_create_settings_page(extension, context);
+        if (panel) {
+          /* Add to the stack */
+          const char *label = g_hash_table_lookup(self->plugin_labels, page_name);
+          adw_view_stack_add_titled(self->stack, panel, page_name, label ? label : page_name);
+          g_hash_table_insert(self->plugin_panels, g_strdup(page_name), panel);
+        }
+      }
+    }
+  }
+
   adw_view_stack_set_visible_child_name(self->stack, page_name);
 
   if (self->content_page) {
-    const char *title = title_for_page_name(page_name);
+    const char *title = title_for_page_name(self, page_name);
     if (title) adw_navigation_page_set_title(self->content_page, title);
   }
 
@@ -1151,4 +1441,222 @@ const char *gnostr_session_view_get_search_text(GnostrSessionView *self) {
 void gnostr_session_view_refresh_account_list(GnostrSessionView *self) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
   rebuild_account_list(self);
+}
+
+void gnostr_session_view_set_user_profile(GnostrSessionView *self,
+                                          const char *pubkey_hex,
+                                          const char *display_name,
+                                          const char *avatar_url) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+
+  /* Cache the pubkey for future profile updates */
+  g_free(self->current_pubkey_hex);
+  self->current_pubkey_hex = g_strdup(pubkey_hex);
+
+  /* Update popover avatar and name if popover exists */
+  if (self->lbl_profile_name) {
+    if (display_name && *display_name) {
+      gtk_label_set_text(self->lbl_profile_name, display_name);
+      gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), TRUE);
+    } else if (pubkey_hex && *pubkey_hex) {
+      /* Show truncated pubkey if no display name */
+      char *truncated = g_strdup_printf("%.8s...%.4s", pubkey_hex, pubkey_hex + 60);
+      gtk_label_set_text(self->lbl_profile_name, truncated);
+      gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), TRUE);
+      g_free(truncated);
+    } else {
+      gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), FALSE);
+    }
+  }
+
+  /* Update popover avatar initials */
+  if (self->popover_avatar_initials) {
+    set_initials_label(self->popover_avatar_initials, display_name, pubkey_hex);
+  }
+
+  /* Load popover avatar image */
+  if (self->popover_avatar_image && avatar_url && *avatar_url) {
+    GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
+    if (cached) {
+      gtk_picture_set_paintable(GTK_PICTURE(self->popover_avatar_image), GDK_PAINTABLE(cached));
+      gtk_widget_set_visible(self->popover_avatar_image, TRUE);
+      if (self->popover_avatar_initials) {
+        gtk_widget_set_visible(self->popover_avatar_initials, FALSE);
+      }
+      g_object_unref(cached);
+    } else {
+      gnostr_avatar_download_async(avatar_url, self->popover_avatar_image, self->popover_avatar_initials);
+    }
+  } else if (self->popover_avatar_image) {
+    /* No avatar URL - show initials */
+    gtk_widget_set_visible(self->popover_avatar_image, FALSE);
+    if (self->popover_avatar_initials) {
+      gtk_widget_set_visible(self->popover_avatar_initials, TRUE);
+    }
+  }
+
+  /* Update header bar avatar button */
+  if (self->header_avatar_initials) {
+    set_initials_label(self->header_avatar_initials, display_name, pubkey_hex);
+  }
+
+  if (self->header_avatar_image && avatar_url && *avatar_url) {
+    GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
+    if (cached) {
+      gtk_picture_set_paintable(GTK_PICTURE(self->header_avatar_image), GDK_PAINTABLE(cached));
+      gtk_widget_set_visible(self->header_avatar_image, TRUE);
+      if (self->header_avatar_initials) {
+        gtk_widget_set_visible(self->header_avatar_initials, FALSE);
+      }
+      g_object_unref(cached);
+    } else {
+      gnostr_avatar_download_async(avatar_url, self->header_avatar_image, self->header_avatar_initials);
+    }
+  } else if (self->header_avatar_image) {
+    /* No avatar URL - show initials */
+    gtk_widget_set_visible(self->header_avatar_image, FALSE);
+    if (self->header_avatar_initials) {
+      gtk_widget_set_visible(self->header_avatar_initials, TRUE);
+    }
+  }
+
+  /* Also refresh the account list to show updated avatars */
+  rebuild_account_list(self);
+}
+
+/* Helper: Create a plugin sidebar row with icon + label */
+static GtkWidget *create_plugin_sidebar_row(const char *label, const char *icon_name) {
+  GtkWidget *row = gtk_list_box_row_new();
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+
+  gtk_widget_set_margin_start(box, 12);
+  gtk_widget_set_margin_end(box, 12);
+  gtk_widget_set_margin_top(box, 10);
+  gtk_widget_set_margin_bottom(box, 10);
+
+  /* Icon */
+  GtkWidget *icon = gtk_image_new_from_icon_name(icon_name ? icon_name : "application-x-addon-symbolic");
+  gtk_widget_add_css_class(icon, "dim-label");
+  gtk_box_append(GTK_BOX(box), icon);
+
+  /* Label */
+  GtkWidget *label_widget = gtk_label_new(label);
+  gtk_label_set_xalign(GTK_LABEL(label_widget), 0);
+  gtk_box_append(GTK_BOX(box), label_widget);
+
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+
+  return row;
+}
+
+/* Helper: Ensure the plugin separator exists in the sidebar */
+static void ensure_plugin_separator(GnostrSessionView *self) {
+  if (self->plugin_separator) return;
+  if (!self->sidebar_list) return;
+
+  /* Create and add the separator */
+  self->plugin_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_widget_set_margin_top(self->plugin_separator, 8);
+  gtk_widget_set_margin_bottom(self->plugin_separator, 8);
+  gtk_widget_set_margin_start(self->plugin_separator, 12);
+  gtk_widget_set_margin_end(self->plugin_separator, 12);
+
+  /* Wrap in a non-activatable row for consistent ListBox behavior */
+  GtkWidget *sep_row = gtk_list_box_row_new();
+  gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(sep_row), FALSE);
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(sep_row), FALSE);
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(sep_row), self->plugin_separator);
+
+  /* Add after the last fixed row (row_repos) */
+  gtk_list_box_append(self->sidebar_list, sep_row);
+}
+
+void gnostr_session_view_add_plugin_sidebar_item(GnostrSessionView *self,
+                                                  const char *panel_id,
+                                                  const char *label,
+                                                  const char *icon_name,
+                                                  gboolean requires_auth,
+                                                  int position,
+                                                  gpointer extension,
+                                                  gpointer context) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+  g_return_if_fail(panel_id != NULL);
+  g_return_if_fail(label != NULL);
+
+  /* Check if already exists */
+  if (g_hash_table_contains(self->plugin_rows, panel_id)) {
+    g_warning("Plugin sidebar item '%s' already exists", panel_id);
+    return;
+  }
+
+  /* Ensure plugin separator exists */
+  ensure_plugin_separator(self);
+
+  /* Create the sidebar row */
+  GtkWidget *row = create_plugin_sidebar_row(label, icon_name);
+
+  /* Store in hash tables */
+  g_hash_table_insert(self->plugin_rows, g_strdup(panel_id), row);
+  g_hash_table_insert(self->plugin_labels, g_strdup(panel_id), g_strdup(label));
+  g_hash_table_insert(self->plugin_auth_required, g_strdup(panel_id), GINT_TO_POINTER(requires_auth));
+
+  /* Store extension and context if provided */
+  if (extension) {
+    g_hash_table_insert(self->plugin_extensions, g_strdup(panel_id), g_object_ref(extension));
+  }
+  if (context) {
+    g_hash_table_insert(self->plugin_contexts, g_strdup(panel_id), context);
+  }
+
+  /* Add to sidebar_list */
+  if (self->sidebar_list) {
+    /* Position: 0 means first plugin item (after separator), -1 means end */
+    /* For now, we just append - position handling could be improved */
+    (void)position;  /* Unused for now - append at end */
+    gtk_list_box_append(self->sidebar_list, row);
+  }
+
+  /* Apply auth gating if needed */
+  if (requires_auth && !self->authenticated) {
+    gtk_widget_set_sensitive(row, FALSE);
+  }
+
+  g_debug("Added plugin sidebar item: %s (%s)", panel_id, label);
+}
+
+void gnostr_session_view_remove_plugin_sidebar_item(GnostrSessionView *self,
+                                                     const char *panel_id) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+  g_return_if_fail(panel_id != NULL);
+
+  /* Remove the sidebar row */
+  GtkWidget *row = g_hash_table_lookup(self->plugin_rows, panel_id);
+  if (row && self->sidebar_list) {
+    gtk_list_box_remove(self->sidebar_list, row);
+  }
+
+  /* Remove from stack if panel was created */
+  GtkWidget *panel = g_hash_table_lookup(self->plugin_panels, panel_id);
+  if (panel && self->stack) {
+    adw_view_stack_remove(self->stack, panel);
+  }
+
+  /* Clean up hash table entries */
+  g_hash_table_remove(self->plugin_rows, panel_id);
+  g_hash_table_remove(self->plugin_panels, panel_id);
+  g_hash_table_remove(self->plugin_extensions, panel_id);
+  g_hash_table_remove(self->plugin_contexts, panel_id);
+  g_hash_table_remove(self->plugin_labels, panel_id);
+  g_hash_table_remove(self->plugin_auth_required, panel_id);
+
+  /* If no more plugin items, remove the separator */
+  if (g_hash_table_size(self->plugin_rows) == 0 && self->plugin_separator) {
+    GtkWidget *sep_row = gtk_widget_get_parent(self->plugin_separator);
+    if (sep_row && self->sidebar_list) {
+      gtk_list_box_remove(self->sidebar_list, sep_row);
+    }
+    self->plugin_separator = NULL;
+  }
+
+  g_debug("Removed plugin sidebar item: %s", panel_id);
 }

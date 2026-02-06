@@ -82,6 +82,56 @@ const char *gnostr_session_view_get_search_text(GnostrSessionView *self);
  */
 void gnostr_session_view_refresh_account_list(GnostrSessionView *self);
 
+/**
+ * gnostr_session_view_set_user_profile:
+ * @self: a #GnostrSessionView
+ * @pubkey_hex: The user's public key in hex format (64 chars)
+ * @display_name: (nullable): The user's display name
+ * @avatar_url: (nullable): URL to the user's avatar image
+ *
+ * Updates the account menu with the current user's profile information.
+ * This shows the user's avatar and display name in the popover header.
+ * Call this when the user logs in or when their profile is updated.
+ */
+void gnostr_session_view_set_user_profile(GnostrSessionView *self,
+                                          const char *pubkey_hex,
+                                          const char *display_name,
+                                          const char *avatar_url);
+
+/**
+ * gnostr_session_view_add_plugin_sidebar_item:
+ * @self: a #GnostrSessionView
+ * @panel_id: Unique identifier for the plugin panel
+ * @label: Display label for the sidebar item
+ * @icon_name: Icon name for the sidebar item
+ * @requires_auth: Whether the item requires authentication
+ * @position: Position in sidebar (0 = after fixed items, -1 = end)
+ * @extension: (nullable): GnostrUIExtension instance for creating panel widget
+ * @context: (nullable): GnostrPluginContext for the extension
+ *
+ * Adds a plugin-provided sidebar item and associated panel to the session view.
+ * When the item is clicked, the extension's create_panel_widget will be called
+ * to lazily create the panel content.
+ */
+void gnostr_session_view_add_plugin_sidebar_item(GnostrSessionView *self,
+                                                  const char *panel_id,
+                                                  const char *label,
+                                                  const char *icon_name,
+                                                  gboolean requires_auth,
+                                                  int position,
+                                                  gpointer extension,
+                                                  gpointer context);
+
+/**
+ * gnostr_session_view_remove_plugin_sidebar_item:
+ * @self: a #GnostrSessionView
+ * @panel_id: Unique identifier for the plugin panel to remove
+ *
+ * Removes a plugin-provided sidebar item and its associated panel.
+ */
+void gnostr_session_view_remove_plugin_sidebar_item(GnostrSessionView *self,
+                                                     const char *panel_id);
+
 G_END_DECLS
 
 #endif /* GNOSTR_SESSION_VIEW_H */

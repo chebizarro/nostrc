@@ -27,7 +27,7 @@ G_BEGIN_DECLS
  */
 
 #define GNOSTR_PLUGIN_API_MAJOR_VERSION 1
-#define GNOSTR_PLUGIN_API_MINOR_VERSION 0
+#define GNOSTR_PLUGIN_API_MINOR_VERSION 1
 
 /**
  * gnostr_plugin_api_check_version:
@@ -300,12 +300,89 @@ typedef enum
   GNOSTR_UI_EXTENSION_PROFILE_HEADER,
 } GnostrUIExtensionPoint;
 
+/* ============================================================================
+ * GNOSTR_SIDEBAR_ITEM
+ * ============================================================================
+ * Structure representing a sidebar/panel item contributed by a plugin.
+ */
+
+/**
+ * GnostrSidebarItem:
+ * @id: Unique panel identifier
+ * @label: Display label for sidebar
+ * @icon_name: Icon name (from icon theme or resource)
+ * @requires_auth: Whether this panel requires user authentication
+ * @position: Position hint (lower = higher in list)
+ *
+ * Represents a sidebar item that plugins can contribute to the main navigation.
+ */
+typedef struct {
+  char     *id;             /* Unique panel identifier */
+  char     *label;          /* Display label for sidebar */
+  char     *icon_name;      /* Icon name */
+  gboolean  requires_auth;  /* Whether this panel requires authentication */
+  int       position;       /* Position hint (lower = higher in list) */
+} GnostrSidebarItem;
+
+/**
+ * gnostr_sidebar_item_new:
+ * @id: Unique panel identifier
+ * @label: Display label for sidebar
+ * @icon_name: Icon name
+ *
+ * Create a new sidebar item.
+ *
+ * Returns: (transfer full): A new #GnostrSidebarItem. Free with gnostr_sidebar_item_free().
+ * @stability: Stable
+ */
+GnostrSidebarItem *gnostr_sidebar_item_new(const char *id,
+                                           const char *label,
+                                           const char *icon_name);
+
+/**
+ * gnostr_sidebar_item_free:
+ * @item: (transfer full) (nullable): A #GnostrSidebarItem to free
+ *
+ * Free a sidebar item and its contents.
+ *
+ * @stability: Stable
+ */
+void gnostr_sidebar_item_free(GnostrSidebarItem *item);
+
+/**
+ * gnostr_sidebar_item_set_requires_auth:
+ * @item: A #GnostrSidebarItem
+ * @requires_auth: Whether authentication is required
+ *
+ * Set whether this sidebar item requires user authentication to be visible/usable.
+ *
+ * @stability: Stable
+ */
+void gnostr_sidebar_item_set_requires_auth(GnostrSidebarItem *item,
+                                           gboolean           requires_auth);
+
+/**
+ * gnostr_sidebar_item_set_position:
+ * @item: A #GnostrSidebarItem
+ * @position: Position hint (lower values appear higher in list)
+ *
+ * Set the position hint for ordering this item in the sidebar.
+ * Default is 0. Negative values appear before default items,
+ * positive values appear after.
+ *
+ * @stability: Stable
+ */
+void gnostr_sidebar_item_set_position(GnostrSidebarItem *item,
+                                      int                position);
+
 /**
  * GnostrUIExtensionInterface:
  * @parent_iface: Parent interface
  * @create_menu_items: Create menu items for an extension point
  * @create_settings_page: Create settings page widget
  * @create_note_decoration: Create decoration widget for a note card
+ * @get_sidebar_items: Get sidebar items provided by this extension
+ * @create_panel_widget: Create the widget for a panel
  *
  * Interface for plugins that extend the user interface.
  */
@@ -357,6 +434,35 @@ struct _GnostrUIExtensionInterface
                                        GnostrPluginContext *context,
                                        GnostrPluginEvent   *event);
 
+  /**
+   * get_sidebar_items:
+   * @extension: The UI extension
+   * @context: Plugin context
+   *
+   * Get the list of sidebar items this extension provides.
+   * Called during plugin activation to populate the sidebar.
+   *
+   * Returns: (transfer full) (element-type GnostrSidebarItem) (nullable):
+   *          List of GnostrSidebarItem structures, or %NULL
+   */
+  GList *(*get_sidebar_items)     (GnostrUIExtension   *extension,
+                                   GnostrPluginContext *context);
+
+  /**
+   * create_panel_widget:
+   * @extension: The UI extension
+   * @context: Plugin context
+   * @panel_id: The panel identifier (from GnostrSidebarItem.id)
+   *
+   * Create the widget content for a sidebar panel.
+   * Called when the user selects this item in the sidebar.
+   *
+   * Returns: (transfer full) (nullable): Panel widget, or %NULL
+   */
+  GtkWidget *(*create_panel_widget)(GnostrUIExtension   *extension,
+                                    GnostrPluginContext *context,
+                                    const char          *panel_id);
+
   /*< private >*/
   gpointer _reserved[4];
 };
@@ -405,6 +511,36 @@ GtkWidget *gnostr_ui_extension_create_settings_page(GnostrUIExtension   *extensi
 GtkWidget *gnostr_ui_extension_create_note_decoration(GnostrUIExtension   *extension,
                                                       GnostrPluginContext *context,
                                                       GnostrPluginEvent   *event);
+
+/**
+ * gnostr_ui_extension_get_sidebar_items:
+ * @extension: A #GnostrUIExtension
+ * @context: The #GnostrPluginContext
+ *
+ * Get the list of sidebar items this extension provides.
+ *
+ * Returns: (transfer full) (element-type GnostrSidebarItem) (nullable):
+ *          List of sidebar items. Free each item with gnostr_sidebar_item_free(),
+ *          then free the list with g_list_free().
+ * @stability: Stable
+ */
+GList *gnostr_ui_extension_get_sidebar_items(GnostrUIExtension   *extension,
+                                             GnostrPluginContext *context);
+
+/**
+ * gnostr_ui_extension_create_panel_widget:
+ * @extension: A #GnostrUIExtension
+ * @context: The #GnostrPluginContext
+ * @panel_id: The panel identifier
+ *
+ * Create the widget content for a sidebar panel.
+ *
+ * Returns: (transfer full) (nullable): Panel widget
+ * @stability: Stable
+ */
+GtkWidget *gnostr_ui_extension_create_panel_widget(GnostrUIExtension   *extension,
+                                                   GnostrPluginContext *context,
+                                                   const char          *panel_id);
 
 /* ============================================================================
  * PLUGIN CONTEXT API
@@ -773,6 +909,19 @@ const char *gnostr_plugin_context_get_user_pubkey(GnostrPluginContext *context);
  * @stability: Stable
  */
 gboolean gnostr_plugin_context_is_logged_in(GnostrPluginContext *context);
+
+/**
+ * gnostr_plugin_context_open_profile_panel:
+ * @context: A #GnostrPluginContext
+ * @pubkey_hex: Public key of the profile to open (64-char hex)
+ *
+ * Open the profile panel for the specified user.
+ * This navigates the main UI to show the profile view.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_open_profile_panel(GnostrPluginContext *context,
+                                              const char          *pubkey_hex);
 
 /**
  * gnostr_plugin_context_request_sign_event:

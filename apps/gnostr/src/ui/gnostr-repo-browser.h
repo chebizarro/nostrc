@@ -26,6 +26,10 @@ G_DECLARE_FINAL_TYPE(GnostrRepoBrowser, gnostr_repo_browser, GNOSTR, REPO_BROWSE
  *   - Emitted when user clicks clone button
  * "refresh-requested" (gpointer user_data)
  *   - Emitted when user clicks the refresh button
+ * "need-profile" (gchar *pubkey_hex, gpointer user_data)
+ *   - Emitted when a profile needs to be fetched from relays
+ * "open-profile" (gchar *pubkey_hex, gpointer user_data)
+ *   - Emitted when user clicks on maintainer avatar/name to view profile
  */
 
 /**
