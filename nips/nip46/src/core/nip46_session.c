@@ -503,8 +503,10 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
         /* Create subscription on this relay - MUST use prepare_subscription
          * to register it with the relay's subscriptions map, otherwise the
-         * relay's message loop won't dispatch events to us! */
-        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+         * relay's message loop won't dispatch events to us!
+         * Note: prepare_subscription requires non-NULL ctx even though unused */
+        GoContext *sub_ctx = go_context_background();
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, sub_ctx, filters);
         if (!sub) {
             nostr_relay_disconnect(relay);
             nostr_relay_free(relay);
