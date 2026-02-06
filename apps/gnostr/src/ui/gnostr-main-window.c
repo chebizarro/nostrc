@@ -3445,22 +3445,47 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     gnostr_badge_manager_start_subscriptions(badge_mgr);
     g_debug("[AUTH] Started notification subscriptions for user %.16s...", self->user_pubkey_hex);
 
-    /* Fetch user's profile from relays for account menu avatar/name */
-    GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
-    if (meta) {
-      /* Profile is cached locally - update account button immediately */
-      if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-        const char *display_name = meta->display_name ? meta->display_name : meta->name;
-        gnostr_session_view_set_user_profile(self->session_view,
-                                              self->user_pubkey_hex,
-                                              display_name,
-                                              meta->picture);
+    /* Fetch user's profile directly from nostrdb for account menu avatar/name */
+    void *txn = NULL;
+    gboolean profile_found = FALSE;
+    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(self->user_pubkey_hex, pk32)) {
+        char *event_json = NULL;
+        int event_len = 0;
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len) == 0 && event_json) {
+          /* Parse profile JSON from kind-0 event content */
+          char *content_str = NULL;
+          if (nostr_json_get_string(event_json, "content", &content_str) == 0 && content_str) {
+            char *display_name = NULL;
+            char *name = NULL;
+            char *picture = NULL;
+            nostr_json_get_string(content_str, "display_name", &display_name);
+            nostr_json_get_string(content_str, "name", &name);
+            nostr_json_get_string(content_str, "picture", &picture);
+
+            const char *final_name = (display_name && *display_name) ? display_name : name;
+            if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+              gnostr_session_view_set_user_profile(self->session_view,
+                                                    self->user_pubkey_hex,
+                                                    final_name,
+                                                    picture);
+              profile_found = TRUE;
+            }
+            free(display_name);
+            free(name);
+            free(picture);
+            free(content_str);
+          }
+          /* event_json is owned by nostrdb, don't free */
+        }
       }
-      gnostr_profile_meta_free(meta);
-    } else {
-      /* Profile not cached - fetch from relays (callback will update session view) */
+      storage_ndb_end_query(txn);
+    }
+
+    if (!profile_found) {
+      /* Profile not in DB - fetch from relays (callback will update session view) */
       enqueue_profile_author(self, self->user_pubkey_hex);
-      g_debug("[AUTH] Queued profile fetch for user %.16s...", self->user_pubkey_hex);
     }
   }
 
