@@ -59,16 +59,22 @@ template $GnostrThreadView: Widget {
 
             styles [
                 "info-bar",
-                "warning",
             ]
 
-            Image {
-                icon-name: "dialog-warning-symbolic";
-                pixel-size: 16;
+            Stack missing_events_stack {
+                Spinner missing_events_spinner {
+                    width-request: 16;
+                    height-request: 16;
+                }
+
+                Image missing_events_icon {
+                    icon-name: "dialog-warning-symbolic";
+                    pixel-size: 16;
+                }
             }
 
             Label missing_events_label {
-                label: "Some messages in this thread could not be found";
+                label: "Fetching missing messages...";
                 xalign: 0;
                 hexpand: true;
                 wrap: true;

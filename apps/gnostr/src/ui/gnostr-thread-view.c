@@ -154,7 +154,11 @@ struct _GnostrThreadView {
   GtkWidget *empty_box;
   GtkWidget *empty_label;
   GtkWidget *missing_events_banner;  /* nostrc-x3b: banner for missing ancestors */
+  GtkWidget *missing_events_stack;
+  GtkWidget *missing_events_spinner;
+  GtkWidget *missing_events_icon;
   GtkWidget *missing_events_label;
+  gboolean is_fetching_missing;      /* TRUE while actively fetching missing ancestors */
 
   /* State */
   char *focus_event_id;
@@ -574,6 +578,9 @@ static void gnostr_thread_view_class_init(GnostrThreadViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, empty_label);
   /* nostrc-x3b: missing events banner */
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_banner);
+  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_stack);
+  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_spinner);
+  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_icon);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_label);
 
   signals[SIGNAL_CLOSE_REQUESTED] = g_signal_new(
@@ -825,6 +832,81 @@ static void set_loading_state(GnostrThreadView *self, gboolean loading) {
   }
   if (self->empty_box) {
     gtk_widget_set_visible(self->empty_box, FALSE);
+  }
+}
+
+/* Internal: update missing events banner state
+ * When fetching=TRUE, shows spinner with "Fetching missing messages..."
+ * When fetching=FALSE, checks for missing events and shows warning or hides banner */
+static void update_missing_events_banner(GnostrThreadView *self, gboolean fetching) {
+  if (!self->missing_events_banner) return;
+
+  self->is_fetching_missing = fetching;
+
+  if (fetching) {
+    /* Show banner with spinner */
+    gtk_widget_set_visible(self->missing_events_banner, TRUE);
+    if (self->missing_events_stack && self->missing_events_spinner) {
+      gtk_stack_set_visible_child(GTK_STACK(self->missing_events_stack),
+                                  self->missing_events_spinner);
+      gtk_spinner_start(GTK_SPINNER(self->missing_events_spinner));
+    }
+    if (self->missing_events_label) {
+      gtk_label_set_text(GTK_LABEL(self->missing_events_label),
+                         "Fetching missing messages...");
+    }
+    /* Remove warning style, add info style for fetching state */
+    gtk_widget_remove_css_class(self->missing_events_banner, "warning");
+    return;
+  }
+
+  /* Fetching complete - stop spinner */
+  if (self->missing_events_spinner) {
+    gtk_spinner_stop(GTK_SPINNER(self->missing_events_spinner));
+  }
+
+  /* Check if we have missing ancestors */
+  gboolean has_missing = FALSE;
+  guint missing_count = 0;
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->events_by_id);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadEventItem *item = (ThreadEventItem *)value;
+    /* Check for missing parent */
+    if (item->parent_id && strlen(item->parent_id) == 64 &&
+        !g_hash_table_contains(self->events_by_id, item->parent_id)) {
+      has_missing = TRUE;
+      missing_count++;
+    }
+    /* Check for missing root (if different from parent) */
+    if (item->root_id && strlen(item->root_id) == 64 &&
+        g_strcmp0(item->root_id, item->parent_id) != 0 &&
+        !g_hash_table_contains(self->events_by_id, item->root_id)) {
+      has_missing = TRUE;
+      missing_count++;
+    }
+  }
+
+  if (has_missing) {
+    /* Show banner with warning icon */
+    gtk_widget_set_visible(self->missing_events_banner, TRUE);
+    if (self->missing_events_stack && self->missing_events_icon) {
+      gtk_stack_set_visible_child(GTK_STACK(self->missing_events_stack),
+                                  self->missing_events_icon);
+    }
+    if (self->missing_events_label) {
+      char *msg = g_strdup_printf(
+        "Some messages in this thread could not be found (%u missing)",
+        missing_count);
+      gtk_label_set_text(GTK_LABEL(self->missing_events_label), msg);
+      g_free(msg);
+    }
+    /* Add warning style */
+    gtk_widget_add_css_class(self->missing_events_banner, "warning");
+  } else {
+    /* No missing events - hide banner */
+    gtk_widget_set_visible(self->missing_events_banner, FALSE);
   }
 }
 
@@ -1675,37 +1757,10 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
     gtk_widget_set_visible(self->scroll_window, TRUE);
   }
 
-  /* nostrc-x3b: Check if we have missing ancestors and show banner */
-  if (self->missing_events_banner) {
-    gboolean has_missing = FALSE;
-    guint missing_count = 0;
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, self->events_by_id);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-      ThreadEventItem *item = (ThreadEventItem *)value;
-      /* Check for missing parent */
-      if (item->parent_id && strlen(item->parent_id) == 64 &&
-          !g_hash_table_contains(self->events_by_id, item->parent_id)) {
-        has_missing = TRUE;
-        missing_count++;
-      }
-      /* Check for missing root (if different from parent) */
-      if (item->root_id && strlen(item->root_id) == 64 &&
-          g_strcmp0(item->root_id, item->parent_id) != 0 &&
-          !g_hash_table_contains(self->events_by_id, item->root_id)) {
-        has_missing = TRUE;
-        missing_count++;
-      }
-    }
-    gtk_widget_set_visible(self->missing_events_banner, has_missing);
-    if (has_missing && self->missing_events_label) {
-      char *msg = g_strdup_printf(
-        "Some messages in this thread could not be found on your relays (%u missing)",
-        missing_count);
-      gtk_label_set_text(GTK_LABEL(self->missing_events_label), msg);
-      g_free(msg);
-    }
+  /* nostrc-x3b: Don't update banner here during rebuild - the fetch flow
+   * manages the banner state. Only update if not actively fetching. */
+  if (!self->is_fetching_missing) {
+    update_missing_events_banner(self, FALSE);
   }
 
   /* Scroll to focus event if set */
@@ -2069,6 +2124,8 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
   if (self->ancestor_fetch_depth >= MAX_ANCESTOR_FETCH_DEPTH) {
     g_debug("[THREAD_VIEW] Reached max ancestor fetch depth (%d), stopping chain traversal",
             MAX_ANCESTOR_FETCH_DEPTH);
+    /* Fetching complete (hit depth limit) - update banner to show final state */
+    update_missing_events_banner(self, FALSE);
     return;
   }
 
@@ -2151,8 +2208,13 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
 
     g_ptr_array_unref(missing_ids);
     g_ptr_array_unref(relay_hints);
+    /* Fetching complete - update banner to show final state */
+    update_missing_events_banner(self, FALSE);
     return;
   }
+
+  /* Show spinner banner while fetching */
+  update_missing_events_banner(self, TRUE);
 
   /* nostrc-46g: Increment depth counter for chain traversal tracking */
   self->ancestor_fetch_depth++;
