@@ -3444,6 +3444,24 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     gnostr_badge_manager_set_event_callback(badge_mgr, on_notification_event, self, NULL);
     gnostr_badge_manager_start_subscriptions(badge_mgr);
     g_debug("[AUTH] Started notification subscriptions for user %.16s...", self->user_pubkey_hex);
+
+    /* Fetch user's profile from relays for account menu avatar/name */
+    GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
+    if (meta) {
+      /* Profile is cached locally - update account button immediately */
+      if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+        const char *display_name = meta->display_name ? meta->display_name : meta->name;
+        gnostr_session_view_set_user_profile(self->session_view,
+                                              self->user_pubkey_hex,
+                                              display_name,
+                                              meta->picture);
+      }
+      gnostr_profile_meta_free(meta);
+    } else {
+      /* Profile not cached - fetch from relays (callback will update session view) */
+      enqueue_profile_author(self, self->user_pubkey_hex);
+      g_debug("[AUTH] Queued profile fetch for user %.16s...", self->user_pubkey_hex);
+    }
   }
 
   /* Start gift wrap subscription for encrypted DMs */
@@ -7592,5 +7610,18 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   if (self->user_pubkey_hex && pubkey_hex &&
       g_ascii_strcasecmp(self->user_pubkey_hex, pubkey_hex) == 0) {
     update_login_ui_state(self);
+
+    /* Update session view account button with user's profile */
+    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+      GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+      if (meta) {
+        const char *display_name = meta->display_name ? meta->display_name : meta->name;
+        gnostr_session_view_set_user_profile(self->session_view,
+                                              pubkey_hex,
+                                              display_name,
+                                              meta->picture);
+        gnostr_profile_meta_free(meta);
+      }
+    }
   }
 }
