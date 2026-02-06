@@ -142,9 +142,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="GtkButton" id="btn_save_draft">
+                <property name="icon-name">document-save-symbolic</property>
+                <property name="tooltip-text">Save as draft (NIP-37)</property>
+                <property name="has-frame">false</property>
+                <signal name="clicked" handler="on_save_draft_clicked"/>
+                <style>
+                  <class name="flat"/>
+                </style>
+              </object>
+            </child>
+            <child>
               <object class="GtkMenuButton" id="btn_drafts">
                 <property name="icon-name">document-open-recent-symbolic</property>
-                <property name="tooltip-text">Drafts (NIP-37)</property>
+                <property name="tooltip-text">Load draft (NIP-37)</property>
                 <property name="has-frame">false</property>
                 <property name="popover">
                   <object class="GtkPopover" id="drafts_popover">
@@ -202,17 +213,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkBox">
                 <property name="hexpand">true</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_save_draft">
-                <property name="icon-name">document-save-symbolic</property>
-                <property name="tooltip-text">Save as draft (NIP-37)</property>
-                <property name="has-frame">false</property>
-                <signal name="clicked" handler="on_save_draft_clicked"/>
-                <style>
-                  <class name="flat"/>
-                </style>
               </object>
             </child>
             <child>
