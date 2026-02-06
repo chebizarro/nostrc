@@ -4491,17 +4491,24 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   /* Check for existing batch state */
   if (self->profile_batches) {
     if (self->profile_fetch_active > 0) {
-      /* Active fetches in progress - re-queue authors for next cycle instead of
-       * starting a concurrent sequence which can cause state corruption. */
-      g_debug("[PROFILE] Fetch in progress (active=%u), re-queuing %u authors",
+      /* Active fetches in progress - append new authors to existing batch sequence
+       * instead of re-queuing them. This allows continuous profile loading during scrolling. */
+      g_debug("[PROFILE] Fetch in progress (active=%u), appending %u authors to batch sequence",
               self->profile_fetch_active, authors->len);
-      if (!self->profile_fetch_queue) {
-        self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+
+      /* Create new batches from the new authors and append to existing sequence */
+      for (guint off = 0; off < authors->len; off += batch_sz) {
+        guint n = (off + batch_sz <= authors->len) ? batch_sz : (authors->len - off);
+        GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+        for (guint j = 0; j < n; j++) {
+          char *s = (char*)g_ptr_array_index(authors, off + j);
+          g_ptr_array_index(authors, off + j) = NULL; /* transfer ownership */
+          g_ptr_array_add(b, s);
+        }
+        g_ptr_array_add(self->profile_batches, b);
       }
-      for (guint i = 0; i < authors->len; i++) {
-        char *pk = g_ptr_array_index(authors, i);
-        if (pk) g_ptr_array_add(self->profile_fetch_queue, g_strdup(pk));
-      }
+      g_debug("[PROFILE] Batch sequence now has %u batches total", self->profile_batches->len);
+
       g_ptr_array_free(authors, TRUE);
       if (dummy) nostr_filters_free(dummy);
       if (urls) free_urls_owned(urls, url_count);
@@ -5013,10 +5020,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Init demand-driven profile fetch state */
   self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
   self->profile_fetch_source_id = 0;
-  self->profile_fetch_debounce_ms = 150;
+  self->profile_fetch_debounce_ms = 50; /* Reduced from 150ms for faster response */
   self->profile_fetch_cancellable = g_cancellable_new();
   self->profile_fetch_active = 0;
-  self->profile_fetch_max_concurrent = 3; /* Limit concurrent fetches to reduce goroutine count */
+  self->profile_fetch_max_concurrent = 5; /* Increased from 3 - goroutines are lightweight */
 
   /* Init debounced NostrDB profile sweep */
   self->ndb_sweep_source_id = 0;
