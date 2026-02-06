@@ -1211,6 +1211,18 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     if (tinfo) {
       gn_nostr_event_item_set_thread_info(item, tinfo->root_id, tinfo->parent_id, tinfo->depth);
     }
+    /* Check if profile needs to be applied or fetched */
+    if (!gn_nostr_event_item_get_profile(item)) {
+      const char *pubkey = gn_nostr_event_item_get_pubkey(item);
+      if (pubkey) {
+        GnNostrProfile *profile = profile_cache_get(self, pubkey);
+        if (profile) {
+          gn_nostr_event_item_set_profile(item, profile);
+        } else {
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
+        }
+      }
+    }
     return g_object_ref(item);
   }
 
@@ -1233,12 +1245,17 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     g_debug("[NIP10-MODEL] No thread info found for item key %lu", (unsigned long)key);
   }
 
-  /* Apply profile if available (gated notes should always have profiles, but be defensive) */
+  /* Apply profile if available, otherwise request fetch.
+   * This is critical for items that were evicted from cache and recreated -
+   * their profiles might still not be loaded. */
   const char *pubkey = gn_nostr_event_item_get_pubkey(item);
   if (pubkey) {
     GnNostrProfile *profile = profile_cache_get(self, pubkey);
     if (profile) {
       gn_nostr_event_item_set_profile(item, profile);
+    } else {
+      /* Profile not cached - emit need-profile to trigger fetch */
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
     }
   }
 
