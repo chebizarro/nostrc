@@ -3383,6 +3383,12 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
+  /* Close the login dialog window immediately */
+  GtkWidget *login_win = gtk_widget_get_ancestor(GTK_WIDGET(login), GTK_TYPE_WINDOW);
+  if (login_win && GTK_IS_WINDOW(login_win) && login_win != GTK_WIDGET(self)) {
+    gtk_window_close(GTK_WINDOW(login_win));
+  }
+
   g_debug("[AUTH] User signed in: %s", npub ? npub : "(null)");
 
   /* Take ownership of the NIP-46 session from the login dialog */
