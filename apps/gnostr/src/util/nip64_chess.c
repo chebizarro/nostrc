@@ -7,8 +7,8 @@
 #include "nip64_chess.h"
 #include <string.h>
 #include <ctype.h>
-#include <json.h>
-#include <nostr-event.h>
+#include <json-glib/json-glib.h>
+#include "nostr-event.h"
 
 /* Unicode chess pieces (white pieces on top, black pieces below) */
 static const gchar *PIECE_UNICODE[7][3] = {
@@ -485,7 +485,7 @@ GnostrChessGame *gnostr_chess_parse_from_json(const char *event_json) {
 
   /* Deserialize to NostrEvent using the facade */
   NostrEvent event = {0};
-  if (nostr_event_deserialize(&event, event_json) != 0) {
+  if (nostr_event_deserialize_compact(&event, event_json) != 0) {
     g_debug("nip64: failed to parse event JSON");
     return NULL;
   }

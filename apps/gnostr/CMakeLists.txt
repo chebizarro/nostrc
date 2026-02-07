@@ -210,13 +210,19 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/libnostr/include
   ${_NOSTR_CONFIG_DIR}
   ${PROJECT_ROOT}/libgo/include
+  ${PROJECT_ROOT}/nips/nip04/include
+  ${PROJECT_ROOT}/nips/nip44/include
   ${PROJECT_ROOT}/nips/nip46/include
   ${PROJECT_ROOT}/nips/nip47/include
   ${PROJECT_ROOT}/nips/nip19/include
   ${PROJECT_ROOT}/nips/nip10/include
   ${PROJECT_ROOT}/nips/nip17/include
   ${PROJECT_ROOT}/nips/nip25/include
-  ${SECP256K1_INCLUDE_DIRS})
+  ${SECP256K1_INCLUDE_DIRS}
+  ${PROJECT_ROOT}/third_party/nostrdb/src
+  ${PROJECT_ROOT}/third_party/nostrdb/ccan
+  /opt/homebrew/opt/nsync/include
+  /opt/homebrew/include)
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching

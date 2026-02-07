@@ -3,38 +3,54 @@
 
 set(PLUGIN_NAME nip47-nwc)
 
+# Get the gnostr app directory (two levels up from plugin)
+set(GNOSTR_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+# Get the project root (four levels up from plugin)
+set(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
+
 # Plugin sources
 set(PLUGIN_SOURCES
     nip47-nwc-plugin.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gnostr-plugin-api.c
+    ${GNOSTR_APP_DIR}/src/gnostr-plugin-api.c
 )
 
 # Create shared library
 add_library(${PLUGIN_NAME} MODULE ${PLUGIN_SOURCES})
 
-# Determine nostrc root (handle both standalone and subproject builds)
-get_filename_component(NOSTRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
-
 # Include directories
 target_include_directories(${PLUGIN_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
-    ${NOSTRC_ROOT}/lib
-    ${NOSTRC_ROOT}/nips/nip47/include
-    ${NOSTRC_ROOT}/nips/nip04/include
+    ${GNOSTR_APP_DIR}/src
+    ${GNOSTR_APP_DIR}/src/util
+    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libnostr/generated
+    ${PROJECT_ROOT}/nips/nip47/include
+    ${PROJECT_ROOT}/nips/nip04/include
+    ${CMAKE_BINARY_DIR}/apps/gnostr/generated
+    /opt/homebrew/opt/nsync/include
+    /opt/homebrew/include
 )
 
 # Plugin build mode - excludes host-only code from gnostr-plugin-api.c
 target_compile_definitions(${PLUGIN_NAME} PRIVATE GNOSTR_PLUGIN_BUILD=1)
 
-# Link libraries (use parent's pkg-config targets)
+# Link libraries
 target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GTK4
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
-    nostr
-    nostr_nip47_core
-    nip04
 )
+
+# Link nostr libraries when available as targets
+if(TARGET nostr)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE nostr)
+endif()
+if(TARGET nostr_nip47_core)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE nostr_nip47_core)
+endif()
+if(TARGET nip04)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE nip04)
+endif()
 
 # Allow undefined symbols - they're resolved when the plugin is loaded by the host app
 if(APPLE)
@@ -44,13 +60,13 @@ endif()
 # Set library properties
 set_target_properties(${PLUGIN_NAME} PROPERTIES
     PREFIX "lib"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/${PLUGIN_NAME}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/apps/gnostr/plugins/${PLUGIN_NAME}"
 )
 
 # Copy plugin file to output directory
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/${PLUGIN_NAME}.plugin
-    ${CMAKE_BINARY_DIR}/plugins/${PLUGIN_NAME}/${PLUGIN_NAME}.plugin
+    ${CMAKE_BINARY_DIR}/apps/gnostr/plugins/${PLUGIN_NAME}/${PLUGIN_NAME}.plugin
     COPYONLY
 )
 

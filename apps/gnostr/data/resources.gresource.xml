@@ -46,4 +46,7 @@
   <gresource prefix="/org/gnostr/assets">
     <file>assets/background.png</file>
   </gresource>
+  <gresource prefix="/org/gnostr/icons">
+    <file>icons/hicolor/scalable/apps/org.gnostr.gnostr.svg</file>
+  </gresource>
 </gresources>

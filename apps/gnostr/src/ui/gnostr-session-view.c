@@ -1214,7 +1214,7 @@ void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_nam
       GnostrUIExtension *extension = g_hash_table_lookup(self->plugin_extensions, page_name);
       GnostrPluginContext *context = g_hash_table_lookup(self->plugin_contexts, page_name);
       if (extension && GNOSTR_IS_UI_EXTENSION(extension)) {
-        panel = gnostr_ui_extension_create_settings_page(extension, context);
+        panel = gnostr_ui_extension_create_panel_widget(extension, context, page_name);
         if (panel) {
           /* Add to the stack */
           const char *label = g_hash_table_lookup(self->plugin_labels, page_name);
