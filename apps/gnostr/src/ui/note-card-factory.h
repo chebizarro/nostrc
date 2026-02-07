@@ -163,6 +163,123 @@ void note_card_factory_connect_search_hashtag(NoteCardFactory *self,
                                               gpointer user_data);
 
 /**
+ * note_card_factory_connect_repost:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the repost-requested signal.
+ * Callback: void (*)(const char *id, const char *json, gpointer)
+ */
+void note_card_factory_connect_repost(NoteCardFactory *self,
+                                       GCallback callback,
+                                       gpointer user_data);
+
+/**
+ * note_card_factory_connect_quote:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the quote-requested signal.
+ * Callback: void (*)(const char *id, const char *content, gpointer)
+ */
+void note_card_factory_connect_quote(NoteCardFactory *self,
+                                      GCallback callback,
+                                      gpointer user_data);
+
+/**
+ * note_card_factory_connect_like:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the like-requested signal.
+ * Callback: void (*)(const char *id, const char *pubkey, gint kind, const char *reaction, gpointer)
+ */
+void note_card_factory_connect_like(NoteCardFactory *self,
+                                     GCallback callback,
+                                     gpointer user_data);
+
+/**
+ * note_card_factory_connect_zap:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the zap-requested signal.
+ * Callback: void (*)(const char *id, const char *pubkey, const char *lud16, gpointer)
+ */
+void note_card_factory_connect_zap(NoteCardFactory *self,
+                                    GCallback callback,
+                                    gpointer user_data);
+
+/**
+ * note_card_factory_connect_mute_user:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the mute-user-requested signal.
+ * Callback: void (*)(const char *pubkey, gpointer)
+ */
+void note_card_factory_connect_mute_user(NoteCardFactory *self,
+                                          GCallback callback,
+                                          gpointer user_data);
+
+/**
+ * note_card_factory_connect_mute_thread:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the mute-thread-requested signal.
+ * Callback: void (*)(const char *root_id, gpointer)
+ */
+void note_card_factory_connect_mute_thread(NoteCardFactory *self,
+                                            GCallback callback,
+                                            gpointer user_data);
+
+/**
+ * note_card_factory_connect_bookmark:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the bookmark-toggled signal.
+ * Callback: void (*)(const char *id, gboolean bookmarked, gpointer)
+ */
+void note_card_factory_connect_bookmark(NoteCardFactory *self,
+                                         GCallback callback,
+                                         gpointer user_data);
+
+/**
+ * note_card_factory_connect_delete:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the delete-note-requested signal.
+ * Callback: void (*)(const char *id, const char *pubkey, gpointer)
+ */
+void note_card_factory_connect_delete(NoteCardFactory *self,
+                                       GCallback callback,
+                                       gpointer user_data);
+
+/**
+ * note_card_factory_connect_navigate:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the navigate-to-note signal.
+ * Callback: void (*)(const char *note_id, gpointer)
+ */
+void note_card_factory_connect_navigate(NoteCardFactory *self,
+                                         GCallback callback,
+                                         gpointer user_data);
+
+/**
  * NoteCardBindCallback:
  * @row: the NoteCardRow widget to populate
  * @item: the model item (GObject) being bound

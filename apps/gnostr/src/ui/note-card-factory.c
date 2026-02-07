@@ -31,6 +31,24 @@ struct _NoteCardFactory {
   gpointer reply_data;
   GCallback search_hashtag_cb;
   gpointer search_hashtag_data;
+  GCallback repost_cb;
+  gpointer repost_data;
+  GCallback quote_cb;
+  gpointer quote_data;
+  GCallback like_cb;
+  gpointer like_data;
+  GCallback zap_cb;
+  gpointer zap_data;
+  GCallback mute_user_cb;
+  gpointer mute_user_data;
+  GCallback mute_thread_cb;
+  gpointer mute_thread_data;
+  GCallback bookmark_cb;
+  gpointer bookmark_data;
+  GCallback delete_cb;
+  gpointer delete_data;
+  GCallback navigate_cb;
+  gpointer navigate_data;
 };
 
 G_DEFINE_TYPE(NoteCardFactory, note_card_factory, G_TYPE_OBJECT)
@@ -46,6 +64,15 @@ static void on_open_profile_relay(GnostrNoteCardRow *row, const char *pubkey, gp
 static void on_view_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data);
 static void on_reply_requested_relay(GnostrNoteCardRow *row, const char *id, const char *root, const char *pubkey, gpointer user_data);
 static void on_search_hashtag_relay(GnostrNoteCardRow *row, const char *hashtag, gpointer user_data);
+static void on_repost_relay(GnostrNoteCardRow *row, const char *id, const char *json, gpointer user_data);
+static void on_quote_relay(GnostrNoteCardRow *row, const char *id, const char *content, gpointer user_data);
+static void on_like_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gint kind, const char *reaction, gpointer user_data);
+static void on_zap_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, const char *lud16, gpointer user_data);
+static void on_mute_user_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_data);
+static void on_mute_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data);
+static void on_bookmark_relay(GnostrNoteCardRow *row, const char *id, gboolean bookmarked, gpointer user_data);
+static void on_delete_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gpointer user_data);
+static void on_navigate_relay(GnostrNoteCardRow *row, const char *note_id, gpointer user_data);
 
 static void
 note_card_factory_dispose(GObject *object)
@@ -143,6 +170,96 @@ note_card_factory_connect_search_hashtag(NoteCardFactory *self,
 }
 
 void
+note_card_factory_connect_repost(NoteCardFactory *self,
+                                  GCallback callback,
+                                  gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->repost_cb = callback;
+  self->repost_data = user_data;
+}
+
+void
+note_card_factory_connect_quote(NoteCardFactory *self,
+                                 GCallback callback,
+                                 gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->quote_cb = callback;
+  self->quote_data = user_data;
+}
+
+void
+note_card_factory_connect_like(NoteCardFactory *self,
+                                GCallback callback,
+                                gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->like_cb = callback;
+  self->like_data = user_data;
+}
+
+void
+note_card_factory_connect_zap(NoteCardFactory *self,
+                               GCallback callback,
+                               gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->zap_cb = callback;
+  self->zap_data = user_data;
+}
+
+void
+note_card_factory_connect_mute_user(NoteCardFactory *self,
+                                     GCallback callback,
+                                     gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->mute_user_cb = callback;
+  self->mute_user_data = user_data;
+}
+
+void
+note_card_factory_connect_mute_thread(NoteCardFactory *self,
+                                       GCallback callback,
+                                       gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->mute_thread_cb = callback;
+  self->mute_thread_data = user_data;
+}
+
+void
+note_card_factory_connect_bookmark(NoteCardFactory *self,
+                                    GCallback callback,
+                                    gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->bookmark_cb = callback;
+  self->bookmark_data = user_data;
+}
+
+void
+note_card_factory_connect_delete(NoteCardFactory *self,
+                                  GCallback callback,
+                                  gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->delete_cb = callback;
+  self->delete_data = user_data;
+}
+
+void
+note_card_factory_connect_navigate(NoteCardFactory *self,
+                                    GCallback callback,
+                                    gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->navigate_cb = callback;
+  self->navigate_data = user_data;
+}
+
+void
 note_card_factory_set_bind_callback(NoteCardFactory *self,
                                     NoteCardBindCallback callback,
                                     gpointer user_data)
@@ -177,8 +294,31 @@ factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     g_signal_connect(row, "search-hashtag", G_CALLBACK(on_search_hashtag_relay), self);
   }
 
-  /* Remaining signals (repost, quote, like, zap, mute, bookmark, delete, navigate)
-   * are currently connected directly by views. See nostrc-epcj for adding relay handlers. */
+  if (self->signal_flags & NOTE_CARD_SIGNAL_REPOST) {
+    g_signal_connect(row, "repost-requested", G_CALLBACK(on_repost_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_QUOTE) {
+    g_signal_connect(row, "quote-requested", G_CALLBACK(on_quote_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_LIKE) {
+    g_signal_connect(row, "like-requested", G_CALLBACK(on_like_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_ZAP) {
+    g_signal_connect(row, "zap-requested", G_CALLBACK(on_zap_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_MUTE) {
+    g_signal_connect(row, "mute-user-requested", G_CALLBACK(on_mute_user_relay), self);
+    g_signal_connect(row, "mute-thread-requested", G_CALLBACK(on_mute_thread_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_BOOKMARK) {
+    g_signal_connect(row, "bookmark-toggled", G_CALLBACK(on_bookmark_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_DELETE) {
+    g_signal_connect(row, "delete-note-requested", G_CALLBACK(on_delete_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_NAVIGATE) {
+    g_signal_connect(row, "navigate-to-note", G_CALLBACK(on_navigate_relay), self);
+  }
 
   gtk_list_item_set_child(item, row);
 }
@@ -432,5 +572,95 @@ on_search_hashtag_relay(GnostrNoteCardRow *row, const char *hashtag, gpointer us
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
   if (self->search_hashtag_cb) {
     ((void (*)(const char *, gpointer))self->search_hashtag_cb)(hashtag, self->search_hashtag_data);
+  }
+}
+
+static void
+on_repost_relay(GnostrNoteCardRow *row, const char *id, const char *json, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->repost_cb) {
+    ((void (*)(const char *, const char *, gpointer))self->repost_cb)(id, json, self->repost_data);
+  }
+}
+
+static void
+on_quote_relay(GnostrNoteCardRow *row, const char *id, const char *content, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->quote_cb) {
+    ((void (*)(const char *, const char *, gpointer))self->quote_cb)(id, content, self->quote_data);
+  }
+}
+
+static void
+on_like_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gint kind, const char *reaction, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->like_cb) {
+    ((void (*)(const char *, const char *, gint, const char *, gpointer))self->like_cb)(id, pubkey, kind, reaction, self->like_data);
+  }
+}
+
+static void
+on_zap_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, const char *lud16, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->zap_cb) {
+    ((void (*)(const char *, const char *, const char *, gpointer))self->zap_cb)(id, pubkey, lud16, self->zap_data);
+  }
+}
+
+static void
+on_mute_user_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->mute_user_cb) {
+    ((void (*)(const char *, gpointer))self->mute_user_cb)(pubkey, self->mute_user_data);
+  }
+}
+
+static void
+on_mute_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->mute_thread_cb) {
+    ((void (*)(const char *, gpointer))self->mute_thread_cb)(root_id, self->mute_thread_data);
+  }
+}
+
+static void
+on_bookmark_relay(GnostrNoteCardRow *row, const char *id, gboolean bookmarked, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->bookmark_cb) {
+    ((void (*)(const char *, gboolean, gpointer))self->bookmark_cb)(id, bookmarked, self->bookmark_data);
+  }
+}
+
+static void
+on_delete_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->delete_cb) {
+    ((void (*)(const char *, const char *, gpointer))self->delete_cb)(id, pubkey, self->delete_data);
+  }
+}
+
+static void
+on_navigate_relay(GnostrNoteCardRow *row, const char *note_id, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->navigate_cb) {
+    ((void (*)(const char *, gpointer))self->navigate_cb)(note_id, self->navigate_data);
   }
 }
