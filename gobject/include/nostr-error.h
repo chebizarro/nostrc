@@ -1,0 +1,45 @@
+#pragma once
+
+#include <glib.h>
+
+G_BEGIN_DECLS
+
+#define NOSTR_ERROR (nostr_error_quark())
+
+GQuark nostr_error_quark(void);
+
+/**
+ * NostrError:
+ * @NOSTR_ERROR_INVALID_EVENT: Event structure is invalid
+ * @NOSTR_ERROR_INVALID_FILTER: Filter structure is invalid
+ * @NOSTR_ERROR_SIGNATURE_INVALID: Event signature verification failed
+ * @NOSTR_ERROR_SIGNATURE_FAILED: Event signing failed
+ * @NOSTR_ERROR_CONNECTION_FAILED: Relay connection failed
+ * @NOSTR_ERROR_CONNECTION_CLOSED: Relay connection was closed
+ * @NOSTR_ERROR_TIMEOUT: Operation timed out
+ * @NOSTR_ERROR_PERMISSION_DENIED: Permission denied by relay
+ * @NOSTR_ERROR_RELAY_ERROR: Relay returned an error
+ * @NOSTR_ERROR_PARSE_FAILED: JSON parsing failed
+ * @NOSTR_ERROR_ENCRYPTION_FAILED: NIP-04/44 encryption failed
+ * @NOSTR_ERROR_DECRYPTION_FAILED: NIP-04/44 decryption failed
+ * @NOSTR_ERROR_INVALID_KEY: Invalid key format
+ * @NOSTR_ERROR_NOT_FOUND: Requested item not found
+ */
+typedef enum {
+  NOSTR_ERROR_INVALID_EVENT,
+  NOSTR_ERROR_INVALID_FILTER,
+  NOSTR_ERROR_SIGNATURE_INVALID,
+  NOSTR_ERROR_SIGNATURE_FAILED,
+  NOSTR_ERROR_CONNECTION_FAILED,
+  NOSTR_ERROR_CONNECTION_CLOSED,
+  NOSTR_ERROR_TIMEOUT,
+  NOSTR_ERROR_PERMISSION_DENIED,
+  NOSTR_ERROR_RELAY_ERROR,
+  NOSTR_ERROR_PARSE_FAILED,
+  NOSTR_ERROR_ENCRYPTION_FAILED,
+  NOSTR_ERROR_DECRYPTION_FAILED,
+  NOSTR_ERROR_INVALID_KEY,
+  NOSTR_ERROR_NOT_FOUND
+} NostrError;
+
+G_END_DECLS

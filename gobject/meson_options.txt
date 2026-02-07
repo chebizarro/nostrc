@@ -1,0 +1,6 @@
+option('introspection', type: 'boolean', value: true,
+  description: 'Generate GObject Introspection data')
+option('tests', type: 'boolean', value: true,
+  description: 'Build tests')
+option('examples', type: 'boolean', value: true,
+  description: 'Build examples')

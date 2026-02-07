@@ -1,0 +1,47 @@
+#pragma once
+
+#include <glib-object.h>
+
+G_BEGIN_DECLS
+
+/**
+ * NostrRelayState:
+ * @NOSTR_RELAY_STATE_DISCONNECTED: Not connected
+ * @NOSTR_RELAY_STATE_CONNECTING: Connection in progress
+ * @NOSTR_RELAY_STATE_CONNECTED: Connected and ready
+ * @NOSTR_RELAY_STATE_ERROR: Connection error
+ */
+typedef enum {
+  NOSTR_RELAY_STATE_DISCONNECTED,
+  NOSTR_RELAY_STATE_CONNECTING,
+  NOSTR_RELAY_STATE_CONNECTED,
+  NOSTR_RELAY_STATE_ERROR
+} NostrRelayState;
+
+GType nostr_relay_state_get_type(void) G_GNUC_CONST;
+#define NOSTR_TYPE_RELAY_STATE (nostr_relay_state_get_type())
+
+/**
+ * NostrEventKind:
+ * Common event kinds as defined in NIPs
+ */
+typedef enum {
+  NOSTR_EVENT_KIND_METADATA = 0,
+  NOSTR_EVENT_KIND_TEXT_NOTE = 1,
+  NOSTR_EVENT_KIND_RECOMMEND_RELAY = 2,
+  NOSTR_EVENT_KIND_CONTACTS = 3,
+  NOSTR_EVENT_KIND_ENCRYPTED_DM = 4,
+  NOSTR_EVENT_KIND_DELETE = 5,
+  NOSTR_EVENT_KIND_REPOST = 6,
+  NOSTR_EVENT_KIND_REACTION = 7,
+  NOSTR_EVENT_KIND_BADGE_AWARD = 8,
+  NOSTR_EVENT_KIND_CHANNEL_CREATE = 40,
+  NOSTR_EVENT_KIND_CHANNEL_METADATA = 41,
+  NOSTR_EVENT_KIND_CHANNEL_MESSAGE = 42,
+  NOSTR_EVENT_KIND_CHANNEL_HIDE = 43,
+  NOSTR_EVENT_KIND_CHANNEL_MUTE = 44,
+  NOSTR_EVENT_KIND_CHESS = 64,
+  /* Add more as needed */
+} NostrEventKind;
+
+G_END_DECLS
