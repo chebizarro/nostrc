@@ -2,119 +2,22 @@
 #define NOSTR_GSUBSCRIPTION_H
 
 #include <glib-object.h>
-#include "nostr-subscription.h"   /* core NostrSubscription APIs */
-#include "nostr_relay.h"          /* GNostrRelay wrapper */
-#include "nostr_filter.h"         /* GLib filter wrapper (temporary name) */
+#include "nostr-enums.h"
+#include "nostr_relay.h"
 
 G_BEGIN_DECLS
 
-/**
- * NostrSubscriptionType:
- * @NOSTR_SUBSCRIPTION_EPHEMERAL: Close subscription after EOSE (End of Stored Events)
- * @NOSTR_SUBSCRIPTION_PERSISTENT: Keep subscription open until explicit close
- *
- * Defines the lifetime behavior of a Nostr subscription.
- *
- * Ephemeral subscriptions are useful for one-time queries where you only need
- * the currently stored events. Persistent subscriptions remain open to receive
- * new events as they are published.
- *
- * Since: 0.1
- */
-typedef enum {
-    NOSTR_SUBSCRIPTION_EPHEMERAL,   /* Close after EOSE */
-    NOSTR_SUBSCRIPTION_PERSISTENT   /* Keep open until explicit close */
-} NostrSubscriptionType;
+/* Forward declarations for core types */
+#ifndef NOSTR_SUBSCRIPTION_FORWARD_DECLARED
+#define NOSTR_SUBSCRIPTION_FORWARD_DECLARED
+struct NostrSubscription;
+typedef struct NostrSubscription NostrSubscription;
+#endif
 
-/**
- * NostrSubscriptionState:
- * @NOSTR_SUBSCRIPTION_STATE_PENDING: Subscription created but not yet sent to relay
- * @NOSTR_SUBSCRIPTION_STATE_ACTIVE: Subscription is active and receiving events
- * @NOSTR_SUBSCRIPTION_STATE_EOSE_RECEIVED: End of stored events received from relay
- * @NOSTR_SUBSCRIPTION_STATE_CLOSED: Subscription has been closed
- * @NOSTR_SUBSCRIPTION_STATE_ERROR: Subscription encountered an error
- *
- * Represents the lifecycle state of a Nostr subscription.
- *
- * The typical lifecycle is:
- * PENDING -> ACTIVE -> EOSE_RECEIVED -> CLOSED
- *
- * For ephemeral subscriptions, the transition to CLOSED happens automatically
- * after EOSE_RECEIVED. For persistent subscriptions, an explicit close is required.
- *
- * Since: 0.1
- */
-typedef enum {
-    NOSTR_SUBSCRIPTION_STATE_PENDING,
-    NOSTR_SUBSCRIPTION_STATE_ACTIVE,
-    NOSTR_SUBSCRIPTION_STATE_EOSE_RECEIVED,
-    NOSTR_SUBSCRIPTION_STATE_CLOSED,
-    NOSTR_SUBSCRIPTION_STATE_ERROR
-} NostrSubscriptionState;
-
-/**
- * NostrRetryPolicy:
- * @NOSTR_RETRY_POLICY_NONE: Do not retry on failure
- * @NOSTR_RETRY_POLICY_IMMEDIATE: Retry immediately on failure
- * @NOSTR_RETRY_POLICY_EXPONENTIAL_BACKOFF: Retry with exponential backoff
- *
- * Defines the retry behavior when a subscription fails.
- *
- * Since: 0.1
- */
-typedef enum {
-    NOSTR_RETRY_POLICY_NONE,
-    NOSTR_RETRY_POLICY_IMMEDIATE,
-    NOSTR_RETRY_POLICY_EXPONENTIAL_BACKOFF
-} NostrRetryPolicy;
-
-/**
- * NostrSubscriptionConfig:
- * @type: The subscription type (ephemeral or persistent)
- * @timeout_ms: Timeout in milliseconds (0 for no timeout)
- * @retry_policy: The retry policy to use on failure
- * @max_events: Maximum number of events to receive (0 for unlimited)
- *
- * Configuration options for creating a Nostr subscription.
- *
- * This struct allows fine-grained control over subscription behavior,
- * including timeout handling, retry logic, and event limits.
- *
- * Example:
- * |[<!-- language="C" -->
- * NostrSubscriptionConfig config = {
- *     .type = NOSTR_SUBSCRIPTION_EPHEMERAL,
- *     .timeout_ms = 5000,
- *     .retry_policy = NOSTR_RETRY_POLICY_EXPONENTIAL_BACKOFF,
- *     .max_events = 100
- * };
- * ]|
- *
- * Since: 0.1
- */
-typedef struct {
-    NostrSubscriptionType type;
-    guint timeout_ms;
-    NostrRetryPolicy retry_policy;
-    guint max_events;
-} NostrSubscriptionConfig;
-
-/**
- * NOSTR_SUBSCRIPTION_CONFIG_DEFAULT:
- *
- * Default subscription configuration.
- *
- * Creates a persistent subscription with no timeout, no retry, and unlimited events.
- *
- * Since: 0.1
- */
-#define NOSTR_SUBSCRIPTION_CONFIG_DEFAULT \
-    (NostrSubscriptionConfig) { \
-        .type = NOSTR_SUBSCRIPTION_PERSISTENT, \
-        .timeout_ms = 0, \
-        .retry_policy = NOSTR_RETRY_POLICY_NONE, \
-        .max_events = 0 \
-    }
+#ifndef NOSTR_FILTERS_FORWARD_DECLARED
+#define NOSTR_FILTERS_FORWARD_DECLARED
+typedef struct NostrFilters NostrFilters;
+#endif
 
 /* Define GNostrSubscription GObject (G-prefixed to avoid clashing with core) */
 #define GNOSTR_TYPE_SUBSCRIPTION (gnostr_subscription_get_type())
@@ -123,117 +26,162 @@ G_DECLARE_FINAL_TYPE(GNostrSubscription, gnostr_subscription, GNOSTR, SUBSCRIPTI
 /**
  * GNostrSubscription:
  *
- * A GObject wrapper for Nostr subscriptions with reactive state management.
+ * A GObject wrapper for Nostr subscriptions with reactive lifecycle management.
  *
- * GNostrSubscription provides a GObject-based interface for managing Nostr
- * subscriptions. It emits signals when state changes occur, enabling reactive
- * UI updates and event-driven programming.
+ * GNostrSubscription provides a signal-driven interface for managing Nostr
+ * subscriptions. A monitor thread drains core GoChannels and emits GObject
+ * signals on the main thread, enabling reactive UI updates.
+ *
+ * ## Lifecycle
+ *
+ * 1. Create: gnostr_subscription_new() → state = PENDING
+ * 2. Fire: gnostr_subscription_fire() → state = ACTIVE, monitor starts
+ * 3. Receive: "event" signals emitted as events arrive
+ * 4. EOSE: "eose" signal emitted, state = EOSE_RECEIVED
+ * 5. Close: gnostr_subscription_close() → state = CLOSED, monitor stops
  *
  * ## Signals
  *
- * - #GNostrSubscription::state-changed - Emitted when the subscription state changes
- * - #GNostrSubscription::event-received - Emitted when an event is received
+ * - #GNostrSubscription::event - Emitted when an event is received
+ * - #GNostrSubscription::eose - Emitted when End of Stored Events is received
+ * - #GNostrSubscription::closed - Emitted when the subscription is closed
+ * - #GNostrSubscription::state-changed - Emitted on state transitions
  *
  * ## Properties
  *
- * - #GNostrSubscription:state - The current subscription state
- * - #GNostrSubscription:config - The subscription configuration
+ * - #GNostrSubscription:id - The subscription ID (read-only)
+ * - #GNostrSubscription:active - Whether the subscription is live (read-only)
+ * - #GNostrSubscription:state - The lifecycle state (read-only)
  *
- * Since: 0.1
+ * Since: 1.0
  */
-/* Note: struct _GNostrSubscription is defined in the .c file (G_DECLARE_FINAL_TYPE) */
 
-/* GObject convenience API */
+/* Signal indices */
+enum {
+    GNOSTR_SUBSCRIPTION_SIGNAL_EVENT,
+    GNOSTR_SUBSCRIPTION_SIGNAL_EOSE,
+    GNOSTR_SUBSCRIPTION_SIGNAL_CLOSED,
+    GNOSTR_SUBSCRIPTION_SIGNAL_STATE_CHANGED,
+    GNOSTR_SUBSCRIPTION_SIGNALS_COUNT
+};
+
+/* --- Constructors --- */
 
 /**
  * gnostr_subscription_new:
- * @relay: A #GNostrRelay to subscribe on
- * @filter: A #NostrFilter specifying the subscription criteria
+ * @relay: a #GNostrRelay to subscribe on
+ * @filters: (transfer none): core NostrFilters for the subscription
  *
- * Creates a new subscription with default configuration.
+ * Creates a new subscription in PENDING state. Call gnostr_subscription_fire()
+ * to activate it and start receiving events.
  *
- * Returns: (transfer full): A new #GNostrSubscription instance
+ * Returns: (transfer full): a new #GNostrSubscription
  *
- * Since: 0.1
+ * Since: 1.0
  */
-GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilter *filter);
+GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters);
 
 /**
- * gnostr_subscription_new_with_config:
- * @relay: A #GNostrRelay to subscribe on
- * @filter: A #NostrFilter specifying the subscription criteria
- * @config: A #NostrSubscriptionConfig with subscription options
+ * gnostr_subscription_fire:
+ * @self: a #GNostrSubscription
+ * @error: (nullable): return location for a #GError
  *
- * Creates a new subscription with the specified configuration.
+ * Sends the REQ message to the relay and starts the monitor thread.
+ * Transitions from PENDING to ACTIVE state.
  *
- * Returns: (transfer full): A new #GNostrSubscription instance
+ * Returns: %TRUE on success, %FALSE on error
  *
- * Since: 0.1
+ * Since: 1.0
  */
-GNostrSubscription *gnostr_subscription_new_with_config(GNostrRelay *relay,
-                                                         NostrFilter *filter,
-                                                         NostrSubscriptionConfig *config);
+gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
 
 /**
- * gnostr_subscription_unsubscribe:
- * @self: A #GNostrSubscription
+ * gnostr_subscription_close:
+ * @self: a #GNostrSubscription
  *
- * Closes the subscription and releases resources.
+ * Closes the subscription, sends CLOSE to the relay, and stops the
+ * monitor thread. Transitions to CLOSED state and emits the "closed" signal.
  *
- * This will transition the subscription to %NOSTR_SUBSCRIPTION_STATE_CLOSED
- * and emit the #GNostrSubscription::state-changed signal.
+ * Safe to call multiple times; subsequent calls are no-ops.
  *
- * Since: 0.1
+ * Since: 1.0
  */
-void gnostr_subscription_unsubscribe(GNostrSubscription *self);
+void gnostr_subscription_close(GNostrSubscription *self);
+
+/* --- Property Accessors --- */
+
+/**
+ * gnostr_subscription_get_id:
+ * @self: a #GNostrSubscription
+ *
+ * Gets the subscription ID assigned by the core library.
+ *
+ * Returns: (transfer none) (nullable): the subscription ID string
+ *
+ * Since: 1.0
+ */
+const gchar *gnostr_subscription_get_id(GNostrSubscription *self);
+
+/**
+ * gnostr_subscription_get_active:
+ * @self: a #GNostrSubscription
+ *
+ * Gets whether the subscription is currently active (live).
+ *
+ * Returns: %TRUE if the subscription is active
+ *
+ * Since: 1.0
+ */
+gboolean gnostr_subscription_get_active(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_get_state:
- * @self: A #GNostrSubscription
+ * @self: a #GNostrSubscription
  *
- * Gets the current subscription state.
+ * Gets the current lifecycle state.
  *
- * Returns: The current #NostrSubscriptionState
+ * Returns: the current #GNostrSubscriptionState
  *
- * Since: 0.1
+ * Since: 1.0
  */
-NostrSubscriptionState gnostr_subscription_get_state(GNostrSubscription *self);
+GNostrSubscriptionState gnostr_subscription_get_state(GNostrSubscription *self);
 
 /**
- * gnostr_subscription_get_config:
- * @self: A #GNostrSubscription
+ * gnostr_subscription_get_relay:
+ * @self: a #GNostrSubscription
  *
- * Gets the subscription configuration.
+ * Gets the relay this subscription is associated with.
  *
- * Returns: (transfer none): The #NostrSubscriptionConfig for this subscription
+ * Returns: (transfer none) (nullable): the #GNostrRelay
  *
- * Since: 0.1
+ * Since: 1.0
  */
-const NostrSubscriptionConfig *gnostr_subscription_get_config(GNostrSubscription *self);
-
-/**
- * gnostr_subscription_get_error_message:
- * @self: A #GNostrSubscription
- *
- * Gets the error message if the subscription is in error state.
- *
- * Returns: (nullable) (transfer none): The error message, or %NULL if no error
- *
- * Since: 0.1
- */
-const gchar *gnostr_subscription_get_error_message(GNostrSubscription *self);
+GNostrRelay *gnostr_subscription_get_relay(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_get_event_count:
- * @self: A #GNostrSubscription
+ * @self: a #GNostrSubscription
  *
  * Gets the number of events received by this subscription.
  *
- * Returns: The event count
+ * Returns: the event count
  *
- * Since: 0.1
+ * Since: 1.0
  */
 guint gnostr_subscription_get_event_count(GNostrSubscription *self);
+
+/**
+ * gnostr_subscription_get_core_subscription:
+ * @self: a #GNostrSubscription
+ *
+ * Gets the underlying core NostrSubscription pointer.
+ * For advanced use cases requiring direct libnostr API access.
+ *
+ * Returns: (transfer none) (nullable): the core NostrSubscription pointer
+ *
+ * Since: 1.0
+ */
+NostrSubscription *gnostr_subscription_get_core_subscription(GNostrSubscription *self);
 
 G_END_DECLS
 

@@ -47,4 +47,25 @@ typedef enum {
   /* Add more as needed */
 } NostrEventKind;
 
+/**
+ * GNostrSubscriptionState:
+ * @GNOSTR_SUBSCRIPTION_STATE_PENDING: Created but not yet sent to relay
+ * @GNOSTR_SUBSCRIPTION_STATE_ACTIVE: Active and receiving events
+ * @GNOSTR_SUBSCRIPTION_STATE_EOSE_RECEIVED: End of stored events received
+ * @GNOSTR_SUBSCRIPTION_STATE_CLOSED: Subscription has been closed
+ * @GNOSTR_SUBSCRIPTION_STATE_ERROR: Subscription encountered an error
+ *
+ * Lifecycle state of a GObject Nostr subscription.
+ */
+typedef enum {
+  GNOSTR_SUBSCRIPTION_STATE_PENDING,
+  GNOSTR_SUBSCRIPTION_STATE_ACTIVE,
+  GNOSTR_SUBSCRIPTION_STATE_EOSE_RECEIVED,
+  GNOSTR_SUBSCRIPTION_STATE_CLOSED,
+  GNOSTR_SUBSCRIPTION_STATE_ERROR
+} GNostrSubscriptionState;
+
+GType gnostr_subscription_state_get_type(void) G_GNUC_CONST;
+#define GNOSTR_TYPE_SUBSCRIPTION_STATE (gnostr_subscription_state_get_type())
+
 G_END_DECLS

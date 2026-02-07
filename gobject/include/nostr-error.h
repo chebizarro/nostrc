@@ -24,6 +24,7 @@ GQuark nostr_error_quark(void);
  * @NOSTR_ERROR_DECRYPTION_FAILED: NIP-04/44 decryption failed
  * @NOSTR_ERROR_INVALID_KEY: Invalid key format
  * @NOSTR_ERROR_NOT_FOUND: Requested item not found
+ * @NOSTR_ERROR_INVALID_STATE: Operation invalid for current state
  */
 typedef enum {
   NOSTR_ERROR_INVALID_EVENT,
@@ -39,7 +40,8 @@ typedef enum {
   NOSTR_ERROR_ENCRYPTION_FAILED,
   NOSTR_ERROR_DECRYPTION_FAILED,
   NOSTR_ERROR_INVALID_KEY,
-  NOSTR_ERROR_NOT_FOUND
+  NOSTR_ERROR_NOT_FOUND,
+  NOSTR_ERROR_INVALID_STATE
 } NostrError;
 
 G_END_DECLS

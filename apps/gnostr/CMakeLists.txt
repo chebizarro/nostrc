@@ -231,6 +231,7 @@ target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
   ${PROJECT_ROOT}/gobject/src/nostr_pool.c
   ${PROJECT_ROOT}/gobject/src/nostr_relay.c
+  ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
   ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
   ${PROJECT_ROOT}/gobject/src/nostr_keys.c
   ${PROJECT_ROOT}/gobject/src/nostr-enums.c

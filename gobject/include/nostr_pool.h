@@ -7,11 +7,13 @@
 
 G_BEGIN_DECLS
 
-/* Note: gnostr_pool_subscribe() will be added when nostrc-wjlt
- * (NostrSubscription lifecycle) is complete. */
-
 /* Forward declarations to avoid include conflicts between core and GObject headers */
 typedef struct NostrFilters NostrFilters;
+
+/* Forward declare GNostrSubscription to avoid header include conflicts.
+ * nostr_subscription.h transitively includes nostr_filter.h (GObject) which
+ * conflicts with core nostr-filter.h in the pool .c file. */
+typedef struct _GNostrSubscription GNostrSubscription;
 
 /* Define GNostrPool GObject */
 #define GNOSTR_TYPE_POOL (gnostr_pool_get_type())
@@ -218,6 +220,28 @@ gboolean gnostr_pool_connect_all_finish(GNostrPool   *self,
  * Disconnects all relays in the pool.
  */
 void gnostr_pool_disconnect_all(GNostrPool *self);
+
+/* --- Subscription API (nostrc-wjlt) --- */
+
+/**
+ * gnostr_pool_subscribe:
+ * @self: a #GNostrPool
+ * @filters: (transfer none): filters for the subscription
+ * @error: (nullable): return location for a #GError
+ *
+ * Creates and fires a subscription across a connected relay in the pool.
+ * Returns a live #GNostrSubscription that emits "event", "eose", and "closed"
+ * signals. The caller is responsible for closing the subscription when done.
+ *
+ * Uses the first connected relay in the pool.
+ *
+ * Returns: (transfer full) (nullable): a new #GNostrSubscription, or %NULL on error
+ *
+ * Since: 1.0
+ */
+GNostrSubscription *gnostr_pool_subscribe(GNostrPool *self,
+                                           NostrFilters *filters,
+                                           GError **error);
 
 G_END_DECLS
 

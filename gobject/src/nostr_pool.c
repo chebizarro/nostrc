@@ -29,6 +29,11 @@
 #include "nostr_pool.h"
 #include "nostr_relay.h"
 
+/* Forward-declare subscription API to avoid include conflicts (nostrc-wjlt) */
+GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters);
+gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
+void gnostr_subscription_close(GNostrSubscription *self);
+
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -831,4 +836,49 @@ gnostr_pool_disconnect_all(GNostrPool *self)
         g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
         gnostr_relay_disconnect(relay);
     }
+}
+
+/* --- Subscription API (nostrc-wjlt) --- */
+
+GNostrSubscription *
+gnostr_pool_subscribe(GNostrPool   *self,
+                      NostrFilters *filters,
+                      GError      **error)
+{
+    g_return_val_if_fail(GNOSTR_IS_POOL(self), NULL);
+    g_return_val_if_fail(filters != NULL, NULL);
+
+    /* Find first connected relay */
+    GNostrRelay *connected_relay = NULL;
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
+    for (guint i = 0; i < n; i++) {
+        g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
+        if (gnostr_relay_get_connected(relay)) {
+            connected_relay = relay;
+            break;
+        }
+    }
+
+    if (!connected_relay) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                            "no connected relay in pool");
+        return NULL;
+    }
+
+    GNostrSubscription *sub = gnostr_subscription_new(connected_relay, filters);
+    if (!sub) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                            "failed to create subscription");
+        return NULL;
+    }
+
+    if (!gnostr_subscription_fire(sub, error)) {
+        g_object_unref(sub);
+        return NULL;
+    }
+
+    g_debug("Pool subscribe: created subscription on %s",
+            gnostr_relay_get_url(connected_relay));
+
+    return sub;
 }
