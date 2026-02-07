@@ -288,6 +288,7 @@ add_subdirectory(plugins/nip77-negentropy)
 add_subdirectory(plugins/nip57-zaps)
 add_subdirectory(plugins/nip34-git)
 add_subdirectory(plugins/nip64-chess)
+add_subdirectory(plugins/nip99-marketplace)
 
 # Make gnostr depend on plugins so they're built together
 add_dependencies(${APP_CLIENT_BIN}
@@ -300,6 +301,7 @@ add_dependencies(${APP_CLIENT_BIN}
   nip57-zaps
   nip34-git
   nip64-chess
+  nip99-marketplace
 )
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
