@@ -21,6 +21,26 @@ gnostr_relay_state_get_type(void)
 }
 
 GType
+gnostr_nip46_state_get_type(void)
+{
+  static GType type = 0;
+
+  if (g_once_init_enter(&type)) {
+    static const GEnumValue values[] = {
+      { GNOSTR_NIP46_STATE_DISCONNECTED, "GNOSTR_NIP46_STATE_DISCONNECTED", "disconnected" },
+      { GNOSTR_NIP46_STATE_CONNECTING, "GNOSTR_NIP46_STATE_CONNECTING", "connecting" },
+      { GNOSTR_NIP46_STATE_CONNECTED, "GNOSTR_NIP46_STATE_CONNECTED", "connected" },
+      { GNOSTR_NIP46_STATE_STOPPING, "GNOSTR_NIP46_STATE_STOPPING", "stopping" },
+      { 0, NULL, NULL }
+    };
+    GType t = g_enum_register_static("GNostrNip46State", values);
+    g_once_init_leave(&type, t);
+  }
+
+  return type;
+}
+
+GType
 gnostr_subscription_state_get_type(void)
 {
   static GType type = 0;

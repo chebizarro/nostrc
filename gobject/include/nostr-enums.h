@@ -68,4 +68,23 @@ typedef enum {
 GType gnostr_subscription_state_get_type(void) G_GNUC_CONST;
 #define GNOSTR_TYPE_SUBSCRIPTION_STATE (gnostr_subscription_state_get_type())
 
+/**
+ * GNostrNip46State:
+ * @GNOSTR_NIP46_STATE_DISCONNECTED: Not connected to remote signer
+ * @GNOSTR_NIP46_STATE_CONNECTING: Connection in progress
+ * @GNOSTR_NIP46_STATE_CONNECTED: Connected and ready for RPC
+ * @GNOSTR_NIP46_STATE_STOPPING: Shutting down connection
+ *
+ * NIP-46 remote signer session state. Maps to core NostrNip46State.
+ */
+typedef enum {
+  GNOSTR_NIP46_STATE_DISCONNECTED,
+  GNOSTR_NIP46_STATE_CONNECTING,
+  GNOSTR_NIP46_STATE_CONNECTED,
+  GNOSTR_NIP46_STATE_STOPPING
+} GNostrNip46State;
+
+GType gnostr_nip46_state_get_type(void) G_GNUC_CONST;
+#define GNOSTR_TYPE_NIP46_STATE (gnostr_nip46_state_get_type())
+
 G_END_DECLS

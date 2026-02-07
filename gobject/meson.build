@@ -83,6 +83,13 @@ nip44_dep = declare_dependency(
   dependencies: nip44_core_static,
   include_directories: include_directories('../nips/nip44/include'))
 
+nip46_core_static = cc.find_library('nostr_nip46_core',
+  dirs: [cmake_build_dir / 'nips' / 'nip46'],
+  static: true)
+nip46_dep = declare_dependency(
+  dependencies: nip46_core_static,
+  include_directories: include_directories('../nips/nip46/include'))
+
 # ── System crypto dependencies ───────────────────────────────────────
 secp256k1_dep = dependency('libsecp256k1')
 openssl_dep = dependency('openssl')
@@ -134,6 +141,8 @@ nostr_glib_sources = files(
   'src/nostr_pointer.c',
   'src/nostr_nip19.c',
   'src/nostr_tag_list.c',
+  'src/nostr_nip46_client.c',
+  'src/nostr_nip46_bunker.c',
 )
 # nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
 
@@ -160,6 +169,8 @@ nostr_glib_headers = files(
   'include/nostr_pointer.h',
   'include/nostr_nip19.h',
   'include/nostr_tag_list.h',
+  'include/nostr_nip46_client.h',
+  'include/nostr_nip46_bunker.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
@@ -176,6 +187,7 @@ nostr_glib_deps = [
   nip06_dep,
   nip19_dep,
   nip44_dep,
+  nip46_dep,
   secp256k1_dep,
   openssl_dep,
   libwebsockets_dep,
@@ -191,9 +203,12 @@ if libsodium_dep.found()
 endif
 
 # ── Build the library ────────────────────────────────────────────────
+# NIP-46 headers use `#include "nostr/nip46/..."` path style
+nip46_inc = include_directories('../nips/nip46/include')
+
 nostr_glib_lib = library('nostr-glib-1.0',
   nostr_glib_sources,
-  include_directories: [nostr_glib_inc, gnostr_app_inc],
+  include_directories: [nostr_glib_inc, gnostr_app_inc, nip46_inc],
   dependencies: nostr_glib_deps,
   install: true)
 
