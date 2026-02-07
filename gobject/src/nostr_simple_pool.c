@@ -2,6 +2,7 @@
 
 #include "nostr_simple_pool.h"
 #include "nostr_query_batcher.h"  /* nostrc-ozlp: query batching */
+#include "nostr_event_bus.h"      /* nostrc-7typ: EventBus integration */
 #include "nostr_relay.h"
 #include "nostr-subscription.h"
 #include "nostr-filter.h"
@@ -19,6 +20,134 @@
 #include <string.h>
 #include <stdbool.h>
 #include <pthread.h>
+
+/* ========================================================================
+ * EventBus Integration Helpers (nostrc-7typ)
+ * ======================================================================== */
+
+/**
+ * event_bus_emit_event:
+ * @ev: The NostrEvent to emit
+ *
+ * Emits an event to the EventBus with topic "event::kind::X" where X is the event kind.
+ * This is called in addition to existing GSignal emission for backward compatibility.
+ */
+static void event_bus_emit_event(NostrEvent *ev) {
+    if (!ev) return;
+
+    NostrEventBus *bus = nostr_event_bus_get_default();
+    if (!bus) return;
+
+    /* Get event kind to build topic */
+    int kind = nostr_event_get_kind(ev);
+    gchar *topic = nostr_event_bus_format_event_topic(kind);
+    if (!topic) return;
+
+    /* Serialize event to JSON */
+    char *json = nostr_event_serialize(ev);
+    if (json) {
+        nostr_event_bus_emit(bus, topic, json);
+        g_free(json);
+    }
+
+    g_free(topic);
+}
+
+/**
+ * event_bus_emit_eose:
+ * @subscription_id: The subscription ID that received EOSE
+ *
+ * Emits an EOSE notification to the EventBus with topic "eose::subscription-id".
+ */
+static void event_bus_emit_eose(const char *subscription_id) {
+    if (!subscription_id) return;
+
+    NostrEventBus *bus = nostr_event_bus_get_default();
+    if (!bus) return;
+
+    gchar *topic = nostr_event_bus_format_eose_topic(subscription_id);
+    if (topic) {
+        nostr_event_bus_emit(bus, topic, NULL);
+        g_free(topic);
+    }
+}
+
+/**
+ * event_bus_emit_ok:
+ * @event_id: The event ID that was acknowledged
+ * @success: Whether the relay accepted the event
+ * @message: Optional message from the relay
+ *
+ * Emits an OK acknowledgment to the EventBus with topic "ok::event-id".
+ * Note: Currently unused in SimplePool but provided for future use when
+ * event publishing is integrated. Publishing typically happens via NostrRelay.
+ */
+static void G_GNUC_UNUSED event_bus_emit_ok(const char *event_id, gboolean success, const char *message) {
+    if (!event_id) return;
+
+    NostrEventBus *bus = nostr_event_bus_get_default();
+    if (!bus) return;
+
+    gchar *topic = nostr_event_bus_format_ok_topic(event_id);
+    if (topic) {
+        /* Build simple JSON payload for OK response */
+        gchar *payload = g_strdup_printf("{\"success\":%s,\"message\":\"%s\"}",
+                                          success ? "true" : "false",
+                                          message ? message : "");
+        nostr_event_bus_emit(bus, topic, payload);
+        g_free(payload);
+        g_free(topic);
+    }
+}
+
+/**
+ * event_bus_emit_notice:
+ * @relay_url: The relay URL that sent the notice
+ * @message: The notice message
+ *
+ * Emits a notice to the EventBus with topic "notice::relay-url".
+ * Note: Currently unused but provided for future use when NOTICE messages
+ * from relays are captured and forwarded.
+ */
+static void G_GNUC_UNUSED event_bus_emit_notice(const char *relay_url, const char *message) {
+    if (!relay_url) return;
+
+    NostrEventBus *bus = nostr_event_bus_get_default();
+    if (!bus) return;
+
+    gchar *topic = g_strdup_printf("notice::%s", relay_url);
+    if (topic) {
+        nostr_event_bus_emit(bus, topic, message);
+        g_free(topic);
+    }
+}
+
+/**
+ * event_bus_emit_closed:
+ * @relay_url: The relay URL that closed the subscription
+ * @subscription_id: The subscription that was closed
+ * @reason: The reason for closing (may be NULL)
+ *
+ * Emits a CLOSED notification to the EventBus. This is treated as a notice
+ * since it's an informational message from the relay.
+ */
+static void event_bus_emit_closed(const char *relay_url, const char *subscription_id, const char *reason) {
+    if (!relay_url) return;
+
+    NostrEventBus *bus = nostr_event_bus_get_default();
+    if (!bus) return;
+
+    /* Build message for CLOSED notification */
+    gchar *message = g_strdup_printf("{\"type\":\"closed\",\"subscription_id\":\"%s\",\"reason\":\"%s\"}",
+                                      subscription_id ? subscription_id : "",
+                                      reason ? reason : "");
+    gchar *topic = g_strdup_printf("notice::%s", relay_url);
+    if (topic) {
+        nostr_event_bus_emit(bus, topic, message);
+        g_free(topic);
+    }
+    g_free(message);
+}
 
 /* GnostrSimplePool GObject implementation */
 G_DEFINE_TYPE(GnostrSimplePool, gnostr_simple_pool, G_TYPE_OBJECT)
@@ -357,6 +486,8 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                         if (eid && *eid && dedup_set_seen(seen, eid)) {
                             nostr_event_free(ev);
                         } else {
+                            /* nostrc-7typ: Emit to EventBus */
+                            event_bus_emit_event(ev);
                             page_has_new = TRUE;
                             int64_t ca = nostr_event_get_created_at(ev);
                             if (min_created_at < 0 || (ca > 0 && ca < min_created_at)) {
@@ -371,6 +502,9 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                 GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
                 if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                     it->eosed = TRUE;
+                    /* nostrc-7typ: Emit EOSE to EventBus */
+                    const char *sid = nostr_subscription_get_id(it->sub);
+                    event_bus_emit_eose(sid);
                 }
             }
 
@@ -586,6 +720,8 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                         /* duplicate: drop */
                         nostr_event_free(ev);
                     } else {
+                        /* nostrc-7typ: Emit to EventBus before adding to batch */
+                        event_bus_emit_event(ev);
                         g_ptr_array_add(batch, ev);
                         it->emitted++;
                     }
@@ -605,6 +741,8 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                 g_message("[EOSE] relay=%s sid=%s latency=%.1fms",
                           it->url_copy ? it->url_copy : "<unknown>", sid ? sid : "null",
                           it->eose_us >= 0 ? it->eose_us / 1000.0 : -1.0);
+                /* nostrc-7typ: Emit EOSE to EventBus */
+                event_bus_emit_eose(sid);
             }
         }
 
@@ -917,6 +1055,8 @@ static gpointer query_single_thread(gpointer user_data) {
 
             while (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
                 events_received++;
+                /* nostrc-7typ: Emit to EventBus */
+                event_bus_emit_event(evt);
                 if (ctx->stream_events && batch) {
                     /* Streaming mode: collect events for batch emission */
                     g_ptr_array_add(batch, evt);
@@ -942,6 +1082,8 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Check for EOSE (normal completion) */
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 g_debug("query_single: EOSE from %s with %u events", url, events_received);
+                /* nostrc-7typ: Emit EOSE to EventBus */
+                event_bus_emit_eose(sid);
                 done = true;
                 break;
             }
@@ -949,6 +1091,8 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Check for CLOSED (relay closed subscription) */
             if (ch_closed && go_channel_try_receive(ch_closed, NULL) == 0) {
                 g_debug("query_single: subscription closed by %s after %u events", url, events_received);
+                /* nostrc-7typ: Emit CLOSED as notice to EventBus */
+                event_bus_emit_closed(url, sid, NULL);
                 break;
             }
 
@@ -1672,6 +1816,8 @@ static void *fetch_profiles_goroutine(void *arg) {
                               eid ? eid : "(null)", pk ? pk : "(null)");
 
                     if (eid && *eid && !dedup_set_seen((DedupSet*)ctx->dedup, eid)) {
+                        /* nostrc-7typ: Emit to EventBus */
+                        event_bus_emit_event(ev);
                         char *json = nostr_event_serialize(ev);
                         if (json) {
                             g_mutex_lock((GMutex*)ctx->results_mutex);
@@ -1688,21 +1834,24 @@ static void *fetch_profiles_goroutine(void *arg) {
                 }
                 msg = NULL;
             }
-            
+
             /* Check CLOSED (relay rejected/killed subscription) */
             if (!item->eosed) {
                 GoChannel *ch_closed = nostr_subscription_get_closed_channel(item->sub);
                 char *closed_msg = NULL;
                 if (ch_closed && go_channel_try_receive(ch_closed, (void**)&closed_msg) == 0) {
-                    g_warning("[GOROUTINE] CLOSED received from %s: %s", 
+                    g_warning("[GOROUTINE] CLOSED received from %s: %s",
                               item->relay_url, closed_msg ? closed_msg : "(no reason)");
+                    /* nostrc-7typ: Emit CLOSED as notice to EventBus */
+                    const char *sid = nostr_subscription_get_id(item->sub);
+                    event_bus_emit_closed(item->relay_url, sid, closed_msg);
                     /* Mark as EOSED so we don't wait for it */
                     item->eosed = TRUE;
                     any_activity = TRUE;
                     if (closed_msg) g_free(closed_msg);
                 }
             }
-            
+
             /* Check EOSE (non-blocking) - prioritize this check */
             if (!item->eosed) {
                 GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
@@ -1717,6 +1866,8 @@ static void *fetch_profiles_goroutine(void *arg) {
                     g_message("[EOSE] relay=%s sid=%s",
                               item->relay_url ? item->relay_url : "(null)",
                               sid ? sid : "null");
+                    /* nostrc-7typ: Emit EOSE to EventBus */
+                    event_bus_emit_eose(sid);
                     any_activity = TRUE;
                 }
             }

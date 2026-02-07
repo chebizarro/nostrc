@@ -226,12 +226,15 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
+# nostrc-kshv: Added nostr_keys for key operations wrapper
 target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
   ${PROJECT_ROOT}/gobject/src/nostr_relay.c
   ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
+  ${PROJECT_ROOT}/gobject/src/nostr_keys.c
   ${PROJECT_ROOT}/gobject/src/nostr-enums.c
-  ${PROJECT_ROOT}/gobject/src/nostr-error.c)
+  ${PROJECT_ROOT}/gobject/src/nostr-error.c
+  ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
@@ -253,6 +256,13 @@ if (TARGET nostr_nip17_core)
 endif()
 if (TARGET nostr_nip47_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip47_core)
+endif()
+# nostrc-kshv: Link NIP-04 and NIP-44 for GNostrKeys encryption
+if (TARGET nip04)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip04)
+endif()
+if (TARGET nostr_nip44_core)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip44_core)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB)
 # Link secp256k1 for identity/key derivation
@@ -451,9 +461,11 @@ target_include_directories(gnostr-live-log PRIVATE
 # Compile GI wrapper into the CLI as well
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
+# nostrc-7typ: nostr_simple_pool now depends on nostr_event_bus
 target_sources(gnostr-live-log PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
   ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
+  ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
@@ -535,7 +547,10 @@ if (BUILD_TESTING)
     ${SIGNER_PROXY_C}
     ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
     ${PROJECT_ROOT}/gobject/src/nostr_relay.c
-    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c)
+    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
+    ${PROJECT_ROOT}/gobject/src/nostr-enums.c
+    ${PROJECT_ROOT}/gobject/src/nostr-error.c
+    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
   if (TARGET nostr_nip46_core)
     target_link_libraries(gnostr-test-blossom PRIVATE nostr_nip46_core)
@@ -567,7 +582,10 @@ if (BUILD_TESTING)
     ${SIGNER_PROXY_C}
     ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
     ${PROJECT_ROOT}/gobject/src/nostr_relay.c
-    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c)
+    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
+    ${PROJECT_ROOT}/gobject/src/nostr-enums.c
+    ${PROJECT_ROOT}/gobject/src/nostr-error.c
+    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3
     nostr libgo)
