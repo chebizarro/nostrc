@@ -86,6 +86,13 @@ GType nostr_filter_get_type(void);
 #define NOSTR_TYPE_FILTER (nostr_filter_get_type())
 #endif
 
+/* GLib autoptr cleanup functions (available when building with GLib) */
+#if defined(NOSTR_HAVE_GLIB) || defined(__GI_SCANNER__)
+#include <glib-object.h>
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrFilter, nostr_filter_free)
+/* NostrFilterBuilder cleanup declared after builder type definition below */
+#endif
+
 /* Field getters/setters (for future GObject properties) */
 /**
  * nostr_filter_get_ids:
@@ -264,6 +271,143 @@ int           nostr_filter_deserialize(NostrFilter *filter, const char *json);
 #  define free_filters                           nostr_filters_free
 #  define filters_match                          nostr_filters_match
 #  define filters_match_ignoring_timestamp       nostr_filters_match_ignoring_timestamp
+#endif
+
+/* ============================================================================
+ * NostrFilterBuilder - Fluent builder pattern for NostrFilter
+ * ============================================================================
+ */
+
+/**
+ * NostrFilterBuilder:
+ *
+ * Opaque builder type for constructing NostrFilter objects using a fluent API.
+ * All builder methods return the builder pointer for chaining.
+ *
+ * Example usage:
+ * ```c
+ * NostrFilter *filter = nostr_filter_builder_build(
+ *     nostr_filter_builder_kinds(
+ *         nostr_filter_builder_authors(
+ *             nostr_filter_builder_new(),
+ *             "pubkey1", "pubkey2", NULL),
+ *         1, 6, -1));
+ * ```
+ */
+typedef struct NostrFilterBuilder NostrFilterBuilder;
+
+/**
+ * nostr_filter_builder_new:
+ *
+ * Creates a new filter builder with default values.
+ *
+ * Returns: (transfer full): A new NostrFilterBuilder, or NULL on allocation failure.
+ *          Free with nostr_filter_builder_free() if not calling build().
+ */
+NostrFilterBuilder *nostr_filter_builder_new(void);
+
+/**
+ * nostr_filter_builder_ids:
+ * @builder: The builder instance
+ * @...: NULL-terminated list of event ID strings
+ *
+ * Sets the event IDs to filter. Pass strings followed by NULL terminator.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_ids(NostrFilterBuilder *builder, ...);
+
+/**
+ * nostr_filter_builder_authors:
+ * @builder: The builder instance
+ * @...: NULL-terminated list of author pubkey strings
+ *
+ * Sets the author pubkeys to filter. Pass strings followed by NULL terminator.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_authors(NostrFilterBuilder *builder, ...);
+
+/**
+ * nostr_filter_builder_kinds:
+ * @builder: The builder instance
+ * @...: -1 terminated list of event kind integers
+ *
+ * Sets the event kinds to filter. Pass integers followed by -1 terminator.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_kinds(NostrFilterBuilder *builder, ...);
+
+/**
+ * nostr_filter_builder_since:
+ * @builder: The builder instance
+ * @timestamp: Unix timestamp for "since" filter
+ *
+ * Sets the minimum timestamp for matching events.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_since(NostrFilterBuilder *builder, int64_t timestamp);
+
+/**
+ * nostr_filter_builder_until:
+ * @builder: The builder instance
+ * @timestamp: Unix timestamp for "until" filter
+ *
+ * Sets the maximum timestamp for matching events.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_until(NostrFilterBuilder *builder, int64_t timestamp);
+
+/**
+ * nostr_filter_builder_limit:
+ * @builder: The builder instance
+ * @limit: Maximum number of events to return
+ *
+ * Sets the limit on number of events returned.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_limit(NostrFilterBuilder *builder, unsigned int limit);
+
+/**
+ * nostr_filter_builder_tag:
+ * @builder: The builder instance
+ * @key: Tag key (e.g., "e", "p")
+ * @value: Tag value to match
+ *
+ * Adds a tag filter requirement. Can be called multiple times
+ * for the same key to add multiple allowed values.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_tag(NostrFilterBuilder *builder, const char *key, const char *value);
+
+/**
+ * nostr_filter_builder_build:
+ * @builder: (transfer full): The builder instance
+ *
+ * Constructs the NostrFilter from the builder and frees the builder.
+ * After calling this, the builder pointer is no longer valid.
+ *
+ * Returns: (transfer full): A new NostrFilter, or NULL on failure.
+ */
+NostrFilter *nostr_filter_builder_build(NostrFilterBuilder *builder);
+
+/**
+ * nostr_filter_builder_free:
+ * @builder: (nullable): The builder to free
+ *
+ * Frees a builder without constructing a filter.
+ * Use this if you need to abort filter construction.
+ */
+void nostr_filter_builder_free(NostrFilterBuilder *builder);
+
+/* GLib autoptr cleanup for NostrFilterBuilder */
+#if defined(NOSTR_HAVE_GLIB) || defined(__GI_SCANNER__)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrFilterBuilder, nostr_filter_builder_free)
 #endif
 
 #ifdef __cplusplus

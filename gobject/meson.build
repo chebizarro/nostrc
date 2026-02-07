@@ -40,6 +40,7 @@ nostr_glib_sources = files(
   'src/crypto_utils.c',
   'src/nostr_async.c',
   'src/nostr_query_batcher.c',
+  'src/nostr_tag_list.c',
 )
 
 # Header files
@@ -58,6 +59,7 @@ nostr_glib_headers = files(
   'include/crypto_utils_gobject.h',
   'include/nostr_async.h',
   'include/nostr_query_batcher.h',
+  'include/nostr_tag_list.h',
 )
 
 # Build the library

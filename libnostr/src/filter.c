@@ -975,3 +975,101 @@ int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
     }
     return 0;
 }
+
+/* ============================================================================
+ * NostrFilterBuilder implementation
+ * ============================================================================
+ */
+
+#include <stdarg.h>
+
+struct NostrFilterBuilder {
+    NostrFilter *filter;
+};
+
+NostrFilterBuilder *nostr_filter_builder_new(void) {
+    NostrFilterBuilder *builder = (NostrFilterBuilder *)malloc(sizeof(NostrFilterBuilder));
+    if (!builder) return NULL;
+    builder->filter = nostr_filter_new();
+    if (!builder->filter) {
+        free(builder);
+        return NULL;
+    }
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_ids(NostrFilterBuilder *builder, ...) {
+    if (!builder || !builder->filter) return builder;
+    va_list args;
+    va_start(args, builder);
+    const char *id;
+    while ((id = va_arg(args, const char *)) != NULL) {
+        nostr_filter_add_id(builder->filter, id);
+    }
+    va_end(args);
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_authors(NostrFilterBuilder *builder, ...) {
+    if (!builder || !builder->filter) return builder;
+    va_list args;
+    va_start(args, builder);
+    const char *author;
+    while ((author = va_arg(args, const char *)) != NULL) {
+        nostr_filter_add_author(builder->filter, author);
+    }
+    va_end(args);
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_kinds(NostrFilterBuilder *builder, ...) {
+    if (!builder || !builder->filter) return builder;
+    va_list args;
+    va_start(args, builder);
+    int kind;
+    while ((kind = va_arg(args, int)) != -1) {
+        nostr_filter_add_kind(builder->filter, kind);
+    }
+    va_end(args);
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_since(NostrFilterBuilder *builder, int64_t timestamp) {
+    if (!builder || !builder->filter) return builder;
+    builder->filter->since = timestamp;
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_until(NostrFilterBuilder *builder, int64_t timestamp) {
+    if (!builder || !builder->filter) return builder;
+    builder->filter->until = timestamp;
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_limit(NostrFilterBuilder *builder, unsigned int limit) {
+    if (!builder || !builder->filter) return builder;
+    builder->filter->limit = (int)limit;
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_tag(NostrFilterBuilder *builder, const char *key, const char *value) {
+    if (!builder || !builder->filter || !key) return builder;
+    nostr_filter_tags_append(builder->filter, key, value, NULL);
+    return builder;
+}
+
+NostrFilter *nostr_filter_builder_build(NostrFilterBuilder *builder) {
+    if (!builder) return NULL;
+    NostrFilter *filter = builder->filter;
+    builder->filter = NULL;  /* Transfer ownership */
+    free(builder);
+    return filter;
+}
+
+void nostr_filter_builder_free(NostrFilterBuilder *builder) {
+    if (!builder) return;
+    if (builder->filter) {
+        nostr_filter_free(builder->filter);
+    }
+    free(builder);
+}

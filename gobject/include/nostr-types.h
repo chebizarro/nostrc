@@ -4,7 +4,7 @@
 
 G_BEGIN_DECLS
 
-/* Forward declarations for all types */
+/* Forward declarations for core libnostr types (plain C structs) */
 typedef struct _NostrEvent NostrEvent;
 typedef struct _NostrFilter NostrFilter;
 typedef struct _NostrTagList NostrTagList;
@@ -13,9 +13,12 @@ typedef struct _NostrPool NostrPool;
 typedef struct _NostrSubscription NostrSubscription;
 typedef struct _NostrKeys NostrKeys;
 
-/* Autoptr cleanup functions - to be defined after type implementations */
-/* Example pattern:
- * G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrEvent, g_object_unref)
- */
+/* Forward declarations for GObject wrapper types (prefixed with G) */
+typedef struct _GNostrEvent GNostrEvent;
+typedef struct _GNostrRelay GNostrRelay;
+typedef struct _GNostrFilter GNostrFilter;
+
+/* Autoptr cleanup functions for GObject wrappers */
+/* Note: G_DEFINE_AUTOPTR_CLEANUP_FUNC is defined in each type's header */
 
 G_END_DECLS
