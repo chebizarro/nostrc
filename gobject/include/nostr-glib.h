@@ -9,6 +9,7 @@
 #include "nostr_filter.h"
 #include "nostr_relay.h"
 #include "nostr_simple_pool.h"
+#include "nostr_pool.h"
 #include "nostr_subscription.h"
 
 #undef NOSTR_GLIB_INSIDE
