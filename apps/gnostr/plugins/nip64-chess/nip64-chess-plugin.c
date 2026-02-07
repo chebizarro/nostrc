@@ -416,13 +416,37 @@ nip64_chess_plugin_get_games(Nip64ChessPlugin *self)
   return self->games;
 }
 
+static void
+on_request_games_done(GObject      *source_object,
+                      GAsyncResult *result,
+                      gpointer      user_data)
+{
+  Nip64ChessPlugin *self = NIP64_CHESS_PLUGIN(user_data);
+  (void)source_object;
+  (void)result;
+
+  g_debug("[NIP-64] Request games completed, cache has %u games",
+          g_hash_table_size(self->games));
+
+  /* Emit games-updated to refresh the UI */
+  guint count = g_hash_table_size(self->games);
+  g_signal_emit(self, plugin_signals[SIGNAL_GAMES_UPDATED], 0, count);
+
+  g_object_unref(self);
+}
+
 void
 nip64_chess_plugin_request_games(Nip64ChessPlugin *self)
 {
   g_return_if_fail(NIP64_IS_CHESS_PLUGIN(self));
 
-  if (!self->context || !self->active)
+  if (!self->context || !self->active) {
+    g_debug("[NIP-64] Cannot request games - context=%p active=%d",
+            (void*)self->context, self->active);
     return;
+  }
+
+  g_debug("[NIP-64] Requesting fresh chess games from relays...");
 
   /* Request fresh chess games from relays */
   static const int kinds[] = { NIP64_KIND_CHESS };
@@ -431,9 +455,8 @@ nip64_chess_plugin_request_games(Nip64ChessPlugin *self)
       kinds, 1,
       50,  /* limit */
       NULL,
-      NULL, NULL);
-
-  g_debug("[NIP-64] Requested fresh chess games from relays");
+      on_request_games_done,
+      g_object_ref(self));
 }
 
 /* ============================================================================

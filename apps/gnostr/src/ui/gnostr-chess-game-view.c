@@ -57,6 +57,8 @@ struct _GnostrChessGameView {
     gboolean show_move_list;
     gboolean human_plays_white;
     gboolean viewing_game;         /* TRUE when viewing a loaded game */
+    gboolean browse_initialized;   /* TRUE after first browse tab visit */
+    guint loading_timeout_id;      /* Timeout to hide loading spinner */
 
     /* Signal handler IDs */
     gulong board_move_made_id;
@@ -68,6 +70,7 @@ struct _GnostrChessGameView {
     gulong games_updated_id;
     gulong game_selected_id;
     gulong refresh_requested_id;
+    gulong stack_visible_id;
 };
 
 G_DEFINE_TYPE(GnostrChessGameView, gnostr_chess_game_view, GTK_TYPE_WIDGET)
@@ -121,6 +124,9 @@ static void on_game_selected(GnostrChessGamesBrowser *browser,
 static void on_refresh_requested(GnostrChessGamesBrowser *browser,
                                   gpointer user_data);
 static void on_games_updated(GObject *plugin, guint count, gpointer user_data);
+static void on_stack_visible_changed(GObject *stack, GParamSpec *pspec, gpointer user_data);
+static void trigger_games_refresh(GnostrChessGameView *self);
+static gboolean on_loading_timeout(gpointer user_data);
 
 /* ============================================================================
  * Widget Lifecycle
@@ -158,6 +164,18 @@ gnostr_chess_game_view_dispose(GObject *object)
             g_signal_handler_disconnect(self->session, self->session_state_changed_id);
             self->session_state_changed_id = 0;
         }
+    }
+
+    /* Cancel any pending timeout */
+    if (self->loading_timeout_id > 0) {
+        g_source_remove(self->loading_timeout_id);
+        self->loading_timeout_id = 0;
+    }
+
+    /* Disconnect stack signal */
+    if (self->stack && self->stack_visible_id > 0) {
+        g_signal_handler_disconnect(self->stack, self->stack_visible_id);
+        self->stack_visible_id = 0;
     }
 
     /* Disconnect games browser signals */
@@ -346,6 +364,10 @@ gnostr_chess_game_view_init(GnostrChessGameView *self)
         G_CALLBACK(on_game_selected), self);
     self->refresh_requested_id = g_signal_connect(self->games_browser, "refresh-requested",
         G_CALLBACK(on_refresh_requested), self);
+
+    /* Connect stack visible-child change to auto-load on Browse tab */
+    self->stack_visible_id = g_signal_connect(self->stack, "notify::visible-child-name",
+        G_CALLBACK(on_stack_visible_changed), self);
 
     /* Create session */
     self->session = gnostr_chess_session_new();
@@ -592,13 +614,7 @@ on_refresh_requested(GnostrChessGamesBrowser *browser,
     GnostrChessGameView *self = GNOSTR_CHESS_GAME_VIEW(user_data);
     (void)browser;
 
-    if (!self->plugin || !self->request_games_func) return;
-
-    /* Show loading state */
-    gnostr_chess_games_browser_set_loading(self->games_browser, TRUE);
-
-    /* Request fresh games from relays */
-    self->request_games_func(self->plugin);
+    trigger_games_refresh(self);
 }
 
 /**
@@ -611,6 +627,12 @@ on_games_updated(GObject *plugin, guint count, gpointer user_data)
     (void)plugin;
     (void)count;
 
+    /* Cancel loading timeout */
+    if (self->loading_timeout_id > 0) {
+        g_source_remove(self->loading_timeout_id);
+        self->loading_timeout_id = 0;
+    }
+
     /* Hide loading state */
     gnostr_chess_games_browser_set_loading(self->games_browser, FALSE);
 
@@ -618,6 +640,83 @@ on_games_updated(GObject *plugin, guint count, gpointer user_data)
     if (self->plugin && self->get_games_func) {
         GHashTable *games = self->get_games_func(self->plugin);
         gnostr_chess_games_browser_set_games(self->games_browser, games);
+    }
+}
+
+/**
+ * Timeout callback to hide loading spinner after a delay
+ */
+static gboolean
+on_loading_timeout(gpointer user_data)
+{
+    GnostrChessGameView *self = GNOSTR_CHESS_GAME_VIEW(user_data);
+
+    self->loading_timeout_id = 0;
+
+    /* Hide loading state - request may have completed without signal */
+    gnostr_chess_games_browser_set_loading(self->games_browser, FALSE);
+
+    /* Refresh the browser list with whatever we have */
+    if (self->plugin && self->get_games_func) {
+        GHashTable *games = self->get_games_func(self->plugin);
+        gnostr_chess_games_browser_set_games(self->games_browser, games);
+    }
+
+    return G_SOURCE_REMOVE;
+}
+
+/**
+ * Trigger a games refresh with loading indicator and timeout
+ */
+static void
+trigger_games_refresh(GnostrChessGameView *self)
+{
+    if (!self->plugin || !self->request_games_func) {
+        g_debug("[Chess] Cannot refresh - no plugin or request_games_func");
+        return;
+    }
+
+    g_debug("[Chess] Triggering games refresh");
+
+    /* Show loading state */
+    gnostr_chess_games_browser_set_loading(self->games_browser, TRUE);
+
+    /* Cancel any existing timeout */
+    if (self->loading_timeout_id > 0) {
+        g_source_remove(self->loading_timeout_id);
+    }
+
+    /* Set a timeout to hide loading after 10 seconds in case no games arrive */
+    self->loading_timeout_id = g_timeout_add_seconds(10, on_loading_timeout, self);
+
+    /* Request fresh games from relays */
+    self->request_games_func(self->plugin);
+}
+
+/**
+ * Handle stack visible child change - auto-load games on Browse tab
+ */
+static void
+on_stack_visible_changed(GObject *stack, GParamSpec *pspec, gpointer user_data)
+{
+    GnostrChessGameView *self = GNOSTR_CHESS_GAME_VIEW(user_data);
+    (void)pspec;
+
+    const gchar *visible = gtk_stack_get_visible_child_name(GTK_STACK(stack));
+
+    if (g_strcmp0(visible, "browse") == 0) {
+        /* User switched to Browse tab */
+        if (!self->browse_initialized) {
+            /* First time visiting Browse tab - load games */
+            self->browse_initialized = TRUE;
+            trigger_games_refresh(self);
+        } else {
+            /* Subsequent visits - just refresh the list from cache */
+            if (self->plugin && self->get_games_func) {
+                GHashTable *games = self->get_games_func(self->plugin);
+                gnostr_chess_games_browser_set_games(self->games_browser, games);
+            }
+        }
     }
 }
 
