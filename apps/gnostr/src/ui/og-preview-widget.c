@@ -606,6 +606,22 @@ static void og_preview_widget_dispose(GObject *object) {
     gtk_widget_set_layout_manager(self->card_box, NULL);
   }
 
+  /* Clear label text BEFORE unparenting to prevent Pango layout crashes.
+   * During cascade disposal, Pango tries to finalize layouts and can crash
+   * if the layout data is corrupted or widgets are disposed in wrong order. */
+  if (self->title_label && GTK_IS_LABEL(self->title_label)) {
+    gtk_label_set_text(GTK_LABEL(self->title_label), "");
+  }
+  if (self->description_label && GTK_IS_LABEL(self->description_label)) {
+    gtk_label_set_text(GTK_LABEL(self->description_label), "");
+  }
+  if (self->site_label && GTK_IS_LABEL(self->site_label)) {
+    gtk_label_set_text(GTK_LABEL(self->site_label), "");
+  }
+  if (self->error_label && GTK_IS_LABEL(self->error_label)) {
+    gtk_label_set_text(GTK_LABEL(self->error_label), "");
+  }
+
   g_clear_pointer(&self->spinner, gtk_widget_unparent);
   g_clear_pointer(&self->error_label, gtk_widget_unparent);
   g_clear_pointer(&self->card_box, gtk_widget_unparent);
