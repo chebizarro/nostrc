@@ -324,3 +324,30 @@ GnostrIssueMeta *gnostr_issue_parse_tags(const char *tags_json, const char *cont
   g_object_unref(parser);
   return meta;
 }
+
+gchar *gnostr_nip34_get_repo_identifier(const char *a_tag) {
+  if (!a_tag) return NULL;
+
+  /* Parse format: 30617:pubkey:d-tag */
+  gchar **parts = g_strsplit(a_tag, ":", 3);
+  if (!parts) return NULL;
+
+  guint len = g_strv_length(parts);
+  if (len < 3) {
+    g_strfreev(parts);
+    return NULL;
+  }
+
+  /* Verify this is a repo reference (kind 30617) */
+  char *endptr;
+  gulong kind = strtoul(parts[0], &endptr, 10);
+  if (*endptr != '\0' || kind != NOSTR_KIND_GIT_REPO) {
+    g_strfreev(parts);
+    return NULL;
+  }
+
+  /* Return the d-tag (repository identifier) */
+  gchar *d_tag = g_strdup(parts[2]);
+  g_strfreev(parts);
+  return d_tag;
+}

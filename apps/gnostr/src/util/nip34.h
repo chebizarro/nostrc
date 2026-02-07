@@ -104,6 +104,18 @@ gboolean gnostr_nip34_is_issue(int kind);
 gboolean gnostr_nip34_is_reply(int kind);
 gboolean gnostr_nip34_is_git_event(int kind);
 
+/**
+ * gnostr_nip34_get_repo_identifier:
+ * @a_tag: The "a" tag value referencing a repository (format: 30617:pubkey:d-tag)
+ *
+ * Extracts the repository identifier (d-tag) from a NIP-34 repository reference.
+ * The d-tag is typically the repository name or identifier.
+ *
+ * Returns: (transfer full) (nullable): The repository identifier, or NULL on error.
+ *          Caller must free with g_free().
+ */
+gchar *gnostr_nip34_get_repo_identifier(const char *a_tag);
+
 G_END_DECLS
 
 #endif /* NIP34_H */

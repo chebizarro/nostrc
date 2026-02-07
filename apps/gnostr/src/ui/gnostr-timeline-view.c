@@ -2303,10 +2303,12 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     else if (gnostr_nip34_is_patch(event_kind) && tags_json) {
       GnostrPatchMeta *patch_meta = gnostr_patch_parse_tags(tags_json, content);
       if (patch_meta) {
+        gchar *repo_name = gnostr_nip34_get_repo_identifier(patch_meta->repo_a_tag);
         gnostr_note_card_row_set_git_patch_mode(GNOSTR_NOTE_CARD_ROW(row),
                                                  patch_meta->title,
-                                                 NULL, /* TODO: resolve repo name from a-tag */
+                                                 repo_name,
                                                  patch_meta->commit_id);
+        g_free(repo_name);
         gnostr_patch_meta_free(patch_meta);
       } else {
         gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
@@ -2316,11 +2318,13 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     else if (gnostr_nip34_is_issue(event_kind) && tags_json) {
       GnostrIssueMeta *issue_meta = gnostr_issue_parse_tags(tags_json, content);
       if (issue_meta) {
+        gchar *repo_name = gnostr_nip34_get_repo_identifier(issue_meta->repo_a_tag);
         gnostr_note_card_row_set_git_issue_mode(GNOSTR_NOTE_CARD_ROW(row),
                                                  issue_meta->title,
-                                                 NULL, /* TODO: resolve repo name from a-tag */
+                                                 repo_name,
                                                  issue_meta->is_open,
                                                  (const char *const *)issue_meta->labels);
+        g_free(repo_name);
         gnostr_issue_meta_free(issue_meta);
       } else {
         gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
