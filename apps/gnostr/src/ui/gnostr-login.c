@@ -86,6 +86,7 @@ struct _GnostrLogin {
   gboolean connecting_local;
   gboolean connecting_bunker;
   gboolean local_signer_available;
+  gulong name_owner_handler;         /* Monitor daemon appearing/disappearing */
   char *nostrconnect_uri;          /* URI for QR code display */
   char *nostrconnect_secret;       /* Secret for bunker auth (hex) */
   uint8_t nostrconnect_secret_bytes[32]; /* Secret bytes for decryption */
@@ -120,6 +121,7 @@ static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data);
 static void on_close_clicked(GtkButton *btn, gpointer user_data);
 static void on_done_clicked(GtkButton *btn, gpointer user_data);
 static void check_local_signer_availability(GnostrLogin *self);
+static void on_name_owner_changed(GObject *proxy, GParamSpec *pspec, gpointer user_data);
 static void save_npub_to_settings(const char *npub);
 static void save_nip46_credentials_to_settings(const char *client_secret_hex,
                                                 const char *signer_pubkey_hex,
@@ -491,6 +493,15 @@ static gboolean on_nip46_connect_success(gpointer data) {
 static void gnostr_login_dispose(GObject *obj) {
   GnostrLogin *self = GNOSTR_LOGIN(obj);
 
+  /* Disconnect name owner monitoring */
+  if (self->name_owner_handler > 0) {
+    NostrSignerProxy *proxy = gnostr_signer_proxy_get(NULL);
+    if (proxy) {
+      g_signal_handler_disconnect(proxy, self->name_owner_handler);
+    }
+    self->name_owner_handler = 0;
+  }
+
   /* Stop NIP-46 relay listener */
   stop_nip46_listener(self);
 
@@ -653,6 +664,8 @@ static void check_local_complete(GObject *source, GAsyncResult *res, gpointer us
   CheckLocalCtx *ctx = (CheckLocalCtx*)user_data;
   GnostrLogin *self = ctx->self;
   g_free(ctx);
+  (void)source;
+  (void)res;
 
   if (!GNOSTR_IS_LOGIN(self)) return;
 
@@ -663,28 +676,55 @@ static void check_local_complete(GObject *source, GAsyncResult *res, gpointer us
   char *npub = NULL;
   NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
 
-  if (proxy) {
-    /* Try to call GetPublicKey synchronously to verify it works */
-    gboolean ok = nostr_org_nostr_signer_call_get_public_key_sync(
-        proxy, &npub, NULL, &error);
-    if (ok && npub && *npub) {
-      self->local_signer_available = TRUE;
-      gtk_label_set_text(GTK_LABEL(self->lbl_local_status), "Signer available");
-      gtk_widget_set_sensitive(self->btn_local_signer, TRUE);
-      g_free(npub);
-    } else {
-      self->local_signer_available = FALSE;
-      gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                         "Signer not responding");
-      gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
-      if (error) g_error_free(error);
-    }
-  } else {
+  if (!proxy) {
+    self->local_signer_available = FALSE;
+    g_debug("[LOGIN] D-Bus proxy creation failed: %s",
+            error ? error->message : "unknown");
+    gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
+                       "No local signer");
+    gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
+    g_clear_error(&error);
+    return;
+  }
+
+  /* Monitor for daemon appearing/disappearing on D-Bus */
+  if (self->name_owner_handler == 0) {
+    self->name_owner_handler = g_signal_connect(
+        proxy, "notify::g-name-owner",
+        G_CALLBACK(on_name_owner_changed), self);
+  }
+
+  /* Check if a process actually owns the bus name before calling methods.
+   * Without this check, calling GetPublicKey when no daemon is running
+   * triggers D-Bus service activation which can timeout. */
+  g_autofree gchar *name_owner =
+      g_dbus_proxy_get_name_owner(G_DBUS_PROXY(proxy));
+  if (!name_owner) {
     self->local_signer_available = FALSE;
     gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                       "No local signer (install gnostr-signer)");
+                       "Signer not running");
     gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
-    if (error) g_error_free(error);
+    return;
+  }
+
+  /* Daemon is running - try GetPublicKey to verify it has a key */
+  gboolean ok = nostr_org_nostr_signer_call_get_public_key_sync(
+      proxy, &npub, NULL, &error);
+  if (ok && npub && *npub) {
+    self->local_signer_available = TRUE;
+    gtk_label_set_text(GTK_LABEL(self->lbl_local_status), "Signer available");
+    gtk_widget_set_sensitive(self->btn_local_signer, TRUE);
+    g_free(npub);
+  } else {
+    /* Daemon is running but GetPublicKey failed - still allow local signing
+     * so user can import a key through the signer daemon */
+    self->local_signer_available = TRUE;
+    g_debug("[LOGIN] Signer detected but GetPublicKey failed: %s",
+            error ? error->message : "unknown");
+    gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
+                       "Signer detected (no key configured)");
+    gtk_widget_set_sensitive(self->btn_local_signer, TRUE);
+    g_clear_error(&error);
   }
 }
 
@@ -700,6 +740,17 @@ static gboolean check_local_idle(gpointer user_data) {
   /* Do the D-Bus check synchronously (it's fast) then update UI */
   check_local_complete(NULL, NULL, ctx);
   return G_SOURCE_REMOVE;
+}
+
+/* Re-check signer availability when daemon appears/disappears on D-Bus */
+static void on_name_owner_changed(GObject *proxy, GParamSpec *pspec,
+                                   gpointer user_data) {
+  (void)pspec;
+  (void)proxy;
+  GnostrLogin *self = GNOSTR_LOGIN(user_data);
+  if (!GNOSTR_IS_LOGIN(self)) return;
+
+  check_local_signer_availability(self);
 }
 
 static void check_local_signer_availability(GnostrLogin *self) {
