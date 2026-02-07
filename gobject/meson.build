@@ -125,7 +125,7 @@ nostr_glib_sources = files(
   'src/nostr_pool.c',
   'src/nostr_relay_store.c',
   'src/nostr_store.c',
-  'src/nostr_ndb_store.c',
+  # nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
   'src/crypto_utils.c',
   'src/nostr_async.c',
   'src/nostr_query_batcher.c',
@@ -136,7 +136,7 @@ nostr_glib_sources = files(
 #   'src/nostr_pointer.c'  - NostrPointer collides with core, uses stale API
 #   'src/nostr_tag_list.c' - nostr_tag_* functions duplicate core tag.c symbols
 
-# Header files (public API)
+# Header files with matching source (safe for GIR scanning)
 nostr_glib_headers = files(
   'include/nostr-glib.h',
   'include/nostr-error.h',
@@ -144,20 +144,24 @@ nostr_glib_headers = files(
   'include/nostr-enums.h',
   'include/nostr_event.h',
   'include/nostr_event_bus.h',
-  'include/nostr_filter.h',
   'include/nostr_keys.h',
   'include/nostr_relay.h',
   'include/nostr_subscription.h',
   'include/nostr_simple_pool.h',
   'include/nostr_pool.h',
-  'include/nostr_pointer.h',
   'include/nostr_relay_store.h',
   'include/nostr_store.h',
   'include/crypto_utils_gobject.h',
   'include/nostr_async.h',
   'include/nostr_query_batcher.h',
-  'include/nostr_tag_list.h',
   'include/nostr_subscription_registry.h',
+)
+
+# Headers without matching source (excluded from GIR, installed for direct use)
+nostr_glib_extra_headers = files(
+  'include/nostr_filter.h',
+  'include/nostr_pointer.h',
+  'include/nostr_tag_list.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
@@ -207,10 +211,10 @@ gnome = import('gnome')
 if get_option('introspection')
   nostr_glib_gir = gnome.generate_gir(nostr_glib_lib,
     sources: nostr_glib_sources + nostr_glib_headers,
-    namespace: 'Nostr',
+    namespace: 'GNostr',
     nsversion: '1.0',
-    symbol_prefix: 'nostr',
-    identifier_prefix: 'Nostr',
+    symbol_prefix: 'gnostr',
+    identifier_prefix: 'GNostr',
     includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0'],
     install: true)
 endif
@@ -224,7 +228,8 @@ pkg.generate(nostr_glib_lib,
   requires_private: ['openssl', 'libsecp256k1'])
 
 # ── Header installation ──────────────────────────────────────────────
-install_headers(nostr_glib_headers, subdir: 'nostr-glib-1.0')
+install_headers(nostr_glib_headers + nostr_glib_extra_headers,
+  subdir: 'nostr-glib-1.0')
 
 # ── Tests ─────────────────────────────────────────────────────────────
 if get_option('tests')
