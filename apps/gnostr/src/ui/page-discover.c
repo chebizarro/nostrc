@@ -26,6 +26,7 @@
 #include "../storage_ndb.h"
 
 #include <string.h>
+#include "../util/debounce.h"
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/page-discover.ui"
 
@@ -90,7 +91,7 @@ struct _GnostrPageDiscover {
     uint64_t live_sub_id;            /* nostrdb subscription ID for live events */
 
     /* State */
-    guint search_debounce_id;
+    GnostrDebounce *search_debounce;
     gboolean profiles_loaded;
     gboolean is_local_mode;
     gboolean is_live_mode;     /* TRUE for Live mode, FALSE for People mode */
@@ -561,7 +562,6 @@ static gboolean
 search_debounce_cb(gpointer user_data)
 {
     GnostrPageDiscover *self = GNOSTR_PAGE_DISCOVER(user_data);
-    self->search_debounce_id = 0;
 
     const char *text = gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
 
@@ -582,12 +582,7 @@ on_search_changed(GtkSearchEntry *entry, GnostrPageDiscover *self)
 {
     (void)entry;
 
-    /* LEGITIMATE TIMEOUT - Search input debounce.
-     * nostrc-b0h: Audited - debouncing user input is appropriate. */
-    if (self->search_debounce_id) {
-        g_source_remove(self->search_debounce_id);
-    }
-    self->search_debounce_id = g_timeout_add(SEARCH_DEBOUNCE_MS, search_debounce_cb, self);
+    gnostr_debounce_trigger(self->search_debounce);
 }
 
 static void
@@ -595,10 +590,7 @@ on_search_activate(GtkSearchEntry *entry, GnostrPageDiscover *self)
 {
     (void)entry;
 
-    if (self->search_debounce_id) {
-        g_source_remove(self->search_debounce_id);
-        self->search_debounce_id = 0;
-    }
+    gnostr_debounce_cancel(self->search_debounce);
 
     const char *text = gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
 
@@ -933,10 +925,7 @@ gnostr_page_discover_dispose(GObject *object)
 {
     GnostrPageDiscover *self = GNOSTR_PAGE_DISCOVER(object);
 
-    if (self->search_debounce_id) {
-        g_source_remove(self->search_debounce_id);
-        self->search_debounce_id = 0;
-    }
+    gnostr_debounce_free(self->search_debounce);
 
     if (self->search_cancellable) {
         g_cancellable_cancel(self->search_cancellable);
@@ -1105,7 +1094,7 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
 {
     gtk_widget_init_template(GTK_WIDGET(self));
 
-    self->search_debounce_id = 0;
+    self->search_debounce = gnostr_debounce_new(SEARCH_DEBOUNCE_MS, search_debounce_cb, self);
     self->profiles_loaded = FALSE;
     self->is_local_mode = TRUE;
     self->is_live_mode = FALSE;

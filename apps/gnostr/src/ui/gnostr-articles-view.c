@@ -21,6 +21,7 @@
 #include <glib/gi18n.h>
 #include <json.h>
 #include <string.h>
+#include "../util/debounce.h"
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-articles-view.ui"
 
@@ -70,7 +71,7 @@ struct _GnostrArticlesView {
   gchar *search_text;
   gboolean articles_loaded;
   gboolean is_logged_in;
-  guint search_debounce_id;
+  GnostrDebounce *search_debounce;
 
   /* Async fetch state */
   GCancellable *fetch_cancellable;
@@ -809,7 +810,6 @@ static void on_clear_topic_clicked(GtkButton *button, gpointer user_data) {
 
 static gboolean search_debounce_cb(gpointer user_data) {
   GnostrArticlesView *self = GNOSTR_ARTICLES_VIEW(user_data);
-  self->search_debounce_id = 0;
 
   const char *text = gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
   g_free(self->search_text);
@@ -824,12 +824,7 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
   GnostrArticlesView *self = GNOSTR_ARTICLES_VIEW(user_data);
   (void)entry;
 
-  /* LEGITIMATE TIMEOUT - Search input debounce (300ms).
-   * nostrc-b0h: Audited - debouncing user input is appropriate. */
-  if (self->search_debounce_id) {
-    g_source_remove(self->search_debounce_id);
-  }
-  self->search_debounce_id = g_timeout_add(300, search_debounce_cb, self);
+  gnostr_debounce_trigger(self->search_debounce);
 }
 
 /* --- Filter application --- */
@@ -948,10 +943,7 @@ static void update_content_state(GnostrArticlesView *self) {
 static void gnostr_articles_view_dispose(GObject *object) {
   GnostrArticlesView *self = GNOSTR_ARTICLES_VIEW(object);
 
-  if (self->search_debounce_id) {
-    g_source_remove(self->search_debounce_id);
-    self->search_debounce_id = 0;
-  }
+  gnostr_debounce_free(self->search_debounce);
 
   /* Cancel any pending fetch */
   if (self->fetch_cancellable) {
@@ -1059,7 +1051,7 @@ static void gnostr_articles_view_init(GnostrArticlesView *self) {
   self->search_text = NULL;
   self->articles_loaded = FALSE;
   self->is_logged_in = FALSE;
-  self->search_debounce_id = 0;
+  self->search_debounce = gnostr_debounce_new(300, search_debounce_cb, self);
   self->fetch_cancellable = NULL;
   /* Uses shared query pool from gnostr_get_shared_query_pool() */
   self->fetch_in_progress = FALSE;

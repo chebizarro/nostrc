@@ -7,6 +7,7 @@
 #include "gnostr-apps-page.h"
 #include "gnostr-avatar-cache.h"
 #include "../util/nip89_handlers.h"
+#include "../util/debounce.h"
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-apps-page.ui"
 
@@ -30,7 +31,7 @@ struct _GnostrAppsPage {
   /* State */
   guint filter_kind;
   char *search_text;
-  guint search_debounce_id;
+  GnostrDebounce *search_debounce;
   GHashTable *followed_set;
   GCancellable *query_cancellable;
 };
@@ -471,7 +472,6 @@ static gboolean
 search_debounce_cb(gpointer user_data)
 {
   GnostrAppsPage *self = GNOSTR_APPS_PAGE(user_data);
-  self->search_debounce_id = 0;
   update_handler_list(self);
   return G_SOURCE_REMOVE;
 }
@@ -481,13 +481,7 @@ on_search_changed(GtkSearchEntry *entry, GnostrAppsPage *self)
 {
   g_free(self->search_text);
   self->search_text = g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry)));
-
-  /* LEGITIMATE TIMEOUT - Search input debounce (300ms).
-   * nostrc-b0h: Audited - debouncing user input is appropriate. */
-  if (self->search_debounce_id) {
-    g_source_remove(self->search_debounce_id);
-  }
-  self->search_debounce_id = g_timeout_add(300, search_debounce_cb, self);
+  gnostr_debounce_trigger(self->search_debounce);
 }
 
 static void
@@ -525,10 +519,8 @@ gnostr_apps_page_dispose(GObject *object)
 {
   GnostrAppsPage *self = GNOSTR_APPS_PAGE(object);
 
-  if (self->search_debounce_id) {
-    g_source_remove(self->search_debounce_id);
-    self->search_debounce_id = 0;
-  }
+  gnostr_debounce_free(self->search_debounce);
+  self->search_debounce = NULL;
 
   if (self->query_cancellable) {
     g_cancellable_cancel(self->query_cancellable);
@@ -592,7 +584,7 @@ gnostr_apps_page_init(GnostrAppsPage *self)
 
   self->filter_kind = 0;
   self->search_text = NULL;
-  self->search_debounce_id = 0;
+  self->search_debounce = gnostr_debounce_new(300, search_debounce_cb, self);
   self->followed_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   /* Create model */

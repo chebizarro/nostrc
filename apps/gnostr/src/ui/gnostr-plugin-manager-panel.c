@@ -9,6 +9,7 @@
 #include "../util/gnostr-plugin-manager.h"
 #include "../gnostr-plugin-api.h"
 #include <adwaita.h>
+#include "../util/debounce.h"
 
 #ifdef HAVE_LIBPEAS
 #include <libpeas.h>
@@ -33,7 +34,7 @@ struct _GnostrPluginManagerPanel
 
   /* State */
   gchar *search_text;
-  guint  search_timeout_id;
+  GnostrDebounce *search_debounce;
   guint  plugin_count;
   guint  enabled_count;
 };
@@ -50,6 +51,7 @@ enum
 static guint signals[N_SIGNALS];
 
 /* Forward declarations */
+static gboolean search_timeout_cb(gpointer user_data);
 static void on_search_changed(GtkSearchEntry *entry, GnostrPluginManagerPanel *self);
 static void on_refresh_clicked(GtkButton *button, GnostrPluginManagerPanel *self);
 static void on_install_clicked(GtkButton *button, GnostrPluginManagerPanel *self);
@@ -66,11 +68,7 @@ gnostr_plugin_manager_panel_dispose(GObject *object)
 {
   GnostrPluginManagerPanel *self = GNOSTR_PLUGIN_MANAGER_PANEL(object);
 
-  if (self->search_timeout_id > 0) {
-    g_source_remove(self->search_timeout_id);
-    self->search_timeout_id = 0;
-  }
-
+  gnostr_debounce_free(self->search_debounce);
   g_clear_pointer(&self->search_text, g_free);
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_PLUGIN_MANAGER_PANEL);
@@ -143,7 +141,7 @@ static void
 gnostr_plugin_manager_panel_init(GnostrPluginManagerPanel *self)
 {
   self->search_text = NULL;
-  self->search_timeout_id = 0;
+  self->search_debounce = gnostr_debounce_new(150, search_timeout_cb, self);
   self->plugin_count = 0;
   self->enabled_count = 0;
 
@@ -224,8 +222,6 @@ search_timeout_cb(gpointer user_data)
 {
   GnostrPluginManagerPanel *self = GNOSTR_PLUGIN_MANAGER_PANEL(user_data);
 
-  self->search_timeout_id = 0;
-
   /* Update filter */
   gtk_list_box_invalidate_filter(self->plugin_list);
 
@@ -258,12 +254,7 @@ on_search_changed(GtkSearchEntry *entry, GnostrPluginManagerPanel *self)
   g_free(self->search_text);
   self->search_text = g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry)));
 
-  /* LEGITIMATE TIMEOUT - Search input debounce (150ms).
-   * nostrc-b0h: Audited - debouncing user input is appropriate. */
-  if (self->search_timeout_id > 0) {
-    g_source_remove(self->search_timeout_id);
-  }
-  self->search_timeout_id = g_timeout_add(150, search_timeout_cb, self);
+  gnostr_debounce_trigger(self->search_debounce);
 }
 
 static void
