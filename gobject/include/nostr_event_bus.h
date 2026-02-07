@@ -333,6 +333,13 @@ gchar *nostr_event_bus_format_ok_topic(const gchar *event_id);
  * @callbacks_invoked: Total callback invocations
  * @pattern_cache_hits: Topic pattern cache hits
  * @pattern_cache_misses: Topic pattern cache misses
+ * @dispatch_latency_p50_ns: 50th percentile dispatch latency (nanoseconds)
+ * @dispatch_latency_p95_ns: 95th percentile dispatch latency (nanoseconds)
+ * @dispatch_latency_p99_ns: 99th percentile dispatch latency (nanoseconds)
+ * @dispatch_latency_min_ns: Minimum dispatch latency observed (nanoseconds)
+ * @dispatch_latency_max_ns: Maximum dispatch latency observed (nanoseconds)
+ * @dispatch_count: Total number of emit() calls measured
+ * @events_dropped: Events not delivered (filtered or cancelled during dispatch)
  *
  * Statistics for monitoring event bus performance.
  */
@@ -342,6 +349,17 @@ typedef struct {
     guint64 callbacks_invoked;
     guint64 pattern_cache_hits;
     guint64 pattern_cache_misses;
+
+    /* Dispatch latency histogram percentiles (nanoseconds) */
+    guint64 dispatch_latency_p50_ns;
+    guint64 dispatch_latency_p95_ns;
+    guint64 dispatch_latency_p99_ns;
+    guint64 dispatch_latency_min_ns;
+    guint64 dispatch_latency_max_ns;
+    guint64 dispatch_count;
+
+    /* Dropped events */
+    guint64 events_dropped;
 } NostrEventBusStats;
 
 /**
@@ -349,10 +367,21 @@ typedef struct {
  * @bus: A #NostrEventBus
  * @stats: (out): Output structure for statistics
  *
- * Retrieves current statistics for the event bus.
+ * Retrieves current statistics for the event bus. Latency
+ * percentiles are computed from an internal histogram with
+ * exponential bin boundaries (1 us base, 1.5x growth factor).
  */
 void nostr_event_bus_get_stats(NostrEventBus *bus,
                                NostrEventBusStats *stats);
+
+/**
+ * nostr_event_bus_reset_stats:
+ * @bus: A #NostrEventBus
+ *
+ * Resets all counters and the latency histogram to zero.
+ * Active subscriptions are not affected.
+ */
+void nostr_event_bus_reset_stats(NostrEventBus *bus);
 
 G_END_DECLS
 

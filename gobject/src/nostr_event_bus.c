@@ -11,6 +11,45 @@
 
 #include "nostr_event_bus.h"
 #include <string.h>
+#include <time.h>
+
+/* --- Dispatch Latency Histogram --- */
+
+#define EVENT_BUS_HIST_BINS   32
+#define EVENT_BUS_HIST_BASE   1000.0   /* 1 μs in nanoseconds */
+#define EVENT_BUS_HIST_FACTOR 1.5      /* exponential growth factor */
+
+/* Pre-computed bin upper bounds (nanoseconds).
+ * Bin i counts samples with latency <= bounds[i].
+ * Range: ~1 μs to ~172 ms (covers expected dispatch latencies). */
+static guint64 hist_bounds_ns[EVENT_BUS_HIST_BINS];
+static gsize hist_bounds_init = 0; /* g_once flag */
+
+static void hist_bounds_compute(void) {
+    gdouble v = EVENT_BUS_HIST_BASE;
+    for (gint i = 0; i < EVENT_BUS_HIST_BINS; i++) {
+        hist_bounds_ns[i] = (guint64)v;
+        v *= EVENT_BUS_HIST_FACTOR;
+    }
+}
+
+static inline void hist_ensure_bounds(void) {
+    if (g_once_init_enter(&hist_bounds_init)) {
+        hist_bounds_compute();
+        g_once_init_leave(&hist_bounds_init, 1);
+    }
+}
+
+static inline guint64 monotonic_ns(void) {
+#if defined(CLOCK_MONOTONIC_RAW)
+    const clockid_t clk = CLOCK_MONOTONIC_RAW;
+#else
+    const clockid_t clk = CLOCK_MONOTONIC;
+#endif
+    struct timespec ts;
+    clock_gettime(clk, &ts);
+    return (guint64)ts.tv_sec * 1000000000ull + (guint64)ts.tv_nsec;
+}
 
 /* --- Private Structures --- */
 
@@ -48,6 +87,16 @@ typedef struct _NostrEventBusPrivate {
     guint64 callbacks_invoked;
     guint64 pattern_cache_hits;
     guint64 pattern_cache_misses;
+
+    /* Dispatch latency histogram */
+    guint64 latency_bins[EVENT_BUS_HIST_BINS];
+    guint64 latency_count;
+    guint64 latency_sum_ns;
+    guint64 latency_min_ns;
+    guint64 latency_max_ns;
+
+    /* Dropped events counter */
+    guint64 events_dropped;
 } NostrEventBusPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE(NostrEventBus, nostr_event_bus, G_TYPE_OBJECT)
@@ -263,6 +312,67 @@ static gboolean check_pattern_cached(NostrEventBusPrivate *priv,
     return result;
 }
 
+/* --- Histogram Helpers --- */
+
+/**
+ * hist_bin_index:
+ * @ns: Latency in nanoseconds
+ *
+ * Finds the histogram bin for a given latency value using binary search.
+ *
+ * Returns: Bin index [0, EVENT_BUS_HIST_BINS-1]
+ */
+static inline gint hist_bin_index(guint64 ns) {
+    gint lo = 0, hi = EVENT_BUS_HIST_BINS - 1, ans = hi;
+    while (lo <= hi) {
+        gint mid = (lo + hi) >> 1;
+        if (hist_bounds_ns[mid] >= ns) { ans = mid; hi = mid - 1; }
+        else { lo = mid + 1; }
+    }
+    return ans;
+}
+
+/**
+ * hist_record:
+ * @priv: Private data (mutex must be held)
+ * @ns: Latency in nanoseconds
+ *
+ * Records a latency sample into the histogram.
+ */
+static void hist_record(NostrEventBusPrivate *priv, guint64 ns) {
+    gint idx = hist_bin_index(ns);
+    priv->latency_bins[idx]++;
+    priv->latency_count++;
+    priv->latency_sum_ns += ns;
+    if (ns < priv->latency_min_ns) priv->latency_min_ns = ns;
+    if (ns > priv->latency_max_ns) priv->latency_max_ns = ns;
+}
+
+/**
+ * hist_percentile:
+ * @priv: Private data (mutex must be held)
+ * @p: Percentile as a fraction (e.g. 0.50, 0.95, 0.99)
+ *
+ * Estimates the latency at a given percentile from the histogram.
+ *
+ * Returns: Estimated latency in nanoseconds
+ */
+static guint64 hist_percentile(const NostrEventBusPrivate *priv, gdouble p) {
+    if (priv->latency_count == 0) return 0;
+
+    guint64 target = (guint64)((gdouble)priv->latency_count * p);
+    if (target == 0) target = 1;
+
+    guint64 cum = 0;
+    for (gint i = 0; i < EVENT_BUS_HIST_BINS; i++) {
+        cum += priv->latency_bins[i];
+        if (cum >= target) {
+            return hist_bounds_ns[i];
+        }
+    }
+    return priv->latency_max_ns;
+}
+
 /* --- Virtual Method Implementations --- */
 
 static NostrEventBusHandle *nostr_event_bus_real_subscribe(NostrEventBus *bus,
@@ -326,6 +436,10 @@ static void nostr_event_bus_real_emit(NostrEventBus *bus,
     g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
     g_return_if_fail(topic != NULL);
 
+    hist_ensure_bounds();
+
+    guint64 t0 = monotonic_ns();
+
     NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
 
     /* Build list of matching subscriptions with refs */
@@ -356,17 +470,20 @@ static void nostr_event_bus_real_emit(NostrEventBus *bus,
     g_mutex_unlock(&priv->mutex);
 
     /* Invoke callbacks outside of lock */
+    guint64 dropped = 0;
     for (guint i = 0; i < matching->len; i++) {
         Subscription *sub = g_ptr_array_index(matching, i);
 
         /* Double-check cancelled flag */
         if (g_atomic_int_get(&sub->cancelled)) {
+            dropped++;
             continue;
         }
 
         /* Apply filter if present */
         if (sub->filter_func) {
             if (!sub->filter_func(topic, event_json, sub->user_data)) {
+                dropped++;
                 continue;
             }
         }
@@ -378,6 +495,14 @@ static void nostr_event_bus_real_emit(NostrEventBus *bus,
         priv->callbacks_invoked++;
         g_mutex_unlock(&priv->mutex);
     }
+
+    /* Record dispatch latency and dropped count */
+    guint64 dt_ns = monotonic_ns() - t0;
+
+    g_mutex_lock(&priv->mutex);
+    hist_record(priv, dt_ns);
+    priv->events_dropped += dropped;
+    g_mutex_unlock(&priv->mutex);
 
     g_ptr_array_unref(matching);
 }
@@ -392,6 +517,10 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
     if (!events_array || count == 0) {
         return;
     }
+
+    hist_ensure_bounds();
+
+    guint64 t0 = monotonic_ns();
 
     NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
 
@@ -421,6 +550,7 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
     g_mutex_unlock(&priv->mutex);
 
     /* Invoke callbacks for each event */
+    guint64 dropped = 0;
     for (gsize e = 0; e < count; e++) {
         const gchar *event_json = events_array[e];
 
@@ -428,11 +558,13 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
             Subscription *sub = g_ptr_array_index(matching, i);
 
             if (g_atomic_int_get(&sub->cancelled)) {
+                dropped++;
                 continue;
             }
 
             if (sub->filter_func) {
                 if (!sub->filter_func(topic, event_json, sub->user_data)) {
+                    dropped++;
                     continue;
                 }
             }
@@ -444,6 +576,14 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
             g_mutex_unlock(&priv->mutex);
         }
     }
+
+    /* Record batch dispatch latency and dropped count */
+    guint64 dt_ns = monotonic_ns() - t0;
+
+    g_mutex_lock(&priv->mutex);
+    hist_record(priv, dt_ns);
+    priv->events_dropped += dropped;
+    g_mutex_unlock(&priv->mutex);
 
     g_ptr_array_unref(matching);
 }
@@ -489,6 +629,14 @@ static void nostr_event_bus_init(NostrEventBus *bus) {
     priv->callbacks_invoked = 0;
     priv->pattern_cache_hits = 0;
     priv->pattern_cache_misses = 0;
+
+    /* Histogram */
+    memset(priv->latency_bins, 0, sizeof(priv->latency_bins));
+    priv->latency_count = 0;
+    priv->latency_sum_ns = 0;
+    priv->latency_min_ns = G_MAXUINT64;
+    priv->latency_max_ns = 0;
+    priv->events_dropped = 0;
 }
 
 /* --- Singleton --- */
@@ -618,6 +766,8 @@ void nostr_event_bus_get_stats(NostrEventBus *bus,
     g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
     g_return_if_fail(stats != NULL);
 
+    hist_ensure_bounds();
+
     NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
 
     g_mutex_lock(&priv->mutex);
@@ -627,6 +777,39 @@ void nostr_event_bus_get_stats(NostrEventBus *bus,
     stats->callbacks_invoked = priv->callbacks_invoked;
     stats->pattern_cache_hits = priv->pattern_cache_hits;
     stats->pattern_cache_misses = priv->pattern_cache_misses;
+
+    /* Latency histogram percentiles */
+    stats->dispatch_latency_p50_ns = hist_percentile(priv, 0.50);
+    stats->dispatch_latency_p95_ns = hist_percentile(priv, 0.95);
+    stats->dispatch_latency_p99_ns = hist_percentile(priv, 0.99);
+    stats->dispatch_latency_min_ns = priv->latency_count > 0 ? priv->latency_min_ns : 0;
+    stats->dispatch_latency_max_ns = priv->latency_max_ns;
+    stats->dispatch_count = priv->latency_count;
+
+    /* Dropped events */
+    stats->events_dropped = priv->events_dropped;
+
+    g_mutex_unlock(&priv->mutex);
+}
+
+void nostr_event_bus_reset_stats(NostrEventBus *bus) {
+    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+
+    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+
+    g_mutex_lock(&priv->mutex);
+
+    priv->events_emitted = 0;
+    priv->callbacks_invoked = 0;
+    priv->pattern_cache_hits = 0;
+    priv->pattern_cache_misses = 0;
+
+    memset(priv->latency_bins, 0, sizeof(priv->latency_bins));
+    priv->latency_count = 0;
+    priv->latency_sum_ns = 0;
+    priv->latency_min_ns = G_MAXUINT64;
+    priv->latency_max_ns = 0;
+    priv->events_dropped = 0;
 
     g_mutex_unlock(&priv->mutex);
 }
