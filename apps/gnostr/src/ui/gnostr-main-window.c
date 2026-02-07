@@ -91,6 +91,8 @@
 #include "nostr-utils.h"
 /* Gnostr utilities (shared query pool) */
 #include "../util/utils.h"
+/* Sync bridge for negentropy EventBus integration */
+#include "../sync/gnostr-sync-bridge.h"
 
 /* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
@@ -3852,6 +3854,9 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
     /* NIP-51: sync mutes, follows, bookmarks from relays */
     gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
+
+    /* Update sync bridge with user pubkey for follow list refresh */
+    gnostr_sync_bridge_set_user_pubkey(self->user_pubkey_hex);
   }
 
   show_toast(self, "Signed in successfully");

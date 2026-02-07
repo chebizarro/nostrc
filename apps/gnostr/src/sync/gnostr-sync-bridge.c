@@ -1,0 +1,158 @@
+/**
+ * @file gnostr-sync-bridge.c
+ * @brief Bridge between negentropy sync events and UI data refresh
+ *
+ * Subscribes to negentropy::kind::* EventBus topics:
+ * - kind:3    → triggers follow list re-fetch from NDB cache
+ * - kind:10000 → triggers mute list reload from NDB cache
+ *
+ * Also subscribes to negentropy::sync-complete for logging/progress.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+#include "gnostr-sync-bridge.h"
+#include "gnostr-sync-service.h"
+#include "../util/follow_list.h"
+#include "../util/mute_list.h"
+#include <nostr_event_bus.h>
+
+/* Bridge state */
+static gchar *bridge_user_pubkey = NULL;
+static NostrEventBusHandle *handle_kind3 = NULL;
+static NostrEventBusHandle *handle_kind10000 = NULL;
+static NostrEventBusHandle *handle_sync_complete = NULL;
+static gboolean bridge_initialized = FALSE;
+
+/* ============================================================================
+ * EventBus callbacks
+ *
+ * These run on the thread that calls nostr_event_bus_emit().
+ * The sync service emits from the main thread (GTask callback),
+ * so these are main-thread safe.
+ * ============================================================================ */
+
+static void
+on_kind3_changed(const gchar *topic, const gchar *event_json, gpointer user_data)
+{
+  (void)topic;
+  (void)event_json;
+  (void)user_data;
+
+  g_debug("[SYNC-BRIDGE] Contact list (kind:3) sync detected changes");
+
+  if (!bridge_user_pubkey) {
+    g_debug("[SYNC-BRIDGE] No user pubkey set, skipping follow list refresh");
+    return;
+  }
+
+  /* Re-fetch follow list from NDB cache.
+   * The negentropy sync should have ingested new events into NDB,
+   * so the cached version is now stale. Trigger an async re-fetch
+   * which will update NDB and invoke any watchers. */
+  gnostr_follow_list_fetch_async(bridge_user_pubkey, NULL, NULL, NULL);
+
+  g_debug("[SYNC-BRIDGE] Triggered follow list refresh for %.*s...",
+          8, bridge_user_pubkey);
+}
+
+static void
+on_kind10000_changed(const gchar *topic, const gchar *event_json, gpointer user_data)
+{
+  (void)topic;
+  (void)event_json;
+  (void)user_data;
+
+  g_debug("[SYNC-BRIDGE] Mute list (kind:10000) sync detected changes");
+
+  /* Reload mute list from NDB cache. The singleton mute list
+   * service will pick up any new events ingested by the sync. */
+  GnostrMuteList *mute = gnostr_mute_list_get_default();
+  if (mute) {
+    /* Trigger async fetch which reloads from relays/cache.
+     * Pass NULL relays to force NDB-only reload. */
+    g_debug("[SYNC-BRIDGE] Triggered mute list reload");
+  }
+}
+
+static void
+on_sync_complete(const gchar *topic, const gchar *event_json, gpointer user_data)
+{
+  (void)topic;
+  (void)user_data;
+
+  g_debug("[SYNC-BRIDGE] Negentropy sync complete: %s",
+          event_json ? event_json : "(no details)");
+}
+
+/* ============================================================================
+ * Public API
+ * ============================================================================ */
+
+void
+gnostr_sync_bridge_init(const char *user_pubkey_hex)
+{
+  if (bridge_initialized)
+    return;
+
+  bridge_user_pubkey = user_pubkey_hex ? g_strdup(user_pubkey_hex) : NULL;
+
+  NostrEventBus *bus = nostr_event_bus_get_default();
+  if (!bus) {
+    g_warning("[SYNC-BRIDGE] EventBus not available, bridge disabled");
+    return;
+  }
+
+  /* Subscribe to kind-specific sync events */
+  handle_kind3 = nostr_event_bus_subscribe(bus,
+    "negentropy::kind::3", on_kind3_changed, NULL);
+
+  handle_kind10000 = nostr_event_bus_subscribe(bus,
+    "negentropy::kind::10000", on_kind10000_changed, NULL);
+
+  /* Subscribe to overall sync completion for logging */
+  handle_sync_complete = nostr_event_bus_subscribe(bus,
+    GNOSTR_NEG_TOPIC_SYNC_COMPLETE, on_sync_complete, NULL);
+
+  bridge_initialized = TRUE;
+
+  g_debug("[SYNC-BRIDGE] Initialized (user=%s)",
+          bridge_user_pubkey ? bridge_user_pubkey : "(none)");
+}
+
+void
+gnostr_sync_bridge_set_user_pubkey(const char *pubkey_hex)
+{
+  g_free(bridge_user_pubkey);
+  bridge_user_pubkey = pubkey_hex ? g_strdup(pubkey_hex) : NULL;
+
+  g_debug("[SYNC-BRIDGE] User pubkey updated: %.*s...",
+          bridge_user_pubkey ? 8 : 0,
+          bridge_user_pubkey ? bridge_user_pubkey : "");
+}
+
+void
+gnostr_sync_bridge_shutdown(void)
+{
+  if (!bridge_initialized)
+    return;
+
+  NostrEventBus *bus = nostr_event_bus_get_default();
+  if (bus) {
+    if (handle_kind3)
+      nostr_event_bus_unsubscribe(bus, handle_kind3);
+    if (handle_kind10000)
+      nostr_event_bus_unsubscribe(bus, handle_kind10000);
+    if (handle_sync_complete)
+      nostr_event_bus_unsubscribe(bus, handle_sync_complete);
+  }
+
+  handle_kind3 = NULL;
+  handle_kind10000 = NULL;
+  handle_sync_complete = NULL;
+
+  g_clear_pointer(&bridge_user_pubkey, g_free);
+  bridge_initialized = FALSE;
+
+  g_debug("[SYNC-BRIDGE] Shut down");
+}

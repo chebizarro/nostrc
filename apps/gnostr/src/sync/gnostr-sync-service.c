@@ -257,12 +257,38 @@ on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data)
             stats.local_count, stats.rounds, stats.events_fetched,
             stats.in_sync);
 
-    /* Emit completion event */
-    g_autofree gchar *json = g_strdup_printf(
+    /* Build stats JSON for events */
+    g_autofree gchar *stats_json = g_strdup_printf(
       "{\"local_count\":%u,\"rounds\":%u,\"events_fetched\":%u,\"in_sync\":%s}",
       stats.local_count, stats.rounds, stats.events_fetched,
       stats.in_sync ? "true" : "false");
-    emit_bus_event(GNOSTR_SYNC_TOPIC_COMPLETED, json);
+
+    /* Emit generic sync completion */
+    emit_bus_event(GNOSTR_SYNC_TOPIC_COMPLETED, stats_json);
+
+    /* Emit negentropy-specific completion with kind details */
+    {
+      GString *kinds_json = g_string_new("{\"kinds\":[");
+      for (size_t i = 0; i < SYNC_KIND_COUNT; i++) {
+        if (i > 0) g_string_append_c(kinds_json, ',');
+        g_string_append_printf(kinds_json, "%d", SYNC_KINDS[i]);
+      }
+      g_string_append_printf(kinds_json, "],\"in_sync\":%s,\"rounds\":%u}",
+                             stats.in_sync ? "true" : "false", stats.rounds);
+      emit_bus_event(GNOSTR_NEG_TOPIC_SYNC_COMPLETE, kinds_json->str);
+      g_string_free(kinds_json, TRUE);
+    }
+
+    /* Emit kind-specific events when changes detected.
+     * UI components subscribe to these to trigger data refresh. */
+    if (!stats.in_sync) {
+      for (size_t i = 0; i < SYNC_KIND_COUNT; i++) {
+        g_autofree gchar *topic = g_strdup_printf("%s%d",
+                                                   GNOSTR_NEG_TOPIC_KIND_PREFIX,
+                                                   SYNC_KINDS[i]);
+        emit_bus_event(topic, stats_json);
+      }
+    }
 
     /* Adjust interval based on result */
     adjust_interval(self, stats.in_sync);

@@ -11,6 +11,7 @@
 #include "util/utils.h"
 #include "util/gnostr-plugin-manager.h"
 #include "sync/gnostr-sync-service.h"
+#include "sync/gnostr-sync-bridge.h"
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -80,6 +81,9 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
   (void)app; (void)user_data;
 
   g_message("gnostr: shutdown initiated");
+
+  /* Shutdown sync bridge (unsubscribes from EventBus) */
+  gnostr_sync_bridge_shutdown();
 
   /* Shutdown sync service (cancels pending sync, stops timer) */
   gnostr_sync_service_shutdown();
@@ -178,6 +182,10 @@ int main(int argc, char **argv) {
         g_clear_error(&seed_err);
       }
     }
+
+    /* Initialize sync bridge (subscribes to EventBus for data refresh).
+     * User pubkey is set later on login via gnostr_sync_bridge_set_user_pubkey(). */
+    gnostr_sync_bridge_init(NULL);
   }
 
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);

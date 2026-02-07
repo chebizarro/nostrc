@@ -126,15 +126,26 @@ gboolean gnostr_sync_service_is_running(GnostrSyncService *self);
 /**
  * EventBus topics emitted by the sync service:
  *
- * "sync::started"        - Sync operation began (event_json = relay URL)
- * "sync::completed"      - Sync succeeded (event_json = stats JSON)
- * "sync::error"          - Sync failed (event_json = error message)
- * "sync::schedule"       - Timer interval changed (event_json = interval secs)
+ * Generic sync lifecycle:
+ *   "sync::started"                 - Sync began (json = relay URL)
+ *   "sync::completed"               - Sync succeeded (json = stats)
+ *   "sync::error"                   - Sync failed (json = error message)
+ *   "sync::schedule"                - Interval changed (json = interval info)
+ *
+ * Negentropy-specific (emitted on completion):
+ *   "negentropy::sync-complete"     - Full sync result with kind details
+ *   "negentropy::kind::3"           - Contact list may have changed
+ *   "negentropy::kind::10000"       - Mute list may have changed
+ *
+ * UI components should subscribe to kind-specific topics to trigger refresh.
  */
 #define GNOSTR_SYNC_TOPIC_STARTED    "sync::started"
 #define GNOSTR_SYNC_TOPIC_COMPLETED  "sync::completed"
 #define GNOSTR_SYNC_TOPIC_ERROR      "sync::error"
 #define GNOSTR_SYNC_TOPIC_SCHEDULE   "sync::schedule"
+
+#define GNOSTR_NEG_TOPIC_SYNC_COMPLETE  "negentropy::sync-complete"
+#define GNOSTR_NEG_TOPIC_KIND_PREFIX    "negentropy::kind::"
 
 G_END_DECLS
 
