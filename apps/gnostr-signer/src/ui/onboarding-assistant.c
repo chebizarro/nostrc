@@ -578,12 +578,13 @@ static gboolean store_generated_key(OnboardingAssistant *self) {
     display_name = gtk_editable_get_text(GTK_EDITABLE(self->entry_profile_name));
   }
 
-  /* Call ImportNsec D-Bus method to store the generated key */
+  /* Call StoreKey D-Bus method to store the generated key.
+   * StoreKey accepts nsec format directly - no separate ImportNsec method. */
   g_dbus_connection_call(bus,
                          "org.nostr.Signer",
                          "/org/nostr/signer",
                          "org.nostr.Signer",
-                         "ImportNsec",
+                         "StoreKey",
                          g_variant_new("(ss)", self->generated_nsec, display_name),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
@@ -614,7 +615,7 @@ static void store_generated_key_async_done(GObject *src, GAsyncResult *res, gpoi
   const char *npub_in = NULL;
 
   if (err) {
-    g_warning("ImportNsec D-Bus error: %s", err->message);
+    g_warning("StoreKey D-Bus error: %s", err->message);
     GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to store key: %s", err->message);
     gtk_alert_dialog_show(ad, GTK_WINDOW(self));
     g_object_unref(ad);
@@ -766,11 +767,11 @@ static gboolean perform_profile_import(OnboardingAssistant *self) {
       return FALSE;
     }
   } else if (is_nsec) {
-    /* Direct nsec import - use ImportNsec if available, otherwise generic */
-    dbus_method = "ImportNsec";
+    /* Direct nsec import - StoreKey handles nsec format directly */
+    dbus_method = "StoreKey";
   } else {
-    /* Try as hex or let daemon figure it out */
-    dbus_method = "ImportNsec";
+    /* Try as hex - StoreKey handles hex format too */
+    dbus_method = "StoreKey";
   }
 
   /* Disable navigation while processing */

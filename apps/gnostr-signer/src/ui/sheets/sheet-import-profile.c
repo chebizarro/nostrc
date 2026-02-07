@@ -14,6 +14,7 @@
 #include "../../rate-limiter.h"
 #include "../../secure-memory.h"
 #include "../../keyboard-nav.h"
+#include "../../backup-recovery.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -413,13 +414,14 @@ static void on_import(GtkButton *btn, gpointer user_data) {
   }
 
   g_autofree gchar *data = NULL;
-  const char *dbus_method = NULL;
 
+  /* NIP-55l only defines StoreKey - we must derive keys locally for mnemonic/NIP-49.
+   * The StoreKey method accepts nsec, hex, or ncryptsec formats directly. */
   switch (self->current_method) {
-    case IMPORT_METHOD_NIP49:
-      data = get_text_view_content(self->text_ncryptsec);
-      if (data) g_strstrip(data);
-      if (!is_valid_ncryptsec(data)) {
+    case IMPORT_METHOD_NIP49: {
+      g_autofree gchar *ncryptsec = get_text_view_content(self->text_ncryptsec);
+      if (ncryptsec) g_strstrip(ncryptsec);
+      if (!is_valid_ncryptsec(ncryptsec)) {
         GtkAlertDialog *ad = gtk_alert_dialog_new("Invalid ncryptsec format.\n\nPlease enter a valid backup starting with 'ncryptsec1'.");
         gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
         g_object_unref(ad);
@@ -433,21 +435,48 @@ static void on_import(GtkButton *btn, gpointer user_data) {
         gn_secure_entry_free_text(passphrase);
         return;
       }
-      dbus_method = "ImportNip49";
+      /* Decrypt NIP-49 locally to get nsec, then call StoreKey */
+      GError *decrypt_err = NULL;
+      gchar *nsec = NULL;
+      if (!gn_backup_import_nip49(ncryptsec, passphrase, &nsec, &decrypt_err)) {
+        GtkAlertDialog *ad = gtk_alert_dialog_new("Decryption failed: %s",
+          decrypt_err ? decrypt_err->message : "Wrong password or corrupted backup.");
+        gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
+        g_object_unref(ad);
+        g_clear_error(&decrypt_err);
+        gn_secure_entry_free_text(passphrase);
+        return;
+      }
+      data = nsec; /* Transfer ownership */
       break;
+    }
 
-    case IMPORT_METHOD_MNEMONIC:
-      data = get_text_view_content(self->text_mnemonic);
-      if (data) g_strstrip(data);
-      if (!is_valid_mnemonic(data)) {
+    case IMPORT_METHOD_MNEMONIC: {
+      g_autofree gchar *mnemonic = get_text_view_content(self->text_mnemonic);
+      if (mnemonic) g_strstrip(mnemonic);
+      if (!is_valid_mnemonic(mnemonic)) {
         GtkAlertDialog *ad = gtk_alert_dialog_new("Invalid mnemonic.\n\nPlease enter 12 or 24 words.");
         gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
         g_object_unref(ad);
         gn_secure_entry_free_text(passphrase);
         return;
       }
-      dbus_method = "ImportMnemonic";
+      /* Derive key from mnemonic locally, then call StoreKey */
+      GError *derive_err = NULL;
+      gchar *nsec = NULL;
+      /* Use account index 0 and optional passphrase */
+      if (!gn_backup_import_mnemonic(mnemonic, passphrase ? passphrase : "", 0, &nsec, &derive_err)) {
+        GtkAlertDialog *ad = gtk_alert_dialog_new("Key derivation failed: %s",
+          derive_err ? derive_err->message : "Invalid mnemonic phrase.");
+        gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
+        g_object_unref(ad);
+        g_clear_error(&derive_err);
+        gn_secure_entry_free_text(passphrase);
+        return;
+      }
+      data = nsec; /* Transfer ownership */
       break;
+    }
 
     case IMPORT_METHOD_NSEC: {
       gchar *nsec = self->secure_nsec ? gn_secure_entry_get_text(self->secure_nsec) : NULL;
@@ -461,7 +490,6 @@ static void on_import(GtkButton *btn, gpointer user_data) {
       }
       data = g_strdup(nsec);
       if (nsec) gn_secure_entry_free_text(nsec);
-      dbus_method = "ImportNsec";
       break;
     }
 
@@ -469,6 +497,10 @@ static void on_import(GtkButton *btn, gpointer user_data) {
       gn_secure_entry_free_text(passphrase);
       return;
   }
+
+  /* All methods now have derived nsec in 'data' - call StoreKey */
+  gn_secure_entry_free_text(passphrase);
+  passphrase = NULL;
 
   if (self->btn_import) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_import), FALSE);
   if (self->btn_cancel) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_cancel), FALSE);
@@ -494,14 +526,17 @@ static void on_import(GtkButton *btn, gpointer user_data) {
   ctx->parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
   ctx->method = self->current_method;
   ctx->data = g_strdup(data);
-  ctx->passphrase = passphrase;
+  ctx->passphrase = NULL; /* Passphrase already consumed during local derivation */
 
+  /* NIP-55l: StoreKey(key: string, identity: string) -> (ok: bool, npub: string)
+   * All import methods now derive the nsec locally and call StoreKey.
+   * The second parameter is an optional identity label (empty for default). */
   g_dbus_connection_call(bus,
                          "org.nostr.Signer",
                          "/org/nostr/signer",
                          "org.nostr.Signer",
-                         dbus_method,
-                         g_variant_new("(ss)", data, ctx->passphrase ? ctx->passphrase : ""),
+                         "StoreKey",
+                         g_variant_new("(ss)", data, ""),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
                          30000,
