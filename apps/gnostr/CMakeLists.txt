@@ -282,6 +282,7 @@ add_subdirectory(plugins/nip49-keyencrypt)
 add_subdirectory(plugins/nip77-negentropy)
 add_subdirectory(plugins/nip57-zaps)
 add_subdirectory(plugins/nip34-git)
+add_subdirectory(plugins/nip64-chess)
 
 # Make gnostr depend on plugins so they're built together
 add_dependencies(${APP_CLIENT_BIN}
@@ -293,6 +294,7 @@ add_dependencies(${APP_CLIENT_BIN}
   nip77-negentropy
   nip57-zaps
   nip34-git
+  nip64-chess
 )
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
@@ -663,6 +665,21 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-nip66-relay-discovery PROPERTIES
     TIMEOUT 30
     LABELS "nip66;relay;discovery;unit;gnostr")
+
+  # Chess engine unit tests (nostrc-vwe8)
+  add_executable(gnostr-test-chess-engine tests/test_chess_engine.c src/util/chess_engine.c)
+  target_compile_features(gnostr-test-chess-engine PRIVATE c_std_11)
+  target_include_directories(gnostr-test-chess-engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-chess-engine PRIVATE PkgConfig::GLIB)
+  # Link math library on Linux for sqrt/abs in piece-square calculations
+  if (UNIX AND NOT APPLE)
+    target_link_libraries(gnostr-test-chess-engine PRIVATE m)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-chess-engine)
+  add_test(NAME gnostr-test-chess-engine COMMAND gnostr-test-chess-engine)
+  set_tests_properties(gnostr-test-chess-engine PROPERTIES
+    TIMEOUT 60
+    LABELS "chess;engine;nip64;unit;gnostr")
 
 endif()
 

@@ -271,7 +271,7 @@
   <!-- Plugin settings -->
   <schema id="org.gnostr.Client.plugins" path="/org/gnostr/client/plugins/">
     <key name="enabled-plugins" type="as">
-      <default>[]</default>
+      <default>['nip34-git', 'nip64-chess']</default>
       <summary>Enabled plugins</summary>
       <description>
         List of plugin module names that are enabled and should be loaded on startup.
