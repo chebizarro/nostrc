@@ -28,6 +28,8 @@
 #include "nostr_nip19.h"
 #include "nostr_filter.h"
 #include "nostr_tag_list.h"
+#include "nostr_nip49.h"
+#include "nostr_bip39.h"
 #include "nostr_async.h"
 #include "crypto_utils_gobject.h"
 

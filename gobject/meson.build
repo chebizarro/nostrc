@@ -90,6 +90,25 @@ nip46_dep = declare_dependency(
   dependencies: nip46_core_static,
   include_directories: include_directories('../nips/nip46/include'))
 
+nip49_core_static = cc.find_library('nostr_nip49_core',
+  dirs: [cmake_build_dir / 'nips' / 'nip49'],
+  static: true,
+  required: false)
+nip49_glib_static = cc.find_library('nostr_nip49_glib',
+  dirs: [cmake_build_dir / 'nips' / 'nip49'],
+  static: true,
+  required: false)
+nip49_libs = []
+if nip49_core_static.found()
+  nip49_libs += nip49_core_static
+endif
+if nip49_glib_static.found()
+  nip49_libs += nip49_glib_static
+endif
+nip49_dep = declare_dependency(
+  dependencies: nip49_libs,
+  include_directories: include_directories('../nips/nip49/include'))
+
 # ── System crypto dependencies ───────────────────────────────────────
 secp256k1_dep = dependency('libsecp256k1')
 openssl_dep = dependency('openssl')
@@ -143,6 +162,8 @@ nostr_glib_sources = files(
   'src/nostr_tag_list.c',
   'src/nostr_nip46_client.c',
   'src/nostr_nip46_bunker.c',
+  'src/nostr_nip49.c',
+  'src/nostr_bip39.c',
 )
 # nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
 
@@ -171,6 +192,8 @@ nostr_glib_headers = files(
   'include/nostr_tag_list.h',
   'include/nostr_nip46_client.h',
   'include/nostr_nip46_bunker.h',
+  'include/nostr_nip49.h',
+  'include/nostr_bip39.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
@@ -188,6 +211,7 @@ nostr_glib_deps = [
   nip19_dep,
   nip44_dep,
   nip46_dep,
+  nip49_dep,
   secp256k1_dep,
   openssl_dep,
   libwebsockets_dep,

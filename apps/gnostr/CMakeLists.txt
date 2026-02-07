@@ -220,6 +220,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/nips/nip10/include
   ${PROJECT_ROOT}/nips/nip17/include
   ${PROJECT_ROOT}/nips/nip25/include
+  ${PROJECT_ROOT}/nips/nip49/include
   ${PROJECT_ROOT}/nips/nip77/include
   ${SECP256K1_INCLUDE_DIRS}
   ${PROJECT_ROOT}/third_party/nostrdb/src
@@ -243,7 +244,9 @@ target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_ndb_store.c
   ${PROJECT_ROOT}/gobject/src/nostr-enums.c
   ${PROJECT_ROOT}/gobject/src/nostr-error.c
-  ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
+  ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
+  ${PROJECT_ROOT}/gobject/src/nostr_nip49.c
+  ${PROJECT_ROOT}/gobject/src/nostr_bip39.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
@@ -275,6 +278,13 @@ if (TARGET nip04)
 endif()
 if (TARGET nostr_nip44_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip44_core)
+endif()
+# hq-cj8e8: Link NIP-49 for GNostrNip49 encrypted key wrapper
+if (TARGET nostr_nip49_core)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip49_core)
+endif()
+if (TARGET nostr_nip49_glib)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip49_glib)
 endif()
 # nostrc-x8lj: Link NIP-77 negentropy for sync client
 if (TARGET nostr_nip77)
