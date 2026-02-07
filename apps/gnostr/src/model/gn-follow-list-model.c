@@ -248,6 +248,9 @@ struct _GnFollowListModel {
     guint visible_start;       /* First visible item index */
     guint visible_end;         /* Last visible item index (exclusive) */
     GHashTable *profile_requested; /* pubkey_hex -> TRUE for items with pending/completed profile requests */
+
+    /* Pending async GTask (nostrc-yjl8) */
+    GTask *pending_task;       /* Non-NULL while _async load is in progress */
 };
 
 static void gn_follow_list_model_list_model_iface_init(GListModelInterface *iface);
@@ -386,6 +389,13 @@ gn_follow_list_model_finalize(GObject *object)
 
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
+
+    /* Cancel pending async task (nostrc-yjl8) */
+    if (self->pending_task) {
+        g_task_return_new_error(self->pending_task, G_IO_ERROR,
+                                G_IO_ERROR_CANCELLED, "Model finalized");
+        g_clear_object(&self->pending_task);
+    }
 
     g_clear_pointer(&self->all_items, g_ptr_array_unref);
     g_clear_pointer(&self->filtered_items, g_ptr_array_unref);
@@ -529,6 +539,12 @@ on_follow_list_loaded(GPtrArray *entries, gpointer user_data)
         gn_follow_list_model_set_visible_range(self, self->visible_start, self->visible_end);
     }
 
+    /* Complete pending async task if one exists (nostrc-yjl8) */
+    if (self->pending_task) {
+        g_task_return_boolean(self->pending_task, TRUE);
+        g_clear_object(&self->pending_task);
+    }
+
     (void)old_len;
 }
 
@@ -566,15 +582,15 @@ gn_follow_list_model_load_for_pubkey_async(GnFollowListModel *self,
 {
     g_return_if_fail(GN_IS_FOLLOW_LIST_MODEL(self));
 
-    /* Currently uses sync version - see nostrc-yjl8 for proper async impl */
-    gn_follow_list_model_load_for_pubkey(self, pubkey_hex);
-
-    /* Complete immediately since we used sync loading */
+    /* Store the GTask so on_follow_list_loaded can complete it
+     * when the async fetch actually finishes (nostrc-yjl8). */
+    g_clear_object(&self->pending_task);
     if (callback) {
-        GTask *task = g_task_new(self, cancellable, callback, user_data);
-        g_task_return_boolean(task, TRUE);
-        g_object_unref(task);
+        self->pending_task = g_task_new(self, cancellable, callback, user_data);
     }
+
+    /* Start async loading (does NOT block the main thread) */
+    gn_follow_list_model_load_for_pubkey(self, pubkey_hex);
 }
 
 gboolean
