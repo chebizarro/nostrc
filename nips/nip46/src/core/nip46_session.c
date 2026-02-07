@@ -36,6 +36,18 @@ typedef struct PendingRequest {
     struct PendingRequest *next;
 } PendingRequest;
 
+/* nostrc-kk9f: Session registry for callback context.
+ * Maps pool pointers to their owning sessions for event dispatch. */
+typedef struct SessionRegistryEntry {
+    NostrSimplePool *pool;
+    struct NostrNip46Session *session;
+    struct SessionRegistryEntry *next;
+} SessionRegistryEntry;
+
+static pthread_mutex_t s_session_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
+static SessionRegistryEntry *s_session_registry = NULL;
+
+/* Session struct definition */
 struct NostrNip46Session {
     /* Session metadata */
     char *note;
@@ -65,6 +77,88 @@ struct NostrNip46Session {
     PendingRequest *pending_requests;     /* Linked list of pending RPC requests */
     char *derived_client_pubkey;          /* Client pubkey derived from secret */
 };
+
+/* nostrc-kk9f: Session registry helper functions.
+ * Register a session's pool for callback lookup. */
+static void session_registry_add(NostrSimplePool *pool, NostrNip46Session *session) {
+    if (!pool || !session) return;
+
+    SessionRegistryEntry *entry = (SessionRegistryEntry *)malloc(sizeof(SessionRegistryEntry));
+    if (!entry) return;
+    entry->pool = pool;
+    entry->session = session;
+
+    pthread_mutex_lock(&s_session_registry_mutex);
+    entry->next = s_session_registry;
+    s_session_registry = entry;
+    pthread_mutex_unlock(&s_session_registry_mutex);
+}
+
+/* Unregister a session's pool */
+static void session_registry_remove(NostrSimplePool *pool) {
+    if (!pool) return;
+
+    pthread_mutex_lock(&s_session_registry_mutex);
+    SessionRegistryEntry **pp = &s_session_registry;
+    while (*pp) {
+        if ((*pp)->pool == pool) {
+            SessionRegistryEntry *entry = *pp;
+            *pp = entry->next;
+            free(entry);
+            break;
+        }
+        pp = &(*pp)->next;
+    }
+    pthread_mutex_unlock(&s_session_registry_mutex);
+}
+
+/* Look up a session by pool pointer */
+static NostrNip46Session *session_registry_find(NostrSimplePool *pool) {
+    if (!pool) return NULL;
+
+    NostrNip46Session *result = NULL;
+    pthread_mutex_lock(&s_session_registry_mutex);
+    for (SessionRegistryEntry *e = s_session_registry; e; e = e->next) {
+        if (e->pool == pool) {
+            result = e->session;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&s_session_registry_mutex);
+    return result;
+}
+
+/* nostrc-kk9f: Pending request helper functions.
+ * Add a pending request to the session's list. */
+static void pending_request_add(NostrNip46Session *s, PendingRequest *req) {
+    if (!s || !req) return;
+
+    pthread_mutex_lock(&s->pending_mutex);
+    req->next = s->pending_requests;
+    s->pending_requests = req;
+    pthread_mutex_unlock(&s->pending_mutex);
+}
+
+/* Find and remove a pending request by ID. Returns the request or NULL.
+ * Caller takes ownership of returned request. */
+static PendingRequest *pending_request_find_and_remove(NostrNip46Session *s, const char *id) {
+    if (!s || !id) return NULL;
+
+    PendingRequest *result = NULL;
+    pthread_mutex_lock(&s->pending_mutex);
+    PendingRequest **pp = &s->pending_requests;
+    while (*pp) {
+        if ((*pp)->request_id && strcmp((*pp)->request_id, id) == 0) {
+            result = *pp;
+            *pp = result->next;
+            result->next = NULL;
+            break;
+        }
+        pp = &(*pp)->next;
+    }
+    pthread_mutex_unlock(&s->pending_mutex);
+    return result;
+}
 
 /* Common helpers */
 static NostrNip46Session *session_new(const char *note) {
@@ -292,10 +386,11 @@ int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubk
     return -1;
 }
 
-/* nostrc-j2yu: Event callback for persistent client pool.
- * Routes incoming NIP-46 responses to pending RPC requests. */
+/* nostrc-kk9f: Event callback for persistent client pool.
+ * Routes incoming NIP-46 responses to pending RPC requests.
+ * Decrypts the event, parses the response, matches by ID, and dispatches via channel. */
 static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
-    if (!incoming || !incoming->event) return;
+    if (!incoming || !incoming->event || !incoming->relay) return;
 
     NostrEvent *ev = incoming->event;
     if (nostr_event_get_kind(ev) != NOSTR_EVENT_KIND_NIP46) return;
@@ -306,8 +401,128 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
 
     fprintf(stderr, "[nip46] persistent_cb: received response from %s\n", sender_pubkey);
 
-    /* Note: Response routing is done via session reference in user_data.
-     * For now we just log - the actual routing happens in nip46_rpc_call_persistent. */
+    /* Find the session for this relay's pool.
+     * We need to iterate through pools to find one that contains this relay. */
+    NostrNip46Session *session = NULL;
+    pthread_mutex_lock(&s_session_registry_mutex);
+    for (SessionRegistryEntry *e = s_session_registry; e; e = e->next) {
+        if (e->pool) {
+            /* Check if this relay belongs to the pool */
+            for (size_t i = 0; i < e->pool->relay_count; i++) {
+                if (e->pool->relays[i] == incoming->relay) {
+                    session = e->session;
+                    break;
+                }
+            }
+            if (session) break;
+        }
+    }
+    pthread_mutex_unlock(&s_session_registry_mutex);
+
+    if (!session) {
+        fprintf(stderr, "[nip46] persistent_cb: no session found for relay\n");
+        return;
+    }
+
+    if (!session->secret) {
+        fprintf(stderr, "[nip46] persistent_cb: session has no secret for decryption\n");
+        return;
+    }
+
+    /* Parse keys for decryption */
+    unsigned char sk[32];
+    if (parse_sk32(session->secret, sk) != 0) {
+        fprintf(stderr, "[nip46] persistent_cb: failed to parse secret key\n");
+        return;
+    }
+
+    unsigned char sender_pk[32];
+    if (parse_peer_xonly32(sender_pubkey, sender_pk) != 0) {
+        fprintf(stderr, "[nip46] persistent_cb: invalid sender pubkey\n");
+        secure_wipe(sk, sizeof(sk));
+        return;
+    }
+
+    /* Decrypt response - detect NIP-04 vs NIP-44 format */
+    uint8_t *plaintext = NULL;
+    size_t plaintext_len = 0;
+    int is_nip04 = (strstr(content, "?iv=") != NULL);
+
+    if (is_nip04) {
+        char *plaintext_str = NULL;
+        char *error_msg = NULL;
+        if (nostr_nip04_decrypt(content, sender_pubkey, session->secret,
+                                &plaintext_str, &error_msg) != 0 || !plaintext_str) {
+            fprintf(stderr, "[nip46] persistent_cb: NIP-04 decrypt failed\n");
+            free(error_msg);
+            secure_wipe(sk, sizeof(sk));
+            return;
+        }
+        free(error_msg);
+        plaintext_len = strlen(plaintext_str);
+        plaintext = (uint8_t *)plaintext_str;
+    } else {
+        if (nostr_nip44_decrypt_v2(sk, sender_pk, content, &plaintext, &plaintext_len) != 0 || !plaintext) {
+            fprintf(stderr, "[nip46] persistent_cb: NIP-44 decrypt failed\n");
+            secure_wipe(sk, sizeof(sk));
+            return;
+        }
+    }
+    secure_wipe(sk, sizeof(sk));
+
+    /* Parse JSON response to get ID */
+    char *response_json = (char *)malloc(plaintext_len + 1);
+    if (!response_json) {
+        free(plaintext);
+        return;
+    }
+    memcpy(response_json, plaintext, plaintext_len);
+    response_json[plaintext_len] = '\0';
+    free(plaintext);
+
+    fprintf(stderr, "[nip46] persistent_cb: decrypted: %.100s...\n", response_json);
+
+    if (!nostr_json_is_valid(response_json)) {
+        fprintf(stderr, "[nip46] persistent_cb: invalid JSON\n");
+        free(response_json);
+        return;
+    }
+
+    /* Extract response ID */
+    char *resp_id = NULL;
+    if (nostr_json_get_string(response_json, "id", &resp_id) != 0 || !resp_id) {
+        fprintf(stderr, "[nip46] persistent_cb: no id field in response\n");
+        free(response_json);
+        return;
+    }
+
+    /* Find and remove matching pending request */
+    PendingRequest *pending = pending_request_find_and_remove(session, resp_id);
+    free(resp_id);
+
+    if (!pending) {
+        fprintf(stderr, "[nip46] persistent_cb: no pending request for this response id\n");
+        free(response_json);
+        return;
+    }
+
+    /* Send response to waiting caller via channel */
+    if (pending->response_chan) {
+        /* Send the response JSON string (ownership transferred to receiver) */
+        if (go_channel_send(pending->response_chan, response_json) != 0) {
+            fprintf(stderr, "[nip46] persistent_cb: failed to send response to channel\n");
+            free(response_json);
+        }
+        /* Don't free response_json here - ownership transferred to channel receiver */
+    } else {
+        free(response_json);
+    }
+
+    /* Clean up the pending request (channel is kept open for receiver) */
+    free(pending->request_id);
+    free(pending);
+
+    fprintf(stderr, "[nip46] persistent_cb: dispatched response to pending request\n");
 }
 
 /* nostrc-j2yu: Start the persistent relay connection for efficient RPC calls. */
@@ -398,6 +613,9 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
                                 s->n_relays, *filters, true);
     nostr_filters_free(filters);
 
+    /* nostrc-kk9f: Register session in registry for callback dispatch */
+    session_registry_add(s->client_pool, s);
+
     s->client_pool_started = 1;
     fprintf(stderr, "[nip46] client_start: persistent pool started with %zu relay(s)\n",
             s->n_relays);
@@ -409,6 +627,9 @@ void nostr_nip46_client_stop(NostrNip46Session *s) {
     if (!s) return;
 
     if (s->client_pool) {
+        /* nostrc-kk9f: Unregister from session registry before cleanup */
+        session_registry_remove(s->client_pool);
+
         nostr_simple_pool_stop(s->client_pool);
         nostr_simple_pool_free(s->client_pool);
         s->client_pool = NULL;
