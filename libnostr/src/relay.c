@@ -1596,3 +1596,8 @@ void nostr_relay_reconnect_now(NostrRelay *relay) {
     }
     nsync_mu_unlock(&relay->priv->mutex);
 }
+
+void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *)) {
+    if (!relay || !relay->priv) return;
+    relay->priv->custom_handler = handler;
+}

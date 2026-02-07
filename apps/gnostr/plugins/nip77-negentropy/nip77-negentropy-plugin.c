@@ -2,7 +2,7 @@
  * nip77-negentropy-plugin.c - NIP-77 Negentropy Sync Plugin
  *
  * Implements NIP-77 (Negentropy) for efficient event set reconciliation.
- * Handles NEG-OPEN, NEG-MSG, and NEG-CLOSE relay messages.
+ * Uses neg-client for the actual protocol exchange.
  *
  * Copyright (C) 2026 Gnostr Contributors
  */
@@ -11,6 +11,15 @@
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
 #include <adwaita.h>
+
+/* Forward declaration of neg-client API (host app symbol, resolved at runtime) */
+extern void gnostr_neg_sync_kinds_async(const char *relay_url,
+                                         const int *kinds, size_t kind_count,
+                                         GCancellable *cancellable,
+                                         GAsyncReadyCallback callback,
+                                         gpointer user_data);
+extern gboolean gnostr_neg_sync_kinds_finish(GAsyncResult *result, void *stats_out,
+                                              GError **error);
 
 /* NIP-77 Message Types (relay protocol) */
 #define NIP77_MSG_NEG_OPEN  "NEG-OPEN"
@@ -53,6 +62,7 @@ static void sync_session_free(gpointer data);
 static void load_settings(Nip77NegentropyPlugin *self);
 static void save_settings(Nip77NegentropyPlugin *self);
 static gboolean on_auto_sync_timer(gpointer user_data);
+static void on_neg_sync_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void start_auto_sync_timer(Nip77NegentropyPlugin *self);
 static void stop_auto_sync_timer(Nip77NegentropyPlugin *self);
 
@@ -177,6 +187,34 @@ save_settings(Nip77NegentropyPlugin *self)
 }
 
 /* ============================================================================
+ * Negentropy sync callback
+ * ============================================================================ */
+
+static void
+on_neg_sync_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  (void)source;
+  Nip77NegentropyPlugin *self = NIP77_NEGENTROPY_PLUGIN(user_data);
+
+  GError *error = NULL;
+  /* Stats struct: { guint local_count, rounds, events_fetched; gboolean in_sync; } */
+  guint stats[4] = {0};
+  gboolean ok = gnostr_neg_sync_kinds_finish(res, stats, &error);
+
+  if (ok) {
+    guint local = stats[0], rounds = stats[1];
+    gboolean in_sync = (gboolean)stats[3];
+    g_debug("[NIP-77] Sync result: local=%u rounds=%u in_sync=%d",
+            local, rounds, in_sync);
+  } else {
+    g_debug("[NIP-77] Sync failed: %s", error ? error->message : "unknown");
+    g_clear_error(&error);
+  }
+
+  g_object_unref(self);
+}
+
+/* ============================================================================
  * Auto-sync timer
  * ============================================================================ */
 
@@ -197,26 +235,16 @@ on_auto_sync_timer(gpointer user_data)
   char **relay_urls = gnostr_plugin_context_get_relay_urls(self->context, &n_urls);
 
   if (relay_urls && n_urls > 0) {
-    g_debug("[NIP-77] Starting sync with %zu relays", n_urls);
+    /* Sync kind:3 (contact lists) and kind:10000 (mute lists) */
+    static const int sync_kinds[] = { 3, 10000 };
+    static const size_t sync_kind_count = 2;
 
-    /*
-     * Note: Full negentropy protocol would require:
-     * 1. For each relay, open a NEG-OPEN message with initial fingerprint
-     * 2. Handle NEG-MSG responses
-     * 3. Build NEG-MSG replies until reconciled
-     * 4. Close with NEG-CLOSE
-     *
-     * This requires relay message hooks which aren't in the current plugin API.
-     * The host application should integrate with the negentropy library
-     * (nips/nip77/) for actual protocol handling.
-     *
-     * For now, we track that sync was requested and increment stats.
-     */
     self->total_syncs++;
 
-    for (gsize i = 0; i < n_urls; i++) {
-      g_debug("[NIP-77] Would sync with relay: %s", relay_urls[i]);
-    }
+    /* Sync with first relay (one session at a time, V1) */
+    g_debug("[NIP-77] Starting negentropy sync with %s", relay_urls[0]);
+    gnostr_neg_sync_kinds_async(relay_urls[0], sync_kinds, sync_kind_count,
+                                 NULL, on_neg_sync_done, g_object_ref(self));
 
     g_strfreev(relay_urls);
   }
@@ -285,12 +313,8 @@ nip77_negentropy_plugin_activate(GnostrPlugin        *plugin,
     start_auto_sync_timer(self);
   }
 
-  /*
-   * Note: NEG-OPEN, NEG-MSG, NEG-CLOSE, NEG-ERR message handling requires
-   * relay protocol message hooks which aren't available in the current
-   * plugin API. The host application should integrate with the negentropy
-   * library (nips/nip77/) for full protocol support.
-   */
+  /* Negentropy protocol is handled by the neg-client in the host app.
+   * Auto-sync timer calls gnostr_neg_sync_kinds_async() to trigger sync. */
 }
 
 static void

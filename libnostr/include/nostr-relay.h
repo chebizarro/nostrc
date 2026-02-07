@@ -336,6 +336,24 @@ uint64_t nostr_relay_get_next_reconnect_ms(NostrRelay *relay);
  */
 void nostr_relay_reconnect_now(NostrRelay *relay);
 
+/* ========================================================================
+ * Extension message handler (NIP-77 negentropy, etc.)
+ * ======================================================================== */
+
+/**
+ * nostr_relay_set_custom_handler:
+ * @relay: (nullable): relay
+ * @handler: (nullable): callback for unknown/extension messages, or NULL to clear
+ *
+ * Install a handler for incoming messages that don't match standard Nostr
+ * envelope types (EVENT, EOSE, OK, etc.). The handler receives the raw JSON
+ * string and returns true if it handled the message.
+ *
+ * Used for NIP-77 negentropy (NEG-MSG, NEG-ERR) and other extensions.
+ * Called from relay worker thread - use thread-safe operations.
+ */
+void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *));
+
 #ifdef __cplusplus
 }
 #endif

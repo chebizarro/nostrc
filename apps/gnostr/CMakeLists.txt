@@ -150,7 +150,7 @@ add_custom_command(
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
-file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c)
+file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
 # Platform-specific files: on macOS, exclude the Linux C implementations
@@ -220,6 +220,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/nips/nip10/include
   ${PROJECT_ROOT}/nips/nip17/include
   ${PROJECT_ROOT}/nips/nip25/include
+  ${PROJECT_ROOT}/nips/nip77/include
   ${SECP256K1_INCLUDE_DIRS}
   ${PROJECT_ROOT}/third_party/nostrdb/src
   ${PROJECT_ROOT}/third_party/nostrdb/ccan
@@ -274,6 +275,10 @@ if (TARGET nip04)
 endif()
 if (TARGET nostr_nip44_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip44_core)
+endif()
+# nostrc-x8lj: Link NIP-77 negentropy for sync client
+if (TARGET nostr_nip77)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip77)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB)
 # Link secp256k1 for identity/key derivation
