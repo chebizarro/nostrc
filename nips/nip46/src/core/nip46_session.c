@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 /* Forward prototypes for local helpers */
 static int csv_split(const char *csv, char ***out_vec, size_t *out_n);
@@ -29,10 +30,21 @@ static void csv_free(char **vec, size_t n);
 static void acl_set_perms(NostrNip46Session *s, const char *client_pk, const char *perms_csv);
 static int acl_has_perm(const NostrNip46Session *s, const char *client_pk, const char *method);
 
+/* nostrc-32yf: Session state machine */
+typedef enum {
+    NIP46_STATE_DISCONNECTED = 0,  /* No pool, no connection */
+    NIP46_STATE_CONNECTING,        /* Pool started, waiting for relay */
+    NIP46_STATE_CONNECTED,         /* Relay connected, subscription active */
+    NIP46_STATE_STOPPING           /* Shutting down */
+} Nip46SessionState;
+
 /* Pending RPC request entry - waiting for response from signer */
 typedef struct PendingRequest {
     char *request_id;           /* RPC request ID to match response */
     GoChannel *response_chan;   /* Channel to send response to waiting caller */
+    uint32_t timeout_ms;        /* nostrc-32yf: Per-request timeout */
+    int64_t submit_time_us;     /* nostrc-32yf: Monotonic submit timestamp (usec) */
+    int cancelled;              /* nostrc-32yf: Set to 1 if request was cancelled */
     struct PendingRequest *next;
 } PendingRequest;
 
@@ -76,6 +88,12 @@ struct NostrNip46Session {
     pthread_mutex_t pending_mutex;        /* Protects pending_requests */
     PendingRequest *pending_requests;     /* Linked list of pending RPC requests */
     char *derived_client_pubkey;          /* Client pubkey derived from secret */
+
+    /* nostrc-5wj9: Configurable request timeout (0 = use default) */
+    uint32_t timeout_ms;
+
+    /* nostrc-32yf: Session state machine */
+    Nip46SessionState state;
 };
 
 /* nostrc-kk9f: Session registry helper functions.
@@ -129,8 +147,9 @@ static NostrNip46Session *session_registry_find(NostrSimplePool *pool) {
 }
 
 /* nostrc-kk9f: Pending request helper functions.
- * Create a new pending request with a response channel. */
-static PendingRequest *pending_request_new(const char *request_id) {
+ * Create a new pending request with a response channel.
+ * nostrc-32yf: Now records per-request timeout and submit time. */
+static PendingRequest *pending_request_new(const char *request_id, uint32_t timeout_ms) {
     if (!request_id) return NULL;
 
     PendingRequest *pr = (PendingRequest *)calloc(1, sizeof(PendingRequest));
@@ -150,6 +169,11 @@ static PendingRequest *pending_request_new(const char *request_id) {
         return NULL;
     }
 
+    pr->timeout_ms = timeout_ms;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    pr->submit_time_us = (int64_t)tv.tv_sec * 1000000 + (int64_t)tv.tv_usec;
+    pr->cancelled = 0;
     pr->next = NULL;
     return pr;
 }
@@ -575,6 +599,41 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
     fprintf(stderr, "[nip46] persistent_cb: dispatched response to pending request\n");
 }
 
+/* nostrc-gj36: Connection monitor for channel-based relay wait.
+ * Checks relay connectivity every 50ms and signals via channel. */
+typedef struct {
+    NostrSimplePool *pool;
+    GoChannel *chan;
+} ConnectMonitorCtx;
+
+static void *connect_monitor_thread(void *arg) {
+    ConnectMonitorCtx *m = (ConnectMonitorCtx *)arg;
+    for (;;) {
+        if (go_channel_is_closed(m->chan)) break;
+        for (size_t r = 0; r < m->pool->relay_count; r++) {
+            if (m->pool->relays[r] &&
+                nostr_relay_is_connected(m->pool->relays[r])) {
+                go_channel_try_send(m->chan, (void *)(intptr_t)1);
+                return NULL;
+            }
+        }
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 50 * 1000000 };
+        nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+
+/* nostrc-32yf: Query session state (internal) */
+static Nip46SessionState nip46_get_state(const NostrNip46Session *s) {
+    if (!s) return NIP46_STATE_DISCONNECTED;
+    return s->state;
+}
+
+/* nostrc-32yf: Query session state (public API, maps internal enum) */
+NostrNip46State nostr_nip46_client_get_state_public(const NostrNip46Session *s) {
+    return (NostrNip46State)nip46_get_state(s);
+}
+
 /* nostrc-j2yu: Start the persistent relay connection for efficient RPC calls. */
 int nostr_nip46_client_start(NostrNip46Session *s) {
     if (!s) return -1;
@@ -583,6 +642,8 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
         fprintf(stderr, "[nip46] client_start: already running\n");
         return 0;
     }
+
+    s->state = NIP46_STATE_CONNECTING;
 
     if (!s->secret) {
         fprintf(stderr, "[nip46] client_start: ERROR: no secret set\n");
@@ -616,28 +677,43 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
         nostr_simple_pool_ensure_relay(s->client_pool, s->relays[i]);
     }
 
-    /* Start pool and wait for connection */
+    /* Start pool and wait for connection using channel select.
+     * nostrc-gj36: Replaced usleep polling with go_select_timeout.
+     * A monitor thread checks relay connectivity and signals via channel. */
     nostr_simple_pool_start(s->client_pool);
 
-    int connected = 0;
-    int max_wait_ms = 5000;
-    int elapsed_ms = 0;
-    while (!connected && elapsed_ms < max_wait_ms) {
-        for (size_t r = 0; r < s->client_pool->relay_count; r++) {
-            if (s->client_pool->relays[r] &&
-                nostr_relay_is_connected(s->client_pool->relays[r])) {
-                connected = 1;
-                break;
-            }
-        }
-        if (!connected) {
-            usleep(50000);
-            elapsed_ms += 50;
-        }
+    GoChannel *connect_chan = go_channel_create(1);
+    if (!connect_chan) {
+        fprintf(stderr, "[nip46] client_start: ERROR: failed to create connect channel\n");
+        nostr_simple_pool_stop(s->client_pool);
+        nostr_simple_pool_free(s->client_pool);
+        s->client_pool = NULL;
+        return -1;
     }
+
+    ConnectMonitorCtx mon = { .pool = s->client_pool, .chan = connect_chan };
+    pthread_t mon_tid;
+    pthread_create(&mon_tid, NULL, connect_monitor_thread, &mon);
+
+    /* Wait for connection signal via channel select with 5s timeout */
+    GoSelectCase connect_cases[1];
+    connect_cases[0].op = GO_SELECT_RECEIVE;
+    connect_cases[0].chan = connect_chan;
+    void *connect_recv = NULL;
+    connect_cases[0].recv_buf = &connect_recv;
+
+    GoSelectResult conn_sel = go_select_timeout(connect_cases, 1, 5000);
+
+    int connected = (conn_sel.selected_case == 0 && conn_sel.ok);
+
+    /* Cleanup monitor thread */
+    go_channel_close(connect_chan);
+    pthread_join(mon_tid, NULL);
+    go_channel_free(connect_chan);
 
     if (!connected) {
         fprintf(stderr, "[nip46] client_start: ERROR: relay connection timeout\n");
+        s->state = NIP46_STATE_DISCONNECTED;
         nostr_simple_pool_stop(s->client_pool);
         nostr_simple_pool_free(s->client_pool);
         s->client_pool = NULL;
@@ -667,6 +743,7 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
     session_registry_add(s->client_pool, s);
 
     s->client_pool_started = 1;
+    s->state = NIP46_STATE_CONNECTED;
     fprintf(stderr, "[nip46] client_start: persistent pool started with %zu relay(s)\n",
             s->n_relays);
     return 0;
@@ -675,6 +752,8 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
 /* nostrc-j2yu: Stop the persistent relay connection */
 void nostr_nip46_client_stop(NostrNip46Session *s) {
     if (!s) return;
+
+    s->state = NIP46_STATE_STOPPING;
 
     if (s->client_pool) {
         /* nostrc-kk9f: Unregister from session registry before cleanup */
@@ -685,6 +764,7 @@ void nostr_nip46_client_stop(NostrNip46Session *s) {
         s->client_pool = NULL;
     }
     s->client_pool_started = 0;
+    s->state = NIP46_STATE_DISCONNECTED;
     fprintf(stderr, "[nip46] client_stop: persistent pool stopped\n");
 }
 
@@ -692,6 +772,23 @@ void nostr_nip46_client_stop(NostrNip46Session *s) {
 int nostr_nip46_client_is_running(NostrNip46Session *s) {
     if (!s) return 0;
     return s->client_pool_started;
+}
+
+/* nostrc-5wj9: Configurable request timeout */
+void nostr_nip46_client_set_timeout(NostrNip46Session *s, uint32_t timeout_ms) {
+    if (!s) return;
+    s->timeout_ms = timeout_ms;
+}
+
+uint32_t nostr_nip46_client_get_timeout(const NostrNip46Session *s) {
+    if (!s || s->timeout_ms == 0) return NOSTR_NIP46_DEFAULT_TIMEOUT_MS;
+    return s->timeout_ms;
+}
+
+/* nostrc-5wj9: Helper to get effective timeout for current session */
+static uint32_t nip46_effective_timeout(const NostrNip46Session *s) {
+    if (s && s->timeout_ms > 0) return s->timeout_ms;
+    return NOSTR_NIP46_DEFAULT_TIMEOUT_MS;
 }
 
 /* Forward declaration for RPC helper used by sign_event and other calls */
@@ -759,6 +856,12 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     if (out_response_pubkey) *out_response_pubkey = NULL;
     if (!s || !method) return NULL;
 
+    /* nostrc-32yf: Reject calls during shutdown */
+    if (s->state == NIP46_STATE_STOPPING) {
+        fprintf(stderr, "[nip46] %s: ERROR: session is stopping\n", method);
+        return NULL;
+    }
+
     /* Validate session state */
     const char *peer = s->remote_pubkey_hex;
     if (!peer) {
@@ -825,7 +928,8 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     free(req);
 
     /* nostrc-3l6f: Create pending request with response channel */
-    PendingRequest *pr = pending_request_new(req_id);
+    uint32_t timeout = nip46_effective_timeout(s);
+    PendingRequest *pr = pending_request_new(req_id, timeout);
     if (!pr) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to create pending request\n", method);
         free(cipher);
@@ -911,10 +1015,11 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         return NULL;
     }
 
-    /* nostrc-3l6f: Wait for response on channel with timeout.
+    /* nostrc-3l6f: Wait for response on channel with per-request timeout.
      * The persistent callback (nip46_persistent_client_cb) will dispatch
      * the response to pr->response_chan when it arrives. */
-    fprintf(stderr, "[nip46] %s: waiting for response (timeout=30s)\n", method);
+    fprintf(stderr, "[nip46] %s: waiting for response (timeout=%ums)\n",
+            method, pr->timeout_ms);
 
     GoSelectCase cases[1];
     cases[0].op = GO_SELECT_RECEIVE;
@@ -922,7 +1027,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     void *recv_buf = NULL;
     cases[0].recv_buf = &recv_buf;
 
-    GoSelectResult sel = go_select_timeout(cases, 1, 30000);  /* 30 second timeout */
+    GoSelectResult sel = go_select_timeout(cases, 1, pr->timeout_ms);
 
     char *result = NULL;
     if (sel.selected_case == -1) {
@@ -1003,6 +1108,161 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     (void)out_response_pubkey;
 
     return result;
+}
+
+/* nostrc-5wj9: Async RPC call infrastructure.
+ * Wraps the synchronous nip46_rpc_call in a detached thread and
+ * invokes the user callback on completion. */
+
+typedef struct {
+    NostrNip46Session *session;
+    char *method;
+    char **params;
+    size_t n_params;
+    NostrNip46AsyncCallback callback;
+    void *user_data;
+} AsyncRpcContext;
+
+static void async_rpc_context_free(AsyncRpcContext *ctx) {
+    if (!ctx) return;
+    free(ctx->method);
+    if (ctx->params) {
+        for (size_t i = 0; i < ctx->n_params; i++)
+            free(ctx->params[i]);
+        free(ctx->params);
+    }
+    free(ctx);
+}
+
+static void *async_rpc_thread(void *arg) {
+    AsyncRpcContext *ctx = (AsyncRpcContext *)arg;
+
+    char *result = nip46_rpc_call(ctx->session, ctx->method,
+                                   (const char **)ctx->params, ctx->n_params,
+                                   NULL);
+
+    if (ctx->callback) {
+        if (result) {
+            ctx->callback(ctx->session, result, NULL, ctx->user_data);
+        } else {
+            ctx->callback(ctx->session, NULL, "RPC call failed", ctx->user_data);
+        }
+    }
+    free(result);
+    async_rpc_context_free(ctx);
+    return NULL;
+}
+
+static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
+                                  const char **params, size_t n_params,
+                                  NostrNip46AsyncCallback callback,
+                                  void *user_data) {
+    if (!s || !method) {
+        if (callback) callback(s, NULL, "invalid arguments", user_data);
+        return;
+    }
+
+    AsyncRpcContext *ctx = (AsyncRpcContext *)calloc(1, sizeof(AsyncRpcContext));
+    if (!ctx) {
+        if (callback) callback(s, NULL, "out of memory", user_data);
+        return;
+    }
+
+    ctx->session = s;
+    ctx->method = strdup(method);
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    if (params && n_params > 0) {
+        ctx->params = (char **)calloc(n_params, sizeof(char *));
+        if (!ctx->params) {
+            async_rpc_context_free(ctx);
+            if (callback) callback(s, NULL, "out of memory", user_data);
+            return;
+        }
+        ctx->n_params = n_params;
+        for (size_t i = 0; i < n_params; i++) {
+            ctx->params[i] = params[i] ? strdup(params[i]) : NULL;
+        }
+    }
+
+    pthread_t tid;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+    if (pthread_create(&tid, &attr, async_rpc_thread, ctx) != 0) {
+        pthread_attr_destroy(&attr);
+        async_rpc_context_free(ctx);
+        if (callback) callback(s, NULL, "failed to create thread", user_data);
+        return;
+    }
+    pthread_attr_destroy(&attr);
+}
+
+/* nostrc-5wj9: Public async API implementations */
+
+void nostr_nip46_client_sign_event_async(NostrNip46Session *s,
+                                          const char *event_json,
+                                          NostrNip46AsyncCallback callback,
+                                          void *user_data) {
+    if (!s || !event_json) {
+        if (callback) callback(s, NULL, "session or event_json is NULL", user_data);
+        return;
+    }
+    const char *params[1] = { event_json };
+    nip46_rpc_call_async(s, "sign_event", params, 1, callback, user_data);
+}
+
+void nostr_nip46_client_connect_rpc_async(NostrNip46Session *s,
+                                           const char *connect_secret,
+                                           const char *perms,
+                                           NostrNip46AsyncCallback callback,
+                                           void *user_data) {
+    if (!s) {
+        if (callback) callback(s, NULL, "session is NULL", user_data);
+        return;
+    }
+    if (!s->remote_pubkey_hex) {
+        if (callback) callback(s, NULL, "no remote_pubkey_hex", user_data);
+        return;
+    }
+    const char *params[3];
+    params[0] = s->remote_pubkey_hex;
+    params[1] = connect_secret ? connect_secret : "";
+    params[2] = perms ? perms : "";
+    nip46_rpc_call_async(s, "connect", params, 3, callback, user_data);
+}
+
+void nostr_nip46_client_get_public_key_rpc_async(NostrNip46Session *s,
+                                                  NostrNip46AsyncCallback callback,
+                                                  void *user_data) {
+    if (!s) {
+        if (callback) callback(s, NULL, "session is NULL", user_data);
+        return;
+    }
+    nip46_rpc_call_async(s, "get_public_key", NULL, 0, callback, user_data);
+}
+
+/* nostrc-5wj9: Cancel all pending RPC requests.
+ * Closes all pending request channels, causing blocked threads to wake
+ * with a "channel closed" result. */
+void nostr_nip46_client_cancel_all(NostrNip46Session *s) {
+    if (!s) return;
+
+    pthread_mutex_lock(&s->pending_mutex);
+    PendingRequest *pr = s->pending_requests;
+    s->pending_requests = NULL;
+    pthread_mutex_unlock(&s->pending_mutex);
+
+    while (pr) {
+        PendingRequest *next = pr->next;
+        if (pr->response_chan) {
+            go_channel_close(pr->response_chan);
+            /* Don't free the channel here - the waiting thread owns it */
+        }
+        pr = next;
+    }
 }
 
 /* nostrc-nip46-rpc: Send connect RPC to remote signer.
