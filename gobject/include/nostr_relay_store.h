@@ -2,7 +2,7 @@
 #define NOSTR_RELAY_STORE_H
 
 #include <glib-object.h>
-#include "relay_store.h"
+#include "nostr-relay-store.h"
 
 /* Define GNostrRelayStore GObject interface (G-prefixed to avoid core conflicts) */
 #define G_NOSTR_TYPE_RELAY_STORE (g_nostr_relay_store_get_type())

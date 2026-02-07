@@ -8,58 +8,135 @@ project('nostr-glib', 'c',
     'buildtype=debugoptimized'
   ])
 
-# Dependencies
+cc = meson.get_compiler('c')
+
+# ── GLib / GObject / GIO ─────────────────────────────────────────────
 glib_dep = dependency('glib-2.0', version: '>= 2.70')
 gobject_dep = dependency('gobject-2.0', version: '>= 2.70')
 gio_dep = dependency('gio-2.0', version: '>= 2.70')
 json_glib_dep = dependency('json-glib-1.0', version: '>= 1.6', required: false)
 
-# libnostr - for now use include path, later can be subproject
-# Note: libnostr must be built first with CMake to generate nostr-config.h
-libnostr_inc = include_directories('../libnostr/include')
-libnostr_generated_inc = include_directories('../libnostr/generated')
+# ── Sibling project paths (relative to gobject/) ─────────────────────
+# CMake build output directory (must be built first)
+cmake_build_dir = meson.current_source_dir() / '..' / 'build'
 
-# Additional dependencies from sibling projects
+# ── libnostr (pre-built by CMake) ────────────────────────────────────
+libnostr_static = cc.find_library('nostr',
+  dirs: [cmake_build_dir / 'libnostr'],
+  static: true)
+libnostr_inc = include_directories(
+  '../libnostr/include',
+  '../libnostr/generated',
+)
+libnostr_dep = declare_dependency(
+  dependencies: libnostr_static,
+  include_directories: libnostr_inc)
+
+# ── libgo (pre-built by CMake) ───────────────────────────────────────
+# liblibgo.a has channels, contexts, select, etc.
+# libgo_fiber.a has the fiber/coroutine runtime
+libgo_static = cc.find_library('libgo',
+  dirs: [cmake_build_dir / 'libgo'],
+  static: true)
+libgo_fiber_static = cc.find_library('go_fiber',
+  dirs: [cmake_build_dir / 'libgo'],
+  static: true,
+  required: false)
 libgo_inc = include_directories('../libgo/include')
-gnostr_signer_inc = include_directories('../apps/gnostr-signer/src')
+libgo_deps = [libgo_static]
+if libgo_fiber_static.found()
+  libgo_deps += libgo_fiber_static
+endif
+libgo_dep = declare_dependency(
+  dependencies: libgo_deps,
+  include_directories: libgo_inc)
 
 # Additional app-level includes (storage_ndb.h for NDB store backend)
 gnostr_app_inc = include_directories('../apps/gnostr/src')
 
-# External library includes (nsync for libgo context)
-nsync_inc = include_directories('/opt/homebrew/include')
+# ── NIP libraries (pre-built by CMake) ───────────────────────────────
+nip04_static = cc.find_library('nip04',
+  dirs: [cmake_build_dir / 'nips' / 'nip04'],
+  static: true)
+nip04_dep = declare_dependency(
+  dependencies: nip04_static,
+  include_directories: include_directories('../nips/nip04/include'))
 
-# NIP includes
-nip04_inc = include_directories('../nips/nip04/include')
-nip06_inc = include_directories('../nips/nip06/include')
-nip19_inc = include_directories('../nips/nip19/include')
-nip44_inc = include_directories('../nips/nip44/include')
+nip06_static = cc.find_library('nip06',
+  dirs: [cmake_build_dir / 'nips' / 'nip06'],
+  static: true)
+nip06_dep = declare_dependency(
+  dependencies: nip06_static,
+  include_directories: include_directories('../nips/nip06/include'))
 
+nip19_static = cc.find_library('nip19',
+  dirs: [cmake_build_dir / 'nips' / 'nip19'],
+  static: true)
+nip19_dep = declare_dependency(
+  dependencies: nip19_static,
+  include_directories: include_directories('../nips/nip19/include'))
 
-# Source files
+nip44_core_static = cc.find_library('nostr_nip44_core',
+  dirs: [cmake_build_dir / 'nips' / 'nip44'],
+  static: true)
+nip44_dep = declare_dependency(
+  dependencies: nip44_core_static,
+  include_directories: include_directories('../nips/nip44/include'))
+
+# ── System crypto dependencies ───────────────────────────────────────
+secp256k1_dep = dependency('libsecp256k1')
+openssl_dep = dependency('openssl')
+libsodium_dep = dependency('libsodium', required: false)
+libwebsockets_dep = dependency('libwebsockets', required: true)
+
+# nsync (no pkg-config — use find_library with explicit dirs)
+nsync_lib = cc.find_library('nsync',
+  dirs: ['/opt/homebrew/lib'],
+  required: true)
+nsync_dep = declare_dependency(
+  dependencies: nsync_lib,
+  include_directories: include_directories('/opt/homebrew/include', is_system: true))
+
+# ── Version header ───────────────────────────────────────────────────
+version_parts = meson.project_version().split('.')
+version_conf = configuration_data()
+version_conf.set('NOSTR_GLIB_MAJOR_VERSION', version_parts[0])
+version_conf.set('NOSTR_GLIB_MINOR_VERSION', version_parts[1])
+version_conf.set('NOSTR_GLIB_MICRO_VERSION', version_parts[2])
+version_conf.set('NOSTR_GLIB_VERSION', meson.project_version())
+
+nostr_glib_version_h = configure_file(
+  input: 'include/nostr-glib-version.h.in',
+  output: 'nostr-glib-version.h',
+  configuration: version_conf,
+  install: true,
+  install_dir: get_option('includedir') / 'nostr-glib-1.0')
+
+# ── Source files ─────────────────────────────────────────────────────
 nostr_glib_sources = files(
   'src/nostr-error.c',
   'src/nostr-enums.c',
   'src/nostr_event.c',
   'src/nostr_event_bus.c',
-  'src/nostr_filter.c',
   'src/nostr_keys.c',
   'src/nostr_relay.c',
   'src/nostr_subscription.c',
   'src/nostr_simple_pool.c',
   'src/nostr_pool.c',
-  'src/nostr_pointer.c',
   'src/nostr_relay_store.c',
   'src/nostr_store.c',
   'src/nostr_ndb_store.c',
   'src/crypto_utils.c',
   'src/nostr_async.c',
   'src/nostr_query_batcher.c',
-  'src/nostr_tag_list.c',
   'src/nostr_subscription_registry.c',
 )
+# Excluded from build (need rename to G-prefixed types/functions):
+#   'src/nostr_filter.c'   - NostrFilter collides with core NostrFilter
+#   'src/nostr_pointer.c'  - NostrPointer collides with core, uses stale API
+#   'src/nostr_tag_list.c' - nostr_tag_* functions duplicate core tag.c symbols
 
-# Header files
+# Header files (public API)
 nostr_glib_headers = files(
   'include/nostr-glib.h',
   'include/nostr-error.h',
@@ -83,19 +160,48 @@ nostr_glib_headers = files(
   'include/nostr_subscription_registry.h',
 )
 
-# Build the library
+# ── All include directories for compilation ──────────────────────────
+nostr_glib_inc = include_directories('include')
+
+# Collect all dependencies
+nostr_glib_deps = [
+  glib_dep,
+  gobject_dep,
+  gio_dep,
+  libnostr_dep,
+  libgo_dep,
+  nip04_dep,
+  nip06_dep,
+  nip19_dep,
+  nip44_dep,
+  secp256k1_dep,
+  openssl_dep,
+  libwebsockets_dep,
+  nsync_dep,
+]
+
+if json_glib_dep.found()
+  nostr_glib_deps += json_glib_dep
+endif
+
+if libsodium_dep.found()
+  nostr_glib_deps += libsodium_dep
+endif
+
+# ── Build the library ────────────────────────────────────────────────
 nostr_glib_lib = library('nostr-glib-1.0',
   nostr_glib_sources,
-  include_directories: ['include', libnostr_inc, libnostr_generated_inc, libgo_inc, gnostr_signer_inc, gnostr_app_inc, nsync_inc, nip04_inc, nip06_inc, nip19_inc, nip44_inc],
-  dependencies: [glib_dep, gobject_dep, gio_dep],
+  include_directories: [nostr_glib_inc, gnostr_app_inc],
+  dependencies: nostr_glib_deps,
   install: true)
 
-# Declare dependency for use as subproject
+# ── Declare dependency for use as subproject ─────────────────────────
 nostr_glib_dep = declare_dependency(
   link_with: nostr_glib_lib,
-  include_directories: include_directories('include'))
+  include_directories: nostr_glib_inc,
+  dependencies: [glib_dep, gobject_dep, gio_dep])
 
-# GObject Introspection
+# ── GObject Introspection ────────────────────────────────────────────
 gnome = import('gnome')
 
 if get_option('introspection')
@@ -109,32 +215,33 @@ if get_option('introspection')
     install: true)
 endif
 
-# pkg-config file generation
+# ── pkg-config ───────────────────────────────────────────────────────
 pkg = import('pkgconfig')
 pkg.generate(nostr_glib_lib,
   name: 'nostr-glib-1.0',
-  description: 'GObject bindings for libnostr',
-  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0'])
+  description: 'GObject wrapper for libnostr — Nostr protocol library',
+  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
+  requires_private: ['openssl', 'libsecp256k1'])
 
-# Header installation
+# ── Header installation ──────────────────────────────────────────────
 install_headers(nostr_glib_headers, subdir: 'nostr-glib-1.0')
 
-# Tests
+# ── Tests ─────────────────────────────────────────────────────────────
 if get_option('tests')
   test_nostr_event = executable('test_nostr_event',
     'tests/test_nostr_event.c',
     dependencies: [glib_dep, gobject_dep],
     link_with: nostr_glib_lib,
-    include_directories: ['include', libnostr_inc, libnostr_generated_inc, libgo_inc, gnostr_signer_inc, nsync_inc])
+    include_directories: nostr_glib_inc)
 
   test('nostr_event', test_nostr_event)
 endif
 
-# Examples
+# ── Examples ─────────────────────────────────────────────────────────
 if get_option('examples')
   connect_publish = executable('connect_publish',
     'examples/connect_publish.c',
     dependencies: [glib_dep, gobject_dep],
     link_with: nostr_glib_lib,
-    include_directories: ['include', libnostr_inc, libnostr_generated_inc, libgo_inc, gnostr_signer_inc, nsync_inc])
+    include_directories: nostr_glib_inc)
 endif

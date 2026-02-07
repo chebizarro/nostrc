@@ -537,3 +537,17 @@ gnostr_subscription_get_core_subscription(GNostrSubscription *self)
     g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION(self), NULL);
     return self->subscription;
 }
+
+/* Alias used by subscription_registry — delegates to close */
+void
+gnostr_subscription_unsubscribe(GNostrSubscription *self)
+{
+    gnostr_subscription_close(self);
+}
+
+/* Stub for subscription_registry — config is registry-internal */
+gconstpointer
+gnostr_subscription_get_config(GNostrSubscription *self G_GNUC_UNUSED)
+{
+    return NULL;
+}

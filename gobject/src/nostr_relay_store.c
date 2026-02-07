@@ -1,7 +1,6 @@
 #include "nostr_relay_store.h"
-#include "nostr_event.h"
-#include "nostr_filter.h"
-#include "relay_store.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
 #include <glib.h>
 
 /* GNostrRelayStore interface implementation */
