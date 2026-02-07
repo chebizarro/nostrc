@@ -229,7 +229,9 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
 target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
   ${PROJECT_ROOT}/gobject/src/nostr_relay.c
-  ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c)
+  ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
+  ${PROJECT_ROOT}/gobject/src/nostr-enums.c
+  ${PROJECT_ROOT}/gobject/src/nostr-error.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)

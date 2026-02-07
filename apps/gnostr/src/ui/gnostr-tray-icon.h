@@ -74,18 +74,18 @@ gboolean gnostr_tray_icon_is_available(void);
 void gnostr_tray_icon_set_unread_count(GnostrTrayIcon *self, int count);
 
 /**
- * GnostrRelayConnectionState:
- * @GNOSTR_RELAY_STATE_DISCONNECTED: All relays are disconnected
- * @GNOSTR_RELAY_STATE_CONNECTING: Some relays are connecting
- * @GNOSTR_RELAY_STATE_CONNECTED: At least one relay is connected
+ * GnostrTrayRelayState:
+ * @GNOSTR_TRAY_RELAY_DISCONNECTED: All relays are disconnected
+ * @GNOSTR_TRAY_RELAY_CONNECTING: Some relays are connecting
+ * @GNOSTR_TRAY_RELAY_CONNECTED: At least one relay is connected
  *
- * Connection state for relay status indicator.
+ * Connection state for tray icon relay status indicator.
  */
 typedef enum {
-  GNOSTR_RELAY_STATE_DISCONNECTED = 0,
-  GNOSTR_RELAY_STATE_CONNECTING   = 1,
-  GNOSTR_RELAY_STATE_CONNECTED    = 2,
-} GnostrRelayConnectionState;
+  GNOSTR_TRAY_RELAY_DISCONNECTED = 0,
+  GNOSTR_TRAY_RELAY_CONNECTING   = 1,
+  GNOSTR_TRAY_RELAY_CONNECTED    = 2,
+} GnostrTrayRelayState;
 
 /**
  * gnostr_tray_icon_set_relay_status:
@@ -100,7 +100,7 @@ typedef enum {
 void gnostr_tray_icon_set_relay_status(GnostrTrayIcon *self,
                                         int connected_count,
                                         int total_count,
-                                        GnostrRelayConnectionState state);
+                                        GnostrTrayRelayState state);
 
 /**
  * gnostr_app_update_relay_status:

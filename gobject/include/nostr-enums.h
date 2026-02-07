@@ -5,21 +5,24 @@
 G_BEGIN_DECLS
 
 /**
- * NostrRelayState:
- * @NOSTR_RELAY_STATE_DISCONNECTED: Not connected
- * @NOSTR_RELAY_STATE_CONNECTING: Connection in progress
- * @NOSTR_RELAY_STATE_CONNECTED: Connected and ready
- * @NOSTR_RELAY_STATE_ERROR: Connection error
+ * GNostrRelayState:
+ * @GNOSTR_RELAY_STATE_DISCONNECTED: Not connected
+ * @GNOSTR_RELAY_STATE_CONNECTING: Connection in progress
+ * @GNOSTR_RELAY_STATE_CONNECTED: Connected and ready
+ * @GNOSTR_RELAY_STATE_ERROR: Connection error
+ *
+ * GObject wrapper connection state enum. Uses G prefix to avoid
+ * conflicts with core libnostr's NostrRelayState enum.
  */
 typedef enum {
-  NOSTR_RELAY_STATE_DISCONNECTED,
-  NOSTR_RELAY_STATE_CONNECTING,
-  NOSTR_RELAY_STATE_CONNECTED,
-  NOSTR_RELAY_STATE_ERROR
-} NostrRelayState;
+  GNOSTR_RELAY_STATE_DISCONNECTED,
+  GNOSTR_RELAY_STATE_CONNECTING,
+  GNOSTR_RELAY_STATE_CONNECTED,
+  GNOSTR_RELAY_STATE_ERROR
+} GNostrRelayState;
 
-GType nostr_relay_state_get_type(void) G_GNUC_CONST;
-#define NOSTR_TYPE_RELAY_STATE (nostr_relay_state_get_type())
+GType gnostr_relay_state_get_type(void) G_GNUC_CONST;
+#define GNOSTR_TYPE_RELAY_STATE (gnostr_relay_state_get_type())
 
 /**
  * NostrEventKind:

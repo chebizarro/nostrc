@@ -19,15 +19,15 @@ static GnostrTrayIcon *g_tray_icon = NULL;
 void gnostr_app_update_relay_status(int connected_count, int total_count) {
   if (!g_tray_icon) return;
 
-  GnostrRelayConnectionState state;
+  GnostrTrayRelayState state;
   if (total_count == 0) {
-    state = GNOSTR_RELAY_STATE_DISCONNECTED;
+    state = GNOSTR_TRAY_RELAY_DISCONNECTED;
   } else if (connected_count == 0) {
-    state = GNOSTR_RELAY_STATE_DISCONNECTED;
+    state = GNOSTR_TRAY_RELAY_DISCONNECTED;
   } else if (connected_count < total_count) {
-    state = GNOSTR_RELAY_STATE_CONNECTING;
+    state = GNOSTR_TRAY_RELAY_CONNECTING;
   } else {
-    state = GNOSTR_RELAY_STATE_CONNECTED;
+    state = GNOSTR_TRAY_RELAY_CONNECTED;
   }
 
   gnostr_tray_icon_set_relay_status(g_tray_icon, connected_count, total_count, state);

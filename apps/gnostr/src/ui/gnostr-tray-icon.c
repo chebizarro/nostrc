@@ -100,7 +100,7 @@ struct _GnostrTrayIcon {
   /* Relay status */
   int relay_connected_count;
   int relay_total_count;
-  GnostrRelayConnectionState relay_state;
+  GnostrTrayRelayState relay_state;
 
   GDBusNodeInfo *sni_introspection_data;
   gboolean registered;
@@ -594,17 +594,17 @@ update_relay_status_label(GnostrTrayIcon *self)
 
   gchar *label = NULL;
   switch (self->relay_state) {
-    case GNOSTR_RELAY_STATE_CONNECTED:
+    case GNOSTR_TRAY_RELAY_CONNECTED:
       label = g_strdup_printf("Relays: %d/%d connected",
                               self->relay_connected_count,
                               self->relay_total_count);
       break;
-    case GNOSTR_RELAY_STATE_CONNECTING:
+    case GNOSTR_TRAY_RELAY_CONNECTING:
       label = g_strdup_printf("Relays: Connecting (%d/%d)",
                               self->relay_connected_count,
                               self->relay_total_count);
       break;
-    case GNOSTR_RELAY_STATE_DISCONNECTED:
+    case GNOSTR_TRAY_RELAY_DISCONNECTED:
     default:
       if (self->relay_total_count > 0) {
         label = g_strdup_printf("Relays: Disconnected (0/%d)",
@@ -701,7 +701,7 @@ void
 gnostr_tray_icon_set_relay_status(GnostrTrayIcon *self,
                                    int connected_count,
                                    int total_count,
-                                   GnostrRelayConnectionState state)
+                                   GnostrTrayRelayState state)
 {
   g_return_if_fail(GNOSTR_IS_TRAY_ICON(self));
 

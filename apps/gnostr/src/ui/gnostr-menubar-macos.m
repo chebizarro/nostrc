@@ -21,12 +21,12 @@
 @property (nonatomic, assign) int unreadCount;
 @property (nonatomic, assign) int relayConnectedCount;
 @property (nonatomic, assign) int relayTotalCount;
-@property (nonatomic, assign) GnostrRelayConnectionState relayState;
+@property (nonatomic, assign) GnostrTrayRelayState relayState;
 
 - (instancetype)initWithApp:(GtkApplication *)app;
 - (void)setWindow:(GtkWindow *)window;
 - (void)setUnreadCount:(int)count;
-- (void)setRelayStatusConnected:(int)connected total:(int)total state:(GnostrRelayConnectionState)state;
+- (void)setRelayStatusConnected:(int)connected total:(int)total state:(GnostrTrayRelayState)state;
 - (void)cleanup;
 
 /* Menu actions */
@@ -182,7 +182,7 @@
     [self updateDMsLabel];
 }
 
-- (void)setRelayStatusConnected:(int)connected total:(int)total state:(GnostrRelayConnectionState)state {
+- (void)setRelayStatusConnected:(int)connected total:(int)total state:(GnostrTrayRelayState)state {
     _relayConnectedCount = connected;
     _relayTotalCount = total;
     _relayState = state;
@@ -219,15 +219,15 @@
     if (item) {
         NSString *label = nil;
         switch (_relayState) {
-            case GNOSTR_RELAY_STATE_CONNECTED:
+            case GNOSTR_TRAY_RELAY_CONNECTED:
                 label = [NSString stringWithFormat:@"Relays: %d/%d connected",
                          _relayConnectedCount, _relayTotalCount];
                 break;
-            case GNOSTR_RELAY_STATE_CONNECTING:
+            case GNOSTR_TRAY_RELAY_CONNECTING:
                 label = [NSString stringWithFormat:@"Relays: Connecting (%d/%d)",
                          _relayConnectedCount, _relayTotalCount];
                 break;
-            case GNOSTR_RELAY_STATE_DISCONNECTED:
+            case GNOSTR_TRAY_RELAY_DISCONNECTED:
             default:
                 if (_relayTotalCount > 0) {
                     label = [NSString stringWithFormat:@"Relays: Disconnected (0/%d)",
@@ -645,7 +645,7 @@ void
 gnostr_tray_icon_set_relay_status(GnostrTrayIcon *self,
                                    int connected_count,
                                    int total_count,
-                                   GnostrRelayConnectionState state)
+                                   GnostrTrayRelayState state)
 {
     g_return_if_fail(GNOSTR_IS_TRAY_ICON(self));
 
