@@ -1,210 +1,12 @@
 /* GNostr Signer application stylesheet */
-
-/* ===== Responsive Design Styles ===== */
-
-/*
- * Responsive Breakpoints (defined in signer-window.ui via AdwBreakpoint):
- *
- * Mobile (< 500px):
- *   - Bottom bar (AdwViewSwitcherBar) is revealed
- *   - Sidebar is collapsed and hidden
- *   - AdwViewSwitcherTitle shows title instead of switcher
- *   - Forms stack vertically with reduced margins (12px)
- *   - Touch targets are enlarged (44px minimum)
- *
- * Tablet (500px - 800px):
- *   - Sidebar is in overlay mode (collapsed but accessible)
- *   - Bottom bar is hidden
- *   - Content uses AdwClamp tightening at ~400px
- *
- * Desktop (> 800px):
- *   - Sidebar is always visible (split view)
- *   - Full navigation visible in header
- *   - Standard margins and spacing
- *
- * Common Test Widths:
- *   - 360px: Mobile portrait (minimum supported)
- *   - 768px: Tablet portrait
- *   - 1024px: Tablet landscape / small desktop
- *   - 1440px: Standard desktop
- *
- * AdwClamp tightening-threshold values:
- *   - Dialogs/sheets: 360-400px
- *   - Main content: 400-500px
- *   - Profile dashboard: 400px
- */
-
-/* Base responsive spacing - mobile first */
-.responsive-margins {
-  margin-start: 12px;
-  margin-end: 12px;
-}
-
-/* Larger margins on wider screens */
-@media (min-width: 600px) {
-  .responsive-margins {
-    margin-start: 16px;
-    margin-end: 16px;
-  }
-}
-
-@media (min-width: 1024px) {
-  .responsive-margins {
-    margin-start: 24px;
-    margin-end: 24px;
-  }
-}
-
-/* Responsive form field spacing */
-.form-spacing-mobile {
-  margin-bottom: 12px;
-}
-
-.form-spacing-tablet {
-  margin-bottom: 16px;
-}
-
-/* Compact sidebar for narrow screens */
-.navigation-sidebar.compact row {
-  padding: 6px 8px;
-}
-
-/* Bottom bar styling for mobile */
-viewswitcherbar {
-  border-top: 1px solid alpha(@borders, 0.5);
-}
-
-/* Responsive dialog sizing - ensure dialogs work on mobile */
-dialog.responsive {
-  min-width: 280px;
-  max-width: 100vw;
-}
-
-/* Stack forms vertically on narrow screens */
-.responsive-form-row {
-  flex-direction: row;
-}
-
-@media (max-width: 480px) {
-  .responsive-form-row {
-    flex-direction: column;
-  }
-
-  .responsive-form-row > * {
-    margin-bottom: 8px;
-  }
-}
-
-/* Responsive font scaling for narrow screens */
-@media (max-width: 360px) {
-  .title-1 {
-    font-size: 1.4em;
-  }
-
-  .title-2 {
-    font-size: 1.2em;
-  }
-
-  .title-3 {
-    font-size: 1.1em;
-  }
-}
-
-/* Touch-friendly targets for mobile */
-@media (pointer: coarse) {
-  button,
-  .activatable,
-  row.activatable {
-    min-height: 44px;
-  }
-
-  listboxrow {
-    min-height: 48px;
-  }
-}
-
-/* ===== Adaptive Layout Helpers ===== */
-
-/* Action button grid - responsive sizing */
-.action-button {
-  min-width: 100px;
-  transition: all 200ms ease;
-}
-
-@media (max-width: 480px) {
-  .action-button {
-    min-width: 80px;
-    padding: 8px;
-  }
-
-  .action-button image {
-    -gtk-icon-size: 24px;
-  }
-}
-
-/* Profile dashboard responsive adjustments */
-.profile-header {
-  padding: 16px;
-}
-
-@media (max-width: 400px) {
-  .profile-header {
-    padding: 8px;
-  }
-
-  .profile-header avatar {
-    -gtk-avatar-size: 72px;
-  }
-}
-
-/* Sidebar navigation - compact mode */
-.navigation-sidebar row {
-  padding: 8px 12px;
-  min-height: 44px;
-}
-
-@media (max-width: 500px) {
-  .navigation-sidebar row {
-    padding: 6px 8px;
-  }
-}
-
-/* Dialog responsive behavior */
-dialog {
-  min-width: 280px;
-}
-
-@media (max-width: 400px) {
-  dialog headerbar button {
-    padding: 6px 8px;
-  }
-}
-
-/* Bottom bar styling for mobile view */
-viewswitcherbar {
-  background-color: @headerbar_bg_color;
-}
-
-/* Ensure proper spacing on narrow screens */
-@media (max-width: 360px) {
-  preferencesgroup {
-    margin-start: 8px;
-    margin-end: 8px;
-  }
-
-  entryrow,
-  actionrow,
-  passwordentryrow {
-    margin-start: 4px;
-    margin-end: 4px;
-  }
-}
+/* GTK4 CSS - not web CSS. GTK doesn't support @media, flex-direction, position, etc. */
 
 /* ===== Status label styles ===== */
 .status-ok {
   color: #2e7d32;
   font-weight: bold;
 }
+
 .status-error {
   color: #c62828;
   font-weight: bold;
@@ -212,7 +14,7 @@ viewswitcherbar {
 
 /* Ensure suffix action buttons in rows follow HIG sizing */
 .suffix-action {
-  min-height: 28px; /* HIG comfortable touch target */
+  min-height: 28px;
   padding: 4px 10px;
 }
 
@@ -327,6 +129,11 @@ dialog button.suggested-action {
   border-radius: 12px;
 }
 
+/* Action button base styling */
+.action-button {
+  min-width: 100px;
+}
+
 /* Flowbox focus handling */
 flowboxchild:focus-visible {
   outline: 2px solid @accent_color;
@@ -334,29 +141,7 @@ flowboxchild:focus-visible {
   border-radius: 8px;
 }
 
-/* ===== Skip Links for Keyboard Navigation (nostrc-tz8w) ===== */
-
-/* Skip link button - hidden by default, shown on focus */
-.skip-link {
-  position: absolute;
-  top: -100px;
-  left: 12px;
-  z-index: 9999;
-  padding: 8px 16px;
-  background-color: @accent_bg_color;
-  color: @accent_fg_color;
-  border-radius: 6px;
-  font-weight: bold;
-  transition: top 0.2s ease;
-}
-
-.skip-link:focus-visible {
-  top: 12px;
-  outline: 3px solid @accent_color;
-  outline-offset: 2px;
-}
-
-/* ===== Enhanced Focus States for Lists (nostrc-tz8w) ===== */
+/* ===== Enhanced Focus States for Lists ===== */
 
 /* Selection and focus for sidebar rows */
 .navigation-sidebar row:selected {
@@ -382,19 +167,30 @@ row.activatable:focus-visible {
   outline-offset: -2px;
 }
 
-/* ===== Dialog Default Button Enhancement (nostrc-tz8w) ===== */
+/* ===== Sidebar navigation styling ===== */
 
-/* Pulse animation for default action button when focused */
-@keyframes pulse-focus {
-  0%, 100% { box-shadow: 0 0 0 0 alpha(@accent_color, 0.4); }
-  50% { box-shadow: 0 0 0 4px alpha(@accent_color, 0.2); }
+.navigation-sidebar row {
+  padding: 8px 12px;
+  min-height: 44px;
 }
 
-dialog button.suggested-action:focus-visible {
-  animation: pulse-focus 2s ease-in-out infinite;
+/* Bottom bar styling */
+viewswitcherbar {
+  border-top: 1px solid alpha(@borders, 0.5);
+  background-color: @headerbar_bg_color;
 }
 
-/* ===== Spinner Focus (for forms in progress) ===== */
+/* Dialog sizing */
+dialog {
+  min-width: 280px;
+}
+
+/* Profile header */
+.profile-header {
+  padding: 16px;
+}
+
+/* ===== Spinner Focus ===== */
 
 spinner:focus-visible {
   outline: 2px solid @accent_color;
@@ -402,56 +198,23 @@ spinner:focus-visible {
   border-radius: 50%;
 }
 
-/* ===== High Contrast Mode Support ===== */
-
-@media (prefers-contrast: more) {
-  *:focus-visible {
-    outline: 3px solid @accent_color;
-    outline-offset: 3px;
-  }
-
-  button.suggested-action:focus-visible,
-  button.destructive-action:focus-visible {
-    outline: 4px solid @accent_color;
-    outline-offset: 3px;
-  }
-
-  .skip-link:focus-visible {
-    outline: 4px solid @accent_color;
-    outline-offset: 3px;
-  }
-
-  .navigation-sidebar row:focus-visible {
-    outline: 3px solid @accent_color;
-    outline-offset: -3px;
-  }
-}
-
-/* ===== Reduced Motion Support ===== */
-
-@media (prefers-reduced-motion: reduce) {
-  * {
-    transition-duration: 0s !important;
-  }
-}
-
 /* ===== Onboarding Assistant Styles ===== */
 
 /* Passphrase strength meter colors */
 levelbar.strength-weak block.filled {
-  background-color: #c62828; /* Red - weak */
+  background-color: #c62828;
 }
 
 levelbar.strength-fair block.filled {
-  background-color: #ef6c00; /* Orange - fair */
+  background-color: #ef6c00;
 }
 
 levelbar.strength-good block.filled {
-  background-color: #f9a825; /* Yellow/amber - good */
+  background-color: #f9a825;
 }
 
 levelbar.strength-strong block.filled {
-  background-color: #2e7d32; /* Green - strong */
+  background-color: #2e7d32;
 }
 
 /* Card style for path selection boxes */
@@ -556,4 +319,30 @@ button.deny-btn:active {
 .details-expander > title {
   font-size: 0.9em;
   color: alpha(@window_fg_color, 0.7);
+}
+
+/* ===== Responsive spacing (use CSS classes, not media queries) ===== */
+/* Apply these classes via code based on window size using AdwBreakpoint */
+
+.responsive-margins {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+
+.responsive-margins-wide {
+  margin-left: 24px;
+  margin-right: 24px;
+}
+
+.form-spacing-mobile {
+  margin-bottom: 12px;
+}
+
+.form-spacing-tablet {
+  margin-bottom: 16px;
+}
+
+/* Compact sidebar */
+.navigation-sidebar.compact row {
+  padding: 6px 8px;
 }
