@@ -156,11 +156,8 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     if (s->bunker_pubkey_hex) { free(s->bunker_pubkey_hex); }
     if (s->bunker_secret_hex) { memset(s->bunker_secret_hex, 0, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
     if (s->current_request_client_pubkey) { free(s->current_request_client_pubkey); }
-    /* free client mode transport */
-    if (s->client_pool) {
-        nostr_simple_pool_stop(s->client_pool);
-        nostr_simple_pool_free(s->client_pool);
-    }
+    /* free client mode transport - use client_stop for consistent cleanup */
+    nostr_nip46_client_stop(s);
     /* cancel and free pending requests */
     pthread_mutex_lock(&s->pending_mutex);
     PendingRequest *pr = s->pending_requests;
