@@ -348,10 +348,20 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
   /* First check cache */
   GPtrArray *cached = gnostr_follow_list_get_cached(pubkey_hex);
   if (cached && cached->len > 0) {
-    /* Return cached immediately */
+    /* Return cached immediately for fast UI */
     if (callback) callback(cached, user_data);
 
-    /* Future: trigger background refresh to keep cache fresh (nostrc-ip96) */
+    /* Background refresh: re-fetch from relays to keep cache fresh.
+     * The callback is NULL so results are silently ingested into NDB
+     * via storage_ndb_ingest_event_json() in on_follow_list_query_done. */
+    FollowListFetchCtx *bg_ctx = g_new0(FollowListFetchCtx, 1);
+    bg_ctx->pubkey_hex = g_strdup(pubkey_hex);
+    bg_ctx->cancellable = NULL;
+    bg_ctx->callback = NULL;  /* silent background refresh */
+    bg_ctx->user_data = NULL;
+
+    gnostr_nip65_fetch_relays_async(pubkey_hex, NULL,
+                                     on_nip65_relays_fetched, bg_ctx);
     return;
   }
   if (cached) g_ptr_array_unref(cached);
