@@ -566,10 +566,10 @@ gn_follow_list_model_load_for_pubkey_async(GnFollowListModel *self,
 {
     g_return_if_fail(GN_IS_FOLLOW_LIST_MODEL(self));
 
-    /* For now, just use the sync version */
+    /* Currently uses sync version - see nostrc-yjl8 for proper async impl */
     gn_follow_list_model_load_for_pubkey(self, pubkey_hex);
 
-    /* TODO: Implement proper async with GTask */
+    /* Complete immediately since we used sync loading */
     if (callback) {
         GTask *task = g_task_new(self, cancellable, callback, user_data);
         g_task_return_boolean(task, TRUE);

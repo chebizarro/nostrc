@@ -177,7 +177,8 @@ factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     g_signal_connect(row, "search-hashtag", G_CALLBACK(on_search_hashtag_relay), self);
   }
 
-  /* TODO: Connect remaining signals based on flags */
+  /* Remaining signals (repost, quote, like, zap, mute, bookmark, delete, navigate)
+   * are currently connected directly by views. See nostrc-epcj for adding relay handlers. */
 
   gtk_list_item_set_child(item, row);
 }

@@ -349,10 +349,10 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
   /* First check cache */
   GPtrArray *cached = gnostr_follow_list_get_cached(pubkey_hex);
   if (cached && cached->len > 0) {
-    /* Return cached immediately, but also refresh in background */
+    /* Return cached immediately */
     if (callback) callback(cached, user_data);
 
-    /* TODO: Optionally trigger background refresh */
+    /* Future: trigger background refresh to keep cache fresh (nostrc-ip96) */
     return;
   }
   if (cached) g_ptr_array_unref(cached);
