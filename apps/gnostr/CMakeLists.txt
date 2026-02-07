@@ -205,6 +205,7 @@ endif()
 
 # Include GI wrapper and core headers for SimplePool and nostr models
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
   ${PROJECT_ROOT}/gobject/include
   ${PROJECT_ROOT}/libnostr/include
@@ -228,6 +229,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
 # nostrc-kshv: Added nostr_keys for key operations wrapper
+# nostrc-h1ti: Added nostr_store interface and NDB store implementation
 target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
   ${PROJECT_ROOT}/gobject/src/nostr_pool.c
@@ -236,6 +238,8 @@ target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
   ${PROJECT_ROOT}/gobject/src/nostr_keys.c
   ${PROJECT_ROOT}/gobject/src/nostr_event.c
+  ${PROJECT_ROOT}/gobject/src/nostr_store.c
+  ${PROJECT_ROOT}/gobject/src/nostr_ndb_store.c
   ${PROJECT_ROOT}/gobject/src/nostr-enums.c
   ${PROJECT_ROOT}/gobject/src/nostr-error.c
   ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)

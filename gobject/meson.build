@@ -23,6 +23,9 @@ libnostr_generated_inc = include_directories('../libnostr/generated')
 libgo_inc = include_directories('../libgo/include')
 gnostr_signer_inc = include_directories('../apps/gnostr-signer/src')
 
+# Additional app-level includes (storage_ndb.h for NDB store backend)
+gnostr_app_inc = include_directories('../apps/gnostr/src')
+
 # External library includes (nsync for libgo context)
 nsync_inc = include_directories('/opt/homebrew/include')
 
@@ -47,6 +50,8 @@ nostr_glib_sources = files(
   'src/nostr_pool.c',
   'src/nostr_pointer.c',
   'src/nostr_relay_store.c',
+  'src/nostr_store.c',
+  'src/nostr_ndb_store.c',
   'src/crypto_utils.c',
   'src/nostr_async.c',
   'src/nostr_query_batcher.c',
@@ -70,6 +75,7 @@ nostr_glib_headers = files(
   'include/nostr_pool.h',
   'include/nostr_pointer.h',
   'include/nostr_relay_store.h',
+  'include/nostr_store.h',
   'include/crypto_utils_gobject.h',
   'include/nostr_async.h',
   'include/nostr_query_batcher.h',
@@ -80,7 +86,7 @@ nostr_glib_headers = files(
 # Build the library
 nostr_glib_lib = library('nostr-glib-1.0',
   nostr_glib_sources,
-  include_directories: ['include', libnostr_inc, libnostr_generated_inc, libgo_inc, gnostr_signer_inc, nsync_inc, nip04_inc, nip06_inc, nip19_inc, nip44_inc],
+  include_directories: ['include', libnostr_inc, libnostr_generated_inc, libgo_inc, gnostr_signer_inc, gnostr_app_inc, nsync_inc, nip04_inc, nip06_inc, nip19_inc, nip44_inc],
   dependencies: [glib_dep, gobject_dep, gio_dep],
   install: true)
 
