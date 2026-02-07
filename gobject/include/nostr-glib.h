@@ -25,6 +25,8 @@
 #include "nostr_subscription.h"
 #include "nostr_subscription_registry.h"
 #include "nostr_pointer.h"
+#include "nostr_filter.h"
+#include "nostr_tag_list.h"
 #include "nostr_async.h"
 #include "crypto_utils_gobject.h"
 
@@ -32,11 +34,8 @@
 
 /*
  * The following headers are NOT included here because they pull in
- * core libnostr headers that create typedef conflicts with GObject
- * wrapper types. Include them directly when needed:
+ * core libnostr headers that create typedef conflicts:
  *
- *   #include "nostr_filter.h"          - NostrFilter name collision
- *   #include "nostr_tag_list.h"        - NostrTag name collision
  *   #include "nostr_relay_store.h"     - pulls core nostr-relay-store.h
  *   #include "nostr_simple_pool.h"     - pulls core nostr-simple-pool.h
  *   #include "nostr_query_batcher.h"   - pulls core nostr-filter.h

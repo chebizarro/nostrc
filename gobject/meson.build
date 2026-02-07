@@ -130,13 +130,13 @@ nostr_glib_sources = files(
   'src/nostr_async.c',
   'src/nostr_query_batcher.c',
   'src/nostr_subscription_registry.c',
+  'src/nostr_filter.c',
+  'src/nostr_pointer.c',
+  'src/nostr_tag_list.c',
 )
-# Excluded from build (need rename to G-prefixed types/functions):
-#   'src/nostr_filter.c'   - NostrFilter collides with core NostrFilter
-#   'src/nostr_pointer.c'  - NostrPointer collides with core, uses stale API
-#   'src/nostr_tag_list.c' - nostr_tag_* functions duplicate core tag.c symbols
+# nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
 
-# Header files with matching source (safe for GIR scanning)
+# Header files (public API)
 nostr_glib_headers = files(
   'include/nostr-glib.h',
   'include/nostr-error.h',
@@ -155,10 +155,6 @@ nostr_glib_headers = files(
   'include/nostr_async.h',
   'include/nostr_query_batcher.h',
   'include/nostr_subscription_registry.h',
-)
-
-# Headers without matching source (excluded from GIR, installed for direct use)
-nostr_glib_extra_headers = files(
   'include/nostr_filter.h',
   'include/nostr_pointer.h',
   'include/nostr_tag_list.h',
@@ -228,8 +224,7 @@ pkg.generate(nostr_glib_lib,
   requires_private: ['openssl', 'libsecp256k1'])
 
 # ── Header installation ──────────────────────────────────────────────
-install_headers(nostr_glib_headers + nostr_glib_extra_headers,
-  subdir: 'nostr-glib-1.0')
+install_headers(nostr_glib_headers, subdir: 'nostr-glib-1.0')
 
 # ── Tests ─────────────────────────────────────────────────────────────
 if get_option('tests')
