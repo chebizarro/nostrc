@@ -545,8 +545,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="orientation">0</property>
                                         <property name="spacing">6</property>
                                         <child>
-                                          <object class="GtkImage">
+                                          <object class="GtkImage" id="img_new_notes_arrow">
                                             <property name="icon-name">go-up-symbolic</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkSpinner" id="spinner_new_notes">
+                                            <property name="visible">false</property>
+                                            <property name="spinning">true</property>
                                           </object>
                                         </child>
                                         <child>
