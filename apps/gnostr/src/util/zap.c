@@ -26,6 +26,104 @@ GQuark gnostr_zap_error_quark(void) {
   return g_quark_from_static_string("gnostr-zap-error");
 }
 
+/* ============== LNURL HTTP Resilience ============== */
+
+/* Timeout for LNURL HTTP requests (seconds) */
+#define LNURL_TIMEOUT_SECS        10
+/* Maximum retry attempts (total attempts = 1 + LNURL_MAX_RETRIES) */
+#define LNURL_MAX_RETRIES          2
+/* Base delay for exponential backoff (milliseconds): 1s, 2s, 4s */
+#define LNURL_BACKOFF_BASE_MS   1000
+
+/* Circuit breaker: trip after this many consecutive failures */
+#define CB_FAILURE_THRESHOLD       5
+/* Circuit breaker: cooldown before half-open probe (seconds) */
+#define CB_COOLDOWN_SECS          60
+
+typedef enum {
+  CB_CLOSED,
+  CB_OPEN,
+  CB_HALF_OPEN
+} CircuitState;
+
+typedef struct {
+  CircuitState state;
+  guint failure_count;
+  gint64 last_failure_time; /* monotonic seconds */
+} CircuitBreaker;
+
+/* Global registry keyed by domain */
+static GHashTable *circuit_breakers = NULL;
+
+static CircuitBreaker *
+get_circuit_breaker(const gchar *domain)
+{
+  if (!circuit_breakers) {
+    circuit_breakers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  }
+  CircuitBreaker *cb = g_hash_table_lookup(circuit_breakers, domain);
+  if (!cb) {
+    cb = g_new0(CircuitBreaker, 1);
+    cb->state = CB_CLOSED;
+    g_hash_table_insert(circuit_breakers, g_strdup(domain), cb);
+  }
+  return cb;
+}
+
+static gboolean
+circuit_breaker_allow_request(const gchar *domain)
+{
+  CircuitBreaker *cb = get_circuit_breaker(domain);
+  if (cb->state == CB_CLOSED) return TRUE;
+
+  gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
+  if (cb->state == CB_OPEN && (now - cb->last_failure_time) >= CB_COOLDOWN_SECS) {
+    cb->state = CB_HALF_OPEN;
+    return TRUE;
+  }
+
+  return cb->state == CB_HALF_OPEN;
+}
+
+static void
+circuit_breaker_record_success(const gchar *domain)
+{
+  CircuitBreaker *cb = get_circuit_breaker(domain);
+  cb->failure_count = 0;
+  cb->state = CB_CLOSED;
+}
+
+static void
+circuit_breaker_record_failure(const gchar *domain)
+{
+  CircuitBreaker *cb = get_circuit_breaker(domain);
+  cb->failure_count++;
+  cb->last_failure_time = g_get_monotonic_time() / G_USEC_PER_SEC;
+  if (cb->failure_count >= CB_FAILURE_THRESHOLD) {
+    cb->state = CB_OPEN;
+    g_debug("zap: circuit breaker OPEN for %s (%u consecutive failures)",
+            domain, cb->failure_count);
+  }
+}
+
+static gchar *
+extract_domain(const gchar *url)
+{
+  GUri *uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+  if (!uri) return NULL;
+  gchar *domain = g_strdup(g_uri_get_host(uri));
+  g_uri_unref(uri);
+  return domain;
+}
+
+/* Propagate user cancellation to per-request cancellable */
+static void
+on_user_cancelled(GCancellable *source, gpointer data)
+{
+  (void)source;
+  g_cancellable_cancel(G_CANCELLABLE(data));
+}
+
 /* ============== Memory Management ============== */
 
 void gnostr_lnurl_pay_info_free(GnostrLnurlPayInfo *info) {
@@ -87,31 +185,100 @@ gchar *gnostr_zap_lud16_to_lnurl(const gchar *lud16) {
 
 #ifdef HAVE_SOUP3
 
-/* Context for LNURL info fetch */
+/* Context for LNURL info fetch with retry support */
 typedef struct {
   GnostrLnurlInfoCallback callback;
   gpointer user_data;
   gchar *lud16;
+  gchar *url;
+  gchar *domain;
+  guint attempt;
+  guint timeout_source_id;
+  GCancellable *request_cancellable;
+  GCancellable *user_cancellable; /* not owned */
+  gulong cancel_handler_id;
 } LnurlFetchContext;
+
+static void do_lnurl_fetch(LnurlFetchContext *ctx);
 
 static void lnurl_fetch_ctx_free(LnurlFetchContext *ctx) {
   if (!ctx) return;
+  if (ctx->timeout_source_id > 0) {
+    g_source_remove(ctx->timeout_source_id);
+  }
+  if (ctx->cancel_handler_id && ctx->user_cancellable) {
+    g_cancellable_disconnect(ctx->user_cancellable, ctx->cancel_handler_id);
+  }
+  g_clear_object(&ctx->request_cancellable);
   g_free(ctx->lud16);
+  g_free(ctx->url);
+  g_free(ctx->domain);
   g_free(ctx);
+}
+
+static gboolean lnurl_timeout_cb(gpointer user_data) {
+  LnurlFetchContext *ctx = (LnurlFetchContext *)user_data;
+  ctx->timeout_source_id = 0;
+  g_debug("zap: LNURL request timed out for %s (attempt %u)", ctx->lud16, ctx->attempt + 1);
+  g_cancellable_cancel(ctx->request_cancellable);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean retry_lnurl_fetch_cb(gpointer user_data) {
+  LnurlFetchContext *ctx = (LnurlFetchContext *)user_data;
+  do_lnurl_fetch(ctx);
+  return G_SOURCE_REMOVE;
 }
 
 static void on_lnurl_info_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   LnurlFetchContext *ctx = (LnurlFetchContext *)user_data;
   GError *error = NULL;
 
+  /* Cancel timeout if still pending */
+  if (ctx->timeout_source_id > 0) {
+    g_source_remove(ctx->timeout_source_id);
+    ctx->timeout_source_id = 0;
+  }
+
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
   if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("zap: LNURL fetch error for %s: %s", ctx->lud16, error->message);
+    gboolean user_cancelled = ctx->user_cancellable &&
+                               g_cancellable_is_cancelled(ctx->user_cancellable);
+
+    if (user_cancelled) {
+      /* User-initiated cancellation - propagate without retry */
+      if (ctx->callback) {
+        ctx->callback(NULL, error, ctx->user_data);
+      }
+      g_clear_error(&error);
+      lnurl_fetch_ctx_free(ctx);
+      return;
     }
+
+    /* Network error or timeout - maybe retry */
+    circuit_breaker_record_failure(ctx->domain);
+
+    if (ctx->attempt < LNURL_MAX_RETRIES) {
+      ctx->attempt++;
+      guint delay = LNURL_BACKOFF_BASE_MS * (1 << (ctx->attempt - 1));
+      g_debug("zap: retrying LNURL fetch for %s (attempt %u/%u, delay %ums)",
+              ctx->lud16, ctx->attempt + 1, LNURL_MAX_RETRIES + 1, delay);
+      g_clear_error(&error);
+      g_timeout_add(delay, retry_lnurl_fetch_cb, ctx);
+      return;
+    }
+
+    /* Final failure after all retries */
+    g_debug("zap: LNURL fetch failed for %s after %u attempts: %s",
+            ctx->lud16, ctx->attempt + 1, error->message);
+
     if (ctx->callback) {
-      ctx->callback(NULL, error, ctx->user_data);
+      GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_TIMEOUT,
+                                "LNURL endpoint timed out after %u attempts. Try again later.",
+                                ctx->attempt + 1);
+      ctx->callback(NULL, err, ctx->user_data);
+      g_error_free(err);
     }
     g_clear_error(&error);
     lnurl_fetch_ctx_free(ctx);
@@ -210,6 +377,8 @@ static void on_lnurl_info_http_done(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
+  circuit_breaker_record_success(ctx->domain);
+
   g_debug("zap: LNURL info fetched - callback=%s, allows_nostr=%d, nostr_pubkey=%.16s...",
           info->callback, info->allows_nostr, info->nostr_pubkey ? info->nostr_pubkey : "none");
 
@@ -220,6 +389,50 @@ static void on_lnurl_info_http_done(GObject *source, GAsyncResult *res, gpointer
   }
 
   lnurl_fetch_ctx_free(ctx);
+}
+
+/* Send (or re-send on retry) the LNURL HTTP request */
+static void
+do_lnurl_fetch(LnurlFetchContext *ctx)
+{
+  /* Fresh per-request cancellable for this attempt */
+  g_clear_object(&ctx->request_cancellable);
+  ctx->request_cancellable = g_cancellable_new();
+
+  /* Propagate user cancellation */
+  if (ctx->cancel_handler_id && ctx->user_cancellable) {
+    g_cancellable_disconnect(ctx->user_cancellable, ctx->cancel_handler_id);
+    ctx->cancel_handler_id = 0;
+  }
+  if (ctx->user_cancellable) {
+    ctx->cancel_handler_id = g_cancellable_connect(
+        ctx->user_cancellable, G_CALLBACK(on_user_cancelled),
+        ctx->request_cancellable, NULL);
+  }
+
+  SoupSession *session = gnostr_get_shared_soup_session();
+  SoupMessage *msg = soup_message_new("GET", ctx->url);
+
+  if (!msg) {
+    if (ctx->callback) {
+      GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVALID_LNURL,
+                                "Failed to create HTTP request");
+      ctx->callback(NULL, err, ctx->user_data);
+      g_error_free(err);
+    }
+    lnurl_fetch_ctx_free(ctx);
+    return;
+  }
+
+  soup_message_headers_append(soup_message_get_request_headers(msg), "Accept", "application/json");
+
+  /* Start per-request timeout */
+  ctx->timeout_source_id = g_timeout_add_seconds(LNURL_TIMEOUT_SECS, lnurl_timeout_cb, ctx);
+
+  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
+                                   ctx->request_cancellable,
+                                   on_lnurl_info_http_done, ctx);
+  g_object_unref(msg);
 }
 
 void gnostr_zap_fetch_lnurl_info_async(const gchar *lud16,
@@ -247,61 +460,92 @@ void gnostr_zap_fetch_lnurl_info_async(const gchar *lud16,
     return;
   }
 
+  /* Check circuit breaker before making request */
+  gchar *domain = extract_domain(url);
+  if (domain && !circuit_breaker_allow_request(domain)) {
+    if (callback) {
+      GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_CIRCUIT_OPEN,
+                                "LNURL endpoint for %s is temporarily unavailable. Try again later.",
+                                lud16);
+      callback(NULL, err, user_data);
+      g_error_free(err);
+    }
+    g_free(domain);
+    g_free(url);
+    return;
+  }
+
   g_debug("zap: fetching LNURL info from %s", url);
 
   LnurlFetchContext *ctx = g_new0(LnurlFetchContext, 1);
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->lud16 = g_strdup(lud16);
+  ctx->url = url; /* takes ownership */
+  ctx->domain = domain; /* takes ownership */
+  ctx->user_cancellable = cancellable;
 
-  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
-  SoupSession *session = gnostr_get_shared_soup_session();
-
-  SoupMessage *msg = soup_message_new("GET", url);
-  g_free(url);
-
-  if (!msg) {
-    if (callback) {
-      GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVALID_LNURL,
-                                "Failed to create HTTP request");
-      callback(NULL, err, user_data);
-      g_error_free(err);
-    }
-    lnurl_fetch_ctx_free(ctx);
-    return;
-  }
-
-  soup_message_headers_append(soup_message_get_request_headers(msg), "Accept", "application/json");
-
-  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, cancellable,
-                                   on_lnurl_info_http_done, ctx);
-
-  g_object_unref(msg);
-  /* Note: Don't unref shared session - we don't own it */
+  do_lnurl_fetch(ctx);
 }
 
-/* Context for invoice request */
+/* Context for invoice request with timeout */
 typedef struct {
   GnostrZapInvoiceCallback callback;
   gpointer user_data;
+  guint timeout_source_id;
+  GCancellable *request_cancellable;
+  GCancellable *user_cancellable; /* not owned */
+  gulong cancel_handler_id;
 } InvoiceRequestContext;
 
 static void invoice_request_ctx_free(InvoiceRequestContext *ctx) {
+  if (!ctx) return;
+  if (ctx->timeout_source_id > 0) {
+    g_source_remove(ctx->timeout_source_id);
+  }
+  if (ctx->cancel_handler_id && ctx->user_cancellable) {
+    g_cancellable_disconnect(ctx->user_cancellable, ctx->cancel_handler_id);
+  }
+  g_clear_object(&ctx->request_cancellable);
   g_free(ctx);
+}
+
+static gboolean invoice_timeout_cb(gpointer user_data) {
+  InvoiceRequestContext *ctx = (InvoiceRequestContext *)user_data;
+  ctx->timeout_source_id = 0;
+  g_debug("zap: invoice request timed out");
+  g_cancellable_cancel(ctx->request_cancellable);
+  return G_SOURCE_REMOVE;
 }
 
 static void on_invoice_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   InvoiceRequestContext *ctx = (InvoiceRequestContext *)user_data;
   GError *error = NULL;
 
+  /* Cancel timeout if still pending */
+  if (ctx->timeout_source_id > 0) {
+    g_source_remove(ctx->timeout_source_id);
+    ctx->timeout_source_id = 0;
+  }
+
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
   if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    gboolean user_cancelled = ctx->user_cancellable &&
+                               g_cancellable_is_cancelled(ctx->user_cancellable);
+
+    if (user_cancelled) {
+      if (ctx->callback) {
+        ctx->callback(NULL, error, ctx->user_data);
+      }
+    } else {
       g_debug("zap: invoice request error: %s", error->message);
-    }
-    if (ctx->callback) {
-      ctx->callback(NULL, error, ctx->user_data);
+      if (ctx->callback) {
+        GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_TIMEOUT,
+                                  "Invoice request timed out. Try again.");
+        ctx->callback(NULL, err, ctx->user_data);
+        g_error_free(err);
+      }
     }
     g_clear_error(&error);
     invoice_request_ctx_free(ctx);
@@ -431,8 +675,16 @@ void gnostr_zap_request_invoice_async(const GnostrLnurlPayInfo *lnurl_info,
   InvoiceRequestContext *ctx = g_new0(InvoiceRequestContext, 1);
   ctx->callback = callback;
   ctx->user_data = user_data;
+  ctx->user_cancellable = cancellable;
+  ctx->request_cancellable = g_cancellable_new();
 
-  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
+  /* Propagate user cancellation */
+  if (cancellable) {
+    ctx->cancel_handler_id = g_cancellable_connect(
+        cancellable, G_CALLBACK(on_user_cancelled),
+        ctx->request_cancellable, NULL);
+  }
+
   SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", url);
@@ -451,11 +703,14 @@ void gnostr_zap_request_invoice_async(const GnostrLnurlPayInfo *lnurl_info,
 
   soup_message_headers_append(soup_message_get_request_headers(msg), "Accept", "application/json");
 
-  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, cancellable,
+  /* Start per-request timeout */
+  ctx->timeout_source_id = g_timeout_add_seconds(LNURL_TIMEOUT_SECS, invoice_timeout_cb, ctx);
+
+  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
+                                   ctx->request_cancellable,
                                    on_invoice_http_done, ctx);
 
   g_object_unref(msg);
-  /* Note: Don't unref shared session - we don't own it */
 }
 
 #else /* !HAVE_SOUP3 */
