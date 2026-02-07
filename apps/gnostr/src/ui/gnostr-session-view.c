@@ -112,8 +112,11 @@ struct _GnostrSessionView {
 
   GtkRevealer *new_notes_revealer;
   GtkButton *btn_new_notes;
+  GtkImage *img_new_notes_arrow;
+  GtkSpinner *spinner_new_notes;
   GtkLabel *lbl_new_notes_count;
   guint pending_new_notes_count;  /* Track pending count for re-showing toast */
+  gboolean new_notes_loading;     /* TRUE while loading new notes */
 
   AdwOverlaySplitView *panel_split;
   GtkBox *panel_container;
@@ -713,6 +716,14 @@ static void on_btn_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
   if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+
+  /* Show spinner, hide arrow while loading new notes */
+  self->new_notes_loading = TRUE;
+  if (self->img_new_notes_arrow)
+    gtk_widget_set_visible(GTK_WIDGET(self->img_new_notes_arrow), FALSE);
+  if (self->spinner_new_notes)
+    gtk_widget_set_visible(GTK_WIDGET(self->spinner_new_notes), TRUE);
+
   g_signal_emit(self, signals[SIGNAL_NEW_NOTES_CLICKED], 0);
 }
 
@@ -994,6 +1005,8 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, new_notes_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_new_notes);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, img_new_notes_arrow);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, spinner_new_notes);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, lbl_new_notes_count);
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, panel_split);
@@ -1344,6 +1357,14 @@ void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint coun
       gtk_revealer_set_reveal_child(self->new_notes_revealer, on_timeline);
     }
   } else {
+    /* Reset loading state - show arrow, hide spinner */
+    if (self->new_notes_loading) {
+      self->new_notes_loading = FALSE;
+      if (self->img_new_notes_arrow)
+        gtk_widget_set_visible(GTK_WIDGET(self->img_new_notes_arrow), TRUE);
+      if (self->spinner_new_notes)
+        gtk_widget_set_visible(GTK_WIDGET(self->spinner_new_notes), FALSE);
+    }
     if (self->new_notes_revealer) {
       gtk_revealer_set_reveal_child(self->new_notes_revealer, FALSE);
     }

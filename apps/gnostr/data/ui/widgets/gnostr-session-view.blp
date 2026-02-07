@@ -496,8 +496,13 @@ template $GnostrSessionView: Adw.Bin {
                                         orientation: horizontal;
                                         spacing: 6;
 
-                                        Image {
+                                        Image img_new_notes_arrow {
                                             icon-name: "go-up-symbolic";
+                                        }
+
+                                        Spinner spinner_new_notes {
+                                            visible: false;
+                                            spinning: true;
                                         }
 
                                         Label lbl_new_notes_count {
