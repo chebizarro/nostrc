@@ -32,6 +32,18 @@ libnostr_dep = declare_dependency(
   dependencies: libnostr_static,
   include_directories: libnostr_inc)
 
+# ── libnostr_json (Jansson backend, pre-built by CMake) ──────────────
+jansson_dep = dependency('jansson')
+libnostr_json_shared = cc.find_library('nostr_json',
+  dirs: [cmake_build_dir / 'libjson'],
+  static: false)
+libnostr_json_inc = include_directories(
+  '../libjson/include',
+)
+libnostr_json_dep = declare_dependency(
+  dependencies: [libnostr_json_shared, jansson_dep],
+  include_directories: libnostr_json_inc)
+
 # ── libgo (pre-built by CMake) ───────────────────────────────────────
 # liblibgo.a has channels, contexts, select, etc.
 # libgo_fiber.a has the fiber/coroutine runtime
@@ -157,6 +169,7 @@ nostr_glib_sources = files(
   'src/nostr_query_batcher.c',
   'src/nostr_subscription_registry.c',
   'src/nostr_filter.c',
+  'src/nostr_json.c',
   'src/nostr_pointer.c',
   'src/nostr_nip19.c',
   'src/nostr_tag_list.c',
@@ -187,6 +200,7 @@ nostr_glib_headers = files(
   'include/nostr_query_batcher.h',
   'include/nostr_subscription_registry.h',
   'include/nostr_filter.h',
+  'include/nostr_json.h',
   'include/nostr_pointer.h',
   'include/nostr_nip19.h',
   'include/nostr_tag_list.h',
@@ -205,6 +219,7 @@ nostr_glib_deps = [
   gobject_dep,
   gio_dep,
   libnostr_dep,
+  libnostr_json_dep,
   libgo_dep,
   nip04_dep,
   nip06_dep,

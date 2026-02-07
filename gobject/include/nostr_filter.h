@@ -2,6 +2,7 @@
 #define GNOSTR_FILTER_H
 
 #include <glib-object.h>
+#include "nostr-error.h"
 
 G_BEGIN_DECLS
 
@@ -36,6 +37,27 @@ gint64         gnostr_filter_get_until(GNostrFilter *self);
 
 void           gnostr_filter_set_limit(GNostrFilter *self, gint limit);
 gint           gnostr_filter_get_limit(GNostrFilter *self);
+
+/**
+ * gnostr_filter_new_from_json:
+ * @json: a JSON string representing a Nostr filter
+ * @error: (nullable): return location for a #GError
+ *
+ * Creates a new GNostrFilter by deserializing a JSON string.
+ *
+ * Returns: (transfer full) (nullable): a new #GNostrFilter, or %NULL on error
+ */
+GNostrFilter *gnostr_filter_new_from_json(const gchar *json, GError **error);
+
+/**
+ * gnostr_filter_to_json:
+ * @self: a #GNostrFilter
+ *
+ * Serializes the filter to a JSON string.
+ *
+ * Returns: (transfer full) (nullable): a newly allocated JSON string
+ */
+gchar *gnostr_filter_to_json(GNostrFilter *self);
 
 G_END_DECLS
 

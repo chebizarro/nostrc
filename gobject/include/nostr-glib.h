@@ -27,6 +27,7 @@
 #include "nostr_pointer.h"
 #include "nostr_nip19.h"
 #include "nostr_filter.h"
+#include "nostr_json.h"
 #include "nostr_tag_list.h"
 #include "nostr_nip49.h"
 #include "nostr_bip39.h"
