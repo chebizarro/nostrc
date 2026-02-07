@@ -3031,8 +3031,8 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
           else if (is_video_url(url)) {
             GnostrVideoPlayer *player = gnostr_video_player_new();
             gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
-            /* Set minimum height only - let width be flexible */
-            gtk_widget_set_size_request(GTK_WIDGET(player), -1, 300);
+            /* Constrain width to prevent window expansion (608 = card width - margins) */
+            gtk_widget_set_size_request(GTK_WIDGET(player), 608, 300);
             gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
             gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
 
@@ -5169,9 +5169,9 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
     self->video_overlay = gtk_overlay_new();
     gtk_widget_add_css_class(self->video_overlay, "video-thumbnail-overlay");
 
-    /* Calculate height based on orientation */
+    /* Calculate height based on orientation. Constrain width to 608 (card - margins) */
     int thumb_height = is_vertical ? 400 : 220;
-    gtk_widget_set_size_request(self->video_overlay, -1, thumb_height);
+    gtk_widget_set_size_request(self->video_overlay, 608, thumb_height);
 
     /* Create thumbnail picture */
     self->video_thumb_picture = gtk_picture_new();
@@ -5227,7 +5227,8 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
   if (!self->video_player) {
     self->video_player = GTK_WIDGET(gnostr_video_player_new());
     int player_height = is_vertical ? 400 : 300;
-    gtk_widget_set_size_request(self->video_player, -1, player_height);
+    /* Constrain width to 608 (card - margins) to prevent window expansion */
+    gtk_widget_set_size_request(self->video_player, 608, player_height);
     gtk_widget_add_css_class(self->video_player, "note-media-video");
     gtk_widget_set_visible(self->video_player, FALSE);
 
