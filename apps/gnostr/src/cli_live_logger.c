@@ -61,8 +61,11 @@ static void on_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_da
               storage_ndb_end_query(txn);
             }
           }
-          /* retry readback more times to account for async indexing */
-          for (int attempt = 0; attempt < 10; attempt++) {
+          /* nostrc-3gd6: Reduced from 10×250ms polling loop (2.5s max blocking) to
+           * 3×200ms (600ms max). Profile indexing is async; a future improvement
+           * would emit a storage event via EventBus when indexing completes. */
+          for (int attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) g_usleep(200000); /* 200ms between retries only */
             void *txn = NULL;
             if (storage_ndb_begin_query(&txn) == 0) {
               char *pjson = NULL; int plen = 0;
@@ -72,7 +75,6 @@ static void on_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_da
               if (pjson) { free(pjson); }
               if (pjson || prc == 0) break;
             }
-            g_usleep(1000 * 250); /* 250ms */
           }
         }
       }

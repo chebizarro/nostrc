@@ -9,10 +9,12 @@
 #include "nostr-event.h"
 #include "json.h"
 #include "channel.h"
+#include "select.h"
 #include "context.h"
 #include "error.h"
 #include "go.h"
 #include "wait_group.h"
+#include <nsync_time.h>
 #include "hash_map.h"
 #include "nostr/metrics.h"
 #include <glib.h>
@@ -466,27 +468,42 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
             g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
         }
 
-        /* Drain page */
+        /* Drain page - nostrc-3gd6: replaced 1ms sleep with go_select_timeout */
         gboolean page_has_new = FALSE;
         gint64 min_created_at = -1;
-        /* CRITICAL FIX: Set free_func so NostrEvent objects are freed when batch is unreffed */
         GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
         for (;;) {
-            gboolean any = FALSE;
+            /* Build select cases for event+eose channels */
+            {
+                size_t max_cases = subs->len * 2;
+                GoSelectCase *cases = g_newa(GoSelectCase, max_cases);
+                size_t nc = 0;
+                for (guint i = 0; i < subs->len; i++) {
+                    SubItem *it = (SubItem *)subs->pdata[i];
+                    if (!it || !it->sub) continue;
+                    GoChannel *ch = nostr_subscription_get_events_channel(it->sub);
+                    if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
+                    if (!it->eosed) {
+                        ch = nostr_subscription_get_eose_channel(it->sub);
+                        if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
+                    }
+                }
+                if (nc > 0) go_select_timeout(cases, nc, 50);
+            }
+
+            /* Drain all channels */
             for (guint i = 0; i < subs->len; i++) {
                 SubItem *it = (SubItem *)subs->pdata[i];
                 if (!it || !it->sub) continue;
                 void *msg = NULL;
                 GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
                 while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-                    any = TRUE;
                     if (msg) {
                         NostrEvent *ev = (NostrEvent*)msg;
                         char *eid = nostr_event_get_id(ev);
                         if (eid && *eid && dedup_set_seen(seen, eid)) {
                             nostr_event_free(ev);
                         } else {
-                            /* nostrc-7typ: Emit to EventBus */
                             event_bus_emit_event(ev);
                             page_has_new = TRUE;
                             int64_t ca = nostr_event_get_created_at(ev);
@@ -495,14 +512,13 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                             }
                             g_ptr_array_add(batch, ev);
                         }
-                        free(eid);  /* nostr_event_get_id returns newly allocated string */
+                        free(eid);
                     }
                     msg = NULL;
                 }
                 GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
                 if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                     it->eosed = TRUE;
-                    /* nostrc-7typ: Emit EOSE to EventBus */
                     const char *sid = nostr_subscription_get_id(it->sub);
                     event_bus_emit_eose(sid);
                 }
@@ -515,7 +531,6 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                 if (it && !it->eosed) { all_eosed = FALSE; break; }
             }
             if (all_eosed || (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) break;
-            if (!any) g_usleep(1000); /* 1ms */
         }
 
         /* Emit sorted batch if any (nostrc-bhm) */
@@ -696,36 +711,49 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     gboolean bootstrap_emitted = FALSE;
     guint max_batch_size = get_batch_size();
 
+    /* nostrc-3gd6: Replaced 5ms adaptive sleep with go_select_timeout.
+     * Blocks until any subscription channel is ready, then drains. */
     while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
-        /* CRITICAL FIX: Set free_func so NostrEvent objects are freed when batch is unreffed.
-         * Without this, every event leaks memory causing unbounded growth. */
-        GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
-        gboolean any = FALSE;
+        /* Block until any event channel is ready (50ms timeout for cancellation checks) */
+        {
+            size_t max_cases = subs->len * 2;
+            GoSelectCase *cases = g_newa(GoSelectCase, max_cases);
+            size_t nc = 0;
+            for (guint i = 0; i < subs->len; i++) {
+                SubItem *it = (SubItem *)subs->pdata[i];
+                if (!it || !it->sub) continue;
+                GoChannel *ch = nostr_subscription_get_events_channel(it->sub);
+                if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
+                if (!it->eosed) {
+                    ch = nostr_subscription_get_eose_channel(it->sub);
+                    if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
+                }
+            }
+            if (nc > 0) go_select_timeout(cases, nc, 50);
+        }
 
-        /* Collect from all subscriptions non-blocking, up to max_batch_size events */
+        GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
+
+        /* Drain all subscriptions non-blocking, up to max_batch_size events */
         for (guint i = 0; i < subs->len && batch->len < max_batch_size; i++) {
             SubItem *it = (SubItem *)subs->pdata[i];
             if (!it || !it->sub) continue;
             GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
             void *msg = NULL;
 
-            /* Drain events up to batch limit */
             while (batch->len < max_batch_size &&
                    ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-                any = TRUE;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent*)msg;
                     char *eid = nostr_event_get_id(ev);
                     if (eid && *eid && dedup_set_seen(dedup, eid)) {
-                        /* duplicate: drop */
                         nostr_event_free(ev);
                     } else {
-                        /* nostrc-7typ: Emit to EventBus before adding to batch */
                         event_bus_emit_event(ev);
                         g_ptr_array_add(batch, ev);
                         it->emitted++;
                     }
-                    free(eid); /* nostr_event_get_id returns newly allocated string */
+                    free(eid);
                 }
                 msg = NULL;
             }
@@ -741,7 +769,6 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                 g_message("[EOSE] relay=%s sid=%s latency=%.1fms",
                           it->url_copy ? it->url_copy : "<unknown>", sid ? sid : "null",
                           it->eose_us >= 0 ? it->eose_us / 1000.0 : -1.0);
-                /* nostrc-7typ: Emit EOSE to EventBus */
                 event_bus_emit_eose(sid);
             }
         }
@@ -752,7 +779,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         } else {
             g_ptr_array_unref(batch);
         }
-        /* If all subs have signaled EOSE once, mark bootstrap complete (log only once) */
+        /* Mark bootstrap complete when all relays have sent EOSE (log only once) */
         if (!bootstrap_emitted && subs->len > 0) {
             gboolean all_eosed = TRUE;
             for (guint i = 0; i < subs->len; i++) {
@@ -764,8 +791,6 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                 g_debug("simple_pool: bootstrap complete (EOSE from all relays)");
             }
         }
-        /* Adaptive sleep: if nothing was read, back off a bit; otherwise, immediately iterate */
-        if (!any) g_usleep(1000 * 5); /* 5ms idle sleep to reduce CPU */
     }
 
     /* Print per-subscription stats - use url_copy since relay may be freed by main thread */
@@ -1021,13 +1046,17 @@ static gpointer query_single_thread(gpointer user_data) {
          * 3. Connection dropped (websocket closed/failed)
          * 4. Cancellation requested
          * 5. Safety timeout reached (10s per relay) */
+        /* nostrc-3gd6: Replaced try_receive + 10ms sleep loop with go_select_timeout.
+         * Blocks until any channel (events/eose/closed) is ready or 100ms timeout,
+         * then drains all available data. Reduces latency from ~10ms to ~1ms. */
         bool done = false;
         guint events_received = 0;
-        guint wait_iterations = 0;
-        const guint max_wait_iterations = 1000;  /* 10 seconds at 10ms per iteration */
         GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
         GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
         GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
+
+        guint64 query_start = g_get_monotonic_time();
+        const guint64 query_timeout_us = 10000000; /* 10s safety timeout */
 
         while (!done) {
             /* Check cancellation */
@@ -1042,13 +1071,23 @@ static gpointer query_single_thread(gpointer user_data) {
                 break;
             }
 
-            /* Safety timeout to prevent infinite waiting if relay never sends EOSE */
-            if (wait_iterations++ >= max_wait_iterations) {
+            /* Safety timeout */
+            if ((g_get_monotonic_time() - query_start) > query_timeout_us) {
                 g_debug("query_single: timeout waiting for EOSE from %s after %u events", url, events_received);
                 break;
             }
 
-            /* Drain all available events first */
+            /* Block until any channel is ready (100ms timeout for periodic checks) */
+            {
+                GoSelectCase cases[3];
+                size_t nc = 0;
+                if (ch_events) { cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_events, .recv_buf = NULL}; }
+                if (ch_eose) { cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_eose, .recv_buf = NULL}; }
+                if (ch_closed) { cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_closed, .recv_buf = NULL}; }
+                if (nc > 0) go_select_timeout(cases, nc, 100);
+            }
+
+            /* Drain all available events */
             NostrEvent *evt = NULL;
             GPtrArray *batch = ctx->stream_events ?
                 g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free) : NULL;
@@ -1058,10 +1097,8 @@ static gpointer query_single_thread(gpointer user_data) {
                 /* nostrc-7typ: Emit to EventBus */
                 event_bus_emit_event(evt);
                 if (ctx->stream_events && batch) {
-                    /* Streaming mode: collect events for batch emission */
                     g_ptr_array_add(batch, evt);
                 } else {
-                    /* Non-streaming mode: serialize to JSON for results array */
                     char *json = nostr_event_serialize(evt);
                     if (json) {
                         g_ptr_array_add(ctx->results, json);
@@ -1074,7 +1111,7 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Emit batch via "events" signal if streaming and we have events */
             if (ctx->stream_events && batch && batch->len > 0) {
                 emit_batch_sorted(ctx->self_obj, batch);
-                batch = NULL;  /* Ownership transferred to emit_batch_sorted */
+                batch = NULL;
             } else if (batch) {
                 g_ptr_array_unref(batch);
             }
@@ -1082,7 +1119,6 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Check for EOSE (normal completion) */
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 g_debug("query_single: EOSE from %s with %u events", url, events_received);
-                /* nostrc-7typ: Emit EOSE to EventBus */
                 event_bus_emit_eose(sid);
                 done = true;
                 break;
@@ -1091,13 +1127,9 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Check for CLOSED (relay closed subscription) */
             if (ch_closed && go_channel_try_receive(ch_closed, NULL) == 0) {
                 g_debug("query_single: subscription closed by %s after %u events", url, events_received);
-                /* nostrc-7typ: Emit CLOSED as notice to EventBus */
                 event_bus_emit_closed(url, sid, NULL);
                 break;
             }
-
-            /* Small sleep to prevent busy waiting */
-            g_usleep(10000);  /* 10ms */
         }
 
         // Cleanup subscription (but NOT relay if from pool)
@@ -1738,37 +1770,33 @@ static void *fetch_profiles_goroutine(void *arg) {
                   ctx->subs->len, ctx->url_count);
     }
     
-    /* Wait for all subscriptions to fire (with timeout to prevent infinite hang) */
+    /* Wait for all subscriptions to fire (with timeout to prevent infinite hang).
+     * nostrc-3gd6: Replaced polling loop with proper blocking nsync_cv_wait_with_deadline.
+     * Previously polled atomic counter every 10ms; now blocks until signaled or deadline. */
     g_debug("[GOROUTINE] Waiting for subscriptions to fire...");
-    
-    /* Poll WaitGroup with timeout instead of blocking forever */
-    guint64 wait_start = g_get_monotonic_time();
-    const guint64 FIRE_TIMEOUT_US = 3000000; // 3 seconds max wait for subscriptions to fire
-    
-    while (TRUE) {
-        /* Check if WaitGroup counter is zero (all done) */
+
+    {
         GoWaitGroup *wg = (GoWaitGroup*)ctx->wg;
-        int count = atomic_load(&wg->counter);
-        
-        if (count == 0) {
-            g_debug("[GOROUTINE] All subscriptions fired, polling for events");
-            break;
+        nsync_time deadline = nsync_time_add(nsync_time_now(), nsync_time_ms(3000));
+
+        nsync_mu_lock(&wg->mutex);
+        while (atomic_load(&wg->counter) > 0) {
+            int rc = nsync_cv_wait_with_deadline(&wg->cond, &wg->mutex, deadline, NULL);
+            if (rc != 0) {
+                /* ETIMEDOUT */
+                int count = atomic_load(&wg->counter);
+                g_warning("[GOROUTINE] Timeout waiting for subscriptions to fire (counter=%d), proceeding anyway", count);
+                break;
+            }
         }
-        
-        /* Check timeout */
-        guint64 now = g_get_monotonic_time();
-        if ((now - wait_start) > FIRE_TIMEOUT_US) {
-            g_warning("[GOROUTINE] Timeout waiting for subscriptions to fire (counter=%d), proceeding anyway", count);
-            break;
+        if (atomic_load(&wg->counter) == 0) {
+            g_debug("[GOROUTINE] All subscriptions fired, proceeding to event collection");
         }
-        
-        /* Sleep briefly */
-        g_usleep(10000); // 10ms
+        nsync_mu_unlock(&wg->mutex);
     }
     
-    /* Poll for events with timeout */
+    /* Collect events with timeout */
     guint64 t_start = g_get_monotonic_time();
-    guint64 t_last_activity = t_start;
     
     /* Timeout configuration:
      * - HARD: Absolute maximum time to wait (configurable via env var)
@@ -1785,28 +1813,52 @@ static void *fetch_profiles_goroutine(void *arg) {
         }
     }
     
+    /* nostrc-3gd6: Replaced try_receive + 10ms sleep loop with go_select_timeout.
+     * Build a select case array from all subscription channels, block until any
+     * channel is ready (or 100ms timeout for cancellation checks), then drain all. */
     while (TRUE) {
         guint64 now = g_get_monotonic_time();
-        gboolean any_activity = FALSE;
-        
+
         /* Check cancellation */
         if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
             g_debug("[GOROUTINE] Cancelled");
             break;
         }
-        
-        /* Poll all subscriptions */
+
+        /* Build select cases from all active subscription channels */
+        {
+            size_t max_cases = ctx->subs->len * 3;
+            GoSelectCase *cases = g_newa(GoSelectCase, max_cases);
+            size_t nc = 0;
+
+            for (guint i = 0; i < ctx->subs->len; i++) {
+                SubItem *item = (SubItem*)ctx->subs->pdata[i];
+                if (!item || !item->sub) continue;
+                GoChannel *ch;
+                ch = nostr_subscription_get_events_channel(item->sub);
+                if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
+                if (!item->eosed) {
+                    ch = nostr_subscription_get_eose_channel(item->sub);
+                    if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
+                    ch = nostr_subscription_get_closed_channel(item->sub);
+                    if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
+                }
+            }
+
+            /* Block until any channel ready or 100ms timeout */
+            if (nc > 0) go_select_timeout(cases, nc, 100);
+        }
+
+        /* Drain all subscription channels (non-blocking) */
         for (guint i = 0; i < ctx->subs->len; i++) {
             SubItem *item = (SubItem*)ctx->subs->pdata[i];
             if (!item || !item->sub) continue;
-            
+
             /* Drain events */
             GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
             void *msg = NULL;
-            
-            while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-                any_activity = TRUE;
 
+            while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
                 if (msg) {
                     NostrEvent *ev = (NostrEvent*)msg;
                     char *eid = nostr_event_get_id(ev);
@@ -1816,7 +1868,6 @@ static void *fetch_profiles_goroutine(void *arg) {
                               eid ? eid : "(null)", pk ? pk : "(null)");
 
                     if (eid && *eid && !dedup_set_seen((DedupSet*)ctx->dedup, eid)) {
-                        /* nostrc-7typ: Emit to EventBus */
                         event_bus_emit_event(ev);
                         char *json = nostr_event_serialize(ev);
                         if (json) {
@@ -1828,93 +1879,67 @@ static void *fetch_profiles_goroutine(void *arg) {
                             g_debug("[GOROUTINE] Added profile (total=%u)", total);
                         }
                     }
-                    free(eid);  /* nostr_event_get_id returns newly allocated string */
+                    free(eid);
                     nostr_event_free(ev);
-                    any_activity = TRUE;
                 }
                 msg = NULL;
             }
 
-            /* Check CLOSED (relay rejected/killed subscription) */
+            /* Check CLOSED */
             if (!item->eosed) {
                 GoChannel *ch_closed = nostr_subscription_get_closed_channel(item->sub);
                 char *closed_msg = NULL;
                 if (ch_closed && go_channel_try_receive(ch_closed, (void**)&closed_msg) == 0) {
                     g_warning("[GOROUTINE] CLOSED received from %s: %s",
                               item->relay_url, closed_msg ? closed_msg : "(no reason)");
-                    /* nostrc-7typ: Emit CLOSED as notice to EventBus */
                     const char *sid = nostr_subscription_get_id(item->sub);
                     event_bus_emit_closed(item->relay_url, sid, closed_msg);
-                    /* Mark as EOSED so we don't wait for it */
                     item->eosed = TRUE;
-                    any_activity = TRUE;
                     if (closed_msg) g_free(closed_msg);
                 }
             }
 
-            /* Check EOSE (non-blocking) - prioritize this check */
+            /* Check EOSE */
             if (!item->eosed) {
                 GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
                 if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                     item->eosed = TRUE;
-                    guint eosed_count = 0;
-                    for (guint i = 0; i < ctx->subs->len; i++) {
-                        SubItem *it = (SubItem*)ctx->subs->pdata[i];
-                        if (it && it->sub && it->eosed) eosed_count++;
-                    }
                     const char *sid = nostr_subscription_get_id(item->sub);
                     g_message("[EOSE] relay=%s sid=%s",
                               item->relay_url ? item->relay_url : "(null)",
                               sid ? sid : "null");
-                    /* nostrc-7typ: Emit EOSE to EventBus */
                     event_bus_emit_eose(sid);
-                    any_activity = TRUE;
                 }
             }
         }
-        
-        /* Check if all SUCCESSFULLY FIRED relays have sent EOSE
-         * Note: Failed subscriptions will have NULL sub pointer */
+
+        /* Check if all FIRED relays have sent EOSE */
         guint eosed_count = 0;
         guint fired_count = 0;
         for (guint i = 0; i < ctx->subs->len; i++) {
             SubItem *item = (SubItem*)ctx->subs->pdata[i];
-            if (item && item->sub) {  /* Only count subscriptions that fired successfully */
+            if (item && item->sub) {
                 fired_count++;
                 if (item->eosed) eosed_count++;
             }
         }
-        
-        /* Exit if all FIRED subscriptions have sent EOSE (ignore failed ones) */
+
         if (fired_count > 0 && eosed_count == fired_count) {
-            g_debug("[GOROUTINE] All %u fired relays sent EOSE (out of %u total), exiting", 
+            g_debug("[GOROUTINE] All %u fired relays sent EOSE (out of %u total), exiting",
                       eosed_count, ctx->subs->len);
             break;
         }
-        
-        /* Safety: If no subscriptions fired at all, exit after 1 second */
+
         if (fired_count == 0 && (now - t_start) > 1000000) {
             g_warning("[GOROUTINE] No subscriptions fired successfully, giving up");
             break;
         }
-        
-        if (any_activity) {
-            t_last_activity = now;
-        }
-        
-        /* Check timeouts */
-        guint64 total_elapsed = now - t_start;
 
-        /* Only use hard timeout - no inactivity timeout since EOSE can be delayed
-         * due to message processing backlog */
-        if (HARD_TIMEOUT_US > 0 && total_elapsed > HARD_TIMEOUT_US) {
-            g_warning("[GOROUTINE] Hard timeout after %lums - some relays may not have sent EOSE (eosed=%u/%u)", 
-                      (unsigned long)(total_elapsed / 1000), eosed_count, fired_count);
+        if (HARD_TIMEOUT_US > 0 && (now - t_start) > HARD_TIMEOUT_US) {
+            g_warning("[GOROUTINE] Hard timeout after %lums - some relays may not have sent EOSE (eosed=%u/%u)",
+                      (unsigned long)((now - t_start) / 1000), eosed_count, fired_count);
             break;
         }
-        
-        /* Sleep briefly to avoid tight loop */
-        g_usleep(10000); // 10ms (reduced from 50ms for faster EOSE detection)
     }
     
 cleanup_and_exit:

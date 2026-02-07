@@ -20,6 +20,7 @@
 #include <nostr-simple-pool.h>
 #include <json.h>
 #include <channel.h>
+#include <select.h>
 #include <context.h>
 #include <error.h>
 #include <string.h>
@@ -587,7 +588,8 @@ static gpointer nwc_response_poll_thread(gpointer user_data) {
     return NULL;
   }
 
-  /* Poll for events until we get our response or timeout */
+  /* nostrc-3gd6: Replaced try_receive + 10ms sleep with go_select_timeout.
+   * Blocks until event/eose channel ready or 100ms timeout, then drains. */
   GoChannel *ch_events = nostr_subscription_get_events_channel(ctx->sub);
   GoChannel *ch_eose = nostr_subscription_get_eose_channel(ctx->sub);
 
@@ -613,17 +615,24 @@ static gpointer nwc_response_poll_thread(gpointer user_data) {
       return NULL;
     }
 
-    /* Try to receive event */
+    /* Block until any channel ready (100ms timeout for periodic checks) */
+    {
+      GoSelectCase cases[2];
+      size_t nc = 0;
+      if (ch_events) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_events, .recv_buf = NULL};
+      if (ch_eose) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_eose, .recv_buf = NULL};
+      if (nc > 0) go_select_timeout(cases, nc, 100);
+    }
+
+    /* Drain events */
     void *msg = NULL;
-    if (ch_events && go_channel_try_receive(ch_events, &msg) == 0 && msg) {
+    while (ch_events && go_channel_try_receive(ch_events, &msg) == 0 && msg) {
       NostrEvent *event = (NostrEvent *)msg;
 
-      /* Check if this is a response to our request */
       char *result_json = NULL;
       GError *error = NULL;
 
       if (parse_nwc_response(self, event, ctx->request_event_id, &result_json, &error)) {
-        /* Success - return result as raw JSON string */
         g_task_return_pointer(ctx->task, result_json, g_free);
         g_object_unref(ctx->task);
         nostr_event_free(event);
@@ -632,7 +641,6 @@ static gpointer nwc_response_poll_thread(gpointer user_data) {
       }
 
       if (error) {
-        /* Error parsing response */
         g_task_return_error(ctx->task, error);
         g_object_unref(ctx->task);
         nostr_event_free(event);
@@ -640,17 +648,12 @@ static gpointer nwc_response_poll_thread(gpointer user_data) {
         return NULL;
       }
 
-      /* Not our response, continue waiting */
       nostr_event_free(event);
+      msg = NULL;
     }
 
-    /* Check for EOSE (no more historical events) */
-    if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-      /* EOSE received, continue waiting for live events */
-    }
-
-    /* Small sleep to prevent busy waiting */
-    g_usleep(10000); /* 10ms */
+    /* Drain EOSE (informational only) */
+    if (ch_eose) go_channel_try_receive(ch_eose, NULL);
   }
 
   return NULL;
