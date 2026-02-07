@@ -593,8 +593,18 @@ static void og_preview_widget_dispose(GObject *object) {
    * children. The box layout manager may try to measure children during
    * destruction, causing NULL pointer dereference in pango when labels
    * have already been partially destroyed. Setting layout manager to NULL
-   * prevents any measurement attempts during the disposal process. */
+   * prevents any measurement attempts during the disposal process.
+   *
+   * CRITICAL FIX: Also clear layout managers of nested containers (card_box,
+   * text_box) to prevent them from measuring their children during disposal.
+   * This happens when many list items are disposed at once during bulk removal. */
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+  if (self->text_box && GTK_IS_WIDGET(self->text_box)) {
+    gtk_widget_set_layout_manager(self->text_box, NULL);
+  }
+  if (self->card_box && GTK_IS_WIDGET(self->card_box)) {
+    gtk_widget_set_layout_manager(self->card_box, NULL);
+  }
 
   g_clear_pointer(&self->spinner, gtk_widget_unparent);
   g_clear_pointer(&self->error_label, gtk_widget_unparent);

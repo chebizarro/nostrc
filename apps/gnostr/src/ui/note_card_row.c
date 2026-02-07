@@ -380,9 +380,12 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   }
   g_clear_object(&self->media_session);
 #endif
-  /* Do NOT remove og_preview from container during disposal - removing triggers disposal
-   * of og_preview while the parent is also being disposed, causing Pango layout corruption.
-   * Just clear the pointer and let GTK handle cleanup during template disposal. */
+  /* Cancel og_preview async operations BEFORE template disposal.
+   * The og_preview_widget has async soup fetches that can corrupt Pango layouts
+   * if they complete during disposal. Mark it disposed and cancel operations. */
+  if (self->og_preview && OG_IS_PREVIEW_WIDGET(self->og_preview)) {
+    og_preview_widget_prepare_for_unbind(self->og_preview);
+  }
   self->og_preview = NULL;
   
   /* NIP-71: Stop ALL video players BEFORE template disposal to prevent GStreamer from
