@@ -1469,7 +1469,7 @@ gboolean onboarding_assistant_check_should_show(void) {
 
   /* Also check if any identities exist in accounts or secret store */
   AccountsStore *as = accounts_store_new();
-  accounts_store_load(as);
+  accounts_store_load(as, NULL);
   guint account_count = accounts_store_count(as);
   accounts_store_free(as);
 

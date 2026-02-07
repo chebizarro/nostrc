@@ -373,7 +373,7 @@ start_device_operation(SheetHwWallet *self)
           gchar *stored_npub = NULL;
           accounts_store_import_pubkey(store, self->result_npub,
                                         label && *label ? label : self->selected_device->product,
-                                        &stored_npub);
+                                        &stored_npub, NULL);
           g_free(stored_npub);
         }
 

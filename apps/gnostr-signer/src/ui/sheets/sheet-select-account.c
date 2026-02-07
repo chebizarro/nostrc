@@ -59,8 +59,8 @@ static void on_row_remove(GtkButton *btn, gpointer user_data) {
   if (!data || !self) return;
 
   /* Remove from stores */
-  accounts_store_remove(self->accounts, data->npub);
-  accounts_store_save(self->accounts);
+  accounts_store_remove(self->accounts, data->npub, NULL);
+  accounts_store_save(self->accounts, NULL);
 
   /* Also remove from secret store */
   secret_store_remove(data->npub);
@@ -83,8 +83,8 @@ static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_
   if (!data) return;
 
   /* Set as active */
-  accounts_store_set_active(self->accounts, data->npub);
-  accounts_store_save(self->accounts);
+  accounts_store_set_active(self->accounts, data->npub, NULL);
+  accounts_store_save(self->accounts, NULL);
 
   /* Invoke callback */
   if (self->on_select) {
@@ -203,7 +203,7 @@ static void populate_list(SheetSelectAccount *self) {
 
   /* Get active account */
   gchar *active_id = NULL;
-  accounts_store_get_active(self->accounts, &active_id);
+  accounts_store_get_active(self->accounts, &active_id, NULL);
 
   /* Load accounts */
   GPtrArray *accounts = accounts_store_list(self->accounts);
@@ -236,8 +236,8 @@ static void on_add_new(GtkButton *btn, gpointer user_data) {
 
   /* Generate new key */
   gchar *npub = NULL;
-  if (accounts_store_generate_key(self->accounts, NULL, &npub)) {
-    accounts_store_save(self->accounts);
+  if (accounts_store_generate_key(self->accounts, NULL, &npub, NULL)) {
+    accounts_store_save(self->accounts, NULL);
     populate_list(self);
 
     /* Select the new account */
@@ -256,12 +256,12 @@ static void on_import_success(const char *npub, const char *label, gpointer user
   /* Add to accounts store if not already present */
   if (npub && *npub) {
     if (!accounts_store_exists(self->accounts, npub)) {
-      accounts_store_add(self->accounts, npub, label);
+      accounts_store_add(self->accounts, npub, label, NULL);
     } else if (label && *label) {
-      accounts_store_set_label(self->accounts, npub, label);
+      accounts_store_set_label(self->accounts, npub, label, NULL);
     }
-    accounts_store_set_active(self->accounts, npub);
-    accounts_store_save(self->accounts);
+    accounts_store_set_active(self->accounts, npub, NULL);
+    accounts_store_save(self->accounts, NULL);
 
     /* Refresh the list */
     populate_list(self);
@@ -327,8 +327,8 @@ static void on_pubkey_entry_response(GObject *source, GAsyncResult *result, gpoi
 
   /* Try to import the public key as watch-only */
   gchar *npub = NULL;
-  if (accounts_store_import_pubkey(self->accounts, pubkey, NULL, &npub)) {
-    accounts_store_save(self->accounts);
+  if (accounts_store_import_pubkey(self->accounts, pubkey, NULL, &npub, NULL)) {
+    accounts_store_save(self->accounts, NULL);
     populate_list(self);
 
     /* Notify callback */
@@ -447,8 +447,8 @@ static void on_import_pubkey_submit(GtkButton *btn, gpointer user_data) {
 
   /* Try to import the public key as watch-only */
   gchar *npub = NULL;
-  if (accounts_store_import_pubkey(self->accounts, pubkey, (label && *label) ? label : NULL, &npub)) {
-    accounts_store_save(self->accounts);
+  if (accounts_store_import_pubkey(self->accounts, pubkey, (label && *label) ? label : NULL, &npub, NULL)) {
+    accounts_store_save(self->accounts, NULL);
     populate_list(self);
 
     adw_dialog_close(dialog);
@@ -503,7 +503,7 @@ static void sheet_select_account_init(SheetSelectAccount *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
   self->accounts = accounts_store_new();
-  accounts_store_load(self->accounts);
+  accounts_store_load(self->accounts, NULL);
   accounts_store_sync_with_secrets(self->accounts);
 
   g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);

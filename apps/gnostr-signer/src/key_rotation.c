@@ -480,7 +480,7 @@ static gboolean rotation_step(gpointer user_data) {
 
       /* Add to accounts store */
       AccountsStore *as = accounts_store_get_default();
-      accounts_store_add(as, kr->new_npub, label);
+      accounts_store_add(as, kr->new_npub, label, NULL);
       g_free(label);
 
       /* Optionally update old key label */
@@ -488,15 +488,15 @@ static gboolean rotation_step(gpointer user_data) {
         gchar *old_display = accounts_store_get_display_name(as, kr->old_npub);
         if (old_display) {
           gchar *new_old_label = g_strdup_printf("%s (migrated)", old_display);
-          accounts_store_set_label(as, kr->old_npub, new_old_label);
+          accounts_store_set_label(as, kr->old_npub, new_old_label, NULL);
           g_free(new_old_label);
           g_free(old_display);
         }
       }
 
       /* Set new key as active */
-      accounts_store_set_active(as, kr->new_npub);
-      accounts_store_save(as);
+      accounts_store_set_active(as, kr->new_npub, NULL);
+      accounts_store_save(as, NULL);
 
       if (kr->publish) {
         emit_progress(kr, KEY_ROTATION_STATE_PUBLISHING,

@@ -308,7 +308,7 @@ static void on_approval_requested(GDBusConnection *connection,
   if (identity && identity[0] != '\0') {
     effective_identity = g_strdup(identity);
   } else if (ui->accounts) {
-    accounts_store_get_active(ui->accounts, &effective_identity);
+    accounts_store_get_active(ui->accounts, &effective_identity, NULL);
   }
   const gchar *acct = effective_identity ? effective_identity : identity;
   /* Auto-approve/deny if remembered */
@@ -601,7 +601,7 @@ static gboolean deferred_init_cb(gpointer user_data) {
 
   /* Create account store (fast - just INI file) */
   AccountsStore *as = accounts_store_new();
-  accounts_store_load(as);
+  accounts_store_load(as, NULL);
 
   STARTUP_TIME_END(STARTUP_PHASE_ACCOUNTS);
 

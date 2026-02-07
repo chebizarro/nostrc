@@ -672,9 +672,9 @@ static gboolean create_account(SheetCreateAccount *self) {
   /* Add to accounts store */
   AccountsStore *as = accounts_store_get_default();
   if (as && self->npub) {
-    accounts_store_add(as, self->npub, self->display_name);
-    accounts_store_set_active(as, self->npub);
-    accounts_store_save(as);
+    accounts_store_add(as, self->npub, self->display_name, NULL);
+    accounts_store_set_active(as, self->npub, NULL);
+    accounts_store_save(as, NULL);
   }
 
   return TRUE;

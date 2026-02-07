@@ -918,7 +918,7 @@ static void on_import_recovered(GtkButton *btn, gpointer user_data) {
   /* Note: This is a simplified import. In production, you'd want to
    * use the same D-Bus mechanism as sheet-backup.c for consistency */
   if (accounts) {
-    if (!accounts_store_import_key(accounts, self->recovered_nsec, "Recovered Key", &npub)) {
+    if (!accounts_store_import_key(accounts, self->recovered_nsec, "Recovered Key", &npub, NULL)) {
       show_error(self, "Import Failed",
                  "Failed to import recovered key to accounts.");
       return;

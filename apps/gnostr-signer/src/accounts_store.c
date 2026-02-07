@@ -5,8 +5,15 @@
  * - GSettings for default-identity and account-order (integration)
  * Integrates with secret_store for secure key operations.
  * Supports multiple key types via key_provider (nostrc-bq0).
+ *
+ * Error Handling:
+ * - Uses GN_SIGNER_ERROR domain for general errors
+ * - Uses g_set_error_literal() for static messages
+ * - Uses g_propagate_error() to pass errors up from underlying stores
+ * - Uses g_prefix_error() to add context to propagated errors
  */
 #include "accounts_store.h"
+#include "gn-signer-error.h"
 #include "secret_store.h"
 #include "settings_manager.h"
 #include "secure-delete.h"
@@ -82,7 +89,14 @@ AccountsStore *accounts_store_new(void) {
 AccountsStore *accounts_store_get_default(void) {
   if (!default_instance) {
     default_instance = accounts_store_new();
-    accounts_store_load(default_instance);
+    /* Note: Errors during load are logged but not fatal for singleton */
+    GError *error = NULL;
+    if (!accounts_store_load(default_instance, &error)) {
+      if (error) {
+        g_warning("accounts_store_get_default: load failed: %s", error->message);
+        g_clear_error(&error);
+      }
+    }
     accounts_store_sync_with_secrets(default_instance);
   }
   return default_instance;
@@ -101,37 +115,50 @@ void accounts_store_free(AccountsStore *as) {
   g_free(as);
 }
 
-void accounts_store_load(AccountsStore *as) {
-  if (!as) return;
+gboolean accounts_store_load(AccountsStore *as, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
 
   GKeyFile *kf = g_key_file_new();
-  GError *err = NULL;
+  GError *local_error = NULL;
 
-  if (!g_key_file_load_from_file(kf, as->path, G_KEY_FILE_NONE, &err)) {
-    if (err) g_clear_error(&err);
-    g_key_file_unref(kf);
+  if (!g_key_file_load_from_file(kf, as->path, G_KEY_FILE_NONE, &local_error)) {
+    /* File not existing is not an error - try GSettings fallback */
+    if (g_error_matches(local_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+      g_clear_error(&local_error);
+      g_key_file_unref(kf);
 
-    /* Try loading from GSettings if INI file doesn't exist */
-    if (as->settings) {
-      gchar **order = settings_manager_get_account_order(as->settings);
-      if (order) {
-        for (gsize i = 0; order[i]; i++) {
-          const gchar *npub = order[i];
-          if (npub && *npub && !g_hash_table_contains(as->map, npub)) {
-            gchar *label = settings_manager_get_identity_label(as->settings, npub);
-            g_hash_table_replace(as->map, g_strdup(npub), label ? label : g_strdup(""));
+      /* Try loading from GSettings if INI file doesn't exist */
+      if (as->settings) {
+        gchar **order = settings_manager_get_account_order(as->settings);
+        if (order) {
+          for (gsize i = 0; order[i]; i++) {
+            const gchar *npub = order[i];
+            if (npub && *npub && !g_hash_table_contains(as->map, npub)) {
+              gchar *label = settings_manager_get_identity_label(as->settings, npub);
+              g_hash_table_replace(as->map, g_strdup(npub), label ? label : g_strdup(""));
+            }
           }
+          g_strfreev(order);
         }
-        g_strfreev(order);
-      }
 
-      /* Load active from GSettings */
-      const gchar *default_id = settings_manager_get_default_identity(as->settings);
-      if (default_id && *default_id && !as->active) {
-        as->active = g_strdup(default_id);
+        /* Load active from GSettings */
+        const gchar *default_id = settings_manager_get_default_identity(as->settings);
+        if (default_id && *default_id && !as->active) {
+          as->active = g_strdup(default_id);
+        }
       }
+      return TRUE;
     }
-    return;
+
+    /* Other file errors are propagated */
+    g_propagate_error(error, local_error);
+    g_prefix_error(error, "Failed to load accounts file: ");
+    g_key_file_unref(kf);
+    return FALSE;
   }
 
   /* Load accounts group */
@@ -198,10 +225,16 @@ void accounts_store_load(AccountsStore *as) {
       }
     }
   }
+
+  return TRUE;
 }
 
-void accounts_store_save(AccountsStore *as) {
-  if (!as) return;
+gboolean accounts_store_save(AccountsStore *as, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
 
   GKeyFile *kf = g_key_file_new();
 
@@ -242,20 +275,25 @@ void accounts_store_save(AccountsStore *as) {
   /* Save to file */
   gsize len = 0;
   gchar *data = g_key_file_to_data(kf, &len, NULL);
+  gboolean success = TRUE;
+
   if (data) {
-    GError *err = NULL;
-    if (!g_file_set_contents(as->path, data, len, &err)) {
-      if (err) {
-        g_warning("accounts_store: save failed: %s", err->message);
-        g_clear_error(&err);
-      }
+    GError *local_error = NULL;
+    if (!g_file_set_contents(as->path, data, len, &local_error)) {
+      g_propagate_error(error, local_error);
+      g_prefix_error(error, "Failed to save accounts file: ");
+      success = FALSE;
     }
     g_free(data);
+  } else {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INTERNAL,
+                        "Failed to serialize accounts data");
+    success = FALSE;
   }
 
   g_key_file_unref(kf);
 
-  /* Sync to GSettings */
+  /* Sync to GSettings even if file save failed */
   if (as->settings) {
     /* Update account order */
     g_ptr_array_add(order_arr, NULL);  /* NULL terminate */
@@ -278,11 +316,28 @@ void accounts_store_save(AccountsStore *as) {
   }
 
   g_ptr_array_free(order_arr, TRUE);
+  return success;
 }
 
-gboolean accounts_store_add(AccountsStore *as, const gchar *id, const gchar *label) {
-  if (!as || !id || !*id) return FALSE;
-  if (g_hash_table_contains(as->map, id)) return FALSE;
+gboolean accounts_store_add(AccountsStore *as, const gchar *id,
+                            const gchar *label, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
+  if (!id || !*id) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Account ID cannot be empty");
+    return FALSE;
+  }
+
+  if (g_hash_table_contains(as->map, id)) {
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_ALREADY_EXISTS,
+                "Account '%s' already exists", id);
+    return FALSE;
+  }
 
   g_hash_table_insert(as->map, g_strdup(id), g_strdup(label ? label : ""));
 
@@ -301,39 +356,56 @@ gboolean accounts_store_add(AccountsStore *as, const gchar *id, const gchar *lab
   return TRUE;
 }
 
-gboolean accounts_store_remove(AccountsStore *as, const gchar *id) {
-  if (!as || !id) return FALSE;
+gboolean accounts_store_remove(AccountsStore *as, const gchar *id, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
 
-  gboolean removed = g_hash_table_remove(as->map, id);
+  if (!id || !*id) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Account ID cannot be empty");
+    return FALSE;
+  }
 
-  if (removed) {
-    /* Securely delete any local files associated with this identity
-     * Note: This does NOT delete from secure storage (Keychain/libsecret)
-     * That must be done separately via secret_store_remove()
-     */
-    GnDeleteResult del_result = gn_secure_delete_identity_files(id);
-    if (del_result != GN_DELETE_OK) {
-      g_warning("accounts_store_remove: secure delete of identity files failed for %s: %s",
-                id, gn_delete_result_to_string(del_result));
-    }
+  if (!g_hash_table_contains(as->map, id)) {
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_FOUND,
+                "Account '%s' not found", id);
+    return FALSE;
+  }
 
-    emit_change(as, ACCOUNTS_CHANGE_REMOVED, id);
+  g_hash_table_remove(as->map, id);
+  g_hash_table_remove(as->watch_only_set, id);
+  g_hash_table_remove(as->key_types, id);
 
-    if (as->active && g_strcmp0(as->active, id) == 0) {
-      /* Pick a new active if any remain */
-      g_clear_pointer(&as->active, g_free);
+  /* Securely delete any local files associated with this identity
+   * Note: This does NOT delete from secure storage (Keychain/libsecret)
+   * That must be done separately via secret_store_remove()
+   */
+  GnDeleteResult del_result = gn_secure_delete_identity_files(id);
+  if (del_result != GN_DELETE_OK) {
+    /* Log warning but don't fail the remove operation */
+    g_warning("accounts_store_remove: secure delete of identity files failed for %s: %s",
+              id, gn_delete_result_to_string(del_result));
+  }
 
-      GHashTableIter it;
-      gpointer key = NULL, val = NULL;
-      g_hash_table_iter_init(&it, as->map);
-      if (g_hash_table_iter_next(&it, &key, &val)) {
-        as->active = g_strdup((const gchar*)key);
-        emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->active);
-      }
+  emit_change(as, ACCOUNTS_CHANGE_REMOVED, id);
+
+  if (as->active && g_strcmp0(as->active, id) == 0) {
+    /* Pick a new active if any remain */
+    g_clear_pointer(&as->active, g_free);
+
+    GHashTableIter it;
+    gpointer key = NULL, val = NULL;
+    g_hash_table_iter_init(&it, as->map);
+    if (g_hash_table_iter_next(&it, &key, &val)) {
+      as->active = g_strdup((const gchar*)key);
+      emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->active);
     }
   }
 
-  return removed;
+  return TRUE;
 }
 
 void accounts_store_entry_free(AccountEntry *entry) {
@@ -376,8 +448,18 @@ GPtrArray *accounts_store_list(AccountsStore *as) {
   return arr;
 }
 
-void accounts_store_set_active(AccountsStore *as, const gchar *id) {
-  if (!as) return;
+gboolean accounts_store_set_active(AccountsStore *as, const gchar *id, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
+  if (id && *id && !g_hash_table_contains(as->map, id)) {
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_FOUND,
+                "Account '%s' not found", id);
+    return FALSE;
+  }
 
   /* Check if actually changing */
   gboolean changed = (g_strcmp0(as->active, id) != 0);
@@ -394,18 +476,46 @@ void accounts_store_set_active(AccountsStore *as, const gchar *id) {
   if (changed) {
     emit_change(as, ACCOUNTS_CHANGE_ACTIVE, id);
   }
+
+  return TRUE;
 }
 
-gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id) {
-  if (!as || !as->active) return FALSE;
+gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
+  if (!as->active) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_FOUND,
+                        "No active account set");
+    return FALSE;
+  }
+
   if (out_id) *out_id = g_strdup(as->active);
   return TRUE;
 }
 
-gboolean accounts_store_set_label(AccountsStore *as, const gchar *id, const gchar *label) {
-  if (!as || !id || !*id) return FALSE;
+gboolean accounts_store_set_label(AccountsStore *as, const gchar *id,
+                                  const gchar *label, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
 
-  if (!g_hash_table_contains(as->map, id)) return FALSE;
+  if (!id || !*id) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Account ID cannot be empty");
+    return FALSE;
+  }
+
+  if (!g_hash_table_contains(as->map, id)) {
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_FOUND,
+                "Account '%s' not found", id);
+    return FALSE;
+  }
 
   g_hash_table_replace(as->map, g_strdup(id), g_strdup(label ? label : ""));
 
@@ -499,14 +609,28 @@ void accounts_store_sync_with_secrets(AccountsStore *as) {
 }
 
 gboolean accounts_store_import_key(AccountsStore *as, const gchar *key,
-                                   const gchar *label, gchar **out_npub) {
-  if (!as || !key || !*key) return FALSE;
+                                   const gchar *label, gchar **out_npub,
+                                   GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
+  if (!key || !*key) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Private key cannot be empty");
+    return FALSE;
+  }
+
   if (out_npub) *out_npub = NULL;
 
   /* Store in secure storage */
   SecretStoreResult rc = secret_store_add(key, label, TRUE);
   if (rc != SECRET_STORE_OK) {
-    g_warning("accounts_store_import_key: secret_store_add failed: %d", rc);
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_BACKEND_FAILED,
+                "Failed to store key in secure storage: %s",
+                secret_store_result_to_string(rc));
     return FALSE;
   }
 
@@ -514,12 +638,23 @@ gboolean accounts_store_import_key(AccountsStore *as, const gchar *key,
   gchar *npub = NULL;
   rc = secret_store_get_public_key(NULL, &npub);
   if (rc != SECRET_STORE_OK || !npub) {
-    g_warning("accounts_store_import_key: could not get npub");
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_CRYPTO_FAILED,
+                        "Failed to derive public key from imported key");
     return FALSE;
   }
 
   /* Add to our tracking */
-  accounts_store_add(as, npub, label);
+  GError *add_error = NULL;
+  if (!accounts_store_add(as, npub, label, &add_error)) {
+    /* If already exists, that's okay - just log and continue */
+    if (!g_error_matches(add_error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_ALREADY_EXISTS)) {
+      g_propagate_error(error, add_error);
+      g_prefix_error(error, "Failed to track imported key: ");
+      g_free(npub);
+      return FALSE;
+    }
+    g_clear_error(&add_error);
+  }
 
   if (out_npub) {
     *out_npub = npub;
@@ -531,19 +666,32 @@ gboolean accounts_store_import_key(AccountsStore *as, const gchar *key,
 }
 
 gboolean accounts_store_generate_key(AccountsStore *as, const gchar *label,
-                                     gchar **out_npub) {
-  if (!as) return FALSE;
+                                     gchar **out_npub, GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
   if (out_npub) *out_npub = NULL;
 
   gchar *npub = NULL;
   SecretStoreResult rc = secret_store_generate(label, TRUE, &npub);
   if (rc != SECRET_STORE_OK || !npub) {
-    g_warning("accounts_store_generate_key: secret_store_generate failed: %d", rc);
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_CRYPTO_FAILED,
+                "Failed to generate keypair: %s",
+                secret_store_result_to_string(rc));
     return FALSE;
   }
 
   /* Add to our tracking */
-  accounts_store_add(as, npub, label);
+  GError *add_error = NULL;
+  if (!accounts_store_add(as, npub, label, &add_error)) {
+    g_propagate_error(error, add_error);
+    g_prefix_error(error, "Failed to track generated key: ");
+    g_free(npub);
+    return FALSE;
+  }
 
   if (out_npub) {
     *out_npub = npub;
@@ -596,8 +744,20 @@ static gboolean hex_to_bytes(const char *hex, uint8_t *out, size_t out_len) {
 }
 
 gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
-                                      const gchar *label, gchar **out_npub) {
-  if (!as || !pubkey || !*pubkey) return FALSE;
+                                      const gchar *label, gchar **out_npub,
+                                      GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
+  if (!pubkey || !*pubkey) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Public key cannot be empty");
+    return FALSE;
+  }
+
   if (out_npub) *out_npub = NULL;
 
   gchar *npub = NULL;
@@ -607,32 +767,38 @@ gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
   if (g_str_has_prefix(pubkey, "npub1")) {
     /* Validate and normalize npub */
     if (nostr_nip19_decode_npub(pubkey, pubkey_bytes) != 0) {
-      g_warning("accounts_store_import_pubkey: invalid npub format");
+      g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                          "Invalid npub format");
       return FALSE;
     }
     /* Re-encode to normalize */
     if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
-      g_warning("accounts_store_import_pubkey: failed to encode npub");
+      g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_CRYPTO_FAILED,
+                          "Failed to encode npub");
       return FALSE;
     }
   } else if (is_hex64(pubkey)) {
     /* Convert hex to bytes and encode as npub */
     if (!hex_to_bytes(pubkey, pubkey_bytes, 32)) {
-      g_warning("accounts_store_import_pubkey: invalid hex pubkey");
+      g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                          "Invalid hex public key");
       return FALSE;
     }
     if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
-      g_warning("accounts_store_import_pubkey: failed to encode npub from hex");
+      g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_CRYPTO_FAILED,
+                          "Failed to encode npub from hex");
       return FALSE;
     }
   } else {
-    g_warning("accounts_store_import_pubkey: unrecognized format (expected npub1... or 64-hex)");
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Unrecognized format: expected npub1... or 64-character hex");
     return FALSE;
   }
 
   /* Check if already exists */
   if (g_hash_table_contains(as->map, npub)) {
-    g_warning("accounts_store_import_pubkey: account already exists");
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_ALREADY_EXISTS,
+                "Account '%s' already exists", npub);
     g_free(npub);
     return FALSE;
   }
@@ -766,11 +932,24 @@ GnKeyType accounts_store_get_key_type(AccountsStore *as, const gchar *id) {
 
 gboolean accounts_store_set_key_type(AccountsStore *as,
                                      const gchar *id,
-                                     GnKeyType key_type) {
-  if (!as || !id || !*id) return FALSE;
+                                     GnKeyType key_type,
+                                     GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
+  if (!id || !*id) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Account ID cannot be empty");
+    return FALSE;
+  }
 
   /* Verify account exists */
   if (!g_hash_table_contains(as->map, id)) {
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_FOUND,
+                "Account '%s' not found", id);
     return FALSE;
   }
 
@@ -781,8 +960,14 @@ gboolean accounts_store_set_key_type(AccountsStore *as,
 gboolean accounts_store_generate_key_with_type(AccountsStore *as,
                                                const gchar *label,
                                                GnKeyType key_type,
-                                               gchar **out_npub) {
-  if (!as) return FALSE;
+                                               gchar **out_npub,
+                                               GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
   if (out_npub) *out_npub = NULL;
 
   /* For secp256k1, use existing secret_store_generate */
@@ -790,12 +975,20 @@ gboolean accounts_store_generate_key_with_type(AccountsStore *as,
     gchar *npub = NULL;
     SecretStoreResult rc = secret_store_generate(label, TRUE, &npub);
     if (rc != SECRET_STORE_OK || !npub) {
-      g_warning("accounts_store_generate_key_with_type: secret_store_generate failed: %d", rc);
+      g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_CRYPTO_FAILED,
+                  "Failed to generate secp256k1 keypair: %s",
+                  secret_store_result_to_string(rc));
       return FALSE;
     }
 
     /* Add to our tracking */
-    accounts_store_add(as, npub, label);
+    GError *add_error = NULL;
+    if (!accounts_store_add(as, npub, label, &add_error)) {
+      g_propagate_error(error, add_error);
+      g_prefix_error(error, "Failed to track generated key: ");
+      g_free(npub);
+      return FALSE;
+    }
 
     /* Store key type */
     g_hash_table_replace(as->key_types, g_strdup(npub), GINT_TO_POINTER(GN_KEY_TYPE_SECP256K1));
@@ -812,8 +1005,9 @@ gboolean accounts_store_generate_key_with_type(AccountsStore *as,
   /* For other key types, use the key provider interface */
   GnKeyProvider *provider = gn_key_provider_get_for_type(key_type);
   if (!provider) {
-    g_warning("accounts_store_generate_key_with_type: no provider for key type %s",
-              gn_key_type_to_string(key_type));
+    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_SUPPORTED,
+                "No provider available for key type '%s'",
+                gn_key_type_to_string(key_type));
     return FALSE;
   }
 
@@ -821,12 +1015,12 @@ gboolean accounts_store_generate_key_with_type(AccountsStore *as,
   gsize sk_size = gn_key_provider_get_private_key_size(provider);
   guint8 *sk = g_malloc(sk_size);
   gsize sk_len = 0;
-  GError *error = NULL;
+  GError *gen_error = NULL;
 
-  if (!gn_key_provider_generate_private_key(provider, sk, &sk_len, &error)) {
-    g_warning("accounts_store_generate_key_with_type: generation failed: %s",
-              error ? error->message : "unknown error");
-    g_clear_error(&error);
+  if (!gn_key_provider_generate_private_key(provider, sk, &sk_len, &gen_error)) {
+    g_propagate_error(error, gen_error);
+    g_prefix_error(error, "Key generation failed: ");
+    gn_secure_clear_buffer(sk);
     g_free(sk);
     return FALSE;
   }
@@ -834,8 +1028,9 @@ gboolean accounts_store_generate_key_with_type(AccountsStore *as,
   /* For now, only secp256k1 is fully supported for storage.
    * Other key types would need additional NIP definitions for encoding.
    * This is a placeholder for future expansion. */
-  g_warning("accounts_store_generate_key_with_type: key type %s not yet supported for storage",
-            gn_key_type_to_string(key_type));
+  g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_SUPPORTED,
+              "Key type '%s' is not yet supported for storage",
+              gn_key_type_to_string(key_type));
 
   /* Securely clear the key */
   gn_secure_clear_buffer(sk);
@@ -848,8 +1043,20 @@ gboolean accounts_store_import_key_with_type(AccountsStore *as,
                                              const gchar *key,
                                              const gchar *label,
                                              GnKeyType key_type,
-                                             gchar **out_npub) {
-  if (!as || !key || !*key) return FALSE;
+                                             gchar **out_npub,
+                                             GError **error) {
+  if (!as) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "AccountsStore is NULL");
+    return FALSE;
+  }
+
+  if (!key || !*key) {
+    g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
+                        "Private key cannot be empty");
+    return FALSE;
+  }
+
   if (out_npub) *out_npub = NULL;
 
   /* Auto-detect if unknown */
@@ -865,7 +1072,9 @@ gboolean accounts_store_import_key_with_type(AccountsStore *as,
   /* For secp256k1, use existing import function */
   if (detected_type == GN_KEY_TYPE_SECP256K1) {
     gchar *npub = NULL;
-    if (!accounts_store_import_key(as, key, label, &npub)) {
+    GError *import_error = NULL;
+    if (!accounts_store_import_key(as, key, label, &npub, &import_error)) {
+      g_propagate_error(error, import_error);
       return FALSE;
     }
 
@@ -882,7 +1091,8 @@ gboolean accounts_store_import_key_with_type(AccountsStore *as,
   }
 
   /* Other key types not yet supported for import */
-  g_warning("accounts_store_import_key_with_type: key type %s not yet supported",
-            gn_key_type_to_string(detected_type));
+  g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_SUPPORTED,
+              "Key type '%s' is not yet supported for import",
+              gn_key_type_to_string(detected_type));
   return FALSE;
 }
