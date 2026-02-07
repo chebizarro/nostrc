@@ -3411,6 +3411,87 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
   g_object_unref(self);
 }
 
+/* nostrc-profile-fix: Callback for NIP-65 load, then fetch user profile.
+ * This ensures we have the user's relay list before fetching their profile. */
+static void on_nip65_loaded_for_profile(GPtrArray *nip65_relays, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->user_pubkey_hex) {
+    g_object_unref(self);
+    return;
+  }
+
+  /* First try cached profile (may have been ingested during NIP-65 fetch) */
+  GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
+  if (meta) {
+    const char *final_name = (meta->display_name && *meta->display_name)
+                             ? meta->display_name : meta->name;
+    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+      gnostr_session_view_set_user_profile(self->session_view,
+                                            self->user_pubkey_hex,
+                                            final_name,
+                                            meta->picture);
+    }
+    gnostr_profile_meta_free(meta);
+    g_object_unref(self);
+    return;
+  }
+
+  /* Build relay list for profile fetch: use NIP-65 read relays + fallbacks */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+
+  /* Add user's read relays from their 10002 (if available) */
+  if (nip65_relays && nip65_relays->len > 0) {
+    GPtrArray *read_relays = gnostr_nip65_get_read_relays(nip65_relays);
+    if (read_relays) {
+      for (guint i = 0; i < read_relays->len; i++) {
+        g_ptr_array_add(relay_urls, g_strdup(g_ptr_array_index(read_relays, i)));
+      }
+      g_ptr_array_unref(read_relays);
+    }
+  }
+
+  /* Also add configured relays as backup */
+  gnostr_get_read_relay_urls_into(relay_urls);
+
+  /* Always include profile-indexing relays */
+  static const char *profile_relays[] = {
+    "wss://purplepag.es", "wss://relay.nostr.band", "wss://relay.damus.io", NULL
+  };
+  for (int i = 0; profile_relays[i]; i++) {
+    gboolean found = FALSE;
+    for (guint j = 0; j < relay_urls->len; j++) {
+      if (g_strcmp0(g_ptr_array_index(relay_urls, j), profile_relays[i]) == 0) {
+        found = TRUE;
+        break;
+      }
+    }
+    if (!found) g_ptr_array_add(relay_urls, g_strdup(profile_relays[i]));
+  }
+
+  if (relay_urls->len > 0) {
+    const char **urls = g_new0(const char*, relay_urls->len);
+    for (guint i = 0; i < relay_urls->len; i++) {
+      urls[i] = g_ptr_array_index(relay_urls, i);
+    }
+    const char *authors[1] = { self->user_pubkey_hex };
+
+    g_debug("[AUTH] Fetching profile from %u relays (after NIP-65 load)", relay_urls->len);
+    gnostr_simple_pool_fetch_profiles_by_authors_async(
+      gnostr_get_shared_query_pool(),
+      urls, relay_urls->len,
+      authors, 1,
+      1, /* limit */
+      NULL, /* cancellable */
+      on_user_profile_fetched,
+      self); /* self already has a ref from caller */
+
+    g_free(urls);
+  } else {
+    g_object_unref(self);
+  }
+  g_ptr_array_unref(relay_urls);
+}
+
 /* Signal handler for when user successfully signs in via login dialog */
 static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -3502,54 +3583,6 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     gnostr_badge_manager_set_event_callback(badge_mgr, on_notification_event, self, NULL);
     gnostr_badge_manager_start_subscriptions(badge_mgr);
     g_debug("[AUTH] Started notification subscriptions for user %.16s...", self->user_pubkey_hex);
-
-    /* Load user profile for account menu avatar/name using profile provider.
-     * This queries nostrdb (same as profile pane) and handles caching. */
-    GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
-    if (meta) {
-      const char *final_name = (meta->display_name && *meta->display_name)
-                               ? meta->display_name : meta->name;
-      if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-        gnostr_session_view_set_user_profile(self->session_view,
-                                              self->user_pubkey_hex,
-                                              final_name,
-                                              meta->picture);
-      }
-      gnostr_profile_meta_free(meta);
-    } else {
-      /* Profile not in DB - fetch from relays using fallback relay list */
-      GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
-      gnostr_get_read_relay_urls_into(relay_urls);
-
-      /* If no relays configured, use popular fallback relays */
-      if (relay_urls->len == 0) {
-        g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
-        g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
-        g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
-        g_ptr_array_add(relay_urls, g_strdup("wss://relay.primal.net"));
-        g_ptr_array_add(relay_urls, g_strdup("wss://purplepag.es"));
-      }
-
-      if (relay_urls->len > 0) {
-        const char **urls = g_new0(const char*, relay_urls->len);
-        for (guint i = 0; i < relay_urls->len; i++) {
-          urls[i] = g_ptr_array_index(relay_urls, i);
-        }
-        const char *authors[1] = { self->user_pubkey_hex };
-
-        gnostr_simple_pool_fetch_profiles_by_authors_async(
-          gnostr_get_shared_query_pool(),
-          urls, relay_urls->len,
-          authors, 1,
-          1, /* limit */
-          NULL, /* cancellable */
-          on_user_profile_fetched,
-          g_object_ref(self));
-
-        g_free(urls);
-      }
-      g_ptr_array_unref(relay_urls);
-    }
   }
 
   /* Start gift wrap subscription for encrypted DMs */
@@ -3558,8 +3591,11 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
   /* Async initialization - dispatch immediately, pool handles load management.
    * These are all async functions that return immediately. No reason to delay. */
   if (self->user_pubkey_hex) {
-    /* NIP-65: fetch user's preferred relay list for live switching */
-    gnostr_nip65_load_on_login_async(self->user_pubkey_hex, NULL, NULL);
+    /* nostrc-profile-fix: NIP-65 load now chains to profile fetch.
+     * This ensures we have user's relay list before fetching their profile. */
+    gnostr_nip65_load_on_login_async(self->user_pubkey_hex,
+                                      on_nip65_loaded_for_profile,
+                                      g_object_ref(self));
 
     /* Blossom: fetch media server preferences for uploads */
     gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);

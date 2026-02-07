@@ -415,7 +415,26 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
   GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
   gnostr_load_relays_into(relay_arr);
 
-  /* Relays come from GSettings with defaults configured in schema */
+  /* nostrc-profile-fix: Add profile-indexing relays for 10002 discovery.
+   * These relays index all profiles and relay lists, ensuring we can find
+   * a user's 10002 even if they use different relays than our defaults. */
+  static const char *profile_indexers[] = {
+    "wss://purplepag.es",
+    "wss://relay.nostr.band",
+    NULL
+  };
+  for (int i = 0; profile_indexers[i]; i++) {
+    gboolean already_present = FALSE;
+    for (guint j = 0; j < relay_arr->len; j++) {
+      if (g_strcmp0(g_ptr_array_index(relay_arr, j), profile_indexers[i]) == 0) {
+        already_present = TRUE;
+        break;
+      }
+    }
+    if (!already_present) {
+      g_ptr_array_add(relay_arr, g_strdup(profile_indexers[i]));
+    }
+  }
 
   /* Build URL array */
   const char **urls = g_new0(const char*, relay_arr->len);
