@@ -522,6 +522,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     unsigned char sk[32];
     if (parse_sk32(s->secret, sk) != 0) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to parse secret key\n", method);
+        secure_wipe(sk, sizeof(sk));
         free(req);
         return NULL;
     }
@@ -1049,7 +1050,7 @@ int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubk
     *out_ciphertext = NULL;
     if (!s->secret) return -1;
     unsigned char sk[32];
-    if (parse_sk32(s->secret, sk) != 0) return -1;
+    if (parse_sk32(s->secret, sk) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     unsigned char pkx[32];
     if (parse_peer_xonly32(peer_pubkey_hex, pkx) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     char *b64 = NULL;
@@ -1065,7 +1066,7 @@ int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubk
     *out_plaintext = NULL;
     if (!s->secret) return -1;
     unsigned char sk[32];
-    if (parse_sk32(s->secret, sk) != 0) return -1;
+    if (parse_sk32(s->secret, sk) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     unsigned char peer_x[32];
     if (parse_peer_xonly32(peer_pubkey_hex, peer_x) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     uint8_t *plain = NULL; size_t plain_len = 0;
@@ -1243,7 +1244,16 @@ static char *percent_encode(const char *s) {
 }
 int nostr_nip46_bunker_issue_bunker_uri(NostrNip46Session *s, const char *remote_signer_pubkey_hex, const char *const *relays, size_t n_relays, const char *secret, char **out_uri) {
     (void)s; if(!remote_signer_pubkey_hex||!out_uri) return -1; *out_uri=NULL;
-    size_t cap = 16 + 64 + 1 + (n_relays? n_relays*64:0) + (secret? strlen(secret)+16:0);
+    /* Calculate capacity: bunker:// (9) + pubkey (64) + separator (1) +
+     * For each relay: "relay=" (6) + encoded_url (up to 3x length) + "&" (1)
+     * For secret: "secret=" (7) + encoded_secret (up to 3x length) + "&" (1) */
+    size_t cap = 16 + 64 + 1;
+    if (relays && n_relays > 0) {
+        for (size_t i = 0; i < n_relays; ++i) {
+            if (relays[i]) cap += 8 + strlen(relays[i]) * 3;  /* "relay=" + 3x URL + "&" */
+        }
+    }
+    if (secret) cap += 10 + strlen(secret) * 3;  /* "secret=" + 3x secret + "&" */
     char *buf=(char*)malloc(cap); if(!buf) return -1; size_t len=0;
     len += snprintf(buf+len, cap-len, "bunker://%s", remote_signer_pubkey_hex);
     int first=1;
