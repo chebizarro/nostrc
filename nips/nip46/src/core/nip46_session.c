@@ -467,6 +467,17 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
         return;
     }
 
+    /* nostrc-nip46-fix: Validate sender is the expected signer.
+     * Without this check, a response from any signer on the relay could be accepted,
+     * leading to "wrong" error responses if multiple signers are on the same relay. */
+    if (session->remote_pubkey_hex) {
+        if (strcmp(sender_pubkey, session->remote_pubkey_hex) != 0) {
+            fprintf(stderr, "[nip46] persistent_cb: ignoring response from unexpected signer %s (expected %s)\n",
+                    sender_pubkey, session->remote_pubkey_hex);
+            return;
+        }
+    }
+
     /* Parse keys for decryption */
     unsigned char sk[32];
     if (parse_sk32(session->secret, sk) != 0) {
