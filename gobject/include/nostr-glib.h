@@ -25,6 +25,7 @@
 #include "nostr_subscription.h"
 #include "nostr_subscription_registry.h"
 #include "nostr_pointer.h"
+#include "nostr_nip19.h"
 #include "nostr_filter.h"
 #include "nostr_tag_list.h"
 #include "nostr_async.h"

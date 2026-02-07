@@ -132,6 +132,7 @@ nostr_glib_sources = files(
   'src/nostr_subscription_registry.c',
   'src/nostr_filter.c',
   'src/nostr_pointer.c',
+  'src/nostr_nip19.c',
   'src/nostr_tag_list.c',
 )
 # nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
@@ -157,6 +158,7 @@ nostr_glib_headers = files(
   'include/nostr_subscription_registry.h',
   'include/nostr_filter.h',
   'include/nostr_pointer.h',
+  'include/nostr_nip19.h',
   'include/nostr_tag_list.h',
 )
 
@@ -235,6 +237,14 @@ if get_option('tests')
     include_directories: nostr_glib_inc)
 
   test('nostr_event', test_nostr_event)
+
+  test_nip19 = executable('test_nip19',
+    'tests/test_nip19.c',
+    dependencies: [glib_dep, gobject_dep],
+    link_with: nostr_glib_lib,
+    include_directories: nostr_glib_inc)
+
+  test('nip19', test_nip19)
 endif
 
 # ── Examples ─────────────────────────────────────────────────────────
