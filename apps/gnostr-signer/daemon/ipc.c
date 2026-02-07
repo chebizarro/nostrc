@@ -1,9 +1,16 @@
+/* ipc.c - IPC server implementation for gnostr-signer-daemon
+ *
+ * SPDX-License-Identifier: MIT
+ */
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include "ipc.h"
+
+/* Error domain registration */
+G_DEFINE_QUARK(gn-ipc-error-quark, gn_ipc_error)
 
 /* IPC server state and statistics */
 typedef struct {
@@ -71,8 +78,8 @@ int nip5f_read_frame(int fd, char **out_json, size_t *out_len);
 int nip5f_write_frame(int fd, const char *json, size_t len);
 #endif
 
-// Reuse existing UDS server
-extern int gnostr_uds_sockd_start(const char *socket_path);
+/* Reuse existing UDS server */
+extern int gnostr_uds_sockd_start(const char *socket_path, GError **error);
 extern void gnostr_uds_sockd_stop(void);
 
 struct GnostrIpcServer {
@@ -156,16 +163,15 @@ static void ipc_stats_cleanup(GnostrIpcServer *srv) {
   g_mutex_clear(&srv->stats_mutex);
 }
 
-GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
+GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint, GError **error) {
   const char *ep = endpoint;
-  gchar *ep_alloc = NULL;
+  g_autofree gchar *ep_alloc = NULL;
   GnostrIpcServer *srv = g_new0(GnostrIpcServer, 1);
   ipc_stats_init(srv);
   if (!ep || !*ep) {
 #ifdef G_OS_UNIX
-    gchar *p = default_endpoint();
+    g_autofree gchar *p = default_endpoint();
     ep_alloc = g_strconcat("unix:", p, NULL);
-    g_free(p);
     ep = ep_alloc;
 #else
     ep_alloc = default_endpoint();
@@ -175,75 +181,72 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
   if (g_str_has_prefix(ep, "unix:")) {
 #ifdef G_OS_UNIX
     const char *path = ep + 5;
-    
-    // Ensure parent directory exists with secure permissions
-    gchar *dir = g_path_get_dirname(path);
+
+    /* Ensure parent directory exists with secure permissions */
+    g_autofree gchar *dir = g_path_get_dirname(path);
     if (g_mkdir_with_parents(dir, 0700) != 0) {
-      g_warning("unix: failed to create directory %s: %s", dir, g_strerror(errno));
-      g_free(dir);
-      if (ep_alloc) g_free(ep_alloc);
+      int saved_errno = errno;
+      g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_DIRECTORY_CREATE,
+                  "Failed to create directory %s: %s", dir, g_strerror(saved_errno));
       ipc_stats_cleanup(srv);
-      g_free((gpointer)srv);
+      g_free(srv);
       return NULL;
     }
-    g_free(dir);
-    
-    // Remove stale socket file if it exists
+
+    /* Remove stale socket file if it exists */
     if (g_file_test(path, G_FILE_TEST_EXISTS)) {
       g_message("unix: removing stale socket at %s", path);
       g_unlink(path);
     }
-    
-    if (gnostr_uds_sockd_start(path) != 0) {
-      g_critical("unix: failed to start UDS server at %s", path);
-      if (ep_alloc) g_free(ep_alloc);
+
+    g_autoptr(GError) uds_error = NULL;
+    if (gnostr_uds_sockd_start(path, &uds_error) != 0) {
+      g_propagate_prefixed_error(error, g_steal_pointer(&uds_error),
+                                  "Failed to start UDS server at %s: ", path);
       ipc_stats_cleanup(srv);
-      g_free((gpointer)srv);
+      g_free(srv);
       return NULL;
     }
-    
-    // Set socket file permissions to 0600 for security
+
+    /* Set socket file permissions to 0600 for security */
     if (g_chmod(path, 0600) != 0) {
       g_warning("unix: failed to set socket permissions: %s", g_strerror(errno));
     }
-    
+
     srv->kind = IPC_UNIX;
     srv->endpoint = g_strdup(path);
     g_message("unix ipc server started at %s", path);
-    if (ep_alloc) g_free(ep_alloc);
     return srv;
 #else
-    g_warning("unix: endpoint not supported on this platform");
-    if (ep_alloc) g_free(ep_alloc);
-    g_free((gpointer)srv);
+    g_set_error_literal(error, GN_IPC_ERROR, GN_IPC_ERROR_PLATFORM_UNSUPPORTED,
+                        "Unix domain sockets not supported on this platform");
+    g_free(srv);
     return NULL;
 #endif
   } else if (g_str_has_prefix(ep, "tcp:")) {
 #ifdef GNOSTR_ENABLE_TCP_IPC
-    // Parse tcp:HOST:PORT
+    /* Parse tcp:HOST:PORT */
     const char *spec = ep + 4;
-    gchar **parts = g_strsplit(spec, ":", 2);
+    g_auto(GStrv) parts = g_strsplit(spec, ":", 2);
     if (!parts || !parts[0] || !parts[1]) {
-      g_warning("tcp endpoint malformed: %s", ep);
-      if (ep_alloc) g_free(ep_alloc);
+      g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_INVALID_ENDPOINT,
+                  "Malformed TCP endpoint: %s (expected tcp:host:port)", ep);
       g_free(srv);
-      if (parts) g_strfreev(parts);
       return NULL;
     }
     g_strlcpy(srv->host, parts[0], sizeof(srv->host));
     srv->port = (guint16)CLAMP((int)g_ascii_strtoll(parts[1], NULL, 10), 1, 65535);
-    g_strfreev(parts);
-    // Enforce loopback only for security
-    if (g_strcmp0(srv->host, "127.0.0.1") != 0 && 
-        g_strcmp0(srv->host, "localhost") != 0 && 
+    /* Enforce loopback only for security */
+    if (g_strcmp0(srv->host, "127.0.0.1") != 0 &&
+        g_strcmp0(srv->host, "localhost") != 0 &&
         g_strcmp0(srv->host, "::1") != 0) {
-      g_critical("tcp endpoint must bind to loopback only, got: %s", srv->host);
-      if (ep_alloc) g_free(ep_alloc);
+      g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_PERMISSION,
+                  "TCP endpoint must bind to loopback only for security, got: %s", srv->host);
       ipc_stats_cleanup(srv);
       g_free(srv);
       return NULL;
     }
-    
+
     // Set maximum concurrent connections
     const char *max_conn_env = g_getenv("NOSTR_SIGNER_MAX_CONNECTIONS");
     srv->max_connections = max_conn_env ? (guint)g_ascii_strtoull(max_conn_env, NULL, 10) : 100;
@@ -252,70 +255,103 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
     // Prepare token file under XDG_RUNTIME_DIR/gnostr/token
     const char *rt = g_get_user_runtime_dir();
     if (!rt || !*rt) rt = g_get_tmp_dir();
-    gchar *dir = g_build_filename(rt, "gnostr", NULL);
+    g_autofree gchar *dir = g_build_filename(rt, "gnostr", NULL);
     g_mkdir_with_parents(dir, 0700);
     srv->token_path = g_build_filename(dir, "token", NULL);
-    g_free(dir);
-    // Load or create token (64 hex chars)
-    GError *err = NULL;
-    if (!g_file_get_contents(srv->token_path, &srv->token, NULL, &err)) {
-      if (err) g_clear_error(&err);
+
+    /* Load or create token (64 hex chars) */
+    g_autoptr(GError) token_read_err = NULL;
+    if (!g_file_get_contents(srv->token_path, &srv->token, NULL, &token_read_err)) {
       guint8 rnd[32];
       g_random_set_seed((guint32)g_get_monotonic_time());
-      for (gsize i=0;i<sizeof(rnd);++i) rnd[i] = (guint8)g_random_int_range(0,256);
+      for (gsize i = 0; i < sizeof(rnd); ++i)
+        rnd[i] = (guint8)g_random_int_range(0, 256);
       gchar *hex = g_malloc0(65);
-      static const char *H="0123456789abcdef";
-      for (int i=0;i<32;i++){ hex[i*2]=H[(rnd[i]>>4)&0xF]; hex[i*2+1]=H[rnd[i]&0xF]; }
+      static const char *H = "0123456789abcdef";
+      for (int i = 0; i < 32; i++) {
+        hex[i * 2] = H[(rnd[i] >> 4) & 0xF];
+        hex[i * 2 + 1] = H[rnd[i] & 0xF];
+      }
       GError *write_err = NULL;
       if (!g_file_set_contents(srv->token_path, hex, 64, &write_err)) {
-        g_warning("tcp: failed to write token file %s: %s",
-                  srv->token_path, write_err ? write_err->message : "unknown");
-        g_clear_error(&write_err);
+        g_propagate_prefixed_error(error, write_err,
+                                    "Failed to write token file %s: ", srv->token_path);
+        g_free(hex);
+        g_clear_pointer(&srv->token_path, g_free);
+        ipc_stats_cleanup(srv);
+        g_free(srv);
+        return NULL;
       }
       srv->token = hex;
-      // chmod to 0600 best-effort
+      /* chmod to 0600 best-effort */
       (void)g_chmod(srv->token_path, 0600);
     }
-    // Create socket and thread
+
+    /* Create socket */
     srv->tcp_fd = (int)socket(AF_INET, SOCK_STREAM, 0);
     if (srv->tcp_fd < 0) {
-      g_warning("tcp: socket() failed: %s", g_strerror(errno));
-      if (ep_alloc) g_free(ep_alloc);
-      g_free(srv->token_path); g_free(srv->token); g_free(srv);
+      int saved_errno = errno;
+      g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_SOCKET_CREATE,
+                  "Failed to create TCP socket: %s", g_strerror(saved_errno));
+      g_clear_pointer(&srv->token_path, g_free);
+      g_clear_pointer(&srv->token, g_free);
+      ipc_stats_cleanup(srv);
+      g_free(srv);
       return NULL;
     }
-    // Set socket options for better performance and reliability
-    int on=1;
+
+    /* Set socket options for better performance and reliability */
+    int on = 1;
     setsockopt(srv->tcp_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-    
-    // Set socket to non-blocking mode for better control
+
+    /* Set socket to non-blocking mode for better control */
     int flags = fcntl(srv->tcp_fd, F_GETFL, 0);
     if (flags >= 0) {
       fcntl(srv->tcp_fd, F_SETFL, flags | O_NONBLOCK);
     }
-    
-    struct sockaddr_in addr; memset(&addr,0,sizeof(addr));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(srv->port);
     addr.sin_addr.s_addr = inet_addr(srv->host);
-    if (bind(srv->tcp_fd, (struct sockaddr*)&addr, sizeof(addr))<0 || listen(srv->tcp_fd, 16)<0) {
-      g_warning("tcp: bind/listen failed: %s", g_strerror(errno));
+
+    if (bind(srv->tcp_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+      int saved_errno = errno;
+      g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_SOCKET_BIND,
+                  "Failed to bind TCP socket to %s:%u: %s",
+                  srv->host, srv->port, g_strerror(saved_errno));
       close(srv->tcp_fd);
-      if (ep_alloc) g_free(ep_alloc);
-      g_free(srv->token_path); g_free(srv->token); g_free(srv);
+      g_clear_pointer(&srv->token_path, g_free);
+      g_clear_pointer(&srv->token, g_free);
+      ipc_stats_cleanup(srv);
+      g_free(srv);
+      return NULL;
+    }
+
+    if (listen(srv->tcp_fd, 16) < 0) {
+      int saved_errno = errno;
+      g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_SOCKET_LISTEN,
+                  "Failed to listen on TCP socket: %s", g_strerror(saved_errno));
+      close(srv->tcp_fd);
+      g_clear_pointer(&srv->token_path, g_free);
+      g_clear_pointer(&srv->token, g_free);
+      ipc_stats_cleanup(srv);
+      g_free(srv);
       return NULL;
     }
     g_atomic_int_set(&srv->stop_flag, 0);
     srv->tcp_thr = g_thread_new("gnostr-tcp-ipc", tcp_ipc_accept_thread, srv);
     srv->kind = IPC_TCP;
     srv->endpoint = g_strdup_printf("%s:%u", srv->host, srv->port);
-    if (ep_alloc) g_free(ep_alloc);
-    g_message("tcp ipc server started on %s:%u (token: %s, max_connections: %u)", 
+    g_message("tcp ipc server started on %s:%u (token: %s, max_connections: %u)",
               srv->host, (unsigned)srv->port, srv->token_path, srv->max_connections);
     return srv;
 #else
-    if (ep_alloc) g_free(ep_alloc);
-    g_free((gpointer)srv);
+    g_set_error_literal(error, GN_IPC_ERROR, GN_IPC_ERROR_PLATFORM_UNSUPPORTED,
+                        "TCP IPC not enabled in this build");
+    ipc_stats_cleanup(srv);
+    g_free(srv);
     return NULL;
 #endif
   } else if (g_str_has_prefix(ep, "npipe:")) {
@@ -326,10 +362,10 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
     /* Validate pipe name format */
     if (!g_str_has_prefix(pipe_name, "\\\\.\\pipe\\") &&
         !g_str_has_prefix(pipe_name, "\\\\\\\\.\\\\pipe\\\\")) {
-      g_warning("npipe: invalid pipe name format: %s (expected \\\\.\\pipe\\name)", pipe_name);
-      if (ep_alloc) g_free(ep_alloc);
+      g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_INVALID_ENDPOINT,
+                  "Invalid pipe name format: %s (expected \\\\.\\pipe\\name)", pipe_name);
       ipc_stats_cleanup(srv);
-      g_free((gpointer)srv);
+      g_free(srv);
       return NULL;
     }
 
@@ -353,15 +389,13 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
     if (!localapp || !*localapp) {
       localapp = g_get_user_config_dir();
     }
-    gchar *dir = g_build_filename(localapp, "gnostr", NULL);
-    g_mkdir_with_parents(dir, 0700);
-    srv->npipe_token_path = g_build_filename(dir, "npipe-token", NULL);
-    g_free(dir);
+    g_autofree gchar *npipe_dir = g_build_filename(localapp, "gnostr", NULL);
+    g_mkdir_with_parents(npipe_dir, 0700);
+    srv->npipe_token_path = g_build_filename(npipe_dir, "npipe-token", NULL);
 
     /* Load or create authentication token (64 hex chars) */
-    GError *err = NULL;
-    if (!g_file_get_contents(srv->npipe_token_path, &srv->npipe_token, NULL, &err)) {
-      if (err) g_clear_error(&err);
+    g_autoptr(GError) npipe_err = NULL;
+    if (!g_file_get_contents(srv->npipe_token_path, &srv->npipe_token, NULL, &npipe_err)) {
       guint8 rnd[32];
       g_random_set_seed((guint32)g_get_monotonic_time());
       for (gsize i = 0; i < sizeof(rnd); ++i) {
@@ -373,11 +407,16 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
         hex[i * 2] = H[(rnd[i] >> 4) & 0xF];
         hex[i * 2 + 1] = H[rnd[i] & 0xF];
       }
-      GError *write_err = NULL;
+      g_autoptr(GError) write_err = NULL;
       if (!g_file_set_contents(srv->npipe_token_path, hex, 64, &write_err)) {
-        g_warning("npipe: failed to write token file %s: %s",
-                  srv->npipe_token_path, write_err ? write_err->message : "unknown");
-        g_clear_error(&write_err);
+        g_propagate_prefixed_error(error, g_steal_pointer(&write_err),
+                                    "Failed to write token file %s: ", srv->npipe_token_path);
+        g_free(hex);
+        g_free(normalized_name);
+        g_free(srv->npipe_token_path);
+        ipc_stats_cleanup(srv);
+        g_free(srv);
+        return NULL;
       }
       srv->npipe_token = hex;
     }
@@ -389,32 +428,32 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
     g_atomic_int_set(&srv->npipe_stop_flag, 0);
     srv->npipe_thr = g_thread_new("gnostr-npipe-ipc", npipe_ipc_accept_thread, srv);
     if (!srv->npipe_thr) {
-      g_warning("npipe: failed to start accept thread");
-      g_free(srv->endpoint);
-      g_free(srv->npipe_token_path);
-      g_free(srv->npipe_token);
-      if (ep_alloc) g_free(ep_alloc);
+      g_set_error_literal(error, GN_IPC_ERROR, GN_IPC_ERROR_THREAD_CREATE,
+                          "Failed to start named pipe accept thread");
+      g_clear_pointer(&srv->endpoint, g_free);
+      g_clear_pointer(&srv->npipe_token_path, g_free);
+      g_clear_pointer(&srv->npipe_token, g_free);
       ipc_stats_cleanup(srv);
-      g_free((gpointer)srv);
+      g_free(srv);
       return NULL;
     }
 
     srv->kind = IPC_NPIPE;
-    if (ep_alloc) g_free(ep_alloc);
     g_message("npipe ipc server started on %s (token: %s, max_connections: %u)",
               srv->endpoint, srv->npipe_token_path, srv->npipe_max_connections);
     return srv;
 #else
-    g_warning("npipe: endpoint only supported on Windows");
-    if (ep_alloc) g_free(ep_alloc);
+    g_set_error_literal(error, GN_IPC_ERROR, GN_IPC_ERROR_PLATFORM_UNSUPPORTED,
+                        "Named pipes only supported on Windows");
     ipc_stats_cleanup(srv);
-    g_free((gpointer)srv);
+    g_free(srv);
     return NULL;
 #endif
   } else {
-    g_warning("unknown endpoint scheme: %s", ep);
-    if (ep_alloc) g_free(ep_alloc);
-    g_free((gpointer)srv);
+    g_set_error(error, GN_IPC_ERROR, GN_IPC_ERROR_INVALID_ENDPOINT,
+                "Unknown endpoint scheme: %s (expected unix:, tcp:, or npipe:)", ep);
+    ipc_stats_cleanup(srv);
+    g_free(srv);
     return NULL;
   }
 }

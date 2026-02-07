@@ -43,20 +43,23 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
   g_message("gnostr-signer: D-Bus interface exported at %s on %s", 
             ORG_NOSTR_SIGNER_OBJECT_PATH, ORG_NOSTR_SIGNER_BUS);
   
-  // Start IPC listener. Endpoint selection via env:
-  //  NOSTR_SIGNER_ENDPOINT examples:
-  //    unix:/run/user/1000/gnostr/signer.sock
-  //    tcp:127.0.0.1:5897
-  //    npipe:\\.\pipe\gnostr-signer (Windows)
+  /* Start IPC listener. Endpoint selection via env:
+   *  NOSTR_SIGNER_ENDPOINT examples:
+   *    unix:/run/user/1000/gnostr/signer.sock
+   *    tcp:127.0.0.1:5897
+   *    npipe:\\.\pipe\gnostr-signer (Windows)
+   */
   const char *endpoint = g_getenv("NOSTR_SIGNER_ENDPOINT");
   if (!endpoint || !*endpoint) {
-    endpoint = g_getenv("NOSTR_SIGNER_SOCK"); // legacy
+    endpoint = g_getenv("NOSTR_SIGNER_SOCK"); /* legacy */
   }
-  
-  ipc_srv = gnostr_ipc_server_start(endpoint);
+
+  g_autoptr(GError) ipc_error = NULL;
+  ipc_srv = gnostr_ipc_server_start(endpoint, &ipc_error);
   if (!ipc_srv) {
     const char *ep = (endpoint && *endpoint) ? endpoint : "(default)";
-    g_warning("gnostr-signer: failed to start IPC server for endpoint '%s'", ep);
+    g_warning("gnostr-signer: failed to start IPC server for endpoint '%s': %s",
+              ep, ipc_error ? ipc_error->message : "unknown error");
     g_warning("gnostr-signer: continuing with D-Bus interface only");
   } else {
     g_message("gnostr-signer: daemon fully initialized and ready");
@@ -146,7 +149,7 @@ static void print_usage(const char *prog_name) {
 int main(int argc, char **argv) {
   GBusType bus_type = G_BUS_TYPE_SESSION;
   gboolean show_version = FALSE;
-  
+
   // Parse command line arguments
   for (int i = 1; i < argc; i++) {
     if (g_strcmp0(argv[i], "-h") == 0 || g_strcmp0(argv[i], "--help") == 0) {
@@ -162,18 +165,18 @@ int main(int argc, char **argv) {
       return 1;
     }
   }
-  
+
   if (show_version) {
     g_print("%s version %s\n", DAEMON_NAME, DAEMON_VERSION);
     g_print("Built with GLib %d.%d.%d\n", GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION);
     return 0;
   }
-  
+
   g_message("%s v%s starting...", DAEMON_NAME, DAEMON_VERSION);
-  
+
   // Initialize mutex for shutdown coordination
   g_mutex_init(&g_shutdown_mutex);
-  
+
   // Disable core dumps when handling secrets
   struct rlimit rl;
   rl.rlim_cur = 0;
@@ -183,17 +186,17 @@ int main(int argc, char **argv) {
   } else {
     g_message("core dumps disabled for security");
   }
-  
+
   // Set up signal handlers for graceful shutdown
   signal(SIGINT, handle_sig);
   signal(SIGTERM, handle_sig);
   signal(SIGPIPE, SIG_IGN);  // Ignore broken pipe
-  
-  g_message("registering D-Bus name on %s bus", 
+
+  g_message("registering D-Bus name on %s bus",
             bus_type == G_BUS_TYPE_SYSTEM ? "system" : "session");
-  
+
   loop = g_main_loop_new(NULL, FALSE);
-  
+
   guint owner_id = g_bus_own_name(bus_type,
                                   ORG_NOSTR_SIGNER_BUS,
                                   G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT | G_BUS_NAME_OWNER_FLAGS_REPLACE,
@@ -202,26 +205,22 @@ int main(int argc, char **argv) {
                                   on_name_lost,
                                   NULL,
                                   NULL);
-  
+
   g_message("entering main loop");
   g_main_loop_run(loop);
-  
+
   g_message("main loop exited, cleaning up");
-  
-  // Cleanup
+
+  /* Cleanup */
   g_bus_unown_name(owner_id);
-  
-  if (g_dbus_conn) {
-    g_object_unref(g_dbus_conn);
-    g_dbus_conn = NULL;
-  }
-  
-  g_main_loop_unref(loop);
-  loop = NULL;
-  
+
+  g_clear_object(&g_dbus_conn);
+
+  g_clear_pointer(&loop, g_main_loop_unref);
+
   g_mutex_clear(&g_shutdown_mutex);
-  
+
   g_message("%s shutdown complete", DAEMON_NAME);
-  
+
   return 0;
 }
