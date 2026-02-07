@@ -295,6 +295,137 @@ int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubk
     return -1;
 }
 
+/* nostrc-j2yu: Event callback for persistent client pool.
+ * Routes incoming NIP-46 responses to pending RPC requests. */
+static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
+    if (!incoming || !incoming->event) return;
+
+    NostrEvent *ev = incoming->event;
+    if (nostr_event_get_kind(ev) != NOSTR_EVENT_KIND_NIP46) return;
+
+    const char *content = nostr_event_get_content(ev);
+    const char *sender_pubkey = nostr_event_get_pubkey(ev);
+    if (!content || !sender_pubkey) return;
+
+    fprintf(stderr, "[nip46] persistent_cb: received response from %s\n", sender_pubkey);
+
+    /* Note: Response routing is done via session reference in user_data.
+     * For now we just log - the actual routing happens in nip46_rpc_call_persistent. */
+}
+
+/* nostrc-j2yu: Start the persistent relay connection for efficient RPC calls. */
+int nostr_nip46_client_start(NostrNip46Session *s) {
+    if (!s) return -1;
+
+    if (s->client_pool_started) {
+        fprintf(stderr, "[nip46] client_start: already running\n");
+        return 0;
+    }
+
+    if (!s->secret) {
+        fprintf(stderr, "[nip46] client_start: ERROR: no secret set\n");
+        return -1;
+    }
+    if (!s->relays || s->n_relays == 0) {
+        fprintf(stderr, "[nip46] client_start: ERROR: no relays configured\n");
+        return -1;
+    }
+
+    /* Derive client pubkey from secret */
+    if (!s->derived_client_pubkey) {
+        s->derived_client_pubkey = nostr_key_get_public(s->secret);
+        if (!s->derived_client_pubkey) {
+            fprintf(stderr, "[nip46] client_start: ERROR: failed to derive pubkey\n");
+            return -1;
+        }
+    }
+
+    /* Create persistent pool */
+    s->client_pool = nostr_simple_pool_new();
+    if (!s->client_pool) {
+        fprintf(stderr, "[nip46] client_start: ERROR: failed to create pool\n");
+        return -1;
+    }
+
+    nostr_simple_pool_set_event_middleware(s->client_pool, nip46_persistent_client_cb);
+
+    /* Connect to all relays */
+    for (size_t i = 0; i < s->n_relays; i++) {
+        nostr_simple_pool_ensure_relay(s->client_pool, s->relays[i]);
+    }
+
+    /* Start pool and wait for connection */
+    nostr_simple_pool_start(s->client_pool);
+
+    int connected = 0;
+    int max_wait_ms = 5000;
+    int elapsed_ms = 0;
+    while (!connected && elapsed_ms < max_wait_ms) {
+        for (size_t r = 0; r < s->client_pool->relay_count; r++) {
+            if (s->client_pool->relays[r] &&
+                nostr_relay_is_connected(s->client_pool->relays[r])) {
+                connected = 1;
+                break;
+            }
+        }
+        if (!connected) {
+            usleep(50000);
+            elapsed_ms += 50;
+        }
+    }
+
+    if (!connected) {
+        fprintf(stderr, "[nip46] client_start: ERROR: relay connection timeout\n");
+        nostr_simple_pool_stop(s->client_pool);
+        nostr_simple_pool_free(s->client_pool);
+        s->client_pool = NULL;
+        return -1;
+    }
+
+    /* Set up subscription for responses */
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter *f = nostr_filter_new();
+    int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
+    nostr_filter_set_kinds(f, kinds, 1);
+
+    NostrTags *filter_tags = nostr_tags_new(1,
+        nostr_tag_new("p", s->derived_client_pubkey, NULL));
+    nostr_filter_set_tags(f, filter_tags);
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 60);
+
+    NostrFilter f_copy = *f;
+    free(f);
+    nostr_filters_add(filters, &f_copy);
+
+    nostr_simple_pool_subscribe(s->client_pool, (const char **)s->relays,
+                                s->n_relays, *filters, true);
+    nostr_filters_free(filters);
+
+    s->client_pool_started = 1;
+    fprintf(stderr, "[nip46] client_start: persistent pool started with %zu relay(s)\n",
+            s->n_relays);
+    return 0;
+}
+
+/* nostrc-j2yu: Stop the persistent relay connection */
+void nostr_nip46_client_stop(NostrNip46Session *s) {
+    if (!s) return;
+
+    if (s->client_pool) {
+        nostr_simple_pool_stop(s->client_pool);
+        nostr_simple_pool_free(s->client_pool);
+        s->client_pool = NULL;
+    }
+    s->client_pool_started = 0;
+    fprintf(stderr, "[nip46] client_stop: persistent pool stopped\n");
+}
+
+/* nostrc-j2yu: Check if persistent pool is running */
+int nostr_nip46_client_is_running(NostrNip46Session *s) {
+    if (!s) return 0;
+    return s->client_pool_started;
+}
+
 /* Forward declaration for RPC helper used by sign_event and other calls */
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
@@ -455,7 +586,13 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     secure_free(&sb);
     free(cipher);
 
-    fprintf(stderr, "[nip46] %s: signed request, connecting to %zu relay(s)\n", method, s->n_relays);
+    /* nostrc-j2yu: Use persistent pool if available */
+    int use_persistent = s->client_pool_started && s->client_pool;
+    if (use_persistent) {
+        fprintf(stderr, "[nip46] %s: using persistent pool with %zu relay(s)\n", method, s->client_pool->relay_count);
+    } else {
+        fprintf(stderr, "[nip46] %s: signed request, connecting to %zu relay(s)\n", method, s->n_relays);
+    }
 
     /* Build filter for responses: kind 24133 tagged to our pubkey */
     NostrFilters *filters = nostr_filters_new();
@@ -470,9 +607,38 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     nostr_filters_add(filters, &f_copy);
 
     /* Create subscriptions for each relay and collect their channels */
-    NostrSubscription **subs = (NostrSubscription **)calloc(s->n_relays, sizeof(NostrSubscription *));
-    NostrRelay **relays = (NostrRelay **)calloc(s->n_relays, sizeof(NostrRelay *));
+    NostrSubscription **subs = NULL;
+    NostrRelay **relays = NULL;
     size_t active_count = 0;
+
+    if (use_persistent) {
+        /* nostrc-j2yu: Use relays from persistent pool - already connected */
+        subs = (NostrSubscription **)calloc(s->client_pool->relay_count, sizeof(NostrSubscription *));
+        relays = (NostrRelay **)calloc(s->client_pool->relay_count, sizeof(NostrRelay *));
+
+        for (size_t r = 0; r < s->client_pool->relay_count; r++) {
+            NostrRelay *relay = s->client_pool->relays[r];
+            if (!relay || !nostr_relay_is_connected(relay)) continue;
+
+            GoContext *sub_ctx = go_context_background();
+            NostrSubscription *sub = nostr_relay_prepare_subscription(relay, sub_ctx, filters);
+            if (!sub) continue;
+
+            Error *err = NULL;
+            if (!nostr_subscription_fire(sub, &err)) {
+                fprintf(stderr, "[nip46] %s: subscription fire failed for persistent relay\n", method);
+                nostr_subscription_free(sub);
+                continue;
+            }
+
+            relays[active_count] = relay;  /* Don't own - pool owns */
+            subs[active_count] = sub;
+            active_count++;
+        }
+    } else {
+        /* Original per-call connection logic */
+        subs = (NostrSubscription **)calloc(s->n_relays, sizeof(NostrSubscription *));
+        relays = (NostrRelay **)calloc(s->n_relays, sizeof(NostrRelay *));
 
     for (size_t i = 0; i < s->n_relays; i++) {
         Error *relay_err = NULL;
@@ -531,6 +697,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         active_count++;
         fprintf(stderr, "[nip46] %s: subscribed to %s\n", method, s->relays[i]);
     }
+    }  /* end else (per-call connection) */
 
     nostr_filters_free(filters);
 
@@ -765,8 +932,11 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
     for (size_t i = 0; i < active_count; i++) {
         nostr_subscription_unsubscribe(subs[i]);
         nostr_subscription_free(subs[i]);
-        nostr_relay_disconnect(relays[i]);
-        nostr_relay_free(relays[i]);
+        /* nostrc-j2yu: Only disconnect/free relays if not using persistent pool */
+        if (!use_persistent) {
+            nostr_relay_disconnect(relays[i]);
+            nostr_relay_free(relays[i]);
+        }
     }
     free(subs);
     free(relays);

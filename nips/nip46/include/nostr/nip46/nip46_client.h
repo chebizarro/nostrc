@@ -51,6 +51,22 @@ int nostr_nip46_client_nip04_decrypt(NostrNip46Session *s, const char *peer_pubk
 int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);
 int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
 
+/* nostrc-j2yu: Persistent connection API.
+ * Start a persistent relay connection for efficient RPC calls.
+ * This should be called after nostr_nip46_client_connect() has parsed the bunker URI.
+ * Once started, all RPC calls reuse the same relay connections instead of
+ * connecting/disconnecting per call.
+ * Returns 0 on success, -1 on failure. */
+int nostr_nip46_client_start(NostrNip46Session *s);
+
+/* nostrc-j2yu: Stop the persistent relay connection.
+ * Safe to call multiple times or if never started. */
+void nostr_nip46_client_stop(NostrNip46Session *s);
+
+/* nostrc-j2yu: Check if the persistent client pool is running.
+ * Returns 1 if running, 0 if not. */
+int nostr_nip46_client_is_running(NostrNip46Session *s);
+
 void nostr_nip46_session_free(NostrNip46Session *s);
 
 #ifdef __cplusplus
