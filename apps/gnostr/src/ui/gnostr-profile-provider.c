@@ -17,6 +17,24 @@ static guint s_cap = 0;
 static gboolean s_init = FALSE;
 static GnostrProfileProviderStats s_stats = {0};
 
+/* Profile update watchers */
+typedef struct {
+  guint id;
+  char *pubkey_hex;
+  GnostrProfileWatchCallback callback;
+  gpointer user_data;
+} ProfileWatch;
+
+static GSList *s_watches = NULL;
+static guint s_next_watch_id = 1;
+
+/* Data for dispatching watcher callbacks on the main thread */
+typedef struct {
+  GnostrProfileWatchCallback callback;
+  GnostrProfileMeta *meta;  /* owned copy */
+  gpointer user_data;
+} WatchDispatch;
+
 void gnostr_profile_provider_init(guint cap) {
   G_LOCK(profile_provider);
   if (s_init) { G_UNLOCK(profile_provider); return; }
@@ -51,6 +69,14 @@ void gnostr_profile_provider_shutdown(void) {
     s_lru = NULL;
   }
   if (s_lru_nodes) { g_hash_table_destroy(s_lru_nodes); s_lru_nodes = NULL; }
+  /* Clean up watchers */
+  for (GSList *l = s_watches; l; l = l->next) {
+    ProfileWatch *w = l->data;
+    g_free(w->pubkey_hex);
+    g_free(w);
+  }
+  g_slist_free(s_watches);
+  s_watches = NULL;
   s_init = FALSE;
   G_UNLOCK(profile_provider);
 }
@@ -250,6 +276,14 @@ int gnostr_profile_provider_get_batch(const char **pks, guint cnt, GnostrProfile
   return 0;
 }
 
+static gboolean watch_dispatch_idle(gpointer data) {
+  WatchDispatch *wd = data;
+  wd->callback(wd->meta->pubkey_hex, wd->meta, wd->user_data);
+  gnostr_profile_meta_free(wd->meta);
+  g_free(wd);
+  return G_SOURCE_REMOVE;
+}
+
 int gnostr_profile_provider_update(const char *pk, const char *json) {
   if (!pk || !json) return -1;
   /* Parse JSON without holding lock (can be slow) */
@@ -266,7 +300,27 @@ int gnostr_profile_provider_update(const char *pk, const char *json) {
   lru_insert(pk);
   lru_evict();
   s_stats.cache_size = g_hash_table_size(s_cache);
+
+  /* Collect matching watchers while holding the lock */
+  GSList *dispatches = NULL;
+  for (GSList *l = s_watches; l; l = l->next) {
+    ProfileWatch *w = l->data;
+    if (g_strcmp0(w->pubkey_hex, pk) == 0) {
+      WatchDispatch *wd = g_new0(WatchDispatch, 1);
+      wd->callback = w->callback;
+      wd->meta = meta_copy(m);
+      wd->user_data = w->user_data;
+      dispatches = g_slist_prepend(dispatches, wd);
+    }
+  }
   G_UNLOCK(profile_provider);
+
+  /* Dispatch to main thread outside the lock */
+  for (GSList *l = dispatches; l; l = l->next) {
+    g_idle_add(watch_dispatch_idle, l->data);
+  }
+  g_slist_free(dispatches);
+
   return 0;
 }
 
@@ -279,6 +333,39 @@ void gnostr_profile_meta_free(GnostrProfileMeta *m) {
   g_free(m->nip05);
   g_free(m->lud16);
   g_free(m);
+}
+
+guint gnostr_profile_provider_watch(const char *pubkey_hex,
+                                    GnostrProfileWatchCallback callback,
+                                    gpointer user_data) {
+  if (!pubkey_hex || !callback) return 0;
+
+  G_LOCK(profile_provider);
+  ProfileWatch *w = g_new0(ProfileWatch, 1);
+  w->id = s_next_watch_id++;
+  w->pubkey_hex = g_strdup(pubkey_hex);
+  w->callback = callback;
+  w->user_data = user_data;
+  s_watches = g_slist_prepend(s_watches, w);
+  G_UNLOCK(profile_provider);
+
+  return w->id;
+}
+
+void gnostr_profile_provider_unwatch(guint watch_id) {
+  if (watch_id == 0) return;
+
+  G_LOCK(profile_provider);
+  for (GSList *l = s_watches; l; l = l->next) {
+    ProfileWatch *w = l->data;
+    if (w->id == watch_id) {
+      s_watches = g_slist_delete_link(s_watches, l);
+      g_free(w->pubkey_hex);
+      g_free(w);
+      break;
+    }
+  }
+  G_UNLOCK(profile_provider);
 }
 
 void gnostr_profile_provider_get_stats(GnostrProfileProviderStats *st) {

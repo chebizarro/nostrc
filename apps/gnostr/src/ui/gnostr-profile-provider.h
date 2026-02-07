@@ -102,6 +102,26 @@ typedef struct {
 void gnostr_profile_provider_get_stats(GnostrProfileProviderStats *stats);
 void gnostr_profile_provider_log_stats(void);
 
+/* Profile update watcher: get notified when a specific pubkey's profile is updated.
+ * Callback is dispatched on the GLib main thread via g_idle_add.
+ *
+ * Parameters:
+ *   pubkey_hex: 64-char hex pubkey to watch
+ *   callback: called with (pubkey_hex, meta, user_data) when profile updates
+ *   user_data: passed to callback
+ *
+ * Returns: watch ID (> 0) for use with gnostr_profile_provider_unwatch(), 0 on error
+ */
+typedef void (*GnostrProfileWatchCallback)(const char *pubkey_hex,
+                                           const GnostrProfileMeta *meta,
+                                           gpointer user_data);
+
+guint gnostr_profile_provider_watch(const char *pubkey_hex,
+                                    GnostrProfileWatchCallback callback,
+                                    gpointer user_data);
+
+void gnostr_profile_provider_unwatch(guint watch_id);
+
 #ifdef __cplusplus
 }
 #endif

@@ -94,7 +94,9 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_event) {
         nostr_metric_counter_add("json_event_backend_used", 1);
-        return json_interface->deserialize_event(event, json_str);
+        /* Backend returns 1=success/0=failure; public API returns 0=success/-1=failure */
+        int rc = json_interface->deserialize_event(event, json_str);
+        return rc ? 0 : -1;
     }
     return -1;
 }
@@ -130,7 +132,8 @@ int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_envelope) {
         nostr_metric_counter_add("json_envelope_backend_used", 1);
-        return json_interface->deserialize_envelope(envelope, json);
+        int rc = json_interface->deserialize_envelope(envelope, json);
+        return rc ? 0 : -1;
     }
     return -1;
 }
@@ -166,7 +169,8 @@ int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_filter) {
         nostr_metric_counter_add("json_filter_backend_used", 1);
-        return json_interface->deserialize_filter(filter, json);
+        int rc = json_interface->deserialize_filter(filter, json);
+        return rc ? 0 : -1;
     }
     return -1;
 }

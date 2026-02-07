@@ -192,6 +192,7 @@ struct _GnostrMainWindow {
   /* Gift wrap (NIP-59) subscription for DMs */
   uint64_t        sub_gift_wrap;         /* nostrdb subscription ID for kind 1059 */
   char           *user_pubkey_hex;       /* current user's pubkey (64-char hex), NULL if not signed in */
+  guint           profile_watch_id;     /* profile provider watch for user's pubkey, 0 if none */
   GPtrArray      *gift_wrap_queue;       /* pending gift wrap events to process */
 
   /* NIP-17 DM Service for decryption and conversation management */
@@ -3492,6 +3493,26 @@ static void on_nip65_loaded_for_profile(GPtrArray *nip65_relays, gpointer user_d
   g_ptr_array_unref(relay_urls);
 }
 
+/* Reactive profile watch callback: fired when profile provider updates our user's profile.
+ * This is dispatched on the main thread via g_idle_add by the profile provider. */
+static void on_user_profile_watch(const char *pubkey_hex,
+                                  const GnostrProfileMeta *meta,
+                                  gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !meta) return;
+
+  const char *final_name = (meta->display_name && *meta->display_name)
+                           ? meta->display_name : meta->name;
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_set_user_profile(self->session_view,
+                                          pubkey_hex,
+                                          final_name,
+                                          meta->picture);
+  }
+
+  update_login_ui_state(self);
+}
+
 /* Signal handler for when user successfully signs in via login dialog */
 static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -3591,6 +3612,15 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
   /* Async initialization - dispatch immediately, pool handles load management.
    * These are all async functions that return immediately. No reason to delay. */
   if (self->user_pubkey_hex) {
+    /* nostrc-wmuq: Register reactive profile watch for the user's pubkey.
+     * When ANY code path updates the profile (timeline fetch, dedicated fetch,
+     * subscription), the account menu will update automatically. */
+    if (self->profile_watch_id) {
+      gnostr_profile_provider_unwatch(self->profile_watch_id);
+    }
+    self->profile_watch_id = gnostr_profile_provider_watch(
+      self->user_pubkey_hex, on_user_profile_watch, self);
+
     /* nostrc-profile-fix: NIP-65 load now chains to profile fetch.
      * This ensures we have user's relay list before fetching their profile. */
     gnostr_nip65_load_on_login_async(self->user_pubkey_hex,
@@ -5718,6 +5748,12 @@ G_DEFINE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, ADW_TYPE_APPLICATION_W
 static void gnostr_main_window_dispose(GObject *object) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
   g_debug("main-window: dispose");
+
+  /* Unwatch profile provider to prevent callbacks after dispose */
+  if (self->profile_watch_id) {
+    gnostr_profile_provider_unwatch(self->profile_watch_id);
+    self->profile_watch_id = 0;
+  }
 
   /* Remove pending timeout/idle sources to prevent callbacks after dispose */
   if (self->profile_fetch_source_id) {
