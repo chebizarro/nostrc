@@ -15,9 +15,10 @@
 #include "relay_store.h"
 #include "secure-memory.h"
 #include <json-glib/json-glib.h>
-#include <nostr/nip19/nip19.h>
+#include <nostr_nip19.h>
+#include <nostr_keys.h>
+/* Core key generation still needed (GObject wrapper doesn't expose private key hex) */
 #include <keys.h>
-#include <nostr-utils.h>
 #include <string.h>
 #include <time.h>
 
@@ -55,19 +56,12 @@ struct _KeyRotation {
 static gchar *npub_to_hex(const gchar *npub) {
   if (!npub || !g_str_has_prefix(npub, "npub1")) return NULL;
 
-  guint8 pk[32];
-  if (nostr_nip19_decode_npub(npub, pk) != 0) {
-    return NULL;
-  }
+  GNostrNip19 *nip19 = gnostr_nip19_decode(npub, NULL);
+  if (!nip19) return NULL;
 
-  /* Convert to hex */
-  static const gchar hexd[16] = "0123456789abcdef";
-  gchar *hex = g_malloc(65);
-  for (gsize i = 0; i < 32; i++) {
-    hex[2*i] = hexd[(pk[i] >> 4) & 0xF];
-    hex[2*i+1] = hexd[pk[i] & 0xF];
-  }
-  hex[64] = '\0';
+  const gchar *pubkey = gnostr_nip19_get_pubkey(nip19);
+  gchar *hex = pubkey ? g_strdup(pubkey) : NULL;
+  g_object_unref(nip19);
   return hex;
 }
 
@@ -181,13 +175,12 @@ gchar *key_rotation_build_migration_event(const gchar *old_pubkey_hex,
     content_str = g_strdup(content);
   } else {
     /* Encode new pubkey as npub for content */
-    guint8 pk[32];
-    if (nostr_hex2bin(pk, new_pubkey_hex, 32)) {
-      gchar *new_npub = NULL;
-      if (nostr_nip19_encode_npub(pk, &new_npub) == 0 && new_npub) {
+    GNostrNip19 *nip19 = gnostr_nip19_encode_npub(new_pubkey_hex, NULL);
+    if (nip19) {
+      const gchar *new_npub = gnostr_nip19_get_bech32(nip19);
+      if (new_npub)
         content_str = g_strdup_printf("Migrating to new key: %s", new_npub);
-        free(new_npub);
-      }
+      g_object_unref(nip19);
     }
     if (!content_str) {
       content_str = g_strdup_printf("Migrating to new key: %s", new_pubkey_hex);
@@ -307,59 +300,47 @@ static gboolean rotation_step(gpointer user_data) {
         return G_SOURCE_REMOVE;
       }
 
-      /* Derive public key */
-      gchar *pk_hex = nostr_key_get_public(sk_hex);
-      if (!pk_hex) {
+      /* Derive public key and npub using GNostrKeys */
+      GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+      if (!keys) {
         gn_secure_strfree(sk_hex);
         emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
                       "Failed to derive public key");
         return G_SOURCE_REMOVE;
       }
 
+      const gchar *pk_hex = gnostr_keys_get_pubkey(keys);
       kr->new_pubkey_hex = g_strdup(pk_hex);
-      free(pk_hex);
+      gchar *npub = gnostr_keys_get_npub(keys);
+      kr->new_npub = npub;  /* transfer full */
+      g_object_unref(keys);
 
-      /* Convert to npub */
-      guint8 pk[32];
-      if (!nostr_hex2bin(pk, kr->new_pubkey_hex, 32)) {
-        gn_secure_strfree(sk_hex);
-        emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
-                      "Failed to decode public key");
-        return G_SOURCE_REMOVE;
-      }
-
-      gchar *npub = NULL;
-      if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
+      if (!kr->new_pubkey_hex || !kr->new_npub) {
         gn_secure_strfree(sk_hex);
         emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
                       "Failed to encode npub");
         return G_SOURCE_REMOVE;
       }
-      kr->new_npub = g_strdup(npub);
-      free(npub);
 
-      /* Convert sk_hex to nsec for storage */
-      guint8 sk[32];
-      if (!nostr_hex2bin(sk, sk_hex, 32)) {
-        gn_secure_strfree(sk_hex);
-        emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
-                      "Failed to decode secret key");
-        return G_SOURCE_REMOVE;
-      }
+      /* Convert sk_hex to nsec for storage using GNostrNip19 */
+      GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
+      gn_secure_strfree(sk_hex);
 
-      gchar *nsec = NULL;
-      if (nostr_nip19_encode_nsec(sk, &nsec) != 0 || !nsec) {
-        gn_secure_zero(sk, sizeof(sk));
-        gn_secure_strfree(sk_hex);
+      if (!nip19) {
         emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
                       "Failed to encode nsec");
         return G_SOURCE_REMOVE;
       }
 
-      kr->new_nsec = gn_secure_strdup(nsec);
-      gn_secure_zero(sk, sizeof(sk));
-      gn_secure_strfree(sk_hex);
-      free(nsec);
+      const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
+      kr->new_nsec = nsec_str ? gn_secure_strdup(nsec_str) : NULL;
+      g_object_unref(nip19);
+
+      if (!kr->new_nsec) {
+        emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
+                      "Failed to encode nsec");
+        return G_SOURCE_REMOVE;
+      }
 
       emit_progress(kr, KEY_ROTATION_STATE_CREATING_EVENT,
                     "Creating migration event...");

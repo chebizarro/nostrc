@@ -7,9 +7,11 @@
  * SPDX-License-Identifier: MIT
  */
 #include "secret-storage.h"
+#include "secure-memory.h"
+#include <nostr_nip19.h>
+#include <nostr_keys.h>
+/* Core nsec decode still needed (GObject NIP-19 doesn't expose decoded secret key) */
 #include <nostr/nip19/nip19.h>
-#include <keys.h>
-#include <nostr-utils.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -86,6 +88,20 @@ bin_to_hex(const guint8 *buf, gsize len)
   return out;
 }
 
+/* Helper: hex string to raw bytes (for Keychain backend) */
+static gboolean
+hex_to_bytes_ss(const gchar *hex, guint8 *out, gsize out_len)
+{
+  gsize hex_len = strlen(hex);
+  if (hex_len != out_len * 2) return FALSE;
+  for (gsize i = 0; i < out_len; i++) {
+    unsigned int byte;
+    if (sscanf(hex + 2*i, "%2x", &byte) != 1) return FALSE;
+    out[i] = (guint8)byte;
+  }
+  return TRUE;
+}
+
 /* Helper: Get current ISO 8601 timestamp */
 static gchar *
 get_iso8601_timestamp(void)
@@ -134,9 +150,9 @@ normalize_key_and_derive_npub(const gchar *input_key,
     return FALSE;
   }
 
-  /* Derive public key */
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) {
+  /* Derive public key and npub via GNostrKeys */
+  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  if (!keys) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
     g_set_error(error,
@@ -146,22 +162,10 @@ normalize_key_and_derive_npub(const gchar *input_key,
     return FALSE;
   }
 
-  /* Convert to npub */
-  guint8 pk[32];
-  if (!nostr_hex2bin(pk, pk_hex, 32)) {
-    g_free(pk_hex);
-    memset(sk_hex, 0, strlen(sk_hex));
-    g_free(sk_hex);
-    g_set_error(error,
-                GN_SECRET_STORAGE_ERROR,
-                GN_SECRET_STORAGE_ERROR_FAILED,
-                "Invalid public key format");
-    return FALSE;
-  }
-  g_free(pk_hex);
+  gchar *npub = gnostr_keys_get_npub(keys);
+  g_object_unref(keys);
 
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
+  if (!npub) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
     g_set_error(error,
@@ -172,8 +176,7 @@ normalize_key_and_derive_npub(const gchar *input_key,
   }
 
   *out_sk_hex = sk_hex;
-  *out_npub = g_strdup(npub);
-  free(npub);
+  *out_npub = npub;
   return TRUE;
 }
 
@@ -365,7 +368,7 @@ gn_secret_storage_store_key(const gchar *label,
 #elif defined(GNOSTR_HAVE_KEYCHAIN)
   /* macOS Keychain implementation */
   guint8 skb[32];
-  if (!nostr_hex2bin(skb, sk_hex, 32)) {
+  if (!hex_to_bytes_ss(sk_hex, skb, 32)) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
     g_free(npub);
@@ -503,16 +506,13 @@ gn_secret_storage_retrieve_key(const gchar *label, GError **error)
     return NULL;
   }
 
-  /* Convert hex to nsec */
+  /* Convert hex to nsec using GNostrNip19 */
   if (is_hex_64(secret)) {
-    guint8 sk[32];
-    if (nostr_hex2bin(sk, secret, 32)) {
-      gchar *encoded = NULL;
-      if (nostr_nip19_encode_nsec(sk, &encoded) == 0 && encoded) {
-        nsec = g_strdup(encoded);
-        free(encoded);
-      }
-      memset(sk, 0, sizeof(sk));
+    GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(secret, NULL);
+    if (nip19) {
+      const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
+      if (nsec_str) nsec = gn_secure_strdup(nsec_str);
+      g_object_unref(nip19);
     }
   }
 
@@ -570,11 +570,21 @@ gn_secret_storage_retrieve_key(const gchar *label, GError **error)
     const UInt8 *bytes = CFDataGetBytePtr(data);
 
     if (len == 32 && bytes) {
-      gchar *encoded = NULL;
-      if (nostr_nip19_encode_nsec(bytes, &encoded) == 0 && encoded) {
-        nsec = g_strdup(encoded);
-        free(encoded);
+      /* Convert raw bytes to hex for GNostrNip19 */
+      static const gchar hexd[16] = "0123456789abcdef";
+      gchar sk_hex[65];
+      for (gsize i = 0; i < 32; i++) {
+        sk_hex[2*i] = hexd[(bytes[i] >> 4) & 0xF];
+        sk_hex[2*i+1] = hexd[bytes[i] & 0xF];
       }
+      sk_hex[64] = '\0';
+      GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
+      if (nip19) {
+        const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
+        if (nsec_str) nsec = gn_secure_strdup(nsec_str);
+        g_object_unref(nip19);
+      }
+      memset(sk_hex, 0, sizeof(sk_hex));
     }
     CFRelease(result);
   }

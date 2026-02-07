@@ -1,19 +1,17 @@
 /* backup-recovery.c - Backup and recovery implementation for gnostr-signer
  *
  * Implements NIP-49 encrypted backup and BIP-39 mnemonic import/export.
- * Uses secure memory functions for handling private keys and passwords.
+ * Uses GObject wrappers (GNostrNip49, GNostrBip39, GNostrKeys, GNostrNip19)
+ * for all cryptographic key operations.
  */
 #include "backup-recovery.h"
 #include "secure-mem.h"
 
 #include <json-glib/json-glib.h>
-#include <nostr/nip49/nip49.h>
-#include <nostr/nip49/nip49_g.h>
-#include <nostr/nip19/nip19.h>
-#include <nostr/crypto/bip39.h>
-#include <nip06.h>
-#include <keys.h>
-#include <nostr-utils.h>
+#include <nostr_nip49.h>
+#include <nostr_nip19.h>
+#include <nostr_bip39.h>
+#include <nostr_keys.h>
 
 #include <string.h>
 #include <stdlib.h>
@@ -34,52 +32,77 @@ static gboolean is_hex_64(const gchar *s) {
   return TRUE;
 }
 
-/* Helper: Convert nsec/hex to raw 32-byte key */
-static gboolean parse_private_key(const gchar *input, guint8 out_key[32], GError **error) {
+/* Helper: Convert nsec/hex input to hex private key string.
+ * Returns a newly-allocated hex string that the caller must securely wipe and free. */
+static gchar *parse_private_key_hex(const gchar *input, GError **error) {
   if (!input || !*input) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
                 "Private key is required");
-    return FALSE;
+    return NULL;
   }
 
   if (g_str_has_prefix(input, "nsec1")) {
-    /* Decode bech32 nsec */
-    if (nostr_nip19_decode_nsec(input, out_key) != 0) {
+    /* Decode bech32 nsec via GNostrNip19 */
+    GError *decode_error = NULL;
+    GNostrNip19 *nip19 = gnostr_nip19_decode(input, &decode_error);
+    if (!nip19) {
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
-                  "Invalid nsec format");
-      return FALSE;
+                  "Invalid nsec format: %s",
+                  decode_error ? decode_error->message : "decode failed");
+      g_clear_error(&decode_error);
+      return NULL;
     }
-    return TRUE;
+
+    if (gnostr_nip19_get_entity_type(nip19) != GNOSTR_BECH32_NSEC) {
+      g_object_unref(nip19);
+      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
+                  "Expected nsec but got different bech32 type");
+      return NULL;
+    }
+
+    /* GNostrNip19 stores the decoded key as hex in the pubkey field for nsec */
+    const gchar *hex = gnostr_nip19_get_pubkey(nip19);
+    gchar *result = hex ? g_strdup(hex) : NULL;
+    g_object_unref(nip19);
+
+    if (!result) {
+      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
+                  "Failed to extract key from nsec");
+      return NULL;
+    }
+    return result;
   } else if (is_hex_64(input)) {
-    /* Decode hex */
-    if (!nostr_hex2bin(out_key, input, 32)) {
-      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
-                  "Invalid hex key format");
-      return FALSE;
-    }
-    return TRUE;
+    return g_strdup(input);
   } else {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
                 "Key must be nsec1... or 64-character hex");
-    return FALSE;
+    return NULL;
   }
 }
 
-/* Helper: Convert 32-byte key to nsec string */
-static gchar *key_to_nsec(const guint8 key[32]) {
-  gchar *nsec = NULL;
-  if (nostr_nip19_encode_nsec(key, &nsec) != 0) {
+/* Helper: Convert hex private key to nsec string via GNostrNip19 */
+static gchar *hex_to_nsec(const gchar *hex_key) {
+  GError *error = NULL;
+  GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(hex_key, &error);
+  if (!nip19) {
+    g_clear_error(&error);
     return NULL;
   }
+  gchar *nsec = g_strdup(gnostr_nip19_get_bech32(nip19));
+  g_object_unref(nip19);
   return nsec;
 }
 
-/* Helper: Convert 32-byte public key to npub string */
-static gchar *pubkey_to_npub(const guint8 pk[32]) {
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(pk, &npub) != 0) {
+/* Helper: Convert hex public key to npub string via GNostrNip19 */
+static gchar *hex_to_npub(const gchar *hex_pubkey) {
+  GError *error = NULL;
+  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(hex_pubkey, &error);
+  if (!nip19) {
+    g_clear_error(&error);
     return NULL;
   }
+  gchar *npub = g_strdup(gnostr_nip19_get_bech32(nip19));
+  g_object_unref(nip19);
   return npub;
 }
 
@@ -102,26 +125,26 @@ gboolean gn_backup_export_nip49(const gchar *nsec,
     return FALSE;
   }
 
-  guint8 privkey[32];
-  if (!parse_private_key(nsec, privkey, error)) {
+  gchar *privkey_hex = parse_private_key_hex(nsec, error);
+  if (!privkey_hex)
     return FALSE;
-  }
 
-  gchar *ncryptsec = NULL;
+  /* Use GNostrNip49 for encryption */
+  GNostrNip49 *nip49 = gnostr_nip49_new();
   GError *nip49_error = NULL;
+  gchar *ncryptsec = gnostr_nip49_encrypt(nip49,
+                                            privkey_hex,
+                                            password,
+                                            GNOSTR_NIP49_SECURITY_SECURE,
+                                            (guint8)security,
+                                            &nip49_error);
 
-  /* Use the GLib wrapper for NIP-49 encryption */
-  gboolean ok = nostr_nip49_encrypt_g(privkey,
-                                       NOSTR_NIP49_SECURITY_SECURE,
-                                       password,
-                                       (guint8)security,
-                                       &ncryptsec,
-                                       &nip49_error);
+  /* Securely clear the hex key */
+  secure_clear(privkey_hex, strlen(privkey_hex));
+  g_free(privkey_hex);
+  g_object_unref(nip49);
 
-  /* Securely clear the private key */
-  secure_clear(privkey, sizeof(privkey));
-
-  if (!ok) {
+  if (!ncryptsec) {
     if (nip49_error) {
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_ENCRYPT_FAILED,
                   "Encryption failed: %s", nip49_error->message);
@@ -162,19 +185,13 @@ gboolean gn_backup_import_nip49(const gchar *encrypted,
     return FALSE;
   }
 
-  guint8 privkey[32];
-  guint8 security_byte = 0;
-  guint8 log_n = 0;
+  /* Use GNostrNip49 for decryption - returns hex string */
+  GNostrNip49 *nip49 = gnostr_nip49_new();
   GError *nip49_error = NULL;
+  gchar *privkey_hex = gnostr_nip49_decrypt(nip49, encrypted, password, &nip49_error);
+  g_object_unref(nip49);
 
-  gboolean ok = nostr_nip49_decrypt_g(encrypted,
-                                       password,
-                                       privkey,
-                                       &security_byte,
-                                       &log_n,
-                                       &nip49_error);
-
-  if (!ok) {
+  if (!privkey_hex) {
     if (nip49_error) {
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DECRYPT_FAILED,
                   "Decryption failed: %s (wrong password or corrupted data)",
@@ -187,8 +204,10 @@ gboolean gn_backup_import_nip49(const gchar *encrypted,
     return FALSE;
   }
 
-  gchar *nsec = key_to_nsec(privkey);
-  secure_clear(privkey, sizeof(privkey));
+  /* Convert hex key to nsec via GNostrNip19 */
+  gchar *nsec = hex_to_nsec(privkey_hex);
+  secure_clear(privkey_hex, strlen(privkey_hex));
+  g_free(privkey_hex);
 
   if (!nsec) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DECRYPT_FAILED,
@@ -241,24 +260,60 @@ gboolean gn_backup_import_mnemonic(const gchar *mnemonic,
     *p = g_ascii_tolower(*p);
   }
 
-  /* Validate the mnemonic */
-  if (!nostr_bip39_validate(normalized)) {
+  /* Validate the mnemonic via GNostrBip39 */
+  if (!gnostr_bip39_validate(normalized)) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_MNEMONIC,
                 "Invalid mnemonic: check word count (12/15/18/21/24) and checksum");
     return FALSE;
   }
 
-  /* Derive seed from mnemonic using BIP-39 with optional passphrase */
-  guint8 seed[64];
-  if (!nostr_bip39_seed(normalized, passphrase ? passphrase : "", seed)) {
-    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
-                "Failed to derive seed from mnemonic");
+  /* For account index 0, use GNostrKeys directly (NIP-06 derivation) */
+  if (account == 0) {
+    GError *key_error = NULL;
+    GNostrKeys *keys = gnostr_keys_new_from_mnemonic(normalized, passphrase, &key_error);
+    if (!keys) {
+      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
+                  "Failed to derive key from mnemonic: %s",
+                  key_error ? key_error->message : "unknown error");
+      g_clear_error(&key_error);
+      return FALSE;
+    }
+    g_object_unref(keys);
+  }
+
+  /* Use GNostrBip39 for seed derivation (supports non-zero account indices) */
+  GNostrBip39 *bip39 = gnostr_bip39_new();
+  GError *bip39_error = NULL;
+
+  if (!gnostr_bip39_set_mnemonic(bip39, normalized, &bip39_error)) {
+    g_object_unref(bip39);
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_MNEMONIC,
+                "Invalid mnemonic: %s",
+                bip39_error ? bip39_error->message : "validation failed");
+    g_clear_error(&bip39_error);
     return FALSE;
   }
 
-  /* Derive private key from seed using NIP-06 path m/44'/1237'/account'/0/0 */
+  /* Derive seed via PBKDF2 */
+  guint8 *seed = NULL;
+  if (!gnostr_bip39_to_seed(bip39, passphrase, &seed, &bip39_error)) {
+    g_object_unref(bip39);
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
+                "Failed to derive seed from mnemonic: %s",
+                bip39_error ? bip39_error->message : "PBKDF2 failed");
+    g_clear_error(&bip39_error);
+    return FALSE;
+  }
+  g_object_unref(bip39);
+
+  /* Derive private key from seed using NIP-06 path m/44'/1237'/account'/0/0
+   * Note: For non-zero accounts we still need the core NIP-06 function.
+   * GNostrKeys::new_from_mnemonic only supports account 0. */
+  /* Import nip06.h for account-specific derivation */
+  extern char *nostr_nip06_private_key_from_seed_account(const unsigned char *seed, unsigned int account);
   gchar *sk_hex = nostr_nip06_private_key_from_seed_account(seed, account);
-  secure_clear(seed, sizeof(seed));
+  secure_clear(seed, 64);
+  g_free(seed);
 
   if (!sk_hex) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
@@ -266,20 +321,10 @@ gboolean gn_backup_import_mnemonic(const gchar *mnemonic,
     return FALSE;
   }
 
-  /* Convert hex to binary and then to nsec */
-  guint8 privkey[32];
-  if (!nostr_hex2bin(privkey, sk_hex, 32)) {
-    secure_clear(sk_hex, strlen(sk_hex));
-    free(sk_hex);
-    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
-                "Invalid derived key format");
-    return FALSE;
-  }
+  /* Convert hex to nsec via GNostrNip19 */
+  gchar *nsec = hex_to_nsec(sk_hex);
   secure_clear(sk_hex, strlen(sk_hex));
   free(sk_hex);
-
-  gchar *nsec = key_to_nsec(privkey);
-  secure_clear(privkey, sizeof(privkey));
 
   if (!nsec) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
@@ -301,32 +346,37 @@ gboolean gn_backup_generate_mnemonic(gint word_count,
   *out_mnemonic = NULL;
   *out_nsec = NULL;
 
-  /* Validate word count */
-  if (word_count != 12 && word_count != 15 && word_count != 18 &&
-      word_count != 21 && word_count != 24) {
-    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_MNEMONIC,
-                "Word count must be 12, 15, 18, 21, or 24");
+  /* Use GNostrBip39 to generate mnemonic */
+  GNostrBip39 *bip39 = gnostr_bip39_new();
+  GError *gen_error = NULL;
+  const gchar *mnemonic = gnostr_bip39_generate(bip39, word_count, &gen_error);
+
+  if (!mnemonic) {
+    g_object_unref(bip39);
+    if (gen_error) {
+      g_propagate_error(error, gen_error);
+    } else {
+      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
+                  "Failed to generate mnemonic");
+    }
     return FALSE;
   }
 
-  /* Generate mnemonic */
-  gchar *mnemonic = nostr_bip39_generate(word_count);
-  if (!mnemonic) {
-    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
-                "Failed to generate mnemonic");
-    return FALSE;
-  }
+  /* Copy mnemonic before we use it (owned by bip39) */
+  gchar *mnemonic_copy = g_strdup(mnemonic);
+  g_object_unref(bip39);
 
   /* Derive key from mnemonic */
   gchar *nsec = NULL;
   GError *derive_error = NULL;
-  if (!gn_backup_import_mnemonic(mnemonic, passphrase, 0, &nsec, &derive_error)) {
-    free(mnemonic);
+  if (!gn_backup_import_mnemonic(mnemonic_copy, passphrase, 0, &nsec, &derive_error)) {
+    secure_clear(mnemonic_copy, strlen(mnemonic_copy));
+    g_free(mnemonic_copy);
     g_propagate_error(error, derive_error);
     return FALSE;
   }
 
-  *out_mnemonic = mnemonic;
+  *out_mnemonic = mnemonic_copy;
   *out_nsec = nsec;
   return TRUE;
 }
@@ -431,7 +481,7 @@ gboolean gn_backup_validate_mnemonic(const gchar *mnemonic) {
     *p = g_ascii_tolower(*p);
   }
 
-  return nostr_bip39_validate(normalized);
+  return gnostr_bip39_validate(normalized);
 }
 
 gboolean gn_backup_get_npub(const gchar *nsec,
@@ -440,44 +490,37 @@ gboolean gn_backup_get_npub(const gchar *nsec,
   g_return_val_if_fail(out_npub != NULL, FALSE);
   *out_npub = NULL;
 
-  guint8 privkey[32];
-  if (!parse_private_key(nsec, privkey, error)) {
+  /* Parse the input to hex key */
+  gchar *privkey_hex = parse_private_key_hex(nsec, error);
+  if (!privkey_hex)
     return FALSE;
-  }
 
-  /* Get hex representation of private key */
-  gchar *sk_hex = nostr_bin2hex(privkey, 32);
-  secure_clear(privkey, sizeof(privkey));
+  /* Derive public key via GNostrKeys */
+  GError *key_error = NULL;
+  GNostrKeys *keys = gnostr_keys_new_from_hex(privkey_hex, &key_error);
+  secure_clear(privkey_hex, strlen(privkey_hex));
+  g_free(privkey_hex);
 
-  if (!sk_hex) {
+  if (!keys) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
-                "Failed to convert key to hex");
+                "Failed to derive public key: %s",
+                key_error ? key_error->message : "unknown error");
+    g_clear_error(&key_error);
     return FALSE;
   }
 
-  /* Derive public key */
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
-  secure_clear(sk_hex, strlen(sk_hex));
-  free(sk_hex);
-
-  if (!pk_hex) {
+  const gchar *pubkey_hex = gnostr_keys_get_pubkey(keys);
+  if (!pubkey_hex) {
+    g_object_unref(keys);
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
                 "Failed to derive public key");
     return FALSE;
   }
 
-  /* Convert to binary */
-  guint8 pubkey[32];
-  if (!nostr_hex2bin(pubkey, pk_hex, 32)) {
-    free(pk_hex);
-    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
-                "Invalid public key format");
-    return FALSE;
-  }
-  free(pk_hex);
+  /* Encode as npub via GNostrNip19 */
+  gchar *npub = hex_to_npub(pubkey_hex);
+  g_object_unref(keys);
 
-  /* Encode as npub */
-  gchar *npub = pubkey_to_npub(pubkey);
   if (!npub) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
                 "Failed to encode public key as npub");

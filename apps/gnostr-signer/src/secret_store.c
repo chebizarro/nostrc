@@ -14,9 +14,12 @@
 #include "secure-delete.h"
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip55l/error.h>
+#include <nostr_nip19.h>
+#include <nostr_keys.h>
+/* Core APIs still needed: nsec decode (GObject NIP-19 doesn't expose secret key hex),
+ * key generation (GNostrKeys doesn't expose private key hex) */
 #include <nostr/nip19/nip19.h>
 #include <keys.h>
-#include <nostr-utils.h>
 #include <gio/gio.h>  /* For GTask async API */
 #include <string.h>
 #include <stdlib.h>
@@ -69,6 +72,18 @@ static gchar *bin_to_hex(const guint8 *buf, gsize len) {
   return out;
 }
 
+/* Internal: hex string to raw bytes (for Keychain backend) */
+static gboolean hex_to_bytes_ss(const gchar *hex, guint8 *out, gsize out_len) {
+  gsize hex_len = strlen(hex);
+  if (hex_len != out_len * 2) return FALSE;
+  for (gsize i = 0; i < out_len; i++) {
+    unsigned int byte;
+    if (sscanf(hex + 2*i, "%2x", &byte) != 1) return FALSE;
+    out[i] = (guint8)byte;
+  }
+  return TRUE;
+}
+
 /* Get fingerprint (first 8 hex chars of pubkey) from npub
  * Available for both libsecret and Keychain backends.
  */
@@ -77,13 +92,19 @@ static gchar *npub_to_fingerprint(const gchar *npub) {
     return NULL;
   }
 
-  guint8 pk[32];
-  if (nostr_nip19_decode_npub(npub, pk) != 0) {
+  GNostrNip19 *nip19 = gnostr_nip19_decode(npub, NULL);
+  if (!nip19) return NULL;
+
+  const gchar *pubkey_hex = gnostr_nip19_get_pubkey(nip19);
+  if (!pubkey_hex || strlen(pubkey_hex) < 8) {
+    g_object_unref(nip19);
     return NULL;
   }
 
-  /* Use first 4 bytes = 8 hex chars */
-  return bin_to_hex(pk, 4);
+  /* Use first 8 hex chars (4 bytes) */
+  gchar *fp = g_strndup(pubkey_hex, 8);
+  g_object_unref(nip19);
+  return fp;
 }
 
 #ifdef GNOSTR_HAVE_LIBSECRET
@@ -186,23 +207,17 @@ SecretStoreResult secret_store_add(const gchar *key,
     return SECRET_STORE_ERR_INVALID_KEY;
   }
 
-  /* Derive public key */
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) {
+  /* Derive public key and npub via GNostrKeys */
+  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  if (!keys) {
     gn_secure_strfree(sk_hex);
     return SECRET_STORE_ERR_BACKEND;
   }
 
-  guint8 pk[32];
-  if (!nostr_hex2bin(pk, pk_hex, 32)) {
-    g_free(pk_hex);
-    gn_secure_strfree(sk_hex);
-    return SECRET_STORE_ERR_INVALID_KEY;
-  }
-  g_free(pk_hex);
+  gchar *npub = gnostr_keys_get_npub(keys);
+  g_object_unref(keys);
 
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
+  if (!npub) {
     gn_secure_strfree(sk_hex);
     return SECRET_STORE_ERR_BACKEND;
   }
@@ -255,7 +270,7 @@ SecretStoreResult secret_store_add(const gchar *key,
 #elif defined(GNOSTR_HAVE_KEYCHAIN)
   /* macOS Keychain implementation */
   guint8 skb[32];
-  if (!nostr_hex2bin(skb, sk_hex, 32)) {
+  if (!hex_to_bytes_ss(sk_hex, skb, 32)) {
     gn_secure_strfree(sk_hex);
     g_free(npub);
     return SECRET_STORE_ERR_INVALID_KEY;
@@ -588,28 +603,22 @@ SecretStoreResult secret_store_generate(const gchar *label,
     return rc;
   }
 
-  /* Derive npub to return */
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
+  /* Derive npub to return via GNostrKeys */
+  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
   gn_secure_strfree(sk_hex);
 
-  if (!pk_hex) {
+  if (!keys) {
     return SECRET_STORE_ERR_BACKEND;
   }
 
-  guint8 pk[32];
-  if (!nostr_hex2bin(pk, pk_hex, 32)) {
-    free(pk_hex);
-    return SECRET_STORE_ERR_BACKEND;
-  }
-  free(pk_hex);
+  gchar *npub = gnostr_keys_get_npub(keys);
+  g_object_unref(keys);
 
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
+  if (!npub) {
     return SECRET_STORE_ERR_BACKEND;
   }
 
-  *out_npub = g_strdup(npub);
-  free(npub);
+  *out_npub = npub;
   return SECRET_STORE_OK;
 }
 
@@ -740,17 +749,15 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
     return SECRET_STORE_ERR_NOT_FOUND;
   }
 
-  /* Convert hex to nsec - use secure memory for the secret key */
+  /* Convert hex to nsec via GNostrNip19 */
   if (is_hex_64(secret)) {
-    guint8 sk[32];
-    if (nostr_hex2bin(sk, secret, 32)) {
-      gchar *nsec = NULL;
-      if (nostr_nip19_encode_nsec(sk, &nsec) == 0 && nsec) {
-        /* Return nsec in secure memory */
-        *out_nsec = gn_secure_strdup(nsec);
-        gn_secure_clear_string(nsec);  /* Zero and free the original */
+    GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(secret, NULL);
+    if (nip19) {
+      const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
+      if (nsec_str) {
+        *out_nsec = gn_secure_strdup(nsec_str);
       }
-      gn_secure_clear_buffer(sk);  /* Securely zero the buffer */
+      g_object_unref(nip19);
     }
   } else if (g_str_has_prefix(secret, "nsec1")) {
     /* Return nsec in secure memory */
@@ -787,11 +794,18 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
     const UInt8 *bytes = CFDataGetBytePtr(data);
 
     if (len == 32 && bytes) {
-      gchar *nsec = NULL;
-      if (nostr_nip19_encode_nsec(bytes, &nsec) == 0 && nsec) {
-        *out_nsec = g_strdup(nsec);
-        free(nsec);
+      /* Convert raw bytes to hex, then encode via GNostrNip19 */
+      gchar *sk_hex = bin_to_hex(bytes, 32);
+      GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
+      if (nip19) {
+        const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
+        if (nsec_str) {
+          *out_nsec = g_strdup(nsec_str);
+        }
+        g_object_unref(nip19);
       }
+      memset(sk_hex, 0, 64);
+      g_free(sk_hex);
     }
     CFRelease(result);
     return *out_nsec ? SECRET_STORE_OK : SECRET_STORE_ERR_BACKEND;

@@ -188,8 +188,29 @@ endif()
 if (TARGET nip06)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE nip06)
 endif()
+# NIP-44 for encrypted DMs (used by GNostrKeys wrapper)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip44/include)
+if (TARGET nostr_nip44_core)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip44_core)
+endif()
+# OpenSSL for RAND_bytes (used by GNostrKeys wrapper)
+if (OPENSSL_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE OpenSSL::Crypto)
+endif()
 # Note: nostr core is already transitively linked via nostr_nip46_core
 # Do NOT link nostr directly here - it causes ODR violation with nostr_json.so
+
+# GObject wrapper headers (GNostrKeys, GNostrNip19, GNostrNip49, GNostrBip39)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/include)
+# Compile GObject wrapper sources into the signer (hq-7p5m6)
+target_sources(${APP_SIGNER_BIN} PRIVATE
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip49.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_bip39.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip19.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_keys.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_event.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-error.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-enums.c)
 
 # Include project root so we can include gnome/seahorse/secret_store.h from the app
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
