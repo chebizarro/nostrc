@@ -7,5 +7,6 @@
 #define ORG_NOSTR_SIGNER_ERR_APPROVAL       "org.nostr.Signer.Error.ApprovalDenied"
 #define ORG_NOSTR_SIGNER_ERR_INVALID_INPUT  "org.nostr.Signer.Error.InvalidInput"
 #define ORG_NOSTR_SIGNER_ERR_INTERNAL       "org.nostr.Signer.Error.Internal"
+#define ORG_NOSTR_SIGNER_ERR_NO_KEY         "org.nostr.Signer.Error.NoKeyConfigured"
 
 #endif /* NIP55L_DBUS_ERRORS_H */

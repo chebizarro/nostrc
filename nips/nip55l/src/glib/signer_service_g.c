@@ -164,9 +164,15 @@ static gboolean handle_get_public_key(NostrSigner *object, GDBusMethodInvocation
   (void)object;
   char *npub = NULL; int rc = nostr_nip55l_get_public_key(&npub);
   if (rc!=0 || !npub) {
-    gchar *msg = g_strdup_printf("get_public_key failed (rc=%d)", rc);
-    g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, msg);
-    g_free(msg);
+    /* NOSTR_SIGNER_ERROR_NOT_FOUND (6) means no key is configured */
+    if (rc == 6) {
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY,
+        "No key configured. Please set up a key in GNostr Signer first.");
+    } else {
+      gchar *msg = g_strdup_printf("get_public_key failed (rc=%d)", rc);
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, msg);
+      g_free(msg);
+    }
     return TRUE;
   }
   nostr_signer_complete_get_public_key(object, invocation, npub);

@@ -794,7 +794,23 @@ static void local_sign_in_complete(GObject *source, GAsyncResult *res, gpointer 
       proxy, &npub, NULL, &error);
 
   if (!ok || !npub || !*npub) {
-    show_toast(self, error ? error->message : "Failed to get public key");
+    /* Check for specific D-Bus errors and show user-friendly messages */
+    const char *msg = "Failed to get public key from local signer";
+    if (error) {
+      /* Check for NoKeyConfigured error from daemon */
+      if (g_dbus_error_is_remote_error(error)) {
+        gchar *remote_error = g_dbus_error_get_remote_error(error);
+        if (remote_error && strstr(remote_error, "NoKeyConfigured")) {
+          msg = "No key configured in local signer.\n\nPlease set up a key in GNostr Signer first.";
+        } else {
+          msg = error->message;
+        }
+        g_free(remote_error);
+      } else {
+        msg = error->message;
+      }
+    }
+    show_toast(self, msg);
     if (error) g_error_free(error);
     return;
   }
