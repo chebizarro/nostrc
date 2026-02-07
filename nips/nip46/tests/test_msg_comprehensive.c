@@ -67,10 +67,11 @@ static int test_request_build_json_object_param(void) {
     const char *params[] = {event_json};
     char *json = nostr_nip46_request_build("req-3", "sign_event", params, 1);
     TEST_ASSERT(json != NULL, "build should succeed");
-    /* JSON objects should be embedded raw, not quoted */
-    TEST_ASSERT(strstr(json, "{\"kind\":1") != NULL, "has raw JSON object");
-    /* Should NOT be double-quoted like "\"{\\"kind\\":1" */
-    TEST_ASSERT(strstr(json, "\"{\\\"kind\\\":1") == NULL, "JSON not double-quoted");
+    /* Per NIP-46 spec, all params are JSON-stringified strings.
+     * Event JSON appears escaped inside a JSON string: "{\"kind\":1,...}" */
+    TEST_ASSERT(strstr(json, "{\\\"kind\\\":1") != NULL, "has stringified JSON object");
+    /* Params array should contain a string (quoted), not a raw object */
+    TEST_ASSERT(strstr(json, "\"params\":[\"") != NULL, "params are string values");
 
     free(json);
     return 0;

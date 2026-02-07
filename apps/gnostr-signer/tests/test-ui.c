@@ -156,7 +156,8 @@ static void mock_approval_dialog_init(MockApprovalDialog *self) {
 }
 
 static MockApprovalDialog *mock_approval_dialog_new(void) {
-  return g_object_new(mock_approval_dialog_get_type(), NULL);
+  /* Sink the floating ref so g_object_unref() works correctly in tests */
+  return g_object_ref_sink(g_object_new(mock_approval_dialog_get_type(), NULL));
 }
 
 /* ===========================================================================
@@ -296,7 +297,7 @@ static void mock_create_profile_dialog_init(MockCreateProfileDialog *self) {
 }
 
 static MockCreateProfileDialog *mock_create_profile_dialog_new(void) {
-  return g_object_new(mock_create_profile_dialog_get_type(), NULL);
+  return g_object_ref_sink(g_object_new(mock_create_profile_dialog_get_type(), NULL));
 }
 
 /* ===========================================================================
@@ -834,7 +835,7 @@ static void test_npub_validation_valid(TestUIFixture *fixture, gconstpointer use
   (void)fixture; (void)user_data;
 
   /* Valid npub examples */
-  g_assert_true(is_valid_npub("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_true(is_valid_npub("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
   g_assert_true(is_valid_npub("npub1xtscya34g58tk0z605fvr788k263gsu6cy9x0mhnm87echrgufzsevkk5s"));
 }
 
@@ -842,7 +843,7 @@ static void test_npub_validation_invalid_prefix(TestUIFixture *fixture, gconstpo
   (void)fixture; (void)user_data;
 
   /* Invalid prefix */
-  g_assert_false(is_valid_npub("nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_npub("nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
   g_assert_false(is_valid_npub("xpub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
   g_assert_false(is_valid_npub("Npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
 }
@@ -878,13 +879,13 @@ static void test_npub_validation_null_empty(TestUIFixture *fixture, gconstpointe
 static void test_nsec_validation_valid(TestUIFixture *fixture, gconstpointer user_data) {
   (void)fixture; (void)user_data;
 
-  g_assert_true(is_valid_nsec("nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_true(is_valid_nsec("nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
 }
 
 static void test_nsec_validation_invalid(TestUIFixture *fixture, gconstpointer user_data) {
   (void)fixture; (void)user_data;
 
-  g_assert_false(is_valid_nsec("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_nsec("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
   g_assert_false(is_valid_nsec(NULL));
   g_assert_false(is_valid_nsec(""));
 }
@@ -1012,7 +1013,7 @@ static void mock_import_key_dialog_init(MockImportKeyDialog *self) {
 }
 
 static MockImportKeyDialog *mock_import_key_dialog_new(void) {
-  return g_object_new(mock_import_key_dialog_get_type(), NULL);
+  return g_object_ref_sink(g_object_new(mock_import_key_dialog_get_type(), NULL));
 }
 
 static void test_import_key_dialog_creation(TestUIFixture *fixture, gconstpointer user_data) {
@@ -1040,7 +1041,7 @@ static void test_import_key_dialog_nsec_validation(TestUIFixture *fixture, gcons
 
   /* Valid nsec */
   gtk_editable_set_text(GTK_EDITABLE(dialog->entry_secret),
-                        "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
+                        "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
   process_pending_events();
   g_assert_true(dialog->key_valid);
   g_assert_true(gtk_widget_get_sensitive(dialog->btn_ok));
@@ -1168,7 +1169,7 @@ static void mock_lock_screen_init(MockLockScreen *self) {
 }
 
 static MockLockScreen *mock_lock_screen_new(void) {
-  return g_object_new(mock_lock_screen_get_type(), NULL);
+  return g_object_ref_sink(g_object_new(mock_lock_screen_get_type(), NULL));
 }
 
 static void mock_lock_screen_set_busy(MockLockScreen *self, gboolean busy) {
@@ -1579,7 +1580,7 @@ static void mock_approval_dialog_ext_init(MockApprovalDialogExt *self) {
 }
 
 static MockApprovalDialogExt *mock_approval_dialog_ext_new(void) {
-  return g_object_new(mock_approval_dialog_ext_get_type(), NULL);
+  return g_object_ref_sink(g_object_new(mock_approval_dialog_ext_get_type(), NULL));
 }
 
 static void test_approval_dialog_event_types(TestUIFixture *fixture, gconstpointer user_data) {
@@ -1661,7 +1662,7 @@ static MockDBusState mock_dbus = { FALSE, NULL, NULL };
 
 static void mock_dbus_init(void) {
   mock_dbus.connected = TRUE;
-  mock_dbus.stored_npub = g_strdup("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
+  mock_dbus.stored_npub = g_strdup("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
   mock_dbus.error_message = NULL;
 }
 
@@ -1970,7 +1971,7 @@ static void mock_backup_dialog_init(MockBackupDialog *self) {
 }
 
 static MockBackupDialog *mock_backup_dialog_new(void) {
-  return g_object_new(mock_backup_dialog_get_type(), NULL);
+  return g_object_ref_sink(g_object_new(mock_backup_dialog_get_type(), NULL));
 }
 
 static void mock_backup_dialog_set_account(MockBackupDialog *self, const gchar *npub) {
@@ -2042,7 +2043,7 @@ static void test_backup_dialog_export_button_state(TestUIFixture *fixture, gcons
   g_assert_false(gtk_widget_get_sensitive(dialog->btn_export));
 
   /* Set account but no password */
-  mock_backup_dialog_set_account(dialog, "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
+  mock_backup_dialog_set_account(dialog, "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
   process_pending_events();
   g_assert_false(gtk_widget_get_sensitive(dialog->btn_export));
 
@@ -2226,7 +2227,7 @@ static void mock_auth_aware_toolbar_init(MockAuthAwareToolbar *self) {
 }
 
 static MockAuthAwareToolbar *mock_auth_aware_toolbar_new(void) {
-  return g_object_new(mock_auth_aware_toolbar_get_type(), NULL);
+  return g_object_ref_sink(g_object_new(mock_auth_aware_toolbar_get_type(), NULL));
 }
 
 static void mock_auth_aware_toolbar_set_auth_state(MockAuthAwareToolbar *self, MockAuthState state) {

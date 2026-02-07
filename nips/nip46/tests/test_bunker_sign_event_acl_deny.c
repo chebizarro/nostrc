@@ -84,10 +84,11 @@ static int run_sign_after_connect_without_permission_should_deny(void){
     char uri_client[256]; snprintf(uri_client, sizeof(uri_client), "bunker://%s?secret=%s", bunker_pk_sec1, client_sk);
     if (nostr_nip46_client_connect(cli, uri_client, NULL) != 0){ printf("cli connect fail\n"); nostr_nip46_session_free(cli); nostr_nip46_session_free(bun); return 4; }
 
-    /* Connect, but request a different permission (no sign_event) */
+    /* Connect, but request a different permission (no sign_event).
+     * NIP-46 connect params: [remote_signer_pubkey, secret, permissions] */
     {
-        const char *cparams[2] = { client_pk_sec1, "get_public_key" };
-        char *creq = nostr_nip46_request_build("c3", "connect", cparams, 2);
+        const char *cparams[3] = { client_pk_sec1, "", "get_public_key" };
+        char *creq = nostr_nip46_request_build("c3", "connect", cparams, 3);
         if (!creq){ printf("connect req build fail\n"); nostr_nip46_session_free(cli); nostr_nip46_session_free(bun); return 5; }
         char *ccipher=NULL; if (nostr_nip46_client_nip04_encrypt(cli, bunker_pk_sec1, creq, &ccipher) != 0 || !ccipher){ printf("connect encrypt fail\n"); free(creq); nostr_nip46_session_free(cli); nostr_nip46_session_free(bun); return 6; }
         free(creq);

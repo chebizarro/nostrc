@@ -218,9 +218,10 @@ static int test_rpc_sign_event_denied_without_permission(void) {
     MockContext ctx;
     TEST_ASSERT(mock_context_init(&ctx) == 0, "context init");
 
-    /* Connect WITHOUT sign_event permission */
-    const char *conn_params[] = {ctx.client_pk, "nip04_encrypt"};  /* No sign_event */
-    char *conn_req = nostr_nip46_request_build("c1", "connect", conn_params, 2);
+    /* Connect WITHOUT sign_event permission.
+     * NIP-46 connect params: [remote_signer_pubkey, secret, permissions] */
+    const char *conn_params[] = {ctx.client_pk, "", "nip04_encrypt"};  /* No sign_event */
+    char *conn_req = nostr_nip46_request_build("c1", "connect", conn_params, 3);
     char *conn_resp_json = NULL;
     TEST_ASSERT(mock_rpc_call(&ctx, conn_req, &conn_resp_json) == 0, "connect RPC");
     free(conn_req);
@@ -343,9 +344,10 @@ static int test_rpc_connect_with_authorize_callback(void) {
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     TEST_ASSERT(nostr_nip46_client_connect(bunker, bunker_uri, NULL) == 0, "bunker connect");
 
-    /* Send connect request */
-    const char *params[] = {client_pk, "sign_event,nip04_encrypt"};
-    char *req_json = nostr_nip46_request_build("c1", "connect", params, 2);
+    /* Send connect request.
+     * NIP-46 connect params: [remote_signer_pubkey, secret, permissions] */
+    const char *params[] = {client_pk, "", "sign_event,nip04_encrypt"};
+    char *req_json = nostr_nip46_request_build("c1", "connect", params, 3);
 
     char *cipher_req = NULL;
     TEST_ASSERT(nostr_nip46_client_nip04_encrypt(client, bunker_pk, req_json, &cipher_req) == 0, "encrypt");
@@ -387,8 +389,9 @@ static int test_rpc_connect_denied_by_callback(void) {
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     nostr_nip46_client_connect(bunker, bunker_uri, NULL);
 
-    const char *params[] = {client_pk, "sign_event"};
-    char *req_json = nostr_nip46_request_build("c1", "connect", params, 2);
+    /* NIP-46 connect params: [remote_signer_pubkey, secret, permissions] */
+    const char *params[] = {client_pk, "", "sign_event"};
+    char *req_json = nostr_nip46_request_build("c1", "connect", params, 3);
 
     char *cipher_req = NULL;
     nostr_nip46_client_nip04_encrypt(client, bunker_pk, req_json, &cipher_req);

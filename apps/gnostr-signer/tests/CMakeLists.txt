@@ -218,10 +218,16 @@ target_compile_features(test-ui PRIVATE c_std_11)
 apply_test_sanitizers(test-ui)
 
 add_test(NAME signer/ui COMMAND test-ui)
+# On macOS there is no x11 backend; use the native backend instead.
+if(APPLE)
+    set(_UI_TEST_ENV "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer;GTK_A11Y=none")
+else()
+    set(_UI_TEST_ENV "GDK_BACKEND=x11;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer;GTK_A11Y=none")
+endif()
 set_tests_properties(signer/ui PROPERTIES
     TIMEOUT 60
     LABELS "signer;ui;unit"
-    ENVIRONMENT "GDK_BACKEND=x11;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer;GTK_A11Y=none"
+    ENVIRONMENT "${_UI_TEST_ENV}"
 )
 
 # ==============================================================================
