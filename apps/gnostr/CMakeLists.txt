@@ -670,6 +670,86 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "thread;graph;unit;gnostr")
 
+  # Thread subscription unit tests (nostrc-pp64)
+  add_executable(gnostr-test-thread-sub tests/test_thread_subscription.c
+    src/model/gnostr-thread-subscription.c
+    src/model/gn-ndb-sub-dispatcher.c
+    src/storage_ndb.c
+    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
+  target_compile_features(gnostr-test-thread-sub PRIVATE c_std_11)
+  target_include_directories(gnostr-test-thread-sub PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${_NOSTR_CONFIG_DIR}
+    ${PROJECT_ROOT}/libgo/include
+    ${_NDB_VENDOR_DIR}/src
+    ${_NDB_VENDOR_DIR}/ccan
+    ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+  target_link_libraries(gnostr-test-thread-sub PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  if (TARGET nostr_json)
+    target_link_libraries(gnostr-test-thread-sub PRIVATE nostr_json)
+  endif()
+  if (TARGET nostrdb_storage)
+    target_link_libraries(gnostr-test-thread-sub PRIVATE nostrdb_storage)
+    if (NOT TARGET nostrdb)
+      if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if (APPLE)
+          target_link_options(gnostr-test-thread-sub PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+          if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+            target_link_libraries(gnostr-test-thread-sub PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          endif()
+          target_link_libraries(gnostr-test-thread-sub PRIVATE "-framework Security")
+        endif()
+      endif()
+    endif()
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-thread-sub)
+  add_test(NAME gnostr-test-thread-sub COMMAND gnostr-test-thread-sub)
+  set_tests_properties(gnostr-test-thread-sub PROPERTIES
+    TIMEOUT 30
+    LABELS "thread;subscription;unit;gnostr")
+
+  # Thread graph model unit tests (nostrc-pp64 4.2)
+  add_executable(gnostr-test-thread-graph-model tests/test_thread_graph_model.c
+    src/model/gnostr-thread-graph-model.c)
+  target_compile_features(gnostr-test-thread-graph-model PRIVATE c_std_11)
+  target_include_directories(gnostr-test-thread-graph-model PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${_NOSTR_CONFIG_DIR}
+    ${PROJECT_ROOT}/libgo/include)
+  target_link_libraries(gnostr-test-thread-graph-model PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  if (TARGET nostr_json)
+    target_link_libraries(gnostr-test-thread-graph-model PRIVATE nostr_json)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-thread-graph-model)
+  add_test(NAME gnostr-test-thread-graph-model COMMAND gnostr-test-thread-graph-model)
+  set_tests_properties(gnostr-test-thread-graph-model PROPERTIES
+    TIMEOUT 30
+    LABELS "thread;graph;model;unit;gnostr")
+
+  # NIP-10 thread manager unit tests (nostrc-pp64 4.3)
+  add_executable(gnostr-test-nip10-thread-mgr tests/test_nip10_thread_manager.c
+    src/model/gnostr-nip10-thread-manager.c)
+  target_compile_features(gnostr-test-nip10-thread-mgr PRIVATE c_std_11)
+  target_include_directories(gnostr-test-nip10-thread-mgr PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${_NOSTR_CONFIG_DIR}
+    ${PROJECT_ROOT}/libgo/include)
+  target_link_libraries(gnostr-test-nip10-thread-mgr PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  if (TARGET nostr_json)
+    target_link_libraries(gnostr-test-nip10-thread-mgr PRIVATE nostr_json)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-nip10-thread-mgr)
+  add_test(NAME gnostr-test-nip10-thread-mgr COMMAND gnostr-test-nip10-thread-mgr)
+  set_tests_properties(gnostr-test-nip10-thread-mgr PROPERTIES
+    TIMEOUT 30
+    LABELS "nip10;thread;manager;unit;gnostr")
+
   # Timeline query unit tests (nostrc-whu3)
   add_executable(gnostr-test-timeline-query tests/test_timeline_query.c src/model/gn-timeline-query.c)
   target_compile_features(gnostr-test-timeline-query PRIVATE c_std_11)
