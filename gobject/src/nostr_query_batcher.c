@@ -15,6 +15,7 @@
 #include "json.h"               /* nostr_event_serialize */
 #include "error.h"              /* Error, free_error */
 #include "channel.h"            /* go_channel_try_receive */
+#include "select.h"             /* go_select_timeout */
 #include "context.h"            /* go_context_background */
 #include <string.h>
 
@@ -207,7 +208,30 @@ static gpointer batch_drain_thread(gpointer user_data) {
     gint64 start_time = g_get_monotonic_time();
     gboolean got_eose = FALSE;
 
-    while (!got_eose && !batcher->disposing) {
+    /* Build select cases for event-driven waiting.
+     * Case 0: receive from events channel
+     * Case 1: receive from EOSE channel (if available) */
+    gint eose_case_idx = -1;
+    GoSelectCase cases[2];
+    size_t num_cases = 0;
+
+    if (ch_events) {
+        cases[num_cases] = (GoSelectCase){
+            .op = GO_SELECT_RECEIVE, .chan = ch_events,
+            .value = NULL, .recv_buf = NULL
+        };
+        num_cases++;
+    }
+    if (ch_eose) {
+        eose_case_idx = (gint)num_cases;
+        cases[num_cases] = (GoSelectCase){
+            .op = GO_SELECT_RECEIVE, .chan = ch_eose,
+            .value = NULL, .recv_buf = NULL
+        };
+        num_cases++;
+    }
+
+    while (!got_eose && !batcher->disposing && num_cases > 0) {
         /* Check timeout */
         gint64 elapsed_ms = (g_get_monotonic_time() - start_time) / 1000;
         if (elapsed_ms > EOSE_TIMEOUT_MS) {
@@ -225,28 +249,43 @@ static gpointer batch_drain_thread(gpointer user_data) {
             break;
         }
 
-        /* Try to receive events (non-blocking) */
+        /* Block on channels with a bounded timeout so we can re-check
+         * cancellation and EOSE timeout periodically. */
+        gint64 remaining_ms = EOSE_TIMEOUT_MS - elapsed_ms;
+        uint64_t select_ms = (uint64_t)(remaining_ms < 100 ? remaining_ms : 100);
+
         void *msg = NULL;
-        while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+        cases[0].recv_buf = (void **)&msg;  /* Reset recv buffer each iteration */
+
+        GoSelectResult result = go_select_timeout(cases, num_cases, select_ms);
+
+        if (result.selected_case == 0 && ch_events) {
+            /* Received an event */
             if (msg) {
                 NostrEvent *event = (NostrEvent *)msg;
-
                 g_mutex_lock(&batcher->mutex);
                 dispatch_event_to_callers(batcher, batch, event);
                 g_mutex_unlock(&batcher->mutex);
-
                 nostr_event_free(event);
             }
-        }
-
-        /* Check for EOSE */
-        if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+        } else if (result.selected_case == eose_case_idx && eose_case_idx >= 0) {
             got_eose = TRUE;
             g_debug("[BATCHER] Got EOSE for %s", batch->relay_url);
-        }
 
-        /* Brief sleep before next poll */
-        g_usleep(5000);  /* 5ms */
+            /* Drain any remaining buffered events */
+            void *drain_msg = NULL;
+            while (ch_events && go_channel_try_receive(ch_events, &drain_msg) == 0) {
+                if (drain_msg) {
+                    NostrEvent *event = (NostrEvent *)drain_msg;
+                    g_mutex_lock(&batcher->mutex);
+                    dispatch_event_to_callers(batcher, batch, event);
+                    g_mutex_unlock(&batcher->mutex);
+                    nostr_event_free(event);
+                    drain_msg = NULL;
+                }
+            }
+        }
+        /* else: timeout — loop back to re-check conditions */
     }
 
     /* Complete all pending requests */

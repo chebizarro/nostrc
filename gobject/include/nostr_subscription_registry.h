@@ -401,6 +401,10 @@ void nostr_subscription_registry_foreach_active(NostrSubscriptionRegistry *regis
  * @current_active: Currently active subscriptions
  * @ephemeral_closed: Ephemeral subscriptions auto-closed after EOSE
  * @groups_count: Number of active groups
+ * @avg_time_to_first_event_us: Average time to first event (microseconds, 0 if none measured)
+ * @avg_eose_latency_us: Average EOSE latency (microseconds, 0 if none measured)
+ * @stuck_pending_count: Subscriptions currently stuck in PENDING state
+ * @auto_reconnects: Total auto-reconnect attempts for persistent subscriptions
  *
  * Statistics for monitoring subscription registry usage.
  */
@@ -409,6 +413,12 @@ typedef struct {
     guint current_active;
     guint64 ephemeral_closed;
     guint groups_count;
+
+    /* Health metrics */
+    guint64 avg_time_to_first_event_us;
+    guint64 avg_eose_latency_us;
+    guint stuck_pending_count;
+    guint64 auto_reconnects;
 } NostrSubscriptionRegistryStats;
 
 /**
@@ -420,6 +430,46 @@ typedef struct {
  */
 void nostr_subscription_registry_get_stats(NostrSubscriptionRegistry *registry,
                                             NostrSubscriptionRegistryStats *stats);
+
+/* --- Health Monitoring --- */
+
+/**
+ * nostr_subscription_registry_notify_event:
+ * @registry: A #NostrSubscriptionRegistry
+ * @sub_id: The subscription ID that received an event
+ *
+ * Notifies the registry that a subscription has received an event.
+ * Only the first call per subscription updates the time-to-first-event
+ * metric; subsequent calls are no-ops.
+ */
+void nostr_subscription_registry_notify_event(NostrSubscriptionRegistry *registry,
+                                               const gchar *sub_id);
+
+/**
+ * nostr_subscription_registry_start_health_monitor:
+ * @registry: A #NostrSubscriptionRegistry
+ * @check_interval_ms: How often to run health checks (milliseconds)
+ * @stuck_timeout_ms: Time after which a PENDING subscription is "stuck" (milliseconds)
+ *
+ * Starts a periodic health monitor that:
+ * - Detects subscriptions stuck in PENDING state
+ * - Logs warnings for stuck subscriptions
+ * - Auto-reconnects persistent subscriptions in ERROR state
+ *
+ * Only one monitor can be active at a time. Calling this while a monitor
+ * is already running replaces it.
+ */
+void nostr_subscription_registry_start_health_monitor(NostrSubscriptionRegistry *registry,
+                                                       guint check_interval_ms,
+                                                       guint stuck_timeout_ms);
+
+/**
+ * nostr_subscription_registry_stop_health_monitor:
+ * @registry: A #NostrSubscriptionRegistry
+ *
+ * Stops the periodic health monitor if one is running.
+ */
+void nostr_subscription_registry_stop_health_monitor(NostrSubscriptionRegistry *registry);
 
 /* --- Cleanup --- */
 

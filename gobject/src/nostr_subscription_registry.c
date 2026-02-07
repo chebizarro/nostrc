@@ -59,6 +59,22 @@ typedef struct {
 /* External function to get subscription config */
 const NostrSubscriptionConfig *gnostr_subscription_get_config(GNostrSubscription *self);
 
+/* --- Per-Subscription Health Tracking --- */
+
+typedef struct {
+    gint64 registered_time_us;      /* g_get_monotonic_time() at registration */
+    gint64 first_event_time_us;     /* 0 until first event arrives */
+    gint64 eose_time_us;            /* 0 until EOSE received */
+} SubscriptionHealth;
+
+static SubscriptionHealth *
+subscription_health_new(void)
+{
+    SubscriptionHealth *h = g_new0(SubscriptionHealth, 1);
+    h->registered_time_us = g_get_monotonic_time();
+    return h;
+}
+
 /* --- Private Data --- */
 
 typedef struct {
@@ -77,6 +93,18 @@ typedef struct {
     /* Statistics */
     guint64 total_registered;
     guint64 ephemeral_closed;
+
+    /* Health monitoring */
+    GHashTable *health_data;        /* sub_id (gchar*) -> SubscriptionHealth* */
+    guint health_timer_id;          /* GSource ID for periodic health checks */
+    guint stuck_timeout_ms;         /* Threshold for "stuck" PENDING detection */
+    guint64 auto_reconnects;        /* Total auto-reconnect attempts */
+
+    /* Cumulative health metrics for averages */
+    guint64 total_ttfe_us;          /* Sum of time-to-first-event values */
+    guint64 ttfe_count;             /* Number of first-event measurements */
+    guint64 total_eose_latency_us;  /* Sum of EOSE latency values */
+    guint64 eose_latency_count;     /* Number of EOSE latency measurements */
 
     GMutex mutex;                   /* Thread safety */
 } NostrSubscriptionRegistryPrivate;
@@ -200,7 +228,15 @@ nostr_subscription_registry_dispose(GObject *object)
     NostrSubscriptionRegistryPrivate *priv =
         nostr_subscription_registry_get_instance_private(self);
 
+    /* Stop health monitor before taking lock */
+    nostr_subscription_registry_stop_health_monitor(self);
+
     g_mutex_lock(&priv->mutex);
+
+    /* Clear health data */
+    if (priv->health_data) {
+        g_hash_table_remove_all(priv->health_data);
+    }
 
     /* Clear all groups */
     if (priv->groups) {
@@ -240,6 +276,7 @@ nostr_subscription_registry_finalize(GObject *object)
     g_hash_table_unref(priv->groups);
     g_hash_table_unref(priv->relay_counts);
     g_hash_table_unref(priv->sub_to_relay);
+    g_hash_table_unref(priv->health_data);
     g_array_unref(priv->state_callbacks);
     g_mutex_clear(&priv->mutex);
 
@@ -274,11 +311,21 @@ nostr_subscription_registry_init(NostrSubscriptionRegistry *self)
                                                 g_free, g_free);
     priv->state_callbacks = g_array_new(FALSE, TRUE, sizeof(StateCallbackEntry));
 
+    priv->health_data = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                               g_free, g_free);
+
     priv->max_per_relay = 0;  /* Unlimited by default */
     priv->next_sub_id = 1;
     priv->next_callback_id = 1;
     priv->total_registered = 0;
     priv->ephemeral_closed = 0;
+    priv->health_timer_id = 0;
+    priv->stuck_timeout_ms = 0;
+    priv->auto_reconnects = 0;
+    priv->total_ttfe_us = 0;
+    priv->ttfe_count = 0;
+    priv->total_eose_latency_us = 0;
+    priv->eose_latency_count = 0;
 }
 
 /* --- Registration API --- */
@@ -309,6 +356,11 @@ nostr_subscription_registry_register_with_group(NostrSubscriptionRegistry *regis
     g_hash_table_insert(priv->subscriptions,
                         g_strdup(sub_id),
                         g_object_ref(subscription));
+
+    /* Track health data */
+    g_hash_table_insert(priv->health_data,
+                        g_strdup(sub_id),
+                        subscription_health_new());
 
     priv->total_registered++;
 
@@ -369,6 +421,9 @@ nostr_subscription_registry_unregister(NostrSubscriptionRegistry *registry,
         NostrSubscriptionGroup *group = value;
         g_hash_table_remove(group->subscriptions, sub_id);
     }
+
+    /* Remove health data */
+    g_hash_table_remove(priv->health_data, sub_id);
 
     /* Remove from main registry (releases reference) */
     g_hash_table_remove(priv->subscriptions, sub_id);
@@ -464,6 +519,17 @@ nostr_subscription_registry_notify_eose(NostrSubscriptionRegistry *registry,
 
     NostrSubscriptionState old_state = gnostr_subscription_get_state(sub);
     const NostrSubscriptionConfig *config = gnostr_subscription_get_config(sub);
+
+    /* Record EOSE latency */
+    SubscriptionHealth *health = g_hash_table_lookup(priv->health_data, sub_id);
+    if (health && health->eose_time_us == 0) {
+        health->eose_time_us = g_get_monotonic_time();
+        gint64 latency = health->eose_time_us - health->registered_time_us;
+        if (latency > 0) {
+            priv->total_eose_latency_us += (guint64)latency;
+            priv->eose_latency_count++;
+        }
+    }
 
     /* Check if ephemeral - should be auto-closed after EOSE */
     gboolean is_ephemeral = config && config->type == NOSTR_SUBSCRIPTION_EPHEMERAL;
@@ -846,7 +912,177 @@ nostr_subscription_registry_get_stats(NostrSubscriptionRegistry *registry,
     stats->ephemeral_closed = priv->ephemeral_closed;
     stats->groups_count = g_hash_table_size(priv->groups);
 
+    /* Health metrics */
+    stats->avg_time_to_first_event_us =
+        priv->ttfe_count > 0 ? priv->total_ttfe_us / priv->ttfe_count : 0;
+    stats->avg_eose_latency_us =
+        priv->eose_latency_count > 0 ? priv->total_eose_latency_us / priv->eose_latency_count : 0;
+    stats->auto_reconnects = priv->auto_reconnects;
+
+    /* Count stuck PENDING subscriptions */
+    stats->stuck_pending_count = 0;
+    if (priv->stuck_timeout_ms > 0) {
+        gint64 now = g_get_monotonic_time();
+        gint64 threshold_us = (gint64)priv->stuck_timeout_ms * 1000;
+
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, priv->subscriptions);
+        while (g_hash_table_iter_next(&iter, &key, &value)) {
+            GNostrSubscription *sub = GNOSTR_SUBSCRIPTION(value);
+            if (gnostr_subscription_get_state(sub) == NOSTR_SUBSCRIPTION_STATE_PENDING) {
+                SubscriptionHealth *health = g_hash_table_lookup(priv->health_data, key);
+                if (health && (now - health->registered_time_us) > threshold_us) {
+                    stats->stuck_pending_count++;
+                }
+            }
+        }
+    }
+
     g_mutex_unlock(&priv->mutex);
+}
+
+/* --- Health Monitoring --- */
+
+void
+nostr_subscription_registry_notify_event(NostrSubscriptionRegistry *registry,
+                                          const gchar *sub_id)
+{
+    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(sub_id != NULL);
+
+    NostrSubscriptionRegistryPrivate *priv =
+        nostr_subscription_registry_get_instance_private(registry);
+
+    g_mutex_lock(&priv->mutex);
+
+    SubscriptionHealth *health = g_hash_table_lookup(priv->health_data, sub_id);
+    if (health && health->first_event_time_us == 0) {
+        health->first_event_time_us = g_get_monotonic_time();
+        gint64 ttfe = health->first_event_time_us - health->registered_time_us;
+        if (ttfe > 0) {
+            priv->total_ttfe_us += (guint64)ttfe;
+            priv->ttfe_count++;
+        }
+    }
+
+    g_mutex_unlock(&priv->mutex);
+}
+
+static gboolean
+health_check_tick(gpointer user_data)
+{
+    NostrSubscriptionRegistry *registry = NOSTR_SUBSCRIPTION_REGISTRY(user_data);
+    NostrSubscriptionRegistryPrivate *priv =
+        nostr_subscription_registry_get_instance_private(registry);
+
+    gint64 now = g_get_monotonic_time();
+    gint64 threshold_us = (gint64)priv->stuck_timeout_ms * 1000;
+
+    /* Collect stuck and errored subscriptions while holding lock */
+    GPtrArray *stuck_ids = g_ptr_array_new_with_free_func(g_free);
+    GPtrArray *error_ids = g_ptr_array_new_with_free_func(g_free);
+
+    g_mutex_lock(&priv->mutex);
+
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, priv->subscriptions);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        GNostrSubscription *sub = GNOSTR_SUBSCRIPTION(value);
+        NostrSubscriptionState state = gnostr_subscription_get_state(sub);
+
+        if (state == NOSTR_SUBSCRIPTION_STATE_PENDING && threshold_us > 0) {
+            SubscriptionHealth *health = g_hash_table_lookup(priv->health_data, key);
+            if (health && (now - health->registered_time_us) > threshold_us) {
+                g_ptr_array_add(stuck_ids, g_strdup(key));
+            }
+        } else if (state == NOSTR_SUBSCRIPTION_STATE_ERROR) {
+            const NostrSubscriptionConfig *config = gnostr_subscription_get_config(sub);
+            if (config && config->type == NOSTR_SUBSCRIPTION_PERSISTENT) {
+                g_ptr_array_add(error_ids, g_strdup(key));
+            }
+        }
+    }
+
+    g_mutex_unlock(&priv->mutex);
+
+    /* Warn about stuck subscriptions */
+    for (guint i = 0; i < stuck_ids->len; i++) {
+        const gchar *sub_id = g_ptr_array_index(stuck_ids, i);
+        g_warning("[REGISTRY] Subscription %s stuck in PENDING for > %u ms",
+                  sub_id, priv->stuck_timeout_ms);
+    }
+
+    /* Auto-reconnect persistent subscriptions in ERROR state */
+    for (guint i = 0; i < error_ids->len; i++) {
+        const gchar *sub_id = g_ptr_array_index(error_ids, i);
+        GNostrSubscription *sub = nostr_subscription_registry_get_by_id(registry, sub_id);
+        if (sub) {
+            g_info("[REGISTRY] Auto-reconnecting persistent subscription %s", sub_id);
+
+            g_mutex_lock(&priv->mutex);
+            priv->auto_reconnects++;
+
+            /* Reset health timers for the reconnect attempt */
+            SubscriptionHealth *health = g_hash_table_lookup(priv->health_data, sub_id);
+            if (health) {
+                health->registered_time_us = g_get_monotonic_time();
+                health->first_event_time_us = 0;
+                health->eose_time_us = 0;
+            }
+            g_mutex_unlock(&priv->mutex);
+
+            /* Attempt reconnect via unsubscribe (resets state) then re-fire.
+             * The actual subscription reconnection is delegated to the
+             * subscription object's own reconnect mechanism. */
+            gnostr_subscription_unsubscribe(sub);
+
+            /* Notify watchers about the state change */
+            notify_state_change(registry, sub_id,
+                                NOSTR_SUBSCRIPTION_STATE_ERROR,
+                                NOSTR_SUBSCRIPTION_STATE_PENDING);
+        }
+    }
+
+    g_ptr_array_unref(stuck_ids);
+    g_ptr_array_unref(error_ids);
+
+    return G_SOURCE_CONTINUE;
+}
+
+void
+nostr_subscription_registry_start_health_monitor(NostrSubscriptionRegistry *registry,
+                                                   guint check_interval_ms,
+                                                   guint stuck_timeout_ms)
+{
+    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(check_interval_ms > 0);
+
+    NostrSubscriptionRegistryPrivate *priv =
+        nostr_subscription_registry_get_instance_private(registry);
+
+    /* Stop existing monitor if running */
+    nostr_subscription_registry_stop_health_monitor(registry);
+
+    priv->stuck_timeout_ms = stuck_timeout_ms;
+    priv->health_timer_id = g_timeout_add(check_interval_ms,
+                                           health_check_tick,
+                                           registry);
+}
+
+void
+nostr_subscription_registry_stop_health_monitor(NostrSubscriptionRegistry *registry)
+{
+    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+
+    NostrSubscriptionRegistryPrivate *priv =
+        nostr_subscription_registry_get_instance_private(registry);
+
+    if (priv->health_timer_id != 0) {
+        g_source_remove(priv->health_timer_id);
+        priv->health_timer_id = 0;
+    }
 }
 
 /* --- Cleanup --- */
