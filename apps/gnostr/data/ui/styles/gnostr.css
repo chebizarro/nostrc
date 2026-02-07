@@ -3446,3 +3446,87 @@ profile-row.muted .profile-row-avatar {
 .plugin-manager-panel .empty-state image {
 	margin-bottom: 8px;
 }
+
+/* ============================================
+   NIP-64 Chess Move Pills
+   ============================================ */
+
+/* Move list container */
+.chess-game-view .move-list {
+	background: transparent;
+}
+
+.chess-game-view .move-list row {
+	padding: 0;
+	margin: 0;
+	background: transparent;
+}
+
+.chess-game-view .move-list row:hover {
+	background: transparent;
+}
+
+/* Move number label */
+.chess-move-number {
+	font-size: 11px;
+	font-weight: 600;
+	color: alpha(@theme_fg_color, 0.6);
+	min-width: 24px;
+}
+
+/* Base pill style */
+.chess-move-pill {
+	padding: 4px 10px;
+	border-radius: 12px;
+	font-family: monospace;
+	font-size: 12px;
+	font-weight: 500;
+	min-width: 42px;
+	transition: all 150ms ease;
+}
+
+/* White move pill - cream/beige background */
+.chess-move-white {
+	background: linear-gradient(135deg, #f5f0e6 0%, #e8dfd0 100%);
+	color: #4a4235;
+	border: 1px solid #d9cfc0;
+}
+
+.chess-move-white:hover {
+	background: linear-gradient(135deg, #f9f4ec 0%, #ede4d6 100%);
+	box-shadow: 0 2px 4px alpha(black, 0.1);
+}
+
+/* Black move pill - dark gray/brown background */
+.chess-move-black {
+	background: linear-gradient(135deg, #5c534a 0%, #3d3632 100%);
+	color: #f0ebe5;
+	border: 1px solid #4a4139;
+}
+
+.chess-move-black:hover {
+	background: linear-gradient(135deg, #6b615a 0%, #4a423c 100%);
+	box-shadow: 0 2px 4px alpha(black, 0.2);
+}
+
+/* Placeholder for pending black move */
+.chess-move-placeholder {
+	background: transparent;
+	border: 1px dashed alpha(@theme_fg_color, 0.2);
+	color: transparent;
+}
+
+/* Dark theme adjustments */
+@media (prefers-color-scheme: dark) {
+	.chess-move-white {
+		background: linear-gradient(135deg, #d9d0c4 0%, #c4b8aa 100%);
+		color: #3d3630;
+		border: 1px solid #b8ac9e;
+	}
+
+	.chess-move-black {
+		background: linear-gradient(135deg, #4a4139 0%, #2d2824 100%);
+		color: #e8e0d8;
+		border: 1px solid #5c524a;
+	}
+}

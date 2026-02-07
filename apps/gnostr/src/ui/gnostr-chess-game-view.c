@@ -112,6 +112,7 @@ static void on_new_game_clicked(GtkButton *button, gpointer user_data);
 static void on_flip_clicked(GtkButton *button, gpointer user_data);
 static void on_draw_clicked(GtkButton *button, gpointer user_data);
 static void update_status_label(GnostrChessGameView *self);
+static GtkWidget *create_move_pill(const gchar *san, gboolean is_white);
 static void add_move_to_list(GnostrChessGameView *self, const gchar *san, gint move_number);
 static void clear_move_list(GnostrChessGameView *self);
 static void sync_board_with_session(GnostrChessGameView *self);
@@ -778,36 +779,79 @@ update_status_label(GnostrChessGameView *self)
     g_free(status);
 }
 
+/**
+ * Create a move pill widget
+ */
+static GtkWidget *
+create_move_pill(const gchar *san, gboolean is_white)
+{
+    GtkWidget *pill = gtk_label_new(san);
+    gtk_widget_add_css_class(pill, "chess-move-pill");
+    gtk_widget_add_css_class(pill, is_white ? "chess-move-white" : "chess-move-black");
+    return pill;
+}
+
 static void
 add_move_to_list(GnostrChessGameView *self, const gchar *san, gint move_number)
 {
     gint ply = gnostr_chess_session_get_move_count(self->session);
     gboolean is_white_move = ((ply % 2) == 1);
 
-    GtkWidget *row;
-
     if (is_white_move) {
-        /* White's move - create new row */
-        gchar *text = g_strdup_printf("%d. %s", move_number, san);
-        row = gtk_label_new(text);
-        gtk_label_set_xalign(GTK_LABEL(row), 0.0);
-        gtk_widget_add_css_class(row, "move-row");
-        g_free(text);
+        /* White's move - create new row with horizontal box */
+        GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_widget_set_margin_start(row_box, 4);
+        gtk_widget_set_margin_end(row_box, 4);
+        gtk_widget_set_margin_top(row_box, 2);
+        gtk_widget_set_margin_bottom(row_box, 2);
 
-        gtk_list_box_append(GTK_LIST_BOX(self->move_list), row);
+        /* Move number */
+        gchar *num_text = g_strdup_printf("%d.", move_number);
+        GtkWidget *num_label = gtk_label_new(num_text);
+        gtk_widget_add_css_class(num_label, "chess-move-number");
+        gtk_widget_set_size_request(num_label, 24, -1);
+        gtk_label_set_xalign(GTK_LABEL(num_label), 1.0);
+        gtk_box_append(GTK_BOX(row_box), num_label);
+        g_free(num_text);
+
+        /* White move pill */
+        GtkWidget *white_pill = create_move_pill(san, TRUE);
+        gtk_widget_set_hexpand(white_pill, TRUE);
+        gtk_box_append(GTK_BOX(row_box), white_pill);
+
+        /* Placeholder for black move */
+        GtkWidget *black_placeholder = gtk_label_new("");
+        gtk_widget_add_css_class(black_placeholder, "chess-move-pill");
+        gtk_widget_add_css_class(black_placeholder, "chess-move-placeholder");
+        gtk_widget_set_hexpand(black_placeholder, TRUE);
+        gtk_box_append(GTK_BOX(row_box), black_placeholder);
+
+        gtk_list_box_append(GTK_LIST_BOX(self->move_list), row_box);
     } else {
-        /* Black's move - update last row */
+        /* Black's move - replace placeholder in last row */
         GtkListBoxRow *last_row = gtk_list_box_get_row_at_index(
             GTK_LIST_BOX(self->move_list),
             move_number - 1);
 
         if (last_row) {
-            GtkWidget *label = gtk_list_box_row_get_child(last_row);
-            if (GTK_IS_LABEL(label)) {
-                const gchar *current = gtk_label_get_text(GTK_LABEL(label));
-                gchar *text = g_strdup_printf("%s  %s", current, san);
-                gtk_label_set_text(GTK_LABEL(label), text);
-                g_free(text);
+            GtkWidget *row_box = gtk_list_box_row_get_child(last_row);
+            if (GTK_IS_BOX(row_box)) {
+                /* Find and replace the placeholder (third child) */
+                GtkWidget *child = gtk_widget_get_first_child(row_box);
+                gint i = 0;
+                while (child && i < 2) {
+                    child = gtk_widget_get_next_sibling(child);
+                    i++;
+                }
+                if (child) {
+                    /* Remove placeholder */
+                    gtk_box_remove(GTK_BOX(row_box), child);
+
+                    /* Add black move pill */
+                    GtkWidget *black_pill = create_move_pill(san, FALSE);
+                    gtk_widget_set_hexpand(black_pill, TRUE);
+                    gtk_box_append(GTK_BOX(row_box), black_pill);
+                }
             }
         }
     }
