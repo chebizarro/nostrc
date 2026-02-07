@@ -278,8 +278,7 @@ target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBPEAS)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBPEAS=1)
 
 # ---- Bundled plugins ----
-# nip47-nwc disabled - uses non-existent nostr_event_compute_id/nostr_sign_id functions
-# add_subdirectory(plugins/nip47-nwc)
+add_subdirectory(plugins/nip47-nwc)
 add_subdirectory(plugins/nip98-httpauth)
 # nip46-connect removed - dead code, NIP-46 now handled by gnostr-signer-service
 add_subdirectory(plugins/nip17-dms)
