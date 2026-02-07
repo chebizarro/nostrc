@@ -18,6 +18,24 @@ G_BEGIN_DECLS
 
 G_DECLARE_FINAL_TYPE(Nip64ChessPlugin, nip64_chess_plugin, NIP64, CHESS_PLUGIN, GObject)
 
+/**
+ * nip64_chess_plugin_get_games:
+ * @self: The chess plugin
+ *
+ * Get the hash table of cached chess games from relays.
+ *
+ * Returns: (transfer none): Hash table mapping event_id -> GnostrChessGame*
+ */
+GHashTable *nip64_chess_plugin_get_games(Nip64ChessPlugin *self);
+
+/**
+ * nip64_chess_plugin_request_games:
+ * @self: The chess plugin
+ *
+ * Request fresh chess games from configured relays.
+ */
+void nip64_chess_plugin_request_games(Nip64ChessPlugin *self);
+
 G_END_DECLS
 
 #endif /* NIP64_CHESS_PLUGIN_H */

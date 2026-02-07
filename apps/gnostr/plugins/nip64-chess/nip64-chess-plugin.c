@@ -23,6 +23,14 @@
 /* NIP-64 Event Kind */
 #define NIP64_KIND_CHESS 64
 
+/* Signal IDs */
+enum {
+  SIGNAL_GAMES_UPDATED,
+  N_SIGNALS
+};
+
+static guint plugin_signals[N_SIGNALS];
+
 struct _Nip64ChessPlugin
 {
   GObject parent_instance;
@@ -32,6 +40,9 @@ struct _Nip64ChessPlugin
 
   /* Cached games */
   GHashTable *games;  /* event_id -> GnostrChessGame* */
+
+  /* Event subscription */
+  guint64 games_subscription;
 };
 
 /* Implement GnostrPlugin interface */
@@ -76,6 +87,67 @@ nip64_chess_plugin_class_init(Nip64ChessPluginClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   object_class->finalize = nip64_chess_plugin_finalize;
+
+  /**
+   * Nip64ChessPlugin::games-updated:
+   * @plugin: The plugin
+   * @count: Number of games in cache
+   *
+   * Emitted when new chess games are received from relays.
+   */
+  plugin_signals[SIGNAL_GAMES_UPDATED] = g_signal_new(
+      "games-updated",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL, NULL,
+      NULL,
+      G_TYPE_NONE, 1,
+      G_TYPE_UINT);
+}
+
+/* ============================================================================
+ * Event Subscription Callback
+ * ============================================================================ */
+
+static void
+on_chess_game_received(GnostrPluginEvent *event, gpointer user_data)
+{
+  Nip64ChessPlugin *self = NIP64_CHESS_PLUGIN(user_data);
+
+  if (!self->active || !event)
+    return;
+
+  int kind = gnostr_plugin_event_get_kind(event);
+  if (kind != NIP64_KIND_CHESS)
+    return;
+
+  /* Parse the chess game from event */
+  char *json = gnostr_plugin_event_to_json(event);
+  if (!json)
+    return;
+
+  GnostrChessGame *game = gnostr_chess_parse_from_json(json);
+  g_free(json);
+
+  if (game && game->event_id) {
+    /* Check if we already have this game */
+    if (!g_hash_table_contains(self->games, game->event_id)) {
+      g_hash_table_replace(self->games, g_strdup(game->event_id), game);
+      g_debug("[NIP-64] Received chess game: %s vs %s (id: %.16s...)",
+              game->white_player ? game->white_player : "?",
+              game->black_player ? game->black_player : "?",
+              game->event_id);
+
+      /* Emit games-updated signal */
+      guint count = g_hash_table_size(self->games);
+      g_signal_emit(self, plugin_signals[SIGNAL_GAMES_UPDATED], 0, count);
+    } else {
+      gnostr_chess_game_free(game);
+    }
+  } else {
+    gnostr_chess_game_free(game);
+  }
 }
 
 /* ============================================================================
@@ -92,6 +164,17 @@ nip64_chess_plugin_activate(GnostrPlugin        *plugin,
 
   self->context = context;
   self->active = TRUE;
+
+  /* Subscribe to NIP-64 chess games from relays */
+  gchar *filter = g_strdup_printf("{\"kinds\":[%d],\"limit\":50}", NIP64_KIND_CHESS);
+  self->games_subscription = gnostr_plugin_context_subscribe_events(
+      context, filter, G_CALLBACK(on_chess_game_received), self, NULL);
+  g_free(filter);
+
+  if (self->games_subscription > 0) {
+    g_debug("[NIP-64] Subscribed to chess games (subscription_id: %lu)",
+            (unsigned long)self->games_subscription);
+  }
 }
 
 static void
@@ -99,9 +182,14 @@ nip64_chess_plugin_deactivate(GnostrPlugin        *plugin,
                               GnostrPluginContext *context)
 {
   Nip64ChessPlugin *self = NIP64_CHESS_PLUGIN(plugin);
-  (void)context;
 
   g_debug("[NIP-64] Chess plugin deactivated");
+
+  /* Unsubscribe from chess game events */
+  if (self->games_subscription > 0 && context) {
+    gnostr_plugin_context_unsubscribe_events(context, self->games_subscription);
+    self->games_subscription = 0;
+  }
 
   self->active = FALSE;
   self->context = NULL;
@@ -236,8 +324,11 @@ nip64_chess_plugin_create_panel_widget(GnostrUIExtension   *extension,
   /* Create the game view with New Game button */
   GnostrChessGameView *game_view = gnostr_chess_game_view_new();
 
-  /* Store reference to plugin context for publishing */
-  g_object_set_data(G_OBJECT(game_view), "nip64-plugin", self);
+  /* Connect the plugin to the game view for games browsing */
+  gnostr_chess_game_view_set_plugin(game_view, self);
+  gnostr_chess_game_view_set_plugin_callbacks(game_view,
+      (GnostrChessGetGamesFunc)nip64_chess_plugin_get_games,
+      (GnostrChessRequestGamesFunc)nip64_chess_plugin_request_games);
 
   return GTK_WIDGET(game_view);
 }
@@ -312,6 +403,37 @@ gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface)
   iface->create_settings_page = nip64_chess_plugin_create_settings_page;
   iface->create_menu_items = nip64_chess_plugin_create_menu_items;
   iface->create_note_decoration = nip64_chess_plugin_create_note_decoration;
+}
+
+/* ============================================================================
+ * Public API
+ * ============================================================================ */
+
+GHashTable *
+nip64_chess_plugin_get_games(Nip64ChessPlugin *self)
+{
+  g_return_val_if_fail(NIP64_IS_CHESS_PLUGIN(self), NULL);
+  return self->games;
+}
+
+void
+nip64_chess_plugin_request_games(Nip64ChessPlugin *self)
+{
+  g_return_if_fail(NIP64_IS_CHESS_PLUGIN(self));
+
+  if (!self->context || !self->active)
+    return;
+
+  /* Request fresh chess games from relays */
+  static const int kinds[] = { NIP64_KIND_CHESS };
+  gnostr_plugin_context_request_relay_events_async(
+      self->context,
+      kinds, 1,
+      50,  /* limit */
+      NULL,
+      NULL, NULL);
+
+  g_debug("[NIP-64] Requested fresh chess games from relays");
 }
 
 /* ============================================================================

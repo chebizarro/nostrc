@@ -203,6 +203,53 @@ void gnostr_chess_game_view_set_board_size(GnostrChessGameView *self, gint size)
 void gnostr_chess_game_view_set_show_move_list(GnostrChessGameView *self,
                                                  gboolean show);
 
+/* ============================================================================
+ * Games Browser
+ * ============================================================================ */
+
+/* Forward declaration for plugin type */
+typedef struct _Nip64ChessPlugin Nip64ChessPlugin;
+
+/* Plugin function pointer types for dynamic binding */
+typedef GHashTable *(*GnostrChessGetGamesFunc)(Nip64ChessPlugin *self);
+typedef void (*GnostrChessRequestGamesFunc)(Nip64ChessPlugin *self);
+
+/**
+ * gnostr_chess_game_view_set_plugin:
+ * @self: The game view widget.
+ * @plugin: The NIP-64 chess plugin.
+ *
+ * Set the plugin for games browsing. This enables the "Browse" tab
+ * to show games from relays. After calling this, also call
+ * gnostr_chess_game_view_set_plugin_callbacks() to enable full functionality.
+ */
+void gnostr_chess_game_view_set_plugin(GnostrChessGameView *self,
+                                        Nip64ChessPlugin *plugin);
+
+/**
+ * gnostr_chess_game_view_set_plugin_callbacks:
+ * @self: The game view widget.
+ * @get_games: Callback to get games hash table from plugin.
+ * @request_games: Callback to request fresh games from relays.
+ *
+ * Set the plugin callbacks. Must be called after set_plugin() for
+ * the browse functionality to work.
+ */
+void gnostr_chess_game_view_set_plugin_callbacks(GnostrChessGameView *self,
+                                                   GnostrChessGetGamesFunc get_games,
+                                                   GnostrChessRequestGamesFunc request_games);
+
+/**
+ * gnostr_chess_game_view_load_game:
+ * @self: The game view widget.
+ * @game: The game to load.
+ *
+ * Load a game for viewing (not playing). The board will display
+ * the game position and allow navigation through moves.
+ */
+void gnostr_chess_game_view_load_game(GnostrChessGameView *self,
+                                       GnostrChessGame *game);
+
 G_END_DECLS
 
 #endif /* GNOSTR_CHESS_GAME_VIEW_H */

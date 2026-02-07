@@ -15,8 +15,11 @@
  */
 
 #include "gnostr-chess-game-view.h"
+#include "gnostr-chess-games-browser.h"
 #include "../util/nip64_chess.h"
 #include <string.h>
+
+/* Use the types defined in the header */
 
 /* Private structure */
 struct _GnostrChessGameView {
@@ -32,7 +35,10 @@ struct _GnostrChessGameView {
     GtkWidget *status_box;         /* Status label + spinner */
     GtkWidget *status_label;       /* "Your turn" / "AI thinking..." */
     GtkWidget *thinking_spinner;   /* Shows during AI computation */
-    GtkWidget *side_panel;         /* Move list + controls */
+    GtkWidget *side_panel;         /* Stack switcher + stack container */
+    GtkWidget *stack_switcher;     /* Tabs: Game | Browse */
+    GtkWidget *stack;              /* GtkStack for game/browse pages */
+    GtkWidget *game_page;          /* Move list + controls */
     GtkWidget *move_list_scroll;   /* Scrollable move history */
     GtkWidget *move_list;          /* ListBox for moves */
     GtkWidget *controls_box;       /* Control buttons */
@@ -40,10 +46,17 @@ struct _GnostrChessGameView {
     GtkWidget *new_game_button;
     GtkWidget *flip_button;
     GtkWidget *draw_button;
+    GnostrChessGamesBrowser *games_browser; /* Browse tab content */
+
+    /* Plugin reference and function pointers */
+    Nip64ChessPlugin *plugin;
+    GnostrChessGetGamesFunc get_games_func;
+    GnostrChessRequestGamesFunc request_games_func;
 
     /* State */
     gboolean show_move_list;
     gboolean human_plays_white;
+    gboolean viewing_game;         /* TRUE when viewing a loaded game */
 
     /* Signal handler IDs */
     gulong board_move_made_id;
@@ -52,6 +65,9 @@ struct _GnostrChessGameView {
     gulong session_ai_thinking_id;
     gulong session_game_over_id;
     gulong session_state_changed_id;
+    gulong games_updated_id;
+    gulong game_selected_id;
+    gulong refresh_requested_id;
 };
 
 G_DEFINE_TYPE(GnostrChessGameView, gnostr_chess_game_view, GTK_TYPE_WIDGET)
@@ -99,6 +115,12 @@ static void sync_board_with_session(GnostrChessGameView *self);
 static void show_game_over_dialog(GnostrChessGameView *self,
                                    const gchar *result,
                                    const gchar *reason);
+static void on_game_selected(GnostrChessGamesBrowser *browser,
+                              const gchar *event_id,
+                              gpointer user_data);
+static void on_refresh_requested(GnostrChessGamesBrowser *browser,
+                                  gpointer user_data);
+static void on_games_updated(GObject *plugin, guint count, gpointer user_data);
 
 /* ============================================================================
  * Widget Lifecycle
@@ -138,6 +160,24 @@ gnostr_chess_game_view_dispose(GObject *object)
         }
     }
 
+    /* Disconnect games browser signals */
+    if (self->games_browser) {
+        if (self->game_selected_id > 0) {
+            g_signal_handler_disconnect(self->games_browser, self->game_selected_id);
+            self->game_selected_id = 0;
+        }
+        if (self->refresh_requested_id > 0) {
+            g_signal_handler_disconnect(self->games_browser, self->refresh_requested_id);
+            self->refresh_requested_id = 0;
+        }
+    }
+
+    /* Disconnect plugin signal */
+    if (self->plugin && self->games_updated_id > 0) {
+        g_signal_handler_disconnect(self->plugin, self->games_updated_id);
+        self->games_updated_id = 0;
+    }
+
     /* Unparent main container */
     if (self->main_box) {
         gtk_widget_unparent(self->main_box);
@@ -146,6 +186,7 @@ gnostr_chess_game_view_dispose(GObject *object)
 
     /* Clear references */
     g_clear_object(&self->session);
+    self->plugin = NULL;
 
     G_OBJECT_CLASS(gnostr_chess_game_view_parent_class)->dispose(object);
 }
@@ -220,21 +261,38 @@ gnostr_chess_game_view_init(GnostrChessGameView *self)
 
     /* ========== Side panel (right side) ========== */
     self->side_panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_size_request(self->side_panel, 200, -1);
+    gtk_widget_set_size_request(self->side_panel, 220, -1);
     gtk_box_append(GTK_BOX(self->main_box), self->side_panel);
+
+    /* Stack switcher (Game | Browse tabs) */
+    self->stack = gtk_stack_new();
+    gtk_stack_set_transition_type(GTK_STACK(self->stack),
+                                   GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+    gtk_widget_set_vexpand(self->stack, TRUE);
+
+    self->stack_switcher = gtk_stack_switcher_new();
+    gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(self->stack_switcher),
+                                  GTK_STACK(self->stack));
+    gtk_widget_set_halign(self->stack_switcher, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(self->side_panel), self->stack_switcher);
+    gtk_box_append(GTK_BOX(self->side_panel), self->stack);
+
+    /* ========== Game page ========== */
+    self->game_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_stack_add_titled(GTK_STACK(self->stack), self->game_page, "game", "Game");
 
     /* Move list header */
     GtkWidget *move_header = gtk_label_new("Moves");
     gtk_widget_add_css_class(move_header, "heading");
     gtk_widget_set_halign(move_header, GTK_ALIGN_START);
-    gtk_box_append(GTK_BOX(self->side_panel), move_header);
+    gtk_box_append(GTK_BOX(self->game_page), move_header);
 
     /* Scrolled move list */
     self->move_list_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(self->move_list_scroll),
                                     GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_vexpand(self->move_list_scroll, TRUE);
-    gtk_box_append(GTK_BOX(self->side_panel), self->move_list_scroll);
+    gtk_box_append(GTK_BOX(self->game_page), self->move_list_scroll);
 
     self->move_list = gtk_list_box_new();
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(self->move_list),
@@ -245,7 +303,7 @@ gnostr_chess_game_view_init(GnostrChessGameView *self)
 
     /* Control buttons */
     self->controls_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_box_append(GTK_BOX(self->side_panel), self->controls_box);
+    gtk_box_append(GTK_BOX(self->game_page), self->controls_box);
 
     /* New Game button */
     self->new_game_button = gtk_button_new_with_label("New Game");
@@ -277,6 +335,17 @@ gnostr_chess_game_view_init(GnostrChessGameView *self)
     g_signal_connect(self->draw_button, "clicked",
                      G_CALLBACK(on_draw_clicked), self);
     gtk_box_append(GTK_BOX(self->controls_box), self->draw_button);
+
+    /* ========== Browse page ========== */
+    self->games_browser = gnostr_chess_games_browser_new();
+    gtk_stack_add_titled(GTK_STACK(self->stack),
+                          GTK_WIDGET(self->games_browser), "browse", "Browse");
+
+    /* Connect browser signals */
+    self->game_selected_id = g_signal_connect(self->games_browser, "game-selected",
+        G_CALLBACK(on_game_selected), self);
+    self->refresh_requested_id = g_signal_connect(self->games_browser, "refresh-requested",
+        G_CALLBACK(on_refresh_requested), self);
 
     /* Create session */
     self->session = gnostr_chess_session_new();
@@ -487,6 +556,69 @@ on_draw_clicked(GtkButton *button, gpointer user_data)
     (void)button;
 
     gnostr_chess_session_offer_draw(self->session);
+}
+
+/**
+ * Handle game selected from browser
+ */
+static void
+on_game_selected(GnostrChessGamesBrowser *browser,
+                  const gchar *event_id,
+                  gpointer user_data)
+{
+    GnostrChessGameView *self = GNOSTR_CHESS_GAME_VIEW(user_data);
+    (void)browser;
+
+    if (!self->plugin || !self->get_games_func || !event_id) return;
+
+    GHashTable *games = self->get_games_func(self->plugin);
+    if (!games) return;
+
+    GnostrChessGame *game = g_hash_table_lookup(games, event_id);
+    if (game) {
+        gnostr_chess_game_view_load_game(self, game);
+        /* Switch to game tab to show the loaded game */
+        gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "game");
+    }
+}
+
+/**
+ * Handle refresh requested from browser
+ */
+static void
+on_refresh_requested(GnostrChessGamesBrowser *browser,
+                      gpointer user_data)
+{
+    GnostrChessGameView *self = GNOSTR_CHESS_GAME_VIEW(user_data);
+    (void)browser;
+
+    if (!self->plugin || !self->request_games_func) return;
+
+    /* Show loading state */
+    gnostr_chess_games_browser_set_loading(self->games_browser, TRUE);
+
+    /* Request fresh games from relays */
+    self->request_games_func(self->plugin);
+}
+
+/**
+ * Handle games-updated signal from plugin
+ */
+static void
+on_games_updated(GObject *plugin, guint count, gpointer user_data)
+{
+    GnostrChessGameView *self = GNOSTR_CHESS_GAME_VIEW(user_data);
+    (void)plugin;
+    (void)count;
+
+    /* Hide loading state */
+    gnostr_chess_games_browser_set_loading(self->games_browser, FALSE);
+
+    /* Refresh the browser list */
+    if (self->plugin && self->get_games_func) {
+        GHashTable *games = self->get_games_func(self->plugin);
+        gnostr_chess_games_browser_set_games(self->games_browser, games);
+    }
 }
 
 /* ============================================================================
@@ -851,4 +983,152 @@ gnostr_chess_game_view_set_show_move_list(GnostrChessGameView *self,
 
     self->show_move_list = show;
     gtk_widget_set_visible(self->side_panel, show);
+}
+
+void
+gnostr_chess_game_view_set_plugin(GnostrChessGameView *self,
+                                   Nip64ChessPlugin *plugin)
+{
+    g_return_if_fail(GNOSTR_IS_CHESS_GAME_VIEW(self));
+
+    /* Disconnect from old plugin */
+    if (self->plugin && self->games_updated_id > 0) {
+        g_signal_handler_disconnect(self->plugin, self->games_updated_id);
+        self->games_updated_id = 0;
+    }
+
+    self->plugin = plugin;
+    self->get_games_func = NULL;
+    self->request_games_func = NULL;
+
+    if (plugin) {
+        /* Connect to games-updated signal */
+        self->games_updated_id = g_signal_connect(plugin, "games-updated",
+            G_CALLBACK(on_games_updated), self);
+    }
+}
+
+void
+gnostr_chess_game_view_set_plugin_callbacks(GnostrChessGameView *self,
+                                             GnostrChessGetGamesFunc get_games,
+                                             GnostrChessRequestGamesFunc request_games)
+{
+    g_return_if_fail(GNOSTR_IS_CHESS_GAME_VIEW(self));
+
+    self->get_games_func = get_games;
+    self->request_games_func = request_games;
+
+    /* Initialize browser with current games if plugin is set */
+    if (self->plugin && self->get_games_func) {
+        GHashTable *games = self->get_games_func(self->plugin);
+        gnostr_chess_games_browser_set_games(self->games_browser, games);
+    }
+}
+
+void
+gnostr_chess_game_view_load_game(GnostrChessGameView *self,
+                                  GnostrChessGame *game)
+{
+    g_return_if_fail(GNOSTR_IS_CHESS_GAME_VIEW(self));
+    g_return_if_fail(game != NULL);
+
+    self->viewing_game = TRUE;
+
+    /* Disable interactive mode - this is view only */
+    gnostr_chess_board_set_interactive(self->board, FALSE);
+
+    /* Clear existing move list */
+    clear_move_list(self);
+
+    /* Populate move list from game */
+    if (game->moves && game->moves_count > 0) {
+        gint move_num = 1;
+        for (gsize i = 0; i < game->moves_count; i++) {
+            GnostrChessMove *move = game->moves[i];
+            if (move && move->san) {
+                gboolean is_white = (i % 2 == 0);
+                add_move_to_list(self, move->san, is_white ? move_num : move_num);
+                if (!is_white) move_num++;
+            }
+        }
+    }
+
+    /* Navigate to final position and render board */
+    gnostr_chess_game_last(game);
+
+    /* Build FEN from the final position or reset to starting position */
+    if (game->moves_count > 0) {
+        /* Render board from game's current board state */
+        gchar fen[128];
+        gint empty_count = 0;
+        gint fen_pos = 0;
+
+        for (gint rank = 7; rank >= 0; rank--) {
+            for (gint file = 0; file < 8; file++) {
+                gint idx = rank * 8 + file;
+                const GnostrChessSquare *sq = &game->board[idx];
+
+                if (sq->piece == GNOSTR_CHESS_PIECE_NONE) {
+                    empty_count++;
+                } else {
+                    if (empty_count > 0) {
+                        fen[fen_pos++] = '0' + empty_count;
+                        empty_count = 0;
+                    }
+                    gchar c = gnostr_chess_piece_char(sq->piece);
+                    if (sq->color == GNOSTR_CHESS_COLOR_BLACK) {
+                        c = g_ascii_tolower(c);
+                    }
+                    fen[fen_pos++] = c;
+                }
+            }
+            if (empty_count > 0) {
+                fen[fen_pos++] = '0' + empty_count;
+                empty_count = 0;
+            }
+            if (rank > 0) {
+                fen[fen_pos++] = '/';
+            }
+        }
+        /* Add minimal FEN suffix */
+        g_strlcpy(fen + fen_pos, " w - - 0 1", sizeof(fen) - fen_pos);
+        gnostr_chess_board_set_fen(self->board, fen);
+    } else {
+        /* No moves, reset to starting position */
+        gnostr_chess_board_reset(self->board);
+    }
+
+    /* Update status label with game info */
+    gchar *status;
+    if (game->result_string && game->result_string[0] != '*') {
+        if (g_strcmp0(game->result_string, "1-0") == 0) {
+            status = g_strdup_printf("White wins - %s vs %s",
+                game->white_player ? game->white_player : "?",
+                game->black_player ? game->black_player : "?");
+        } else if (g_strcmp0(game->result_string, "0-1") == 0) {
+            status = g_strdup_printf("Black wins - %s vs %s",
+                game->white_player ? game->white_player : "?",
+                game->black_player ? game->black_player : "?");
+        } else if (g_strcmp0(game->result_string, "1/2-1/2") == 0) {
+            status = g_strdup_printf("Draw - %s vs %s",
+                game->white_player ? game->white_player : "?",
+                game->black_player ? game->black_player : "?");
+        } else {
+            status = g_strdup_printf("%s vs %s - %s",
+                game->white_player ? game->white_player : "?",
+                game->black_player ? game->black_player : "?",
+                game->result_string);
+        }
+    } else {
+        status = g_strdup_printf("%s vs %s (in progress)",
+            game->white_player ? game->white_player : "?",
+            game->black_player ? game->black_player : "?");
+    }
+
+    gtk_label_set_text(GTK_LABEL(self->status_label), status);
+    g_free(status);
+
+    /* Disable game controls when viewing */
+    gtk_widget_set_sensitive(self->resign_button, FALSE);
+    gtk_widget_set_sensitive(self->draw_button, FALSE);
 }
