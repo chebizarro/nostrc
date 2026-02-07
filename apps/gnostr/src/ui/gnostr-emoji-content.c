@@ -164,13 +164,17 @@ static void add_emoji_image(GnostrEmojiContent *self, GnostrCustomEmoji *emoji) 
   } else {
     /* Load asynchronously - use shared session to reduce memory overhead */
 #ifdef HAVE_SOUP3
-    EmojiLoadCtx *ctx = g_new0(EmojiLoadCtx, 1);
-    ctx->picture = GTK_PICTURE(g_object_ref(picture));
-    ctx->url = g_strdup(emoji->url);
-
-    SoupMessage *msg = soup_message_new("GET", emoji->url);
-    soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_emoji_loaded, ctx);
-    g_object_unref(msg);
+    SoupSession *session = gnostr_get_shared_soup_session();
+    if (session) {
+      SoupMessage *msg = soup_message_new("GET", emoji->url);
+      if (msg) {
+        EmojiLoadCtx *ctx = g_new0(EmojiLoadCtx, 1);
+        ctx->picture = GTK_PICTURE(g_object_ref(picture));
+        ctx->url = g_strdup(emoji->url);
+        soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, NULL, on_emoji_loaded, ctx);
+        g_object_unref(msg);
+      }
+    }
 #endif
     /* Prefetch to cache */
     gnostr_emoji_cache_prefetch(emoji->url);
@@ -181,14 +185,24 @@ static void add_emoji_image(GnostrEmojiContent *self, GnostrCustomEmoji *emoji) 
 
 #ifdef HAVE_SOUP3
 static void on_emoji_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  (void)source;
   EmojiLoadCtx *ctx = (EmojiLoadCtx *)user_data;
   if (!ctx) return;
 
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
-  if (bytes && GTK_IS_PICTURE(ctx->picture)) {
+  /* Check for errors first - don't proceed if fetch failed */
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("Emoji: failed to load %s: %s", ctx->url ? ctx->url : "(null)", error->message);
+    }
+    g_error_free(error);
+    if (ctx->picture) g_object_unref(ctx->picture);
+    emoji_load_ctx_free(ctx);
+    return;
+  }
+
+  if (bytes && ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
     GInputStream *stream = g_memory_input_stream_new_from_bytes(bytes);
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream_at_scale(stream, 24, 24, TRUE, NULL, NULL);
     g_object_unref(stream);
@@ -210,10 +224,9 @@ static void on_emoji_loaded(GObject *source, GAsyncResult *res, gpointer user_da
       g_object_unref(texture);
       g_object_unref(pixbuf);
     }
-    g_bytes_unref(bytes);
   }
 
-  g_clear_error(&error);
+  if (bytes) g_bytes_unref(bytes);
   if (ctx->picture) g_object_unref(ctx->picture);
   emoji_load_ctx_free(ctx);
 }

@@ -407,13 +407,18 @@ static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWi
     goto error_decrement;
   }
 
+  SoupSession *sess = gnostr_get_shared_soup_session();
+  if (!sess) {
+    g_debug("avatar fetch: shared session unavailable (shutdown?)");
+    goto error_decrement;
+  }
+
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
     g_warning("avatar fetch: failed to create message for url=%s", url);
     goto error_decrement;
   }
 
-  SoupSession *sess = soup_session_new();
   AvatarCtx *ctx = g_new0(AvatarCtx, 1);
   g_weak_ref_init(&ctx->image_ref, image);
   g_weak_ref_init(&ctx->initials_ref, initials);
@@ -424,7 +429,6 @@ static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWi
 
   soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
   g_object_unref(msg);
-  g_object_unref(sess);
   return;
 
 error_decrement:
