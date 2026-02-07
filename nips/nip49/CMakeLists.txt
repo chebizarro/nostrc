@@ -38,6 +38,7 @@ endif()
 if (GLIB2_FOUND)
   add_library(nostr_nip49_glib ${NIP49_GLIB_SRC})
   target_include_directories(nostr_nip49_glib PUBLIC ${NIP49_INC} ${GLIB2_INCLUDE_DIRS})
+  target_link_directories(nostr_nip49_glib PUBLIC ${GLIB2_LIBRARY_DIRS})
   target_link_libraries(nostr_nip49_glib PUBLIC nostr_nip49_core ${GLIB2_LIBRARIES})
 endif()
 
