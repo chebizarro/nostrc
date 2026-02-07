@@ -613,6 +613,45 @@ gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
 
   g_debug("[PLUGIN] Set main window on %u plugin contexts",
           g_hash_table_size(manager->plugin_contexts));
+
+#ifdef HAVE_LIBPEAS
+  /* Add sidebar items for already-loaded UI extension plugins */
+  if (window && GNOSTR_IS_MAIN_WINDOW(window)) {
+    GnostrSessionView *session_view = gnostr_main_window_get_session_view(
+        GNOSTR_MAIN_WINDOW(window));
+
+    if (session_view) {
+      g_hash_table_iter_init(&iter, manager->loaded_plugins);
+      while (g_hash_table_iter_next(&iter, &key, &value)) {
+        const char *plugin_id = (const char *)key;
+        GObject *plugin = G_OBJECT(value);
+
+        if (GNOSTR_IS_UI_EXTENSION(plugin)) {
+          GnostrUIExtension *ui_ext = GNOSTR_UI_EXTENSION(plugin);
+          GnostrPluginContext *ctx = g_hash_table_lookup(manager->plugin_contexts, plugin_id);
+
+          if (ctx) {
+            GList *sidebar_items = gnostr_ui_extension_get_sidebar_items(ui_ext, ctx);
+            for (GList *l = sidebar_items; l; l = l->next) {
+              GnostrSidebarItem *item = l->data;
+              gnostr_session_view_add_plugin_sidebar_item(
+                  session_view,
+                  item->id,
+                  item->label,
+                  item->icon_name,
+                  item->requires_auth,
+                  item->position,
+                  ui_ext,
+                  ctx);
+              g_debug("[PLUGIN] Added sidebar item (deferred): %s", item->label);
+            }
+            g_list_free_full(sidebar_items, (GDestroyNotify)gnostr_sidebar_item_free);
+          }
+        }
+      }
+    }
+  }
+#endif
 }
 
 GtkWidget *
