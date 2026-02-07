@@ -556,9 +556,10 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
         free(response_json);
     }
 
-    /* Clean up the pending request (channel is kept open for receiver) */
-    free(pending->request_id);
-    free(pending);
+    /* CRITICAL: Do NOT free pending request here!
+     * The caller (nip46_rpc_call) owns the pending request and will free it
+     * after receiving the response from the channel. Freeing here causes
+     * use-after-free race condition. */
 
     fprintf(stderr, "[nip46] persistent_cb: dispatched response to pending request\n");
 }
