@@ -925,21 +925,22 @@ on_ai_move_complete(GObject *source_object,
     GnostrChessSession *self = GNOSTR_CHESS_SESSION(source_object);
     GError *error = NULL;
 
-    /* Clear thinking state */
+    /* Clear thinking flag (but don't emit signal yet - wait until move is made) */
     self->ai_thinking = FALSE;
-    g_signal_emit(self, signals[SIGNAL_AI_THINKING], 0, FALSE);
 
     AiMoveData *data = g_task_propagate_pointer(G_TASK(res), &error);
 
     if (error) {
         g_warning("[CHESS_SESSION] AI computation failed: %s", error->message);
         g_clear_error(&error);
+        g_signal_emit(self, signals[SIGNAL_AI_THINKING], 0, FALSE);
         return;
     }
 
     if (!data || !data->best_move) {
         g_warning("[CHESS_SESSION] AI returned no move");
         ai_move_data_free(data);
+        g_signal_emit(self, signals[SIGNAL_AI_THINKING], 0, FALSE);
         return;
     }
 
@@ -948,6 +949,7 @@ on_ai_move_complete(GObject *source_object,
     if (strlen(move) < 4) {
         g_warning("[CHESS_SESSION] Invalid AI move format: %s", move);
         ai_move_data_free(data);
+        g_signal_emit(self, signals[SIGNAL_AI_THINKING], 0, FALSE);
         return;
     }
 
@@ -963,12 +965,17 @@ on_ai_move_complete(GObject *source_object,
         g_warning("[CHESS_SESSION] AI move was illegal: %s", move);
         g_free(san);
         ai_move_data_free(data);
+        g_signal_emit(self, signals[SIGNAL_AI_THINKING], 0, FALSE);
         return;
     }
 
     /* Record the move */
     self->move_count++;
     self->move_history = g_list_append(self->move_history, san);
+
+    /* Now that move is made, emit AI thinking done signal
+     * This must be after the move so is_human_turn() returns correct value */
+    g_signal_emit(self, signals[SIGNAL_AI_THINKING], 0, FALSE);
 
     /* Emit move-made signal */
     gint move_number = (self->move_count + 1) / 2;
