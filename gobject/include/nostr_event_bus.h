@@ -42,13 +42,15 @@ typedef struct _NostrEventBusHandle NostrEventBusHandle;
 /**
  * NostrEventBusCallback:
  * @topic: The topic that matched the subscription pattern
- * @event_json: The event payload as a JSON string (may be NULL for some topics)
+ * @event_data: The event payload (type depends on topic; may be NULL)
  * @user_data: User data passed to nostr_event_bus_subscribe()
  *
  * Callback signature for event bus subscriptions.
+ * For "event::kind::*" topics, @event_data is a NostrEvent*.
+ * For other topics, @event_data may be a string or NULL.
  */
 typedef void (*NostrEventBusCallback)(const gchar *topic,
-                                       const gchar *event_json,
+                                       gpointer event_data,
                                        gpointer user_data);
 
 /* --- GObject Type Definition --- */
@@ -73,9 +75,9 @@ struct _NostrEventBusClass {
                                       gpointer user_data,
                                       GDestroyNotify destroy_notify);
     void (*unsubscribe)(NostrEventBus *bus, NostrEventBusHandle *handle);
-    void (*emit)(NostrEventBus *bus, const gchar *topic, const gchar *event_json);
+    void (*emit)(NostrEventBus *bus, const gchar *topic, gpointer event_data);
     void (*emit_batch)(NostrEventBus *bus, const gchar *topic,
-                       const gchar *const *events_array, gsize count);
+                       gpointer const *events_array, gsize count);
 
     /*< private >*/
     gpointer padding[8];
@@ -86,7 +88,7 @@ struct _NostrEventBusClass {
 /**
  * NostrEventBusFilterFunc:
  * @topic: The topic being tested
- * @event_json: The event payload (may be NULL)
+ * @event_data: The event payload (type depends on topic; may be NULL)
  * @user_data: User data passed to nostr_event_bus_subscribe_filtered()
  *
  * Predicate function for fine-grained filtering of events.
@@ -96,7 +98,7 @@ struct _NostrEventBusClass {
  * Returns: %TRUE if the event should be delivered, %FALSE to skip
  */
 typedef gboolean (*NostrEventBusFilterFunc)(const gchar *topic,
-                                            const gchar *event_json,
+                                            gpointer event_data,
                                             gpointer user_data);
 
 /* --- Handle Type --- */
@@ -227,28 +229,26 @@ void nostr_event_bus_unsubscribe(NostrEventBus *bus,
  * nostr_event_bus_emit:
  * @bus: A #NostrEventBus
  * @topic: The topic to emit on
- * @event_json: (nullable): The event payload as JSON
+ * @event_data: (nullable): The event payload (type depends on topic)
  *
  * Emits an event on the specified topic. All subscribers with matching
  * topic patterns will have their callbacks invoked synchronously in
  * registration order.
  *
- * The topic should follow the naming conventions:
- * - "event::kind::<N>" for Nostr events by kind
- * - "eose::<sub-id>" for EOSE notifications
- * - "ok::<event-id>" for relay acknowledgments
+ * For "event::kind::*" topics, @event_data should be a NostrEvent*.
+ * For other topics, @event_data may be a string or NULL.
  *
  * Thread-safe. Callbacks are invoked on the calling thread.
  */
 void nostr_event_bus_emit(NostrEventBus *bus,
                           const gchar *topic,
-                          const gchar *event_json);
+                          gpointer event_data);
 
 /**
  * nostr_event_bus_emit_batch:
  * @bus: A #NostrEventBus
  * @topic: The topic to emit on
- * @events_array: (array length=count) (element-type utf8): Array of event JSON strings
+ * @events_array: (array length=count): Array of event data pointers
  * @count: Number of events in the array
  *
  * Emits multiple events on the same topic in a single batch. This is
@@ -262,7 +262,7 @@ void nostr_event_bus_emit(NostrEventBus *bus,
  */
 void nostr_event_bus_emit_batch(NostrEventBus *bus,
                                 const gchar *topic,
-                                const gchar *const *events_array,
+                                gpointer const *events_array,
                                 gsize count);
 
 /* --- Utility Functions --- */

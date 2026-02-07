@@ -432,7 +432,7 @@ static void nostr_event_bus_real_unsubscribe(NostrEventBus *bus,
 
 static void nostr_event_bus_real_emit(NostrEventBus *bus,
                                        const gchar *topic,
-                                       const gchar *event_json) {
+                                       gpointer event_data) {
     g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
     g_return_if_fail(topic != NULL);
 
@@ -482,14 +482,14 @@ static void nostr_event_bus_real_emit(NostrEventBus *bus,
 
         /* Apply filter if present */
         if (sub->filter_func) {
-            if (!sub->filter_func(topic, event_json, sub->user_data)) {
+            if (!sub->filter_func(topic, event_data, sub->user_data)) {
                 dropped++;
                 continue;
             }
         }
 
         /* Invoke callback */
-        sub->callback(topic, event_json, sub->user_data);
+        sub->callback(topic, event_data, sub->user_data);
 
         g_mutex_lock(&priv->mutex);
         priv->callbacks_invoked++;
@@ -509,7 +509,7 @@ static void nostr_event_bus_real_emit(NostrEventBus *bus,
 
 static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
                                              const gchar *topic,
-                                             const gchar *const *events_array,
+                                             gpointer const *events_array,
                                              gsize count) {
     g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
     g_return_if_fail(topic != NULL);
@@ -552,7 +552,7 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
     /* Invoke callbacks for each event */
     guint64 dropped = 0;
     for (gsize e = 0; e < count; e++) {
-        const gchar *event_json = events_array[e];
+        gpointer event_data = events_array[e];
 
         for (guint i = 0; i < matching->len; i++) {
             Subscription *sub = g_ptr_array_index(matching, i);
@@ -563,13 +563,13 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
             }
 
             if (sub->filter_func) {
-                if (!sub->filter_func(topic, event_json, sub->user_data)) {
+                if (!sub->filter_func(topic, event_data, sub->user_data)) {
                     dropped++;
                     continue;
                 }
             }
 
-            sub->callback(topic, event_json, sub->user_data);
+            sub->callback(topic, event_data, sub->user_data);
 
             g_mutex_lock(&priv->mutex);
             priv->callbacks_invoked++;
@@ -726,16 +726,16 @@ void nostr_event_bus_unsubscribe(NostrEventBus *bus,
 
 void nostr_event_bus_emit(NostrEventBus *bus,
                            const gchar *topic,
-                           const gchar *event_json) {
+                           gpointer event_data) {
     g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
 
     NostrEventBusClass *klass = NOSTR_EVENT_BUS_GET_CLASS(bus);
-    klass->emit(bus, topic, event_json);
+    klass->emit(bus, topic, event_data);
 }
 
 void nostr_event_bus_emit_batch(NostrEventBus *bus,
                                  const gchar *topic,
-                                 const gchar *const *events_array,
+                                 gpointer const *events_array,
                                  gsize count) {
     g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
 

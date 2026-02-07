@@ -143,7 +143,7 @@ emit_bus_event(const char *topic, const char *json)
 {
   NostrEventBus *bus = nostr_event_bus_get_default();
   if (bus)
-    nostr_event_bus_emit(bus, topic, json);
+    nostr_event_bus_emit(bus, topic, (gpointer)json);
 }
 
 static void

@@ -11,6 +11,8 @@
 #include <glib.h>
 #include "../src/model/gnostr-thread-subscription.h"
 #include "nostr_event_bus.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 
 /* ========== Test fixtures ========== */
 
@@ -20,31 +22,55 @@
 #define REACT_ID "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 #define OTHER_ID "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 
-/* Construct a minimal kind:1 event JSON referencing a root ID */
-static char *make_reply_json(const char *event_id, const char *root_id) {
-    return g_strdup_printf(
-        "{\"id\":\"%s\",\"pubkey\":\"1111111111111111111111111111111111111111111111111111111111111111\","
-        "\"kind\":1,\"created_at\":1700000000,\"content\":\"test reply\","
-        "\"tags\":[[\"e\",\"%s\",\"\",\"root\"]]}",
-        event_id, root_id);
+/* Construct a minimal kind:1 NostrEvent referencing a root ID via e-tag */
+static NostrEvent *make_reply_event(const char *event_id, const char *root_id) {
+    NostrEvent *ev = nostr_event_new();
+    ev->id = g_strdup(event_id);
+    ev->pubkey = g_strdup("1111111111111111111111111111111111111111111111111111111111111111");
+    ev->kind = 1;
+    ev->created_at = 1700000000;
+    ev->content = g_strdup("test reply");
+
+    NostrTag *tag = nostr_tag_new("e", root_id, "", "root", NULL);
+    NostrTags *tags = nostr_tags_new(0);
+    nostr_tags_append(tags, tag);
+    ev->tags = tags;
+
+    return ev;
 }
 
-/* Construct a minimal kind:7 reaction JSON referencing an event */
-static char *make_reaction_json(const char *event_id, const char *target_id) {
-    return g_strdup_printf(
-        "{\"id\":\"%s\",\"pubkey\":\"2222222222222222222222222222222222222222222222222222222222222222\","
-        "\"kind\":7,\"created_at\":1700000001,\"content\":\"+\","
-        "\"tags\":[[\"e\",\"%s\"]]}",
-        event_id, target_id);
+/* Construct a minimal kind:7 reaction NostrEvent referencing an event */
+static NostrEvent *make_reaction_event(const char *event_id, const char *target_id) {
+    NostrEvent *ev = nostr_event_new();
+    ev->id = g_strdup(event_id);
+    ev->pubkey = g_strdup("2222222222222222222222222222222222222222222222222222222222222222");
+    ev->kind = 7;
+    ev->created_at = 1700000001;
+    ev->content = g_strdup("+");
+
+    NostrTag *tag = nostr_tag_new("e", target_id, NULL);
+    NostrTags *tags = nostr_tags_new(0);
+    nostr_tags_append(tags, tag);
+    ev->tags = tags;
+
+    return ev;
 }
 
-/* Construct a minimal kind:1111 NIP-22 comment JSON */
-static char *make_comment_json(const char *event_id, const char *root_id) {
-    return g_strdup_printf(
-        "{\"id\":\"%s\",\"pubkey\":\"3333333333333333333333333333333333333333333333333333333333333333\","
-        "\"kind\":1111,\"created_at\":1700000002,\"content\":\"test comment\","
-        "\"tags\":[[\"E\",\"%s\",\"\",\"root\"]]}",
-        event_id, root_id);
+/* Construct a minimal kind:1111 NIP-22 comment NostrEvent */
+static NostrEvent *make_comment_event(const char *event_id, const char *root_id) {
+    NostrEvent *ev = nostr_event_new();
+    ev->id = g_strdup(event_id);
+    ev->pubkey = g_strdup("3333333333333333333333333333333333333333333333333333333333333333");
+    ev->kind = 1111;
+    ev->created_at = 1700000002;
+    ev->content = g_strdup("test comment");
+
+    NostrTag *tag = nostr_tag_new("E", root_id, "", "root", NULL);
+    NostrTags *tags = nostr_tags_new(0);
+    nostr_tags_append(tags, tag);
+    ev->tags = tags;
+
+    return ev;
 }
 
 /* Signal counter context */
@@ -53,39 +79,34 @@ typedef struct {
     guint reaction_count;
     guint comment_count;
     guint eose_count;
-    char *last_reply_json;
-    char *last_reaction_json;
-    char *last_comment_json;
+    NostrEvent *last_reply_event;
+    NostrEvent *last_reaction_event;
+    NostrEvent *last_comment_event;
 } SignalCtx;
 
-static void on_reply(GnostrThreadSubscription *sub, const char *json, gpointer data) {
+static void on_reply(GnostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
     (void)sub;
     SignalCtx *ctx = data;
     ctx->reply_count++;
-    g_free(ctx->last_reply_json);
-    ctx->last_reply_json = g_strdup(json);
+    ctx->last_reply_event = ev;
 }
 
-static void on_reaction(GnostrThreadSubscription *sub, const char *json, gpointer data) {
+static void on_reaction(GnostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
     (void)sub;
     SignalCtx *ctx = data;
     ctx->reaction_count++;
-    g_free(ctx->last_reaction_json);
-    ctx->last_reaction_json = g_strdup(json);
+    ctx->last_reaction_event = ev;
 }
 
-static void on_comment(GnostrThreadSubscription *sub, const char *json, gpointer data) {
+static void on_comment(GnostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
     (void)sub;
     SignalCtx *ctx = data;
     ctx->comment_count++;
-    g_free(ctx->last_comment_json);
-    ctx->last_comment_json = g_strdup(json);
+    ctx->last_comment_event = ev;
 }
 
 static void signal_ctx_clear(SignalCtx *ctx) {
-    g_free(ctx->last_reply_json);
-    g_free(ctx->last_reaction_json);
-    g_free(ctx->last_comment_json);
+    /* We don't own the events — they're borrowed from the emit call */
     memset(ctx, 0, sizeof(*ctx));
 }
 
@@ -128,20 +149,20 @@ static void test_reply_signal_via_eventbus(void) {
     gnostr_thread_subscription_start(sub);
 
     /* Emit a kind:1 event that references our root */
-    char *json = make_reply_json(REPLY_ID, ROOT_ID);
+    NostrEvent *ev = make_reply_event(REPLY_ID, ROOT_ID);
     NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1", json);
+    nostr_event_bus_emit(bus, "event::kind::1", ev);
 
     g_assert_cmpuint(ctx.reply_count, ==, 1);
-    g_assert_nonnull(ctx.last_reply_json);
+    g_assert_nonnull(ctx.last_reply_event);
 
     /* Verify deduplication: same event again should not fire */
-    nostr_event_bus_emit(bus, "event::kind::1", json);
+    nostr_event_bus_emit(bus, "event::kind::1", ev);
     g_assert_cmpuint(ctx.reply_count, ==, 1);
 
     g_assert_cmpuint(gnostr_thread_subscription_get_seen_count(sub), ==, 1);
 
-    g_free(json);
+    nostr_event_free(ev);
     signal_ctx_clear(&ctx);
     g_object_unref(sub);
 }
@@ -153,14 +174,14 @@ static void test_reaction_signal_via_eventbus(void) {
     g_signal_connect(sub, "reaction-received", G_CALLBACK(on_reaction), &ctx);
     gnostr_thread_subscription_start(sub);
 
-    char *json = make_reaction_json(REACT_ID, ROOT_ID);
+    NostrEvent *ev = make_reaction_event(REACT_ID, ROOT_ID);
     NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::7", json);
+    nostr_event_bus_emit(bus, "event::kind::7", ev);
 
     g_assert_cmpuint(ctx.reaction_count, ==, 1);
-    g_assert_nonnull(ctx.last_reaction_json);
+    g_assert_nonnull(ctx.last_reaction_event);
 
-    g_free(json);
+    nostr_event_free(ev);
     signal_ctx_clear(&ctx);
     g_object_unref(sub);
 }
@@ -173,15 +194,15 @@ static void test_comment_signal_via_eventbus(void) {
     gnostr_thread_subscription_start(sub);
 
     /* NIP-22 comment with uppercase E tag */
-    char *json = make_comment_json(
+    NostrEvent *ev = make_comment_event(
         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         ROOT_ID);
     NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1111", json);
+    nostr_event_bus_emit(bus, "event::kind::1111", ev);
 
     g_assert_cmpuint(ctx.comment_count, ==, 1);
 
-    g_free(json);
+    nostr_event_free(ev);
     signal_ctx_clear(&ctx);
     g_object_unref(sub);
 }
@@ -194,13 +215,13 @@ static void test_unrelated_event_filtered(void) {
     gnostr_thread_subscription_start(sub);
 
     /* Event referencing a different root - should be filtered */
-    char *json = make_reply_json(REPLY_ID, OTHER_ID);
+    NostrEvent *ev = make_reply_event(REPLY_ID, OTHER_ID);
     NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1", json);
+    nostr_event_bus_emit(bus, "event::kind::1", ev);
 
     g_assert_cmpuint(ctx.reply_count, ==, 0);
 
-    g_free(json);
+    nostr_event_free(ev);
     signal_ctx_clear(&ctx);
     g_object_unref(sub);
 }
@@ -214,11 +235,11 @@ static void test_add_monitored_id(void) {
 
     /* Event referencing a mid-thread ID (not root) */
     char *mid_id = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-    char *json = make_reply_json(REPLY_ID, mid_id);
+    NostrEvent *ev = make_reply_event(REPLY_ID, mid_id);
     NostrEventBus *bus = nostr_event_bus_get_default();
 
     /* Should be filtered initially */
-    nostr_event_bus_emit(bus, "event::kind::1", json);
+    nostr_event_bus_emit(bus, "event::kind::1", ev);
     g_assert_cmpuint(ctx.reply_count, ==, 0);
 
     /* Add the mid-thread ID to monitored set */
@@ -226,14 +247,14 @@ static void test_add_monitored_id(void) {
 
     /* Now it should match */
     /* Need a different event ID since the first one was already seen in the filter */
-    g_free(json);
-    json = make_reply_json(
+    nostr_event_free(ev);
+    ev = make_reply_event(
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
         mid_id);
-    nostr_event_bus_emit(bus, "event::kind::1", json);
+    nostr_event_bus_emit(bus, "event::kind::1", ev);
     g_assert_cmpuint(ctx.reply_count, ==, 1);
 
-    g_free(json);
+    nostr_event_free(ev);
     signal_ctx_clear(&ctx);
     g_object_unref(sub);
 }
@@ -247,13 +268,13 @@ static void test_no_signals_after_stop(void) {
     gnostr_thread_subscription_stop(sub);
 
     /* After stop, events should not trigger signals */
-    char *json = make_reply_json(REPLY_ID, ROOT_ID);
+    NostrEvent *ev = make_reply_event(REPLY_ID, ROOT_ID);
     NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1", json);
+    nostr_event_bus_emit(bus, "event::kind::1", ev);
 
     g_assert_cmpuint(ctx.reply_count, ==, 0);
 
-    g_free(json);
+    nostr_event_free(ev);
     signal_ctx_clear(&ctx);
     g_object_unref(sub);
 }

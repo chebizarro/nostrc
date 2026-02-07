@@ -13,7 +13,8 @@
 #include "gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
 #include "nostr_event_bus.h"
-#include "json.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 #include <string.h>
 
 /* Maximum events for the nostrdb subscription filter */
@@ -55,193 +56,157 @@ static guint signals[N_SIGNALS];
 G_DEFINE_TYPE(GnostrThreadSubscription, gnostr_thread_subscription, G_TYPE_OBJECT)
 
 /* Forward declarations */
-static void on_event_bus_kind1(const gchar *topic, const gchar *event_json, gpointer user_data);
-static void on_event_bus_kind7(const gchar *topic, const gchar *event_json, gpointer user_data);
-static void on_event_bus_kind1111(const gchar *topic, const gchar *event_json, gpointer user_data);
-static gboolean filter_thread_note(const gchar *topic, const gchar *event_json, gpointer user_data);
-static gboolean filter_thread_reaction(const gchar *topic, const gchar *event_json, gpointer user_data);
+static void on_event_bus_kind1(const gchar *topic, gpointer event_data, gpointer user_data);
+static void on_event_bus_kind7(const gchar *topic, gpointer event_data, gpointer user_data);
+static void on_event_bus_kind1111(const gchar *topic, gpointer event_data, gpointer user_data);
+static gboolean filter_thread_note(const gchar *topic, gpointer event_data, gpointer user_data);
+static gboolean filter_thread_reaction(const gchar *topic, gpointer event_data, gpointer user_data);
 static void on_ndb_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 
 /* ========== Helpers ========== */
 
 /**
- * Check if a JSON event references any of our monitored IDs via e-tags.
- * Scans the "tags" array for ["e", "<monitored-id>", ...] entries.
+ * Check if a NostrEvent references any of our monitored IDs via e/E tags.
+ * Iterates the event's tags directly (no JSON parsing needed).
  */
-typedef struct {
-    GHashTable *monitored_ids;
-    gboolean found;
-} ETagScanCtx;
+static gboolean event_references_monitored(const NostrEvent *ev, GHashTable *monitored_ids) {
+    if (!ev || !monitored_ids) return FALSE;
 
-static bool scan_etag_callback(size_t index, const char *tag_json, void *user_data) {
-    (void)index;
-    ETagScanCtx *ctx = user_data;
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
+    if (!tags) return FALSE;
 
-    if (!nostr_json_is_array_str(tag_json)) return true;
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (!tag || nostr_tag_size(tag) < 2) continue;
 
-    /* Get tag type (first element) */
-    char *tag_type = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_type) != 0 || !tag_type)
-        return true;
+        const char *key = nostr_tag_get_key(tag);
+        if (!key) continue;
 
-    gboolean is_etag = (strcmp(tag_type, "e") == 0 || strcmp(tag_type, "E") == 0);
-    free(tag_type);
-    if (!is_etag) return true;
+        /* Check for e or E tags (NIP-10 and NIP-22) */
+        if (strcmp(key, "e") != 0 && strcmp(key, "E") != 0) continue;
 
-    /* Get event ID (second element) */
-    char *event_id = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 1, &event_id) != 0 || !event_id)
-        return true;
-
-    if (strlen(event_id) == 64 && g_hash_table_contains(ctx->monitored_ids, event_id)) {
-        ctx->found = TRUE;
-        free(event_id);
-        return false; /* stop iteration */
+        const char *value = nostr_tag_get_value(tag);
+        if (value && strlen(value) == 64 &&
+            g_hash_table_contains(monitored_ids, value)) {
+            return TRUE;
+        }
     }
 
-    free(event_id);
-    return true;
-}
-
-static gboolean event_references_monitored(const char *event_json, GHashTable *monitored_ids) {
-    if (!event_json || !monitored_ids) return FALSE;
-
-    ETagScanCtx ctx = { .monitored_ids = monitored_ids, .found = FALSE };
-    nostr_json_array_foreach(event_json, "tags", scan_etag_callback, &ctx);
-    return ctx.found;
-}
-
-/**
- * Extract event ID from JSON. Caller must free the returned string.
- */
-static char *extract_event_id(const char *event_json) {
-    char *id = NULL;
-    if (nostr_json_get_string(event_json, "id", &id) == 0 && id && strlen(id) == 64)
-        return id;
-    free(id);
-    return NULL;
+    return FALSE;
 }
 
 /* ========== EventBus filter predicates ========== */
 
 /**
  * Filter for kind:1 and kind:1111 events that are part of this thread.
- * Scans e-tags (including NIP-10 root/reply markers and NIP-22 uppercase E tags)
+ * Checks e-tags (including NIP-10 root/reply markers and NIP-22 uppercase E tags)
  * for references to monitored event IDs.
+ * event_data is a NostrEvent* for "event::kind::*" topics.
  */
-static gboolean filter_thread_note(const gchar *topic, const gchar *event_json,
+static gboolean filter_thread_note(const gchar *topic, gpointer event_data,
                                     gpointer user_data) {
     (void)topic;
     GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
-    if (!event_json) return FALSE;
+    NostrEvent *ev = (NostrEvent *)event_data;
+    if (!ev) return FALSE;
 
     /* Fast path: check if event's ID itself is one we monitor (e.g., root event) */
-    char *id = extract_event_id(event_json);
-    if (id) {
-        gboolean is_self = g_hash_table_contains(self->monitored_ids, id);
-        if (is_self) {
-            free(id);
+    const char *id = ev->id;
+    if (id && strlen(id) == 64) {
+        if (g_hash_table_contains(self->monitored_ids, id))
             return TRUE;
-        }
         /* Check dedup early */
-        if (g_hash_table_contains(self->seen_events, id)) {
-            free(id);
+        if (g_hash_table_contains(self->seen_events, id))
             return FALSE;
-        }
-        free(id);
     }
 
     /* Scan all e/E tags for references to monitored IDs */
-    return event_references_monitored(event_json, self->monitored_ids);
+    return event_references_monitored(ev, self->monitored_ids);
 }
 
 /**
  * Filter for kind:7 reactions referencing any monitored event.
+ * event_data is a NostrEvent* for "event::kind::*" topics.
  */
-static gboolean filter_thread_reaction(const gchar *topic, const gchar *event_json,
+static gboolean filter_thread_reaction(const gchar *topic, gpointer event_data,
                                         gpointer user_data) {
     (void)topic;
     GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
-    if (!event_json) return FALSE;
+    NostrEvent *ev = (NostrEvent *)event_data;
+    if (!ev) return FALSE;
 
     /* Check dedup */
-    char *id = extract_event_id(event_json);
-    if (id) {
-        if (g_hash_table_contains(self->seen_events, id)) {
-            free(id);
+    const char *id = ev->id;
+    if (id && strlen(id) == 64) {
+        if (g_hash_table_contains(self->seen_events, id))
             return FALSE;
-        }
-        free(id);
     }
 
     /* Reactions reference the target event via e-tag */
-    return event_references_monitored(event_json, self->monitored_ids);
+    return event_references_monitored(ev, self->monitored_ids);
 }
 
 /* ========== EventBus callbacks ========== */
 
-static void on_event_bus_kind1(const gchar *topic, const gchar *event_json,
+static void on_event_bus_kind1(const gchar *topic, gpointer event_data,
                                 gpointer user_data) {
     (void)topic;
     GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
-    if (self->disposed || !event_json) return;
+    NostrEvent *ev = (NostrEvent *)event_data;
+    if (self->disposed || !ev) return;
 
-    char *id = extract_event_id(event_json);
-    if (!id) return;
+    const char *eid = ev->id;
+    if (!eid || strlen(eid) != 64) return;
 
     /* Deduplicate */
-    if (g_hash_table_contains(self->seen_events, id)) {
-        free(id);
+    if (g_hash_table_contains(self->seen_events, eid))
         return;
-    }
-    g_hash_table_insert(self->seen_events, id, GINT_TO_POINTER(TRUE)); /* takes ownership of id */
+    g_hash_table_insert(self->seen_events, g_strdup(eid), GINT_TO_POINTER(TRUE));
 
     g_debug("[THREAD_SUB] Reply received: %.16s... for root %.16s...",
-            id, self->root_event_id);
+            eid, self->root_event_id);
 
-    g_signal_emit(self, signals[SIGNAL_REPLY_RECEIVED], 0, event_json);
+    g_signal_emit(self, signals[SIGNAL_REPLY_RECEIVED], 0, ev);
 }
 
-static void on_event_bus_kind7(const gchar *topic, const gchar *event_json,
+static void on_event_bus_kind7(const gchar *topic, gpointer event_data,
                                 gpointer user_data) {
     (void)topic;
     GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
-    if (self->disposed || !event_json) return;
+    NostrEvent *ev = (NostrEvent *)event_data;
+    if (self->disposed || !ev) return;
 
-    char *id = extract_event_id(event_json);
-    if (!id) return;
+    const char *eid = ev->id;
+    if (!eid || strlen(eid) != 64) return;
 
-    if (g_hash_table_contains(self->seen_events, id)) {
-        free(id);
+    if (g_hash_table_contains(self->seen_events, eid))
         return;
-    }
-    g_hash_table_insert(self->seen_events, id, GINT_TO_POINTER(TRUE));
+    g_hash_table_insert(self->seen_events, g_strdup(eid), GINT_TO_POINTER(TRUE));
 
     g_debug("[THREAD_SUB] Reaction received: %.16s... for root %.16s...",
-            id, self->root_event_id);
+            eid, self->root_event_id);
 
-    g_signal_emit(self, signals[SIGNAL_REACTION_RECEIVED], 0, event_json);
+    g_signal_emit(self, signals[SIGNAL_REACTION_RECEIVED], 0, ev);
 }
 
-static void on_event_bus_kind1111(const gchar *topic, const gchar *event_json,
+static void on_event_bus_kind1111(const gchar *topic, gpointer event_data,
                                    gpointer user_data) {
     (void)topic;
     GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
-    if (self->disposed || !event_json) return;
+    NostrEvent *ev = (NostrEvent *)event_data;
+    if (self->disposed || !ev) return;
 
-    char *id = extract_event_id(event_json);
-    if (!id) return;
+    const char *eid = ev->id;
+    if (!eid || strlen(eid) != 64) return;
 
-    if (g_hash_table_contains(self->seen_events, id)) {
-        free(id);
+    if (g_hash_table_contains(self->seen_events, eid))
         return;
-    }
-    g_hash_table_insert(self->seen_events, id, GINT_TO_POINTER(TRUE));
+    g_hash_table_insert(self->seen_events, g_strdup(eid), GINT_TO_POINTER(TRUE));
 
     g_debug("[THREAD_SUB] NIP-22 comment received: %.16s... for root %.16s...",
-            id, self->root_event_id);
+            eid, self->root_event_id);
 
-    g_signal_emit(self, signals[SIGNAL_COMMENT_RECEIVED], 0, event_json);
+    g_signal_emit(self, signals[SIGNAL_COMMENT_RECEIVED], 0, ev);
 }
 
 /* ========== nostrdb subscription callback ========== */
@@ -332,7 +297,7 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
     /**
      * GnostrThreadSubscription::reply-received:
      * @self: the subscription
-     * @event_json: the event JSON string
+     * @event: (type gpointer): the NostrEvent*
      *
      * Emitted when a new kind:1 reply in the thread is received.
      */
@@ -341,12 +306,12 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
-        G_TYPE_NONE, 1, G_TYPE_STRING);
+        G_TYPE_NONE, 1, G_TYPE_POINTER);
 
     /**
      * GnostrThreadSubscription::reaction-received:
      * @self: the subscription
-     * @event_json: the event JSON string
+     * @event: (type gpointer): the NostrEvent*
      *
      * Emitted when a new kind:7 reaction to a thread event is received.
      */
@@ -355,12 +320,12 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
-        G_TYPE_NONE, 1, G_TYPE_STRING);
+        G_TYPE_NONE, 1, G_TYPE_POINTER);
 
     /**
      * GnostrThreadSubscription::comment-received:
      * @self: the subscription
-     * @event_json: the event JSON string
+     * @event: (type gpointer): the NostrEvent*
      *
      * Emitted when a new kind:1111 NIP-22 comment in the thread is received.
      */
@@ -369,7 +334,7 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
-        G_TYPE_NONE, 1, G_TYPE_STRING);
+        G_TYPE_NONE, 1, G_TYPE_POINTER);
 
     /**
      * GnostrThreadSubscription::eose:

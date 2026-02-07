@@ -32,7 +32,8 @@
  * @ev: The NostrEvent to emit
  *
  * Emits an event to the EventBus with topic "event::kind::X" where X is the event kind.
- * This is called in addition to existing GSignal emission for backward compatibility.
+ * Passes the NostrEvent* directly to avoid JSON serialization on the worker thread
+ * (which caused ASan stack overflow via json_dumps recursion — hq-somxz).
  */
 static void event_bus_emit_event(NostrEvent *ev) {
     if (!ev) return;
@@ -45,12 +46,8 @@ static void event_bus_emit_event(NostrEvent *ev) {
     gchar *topic = nostr_event_bus_format_event_topic(kind);
     if (!topic) return;
 
-    /* Serialize event to JSON */
-    char *json = nostr_event_serialize(ev);
-    if (json) {
-        nostr_event_bus_emit(bus, topic, json);
-        g_free(json);
-    }
+    /* Pass NostrEvent* directly — no serialization on hot path */
+    nostr_event_bus_emit(bus, topic, ev);
 
     g_free(topic);
 }
@@ -96,7 +93,7 @@ static void G_GNUC_UNUSED event_bus_emit_ok(const char *event_id, gboolean succe
         gchar *payload = g_strdup_printf("{\"success\":%s,\"message\":\"%s\"}",
                                           success ? "true" : "false",
                                           message ? message : "");
-        nostr_event_bus_emit(bus, topic, payload);
+        nostr_event_bus_emit(bus, topic, (gpointer)payload);
         g_free(payload);
         g_free(topic);
     }
@@ -119,7 +116,7 @@ static void G_GNUC_UNUSED event_bus_emit_notice(const char *relay_url, const cha
 
     gchar *topic = g_strdup_printf("notice::%s", relay_url);
     if (topic) {
-        nostr_event_bus_emit(bus, topic, message);
+        nostr_event_bus_emit(bus, topic, (gpointer)message);
         g_free(topic);
     }
 }
@@ -145,7 +142,7 @@ static void event_bus_emit_closed(const char *relay_url, const char *subscriptio
                                       reason ? reason : "");
     gchar *topic = g_strdup_printf("notice::%s", relay_url);
     if (topic) {
-        nostr_event_bus_emit(bus, topic, message);
+        nostr_event_bus_emit(bus, topic, (gpointer)message);
         g_free(topic);
     }
     g_free(message);

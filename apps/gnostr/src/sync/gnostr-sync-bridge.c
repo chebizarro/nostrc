@@ -33,10 +33,10 @@ static gboolean bridge_initialized = FALSE;
  * ============================================================================ */
 
 static void
-on_kind3_changed(const gchar *topic, const gchar *event_json, gpointer user_data)
+on_kind3_changed(const gchar *topic, gpointer event_data, gpointer user_data)
 {
   (void)topic;
-  (void)event_json;
+  (void)event_data;
   (void)user_data;
 
   g_debug("[SYNC-BRIDGE] Contact list (kind:3) sync detected changes");
@@ -57,10 +57,10 @@ on_kind3_changed(const gchar *topic, const gchar *event_json, gpointer user_data
 }
 
 static void
-on_kind10000_changed(const gchar *topic, const gchar *event_json, gpointer user_data)
+on_kind10000_changed(const gchar *topic, gpointer event_data, gpointer user_data)
 {
   (void)topic;
-  (void)event_json;
+  (void)event_data;
   (void)user_data;
 
   g_debug("[SYNC-BRIDGE] Mute list (kind:10000) sync detected changes");
@@ -76,13 +76,14 @@ on_kind10000_changed(const gchar *topic, const gchar *event_json, gpointer user_
 }
 
 static void
-on_sync_complete(const gchar *topic, const gchar *event_json, gpointer user_data)
+on_sync_complete(const gchar *topic, gpointer event_data, gpointer user_data)
 {
   (void)topic;
   (void)user_data;
 
+  const gchar *json = (const gchar *)event_data;
   g_debug("[SYNC-BRIDGE] Negentropy sync complete: %s",
-          event_json ? event_json : "(no details)");
+          json ? json : "(no details)");
 }
 
 /* ============================================================================
