@@ -420,6 +420,26 @@ void nostr_filter_set_tags(NostrFilter *filter, NostrTags *tags) {
     filter->tags = tags; /* takes ownership */
 }
 
+/* NostrTimestamp-typed accessors (NostrTimestamp == int64_t) */
+NostrTimestamp nostr_filter_get_since(const NostrFilter *filter) {
+    return filter ? filter->since : 0;
+}
+
+void nostr_filter_set_since(NostrFilter *filter, NostrTimestamp since) {
+    if (!filter) return;
+    filter->since = since;
+}
+
+NostrTimestamp nostr_filter_get_until(const NostrFilter *filter) {
+    return filter ? filter->until : 0;
+}
+
+void nostr_filter_set_until(NostrFilter *filter, NostrTimestamp until) {
+    if (!filter) return;
+    filter->until = until;
+}
+
+/* GI-friendly int64 aliases (identical implementation, distinct symbol for bindings) */
 int64_t nostr_filter_get_since_i64(const NostrFilter *filter) {
     return filter ? filter->since : 0;
 }

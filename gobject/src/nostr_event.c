@@ -29,8 +29,15 @@ enum {
     N_PROPERTIES
 };
 
+/* Signal indices (internal) */
+enum {
+    SIGNAL_SIGNED,
+    SIGNAL_VERIFIED,
+    N_SIGNALS
+};
+
 static GParamSpec *obj_properties[N_PROPERTIES] = { NULL, };
-static guint gnostr_event_signals[GNOSTR_EVENT_SIGNALS_COUNT] = { 0 };
+static guint gnostr_event_signals[N_SIGNALS] = { 0 };
 
 struct _GNostrEvent {
     GObject parent_instance;
@@ -215,7 +222,7 @@ gnostr_event_class_init(GNostrEventClass *klass)
      *
      * Emitted after the event has been successfully signed.
      */
-    gnostr_event_signals[GNOSTR_EVENT_SIGNAL_SIGNED] =
+    gnostr_event_signals[SIGNAL_SIGNED] =
         g_signal_new("signed",
                      G_TYPE_FROM_CLASS(klass),
                      G_SIGNAL_RUN_FIRST,
@@ -228,7 +235,7 @@ gnostr_event_class_init(GNostrEventClass *klass)
      *
      * Emitted after the event signature has been successfully verified.
      */
-    gnostr_event_signals[GNOSTR_EVENT_SIGNAL_VERIFIED] =
+    gnostr_event_signals[SIGNAL_VERIFIED] =
         g_signal_new("verified",
                      G_TYPE_FROM_CLASS(klass),
                      G_SIGNAL_RUN_FIRST,
@@ -320,7 +327,7 @@ gnostr_event_sign(GNostrEvent *self, const gchar *privkey, GError **error)
     g_object_notify_by_pspec(G_OBJECT(self), obj_properties[PROP_SIG]);
 
     /* Emit signed signal */
-    g_signal_emit(self, gnostr_event_signals[GNOSTR_EVENT_SIGNAL_SIGNED], 0);
+    g_signal_emit(self, gnostr_event_signals[SIGNAL_SIGNED], 0);
 
     return TRUE;
 }
@@ -341,7 +348,7 @@ gnostr_event_verify(GNostrEvent *self, GError **error)
     }
 
     /* Emit verified signal */
-    g_signal_emit(self, gnostr_event_signals[GNOSTR_EVENT_SIGNAL_VERIFIED], 0);
+    g_signal_emit(self, gnostr_event_signals[SIGNAL_VERIFIED], 0);
 
     return TRUE;
 }

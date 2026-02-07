@@ -16,14 +16,24 @@ G_DECLARE_FINAL_TYPE(GNostrEvent, gnostr_event, GNOSTR, EVENT, GObject)
  *
  * A GObject wrapper for Nostr events implementing NIP-01.
  * Provides property notifications and signals for signing/verification.
+ *
+ * ## Signals
+ *
+ * - #GNostrEvent::signed - Emitted after the event has been successfully signed
+ * - #GNostrEvent::verified - Emitted after the event signature has been verified
+ *
+ * ## Properties
+ *
+ * - #GNostrEvent:id - The event ID (read-only after signing)
+ * - #GNostrEvent:pubkey - The author's public key (read-only)
+ * - #GNostrEvent:created-at - Unix timestamp of creation
+ * - #GNostrEvent:kind - The event kind
+ * - #GNostrEvent:content - The event content
+ * - #GNostrEvent:sig - The signature (read-only after signing)
+ * - #GNostrEvent:tags - Event tags
+ *
+ * Since: 0.1
  */
-
-/* Signal indices */
-enum {
-    GNOSTR_EVENT_SIGNAL_SIGNED,
-    GNOSTR_EVENT_SIGNAL_VERIFIED,
-    GNOSTR_EVENT_SIGNALS_COUNT
-};
 
 /**
  * gnostr_event_new:

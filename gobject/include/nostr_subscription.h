@@ -141,16 +141,7 @@ G_DECLARE_FINAL_TYPE(GNostrSubscription, gnostr_subscription, GNOSTR, SUBSCRIPTI
  *
  * Since: 0.1
  */
-struct _GNostrSubscription {
-    GObject parent_instance;
-
-    /*< private >*/
-    NostrSubscription *subscription;      /* core subscription pointer */
-    NostrSubscriptionState state;         /* current lifecycle state */
-    NostrSubscriptionConfig config;       /* subscription configuration */
-    gchar *error_message;                 /* error message if state is ERROR */
-    guint event_count;                    /* number of events received */
-};
+/* Note: struct _GNostrSubscription is defined in the .c file (G_DECLARE_FINAL_TYPE) */
 
 /* GObject convenience API */
 

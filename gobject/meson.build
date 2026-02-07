@@ -31,6 +31,7 @@ nostr_glib_sources = files(
   'src/nostr-error.c',
   'src/nostr-enums.c',
   'src/nostr_event.c',
+  'src/nostr_event_bus.c',
   'src/nostr_filter.c',
   'src/nostr_relay.c',
   'src/nostr_subscription.c',
@@ -41,6 +42,7 @@ nostr_glib_sources = files(
   'src/nostr_async.c',
   'src/nostr_query_batcher.c',
   'src/nostr_tag_list.c',
+  'src/nostr_subscription_registry.c',
 )
 
 # Header files
@@ -50,6 +52,7 @@ nostr_glib_headers = files(
   'include/nostr-types.h',
   'include/nostr-enums.h',
   'include/nostr_event.h',
+  'include/nostr_event_bus.h',
   'include/nostr_filter.h',
   'include/nostr_relay.h',
   'include/nostr_subscription.h',
@@ -60,6 +63,7 @@ nostr_glib_headers = files(
   'include/nostr_async.h',
   'include/nostr_query_batcher.h',
   'include/nostr_tag_list.h',
+  'include/nostr_subscription_registry.h',
 )
 
 # Build the library
