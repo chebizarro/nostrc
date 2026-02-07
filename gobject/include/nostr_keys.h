@@ -6,6 +6,9 @@
 
 G_BEGIN_DECLS
 
+/* Forward declaration to avoid circular dependency */
+typedef struct _GNostrEvent GNostrEvent;
+
 /* Define GNostrKeys GObject wrapper */
 /* Prefixed with G to avoid clashing with core NostrKeys functions */
 #define GNOSTR_TYPE_KEYS (gnostr_keys_get_type())
@@ -70,6 +73,21 @@ GNostrKeys *gnostr_keys_new_from_hex(const gchar *privkey_hex, GError **error);
 GNostrKeys *gnostr_keys_new_from_nsec(const gchar *nsec, GError **error);
 
 /**
+ * gnostr_keys_new_from_mnemonic:
+ * @mnemonic: BIP-39 mnemonic phrase (12-24 words)
+ * @passphrase: (nullable): optional passphrase for seed derivation
+ * @error: (nullable): return location for a #GError
+ *
+ * Creates a new GNostrKeys from a BIP-39 mnemonic using NIP-06 key derivation
+ * (path m/44'/1237'/0'/0/0). If @passphrase is %NULL, an empty passphrase is used.
+ *
+ * Returns: (transfer full) (nullable): a new #GNostrKeys, or %NULL on error
+ */
+GNostrKeys *gnostr_keys_new_from_mnemonic(const gchar *mnemonic,
+                                           const gchar *passphrase,
+                                           GError **error);
+
+/**
  * gnostr_keys_new_pubkey_only:
  * @pubkey_hex: hex-encoded public key (64 characters)
  * @error: (nullable): return location for a #GError
@@ -118,10 +136,10 @@ gboolean gnostr_keys_has_private_key(GNostrKeys *self);
 /**
  * gnostr_keys_sign:
  * @self: a #GNostrKeys
- * @message: the message to sign (typically an event ID)
+ * @message: the 32-byte message hash to sign (as 64-character hex string)
  * @error: (nullable): return location for a #GError
  *
- * Signs a message using Schnorr signatures (BIP-340).
+ * Signs a 32-byte message hash using Schnorr signatures (BIP-340).
  * Requires a private key to be loaded.
  * Emits the "signed" signal on success.
  *
@@ -132,7 +150,7 @@ gchar *gnostr_keys_sign(GNostrKeys *self, const gchar *message, GError **error);
 /**
  * gnostr_keys_verify:
  * @self: a #GNostrKeys
- * @message: the message that was signed
+ * @message: the 32-byte message hash that was signed (as 64-character hex string)
  * @signature: the signature to verify (128-character hex string)
  * @error: (nullable): return location for a #GError
  *
@@ -141,6 +159,19 @@ gchar *gnostr_keys_sign(GNostrKeys *self, const gchar *message, GError **error);
  * Returns: %TRUE if signature is valid, %FALSE otherwise
  */
 gboolean gnostr_keys_verify(GNostrKeys *self, const gchar *message, const gchar *signature, GError **error);
+
+/**
+ * gnostr_keys_sign_event:
+ * @self: a #GNostrKeys
+ * @event: (transfer none): a #GNostrEvent to sign
+ * @error: (nullable): return location for a #GError
+ *
+ * Signs a Nostr event using this key's private key. Sets the event's
+ * pubkey, id, and sig fields. Requires a private key to be loaded.
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ */
+gboolean gnostr_keys_sign_event(GNostrKeys *self, GNostrEvent *event, GError **error);
 
 /* NIP-04 Encryption/Decryption */
 

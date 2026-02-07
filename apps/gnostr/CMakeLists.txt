@@ -214,6 +214,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/nips/nip44/include
   ${PROJECT_ROOT}/nips/nip46/include
   ${PROJECT_ROOT}/nips/nip47/include
+  ${PROJECT_ROOT}/nips/nip06/include
   ${PROJECT_ROOT}/nips/nip19/include
   ${PROJECT_ROOT}/nips/nip10/include
   ${PROJECT_ROOT}/nips/nip17/include
@@ -234,12 +235,16 @@ target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
   ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
   ${PROJECT_ROOT}/gobject/src/nostr_keys.c
+  ${PROJECT_ROOT}/gobject/src/nostr_event.c
   ${PROJECT_ROOT}/gobject/src/nostr-enums.c
   ${PROJECT_ROOT}/gobject/src/nostr-error.c
   ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
+endif()
+if (TARGET nip06)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip06)
 endif()
 if (TARGET nip19)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip19)

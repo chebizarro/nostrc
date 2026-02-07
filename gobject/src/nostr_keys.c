@@ -4,15 +4,17 @@
  * GNostrKeys: GObject wrapper for Nostr key operations
  *
  * Provides a modern GObject implementation with:
- * - Key generation and import (hex/nsec)
- * - Public key derivation
+ * - Key generation and import (hex/nsec/mnemonic)
+ * - Public key derivation and NIP-19 encoding
  * - Schnorr signing (BIP-340)
+ * - Event signing
  * - NIP-04 encryption/decryption (legacy)
  * - NIP-44 encryption/decryption (recommended)
  * - Secure memory handling for private keys
  */
 
 #include "nostr_keys.h"
+#include "nostr_event.h"
 #include <glib.h>
 #include <string.h>
 
@@ -21,9 +23,20 @@
 #include "nostr-keys.h"
 #include "secure_buf.h"
 
-/* NIP headers - include nostr subdirectory versions for full API */
+/* NIP headers */
 #include "nostr/nip04.h"
 #include "nostr/nip44/nip44.h"
+#include "nostr/nip19/nip19.h"
+#include "nip06.h"
+#include "nostr/crypto/bip39.h"
+
+/* secp256k1 for Schnorr signing/verification */
+#include <secp256k1.h>
+#include <secp256k1_schnorrsig.h>
+#include <secp256k1_extrakeys.h>
+
+/* OpenSSL for random bytes */
+#include <openssl/rand.h>
 
 /* Property IDs */
 enum {
@@ -57,7 +70,7 @@ G_DEFINE_TYPE(GNostrKeys, gnostr_keys, G_TYPE_OBJECT)
 
 /* Forward declarations for internal helpers */
 static gboolean hex_to_bytes(const gchar *hex, guint8 *out, gsize out_len);
-static gchar *bytes_to_hex(const guint8 *bytes, gsize len) G_GNUC_UNUSED;
+static gchar *bytes_to_hex(const guint8 *bytes, gsize len);
 
 static void
 gnostr_keys_get_property(GObject    *object,
@@ -349,14 +362,112 @@ gnostr_keys_new_from_nsec(const gchar *nsec, GError **error)
         return NULL;
     }
 
-    /* Decode bech32 nsec to hex - this requires NIP-19 decoding */
-    /* For now, we rely on the nip19 library if available */
-    /* TODO: Add proper NIP-19 bech32 decoding support */
-    g_set_error(error,
-                NOSTR_ERROR,
-                NOSTR_ERROR_INVALID_KEY,
-                "nsec import not yet implemented - use hex format");
-    return NULL;
+    /* Decode bech32 nsec to raw 32-byte secret key */
+    uint8_t seckey_bytes[32];
+    int rc = nostr_nip19_decode_nsec(nsec, seckey_bytes);
+    if (rc != 0) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_INVALID_KEY,
+                    "Failed to decode nsec: invalid bech32 encoding");
+        return NULL;
+    }
+
+    /* Convert raw bytes to hex for load */
+    gchar *hex = bytes_to_hex(seckey_bytes, 32);
+    secure_wipe(seckey_bytes, 32);
+
+    GNostrKeys *self = g_object_new(GNOSTR_TYPE_KEYS, NULL);
+    if (!gnostr_keys_load_privkey_hex(self, hex, error)) {
+        secure_wipe(hex, 64);
+        g_free(hex);
+        g_object_unref(self);
+        return NULL;
+    }
+
+    secure_wipe(hex, 64);
+    g_free(hex);
+
+    g_signal_emit(self, gnostr_keys_signals[SIGNAL_KEY_IMPORTED], 0);
+
+    return self;
+}
+
+GNostrKeys *
+gnostr_keys_new_from_mnemonic(const gchar *mnemonic,
+                               const gchar *passphrase,
+                               GError **error)
+{
+    g_return_val_if_fail(mnemonic != NULL, NULL);
+
+    /* Validate the mnemonic */
+    if (!nostr_nip06_validate_mnemonic(mnemonic)) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_INVALID_KEY,
+                    "Invalid BIP-39 mnemonic phrase");
+        return NULL;
+    }
+
+    /* Derive seed from mnemonic.
+     * NIP-06 uses empty passphrase by default. The nostr_nip06_seed_from_mnemonic
+     * uses "" as passphrase. For custom passphrase we'd need direct BIP-39 API. */
+    unsigned char *seed = NULL;
+
+    if (passphrase != NULL && passphrase[0] != '\0') {
+        /* Use BIP-39 directly for custom passphrase */
+        seed = g_malloc(64);
+        if (!nostr_bip39_seed(mnemonic, passphrase, seed)) {
+            g_free(seed);
+            g_set_error(error,
+                        NOSTR_ERROR,
+                        NOSTR_ERROR_INVALID_KEY,
+                        "Failed to derive seed from mnemonic");
+            return NULL;
+        }
+    } else {
+        /* Standard NIP-06 path with empty passphrase */
+        seed = nostr_nip06_seed_from_mnemonic(mnemonic);
+        if (seed == NULL) {
+            g_set_error(error,
+                        NOSTR_ERROR,
+                        NOSTR_ERROR_INVALID_KEY,
+                        "Failed to derive seed from mnemonic");
+            return NULL;
+        }
+    }
+
+    /* Derive private key using NIP-06 path m/44'/1237'/0'/0/0 */
+    char *privkey_hex = nostr_nip06_private_key_from_seed(seed);
+    secure_wipe(seed, 64);
+    if (passphrase != NULL && passphrase[0] != '\0') {
+        g_free(seed);
+    } else {
+        free(seed);
+    }
+
+    if (privkey_hex == NULL) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_INVALID_KEY,
+                    "Failed to derive private key from seed (BIP-32 derivation failed)");
+        return NULL;
+    }
+
+    GNostrKeys *self = g_object_new(GNOSTR_TYPE_KEYS, NULL);
+    if (!gnostr_keys_load_privkey_hex(self, privkey_hex, error)) {
+        secure_wipe(privkey_hex, strlen(privkey_hex));
+        free(privkey_hex);
+        g_object_unref(self);
+        return NULL;
+    }
+
+    secure_wipe(privkey_hex, strlen(privkey_hex));
+    free(privkey_hex);
+
+    g_signal_emit(self, gnostr_keys_signals[SIGNAL_KEY_IMPORTED], 0);
+
+    return self;
 }
 
 GNostrKeys *
@@ -396,9 +507,20 @@ gnostr_keys_get_npub(GNostrKeys *self)
     if (self->pubkey == NULL)
         return NULL;
 
-    /* TODO: Add proper NIP-19 bech32 encoding */
-    /* For now, return NULL - full implementation requires bech32 library */
-    return NULL;
+    /* Convert hex pubkey to raw bytes */
+    guint8 pubkey_bytes[32];
+    if (!hex_to_bytes(self->pubkey, pubkey_bytes, 32))
+        return NULL;
+
+    /* Encode as npub using NIP-19 */
+    char *npub = NULL;
+    int rc = nostr_nip19_encode_npub(pubkey_bytes, &npub);
+    if (rc != 0 || npub == NULL)
+        return NULL;
+
+    gchar *result = g_strdup(npub);
+    free(npub);
+    return result;
 }
 
 gboolean
@@ -422,13 +544,89 @@ gnostr_keys_sign(GNostrKeys *self, const gchar *message, GError **error)
         return NULL;
     }
 
-    /* Signing requires the nostr_event_sign or lower-level secp256k1 API */
-    /* For now, we expose only through GNostrEvent which handles this */
-    g_set_error(error,
-                NOSTR_ERROR,
-                NOSTR_ERROR_SIGNATURE_FAILED,
-                "Direct signing not yet implemented - use GNostrEvent::sign");
-    return NULL;
+    /* Validate message is 64 hex chars (32 bytes) */
+    gsize msg_len = strlen(message);
+    if (msg_len != 64) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "Message must be 64 hex characters (32 bytes), got %zu", msg_len);
+        return NULL;
+    }
+
+    /* Convert message hex to bytes */
+    guint8 msg_bytes[32];
+    if (!hex_to_bytes(message, msg_bytes, 32)) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "Invalid hex encoding in message");
+        return NULL;
+    }
+
+    /* Create secp256k1 context */
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    if (ctx == NULL) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "Failed to create secp256k1 context");
+        return NULL;
+    }
+
+    gchar *result = NULL;
+
+    /* Verify private key */
+    if (!secp256k1_ec_seckey_verify(ctx, self->privkey.ptr)) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "Private key failed secp256k1 validation");
+        goto cleanup;
+    }
+
+    /* Create keypair */
+    secp256k1_keypair keypair;
+    if (secp256k1_keypair_create(ctx, &keypair, self->privkey.ptr) != 1) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "Failed to create secp256k1 keypair");
+        goto cleanup;
+    }
+
+    /* Generate auxiliary randomness for signing */
+    unsigned char aux_rand[32];
+    if (RAND_bytes(aux_rand, sizeof(aux_rand)) != 1) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "Failed to generate random bytes for signing");
+        goto cleanup;
+    }
+
+    /* Sign with Schnorr (BIP-340) */
+    unsigned char sig_bytes[64];
+    if (secp256k1_schnorrsig_sign32(ctx, sig_bytes, msg_bytes, &keypair, aux_rand) != 1) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "Schnorr signing failed");
+        goto cleanup;
+    }
+
+    /* Convert signature to hex */
+    result = bytes_to_hex(sig_bytes, 64);
+
+    /* Emit signal */
+    g_signal_emit(self, gnostr_keys_signals[SIGNAL_SIGNED], 0, result);
+
+cleanup:
+    /* Wipe local secret material */
+    secure_wipe(&keypair, sizeof(keypair));
+    secure_wipe(aux_rand, sizeof(aux_rand));
+    secp256k1_context_destroy(ctx);
+    return result;
 }
 
 gboolean
@@ -446,13 +644,105 @@ gnostr_keys_verify(GNostrKeys *self, const gchar *message, const gchar *signatur
         return FALSE;
     }
 
-    /* Verification requires secp256k1 schnorr verify */
-    /* For now, exposed only through GNostrEvent::verify */
-    g_set_error(error,
-                NOSTR_ERROR,
-                NOSTR_ERROR_SIGNATURE_INVALID,
-                "Direct verification not yet implemented - use GNostrEvent::verify");
-    return FALSE;
+    /* Validate message is 64 hex chars (32 bytes) */
+    if (strlen(message) != 64) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Message must be 64 hex characters (32 bytes)");
+        return FALSE;
+    }
+
+    /* Validate signature is 128 hex chars (64 bytes) */
+    if (strlen(signature) != 128) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Signature must be 128 hex characters (64 bytes)");
+        return FALSE;
+    }
+
+    /* Convert hex to bytes */
+    guint8 msg_bytes[32];
+    if (!hex_to_bytes(message, msg_bytes, 32)) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Invalid hex encoding in message");
+        return FALSE;
+    }
+
+    guint8 sig_bytes[64];
+    if (!hex_to_bytes(signature, sig_bytes, 64)) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Invalid hex encoding in signature");
+        return FALSE;
+    }
+
+    guint8 pubkey_bytes[32];
+    if (!hex_to_bytes(self->pubkey, pubkey_bytes, 32)) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Invalid public key encoding");
+        return FALSE;
+    }
+
+    /* Create secp256k1 context for verification */
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+    if (ctx == NULL) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Failed to create secp256k1 context");
+        return FALSE;
+    }
+
+    /* Parse x-only public key */
+    secp256k1_xonly_pubkey xonly_pk;
+    if (secp256k1_xonly_pubkey_parse(ctx, &xonly_pk, pubkey_bytes) != 1) {
+        secp256k1_context_destroy(ctx);
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Failed to parse public key for verification");
+        return FALSE;
+    }
+
+    /* Verify Schnorr signature */
+    int verified = secp256k1_schnorrsig_verify(ctx, sig_bytes, msg_bytes, 32, &xonly_pk);
+    secp256k1_context_destroy(ctx);
+
+    if (!verified) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_INVALID,
+                    "Schnorr signature verification failed");
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+gboolean
+gnostr_keys_sign_event(GNostrKeys *self, GNostrEvent *event, GError **error)
+{
+    g_return_val_if_fail(GNOSTR_IS_KEYS(self), FALSE);
+    g_return_val_if_fail(GNOSTR_IS_EVENT(event), FALSE);
+
+    if (self->privkey_hex == NULL) {
+        g_set_error(error,
+                    NOSTR_ERROR,
+                    NOSTR_ERROR_SIGNATURE_FAILED,
+                    "No private key available for signing");
+        return FALSE;
+    }
+
+    /* Delegate to GNostrEvent's sign method which handles
+     * serialization, hashing, and setting id/pubkey/sig fields */
+    return gnostr_event_sign(event, self->privkey_hex, error);
 }
 
 gchar *

@@ -26,9 +26,12 @@ gnostr_signer_inc = include_directories('../apps/gnostr-signer/src')
 # External library includes (nsync for libgo context)
 nsync_inc = include_directories('/opt/homebrew/include')
 
-# NIP encryption includes
+# NIP includes
 nip04_inc = include_directories('../nips/nip04/include')
+nip06_inc = include_directories('../nips/nip06/include')
+nip19_inc = include_directories('../nips/nip19/include')
 nip44_inc = include_directories('../nips/nip44/include')
+
 
 # Source files
 nostr_glib_sources = files(
@@ -77,7 +80,7 @@ nostr_glib_headers = files(
 # Build the library
 nostr_glib_lib = library('nostr-glib-1.0',
   nostr_glib_sources,
-  include_directories: ['include', libnostr_inc, libnostr_generated_inc, libgo_inc, gnostr_signer_inc, nsync_inc, nip04_inc, nip44_inc],
+  include_directories: ['include', libnostr_inc, libnostr_generated_inc, libgo_inc, gnostr_signer_inc, nsync_inc, nip04_inc, nip06_inc, nip19_inc, nip44_inc],
   dependencies: [glib_dep, gobject_dep, gio_dep],
   install: true)
 
