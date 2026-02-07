@@ -12,7 +12,7 @@
 #include <libpeas.h>
 #include <adwaita.h>
 
-/* Forward declaration of neg-client API (host app symbol, resolved at runtime) */
+/* Forward declarations of host app symbols (resolved at runtime) */
 extern void gnostr_neg_sync_kinds_async(const char *relay_url,
                                          const int *kinds, size_t kind_count,
                                          GCancellable *cancellable,
@@ -20,6 +20,14 @@ extern void gnostr_neg_sync_kinds_async(const char *relay_url,
                                          gpointer user_data);
 extern gboolean gnostr_neg_sync_kinds_finish(GAsyncResult *result, void *stats_out,
                                               GError **error);
+
+/* Sync service API (host app symbol) */
+extern GType gnostr_sync_service_get_type(void);
+extern gpointer gnostr_sync_service_get_default(void);
+extern void gnostr_sync_service_start(gpointer self);
+extern void gnostr_sync_service_stop(gpointer self);
+extern void gnostr_sync_service_sync_now(gpointer self);
+extern gboolean gnostr_sync_service_is_running(gpointer self);
 
 /* NIP-77 Message Types (relay protocol) */
 #define NIP77_MSG_NEG_OPEN  "NEG-OPEN"
@@ -308,13 +316,14 @@ nip77_negentropy_plugin_activate(GnostrPlugin        *plugin,
   /* Load auto-sync settings from plugin data storage */
   load_settings(self);
 
-  /* Start auto-sync timer if enabled */
+  /* Start background sync service if auto-sync enabled.
+   * The sync service handles adaptive scheduling, reconnection sync,
+   * and EventBus notifications (replaces the simple timer). */
   if (self->auto_sync_enabled) {
-    start_auto_sync_timer(self);
+    gpointer svc = gnostr_sync_service_get_default();
+    if (svc)
+      gnostr_sync_service_start(svc);
   }
-
-  /* Negentropy protocol is handled by the neg-client in the host app.
-   * Auto-sync timer calls gnostr_neg_sync_kinds_async() to trigger sync. */
 }
 
 static void
@@ -329,7 +338,12 @@ nip77_negentropy_plugin_deactivate(GnostrPlugin        *plugin,
   /* Save settings before deactivating */
   save_settings(self);
 
-  /* Stop auto-sync timer */
+  /* Stop the background sync service */
+  gpointer svc = gnostr_sync_service_get_default();
+  if (svc)
+    gnostr_sync_service_stop(svc);
+
+  /* Stop legacy auto-sync timer (if somehow still running) */
   stop_auto_sync_timer(self);
 
   /* Cancel active sync sessions */
@@ -403,11 +417,13 @@ on_auto_sync_changed(GObject *row, GParamSpec *pspec, gpointer user_data)
   self->auto_sync_enabled = adw_switch_row_get_active(ADW_SWITCH_ROW(row));
   save_settings(self);
 
-  /* Start or stop timer based on new setting */
-  if (self->auto_sync_enabled && self->active) {
-    start_auto_sync_timer(self);
-  } else {
-    stop_auto_sync_timer(self);
+  /* Start or stop sync service based on new setting */
+  gpointer svc = gnostr_sync_service_get_default();
+  if (svc) {
+    if (self->auto_sync_enabled && self->active)
+      gnostr_sync_service_start(svc);
+    else
+      gnostr_sync_service_stop(svc);
   }
 }
 

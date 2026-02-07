@@ -10,6 +10,7 @@
 #include "util/cache_prune.h"
 #include "util/utils.h"
 #include "util/gnostr-plugin-manager.h"
+#include "sync/gnostr-sync-service.h"
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -80,7 +81,10 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 
   g_message("gnostr: shutdown initiated");
 
-  /* Shutdown plugin manager first */
+  /* Shutdown sync service (cancels pending sync, stops timer) */
+  gnostr_sync_service_shutdown();
+
+  /* Shutdown plugin manager */
   GnostrPluginManager *plugin_manager = gnostr_plugin_manager_get_default();
   gnostr_plugin_manager_shutdown(plugin_manager);
 
