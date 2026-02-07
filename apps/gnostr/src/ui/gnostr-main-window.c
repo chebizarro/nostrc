@@ -66,6 +66,10 @@
 #include "../util/blossom_settings.h"
 /* NIP-66 relay discovery */
 #include "../util/nip66_relay_discovery.h"
+/* Metrics dashboard */
+#include "nostr/metrics.h"
+#include "nostr/metrics_schema.h"
+#include "nostr/metrics_collector.h"
 /* NIP-37 Draft events */
 #include "../util/gnostr-drafts.h"
 #include "gnostr-login.h"
@@ -3191,6 +3195,221 @@ static void on_plugin_info_signal(GnostrPluginManagerPanel *panel,
   gnostr_plugin_manager_panel_show_plugin_info(panel, plugin_id);
 }
 
+/* --- Metrics Panel (6.3) --- */
+
+typedef struct {
+  GtkLabel *lbl_connected_relays;
+  GtkLabel *lbl_active_subs;
+  GtkLabel *lbl_queue_depth;
+  GtkLabel *lbl_events_received;
+  GtkLabel *lbl_events_dispatched;
+  GtkLabel *lbl_events_dropped;
+  GtkLabel *lbl_drop_rate;
+  GtkLabel *lbl_dispatch_p50;
+  GtkLabel *lbl_dispatch_p99;
+  GtkLabel *lbl_status_icon;
+  GtkWidget *panel;
+  guint timer_id;
+} MetricsPanelCtx;
+
+static GtkWidget *metrics_add_row(GtkListBox *list, const char *title, const char *initial) {
+  GtkWidget *row = gtk_list_box_row_new();
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_set_margin_start(box, 12);
+  gtk_widget_set_margin_end(box, 12);
+  gtk_widget_set_margin_top(box, 8);
+  gtk_widget_set_margin_bottom(box, 8);
+
+  GtkWidget *lbl_title = gtk_label_new(title);
+  gtk_widget_set_hexpand(lbl_title, TRUE);
+  gtk_label_set_xalign(GTK_LABEL(lbl_title), 0);
+
+  GtkWidget *lbl_value = gtk_label_new(initial);
+  gtk_widget_add_css_class(lbl_value, "dim-label");
+
+  gtk_box_append(GTK_BOX(box), lbl_title);
+  gtk_box_append(GTK_BOX(box), lbl_value);
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+  gtk_list_box_append(list, row);
+  return lbl_value;
+}
+
+static void metrics_panel_refresh(MetricsPanelCtx *mctx) {
+  if (!mctx || !mctx->panel) return;
+  if (!gtk_widget_get_mapped(mctx->panel)) return;
+
+  NostrMetricsSnapshot snap;
+  memset(&snap, 0, sizeof(snap));
+  if (!nostr_metrics_collector_latest(&snap)) {
+    /* Collector not running or no data — try an immediate collect */
+    nostr_metrics_snapshot_collect(&snap);
+  }
+
+  char buf[64];
+
+  /* Find specific metrics by name */
+  int64_t connected = 0, active_subs = 0, queue_depth = 0;
+  uint64_t events_recv = 0, events_disp = 0, events_drop = 0;
+  uint64_t recv_delta = 0, disp_delta = 0, drop_delta = 0;
+  uint64_t disp_p50 = 0, disp_p99 = 0;
+
+  for (size_t i = 0; i < snap.gauge_count; i++) {
+    if (!snap.gauges[i].name) continue;
+    if (strcmp(snap.gauges[i].name, METRIC_CONNECTED_RELAYS) == 0)
+      connected = snap.gauges[i].value;
+    else if (strcmp(snap.gauges[i].name, METRIC_ACTIVE_SUBSCRIPTIONS) == 0)
+      active_subs = snap.gauges[i].value;
+    else if (strcmp(snap.gauges[i].name, METRIC_QUEUE_DEPTH) == 0)
+      queue_depth = snap.gauges[i].value;
+  }
+
+  for (size_t i = 0; i < snap.counter_count; i++) {
+    if (!snap.counters[i].name) continue;
+    if (strcmp(snap.counters[i].name, METRIC_EVENTS_RECEIVED) == 0) {
+      events_recv = snap.counters[i].total;
+      recv_delta = snap.counters[i].delta_60s;
+    } else if (strcmp(snap.counters[i].name, METRIC_EVENTS_DISPATCHED) == 0) {
+      events_disp = snap.counters[i].total;
+      disp_delta = snap.counters[i].delta_60s;
+    } else if (strcmp(snap.counters[i].name, METRIC_EVENTS_DROPPED) == 0) {
+      events_drop = snap.counters[i].total;
+      drop_delta = snap.counters[i].delta_60s;
+    }
+  }
+
+  for (size_t i = 0; i < snap.histogram_count; i++) {
+    if (!snap.histograms[i].name) continue;
+    if (strcmp(snap.histograms[i].name, METRIC_DISPATCH_LATENCY_NS) == 0) {
+      disp_p50 = snap.histograms[i].p50_ns;
+      disp_p99 = snap.histograms[i].p99_ns;
+    }
+  }
+
+  /* Update labels */
+  snprintf(buf, sizeof(buf), "%lld", (long long)connected);
+  gtk_label_set_text(mctx->lbl_connected_relays, buf);
+
+  snprintf(buf, sizeof(buf), "%lld", (long long)active_subs);
+  gtk_label_set_text(mctx->lbl_active_subs, buf);
+
+  snprintf(buf, sizeof(buf), "%lld", (long long)queue_depth);
+  gtk_label_set_text(mctx->lbl_queue_depth, buf);
+
+  snprintf(buf, sizeof(buf), "%llu (+%llu/min)", (unsigned long long)events_recv,
+           (unsigned long long)recv_delta);
+  gtk_label_set_text(mctx->lbl_events_received, buf);
+
+  snprintf(buf, sizeof(buf), "%llu (+%llu/min)", (unsigned long long)events_disp,
+           (unsigned long long)disp_delta);
+  gtk_label_set_text(mctx->lbl_events_dispatched, buf);
+
+  snprintf(buf, sizeof(buf), "%llu (+%llu/min)", (unsigned long long)events_drop,
+           (unsigned long long)drop_delta);
+  gtk_label_set_text(mctx->lbl_events_dropped, buf);
+
+  /* Drop rate */
+  double drop_rate = events_recv > 0
+    ? (double)events_drop / (double)events_recv * 100.0 : 0.0;
+  snprintf(buf, sizeof(buf), "%.2f%%", drop_rate);
+  gtk_label_set_text(mctx->lbl_drop_rate, buf);
+
+  /* Dispatch latency (convert ns to us for readability) */
+  snprintf(buf, sizeof(buf), "%.1f \xC2\xB5s", disp_p50 / 1000.0);
+  gtk_label_set_text(mctx->lbl_dispatch_p50, buf);
+
+  snprintf(buf, sizeof(buf), "%.1f \xC2\xB5s", disp_p99 / 1000.0);
+  gtk_label_set_text(mctx->lbl_dispatch_p99, buf);
+
+  /* Status indicator: green if drop_rate < 1%, yellow < 5%, red >= 5% */
+  if (drop_rate >= 5.0)
+    gtk_label_set_text(mctx->lbl_status_icon, "Degraded");
+  else if (drop_rate >= 1.0)
+    gtk_label_set_text(mctx->lbl_status_icon, "Warning");
+  else
+    gtk_label_set_text(mctx->lbl_status_icon, "Healthy");
+
+  nostr_metrics_snapshot_free(&snap);
+}
+
+static gboolean metrics_panel_tick(gpointer user_data) {
+  MetricsPanelCtx *mctx = user_data;
+  metrics_panel_refresh(mctx);
+  return G_SOURCE_CONTINUE;
+}
+
+static void metrics_panel_ctx_free(gpointer data) {
+  MetricsPanelCtx *mctx = data;
+  if (!mctx) return;
+  if (mctx->timer_id) g_source_remove(mctx->timer_id);
+  g_free(mctx);
+}
+
+static void settings_dialog_setup_metrics_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkBox *panel = GTK_BOX(gtk_builder_get_object(ctx->builder, "metrics_panel"));
+  if (!panel) return;
+
+  MetricsPanelCtx *mctx = g_new0(MetricsPanelCtx, 1);
+  mctx->panel = GTK_WIDGET(panel);
+
+  /* Connection Health section */
+  GtkWidget *health_label = gtk_label_new("Connection Health");
+  gtk_label_set_xalign(GTK_LABEL(health_label), 0);
+  gtk_widget_add_css_class(health_label, "heading");
+  gtk_box_append(panel, health_label);
+
+  GtkWidget *health_list = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(health_list), GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(health_list, "boxed-list");
+  gtk_box_append(panel, health_list);
+
+  mctx->lbl_status_icon = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(health_list), "Status", "Healthy"));
+  mctx->lbl_connected_relays = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(health_list), "Connected Relays", "0"));
+  mctx->lbl_active_subs = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(health_list), "Active Subscriptions", "0"));
+  mctx->lbl_queue_depth = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(health_list), "Queue Depth", "0"));
+
+  /* Event Flow section */
+  GtkWidget *flow_label = gtk_label_new("Event Flow");
+  gtk_label_set_xalign(GTK_LABEL(flow_label), 0);
+  gtk_widget_add_css_class(flow_label, "heading");
+  gtk_box_append(panel, flow_label);
+
+  GtkWidget *flow_list = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(flow_list), GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(flow_list, "boxed-list");
+  gtk_box_append(panel, flow_list);
+
+  mctx->lbl_events_received = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(flow_list), "Events Received", "0"));
+  mctx->lbl_events_dispatched = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(flow_list), "Events Dispatched", "0"));
+  mctx->lbl_events_dropped = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(flow_list), "Events Dropped", "0"));
+  mctx->lbl_drop_rate = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(flow_list), "Drop Rate", "0.00%"));
+
+  /* Latency section */
+  GtkWidget *lat_label = gtk_label_new("Dispatch Latency");
+  gtk_label_set_xalign(GTK_LABEL(lat_label), 0);
+  gtk_widget_add_css_class(lat_label, "heading");
+  gtk_box_append(panel, lat_label);
+
+  GtkWidget *lat_list = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(lat_list), GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(lat_list, "boxed-list");
+  gtk_box_append(panel, lat_list);
+
+  mctx->lbl_dispatch_p50 = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(lat_list), "p50", "0.0 \xC2\xB5s"));
+  mctx->lbl_dispatch_p99 = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(lat_list), "p99", "0.0 \xC2\xB5s"));
+
+  /* Initial refresh */
+  metrics_panel_refresh(mctx);
+
+  /* Timer: refresh every 2 seconds while dialog is open */
+  mctx->timer_id = g_timeout_add_seconds(2, metrics_panel_tick, mctx);
+
+  /* Clean up when dialog is destroyed */
+  g_object_set_data_full(G_OBJECT(ctx->win), "metrics-panel-ctx", mctx, metrics_panel_ctx_free);
+}
+
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
@@ -3253,6 +3472,7 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   settings_dialog_setup_account_panel(ctx);
   settings_dialog_setup_blossom_panel(ctx);
   settings_dialog_setup_media_panel(ctx);
+  settings_dialog_setup_metrics_panel(ctx);
 
   /* Connect plugin manager panel signals */
   GnostrPluginManagerPanel *plugin_panel = GNOSTR_PLUGIN_MANAGER_PANEL(

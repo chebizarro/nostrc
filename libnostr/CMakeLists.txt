@@ -62,6 +62,7 @@ set(LIBNOSTR_SOURCES
   src/crypto/bip32.c
   # Metrics backend (contains full and no-op implementations gated by NOSTR_ENABLE_METRICS)
   src/metrics.c
+  src/metrics_collector.c
 )
 
 # Optional metrics instrumentation macro (implementation is always compiled)

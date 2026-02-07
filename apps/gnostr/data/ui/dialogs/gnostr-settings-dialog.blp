@@ -1958,6 +1958,25 @@ Window settings_window {
         }
 
         StackPage {
+          name: "metrics";
+          title: "Metrics";
+          icon-name: "utilities-system-monitor-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box metrics_panel {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+            }
+          };
+        }
+
+        StackPage {
           name: "mute";
           title: "Mute List";
           icon-name: "action-unavailable-symbolic";

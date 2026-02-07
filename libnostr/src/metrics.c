@@ -2,8 +2,8 @@
 #include "nostr/metrics.h"
 
 #include <stdatomic.h>
+#include <stdarg.h>
 #include <pthread.h>
-#include <math.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +36,7 @@ uint64_t nostr_now_ns(void) {
 static const double k_hist_base_ns = 1000.0;         // 1 us
 static const double k_hist_factor = 1.5;             // exponential growth
 
-typedef enum { MET_COUNTER = 1, MET_HISTOGRAM = 2 } metric_type_t;
+typedef enum { MET_COUNTER = 1, MET_HISTOGRAM = 2, MET_GAUGE = 3 } metric_type_t;
 
 typedef struct metrics_histogram {
     // bins[i] counts samples <= bounds_ns[i]
@@ -61,6 +61,10 @@ typedef struct metrics_entry {
             // Pad to dedicate a full cache line to the counter to reduce ping-pong
             char _pad_counter[NOSTR_CACHELINE - sizeof(unsigned long long)];
         } c;
+        struct {
+            _Atomic long long gauge;
+            char _pad_gauge[NOSTR_CACHELINE - sizeof(long long)];
+        } g;
         metrics_histogram hist;
     } u __attribute__((aligned(NOSTR_CACHELINE)));
     struct metrics_entry *next;
@@ -146,6 +150,8 @@ static metrics_entry *registry_get_or_create(const char *name, metric_type_t typ
         // Create and cache a single handle per histogram metric
         nostr_metric_histogram *handle = (nostr_metric_histogram *)malloc(sizeof(*handle));
         if (handle) { handle->shard = si; handle->entry = e; e->hist_handle = handle; }
+    } else if (type == MET_GAUGE) {
+        atomic_store(&e->u.g.gauge, 0LL);
     } else {
         atomic_store(&e->u.c.counter, 0);
     }
@@ -288,6 +294,36 @@ void __attribute__((hot)) nostr_metric_counter_add(const char *name, uint64_t de
     tls_counters_add(name, delta);
 }
 
+void nostr_metric_gauge_set(const char *name, int64_t value)
+{
+    pthread_once(&g_once, metrics_init_once);
+    metrics_entry *e = registry_get_or_create(name, MET_GAUGE);
+    if (e) atomic_store(&e->u.g.gauge, (long long)value);
+}
+
+void nostr_metric_gauge_inc(const char *name)
+{
+    pthread_once(&g_once, metrics_init_once);
+    metrics_entry *e = registry_get_or_create(name, MET_GAUGE);
+    if (e) atomic_fetch_add(&e->u.g.gauge, 1LL);
+}
+
+void nostr_metric_gauge_dec(const char *name)
+{
+    pthread_once(&g_once, metrics_init_once);
+    metrics_entry *e = registry_get_or_create(name, MET_GAUGE);
+    if (e) atomic_fetch_sub(&e->u.g.gauge, 1LL);
+}
+
+void nostr_metric_histogram_record(nostr_metric_histogram *h, uint64_t value_ns)
+{
+    if (!h || !h->entry) return;
+    metrics_shard *sh = &g_shards[h->shard];
+    pthread_mutex_lock(&sh->mu);
+    hist_record_locked(&h->entry->u.hist, value_ns);
+    pthread_mutex_unlock(&sh->mu);
+}
+
 static uint64_t percentile_estimate(const metrics_histogram *h, double p)
 {
     if (h->count == 0) return 0;
@@ -321,6 +357,19 @@ void nostr_metrics_dump(void)
             unsigned long long v = atomic_load(&e->u.c.counter);
             if (!first) fputc(',', stdout); else first = 0;
             fprintf(stdout, "\"%s\":%llu", e->name, v);
+        }
+        pthread_mutex_unlock(&sh->mu);
+    }
+    fputs("},\"gauges\":{", stdout);
+    first = 1;
+    for (int si = 0; si < NOSTR_METRICS_SHARDS; ++si) {
+        metrics_shard *sh = &g_shards[si];
+        pthread_mutex_lock(&sh->mu);
+        for (metrics_entry *e = sh->head; e; e = e->next) {
+            if (e->type != MET_GAUGE) continue;
+            long long v = atomic_load(&e->u.g.gauge);
+            if (!first) fputc(',', stdout); else first = 0;
+            fprintf(stdout, "\"%s\":%lld", e->name, v);
         }
         pthread_mutex_unlock(&sh->mu);
     }
@@ -364,13 +413,108 @@ void nostr_metrics_dump(void)
     fflush(stdout);
 }
 
+// snprintf helper that tracks position
+static int prom_append(char *buf, size_t buf_size, size_t *pos, const char *fmt, ...)
+    __attribute__((format(printf, 4, 5)));
+static int prom_append(char *buf, size_t buf_size, size_t *pos, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int n;
+    if (buf && *pos < buf_size) {
+        n = vsnprintf(buf + *pos, buf_size - *pos, fmt, ap);
+    } else {
+        n = vsnprintf(NULL, 0, fmt, ap);
+    }
+    va_end(ap);
+    if (n > 0) *pos += (size_t)n;
+    return n;
+}
+
+size_t nostr_metrics_prometheus(char *buf, size_t buf_size)
+{
+    tls_counters_flush(&g_tls_counters);
+    pthread_once(&g_once, metrics_init_once);
+
+    size_t pos = 0;
+
+    // Counters
+    for (int si = 0; si < NOSTR_METRICS_SHARDS; ++si) {
+        metrics_shard *sh = &g_shards[si];
+        pthread_mutex_lock(&sh->mu);
+        for (metrics_entry *e = sh->head; e; e = e->next) {
+            if (e->type != MET_COUNTER) continue;
+            unsigned long long v = atomic_load(&e->u.c.counter);
+            prom_append(buf, buf_size, &pos,
+                "# TYPE nostr_%s counter\n"
+                "nostr_%s %llu\n",
+                e->name, e->name, v);
+        }
+        pthread_mutex_unlock(&sh->mu);
+    }
+
+    // Gauges
+    for (int si = 0; si < NOSTR_METRICS_SHARDS; ++si) {
+        metrics_shard *sh = &g_shards[si];
+        pthread_mutex_lock(&sh->mu);
+        for (metrics_entry *e = sh->head; e; e = e->next) {
+            if (e->type != MET_GAUGE) continue;
+            long long v = atomic_load(&e->u.g.gauge);
+            prom_append(buf, buf_size, &pos,
+                "# TYPE nostr_%s gauge\n"
+                "nostr_%s %lld\n",
+                e->name, e->name, v);
+        }
+        pthread_mutex_unlock(&sh->mu);
+    }
+
+    // Histograms (Prometheus summary style with quantiles)
+    for (int si = 0; si < NOSTR_METRICS_SHARDS; ++si) {
+        metrics_shard *sh = &g_shards[si];
+        pthread_mutex_lock(&sh->mu);
+        for (metrics_entry *e = sh->head; e; e = e->next) {
+            if (e->type != MET_HISTOGRAM) continue;
+            const metrics_histogram *h = &e->u.hist;
+            if (h->count == 0) continue;
+            unsigned long long sum64 = (unsigned long long)(
+                h->sum_ns > ((__uint128_t)~0ull) ? ~0ull : h->sum_ns);
+            uint64_t p50 = percentile_estimate(h, 0.50);
+            uint64_t p90 = percentile_estimate(h, 0.90);
+            uint64_t p99 = percentile_estimate(h, 0.99);
+            prom_append(buf, buf_size, &pos,
+                "# TYPE nostr_%s summary\n"
+                "nostr_%s{quantile=\"0.5\"} %llu\n"
+                "nostr_%s{quantile=\"0.9\"} %llu\n"
+                "nostr_%s{quantile=\"0.99\"} %llu\n"
+                "nostr_%s_sum %llu\n"
+                "nostr_%s_count %llu\n",
+                e->name,
+                e->name, (unsigned long long)p50,
+                e->name, (unsigned long long)p90,
+                e->name, (unsigned long long)p99,
+                e->name, sum64,
+                e->name, (unsigned long long)h->count);
+        }
+        pthread_mutex_unlock(&sh->mu);
+    }
+
+    // Null-terminate if there's space
+    if (buf && pos < buf_size) buf[pos] = '\0';
+    return pos;
+}
+
 #else // !NOSTR_ENABLE_METRICS
 
 // No-op implementations
 nostr_metric_histogram *nostr_metric_histogram_get(const char *name) { (void)name; return NULL; }
+void nostr_metric_histogram_record(nostr_metric_histogram *h, uint64_t value_ns) { (void)h; (void)value_ns; }
 void nostr_metric_timer_start(nostr_metric_timer *t) { if (t) t->t0_ns = 0; }
 void nostr_metric_timer_stop(nostr_metric_timer *t, nostr_metric_histogram *h) { (void)t; (void)h; }
 void nostr_metric_counter_add(const char *name, uint64_t delta) { (void)name; (void)delta; }
+void nostr_metric_gauge_set(const char *name, int64_t value) { (void)name; (void)value; }
+void nostr_metric_gauge_inc(const char *name) { (void)name; }
+void nostr_metric_gauge_dec(const char *name) { (void)name; }
 void nostr_metrics_dump(void) { }
+size_t nostr_metrics_prometheus(char *buf, size_t buf_size) { (void)buf; (void)buf_size; return 0; }
 
 #endif // NOSTR_ENABLE_METRICS
