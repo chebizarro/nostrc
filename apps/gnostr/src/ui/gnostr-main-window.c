@@ -18,6 +18,7 @@
 #include "gnostr-search-results-view.h"
 #include "gnostr-classifieds-view.h"
 #include "gnostr-repo-browser.h"
+#include "gnostr-plugin-manager-panel.h"
 #include "../util/gnostr-plugin-manager.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
@@ -3174,6 +3175,21 @@ static void settings_dialog_setup_notifications_panel(SettingsDialogCtx *ctx) {
   g_object_unref(notif_settings);
 }
 
+/* Plugin panel signal handlers */
+static void on_plugin_settings_signal(GnostrPluginManagerPanel *panel,
+                                      const char *plugin_id,
+                                      gpointer user_data) {
+  (void)user_data;
+  gnostr_plugin_manager_panel_show_plugin_settings(panel, plugin_id);
+}
+
+static void on_plugin_info_signal(GnostrPluginManagerPanel *panel,
+                                  const char *plugin_id,
+                                  gpointer user_data) {
+  (void)user_data;
+  gnostr_plugin_manager_panel_show_plugin_info(panel, plugin_id);
+}
+
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
@@ -3236,6 +3252,16 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   settings_dialog_setup_account_panel(ctx);
   settings_dialog_setup_blossom_panel(ctx);
   settings_dialog_setup_media_panel(ctx);
+
+  /* Connect plugin manager panel signals */
+  GnostrPluginManagerPanel *plugin_panel = GNOSTR_PLUGIN_MANAGER_PANEL(
+      gtk_builder_get_object(builder, "plugin_manager_panel"));
+  if (plugin_panel) {
+    g_signal_connect(plugin_panel, "plugin-settings",
+                     G_CALLBACK(on_plugin_settings_signal), NULL);
+    g_signal_connect(plugin_panel, "plugin-info",
+                     G_CALLBACK(on_plugin_info_signal), NULL);
+  }
 
   /* Context is freed when window is destroyed */
   g_signal_connect(win, "destroy", G_CALLBACK(on_settings_dialog_destroy), ctx);
