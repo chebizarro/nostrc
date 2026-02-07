@@ -420,7 +420,6 @@ gnostr_fetch_profile_badges_async(const gchar *pubkey_hex,
   nostr_filter_set_kinds(filter, kinds, 1);
   const char *authors[] = { pubkey_hex };
   nostr_filter_set_authors(filter, authors, 1);
-  nostr_filter_set_limit(filter, 1);
 
   /* Convert relay URLs to array */
   const char **urls = g_new0(const char *, relay_urls->len + 1);
@@ -526,7 +525,6 @@ fetch_badge_definitions(BadgeFetchCtx *ctx)
     nostr_filter_set_authors(filter, authors, 1);
     /* Set #d tag filter using nostr_filter_tags_append */
     nostr_filter_tags_append(filter, "#d", badge->definition->identifier, NULL);
-    nostr_filter_set_limit(filter, 1);
 
     /* Store badge index in user_data via pointer arithmetic */
     gpointer badge_ptr = badge;
@@ -698,7 +696,6 @@ gnostr_fetch_badge_definition_async(const gchar *naddr,
   nostr_filter_set_authors(filter, authors, 1);
   /* Set #d tag filter using nostr_filter_tags_append */
   nostr_filter_tags_append(filter, "#d", parts[2], NULL);
-  nostr_filter_set_limit(filter, 1);
 
   /* Convert relay URLs to array */
   const char **urls = g_new0(const char *, relay_urls->len + 1);

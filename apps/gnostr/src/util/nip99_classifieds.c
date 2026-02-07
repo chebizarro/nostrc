@@ -694,7 +694,6 @@ gnostr_fetch_classified_by_naddr_async(const gchar *naddr,
   const char *authors[] = { parts[1] };
   nostr_filter_set_authors(filter, authors, 1);
   nostr_filter_tags_append(filter, "#d", parts[2], NULL);
-  nostr_filter_set_limit(filter, 1);
 
   /* Convert relay URLs to array */
   const char **urls = g_new0(const char *, relay_urls->len + 1);

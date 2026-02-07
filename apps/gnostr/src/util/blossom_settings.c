@@ -585,7 +585,6 @@ void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
   nostr_filter_set_kinds(filter, kinds, 1);
   const char *authors[1] = { pubkey_hex };
   nostr_filter_set_authors(filter, authors, 1);
-  nostr_filter_set_limit(filter, 1);
 
   /* Get configured relays */
   GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);

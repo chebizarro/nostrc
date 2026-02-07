@@ -409,7 +409,6 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
   nostr_filter_set_kinds(filter, kinds, 1);
   const char *authors[1] = { pubkey_hex };
   nostr_filter_set_authors(filter, authors, 1);
-  nostr_filter_set_limit(filter, 1);
 
   /* Get configured relays */
   GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
@@ -750,7 +749,6 @@ void gnostr_nip17_fetch_dm_relays_async(const gchar *pubkey_hex,
   nostr_filter_set_kinds(filter, kinds, 1);
   const char *authors[1] = { pubkey_hex };
   nostr_filter_set_authors(filter, authors, 1);
-  nostr_filter_set_limit(filter, 1);
 
   /* Get configured relays - prefer DM relays, fall back to general */
   GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);

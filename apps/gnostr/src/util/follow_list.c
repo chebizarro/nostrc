@@ -286,7 +286,6 @@ static void query_relays_for_follow_list(FollowListFetchCtx *ctx, GPtrArray *rel
   nostr_filter_set_kinds(filter, kinds, 1);
   const char *authors[1] = { ctx->pubkey_hex };
   nostr_filter_set_authors(filter, authors, 1);
-  nostr_filter_set_limit(filter, 1);
 
   /* Build URL array */
   const char **urls = g_new0(const char*, relay_urls->len);
