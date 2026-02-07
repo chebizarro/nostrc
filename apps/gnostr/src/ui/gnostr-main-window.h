@@ -48,6 +48,9 @@ void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, i
 /* Public: Get the repository browser widget (NIP-34) */
 GtkWidget *gnostr_main_window_get_repo_browser(GnostrMainWindow *self);
 
+/* Public: Get the session view (for plugin sidebar registration) */
+GnostrSessionView *gnostr_main_window_get_session_view(GnostrMainWindow *self);
+
 /* Public: Navigate to and show profile panel for given pubkey */
 void gnostr_main_window_open_profile(GtkWidget *window, const char *pubkey_hex);
 

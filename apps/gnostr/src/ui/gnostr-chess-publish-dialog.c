@@ -15,8 +15,8 @@
 #include "../util/nip64_chess.h"
 #include <glib/gi18n.h>
 #include <json.h>
+/* Use gobject relay wrapper for GLib integration */
 #include "nostr_relay.h"
-#include "nostr-event.h"
 
 struct _GnostrChessPublishDialog {
     AdwDialog parent_instance;

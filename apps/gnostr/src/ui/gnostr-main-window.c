@@ -5614,6 +5614,11 @@ GtkWidget *gnostr_main_window_get_repo_browser(GnostrMainWindow *self) {
   return gnostr_session_view_get_repo_browser(self->session_view);
 }
 
+GnostrSessionView *gnostr_main_window_get_session_view(GnostrMainWindow *self) {
+  g_return_val_if_fail(GNOSTR_IS_MAIN_WINDOW(self), NULL);
+  return self->session_view;
+}
+
 static void gnostr_main_window_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
 

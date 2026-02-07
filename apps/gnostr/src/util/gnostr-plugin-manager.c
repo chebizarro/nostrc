@@ -10,6 +10,8 @@
 
 #include "gnostr-plugin-manager.h"
 #include "../gnostr-plugin-api.h"
+#include "../ui/gnostr-session-view.h"
+#include "../ui/gnostr-main-window.h"
 #include <gio/gio.h>
 
 #ifdef HAVE_LIBPEAS
@@ -532,6 +534,31 @@ on_extension_added(PeasExtensionSet *set,
     g_debug("[PLUGIN] Activated plugin: %s (%s)",
             gnostr_plugin_get_name(plugin),
             id);
+
+    /* Check for UI extension with sidebar items */
+    if (GNOSTR_IS_UI_EXTENSION(exten) && manager->main_window) {
+      GnostrUIExtension *ui_ext = GNOSTR_UI_EXTENSION(exten);
+      GnostrSessionView *session_view = gnostr_main_window_get_session_view(
+          GNOSTR_MAIN_WINDOW(manager->main_window));
+
+      if (session_view) {
+        GList *sidebar_items = gnostr_ui_extension_get_sidebar_items(ui_ext, ctx);
+        for (GList *l = sidebar_items; l; l = l->next) {
+          GnostrSidebarItem *item = l->data;
+          gnostr_session_view_add_plugin_sidebar_item(
+              session_view,
+              item->id,
+              item->label,
+              item->icon_name,
+              item->requires_auth,
+              item->position,
+              ui_ext,
+              ctx);
+          g_debug("[PLUGIN] Added sidebar item: %s", item->label);
+        }
+        g_list_free_full(sidebar_items, (GDestroyNotify)gnostr_sidebar_item_free);
+      }
+    }
   }
 }
 
