@@ -608,34 +608,43 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note)
 
 /* ============== NIP-25 Reaction Count API ============== */
 
+/* Helper: convert a 64-char hex event ID to a 32-byte binary ID.
+ * Returns TRUE on success, FALSE on malformed input. */
+static gboolean
+hex_to_id32(const char *hex, unsigned char out[32])
+{
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + 2*i, "%02x", &byte) != 1) return FALSE;
+    out[i] = (unsigned char)byte;
+  }
+  return TRUE;
+}
+
 /* Count reactions (kind 7) for a given event.
- * Uses a NIP-01 filter query to find all kind 7 events that reference the given event ID. */
+ * Uses pre-computed ndb_note_meta for O(1) lookup instead of filter queries. */
 guint storage_ndb_count_reactions(const char *event_id_hex)
 {
   if (!event_id_hex || strlen(event_id_hex) != 64) return 0;
 
+  unsigned char id32[32];
+  if (!hex_to_id32(event_id_hex, id32)) return 0;
+
   void *txn = NULL;
   if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return 0;
 
-  /* Build filter: {"kinds":[7],"#e":["<event_id>"]} */
-  gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
-
-  char **results = NULL;
-  int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
-  g_free(filter_json);
-
-  storage_ndb_end_query(txn);
-
-  if (rc != 0) return 0;
-
-  guint reaction_count = (guint)count;
-
-  /* Free the results - we only need the count */
-  if (results) {
-    storage_ndb_free_results(results, count);
+  guint reaction_count = 0;
+  struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
+  if (meta) {
+    struct ndb_note_meta_entry *entry =
+        ndb_note_meta_find_entry(meta, NDB_NOTE_META_COUNTS, NULL);
+    if (entry) {
+      uint32_t *total = ndb_note_meta_counts_total_reactions(entry);
+      if (total) reaction_count = (guint)*total;
+    }
   }
 
+  storage_ndb_end_query(txn);
   return reaction_count;
 }
 
@@ -676,66 +685,73 @@ gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user
 /* NIP-25: Get reaction breakdown for an event (emoji -> count).
  * Returns a GHashTable with emoji strings as keys and count as GUINT_TO_POINTER values.
  * Also populates reactor_pubkeys array if non-NULL.
- * Caller must free the returned hash table with g_hash_table_unref(). */
+ * Caller must free the returned hash table with g_hash_table_unref().
+ *
+ * Uses pre-computed ndb_note_meta for O(1) emoji→count lookup.
+ * Falls back to filter query only when reactor_pubkeys are requested
+ * (metadata stores counts, not individual reactor pubkeys). */
 GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArray **reactor_pubkeys)
 {
   GHashTable *breakdown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   if (!event_id_hex || strlen(event_id_hex) != 64) return breakdown;
 
+  unsigned char id32[32];
+  if (!hex_to_id32(event_id_hex, id32)) return breakdown;
+
   void *txn = NULL;
   if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return breakdown;
 
-  /* Build filter: {"kinds":[7],"#e":["<event_id>"]} */
-  gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
+  struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
+  if (meta) {
+    uint16_t n_entries = ndb_note_meta_entries_count(meta);
+    for (int i = 0; i < n_entries; i++) {
+      struct ndb_note_meta_entry *entry = ndb_note_meta_entry_at(meta, i);
+      if (!entry) continue;
+      uint16_t *type = ndb_note_meta_entry_type(entry);
+      if (!type || *type != NDB_NOTE_META_REACTION) continue;
 
-  char **results = NULL;
-  int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
-  g_free(filter_json);
+      uint32_t *cnt = ndb_note_meta_reaction_count(entry);
+      union ndb_reaction_str *rstr = ndb_note_meta_reaction_str(entry);
+      if (!cnt || !rstr || *cnt == 0) continue;
 
-  if (rc != 0 || count == 0) {
-    storage_ndb_end_query(txn);
-    if (results) storage_ndb_free_results(results, count);
-    return breakdown;
-  }
+      char buf[128];
+      const char *emoji = ndb_reaction_to_str(rstr, buf);
+      if (!emoji || !*emoji) emoji = "+";
 
-  /* Initialize reactor_pubkeys array if requested */
-  if (reactor_pubkeys) {
-    *reactor_pubkeys = g_ptr_array_new_with_free_func(g_free);
-  }
-
-  /* Parse each reaction event to extract content (emoji) and pubkey */
-  for (int i = 0; i < count; i++) {
-    if (!results[i]) continue;
-
-    /* Parse the JSON to extract content and pubkey */
-    if (!gnostr_json_is_valid(results[i])) continue;
-
-    char *content_val = NULL;
-    char *pubkey_val = NULL;
-    content_val = gnostr_json_get_string(results[i], "content", NULL);
-    pubkey_val = gnostr_json_get_string(results[i], "pubkey", NULL);
-
-    /* Default to "+" if content is empty */
-    const char *content = (content_val && *content_val) ? content_val : "+";
-
-    /* Increment count for this emoji */
-    gpointer existing = g_hash_table_lookup(breakdown, content);
-    guint emoji_count = existing ? GPOINTER_TO_UINT(existing) + 1 : 1;
-    g_hash_table_insert(breakdown, g_strdup(content), GUINT_TO_POINTER(emoji_count));
-
-    /* Track reactor pubkey if requested */
-    if (reactor_pubkeys && pubkey_val && strlen(pubkey_val) == 64) {
-      g_ptr_array_add(*reactor_pubkeys, g_strdup(pubkey_val));
+      g_hash_table_insert(breakdown, g_strdup(emoji), GUINT_TO_POINTER((guint)*cnt));
     }
-
-    g_free(content_val);
-    g_free(pubkey_val);
   }
 
   storage_ndb_end_query(txn);
-  if (results) storage_ndb_free_results(results, count);
+
+  /* Metadata only stores aggregate counts, not individual reactor pubkeys.
+   * Fall back to filter query if caller needs the pubkey list. */
+  if (reactor_pubkeys) {
+    *reactor_pubkeys = g_ptr_array_new_with_free_func(g_free);
+
+    void *txn2 = NULL;
+    if (storage_ndb_begin_query_retry(&txn2, 3, 10) == 0 && txn2) {
+      gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
+      char **results = NULL;
+      int count = 0;
+      int rc = storage_ndb_query(txn2, filter_json, &results, &count);
+      g_free(filter_json);
+
+      if (rc == 0 && results) {
+        for (int i = 0; i < count; i++) {
+          if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+          char *pubkey_val = gnostr_json_get_string(results[i], "pubkey", NULL);
+          if (pubkey_val && strlen(pubkey_val) == 64)
+            g_ptr_array_add(*reactor_pubkeys, pubkey_val);
+          else
+            g_free(pubkey_val);
+        }
+        storage_ndb_free_results(results, count);
+      }
+      storage_ndb_end_query(txn2);
+    }
+  }
 
   return breakdown;
 }
