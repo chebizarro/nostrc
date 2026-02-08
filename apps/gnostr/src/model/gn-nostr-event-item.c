@@ -44,6 +44,9 @@ struct _GnNostrEventItem {
   guint like_count;
   gboolean is_liked;  /* Whether current user has liked this event */
 
+  /* NIP-18: Repost count */
+  guint repost_count;
+
   /* NIP-57: Zap stats */
   guint zap_count;
   gint64 zap_total_msat;
@@ -74,6 +77,7 @@ enum {
   PROP_REVEALING,
   PROP_LIKE_COUNT,
   PROP_IS_LIKED,
+  PROP_REPOST_COUNT,
   PROP_ZAP_COUNT,
   PROP_ZAP_TOTAL_MSAT,
   PROP_EXPIRATION,
@@ -284,6 +288,9 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
     case PROP_IS_LIKED:
       g_value_set_boolean(value, self->is_liked);
       break;
+    case PROP_REPOST_COUNT:
+      g_value_set_uint(value, self->repost_count);
+      break;
     case PROP_ZAP_COUNT:
       g_value_set_uint(value, self->zap_count);
       break;
@@ -327,6 +334,9 @@ static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, con
       break;
     case PROP_IS_LIKED:
       self->is_liked = g_value_get_boolean(value);
+      break;
+    case PROP_REPOST_COUNT:
+      self->repost_count = g_value_get_uint(value);
       break;
     case PROP_ZAP_COUNT:
       self->zap_count = g_value_get_uint(value);
@@ -383,6 +393,9 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
                                                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   properties[PROP_IS_LIKED] = g_param_spec_boolean("is-liked", "Is Liked",
                                                     "Whether current user has liked this event", FALSE,
+                                                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_REPOST_COUNT] = g_param_spec_uint("repost-count", "Repost Count",
+                                                    "NIP-18 repost count", 0, G_MAXUINT, 0,
                                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   properties[PROP_ZAP_COUNT] = g_param_spec_uint("zap-count", "Zap Count",
                                                   "NIP-57 zap receipt count", 0, G_MAXUINT, 0,
@@ -662,6 +675,20 @@ void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked)
   if (self->is_liked != is_liked) {
     self->is_liked = is_liked;
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LIKED]);
+  }
+}
+
+/* NIP-18: Repost count support */
+guint gn_nostr_event_item_get_repost_count(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->repost_count;
+}
+
+void gn_nostr_event_item_set_repost_count(GnNostrEventItem *self, guint count) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->repost_count != count) {
+    self->repost_count = count;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REPOST_COUNT]);
   }
 }
 

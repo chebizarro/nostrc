@@ -702,6 +702,39 @@ guint storage_ndb_count_reactions(const char *event_id_hex)
   return reaction_count;
 }
 
+/* nostrc-24: Batch count reposts using ndb_note_meta (O(1) per lookup) */
+GHashTable *storage_ndb_count_reposts_batch(const char * const *event_ids, guint n_ids)
+{
+  GHashTable *counts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!event_ids || n_ids == 0) return counts;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return counts;
+
+  for (guint i = 0; i < n_ids; i++) {
+    if (!event_ids[i] || strlen(event_ids[i]) != 64) continue;
+
+    unsigned char id32[32];
+    if (!hex_to_id32(event_ids[i], id32)) continue;
+
+    struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
+    if (!meta) continue;
+
+    struct ndb_note_meta_entry *entry =
+        ndb_note_meta_find_entry(meta, NDB_NOTE_META_COUNTS, NULL);
+    if (!entry) continue;
+
+    uint16_t *reposts = ndb_note_meta_counts_reposts(entry);
+    if (reposts && *reposts > 0) {
+      g_hash_table_insert(counts, g_strdup(event_ids[i]),
+                          GUINT_TO_POINTER((guint)*reposts));
+    }
+  }
+
+  storage_ndb_end_query(txn);
+  return counts;
+}
+
 /* Check if a specific user has reacted to an event.
  * Uses a NIP-01 filter query to find reactions from the given user. */
 gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user_pubkey_hex)

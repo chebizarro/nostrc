@@ -1412,6 +1412,18 @@ static void on_item_notify_like_count(GObject *obj, GParamSpec *pspec, gpointer 
     gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
 }
 
+/* NIP-18: Notify handler for repost count changes */
+static void on_item_notify_repost_count(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  guint repost_count = 0;
+  g_object_get(obj, "repost-count", &repost_count, NULL);
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_repost_count(GNOSTR_NOTE_CARD_ROW(row), repost_count);
+}
+
 /* NIP-25: Notify handler for is_liked changes */
 static void on_item_notify_is_liked(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -2216,6 +2228,9 @@ static gboolean metadata_batch_idle_cb(gpointer user_data)
 
   g_autoptr(GHashTable) zap_stats = storage_ndb_get_zap_stats_batch(event_ids, id_count);
 
+  /* nostrc-24: Repost counts from ndb_note_meta */
+  g_autoptr(GHashTable) repost_counts = storage_ndb_count_reposts_batch(event_ids, id_count);
+
   /* Distribute results to items */
   for (guint i = 0; i < n; i++) {
     GObject *obj = g_ptr_array_index(self->pending_metadata_items, i);
@@ -2244,6 +2259,14 @@ static gboolean metadata_batch_idle_cb(gpointer user_data)
       if (zs && zs->zap_count > 0) {
         gn_nostr_event_item_set_zap_count(GN_NOSTR_EVENT_ITEM(obj), zs->zap_count);
         gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), zs->total_msat);
+      }
+
+      /* Repost count (nostrc-24) */
+      gpointer rval = g_hash_table_lookup(repost_counts, id_hex);
+      if (rval) {
+        guint rcount = GPOINTER_TO_UINT(rval);
+        if (rcount > 0)
+          gn_nostr_event_item_set_repost_count(GN_NOSTR_EVENT_ITEM(obj), rcount);
       }
 
       /* Trigger NIP-65 relay fetch for reactions */
@@ -2693,6 +2716,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       /* NIP-25: Set reaction count and liked state from model or local storage */
       guint like_count = gn_nostr_event_item_get_like_count(GN_NOSTR_EVENT_ITEM(obj));
       gboolean is_liked = gn_nostr_event_item_get_is_liked(GN_NOSTR_EVENT_ITEM(obj));
+      guint repost_count = gn_nostr_event_item_get_repost_count(GN_NOSTR_EVENT_ITEM(obj));
       guint zap_count = gn_nostr_event_item_get_zap_count(GN_NOSTR_EVENT_ITEM(obj));
       gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
 
@@ -2722,6 +2746,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
       gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
       gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
+      gnostr_note_card_row_set_repost_count(GNOSTR_NOTE_CARD_ROW(row), repost_count);
       gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, zap_total);
     }
 
@@ -2765,6 +2790,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     /* NIP-25: Connect reaction count/state change handlers */
     g_signal_connect_object(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row, 0);
     g_signal_connect_object(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row, 0);
+
+    /* NIP-18: Connect repost count change handler */
+    g_signal_connect_object(obj, "notify::repost-count", G_CALLBACK(on_item_notify_repost_count), row, 0);
 
     /* NIP-57: Connect zap stats change handlers */
     g_signal_connect_object(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      row, 0);
@@ -2933,6 +2961,9 @@ static void refresh_visible_items_metadata(GnostrTimelineView *self) {
 
   GHashTable *zap_stats = storage_ndb_get_zap_stats_batch(event_ids, id_count);
 
+  /* nostrc-24: Repost counts from ndb_note_meta */
+  GHashTable *repost_counts = storage_ndb_count_reposts_batch(event_ids, id_count);
+
   /* Pass 3: Distribute results to items */
   for (guint i = 0; i < items->len; i++) {
     GObject *obj = g_ptr_array_index(items, i);
@@ -2955,6 +2986,14 @@ static void refresh_visible_items_metadata(GnostrTimelineView *self) {
       gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), zs->total_msat);
     }
 
+    /* Repost count (nostrc-24) */
+    gpointer rval = g_hash_table_lookup(repost_counts, id_hex);
+    if (rval) {
+      guint rcount = GPOINTER_TO_UINT(rval);
+      if (rcount > 0)
+        gn_nostr_event_item_set_repost_count(GN_NOSTR_EVENT_ITEM(obj), rcount);
+    }
+
     /* Trigger NIP-65 relay fetch for reactions */
     gchar *pubkey = NULL;
     g_object_get(obj, "pubkey", &pubkey, NULL);
@@ -2967,6 +3006,7 @@ static void refresh_visible_items_metadata(GnostrTimelineView *self) {
   g_hash_table_unref(reaction_counts);
   if (user_reacted) g_hash_table_unref(user_reacted);
   g_hash_table_unref(zap_stats);
+  g_hash_table_unref(repost_counts);
   g_free(user_pubkey);
   g_ptr_array_unref(items);
   g_ptr_array_unref(ids);

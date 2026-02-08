@@ -203,6 +203,14 @@ typedef struct {
  * Caller must g_hash_table_unref(). */
 GHashTable *storage_ndb_count_reactions_batch(const char * const *event_ids, guint n_ids);
 
+/* Batch count reposts for multiple events using ndb_note_meta.
+ * event_ids: array of 64-char hex event IDs
+ * n_ids: number of event IDs
+ * Returns GHashTable mapping event_id_hex (owned) -> GUINT_TO_POINTER(count).
+ * Only events with count > 0 appear in the table.
+ * Caller must g_hash_table_unref(). */
+GHashTable *storage_ndb_count_reposts_batch(const char * const *event_ids, guint n_ids);
+
 /* Batch check if user has reacted to multiple events in a single query.
  * event_ids: array of 64-char hex event IDs
  * n_ids: number of event IDs
