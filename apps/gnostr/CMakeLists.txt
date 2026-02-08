@@ -109,6 +109,7 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-conversation-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.ui
