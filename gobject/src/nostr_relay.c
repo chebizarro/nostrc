@@ -18,7 +18,9 @@
 #include "nostr-filter.h" /* NostrFilter */
 
 /* NIP-11 relay information document */
+#ifdef ENABLE_NIP11
 #include "nip11.h"
+#endif
 
 /* Now include GObject wrapper header */
 #include "nostr_relay.h"
@@ -45,8 +47,10 @@ struct _GNostrRelay {
     NostrRelay *relay;           /* Core libnostr relay */
     gchar *url;                  /* Cached URL (construct-only) */
     GNostrRelayState state;       /* Current connection state (GObject enum) */
+#ifdef ENABLE_NIP11
     RelayInformationDocument *nip11_info;  /* Cached NIP-11 info (owned) */
     GCancellable *nip11_cancellable;       /* Cancel in-flight NIP-11 fetch */
+#endif
 };
 
 G_DEFINE_TYPE(GNostrRelay, gnostr_relay, G_TYPE_OBJECT)
@@ -85,10 +89,12 @@ gnostr_relay_set_state_internal(GNostrRelay *self, GNostrRelayState new_state)
 
     self->state = new_state;
 
+#ifdef ENABLE_NIP11
     /* Auto-fetch NIP-11 info when we become connected */
     if (new_state == GNOSTR_RELAY_STATE_CONNECTED && self->nip11_info == NULL) {
         gnostr_relay_fetch_nip11_async(self);
     }
+#endif
 
     /* Emit state-changed signal */
     g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_STATE_CHANGED], 0,
@@ -222,6 +228,7 @@ gnostr_relay_finalize(GObject *object)
 {
     GNostrRelay *self = GNOSTR_RELAY(object);
 
+#ifdef ENABLE_NIP11
     /* Cancel any in-flight NIP-11 fetch */
     if (self->nip11_cancellable) {
         g_cancellable_cancel(self->nip11_cancellable);
@@ -233,6 +240,7 @@ gnostr_relay_finalize(GObject *object)
         nostr_nip11_free_info(self->nip11_info);
         self->nip11_info = NULL;
     }
+#endif
 
     /* Remove callback before freeing relay */
     if (self->relay) {
@@ -408,6 +416,7 @@ gnostr_relay_class_init(GNostrRelayClass *klass)
                      0, NULL, NULL, NULL,
                      G_TYPE_NONE, 1, G_TYPE_ERROR);
 
+#ifdef ENABLE_NIP11
     /**
      * GNostrRelay::nip11-info-fetched:
      * @self: the relay
@@ -421,6 +430,7 @@ gnostr_relay_class_init(GNostrRelayClass *klass)
                      G_SIGNAL_RUN_FIRST,
                      0, NULL, NULL, NULL,
                      G_TYPE_NONE, 0);
+#endif
 
     /* Legacy signals for backward compatibility */
     nostr_relay_signals[SIGNAL_CONNECTED] =
@@ -450,8 +460,10 @@ gnostr_relay_init(GNostrRelay *self)
     self->relay = NULL;
     self->url = NULL;
     self->state = GNOSTR_RELAY_STATE_DISCONNECTED;
+#ifdef ENABLE_NIP11
     self->nip11_info = NULL;
     self->nip11_cancellable = NULL;
+#endif
 }
 
 /* Public API */
@@ -656,6 +668,7 @@ gnostr_relay_get_core_relay(GNostrRelay *self)
     return self->relay;
 }
 
+#ifdef ENABLE_NIP11
 /* ---- NIP-11 Relay Information ---- */
 
 /* Data for delivering NIP-11 result on main thread */
@@ -770,3 +783,4 @@ gnostr_relay_supports_nip(GNostrRelay *self, gint nip)
     }
     return FALSE;
 }
+#endif /* ENABLE_NIP11 */

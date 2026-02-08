@@ -107,7 +107,7 @@ target_include_directories(nostr_glib
   PRIVATE
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
     ${CMAKE_SOURCE_DIR}/nips/nip06/include
-    ${CMAKE_SOURCE_DIR}/nips/nip11/include
+    $<$<BOOL:${ENABLE_NIP11}>:${CMAKE_SOURCE_DIR}/nips/nip11/include>
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
     ${NSYNC_INCLUDE_DIR}
 )
@@ -147,6 +147,9 @@ if(JSON_GLIB_FOUND)
 endif()
 if(LIBSODIUM_FOUND)
   target_link_libraries(nostr_glib PRIVATE PkgConfig::LIBSODIUM)
+endif()
+if(ENABLE_NIP11)
+  target_compile_definitions(nostr_glib PRIVATE ENABLE_NIP11)
 endif()
 
 # Inherit sanitizer flags from root CMakeLists.txt
