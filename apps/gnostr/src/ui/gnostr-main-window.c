@@ -5841,16 +5841,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
    * This avoids duplicate processing and high memory usage. Initial refresh occurs in
    * initial_refresh_timeout_cb, and subsequent updates stream from nostrdb watchers. */
 
-  /* Start gift wrap (NIP-59) subscription if user is signed in.
-   * This is a nostrdb subscription (not relay).
-   * Gift wraps are encrypted messages addressed to the current user. */
-  start_gift_wrap_subscription(self);
-  
-  /* Seed initial items so Timeline page isn't empty.
-   * 150ms delay allows relay pool setup (started above) to begin connecting.
-   * nostrc-b0h: Audited - brief delay for async initialization is appropriate. */
-  g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
-
   /* Init demand-driven profile fetch state */
   self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
   self->profile_fetch_source_id = 0;
@@ -5864,12 +5854,17 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->ndb_sweep_debounce_ms = 1000; /* 1 second - prevents transaction contention */
   if (!self->pool) self->pool = gnostr_pool_new();
 
-  /* Init gift wrap (NIP-59) subscription state */
+  /* nostrc-bkor: Init gift wrap state and DM service BEFORE starting the subscription.
+   * Previously these were initialized AFTER start_gift_wrap_subscription(), which wiped
+   * the user_pubkey_hex and sub_gift_wrap that the subscription had just set. This caused
+   * the logged-in user's pubkey to be NULL on app restart, breaking View Profile and
+   * other features that depend on user_pubkey_hex. */
   self->sub_gift_wrap = 0;
   self->user_pubkey_hex = NULL;
   self->gift_wrap_queue = NULL; /* Created lazily when first gift wrap arrives */
 
-  /* Init NIP-17 DM service and wire to inbox view */
+  /* Init NIP-17 DM service and wire to inbox view (before gift wrap subscription
+   * so dm_service is available when start_gift_wrap_subscription sets pubkey on it) */
   self->dm_service = gnostr_dm_service_new();
 
   GtkWidget *dm_inbox = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
@@ -5905,6 +5900,15 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Wire DM service message-received for live updates */
   g_signal_connect(self->dm_service, "message-received",
                    G_CALLBACK(on_dm_service_message_received), self);
+
+  /* nostrc-bkor: Start gift wrap subscription AFTER state init and DM service setup.
+   * This sets user_pubkey_hex from saved settings on app restart. */
+  start_gift_wrap_subscription(self);
+
+  /* Seed initial items so Timeline page isn't empty.
+   * 150ms delay allows relay pool setup (started above) to begin connecting.
+   * nostrc-b0h: Audited - brief delay for async initialization is appropriate. */
+  g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
 
   /* Background profile prefetch disabled (model emits need-profile when required). */
 
