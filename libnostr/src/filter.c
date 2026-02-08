@@ -915,7 +915,11 @@ static int parse_int64_value(const char **pp, int64_t *out) {
     else if (*p == '+') { ++p; }
     if (*p < '0' || *p > '9') return 0;
     int64_t val = 0;
-    while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); ++p; }
+    while (*p >= '0' && *p <= '9') {
+        // nostrc-g4t: overflow check before accumulate
+        if (val > (INT64_MAX - 9) / 10) return 0;
+        val = val * 10 + (*p - '0'); ++p;
+    }
     *out = sign * val;
     *pp = p;
     return 1;

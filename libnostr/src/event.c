@@ -16,6 +16,7 @@
 #include <stdarg.h>
 #include "string_array.h"
 #include <stdint.h>
+#include <limits.h>
 
 static inline int hexval_char(char ch) {
     if (ch >= '0' && ch <= '9') return ch - '0';
@@ -186,6 +187,9 @@ static const char *find_key(const char *json, const char *key) {
     return NULL;
 }
 
+// nostrc-g4t: max realloc cap for JSON string buffers (16 MB)
+#define JSON_STRING_MAX_CAP (16 * 1024 * 1024)
+
 static int parse_json_string_fast(const char **pp, char **out) {
     const char *p = skip_ws_local(*pp);
     if (*p != '"') return 0;
@@ -218,6 +222,7 @@ static int parse_json_string_fast(const char **pp, char **out) {
     while (*p && *p != '"') {
         unsigned char c = (unsigned char)*p++;
         if (c == '\\') {
+            if (!*p) { free(buf); return 0; } // nostrc-g4t: null-check after backslash
             char e = *p++;
             switch (e) {
                 case '"': buf[len++] = '"'; break;
@@ -229,6 +234,8 @@ static int parse_json_string_fast(const char **pp, char **out) {
                 case 'r': buf[len++] = '\r'; break;
                 case 't': buf[len++] = '\t'; break;
                 case 'u': {
+                    // nostrc-g4t: Validate 4 hex digits remain before dereferencing
+                    if (!p[0] || !p[1] || !p[2] || !p[3]) { free(buf); return 0; }
                     // Decode \uXXXX (with surrogate pair support) into UTF-8
                     int h0 = hexval_char(*p); if (h0 < 0) { free(buf); return 0; } ++p;
                     int h1 = hexval_char(*p); if (h1 < 0) { free(buf); return 0; } ++p;
@@ -237,9 +244,10 @@ static int parse_json_string_fast(const char **pp, char **out) {
                     uint32_t cp = (uint32_t)((h0 << 12) | (h1 << 8) | (h2 << 4) | h3);
                     // Handle surrogate pairs
                     if (cp >= 0xD800 && cp <= 0xDBFF) {
-                        // Expect next sequence: \uDC00-\uDFFF
-                        if (*p != '\\' || *(p+1) != 'u') { free(buf); return 0; }
+                        // nostrc-g4t: Validate \uXXXX sequence exists for low surrogate
+                        if (!p[0] || !p[1] || p[0] != '\\' || p[1] != 'u') { free(buf); return 0; }
                         p += 2;
+                        if (!p[0] || !p[1] || !p[2] || !p[3]) { free(buf); return 0; }
                         int g0 = hexval_char(*p); if (g0 < 0) { free(buf); return 0; } ++p;
                         int g1 = hexval_char(*p); if (g1 < 0) { free(buf); return 0; } ++p;
                         int g2 = hexval_char(*p); if (g2 < 0) { free(buf); return 0; } ++p;
@@ -253,19 +261,19 @@ static int parse_json_string_fast(const char **pp, char **out) {
                     }
                     // UTF-8 encode
                     if (cp <= 0x7F) {
-                        if (len + 1 + 1 > cap) { size_t ncap = cap * 2; while (len + 2 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        if (len + 1 + 1 > cap) { size_t ncap = cap * 2; while (len + 2 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
                         buf[len++] = (char)cp;
                     } else if (cp <= 0x7FF) {
-                        if (len + 2 + 1 > cap) { size_t ncap = cap * 2; while (len + 3 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        if (len + 2 + 1 > cap) { size_t ncap = cap * 2; while (len + 3 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
                         buf[len++] = (char)(0xC0 | (cp >> 6));
                         buf[len++] = (char)(0x80 | (cp & 0x3F));
                     } else if (cp <= 0xFFFF) {
-                        if (len + 3 + 1 > cap) { size_t ncap = cap * 2; while (len + 4 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        if (len + 3 + 1 > cap) { size_t ncap = cap * 2; while (len + 4 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
                         buf[len++] = (char)(0xE0 | (cp >> 12));
                         buf[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
                         buf[len++] = (char)(0x80 | (cp & 0x3F));
                     } else {
-                        if (len + 4 + 1 > cap) { size_t ncap = cap * 2; while (len + 5 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        if (len + 4 + 1 > cap) { size_t ncap = cap * 2; while (len + 5 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
                         buf[len++] = (char)(0xF0 | (cp >> 18));
                         buf[len++] = (char)(0x80 | ((cp >> 12) & 0x3F));
                         buf[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
@@ -293,7 +301,11 @@ static int parse_json_int64_simple(const char **pp, long long *out) {
     const char *p = skip_ws_local(*pp);
     int neg = 0; long long v = 0; int any = 0;
     if (*p == '-') { neg = 1; ++p; }
-    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); ++p; any = 1; }
+    while (*p >= '0' && *p <= '9') {
+        // nostrc-g4t: overflow check before accumulate
+        if (v > (LLONG_MAX - 9) / 10) return 0;
+        v = v * 10 + (*p - '0'); ++p; any = 1;
+    }
     if (!any) return 0;
     *out = neg ? -v : v;
     *pp = p;
@@ -318,6 +330,7 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
         if (match_key_advance(&p, "kind")) {
             long long v = 0;
             if (!parse_json_int64_simple(&p, &v)) { return 0; }
+            if (v < 0 || v > 65535) { return 0; } // nostrc-g4t: valid NIP-01 kind range
             event->kind = (int)v; have_kind = 1;
         } else if (match_key_advance(&p, "created_at")) {
             long long ts = 0;

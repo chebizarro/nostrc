@@ -565,6 +565,9 @@ static int hexval(char c) {
     return -1;
 }
 
+// nostrc-g4t: max realloc cap for JSON string buffers (16 MB)
+#define ENVELOPE_JSON_STRING_MAX_CAP (16 * 1024 * 1024)
+
 static char *parse_json_string(const char **pp) {
     const char *p = skip_ws(*pp);
     if (*p != '"') return NULL;
@@ -578,6 +581,7 @@ static char *parse_json_string(const char **pp) {
         if (c == '"') { // end of string
             break;
         } else if (c == '\\') { // escape sequence
+            if (!*p) { free(buf); return NULL; } // nostrc-g4t: null-check after backslash
             char e = *p++;
             char outc;
             switch (e) {
@@ -590,13 +594,18 @@ static char *parse_json_string(const char **pp) {
             case 'r': outc = '\r'; goto emit_one;
             case 't': outc = '\t'; goto emit_one;
             case 'u': {
+                // nostrc-g4t: validate 4 chars remain before dereferencing
+                if (!p[0] || !p[1] || !p[2] || !p[3]) { free(buf); return NULL; }
                 // parse 4 hex digits
                 int h1 = hexval(p[0]); int h2 = hexval(p[1]); int h3 = hexval(p[2]); int h4 = hexval(p[3]);
                 if (h1 < 0 || h2 < 0 || h3 < 0 || h4 < 0) { free(buf); return NULL; }
                 uint32_t cp = (uint32_t)((h1<<12) | (h2<<8) | (h3<<4) | h4);
                 p += 4;
                 // Handle UTF-16 surrogate pairs \uD800-\uDBFF followed by \uDC00-\uDFFF
-                if (cp >= 0xD800 && cp <= 0xDBFF && p[0] == '\\' && p[1] == 'u') {
+                // nostrc-g4t: validate bounds before accessing p[0..5]
+                if (cp >= 0xD800 && cp <= 0xDBFF &&
+                    p[0] && p[1] && p[0] == '\\' && p[1] == 'u' &&
+                    p[2] && p[3] && p[4] && p[5]) {
                     int h5 = hexval(p[2]); int h6 = hexval(p[3]); int h7 = hexval(p[4]); int h8 = hexval(p[5]);
                     if (h5 >= 0 && h6 >= 0 && h7 >= 0 && h8 >= 0) {
                         uint32_t low = (uint32_t)((h5<<12) | (h6<<8) | (h7<<4) | h8);
@@ -608,7 +617,7 @@ static char *parse_json_string(const char **pp) {
                 }
                 char tmp[4];
                 int n = utf8_encode(cp, tmp);
-                if (len + (size_t)n >= cap) { cap *= 2; char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
+                if (len + (size_t)n >= cap) { cap *= 2; if (cap > ENVELOPE_JSON_STRING_MAX_CAP) { free(buf); return NULL; } char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
                 for (int i=0;i<n;i++) buf[len++] = tmp[i];
                 continue;
             }
@@ -616,10 +625,10 @@ static char *parse_json_string(const char **pp) {
                 free(buf); return NULL;
             }
 emit_one:
-            if (len + 1 >= cap) { cap *= 2; char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
+            if (len + 1 >= cap) { cap *= 2; if (cap > ENVELOPE_JSON_STRING_MAX_CAP) { free(buf); return NULL; } char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
             buf[len++] = outc;
         } else {
-            if (len + 1 >= cap) { cap *= 2; char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
+            if (len + 1 >= cap) { cap *= 2; if (cap > ENVELOPE_JSON_STRING_MAX_CAP) { free(buf); return NULL; } char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
             buf[len++] = c;
         }
     }
