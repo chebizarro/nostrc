@@ -10,7 +10,6 @@
     <file>ui/widgets/gnostr-dm-inbox-view.ui</file>
     <file>ui/widgets/gnostr-dm-conversation-view.ui</file>
     <file>ui/widgets/gnostr-dm-row.ui</file>
-    <file>ui/widgets/gnostr-dm-conversation-view.ui</file>
     <file>ui/widgets/gnostr-notifications-view.ui</file>
     <file>ui/widgets/gnostr-notification-row.ui</file>
     <file>ui/widgets/gnostr-profile-pane.ui</file>
