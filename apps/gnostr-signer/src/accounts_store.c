@@ -25,6 +25,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdint.h>
 
 /* Change callback entry */
 typedef struct {
