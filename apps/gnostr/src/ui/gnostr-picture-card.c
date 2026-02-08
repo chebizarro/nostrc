@@ -914,6 +914,74 @@ update_display(GnostrPictureCard *self) {
   update_reaction_display(self);
 }
 
+/* Context for async thumbnail loading - prevents use-after-free */
+typedef struct {
+  GWeakRef card_ref;  /* weak ref to the picture card */
+  char *url;
+} ThumbnailLoadCtx;
+
+static void thumbnail_load_ctx_free(ThumbnailLoadCtx *ctx) {
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->card_ref);
+  g_free(ctx->url);
+  g_free(ctx);
+}
+
+#ifdef HAVE_SOUP3
+static void on_thumbnail_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
+  ThumbnailLoadCtx *ctx = (ThumbnailLoadCtx *)user_data;
+  GError *error = NULL;
+  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("PictureCard: Failed to load thumbnail: %s", error->message);
+    }
+    g_error_free(error);
+    thumbnail_load_ctx_free(ctx);
+    return;
+  }
+
+  GnostrPictureCard *self = g_weak_ref_get(&ctx->card_ref);
+  if (!self) {
+    if (bytes) g_bytes_unref(bytes);
+    thumbnail_load_ctx_free(ctx);
+    return;
+  }
+
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    if (bytes) g_bytes_unref(bytes);
+    gtk_widget_set_visible(self->image_spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
+    g_object_unref(self);
+    thumbnail_load_ctx_free(ctx);
+    return;
+  }
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
+
+  if (error) {
+    g_warning("PictureCard: Failed to create texture: %s", error->message);
+    g_error_free(error);
+    gtk_widget_set_visible(self->image_spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
+    g_object_unref(self);
+    thumbnail_load_ctx_free(ctx);
+    return;
+  }
+
+  gtk_picture_set_paintable(GTK_PICTURE(self->image_picture), GDK_PAINTABLE(texture));
+  gtk_widget_set_visible(self->image_picture, TRUE);
+  gtk_widget_set_visible(self->image_spinner, FALSE);
+  gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
+
+  g_object_unref(texture);
+  g_object_unref(self);
+  thumbnail_load_ctx_free(ctx);
+}
+#endif
+
 /* Internal: Load the primary image */
 static void
 load_image(GnostrPictureCard *self) {
@@ -923,11 +991,48 @@ load_image(GnostrPictureCard *self) {
     return;
   }
 
-  /* Use GFile to load from URI */
+#ifdef HAVE_SOUP3
+  /* Cancel any pending load */
+  if (self->image_cancellable) {
+    g_cancellable_cancel(self->image_cancellable);
+    g_clear_object(&self->image_cancellable);
+    self->image_cancellable = g_cancellable_new();
+  }
+
+  /* Show spinner while loading */
+  gtk_widget_set_visible(self->image_spinner, TRUE);
+  gtk_spinner_start(GTK_SPINNER(self->image_spinner));
+
+  SoupMessage *msg = soup_message_new("GET", url);
+  if (!msg) {
+    g_warning("PictureCard: Invalid URL: %s", url);
+    gtk_widget_set_visible(self->image_spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
+    return;
+  }
+
+  ThumbnailLoadCtx *ctx = g_new0(ThumbnailLoadCtx, 1);
+  g_weak_ref_init(&ctx->card_ref, self);
+  ctx->url = g_strdup(url);
+
+  soup_session_send_and_read_async(
+    gnostr_get_shared_soup_session(),
+    msg,
+    G_PRIORITY_LOW,
+    self->image_cancellable,
+    on_thumbnail_loaded,
+    ctx
+  );
+
+  g_object_unref(msg);
+  gtk_widget_set_visible(self->image_picture, TRUE);
+#else
+  /* Fallback: try GFile (requires GVfs for HTTP URIs) */
   GFile *file = g_file_new_for_uri(url);
   gtk_picture_set_file(GTK_PICTURE(self->image_picture), file);
   gtk_widget_set_visible(self->image_picture, TRUE);
   g_object_unref(file);
+#endif
 }
 
 /* Internal: Update reaction count display */

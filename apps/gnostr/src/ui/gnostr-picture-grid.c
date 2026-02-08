@@ -96,12 +96,15 @@ static void on_card_author_clicked(GnostrPictureCard *card, const char *pubkey, 
 static void on_card_like_clicked(GnostrPictureCard *card, gpointer user_data);
 static void on_card_zap_clicked(GnostrPictureCard *card, gpointer user_data);
 static void on_card_hashtag_clicked(GnostrPictureCard *card, const char *tag, gpointer user_data);
+static void on_image_viewer_destroyed(GtkWidget *widget, gpointer user_data);
 
 static void
 gnostr_picture_grid_dispose(GObject *object) {
   GnostrPictureGrid *self = GNOSTR_PICTURE_GRID(object);
 
   if (self->overlay_window) {
+    g_signal_handlers_disconnect_by_func(self->overlay_window,
+                                          on_image_viewer_destroyed, self);
     gtk_window_destroy(GTK_WINDOW(self->overlay_window));
     self->overlay_window = NULL;
     self->image_viewer = NULL;
@@ -625,10 +628,12 @@ gnostr_picture_grid_show_overlay(GnostrPictureGrid *self,
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
   GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
 
-  /* Create or reuse image viewer */
+  /* Create image viewer (fresh each time — viewer is destroyed on close) */
   if (!self->image_viewer) {
     self->image_viewer = gnostr_image_viewer_new(parent);
     self->overlay_window = GTK_WIDGET(self->image_viewer);
+    g_signal_connect(self->overlay_window, "destroy",
+                     G_CALLBACK(on_image_viewer_destroyed), self);
   }
 
   /* Get all image URLs for gallery navigation */
@@ -723,6 +728,15 @@ update_empty_state(GnostrPictureGrid *self) {
     gtk_widget_set_visible(self->empty_box, FALSE);
     gtk_widget_set_visible(self->scrolled_window, TRUE);
   }
+}
+
+/* Image viewer destroy handler - clears stale pointers (nostrc-rvzp) */
+static void
+on_image_viewer_destroyed(GtkWidget *widget, gpointer user_data) {
+  GnostrPictureGrid *self = GNOSTR_PICTURE_GRID(user_data);
+  (void)widget;
+  self->image_viewer = NULL;
+  self->overlay_window = NULL;
 }
 
 /* Card signal handlers */

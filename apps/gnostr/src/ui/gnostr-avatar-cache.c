@@ -572,6 +572,42 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
         return;
 
       s_avatar_metrics.requests_total++;
+      ensure_avatar_cache();
+
+      /* Check memory/disk cache before starting HTTP fetch.
+       * This avoids wasting concurrent fetch slots on already-cached avatars
+       * and ensures immediate display when cached. (nostrc-qm77) */
+      GdkTexture *cached = g_hash_table_lookup(avatar_texture_cache, url);
+      if (cached) {
+        s_avatar_metrics.mem_cache_hits++;
+        avatar_lru_touch(url);
+        if (image && GTK_IS_PICTURE(image)) {
+          gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(cached));
+          gtk_widget_set_visible(image, TRUE);
+        }
+        if (initials && GTK_IS_WIDGET(initials)) {
+          gtk_widget_set_visible(initials, FALSE);
+        }
+        return;
+      }
+
+      GdkTexture *disk_tex = try_load_avatar_from_disk(url);
+      if (disk_tex) {
+        /* Promote to memory cache */
+        g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
+        avatar_lru_insert(url);
+        avatar_lru_evict_if_needed();
+        if (image && GTK_IS_PICTURE(image)) {
+          gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(disk_tex));
+          gtk_widget_set_visible(image, TRUE);
+        }
+        if (initials && GTK_IS_WIDGET(initials)) {
+          gtk_widget_set_visible(initials, FALSE);
+        }
+        g_object_unref(disk_tex);
+        return;
+      }
+
       ensure_fetch_limiter();
 
       g_mutex_lock(&s_fetch_mutex);
