@@ -25,6 +25,11 @@ typedef void (*NostrRelayStateCallback)(struct NostrRelay *relay,
                                         NostrRelayConnectionState new_state,
                                         void *user_data);
 
+/* Callback for NIP-42 AUTH challenge received (nostrc-7og) */
+typedef void (*NostrRelayAuthCallback)(struct NostrRelay *relay,
+                                       const char *challenge,
+                                       void *user_data);
+
 struct _NostrRelayPrivate {
     nsync_mu mutex;
 
@@ -55,6 +60,10 @@ struct _NostrRelayPrivate {
     /* State change callback */
     NostrRelayStateCallback state_callback;
     void *state_callback_user_data;
+
+    /* NIP-42 AUTH challenge callback (nostrc-7og) */
+    NostrRelayAuthCallback auth_callback;
+    void *auth_callback_user_data;
 };
 
 typedef struct _NostrRelayWriteRequest {

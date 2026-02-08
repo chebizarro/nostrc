@@ -56,6 +56,7 @@ enum {
     GNOSTR_RELAY_SIGNAL_CLOSED,
     GNOSTR_RELAY_SIGNAL_ERROR,
     GNOSTR_RELAY_SIGNAL_NIP11_INFO,
+    GNOSTR_RELAY_SIGNAL_AUTH_CHALLENGE,
     GNOSTR_RELAY_SIGNALS_COUNT
 };
 
@@ -238,6 +239,60 @@ gboolean gnostr_relay_supports_nip(GNostrRelay *self, gint nip);
  * Emits "nip11-info-fetched" signal when complete.
  */
 void gnostr_relay_fetch_nip11_async(GNostrRelay *self);
+
+/* ---- NIP-42 Relay Authentication (nostrc-7og) ---- */
+
+/**
+ * GNostrRelayAuthSignFunc:
+ * @event: (transfer none): the unsigned kind 22242 auth event to sign
+ * @error: (out) (optional): return location for a signing error
+ * @user_data: user data
+ *
+ * Callback used to sign a NIP-42 authentication event.
+ * The implementation should sign the event in place (setting id/pubkey/sig).
+ */
+typedef void (*GNostrRelayAuthSignFunc)(NostrEvent *event,
+                                        GError **error,
+                                        gpointer user_data);
+
+/**
+ * gnostr_relay_set_auth_handler:
+ * @self: a #GNostrRelay
+ * @sign_func: (nullable) (scope notified): signing callback, or %NULL to clear
+ * @user_data: (closure): user data for @sign_func
+ * @destroy: (nullable): destroy notify for @user_data
+ *
+ * Sets the NIP-42 authentication handler. When an AUTH challenge is
+ * received from the relay, the signing function will be called
+ * automatically to produce a signed kind 22242 event response.
+ *
+ * If no handler is set, AUTH challenges are still emitted via the
+ * "auth-challenge" signal but no automatic response is sent.
+ */
+void gnostr_relay_set_auth_handler(GNostrRelay *self,
+                                    GNostrRelayAuthSignFunc sign_func,
+                                    gpointer user_data,
+                                    GDestroyNotify destroy);
+
+/**
+ * gnostr_relay_authenticate:
+ * @self: a #GNostrRelay
+ * @error: (nullable): return location for a #GError
+ *
+ * Manually triggers NIP-42 authentication using the stored challenge
+ * and the previously configured auth handler.
+ *
+ * Returns: %TRUE if authentication event was sent, %FALSE on error
+ */
+gboolean gnostr_relay_authenticate(GNostrRelay *self, GError **error);
+
+/**
+ * gnostr_relay_get_authenticated:
+ * @self: a #GNostrRelay
+ *
+ * Returns: %TRUE if the relay has been successfully authenticated
+ */
+gboolean gnostr_relay_get_authenticated(GNostrRelay *self);
 
 G_END_DECLS
 

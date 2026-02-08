@@ -826,6 +826,17 @@ static void *message_loop(void *arg) {
             r->priv->challenge = ch ? strdup(ch) : NULL;
             char tmp[256]; snprintf(tmp, sizeof(tmp), "AUTH challenge=%s", r->priv->challenge ? r->priv->challenge : "");
             relay_debug_emit(r, tmp);
+
+            // Invoke auth callback if registered (nostrc-7og)
+            NostrRelayAuthCallback auth_cb = NULL;
+            void *auth_cb_data = NULL;
+            nsync_mu_lock(&r->priv->mutex);
+            auth_cb = r->priv->auth_callback;
+            auth_cb_data = r->priv->auth_callback_user_data;
+            nsync_mu_unlock(&r->priv->mutex);
+            if (auth_cb && r->priv->challenge) {
+                auth_cb(r, r->priv->challenge, auth_cb_data);
+            }
             break; }
         case NOSTR_ENVELOPE_EVENT: {
             NostrEventEnvelope *env = (NostrEventEnvelope *)envelope;
@@ -1561,6 +1572,16 @@ void nostr_relay_set_state_callback(NostrRelay *relay,
     nsync_mu_lock(&relay->priv->mutex);
     relay->priv->state_callback = callback;
     relay->priv->state_callback_user_data = user_data;
+    nsync_mu_unlock(&relay->priv->mutex);
+}
+
+void nostr_relay_set_auth_callback(NostrRelay *relay,
+                                   NostrRelayAuthCallback callback,
+                                   void *user_data) {
+    if (!relay || !relay->priv) return;
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->priv->auth_callback = callback;
+    relay->priv->auth_callback_user_data = user_data;
     nsync_mu_unlock(&relay->priv->mutex);
 }
 

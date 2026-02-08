@@ -51,6 +51,11 @@ struct _GNostrRelay {
     RelayInformationDocument *nip11_info;  /* Cached NIP-11 info (owned) */
     GCancellable *nip11_cancellable;       /* Cancel in-flight NIP-11 fetch */
 #endif
+    /* NIP-42 authentication (nostrc-7og) */
+    GNostrRelayAuthSignFunc auth_sign_func;
+    gpointer auth_sign_data;
+    GDestroyNotify auth_sign_destroy;
+    gboolean authenticated;      /* TRUE after successful AUTH response */
 };
 
 G_DEFINE_TYPE(GNostrRelay, gnostr_relay, G_TYPE_OBJECT)
@@ -88,6 +93,12 @@ gnostr_relay_set_state_internal(GNostrRelay *self, GNostrRelayState new_state)
     gboolean is_connected = (new_state == GNOSTR_RELAY_STATE_CONNECTED);
 
     self->state = new_state;
+
+    /* Reset auth state on disconnect (nostrc-7og) */
+    if (new_state == GNOSTR_RELAY_STATE_DISCONNECTED ||
+        new_state == GNOSTR_RELAY_STATE_ERROR) {
+        self->authenticated = FALSE;
+    }
 
 #ifdef ENABLE_NIP11
     /* Auto-fetch NIP-11 info when we become connected */
@@ -150,6 +161,54 @@ on_core_state_changed(NostrRelay *relay G_GNUC_UNUSED,
 
     /* Store state directly for immediate access (thread-safe) */
     __atomic_store_n(&self->state, g_new_state, __ATOMIC_SEQ_CST);
+}
+
+/* ---- NIP-42 AUTH challenge callback (worker thread → main thread) ---- */
+
+typedef struct {
+    GNostrRelay *self;
+    gchar *challenge;
+} AuthChallengeData;
+
+static gboolean
+auth_challenge_on_main_thread(gpointer user_data)
+{
+    AuthChallengeData *data = user_data;
+    GNostrRelay *self = data->self;
+
+    /* Emit auth-challenge signal */
+    g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_AUTH_CHALLENGE], 0,
+                  data->challenge);
+
+    /* Auto-authenticate if handler is configured */
+    if (self->auth_sign_func) {
+        GError *error = NULL;
+        if (!gnostr_relay_authenticate(self, &error)) {
+            g_warning("NIP-42 auto-auth failed for %s: %s",
+                      self->url, error ? error->message : "unknown");
+            if (error) g_error_free(error);
+        }
+    }
+
+    g_object_unref(data->self);
+    g_free(data->challenge);
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
+
+/* Core relay auth callback (called from worker thread) */
+static void
+on_core_auth_challenge(NostrRelay *relay G_GNUC_UNUSED,
+                       const char *challenge,
+                       void *user_data)
+{
+    GNostrRelay *self = GNOSTR_RELAY(user_data);
+
+    AuthChallengeData *data = g_new(AuthChallengeData, 1);
+    data->self = g_object_ref(self);
+    data->challenge = g_strdup(challenge);
+
+    g_idle_add_full(G_PRIORITY_DEFAULT, auth_challenge_on_main_thread, data, NULL);
 }
 
 static void
@@ -219,6 +278,9 @@ gnostr_relay_constructed(GObject *object)
 
             /* Set up state callback to receive connection state changes */
             nostr_relay_set_state_callback(self->relay, on_core_state_changed, self);
+
+            /* Set up auth callback for NIP-42 challenges (nostrc-7og) */
+            nostr_relay_set_auth_callback(self->relay, on_core_auth_challenge, self);
         }
     }
 }
@@ -242,12 +304,21 @@ gnostr_relay_finalize(GObject *object)
     }
 #endif
 
-    /* Remove callback before freeing relay */
+    /* Remove callbacks before freeing relay */
     if (self->relay) {
         nostr_relay_set_state_callback(self->relay, NULL, NULL);
+        nostr_relay_set_auth_callback(self->relay, NULL, NULL);
         nostr_relay_free(self->relay);
         self->relay = NULL;
     }
+
+    /* Free auth handler user data */
+    if (self->auth_sign_destroy && self->auth_sign_data) {
+        self->auth_sign_destroy(self->auth_sign_data);
+    }
+    self->auth_sign_func = NULL;
+    self->auth_sign_data = NULL;
+    self->auth_sign_destroy = NULL;
 
     g_free(self->url);
     self->url = NULL;
@@ -432,6 +503,22 @@ gnostr_relay_class_init(GNostrRelayClass *klass)
                      G_TYPE_NONE, 0);
 #endif
 
+    /**
+     * GNostrRelay::auth-challenge:
+     * @self: the relay
+     * @challenge: the NIP-42 challenge string from the relay
+     *
+     * Emitted when a NIP-42 AUTH challenge is received from the relay.
+     * If an auth handler has been set via gnostr_relay_set_auth_handler(),
+     * automatic authentication will be attempted after this signal is emitted.
+     */
+    gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_AUTH_CHALLENGE] =
+        g_signal_new("auth-challenge",
+                     G_TYPE_FROM_CLASS(klass),
+                     G_SIGNAL_RUN_FIRST,
+                     0, NULL, NULL, NULL,
+                     G_TYPE_NONE, 1, G_TYPE_STRING);
+
     /* Legacy signals for backward compatibility */
     nostr_relay_signals[SIGNAL_CONNECTED] =
         g_signal_new("connected",
@@ -464,6 +551,10 @@ gnostr_relay_init(GNostrRelay *self)
     self->nip11_info = NULL;
     self->nip11_cancellable = NULL;
 #endif
+    self->auth_sign_func = NULL;
+    self->auth_sign_data = NULL;
+    self->auth_sign_destroy = NULL;
+    self->authenticated = FALSE;
 }
 
 /* Public API */
@@ -620,10 +711,23 @@ gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error)
     if (self->nip11_info && self->nip11_info->limitation) {
         RelayLimitationDocument *lim = self->nip11_info->limitation;
 
-        if (lim->auth_required) {
-            g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
-                        "relay %s requires NIP-42 authentication", self->url);
-            return FALSE;
+        if (lim->auth_required && !self->authenticated) {
+            /* Try auto-auth if handler is configured (nostrc-7og) */
+            if (self->auth_sign_func) {
+                GError *auth_err = NULL;
+                if (!gnostr_relay_authenticate(self, &auth_err)) {
+                    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
+                                "relay %s requires auth and auto-auth failed: %s",
+                                self->url, auth_err ? auth_err->message : "unknown");
+                    if (auth_err) g_error_free(auth_err);
+                    return FALSE;
+                }
+                /* Auth succeeded, fall through to publish */
+            } else {
+                g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
+                            "relay %s requires NIP-42 authentication", self->url);
+                return FALSE;
+            }
         }
 
         if (lim->payment_required) {
@@ -699,6 +803,121 @@ gnostr_relay_get_core_relay(GNostrRelay *self)
 {
     g_return_val_if_fail(GNOSTR_IS_RELAY(self), NULL);
     return self->relay;
+}
+
+/* ---- NIP-42 Authentication API (nostrc-7og) ---- */
+
+/**
+ * Sign callback adapter: bridges GNostrRelayAuthSignFunc to core nostr_relay_auth's
+ * void (*sign)(NostrEvent *, Error **) signature.
+ */
+typedef struct {
+    GNostrRelayAuthSignFunc func;
+    gpointer user_data;
+    GError *g_error;      /* Captures GError from sign callback */
+} AuthSignAdapter;
+
+/* Thread-local adapter for bridging sign callback */
+static __thread AuthSignAdapter *_auth_sign_adapter;
+
+static void
+auth_sign_bridge(NostrEvent *event, Error **err)
+{
+    AuthSignAdapter *adapter = _auth_sign_adapter;
+    if (!adapter || !adapter->func) {
+        if (err) *err = new_error(1, "no auth sign function configured");
+        return;
+    }
+
+    GError *g_err = NULL;
+    adapter->func(event, &g_err, adapter->user_data);
+    if (g_err) {
+        if (err) *err = new_error(1, "%s", g_err->message);
+        adapter->g_error = g_err;
+    }
+}
+
+void
+gnostr_relay_set_auth_handler(GNostrRelay *self,
+                               GNostrRelayAuthSignFunc sign_func,
+                               gpointer user_data,
+                               GDestroyNotify destroy)
+{
+    g_return_if_fail(GNOSTR_IS_RELAY(self));
+
+    /* Free old handler data */
+    if (self->auth_sign_destroy && self->auth_sign_data) {
+        self->auth_sign_destroy(self->auth_sign_data);
+    }
+
+    self->auth_sign_func = sign_func;
+    self->auth_sign_data = user_data;
+    self->auth_sign_destroy = destroy;
+    self->authenticated = FALSE;
+}
+
+gboolean
+gnostr_relay_authenticate(GNostrRelay *self, GError **error)
+{
+    g_return_val_if_fail(GNOSTR_IS_RELAY(self), FALSE);
+
+    if (!self->relay) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                            "no core relay");
+        return FALSE;
+    }
+
+    if (!self->auth_sign_func) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
+                            "no auth handler configured; call gnostr_relay_set_auth_handler() first");
+        return FALSE;
+    }
+
+    if (self->state != GNOSTR_RELAY_STATE_CONNECTED) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                            "not connected");
+        return FALSE;
+    }
+
+    /* Set up thread-local bridge adapter */
+    AuthSignAdapter adapter = {
+        .func = self->auth_sign_func,
+        .user_data = self->auth_sign_data,
+        .g_error = NULL
+    };
+    _auth_sign_adapter = &adapter;
+
+    Error *core_err = NULL;
+    nostr_relay_auth(self->relay, auth_sign_bridge, &core_err);
+
+    _auth_sign_adapter = NULL;
+
+    if (adapter.g_error) {
+        if (error) {
+            *error = adapter.g_error;
+        } else {
+            g_error_free(adapter.g_error);
+        }
+        if (core_err) free_error(core_err);
+        return FALSE;
+    }
+
+    if (core_err) {
+        g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
+                    "%s", core_err->message ? core_err->message : "auth failed");
+        free_error(core_err);
+        return FALSE;
+    }
+
+    self->authenticated = TRUE;
+    return TRUE;
+}
+
+gboolean
+gnostr_relay_get_authenticated(GNostrRelay *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_RELAY(self), FALSE);
+    return self->authenticated;
 }
 
 #ifdef ENABLE_NIP11

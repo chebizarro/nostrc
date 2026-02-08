@@ -312,6 +312,32 @@ void nostr_relay_set_state_callback(NostrRelay *relay,
                                     void *user_data);
 
 /**
+ * NostrRelayAuthCallback:
+ * @relay: The relay that received the AUTH challenge
+ * @challenge: The challenge string from the relay
+ * @user_data: User data passed to nostr_relay_set_auth_callback()
+ *
+ * Callback invoked when a NIP-42 AUTH challenge is received.
+ * Called from relay worker thread - use thread-safe operations.
+ */
+typedef void (*NostrRelayAuthCallback)(NostrRelay *relay,
+                                       const char *challenge,
+                                       void *user_data);
+
+/**
+ * nostr_relay_set_auth_callback:
+ * @relay: (nullable): relay
+ * @callback: (nullable): Callback function, or NULL to remove
+ * @user_data: (nullable): User data passed to callback
+ *
+ * Set a callback to be notified of NIP-42 AUTH challenges.
+ * The callback is invoked from the relay worker thread.
+ */
+void nostr_relay_set_auth_callback(NostrRelay *relay,
+                                   NostrRelayAuthCallback callback,
+                                   void *user_data);
+
+/**
  * nostr_relay_get_reconnect_attempt:
  * @relay: (nullable): relay
  *
