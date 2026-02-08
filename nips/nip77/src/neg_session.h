@@ -18,6 +18,10 @@ struct NostrNegSession {
   /* queued child ranges to send in subsequent rounds due to max_ranges cap */
   neg_bound_t pending_ranges[64];
   size_t pending_ranges_len;
+  /* NEED IDs: event IDs the peer has that we don't (to download) */
+  unsigned char *need_ids;     /* flat array of 32-byte IDs */
+  size_t need_ids_count;
+  size_t need_ids_cap;
 };
 
 #endif

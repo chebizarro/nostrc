@@ -18,6 +18,10 @@
 #include <nostr/nip77/negentropy.h>
 #include <nostr-relay.h>
 #include <nostr-json.h>
+#include <nostr-subscription.h>
+#include <nostr-filter.h>
+#include <nostr-event.h>
+#include <select.h>
 #include "nostr_json.h"
 #include <channel.h>
 #include <string.h>
@@ -269,6 +273,126 @@ wait_neg_response(gchar **hex_out, gint64 deadline_us, GError **error)
 }
 
 /* ============================================================================
+ * Event Fetching — download NEED events from relay after reconciliation
+ * ============================================================================ */
+
+#define FETCH_TIMEOUT_MS  30000  /* 30s for event fetch */
+#define FETCH_BATCH_SIZE  256    /* Max IDs per REQ */
+
+static gchar *
+bin2hex_g(const unsigned char *bin, size_t len)
+{
+  static const char hex[] = "0123456789abcdef";
+  gchar *out = g_malloc(len * 2 + 1);
+  for (size_t i = 0; i < len; i++) {
+    out[2 * i]     = hex[bin[i] >> 4];
+    out[2 * i + 1] = hex[bin[i] & 0x0F];
+  }
+  out[len * 2] = '\0';
+  return out;
+}
+
+/**
+ * Fetch NEED events from relay after negentropy reconciliation.
+ * Sends REQ with ID filter, receives events, and ingests into NDB.
+ * Returns number of events successfully fetched and ingested.
+ */
+static guint
+fetch_need_events(NostrRelay *relay, NostrNegSession *neg,
+                  GCancellable *cancel)
+{
+  const unsigned char *need_ids = NULL;
+  size_t need_count = 0;
+  if (nostr_neg_get_need_ids(neg, &need_ids, &need_count) != 0 ||
+      need_count == 0)
+    return 0;
+
+  g_debug("[NEG] Fetching %zu missing events", need_count);
+
+  guint total_fetched = 0;
+
+  /* Batch IDs into groups to avoid giant filters */
+  for (size_t batch_start = 0; batch_start < need_count;
+       batch_start += FETCH_BATCH_SIZE) {
+    if (g_cancellable_is_cancelled(cancel)) break;
+
+    size_t batch_end = batch_start + FETCH_BATCH_SIZE;
+    if (batch_end > need_count) batch_end = need_count;
+    size_t batch_size = batch_end - batch_start;
+
+    /* Build filter with IDs */
+    NostrFilter *filter = nostr_filter_new();
+    for (size_t i = batch_start; i < batch_end; i++) {
+      gchar *hex = bin2hex_g(need_ids + i * 32, 32);
+      nostr_filter_add_id(filter, hex);
+      g_free(hex);
+    }
+
+    NostrFilters *filters = nostr_filters_new();
+    nostr_filters_add(filters, filter);
+
+    /* Create and fire subscription */
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    if (!sub) {
+      g_warning("[NEG] Failed to prepare fetch subscription");
+      break;
+    }
+
+    Error *fire_err = NULL;
+    if (!nostr_subscription_fire(sub, &fire_err)) {
+      g_warning("[NEG] Failed to fire fetch subscription: %s",
+                fire_err ? fire_err->message : "unknown");
+      if (fire_err) free(fire_err);
+      nostr_subscription_free(sub);
+      break;
+    }
+
+    /* Receive events until EOSE or timeout */
+    guint batch_fetched = 0;
+    gboolean done = FALSE;
+    while (!done && !g_cancellable_is_cancelled(cancel)) {
+      NostrEvent *event = NULL;
+      void *eose_val = NULL;
+      GoSelectCase cases[2] = {
+        { .op = GO_SELECT_RECEIVE, .chan = sub->events,
+          .recv_buf = (void **)&event },
+        { .op = GO_SELECT_RECEIVE, .chan = sub->end_of_stored_events,
+          .recv_buf = &eose_val },
+      };
+
+      GoSelectResult result = go_select_timeout(cases, 2, FETCH_TIMEOUT_MS);
+
+      if (result.selected_case == 0 && event) {
+        /* EVENT received — serialize and ingest */
+        char *json = nostr_event_serialize(event);
+        if (json) {
+          storage_ndb_ingest_event_json(json, NULL);
+          batch_fetched++;
+          free(json);
+        }
+        nostr_event_free(event);
+      } else if (result.selected_case == 1) {
+        /* EOSE — all stored events received */
+        done = TRUE;
+      } else {
+        /* timeout or error */
+        g_debug("[NEG] Fetch timeout after %u events", batch_fetched);
+        done = TRUE;
+      }
+    }
+
+    nostr_subscription_unsubscribe(sub);
+    nostr_subscription_free(sub);
+    total_fetched += batch_fetched;
+
+    g_debug("[NEG] Batch fetched %u/%zu events",
+            batch_fetched, batch_size);
+  }
+
+  return total_fetched;
+}
+
+/* ============================================================================
  * GTask Implementation
  * ============================================================================ */
 
@@ -427,6 +551,14 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
       GoChannel *wch = nostr_relay_write(relay, strdup(neg_msg));
       g_free(neg_msg);
       if (wch) go_channel_free(wch);
+    }
+
+    /* === Phase 5.5: Fetch missing events (NEED IDs) === */
+    if (!proto_err && !g_cancellable_is_cancelled(cancel)) {
+      stats->events_fetched = fetch_need_events(relay, neg, cancel);
+      if (stats->events_fetched > 0) {
+        g_debug("[NEG] Fetched %u events from relay", stats->events_fetched);
+      }
     }
 
     /* Send NEG-CLOSE regardless of outcome */

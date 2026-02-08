@@ -68,6 +68,13 @@ char *nostr_neg_build_next_hex(NostrNegSession *s);
 /* Stats */
 void  nostr_neg_get_stats(const NostrNegSession *s, NostrNegStats *out);
 
+/* NEED IDs — event IDs the peer has that we don't.
+ * Valid after protocol completes. Pointer owned by session.
+ * Returns 0 on success, -1 on invalid arguments. */
+int   nostr_neg_get_need_ids(const NostrNegSession *s,
+                              const unsigned char **out_ids,
+                              size_t *out_count);
+
 #ifdef __cplusplus
 }
 #endif

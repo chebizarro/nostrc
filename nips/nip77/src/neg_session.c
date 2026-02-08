@@ -1,5 +1,6 @@
 #include "neg_session.h"
 #include "neg_fingerprint.h"
+#include "neg_varint.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -20,14 +21,75 @@ NostrNegSession *nostr_neg_session_new(const NostrNegDataSource *ds,
   return s;
 }
 
-/* TLV iterator to count IdList items in payload into a uint32_t* passed via u */
-static int count_idlist_items_cb(unsigned char t, const unsigned char *val, size_t vlen, void *u) {
-  if (t == NEG_ELT_IDLIST && val && vlen % 32 == 0 && u) {
-    uint32_t *cnt = (uint32_t*)u;
-    *cnt += (uint32_t)(vlen / 32);
-    return 1; /* stop after first IdList */
+/* Context for NEED ID extraction callback */
+typedef struct {
+  NostrNegSession *session;
+} extract_need_ctx_t;
+
+/* TLV iterator: extract NEED IDs from peer's IdList.
+ * Compares peer IDs against local dataset; IDs not found locally are NEED. */
+static int extract_need_ids_cb(unsigned char t, const unsigned char *val, size_t vlen, void *u) {
+  if (t != NEG_ELT_IDLIST || !val || vlen == 0 || !u) return 0;
+  extract_need_ctx_t *ctx = (extract_need_ctx_t *)u;
+  NostrNegSession *s = ctx->session;
+
+  /* Parse varint count prefix */
+  uint64_t count = 0;
+  size_t used = 0;
+  if (neg_varint_decode(val, vlen, &count, &used) != 0 || count == 0) return 0;
+
+  const unsigned char *ids_start = val + used;
+  size_t ids_bytes = vlen - used;
+  if (ids_bytes < count * 32) return 0; /* malformed */
+
+  s->stats.ids_recv += (uint32_t)count;
+
+  /* Build local ID set for comparison */
+  size_t local_cap = 256, local_cnt = 0;
+  unsigned char *local_ids = (unsigned char *)malloc(local_cap * 32);
+  if (local_ids && s->ds.begin_iter) {
+    s->ds.begin_iter(s->ds.ctx);
+    NostrIndexItem it;
+    while (s->ds.next && s->ds.next(s->ds.ctx, &it) == 0) {
+      if (local_cnt >= local_cap) {
+        size_t ncap = local_cap * 2;
+        unsigned char *tmp = (unsigned char *)realloc(local_ids, ncap * 32);
+        if (!tmp) break;
+        local_ids = tmp;
+        local_cap = ncap;
+      }
+      memcpy(local_ids + local_cnt * 32, it.id.bytes, 32);
+      local_cnt++;
+    }
+    if (s->ds.end_iter) s->ds.end_iter(s->ds.ctx);
   }
-  return 0;
+
+  /* For each peer ID, check if in local set */
+  for (uint64_t i = 0; i < count; i++) {
+    const unsigned char *peer_id = ids_start + i * 32;
+    int found = 0;
+    for (size_t j = 0; j < local_cnt; j++) {
+      if (memcmp(local_ids + j * 32, peer_id, 32) == 0) {
+        found = 1;
+        break;
+      }
+    }
+    if (!found) {
+      /* Grow need_ids array */
+      if (s->need_ids_count >= s->need_ids_cap) {
+        size_t new_cap = s->need_ids_cap ? s->need_ids_cap * 2 : 64;
+        unsigned char *tmp = (unsigned char *)realloc(s->need_ids, new_cap * 32);
+        if (!tmp) continue;
+        s->need_ids = tmp;
+        s->need_ids_cap = new_cap;
+      }
+      memcpy(s->need_ids + s->need_ids_count * 32, peer_id, 32);
+      s->need_ids_count++;
+    }
+  }
+
+  free(local_ids);
+  return 1; /* stop after first IdList */
 }
 
 /* TLV fingerprint capture context and callback */
@@ -45,6 +107,7 @@ static int capture_fp_cb(unsigned char t, const unsigned char *val, size_t vlen,
 void nostr_neg_session_free(NostrNegSession *s) {
   if (!s) return;
   if (s->pending_msg) free(s->pending_msg);
+  if (s->need_ids) free(s->need_ids);
   free(s);
 }
 
@@ -210,7 +273,8 @@ int nostr_neg_handle_peer_hex(NostrNegSession *s, const char *hex_msg) {
     s->stats.ranges_recv += (uint32_t)rn;
     /* Account ids received if peer sent an IdList */
     if (payload && payload_len) {
-      neg_msg_payload_iterate(payload, payload_len, count_idlist_items_cb, &s->stats.ids_recv);
+      extract_need_ctx_t ectx = { .session = s };
+      neg_msg_payload_iterate(payload, payload_len, extract_need_ids_cb, &ectx);
     }
     if (rn >= 1) {
       /* Extract peer fingerprint (first only) */
@@ -317,4 +381,13 @@ char *nostr_neg_build_next_hex(NostrNegSession *s) {
 void  nostr_neg_get_stats(const NostrNegSession *s, NostrNegStats *out) {
   if (!out) return;
   if (s) *out = s->stats; else memset(out, 0, sizeof(*out));
+}
+
+int nostr_neg_get_need_ids(const NostrNegSession *s,
+                           const unsigned char **out_ids,
+                           size_t *out_count) {
+  if (!s || !out_ids || !out_count) return -1;
+  *out_ids = s->need_ids;
+  *out_count = s->need_ids_count;
+  return 0;
 }

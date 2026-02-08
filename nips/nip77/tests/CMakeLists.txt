@@ -30,6 +30,11 @@ add_executable(test_neg_session_caps test_neg_session_caps.c)
 target_link_libraries(test_neg_session_caps PRIVATE nostr_nip77)
 add_test(NAME test_neg_session_caps COMMAND test_neg_session_caps)
 
+# NEED ID extraction test (nostrc-pce8)
+add_executable(test_neg_session_need test_neg_session_need.c)
+target_link_libraries(test_neg_session_need PRIVATE nostr_nip77)
+add_test(NAME test_neg_session_need COMMAND test_neg_session_need)
+
 if(TARGET nostr_nip77_ndb)
   add_executable(test_ndb_integration test_ndb_integration.c)
   target_link_libraries(test_ndb_integration PRIVATE nostr_nip77 nostr_nip77_ndb)
