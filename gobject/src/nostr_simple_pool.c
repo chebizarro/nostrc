@@ -148,6 +148,79 @@ static void event_bus_emit_closed(const char *relay_url, const char *subscriptio
     g_free(message);
 }
 
+/* ========================================================================
+ * Worker Thread Spawning (hq-oznk2)
+ *
+ * ASan inflates stack frames 3-4x.  The default ~8 MB thread stack
+ * overflows on deep call chains (Go channel ops, relay negotiation).
+ * Use pthread_create with 32 MB stack when ASan is active.
+ * ======================================================================== */
+
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+#define POOL_ASAN_ACTIVE 1
+#else
+#define POOL_ASAN_ACTIVE 0
+#endif
+
+#define POOL_ASAN_STACK_SIZE (32u * 1024u * 1024u)  /* 32 MB */
+
+typedef struct {
+    GThreadFunc func;
+    gpointer    data;
+} PoolThreadTrampoline;
+
+static void *pool_thread_trampoline(void *arg) {
+    PoolThreadTrampoline *t = arg;
+    GThreadFunc func = t->func;
+    gpointer    data = t->data;
+    g_free(t);
+    func(data);
+    return NULL;
+}
+
+/**
+ * spawn_worker_thread:
+ * @name: thread name (for logging only)
+ * @func: entry point
+ * @data: user data passed to @func
+ *
+ * Creates a detached worker thread.  Under ASan (or when the
+ * NOSTR_LARGE_STACK env var is set) uses pthread_create with a
+ * 32 MB stack; otherwise delegates to g_thread_new.
+ */
+static void spawn_worker_thread(const char *name,
+                                GThreadFunc func,
+                                gpointer    data) {
+    gboolean need_large_stack = POOL_ASAN_ACTIVE || g_getenv("NOSTR_LARGE_STACK");
+
+    if (need_large_stack) {
+        pthread_t      tid;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, POOL_ASAN_STACK_SIZE);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+        PoolThreadTrampoline *t = g_new(PoolThreadTrampoline, 1);
+        t->func = func;
+        t->data = data;
+
+        int rc = pthread_create(&tid, &attr, pool_thread_trampoline, t);
+        pthread_attr_destroy(&attr);
+
+        if (rc != 0) {
+            g_warning("[POOL] pthread_create('%s', 32MB stack) failed: %s — "
+                      "falling back to g_thread_new", name, g_strerror(rc));
+            g_free(t);
+            GThread *thr = g_thread_new(name, func, data);
+            g_thread_unref(thr);
+        }
+    } else {
+        GThread *thr = g_thread_new(name, func, data);
+        g_thread_unref(thr);
+    }
+}
+
 /* GnostrSimplePool GObject implementation */
 G_DEFINE_TYPE(GnostrSimplePool, gnostr_simple_pool, G_TYPE_OBJECT)
 
@@ -585,8 +658,7 @@ void gnostr_simple_pool_paginate_with_interval_async(GnostrSimplePool *self,
     ctx->task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
 
     /* Spawn worker */
-    GThread *thr = g_thread_new("nostr-paginate", paginate_with_interval_thread, ctx);
-    g_thread_unref(thr);
+    spawn_worker_thread("nostr-paginate", paginate_with_interval_thread, ctx);
 
     /* Immediate async success */
     g_task_return_boolean(ctx->task, TRUE);
@@ -865,8 +937,7 @@ void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
         ctx->filters = NULL;
     }
     ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-    GThread *thr = g_thread_new("nostr-subscribe-many", subscribe_many_thread, ctx);
-    g_thread_unref(thr);  /* Thread runs detached, we don't need to join */
+    spawn_worker_thread("nostr-subscribe-many", subscribe_many_thread, ctx);
 
     /* Immediate success for async setup */
     GTask *task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
@@ -1202,8 +1273,7 @@ void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
     }
 
     // Start worker thread
-    GThread *thread = g_thread_new("nostr-query-single", query_single_thread, g_steal_pointer(&ctx));
-    g_thread_unref(thread);  // we don't need to join
+    spawn_worker_thread("nostr-query-single", query_single_thread, g_steal_pointer(&ctx));
 }
 
 /**
@@ -1257,8 +1327,7 @@ void gnostr_simple_pool_query_single_streaming_async(GnostrSimplePool *self,
     }
 
     // Start worker thread
-    GThread *thread = g_thread_new("nostr-query-streaming", query_single_thread, g_steal_pointer(&ctx));
-    g_thread_unref(thread);
+    spawn_worker_thread("nostr-query-streaming", query_single_thread, g_steal_pointer(&ctx));
 }
 
 GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
@@ -1416,15 +1485,7 @@ void gnostr_simple_pool_count_async(GnostrSimplePool *self,
     g_task_set_task_data(ctx->task, ctx, NULL);  /* ctx freed in thread */
 
     /* Run count in a thread */
-    GThread *thread = g_thread_new("count-query", count_thread_func, ctx);
-    if (!thread) {
-        g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                                "Failed to create count query thread");
-        g_object_unref(ctx->task);
-        count_ctx_free(ctx);
-        return;
-    }
-    g_thread_unref(thread);  /* Thread is detached */
+    spawn_worker_thread("count-query", count_thread_func, ctx);
 }
 
 gint64 gnostr_simple_pool_count_finish(GnostrSimplePool *self,
