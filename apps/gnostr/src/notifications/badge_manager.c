@@ -11,6 +11,8 @@
 #include "../model/gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
 #include "../util/zap.h"
+#include "../ui/gnostr-notifications-view.h"
+#include "nostr_json.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -1176,6 +1178,439 @@ gnostr_badge_manager_stop_subscriptions(GnostrBadgeManager *self)
   }
 
   g_debug("Stopped notification subscriptions");
+}
+
+/* ============== History Loading (nostrc-27) ============== */
+
+/* Data for async history loading GTask */
+typedef struct {
+  char *user_pubkey;
+  gint64 last_read[GNOSTR_NOTIFICATION_TYPE_COUNT];
+  GPtrArray *notifs;  /* result: array of GnostrNotification* */
+  GnostrNotificationsView *view;
+} HistoryLoadData;
+
+static void
+history_load_data_free(HistoryLoadData *data)
+{
+  if (!data) return;
+  g_free(data->user_pubkey);
+  if (data->notifs)
+    g_ptr_array_unref(data->notifs);
+  g_slice_free(HistoryLoadData, data);
+}
+
+/* Context for extracting last "e" tag value from tags array */
+typedef struct {
+  char *last_e_value;
+} HistoryETagCtx;
+
+static gboolean
+history_extract_e_tag_cb(gsize idx, const gchar *element_json, gpointer user_data)
+{
+  (void)idx;
+  HistoryETagCtx *ctx = user_data;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
+
+  char *name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!name) return TRUE;
+
+  if (g_strcmp0(name, "e") == 0) {
+    g_free(ctx->last_e_value);
+    ctx->last_e_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  }
+  g_free(name);
+  return TRUE;
+}
+
+/* Extract the last "e" tag value from event JSON. Returns newly allocated hex or NULL. */
+static char *
+history_extract_target_event_id(const char *event_json)
+{
+  char *tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (!tags_json) return NULL;
+
+  HistoryETagCtx ctx = { .last_e_value = NULL };
+  gnostr_json_array_foreach_root(tags_json, history_extract_e_tag_cb, &ctx);
+
+  g_free(tags_json);
+  return ctx.last_e_value;
+}
+
+/* Convert hex string to 32-byte binary. Returns TRUE on success. */
+static gboolean
+hex_to_bin32(const char *hex, unsigned char out[32])
+{
+  if (!hex || strlen(hex) != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + (i * 2), "%2x", &byte) != 1) return FALSE;
+    out[i] = (unsigned char)byte;
+  }
+  return TRUE;
+}
+
+/* Sort comparator: ascending by created_at (oldest first for prepend ordering) */
+static gint
+notif_cmp_created_at_asc(gconstpointer a, gconstpointer b)
+{
+  const GnostrNotification *na = *(const GnostrNotification *const *)a;
+  const GnostrNotification *nb = *(const GnostrNotification *const *)b;
+  if (na->created_at < nb->created_at) return -1;
+  if (na->created_at > nb->created_at) return 1;
+  return 0;
+}
+
+/* Process mentions/replies (kinds 1, 1111) from query results */
+static void
+history_process_mentions(HistoryLoadData *data, void *txn,
+                         char **results, int count)
+{
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    char *pubkey = gnostr_json_get_string(results[i], "pubkey", NULL);
+    if (!pubkey) continue;
+
+    /* Skip self-notifications */
+    if (g_strcmp0(pubkey, data->user_pubkey) == 0) {
+      g_free(pubkey);
+      continue;
+    }
+
+    char *id = gnostr_json_get_string(results[i], "id", NULL);
+    if (!id) { g_free(pubkey); continue; }
+
+    gint64 created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
+    char *content = gnostr_json_get_string(results[i], "content", NULL);
+
+    /* Classify as reply vs mention using note_is_reply_to_user */
+    GnostrNotificationType type = GNOSTR_NOTIFICATION_MENTION;
+    char *target_id = NULL;
+
+    unsigned char id_bin[32];
+    if (hex_to_bin32(id, id_bin)) {
+      storage_ndb_note *note = NULL;
+      uint64_t nkey = storage_ndb_get_note_key_by_id(txn, id_bin, &note);
+      if (nkey != 0 && note) {
+        char *reply_target = NULL;
+        if (note_is_reply_to_user(txn, note, data->user_pubkey, &reply_target)) {
+          type = GNOSTR_NOTIFICATION_REPLY;
+          target_id = reply_target;
+        }
+      }
+    }
+
+    gint64 last_read = data->last_read[type];
+
+    GnostrNotification *notif = g_new0(GnostrNotification, 1);
+    notif->id = id;
+    notif->type = type;
+    notif->actor_pubkey = pubkey;
+    notif->content_preview = content;
+    notif->target_note_id = target_id ? target_id : g_strdup(id);
+    notif->created_at = created_at;
+    notif->is_read = (created_at <= last_read);
+    notif->zap_amount_msats = 0;
+
+    g_ptr_array_add(data->notifs, notif);
+  }
+}
+
+/* Process reactions (kind 7) from query results */
+static void
+history_process_reactions(HistoryLoadData *data, char **results, int count)
+{
+  gint64 last_read = data->last_read[GNOSTR_NOTIFICATION_REACTION];
+
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    char *pubkey = gnostr_json_get_string(results[i], "pubkey", NULL);
+    if (!pubkey) continue;
+
+    if (g_strcmp0(pubkey, data->user_pubkey) == 0) {
+      g_free(pubkey);
+      continue;
+    }
+
+    char *id = gnostr_json_get_string(results[i], "id", NULL);
+    if (!id) { g_free(pubkey); continue; }
+
+    gint64 created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
+    char *content = gnostr_json_get_string(results[i], "content", NULL);
+    char *target_id = history_extract_target_event_id(results[i]);
+
+    GnostrNotification *notif = g_new0(GnostrNotification, 1);
+    notif->id = id;
+    notif->type = GNOSTR_NOTIFICATION_REACTION;
+    notif->actor_pubkey = pubkey;
+    notif->content_preview = content;  /* emoji like "+", heart, etc. */
+    notif->target_note_id = target_id;
+    notif->created_at = created_at;
+    notif->is_read = (created_at <= last_read);
+
+    g_ptr_array_add(data->notifs, notif);
+  }
+}
+
+/* Process reposts (kind 6) from query results */
+static void
+history_process_reposts(HistoryLoadData *data, char **results, int count)
+{
+  gint64 last_read = data->last_read[GNOSTR_NOTIFICATION_REPOST];
+
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    char *pubkey = gnostr_json_get_string(results[i], "pubkey", NULL);
+    if (!pubkey) continue;
+
+    if (g_strcmp0(pubkey, data->user_pubkey) == 0) {
+      g_free(pubkey);
+      continue;
+    }
+
+    char *id = gnostr_json_get_string(results[i], "id", NULL);
+    if (!id) { g_free(pubkey); continue; }
+
+    gint64 created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
+    char *target_id = history_extract_target_event_id(results[i]);
+
+    GnostrNotification *notif = g_new0(GnostrNotification, 1);
+    notif->id = id;
+    notif->type = GNOSTR_NOTIFICATION_REPOST;
+    notif->actor_pubkey = pubkey;
+    notif->target_note_id = target_id;
+    notif->created_at = created_at;
+    notif->is_read = (created_at <= last_read);
+
+    g_ptr_array_add(data->notifs, notif);
+  }
+}
+
+/* Process zaps (kind 9735) from query results */
+static void
+history_process_zaps(HistoryLoadData *data, char **results, int count)
+{
+  gint64 last_read = data->last_read[GNOSTR_NOTIFICATION_ZAP];
+
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    char *id = gnostr_json_get_string(results[i], "id", NULL);
+    if (!id) continue;
+
+    gint64 created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
+
+    /* Parse zap receipt for sender and amount */
+    GnostrZapReceipt *receipt = gnostr_zap_parse_receipt(results[i]);
+    char *sender = NULL;
+    guint64 amount_msats = 0;
+
+    if (receipt) {
+      sender = g_strdup(receipt->sender_pubkey ? receipt->sender_pubkey
+                                               : receipt->event_pubkey);
+      if (receipt->amount_msat > 0)
+        amount_msats = (guint64)receipt->amount_msat;
+      gnostr_zap_receipt_free(receipt);
+    } else {
+      /* Fallback: use event pubkey */
+      sender = gnostr_json_get_string(results[i], "pubkey", NULL);
+    }
+
+    if (!sender || g_strcmp0(sender, data->user_pubkey) == 0) {
+      g_free(sender);
+      g_free(id);
+      continue;
+    }
+
+    char *target_id = history_extract_target_event_id(results[i]);
+
+    GnostrNotification *notif = g_new0(GnostrNotification, 1);
+    notif->id = id;
+    notif->type = GNOSTR_NOTIFICATION_ZAP;
+    notif->actor_pubkey = sender;
+    notif->target_note_id = target_id;
+    notif->created_at = created_at;
+    notif->is_read = (created_at <= last_read);
+    notif->zap_amount_msats = amount_msats;
+
+    g_ptr_array_add(data->notifs, notif);
+  }
+}
+
+/* Process followers (kind 3) from query results */
+static void
+history_process_followers(HistoryLoadData *data, char **results, int count)
+{
+  gint64 last_read = data->last_read[GNOSTR_NOTIFICATION_FOLLOWER];
+
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    char *pubkey = gnostr_json_get_string(results[i], "pubkey", NULL);
+    if (!pubkey) continue;
+
+    if (g_strcmp0(pubkey, data->user_pubkey) == 0) {
+      g_free(pubkey);
+      continue;
+    }
+
+    char *id = gnostr_json_get_string(results[i], "id", NULL);
+    if (!id) { g_free(pubkey); continue; }
+
+    gint64 created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
+
+    GnostrNotification *notif = g_new0(GnostrNotification, 1);
+    notif->id = id;
+    notif->type = GNOSTR_NOTIFICATION_FOLLOWER;
+    notif->actor_pubkey = pubkey;
+    notif->created_at = created_at;
+    notif->is_read = (created_at <= last_read);
+
+    g_ptr_array_add(data->notifs, notif);
+  }
+}
+
+#define HISTORY_LIMIT_PER_TYPE 100
+
+static void
+history_load_thread_func(GTask *task, gpointer source_object,
+                         gpointer task_data, GCancellable *cancellable)
+{
+  (void)source_object;
+  (void)cancellable;
+  HistoryLoadData *data = task_data;
+  data->notifs = g_ptr_array_new_with_free_func(
+      (GDestroyNotify)gnostr_notification_free);
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 50) != 0 || !txn) {
+    g_debug("[HISTORY] Failed to begin NDB query for history loading");
+    g_task_return_pointer(task, data, NULL);
+    return;
+  }
+
+  /* 1. Mentions/replies (kinds 1, 1111) */
+  {
+    gchar *filter = g_strdup_printf(
+        "{\"kinds\":[%d,%d],\"#p\":[\"%s\"],\"limit\":%d}",
+        KIND_TEXT_NOTE, KIND_COMMENT, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
+    char **results = NULL;
+    int count = 0;
+    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+      history_process_mentions(data, txn, results, count);
+    }
+    if (results) storage_ndb_free_results(results, count);
+    g_free(filter);
+  }
+
+  /* 2. Reactions (kind 7) */
+  {
+    gchar *filter = g_strdup_printf(
+        "{\"kinds\":[%d],\"#p\":[\"%s\"],\"limit\":%d}",
+        KIND_REACTION, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
+    char **results = NULL;
+    int count = 0;
+    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+      history_process_reactions(data, results, count);
+    }
+    if (results) storage_ndb_free_results(results, count);
+    g_free(filter);
+  }
+
+  /* 3. Reposts (kind 6) */
+  {
+    gchar *filter = g_strdup_printf(
+        "{\"kinds\":[%d],\"#p\":[\"%s\"],\"limit\":%d}",
+        KIND_REPOST, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
+    char **results = NULL;
+    int count = 0;
+    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+      history_process_reposts(data, results, count);
+    }
+    if (results) storage_ndb_free_results(results, count);
+    g_free(filter);
+  }
+
+  /* 4. Zaps (kind 9735) */
+  {
+    gchar *filter = g_strdup_printf(
+        "{\"kinds\":[%d],\"#p\":[\"%s\"],\"limit\":%d}",
+        KIND_ZAP_RECEIPT, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
+    char **results = NULL;
+    int count = 0;
+    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+      history_process_zaps(data, results, count);
+    }
+    if (results) storage_ndb_free_results(results, count);
+    g_free(filter);
+  }
+
+  /* 5. Followers (kind 3) */
+  {
+    gchar *filter = g_strdup_printf(
+        "{\"kinds\":[%d],\"#p\":[\"%s\"],\"limit\":%d}",
+        KIND_CONTACT_LIST, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
+    char **results = NULL;
+    int count = 0;
+    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+      history_process_followers(data, results, count);
+    }
+    if (results) storage_ndb_free_results(results, count);
+    g_free(filter);
+  }
+
+  storage_ndb_end_query(txn);
+
+  /* Sort by created_at ascending (oldest first → prepend gives newest on top) */
+  g_ptr_array_sort(data->notifs, notif_cmp_created_at_asc);
+
+  g_debug("[HISTORY] Loaded %u historical notifications", data->notifs->len);
+  g_task_return_pointer(task, data, NULL);
+}
+
+static void
+history_load_done(GObject *source_object, GAsyncResult *result, gpointer user_data)
+{
+  (void)source_object;
+  (void)user_data;
+  GTask *task = G_TASK(result);
+  HistoryLoadData *data = g_task_propagate_pointer(task, NULL);
+  if (!data) return;
+
+  if (data->view && GNOSTR_IS_NOTIFICATIONS_VIEW(data->view)) {
+    for (guint i = 0; i < data->notifs->len; i++) {
+      GnostrNotification *notif = g_ptr_array_index(data->notifs, i);
+      gnostr_notifications_view_add_notification(data->view, notif);
+    }
+    gnostr_notifications_view_set_loading(data->view, FALSE);
+    if (data->notifs->len == 0)
+      gnostr_notifications_view_set_empty(data->view, TRUE);
+
+    g_debug("[HISTORY] Added %u notifications to view", data->notifs->len);
+  }
+
+  history_load_data_free(data);
+}
+
+void
+gnostr_badge_manager_load_history(GnostrBadgeManager *self,
+                                   GnostrNotificationsView *view)
+{
+  g_return_if_fail(GNOSTR_IS_BADGE_MANAGER(self));
+  if (!self->user_pubkey || strlen(self->user_pubkey) != 64 || !view) return;
+
+  HistoryLoadData *data = g_slice_new0(HistoryLoadData);
+  data->user_pubkey = g_strdup(self->user_pubkey);
+  memcpy(data->last_read, self->last_read, sizeof(data->last_read));
+  data->view = view;
+
+  GTask *task = g_task_new(self, NULL, history_load_done, NULL);
+  g_task_set_task_data(task, data, NULL);
+  g_task_run_in_thread(task, history_load_thread_func);
+  g_object_unref(task);
 }
 
 /* ============== Badge Formatting ============== */

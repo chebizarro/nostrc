@@ -297,6 +297,21 @@ void gnostr_badge_manager_start_subscriptions(GnostrBadgeManager *self);
  */
 void gnostr_badge_manager_stop_subscriptions(GnostrBadgeManager *self);
 
+/* Forward-declare for history loading */
+typedef struct _GnostrNotificationsView GnostrNotificationsView;
+
+/**
+ * gnostr_badge_manager_load_history:
+ * @self: The badge manager
+ * @view: The notifications view to populate
+ *
+ * Loads historical notification events from NDB and adds them to the
+ * notifications view. Runs asynchronously via GTask to avoid blocking UI.
+ * Requires user pubkey to be set and storage_ndb to be initialized.
+ */
+void gnostr_badge_manager_load_history(GnostrBadgeManager *self,
+                                        GnostrNotificationsView *view);
+
 /* ============== Badge Formatting ============== */
 
 /**

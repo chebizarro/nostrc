@@ -3914,6 +3914,13 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     gnostr_badge_manager_set_event_callback(badge_mgr, on_notification_event, self, NULL);
     gnostr_badge_manager_start_subscriptions(badge_mgr);
     g_debug("[AUTH] Started notification subscriptions for user %.16s...", self->user_pubkey_hex);
+
+    /* nostrc-27: Load historical notifications from NDB */
+    GtkWidget *nw = gnostr_session_view_get_notifications_view(self->session_view);
+    if (nw && GNOSTR_IS_NOTIFICATIONS_VIEW(nw)) {
+      gnostr_notifications_view_set_loading(GNOSTR_NOTIFICATIONS_VIEW(nw), TRUE);
+      gnostr_badge_manager_load_history(badge_mgr, GNOSTR_NOTIFICATIONS_VIEW(nw));
+    }
   }
 
   /* Start gift wrap subscription for encrypted DMs */
