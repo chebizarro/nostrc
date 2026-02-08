@@ -297,14 +297,22 @@ static gboolean on_update_debounce_timeout(gpointer user_data) {
 
   guint inserted = self->batch_insert_count;
   if (inserted > 0) {
-    g_debug("[TIMELINE] Debounced insert: %u items at position 0", inserted);
-    /* Emit incremental insert signal - GTK handles scroll position adjustment */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
-  }
+    /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
+     * Two sequential items_changed signals break GTK's widget cache. */
+    guint evicted = enforce_window_size(self, FALSE);
 
-  /* Enforce window size - evict oldest items if needed.
-   * Do this AFTER the insert signal so eviction signal is separate. */
-  enforce_window_size(self, TRUE);
+    if (evicted > 0) {
+      /* Prepend + tail eviction can't be a single positional signal.
+       * Use replace-all: items_changed(0, old_total, new_total) (nostrc-2n7). */
+      guint gtk_old = self->pending_update_old_count;
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old, self->notes->len);
+      g_debug("[TIMELINE] Debounced insert+evict: added %u, evicted %u (replace-all)",
+              inserted, evicted);
+    } else {
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
+      g_debug("[TIMELINE] Debounced insert: %u items at position 0", inserted);
+    }
+  }
 
   /* Reset batch counter for next debounce window */
   self->batch_insert_count = 0;
@@ -602,19 +610,27 @@ static gboolean on_tick_callback(GtkWidget     *widget,
   }
 
   /* Process the batch */
+  guint gtk_old_count = self->notes->len;
   process_staged_items(self, to_process);
 
-  /* Emit single batched signal for all items processed this frame */
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, to_process);
+  /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
+   * Two sequential items_changed signals break GTK's widget cache. */
+  guint evicted = enforce_window_size(self, FALSE);
+
+  /* Emit single atomic signal */
+  if (evicted > 0) {
+    /* Prepend + tail eviction: replace-all signal (nostrc-2n7) */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old_count, self->notes->len);
+    g_debug("[FRAME] Processed %u items, evicted %u (replace-all)", to_process, evicted);
+  } else {
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, to_process);
+  }
 
   /* Track unseen items if user is scrolled down */
   if (!self->user_at_top) {
     self->unseen_count += to_process;
     g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
   }
-
-  /* Enforce window size after insert */
-  enforce_window_size(self, TRUE);
 
   /* Check frame budget */
   gint64 elapsed_us = g_get_monotonic_time() - start_us;
@@ -1092,16 +1108,24 @@ static void process_reveal_batch(GnTimelineModel *self) {
     }
   }
 
-  /* Emit items_changed for this batch */
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, batch_size);
+  /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
+   * Two sequential items_changed signals break GTK's widget cache. */
+  guint gtk_old_count = self->notes->len - batch_size;
+  guint evicted = enforce_window_size(self, FALSE);
+
+  /* Emit single atomic signal */
+  if (evicted > 0) {
+    /* Prepend + tail eviction: replace-all signal (nostrc-2n7) */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old_count, self->notes->len);
+    g_debug("[REVEAL] Batch %u items, evicted %u (replace-all)", batch_size, evicted);
+  } else {
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, batch_size);
+  }
 
   /* Emit reveal progress signal (position, total) */
   guint revealed = batch_end;
   guint total = self->reveal_queue->len;
   g_signal_emit(self, signals[SIGNAL_REVEAL_PROGRESS], 0, revealed, total);
-
-  /* Enforce window size after insert */
-  enforce_window_size(self, TRUE);
 
   /* Update position for next batch */
   self->reveal_position = batch_end;
@@ -1652,16 +1676,19 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
       qsort(new_start, added, sizeof(NoteEntry),
             (int (*)(const void *, const void *))note_entry_compare_newest_first);
     }
-    /*
-     * Emit incremental append signal instead of replace-all.
-     * This tells GTK to create widgets only for new items at the end,
-     * without disturbing existing widgets - much safer during scroll.
-     */
-    g_list_model_items_changed(G_LIST_MODEL(self), old_count, 0, added);
-    g_debug("[TIMELINE] load_older: appended %u items at position %u", added, old_count);
 
-    /* Enforce window size - evict oldest items if we exceeded the max */
-    enforce_window_size(self, TRUE);
+    /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
+     * Emitting two sequential items_changed signals (append then evict)
+     * causes GTK's widget cache to become inconsistent — stale rows or crashes. */
+    enforce_window_size(self, FALSE);
+
+    /* Emit single atomic signal with net items added after eviction */
+    guint net_added = self->notes->len - old_count;
+    if (net_added > 0) {
+      g_list_model_items_changed(G_LIST_MODEL(self), old_count, 0, net_added);
+      g_debug("[TIMELINE] load_older: appended %u items at position %u (evicted %u)",
+              net_added, old_count, added - net_added);
+    }
   }
 
   return added;
