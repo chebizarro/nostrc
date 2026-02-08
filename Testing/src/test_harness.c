@@ -649,7 +649,7 @@ NostrEvent **nostr_test_load_events_jsonl(const char *path, size_t *count) {
         if (!ev) continue;
 
         /* Parse JSON using compact deserializer */
-        if (nostr_event_deserialize_compact(ev, line) != 1) {
+        if (nostr_event_deserialize_compact(ev, line, NULL) != 1) {
             nostr_event_free(ev);
             continue;
         }

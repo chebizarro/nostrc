@@ -163,7 +163,7 @@ static int handle_neg_open(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
   if (filter_json) {
     filter = nostr_filter_new();
     if (filter) {
-      if (nostr_filter_deserialize_compact(filter, filter_json) != 1) {
+      if (nostr_filter_deserialize_compact(filter, filter_json, NULL) != 1) {
         /* Parse failed, use NULL filter (all events) */
         nostr_filter_free(filter);
         filter = NULL;

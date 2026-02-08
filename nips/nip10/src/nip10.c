@@ -368,7 +368,7 @@ int nostr_nip10_parse_thread_from_json(const char *json_str, NostrNip10ThreadInf
     if (!ev) return -1;
 
     /* Use compact deserialize which is available in core nostr lib */
-    int rc = nostr_event_deserialize_compact(ev, json_str);
+    int rc = nostr_event_deserialize_compact(ev, json_str, NULL);
     if (rc != 1) {  /* compact deserialize returns 1 on success, 0 on failure */
         nostr_event_free(ev);
         return -1;

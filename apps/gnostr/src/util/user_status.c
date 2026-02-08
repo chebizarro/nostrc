@@ -562,7 +562,7 @@ static void on_status_sign_complete(GObject *source, GAsyncResult *res, gpointer
 
   /* Parse signed event */
   NostrEvent *event = nostr_event_new();
-  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
+  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, NULL);
   if (!parse_rc) {
     g_warning("[NIP-38] Failed to parse signed status event");
     if (ctx->callback) {

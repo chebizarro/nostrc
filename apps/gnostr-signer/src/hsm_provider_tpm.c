@@ -1354,7 +1354,7 @@ tpm_sign_event(GnHsmProvider *provider,
 
   /* Parse and sign the event */
   NostrEvent *event = nostr_event_new();
-  if (!nostr_event_deserialize_compact(event, event_json)) {
+  if (!nostr_event_deserialize_compact(event, event_json, NULL)) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
     nostr_event_free(event);

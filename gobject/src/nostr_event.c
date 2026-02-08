@@ -273,7 +273,7 @@ gnostr_event_new_from_json(const gchar *json, GError **error)
         return NULL;
     }
 
-    int result = nostr_event_deserialize_compact(self->event, json);
+    int result = nostr_event_deserialize_compact(self->event, json, NULL);
     if (result == 0) {
         g_set_error(error,
                     NOSTR_ERROR,

@@ -108,7 +108,7 @@ gboolean gnostr_contact_list_load_from_json(GnostrContactList *self,
 
     /* Parse event using NostrEvent API */
     NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, event_json);
+    int parse_rc = nostr_event_deserialize_compact(event, event_json, NULL);
     if (parse_rc != 1) {
         g_warning("nip02_contacts: failed to parse event JSON");
         nostr_event_free(event);
@@ -252,7 +252,7 @@ static void on_contact_list_query_done(GObject *source, GAsyncResult *res, gpoin
             const char *json_str = g_ptr_array_index(results, i);
 
             NostrEvent *event = nostr_event_new();
-            int parse_rc = nostr_event_deserialize_compact(event, json_str);
+            int parse_rc = nostr_event_deserialize_compact(event, json_str, NULL);
             if (parse_rc != 1) {
                 nostr_event_free(event);
                 continue;

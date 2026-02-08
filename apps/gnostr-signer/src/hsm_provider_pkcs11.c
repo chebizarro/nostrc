@@ -1088,7 +1088,7 @@ pkcs11_sign_event(GnHsmProvider *provider,
     return NULL;
   }
 
-  if (!nostr_event_deserialize_compact(event, event_json)) {
+  if (!nostr_event_deserialize_compact(event, event_json, NULL)) {
     nostr_event_free(event);
     g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
                 "Failed to parse event JSON");

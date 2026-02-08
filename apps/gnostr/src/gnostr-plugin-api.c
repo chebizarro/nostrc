@@ -512,7 +512,7 @@ gnostr_plugin_context_publish_event(GnostrPluginContext *context,
 
   /* Parse the signed event */
   NostrEvent *event = nostr_event_new();
-  int rc = nostr_event_deserialize_compact(event, event_json);
+  int rc = nostr_event_deserialize_compact(event, event_json, NULL);
   if (rc != 1) {
     g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
                 "Failed to parse event JSON");

@@ -192,3 +192,33 @@ int nostr_json_parse_int64(const char **pp, long long *out) {
     *pp = p;
     return 1;
 }
+
+/* nostrc-737: Human-readable error strings for compact JSON parse errors */
+const char *nostr_json_error_string(int code) {
+    switch (code) {
+    case NOSTR_JSON_OK:                 return "ok";
+    case NOSTR_JSON_ERR_NULL_INPUT:     return "null input";
+    case NOSTR_JSON_ERR_EXPECTED_OBJECT: return "expected '{'";
+    case NOSTR_JSON_ERR_EXPECTED_ARRAY:  return "expected '['";
+    case NOSTR_JSON_ERR_TRUNCATED:      return "truncated input";
+    case NOSTR_JSON_ERR_BAD_STRING:     return "malformed string";
+    case NOSTR_JSON_ERR_BAD_NUMBER:     return "malformed number";
+    case NOSTR_JSON_ERR_BAD_KEY:        return "expected quoted key";
+    case NOSTR_JSON_ERR_EXPECTED_COLON: return "expected ':'";
+    case NOSTR_JSON_ERR_BAD_SEPARATOR:  return "expected ',' or closing delimiter";
+    case NOSTR_JSON_ERR_UNCLOSED_BRACE: return "unclosed brace/bracket";
+    case NOSTR_JSON_ERR_SKIP_VALUE:     return "failed to skip value";
+    case NOSTR_JSON_ERR_OVERFLOW:       return "integer overflow";
+    case NOSTR_JSON_ERR_KIND_RANGE:     return "kind out of range (0-65535)";
+    case NOSTR_JSON_ERR_TAG_LIMIT:      return "tag count exceeds limit";
+    case NOSTR_JSON_ERR_DEPTH_LIMIT:    return "tag depth exceeds limit";
+    case NOSTR_JSON_ERR_ALLOC:          return "allocation failed";
+    case NOSTR_JSON_ERR_BAD_LABEL:      return "envelope label parse failed";
+    case NOSTR_JSON_ERR_LABEL_MISMATCH: return "envelope label mismatch";
+    case NOSTR_JSON_ERR_MISSING_FIELD:  return "required field missing";
+    case NOSTR_JSON_ERR_BAD_BOOL:       return "expected true/false";
+    case NOSTR_JSON_ERR_NESTED_EVENT:   return "nested event parse failed";
+    case NOSTR_JSON_ERR_NESTED_FILTER:  return "nested filter parse failed";
+    default:                            return "unknown error";
+    }
+}

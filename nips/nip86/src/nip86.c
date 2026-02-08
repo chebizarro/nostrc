@@ -164,7 +164,7 @@ static int nip98_verify(const char *auth_header, const char *method, const char 
   out[dst_len] = '\0';
   /* Parse JSON into event */
   NostrEvent *ev = nostr_event_new(); int ok = 0;
-  if (nostr_event_deserialize_compact(ev, (const char*)out)) ok = 1; else ok = (nostr_event_deserialize(ev, (const char*)out) == 0);
+  if (nostr_event_deserialize_compact(ev, (const char*)out, NULL)) ok = 1; else ok = (nostr_event_deserialize(ev, (const char*)out) == 0);
   free(out);
   if (!ok) { nostr_event_free(ev); return 0; }
   /* If pubkey missing due to compact-path miss, try to extract manually */

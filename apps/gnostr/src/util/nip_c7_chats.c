@@ -91,7 +91,7 @@ gnostr_chat_room_parse(const gchar *event_json)
 
   /* Parse with NostrEvent API */
   NostrEvent event = {0};
-  if (!nostr_event_deserialize_compact(&event, event_json)) {
+  if (!nostr_event_deserialize_compact(&event, event_json, NULL)) {
     g_warning("chat_room: failed to parse JSON");
     return NULL;
   }
@@ -481,7 +481,7 @@ gnostr_c7_chat_message_parse(const gchar *event_json)
 
   /* Parse with NostrEvent API */
   NostrEvent event = {0};
-  if (!nostr_event_deserialize_compact(&event, event_json)) {
+  if (!nostr_event_deserialize_compact(&event, event_json, NULL)) {
     g_warning("chat_message: failed to parse JSON");
     return NULL;
   }

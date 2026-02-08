@@ -205,7 +205,7 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
     memcpy(ebuf, ev_json, elen); ebuf[elen] = '\0';
     NostrEvent *ev = nostr_event_new(); int ok_parse = 0;
     if (ev) {
-      if (nostr_event_deserialize_compact(ev, ebuf)) ok_parse = 1;
+      if (nostr_event_deserialize_compact(ev, ebuf, NULL)) ok_parse = 1;
       else ok_parse = (nostr_event_deserialize(ev, ebuf) == 0);
     }
     int rc_store = -1; const char *reason = NULL; char *id = NULL;

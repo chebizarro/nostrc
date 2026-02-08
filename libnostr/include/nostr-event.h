@@ -201,8 +201,11 @@ char *nostr_event_serialize_compact(const NostrEvent *event);
 
 /* Fast-path JSON deserialization from a compact object string.
  * Returns 1 on success, 0 on parse error. Populates provided @event.
+ * If @err_out is non-NULL, receives structured error info on failure.
  */
-int nostr_event_deserialize_compact(NostrEvent *event, const char *json);
+typedef struct NostrJsonErrorInfo NostrJsonErrorInfo;
+int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
+                                     NostrJsonErrorInfo *err_out);
 
 /* ========================================================================
  * Event Priority Classification (nostrc-7u2)

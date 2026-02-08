@@ -40,7 +40,7 @@ int relayd_nip42_handle_auth_frame(struct lws *wsi, ConnState *cs, const RelaydC
   NostrEvent *ev = nostr_event_new();
   bool ok_parse = false;
   if (ev) {
-    if (nostr_event_deserialize_compact(ev, pbuf)) ok_parse = true;
+    if (nostr_event_deserialize_compact(ev, pbuf, NULL)) ok_parse = true;
     else ok_parse = (nostr_event_deserialize(ev, pbuf) == 0);
   }
   if (ok_parse && nostr_event_check_signature(ev)) {

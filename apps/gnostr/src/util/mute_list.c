@@ -149,7 +149,7 @@ gboolean gnostr_mute_list_load_from_json(GnostrMuteList *self,
 
     /* Parse event using NostrEvent API */
     NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, event_json);
+    int parse_rc = nostr_event_deserialize_compact(event, event_json, NULL);
     if (parse_rc != 1) {
         g_warning("mute_list: failed to parse event JSON");
         nostr_event_free(event);
@@ -237,7 +237,7 @@ static gboolean mute_list_merge_from_json(GnostrMuteList *self,
     g_mutex_lock(&self->lock);
 
     NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, event_json);
+    int parse_rc = nostr_event_deserialize_compact(event, event_json, NULL);
     if (parse_rc != 1) {
         nostr_event_free(event);
         g_mutex_unlock(&self->lock);
@@ -533,7 +533,7 @@ static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer
             const char *json_str = g_ptr_array_index(results, i);
 
             NostrEvent *event = nostr_event_new();
-            int parse_rc = nostr_event_deserialize_compact(event, json_str);
+            int parse_rc = nostr_event_deserialize_compact(event, json_str, NULL);
             if (parse_rc != 1) {
                 nostr_event_free(event);
                 continue;
@@ -837,7 +837,7 @@ gboolean gnostr_mute_list_should_hide_event(GnostrMuteList *self,
 
     /* Parse event using NostrEvent API */
     NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, event_json);
+    int parse_rc = nostr_event_deserialize_compact(event, event_json, NULL);
     if (parse_rc != 1) {
         nostr_event_free(event);
         return FALSE;
@@ -1050,7 +1050,7 @@ static void save_context_free(SaveContext *ctx) {
 static void publish_to_relays(SaveContext *ctx, const char *signed_event_json) {
     /* Parse the signed event */
     NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
+    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, NULL);
     if (parse_rc != 1) {
         g_warning("mute_list: failed to parse signed event");
         if (ctx->callback) {

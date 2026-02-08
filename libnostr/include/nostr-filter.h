@@ -263,7 +263,9 @@ void          nostr_filter_tags_append(NostrFilter *filter, const char *key, con
 
 /* Compact fast-path JSON (de)serializers */
 char         *nostr_filter_serialize_compact(const NostrFilter *filter);
-int           nostr_filter_deserialize_compact(NostrFilter *filter, const char *json);
+typedef struct NostrJsonErrorInfo NostrJsonErrorInfo;
+int           nostr_filter_deserialize_compact(NostrFilter *filter, const char *json,
+                                                NostrJsonErrorInfo *err_out);
 
 /* Backend-abstracted wrappers (prefer compact, fallback to backend) */
 int           nostr_filter_deserialize(NostrFilter *filter, const char *json);

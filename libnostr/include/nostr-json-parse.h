@@ -65,6 +65,59 @@ char *nostr_json_parse_string(const char **pp);
  */
 int nostr_json_parse_int64(const char **pp, long long *out);
 
+/* nostrc-737: Structured error codes for compact JSON parsers */
+
+/**
+ * NostrJsonErrorCode:
+ * Fine-grained error codes for compact JSON parsing.
+ */
+typedef enum {
+    NOSTR_JSON_OK                  = 0,
+
+    /* 1-9: Input validation */
+    NOSTR_JSON_ERR_NULL_INPUT      = 1,
+    NOSTR_JSON_ERR_EXPECTED_OBJECT = 2,
+    NOSTR_JSON_ERR_EXPECTED_ARRAY  = 3,
+
+    /* 10-19: Structural JSON errors */
+    NOSTR_JSON_ERR_TRUNCATED       = 10,
+    NOSTR_JSON_ERR_BAD_STRING      = 11,
+    NOSTR_JSON_ERR_BAD_NUMBER      = 12,
+    NOSTR_JSON_ERR_BAD_KEY         = 13,
+    NOSTR_JSON_ERR_EXPECTED_COLON  = 14,
+    NOSTR_JSON_ERR_BAD_SEPARATOR   = 15,
+    NOSTR_JSON_ERR_UNCLOSED_BRACE  = 16,
+    NOSTR_JSON_ERR_SKIP_VALUE      = 17,
+
+    /* 20-29: Semantic / limit errors */
+    NOSTR_JSON_ERR_OVERFLOW        = 20,
+    NOSTR_JSON_ERR_KIND_RANGE      = 21,
+    NOSTR_JSON_ERR_TAG_LIMIT       = 22,
+    NOSTR_JSON_ERR_DEPTH_LIMIT     = 23,
+    NOSTR_JSON_ERR_ALLOC           = 24,
+
+    /* 30-39: Envelope-specific */
+    NOSTR_JSON_ERR_BAD_LABEL       = 30,
+    NOSTR_JSON_ERR_LABEL_MISMATCH  = 31,
+    NOSTR_JSON_ERR_MISSING_FIELD   = 32,
+    NOSTR_JSON_ERR_BAD_BOOL        = 33,
+    NOSTR_JSON_ERR_NESTED_EVENT    = 34,
+    NOSTR_JSON_ERR_NESTED_FILTER   = 35
+} NostrJsonErrorCode;
+
+/**
+ * NostrJsonErrorInfo:
+ * Optional structured error output for compact parsers.
+ * Stack-allocatable, no heap. Pass NULL to ignore errors.
+ */
+typedef struct NostrJsonErrorInfo {
+    int code;      /* NostrJsonErrorCode */
+    int offset;    /* byte offset into input, or -1 */
+} NostrJsonErrorInfo;
+
+/** Return a static human-readable string for an error code. */
+const char *nostr_json_error_string(int code);
+
 #ifdef __cplusplus
 }
 #endif

@@ -98,7 +98,9 @@ NostrEnvelope *nostr_envelope_parse(const char *json);
 void nostr_envelope_free(NostrEnvelope *envelope);
 
 /* Compact fast-path deserializer (used by json.c with backend fallback) */
-int nostr_envelope_deserialize_compact(NostrEnvelope *envelope, const char *json);
+typedef struct NostrJsonErrorInfo NostrJsonErrorInfo;
+int nostr_envelope_deserialize_compact(NostrEnvelope *envelope, const char *json,
+                                        NostrJsonErrorInfo *err_out);
 /* Compact fast-path serializer (used by json.c with backend fallback) */
 char *nostr_envelope_serialize_compact(const NostrEnvelope *envelope);
 

@@ -618,7 +618,7 @@ bool nostr_nip57_validate_zap_receipt_full(NostrEvent *receipt_event,
     NostrEvent *zap_req = nostr_event_new();
     if (!zap_req) return false;
 
-    if (!nostr_event_deserialize_compact(zap_req, description)) {
+    if (!nostr_event_deserialize_compact(zap_req, description, NULL)) {
         nostr_event_free(zap_req);
         return false;
     }
@@ -683,7 +683,7 @@ NostrZapRequest *nostr_nip57_extract_zap_request_from_receipt(NostrEvent *receip
     NostrEvent *zap_req = nostr_event_new();
     if (!zap_req) return NULL;
 
-    if (!nostr_event_deserialize_compact(zap_req, description)) {
+    if (!nostr_event_deserialize_compact(zap_req, description, NULL)) {
         nostr_event_free(zap_req);
         return NULL;
     }

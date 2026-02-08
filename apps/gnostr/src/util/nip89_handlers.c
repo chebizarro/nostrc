@@ -150,7 +150,7 @@ GnostrNip89HandlerInfo *gnostr_nip89_parse_handler_info(const char *event_json)
 
   /* Parse with NostrEvent API */
   NostrEvent event = {0};
-  if (!nostr_event_deserialize_compact(&event, event_json)) {
+  if (!nostr_event_deserialize_compact(&event, event_json, NULL)) {
     g_debug("nip89: failed to parse handler info JSON");
     return NULL;
   }
@@ -293,7 +293,7 @@ GnostrNip89Recommendation *gnostr_nip89_parse_recommendation(const char *event_j
 
   /* Parse with NostrEvent API */
   NostrEvent event = {0};
-  if (!nostr_event_deserialize_compact(&event, event_json)) {
+  if (!nostr_event_deserialize_compact(&event, event_json, NULL)) {
     g_debug("nip89: failed to parse recommendation JSON");
     return NULL;
   }

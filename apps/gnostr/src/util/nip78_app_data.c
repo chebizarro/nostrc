@@ -648,7 +648,7 @@ static void on_publish_sign_complete(GObject *source, GAsyncResult *res, gpointe
 
     /* Parse signed event */
     NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
+    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, NULL);
     if (parse_rc != 1) {
         g_warning("nip78: failed to parse signed event");
         if (ctx->callback) {

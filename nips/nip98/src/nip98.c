@@ -280,7 +280,7 @@ NostrNip98Result nostr_nip98_parse_auth_header(const char *header,
         return NOSTR_NIP98_ERR_ALLOC;
     }
 
-    if (nostr_event_deserialize_compact(event, json) != 1) {
+    if (nostr_event_deserialize_compact(event, json, NULL) != 1) {
         nostr_event_free(event);
         free(json);
         return NOSTR_NIP98_ERR_DECODE;

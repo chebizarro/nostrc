@@ -556,7 +556,7 @@ static void on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user
 
     /* Parse rumor event */
     NostrEvent *rumor = nostr_event_new();
-    if (!nostr_event_deserialize_compact(rumor, rumor_json)) {
+    if (!nostr_event_deserialize_compact(rumor, rumor_json, NULL)) {
         g_warning("[NIP59] Failed to parse rumor JSON");
         nostr_event_free(rumor);
         g_free(rumor_json);
@@ -616,7 +616,7 @@ static void on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_
 
     /* Parse seal event */
     NostrEvent *seal = nostr_event_new();
-    if (!nostr_event_deserialize_compact(seal, seal_json)) {
+    if (!nostr_event_deserialize_compact(seal, seal_json, NULL)) {
         g_warning("[NIP59] Failed to parse seal JSON");
         nostr_event_free(seal);
         g_free(seal_json);

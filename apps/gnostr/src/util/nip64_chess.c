@@ -485,7 +485,7 @@ GnostrChessGame *gnostr_chess_parse_from_json(const char *event_json) {
 
   /* Deserialize to NostrEvent using the facade */
   NostrEvent event = {0};
-  if (nostr_event_deserialize_compact(&event, event_json) != 0) {
+  if (nostr_event_deserialize_compact(&event, event_json, NULL) != 0) {
     g_debug("nip64: failed to parse event JSON");
     return NULL;
   }

@@ -1,6 +1,7 @@
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
+#include "nostr-json-parse.h"
 #include "security_limits_runtime.h"
 #include "nostr/metrics.h"
 #include "nostr_log.h"
@@ -73,7 +74,8 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
     if (!json_force_fallback()) {
         // Try compact fast path first using a stack-allocated shadow to avoid partial mutation
         NostrEvent shadow = {0};
-        if (nostr_event_deserialize_compact(&shadow, json_str)) {
+        NostrJsonErrorInfo err = {0, -1};
+        if (nostr_event_deserialize_compact(&shadow, json_str, &err)) {
             nostr_metric_counter_add("json_event_compact_ok", 1);
             // Replace fields in destination
             nostr_event_clear_fields(event);
@@ -88,6 +90,9 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
         } else {
             // Clean any partial allocations in shadow before falling back
             nostr_metric_counter_add("json_event_compact_fail", 1);
+            if (err.code != NOSTR_JSON_OK)
+                nostr_rl_log(NLOG_WARN, "json", "event compact parse failed: %s (offset %d)",
+                             nostr_json_error_string(err.code), err.offset);
             nostr_event_clear_fields(&shadow);
         }
     }
@@ -123,10 +128,14 @@ int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
     }
     if (!json_force_fallback()) {
         // Try compact fast path first
-        if (nostr_envelope_deserialize_compact(envelope, json)) {
+        NostrJsonErrorInfo env_err = {0, -1};
+        if (nostr_envelope_deserialize_compact(envelope, json, &env_err)) {
             nostr_metric_counter_add("json_envelope_compact_ok", 1);
             return 0;
         }
+        if (env_err.code != NOSTR_JSON_OK)
+            nostr_rl_log(NLOG_WARN, "json", "envelope compact parse failed: %s (offset %d)",
+                         nostr_json_error_string(env_err.code), env_err.offset);
     }
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_envelope) {
@@ -159,10 +168,14 @@ int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
     }
     if (!json_force_fallback()) {
         // Try compact fast path first
-        if (nostr_filter_deserialize_compact(filter, json)) {
+        NostrJsonErrorInfo filt_err = {0, -1};
+        if (nostr_filter_deserialize_compact(filter, json, &filt_err)) {
             nostr_metric_counter_add("json_filter_compact_ok", 1);
             return 0;
         }
+        if (filt_err.code != NOSTR_JSON_OK)
+            nostr_rl_log(NLOG_WARN, "json", "filter compact parse failed: %s (offset %d)",
+                         nostr_json_error_string(filt_err.code), filt_err.offset);
     }
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_filter) {

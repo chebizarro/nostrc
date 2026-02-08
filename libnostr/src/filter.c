@@ -983,10 +983,19 @@ static int parse_int64_value(const char **pp, int64_t *out) {
     return 1;
 }
 
-int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
-    if (!filter || !json) return 0;
+int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json,
+                                      NostrJsonErrorInfo *err_out) {
+    /* nostrc-737: JFAIL sets error info and returns 0 */
+#define JFAIL_FI(code_val, pos) do { \
+    if (err_out) { err_out->code = (code_val); err_out->offset = (int)((pos) - json); } \
+    return 0; \
+} while (0)
+    if (!filter || !json) {
+        if (err_out) { err_out->code = NOSTR_JSON_ERR_NULL_INPUT; err_out->offset = -1; }
+        return 0;
+    }
     const char *p = nostr_json_skip_ws(json);
-    if (*p != '{') return 0;
+    if (*p != '{') JFAIL_FI(NOSTR_JSON_ERR_EXPECTED_OBJECT, p);
     ++p;
     p = nostr_json_skip_ws(p);
     int touched = 0;
@@ -994,72 +1003,73 @@ int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
     while (*p) {
         // parse key
         char *key = parse_string_dup(&p);
-        if (!key) return 0;
+        if (!key) JFAIL_FI(NOSTR_JSON_ERR_BAD_KEY, p);
         p = nostr_json_skip_ws(p);
-        if (*p != ':') { free(key); return 0; }
+        if (*p != ':') { free(key); JFAIL_FI(NOSTR_JSON_ERR_EXPECTED_COLON, p); }
         ++p; p = nostr_json_skip_ws(p);
         if (key[0] == '#' && key[1] != '\0' && key[2] == '\0') {
             // dynamic tag key of form "#e"
-            if (*p != '[') { free(key); return 0; }
+            if (*p != '[') { free(key); JFAIL_FI(NOSTR_JSON_ERR_EXPECTED_ARRAY, p); }
             char kbuf[2] = { key[1], '\0' };
             int ok = parse_string_array_values_as_tags(filter, kbuf, &p);
             free(key);
-            if (!ok) return 0;
+            if (!ok) JFAIL_FI(NOSTR_JSON_ERR_BAD_STRING, p);
             touched = 1;
         } else if (strcmp(key, "ids") == 0) {
             free(key);
-            if (!parse_string_array_to_array(&filter->ids, &p)) return 0;
+            if (!parse_string_array_to_array(&filter->ids, &p)) JFAIL_FI(NOSTR_JSON_ERR_BAD_STRING, p);
             touched = 1;
         } else if (strcmp(key, "kinds") == 0) {
             free(key);
-            if (!parse_int_array_to_array(&filter->kinds, &p)) return 0;
+            if (!parse_int_array_to_array(&filter->kinds, &p)) JFAIL_FI(NOSTR_JSON_ERR_BAD_NUMBER, p);
             touched = 1;
         } else if (strcmp(key, "authors") == 0) {
             free(key);
-            if (!parse_string_array_to_array(&filter->authors, &p)) return 0;
+            if (!parse_string_array_to_array(&filter->authors, &p)) JFAIL_FI(NOSTR_JSON_ERR_BAD_STRING, p);
             touched = 1;
         } else if (strcmp(key, "since") == 0) {
             free(key);
             int64_t val = 0;
-            if (!parse_int64_value(&p, &val)) return 0;
+            if (!parse_int64_value(&p, &val)) JFAIL_FI(NOSTR_JSON_ERR_BAD_NUMBER, p);
             filter->since = val;
             touched = 1;
         } else if (strcmp(key, "until") == 0) {
             free(key);
             int64_t val = 0;
-            if (!parse_int64_value(&p, &val)) return 0;
+            if (!parse_int64_value(&p, &val)) JFAIL_FI(NOSTR_JSON_ERR_BAD_NUMBER, p);
             filter->until = val;
             touched = 1;
         } else if (strcmp(key, "limit") == 0) {
             free(key);
             int64_t val = 0;
-            if (!parse_int64_value(&p, &val)) return 0;
+            if (!parse_int64_value(&p, &val)) JFAIL_FI(NOSTR_JSON_ERR_BAD_NUMBER, p);
             filter->limit = (int)val;
             touched = 1;
         } else if (strcmp(key, "search") == 0) {
             free(key);
             char *val = parse_string_dup(&p);
-            if (!val) return 0;
+            if (!val) JFAIL_FI(NOSTR_JSON_ERR_BAD_STRING, p);
             if (filter->search) free(filter->search);
             filter->search = val;
             touched = 1;
         } else if (strcmp(key, "relays") == 0) {
             free(key);
-            if (!parse_string_array_to_array(&filter->relays, &p)) return 0;
+            if (!parse_string_array_to_array(&filter->relays, &p)) JFAIL_FI(NOSTR_JSON_ERR_BAD_STRING, p);
             touched = 1;
         } else {
             // skip other values quickly
             const char *q = skip_value(p);
             free(key);
-            if (!q) return 0;
+            if (!q) JFAIL_FI(NOSTR_JSON_ERR_SKIP_VALUE, p);
             p = q;
         }
         p = nostr_json_skip_ws(p);
         if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == '}') return touched ? 1 : 0;
-        return 0;
+        JFAIL_FI(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
     }
-    return 0;
+    JFAIL_FI(NOSTR_JSON_ERR_TRUNCATED, p);
+#undef JFAIL_FI
 }
 
 /* ============================================================================

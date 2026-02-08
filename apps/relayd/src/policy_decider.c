@@ -63,7 +63,7 @@ int relayd_nip01_ingress_decide_json(const char *event_json, int64_t now_overrid
   if (!ebuf) { if (out_reason) *out_reason = "oom"; return -1; }
   NostrEvent *ev = nostr_event_new(); int ok_parse = 0;
   if (ev) {
-    if (nostr_event_deserialize_compact(ev, ebuf)) ok_parse = 1;
+    if (nostr_event_deserialize_compact(ev, ebuf, NULL)) ok_parse = 1;
     else ok_parse = (nostr_event_deserialize(ev, ebuf) == 0);
   }
   if (!ok_parse || !ev) { free(ebuf); if (ev) nostr_event_free(ev); if (out_reason) *out_reason = "parse error"; return -1; }

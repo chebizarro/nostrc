@@ -310,54 +310,71 @@ static int debug_enabled(void) {
 }
 
 /* === Compact fast-path deserializer === */
-int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
-    if (!base || !json) return 0;
+/* nostrc-737: JFAIL_ENV returns 0 with error info (early returns before switch) */
+#define JFAIL_ENV(code_val, pos) do { \
+    if (err_out) { err_out->code = (code_val); err_out->offset = (int)((pos) - json); } \
+    return 0; \
+} while (0)
+/* ESET_ENV sets error info without returning (for use before break in switch) */
+#define ESET_ENV(code_val) do { \
+    if (err_out) { err_out->code = (code_val); err_out->offset = (int)(p - json); } \
+} while (0)
+int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
+                                        NostrJsonErrorInfo *err_out) {
+    if (!base || !json) {
+        if (err_out) { err_out->code = NOSTR_JSON_ERR_NULL_INPUT; err_out->offset = -1; }
+        return 0;
+    }
     if (debug_enabled()) {
         fprintf(stderr, "[compact] parse envelope: %s\n", json);
     }
     const char *p = nostr_json_skip_ws(json);
-    if (*p != '[') return 0;
+    if (*p != '[') JFAIL_ENV(NOSTR_JSON_ERR_EXPECTED_ARRAY, p);
     ++p; // skip [
     // first: label
     char *label = nostr_json_parse_string(&p);
     if (!label) {
         if (debug_enabled()) fprintf(stderr, "[compact] failed to parse label string at: %.32s\n", p);
-        return 0;
+        JFAIL_ENV(NOSTR_JSON_ERR_BAD_LABEL, p);
     }
     const char *q = parse_comma(p);
-    if (!q) { if (debug_enabled()) fprintf(stderr, "[compact] missing comma after label '%s' at: %.32s\n", label, p); free(label); return 0; }
+    if (!q) {
+        if (debug_enabled()) fprintf(stderr, "[compact] missing comma after label '%s' at: %.32s\n", label, p);
+        if (err_out) { err_out->code = NOSTR_JSON_ERR_BAD_SEPARATOR; err_out->offset = (int)(p - json); }
+        free(label); return 0;
+    }
     p = q; p = nostr_json_skip_ws(p);
 
     int ok = 0;
     switch (base->type) {
     case NOSTR_ENVELOPE_EVENT: {
-        if (strcmp(label, "EVENT") != 0) break;
+        if (strcmp(label, "EVENT") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrEventEnvelope *env = (NostrEventEnvelope *)base;
         // Optional sub id
         if (*p == '"') {
             env->subscription_id = nostr_json_parse_string(&p);
-            if (!env->subscription_id) break;
-            q = parse_comma(p); if (!q) break; p = nostr_json_skip_ws(q);
+            if (!env->subscription_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
+            q = parse_comma(p); if (!q) { ESET_ENV(NOSTR_JSON_ERR_BAD_SEPARATOR); break; } p = nostr_json_skip_ws(q);
         }
         // Next must be event object
         char *event_json = parse_json_object(&p);
-        if (!event_json) break;
+        if (!event_json) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); break; }
         NostrEvent *ev = nostr_event_new();
         int succ = nostr_event_deserialize(ev, event_json);
         free(event_json);
-        if (succ != 0) { nostr_event_free(ev); break; }
+        if (succ != 0) { nostr_event_free(ev); ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT); break; }
         env->event = ev;
         ok = 1;
         break;
     }
     case NOSTR_ENVELOPE_REQ: {
-        if (strcmp(label, "REQ") != 0) break;
+        if (strcmp(label, "REQ") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrReqEnvelope *env = (NostrReqEnvelope *)base;
         env->subscription_id = nostr_json_parse_string(&p);
-        if (!env->subscription_id) break;
+        if (!env->subscription_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
         // zero or more filter objects
         NostrFilters *filters = nostr_filters_new();
-        if (!filters) break;
+        if (!filters) { ESET_ENV(NOSTR_JSON_ERR_ALLOC); break; }
         size_t maxf = (size_t)nostr_limit_max_filters_per_req();
         size_t added = 0;
         while (1) {
@@ -369,7 +386,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
             if (!obj) break;
             if (added < maxf) {
                 NostrFilter f = {0};
-                if (nostr_filter_deserialize_compact(&f, obj)) {
+                if (nostr_filter_deserialize_compact(&f, obj, NULL)) {
                     (void)nostr_filters_add(filters, &f); // moves and zeros f
                     added++;
                 } else {
@@ -388,12 +405,12 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         break;
     }
     case NOSTR_ENVELOPE_COUNT: {
-        if (strcmp(label, "COUNT") != 0) break;
+        if (strcmp(label, "COUNT") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrCountEnvelope *env = (NostrCountEnvelope *)base;
         env->subscription_id = nostr_json_parse_string(&p);
-        if (!env->subscription_id) break;
+        if (!env->subscription_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
         NostrFilters *filters = nostr_filters_new();
-        if (!filters) break;
+        if (!filters) { ESET_ENV(NOSTR_JSON_ERR_ALLOC); break; }
         env->count = 0;
         size_t maxf = (size_t)nostr_limit_max_filters_per_req();
         size_t added = 0;
@@ -434,7 +451,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
                 // treat as filter
                 if (added < maxf) {
                     NostrFilter f = {0};
-                    if (nostr_filter_deserialize_compact(&f, obj)) {
+                    if (nostr_filter_deserialize_compact(&f, obj, NULL)) {
                         (void)nostr_filters_add(filters, &f);
                         added++;
                     } else {
@@ -453,64 +470,64 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         break;
     }
     case NOSTR_ENVELOPE_OK: {
-        if (strcmp(label, "OK") != 0) break;
+        if (strcmp(label, "OK") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrOKEnvelope *env = (NostrOKEnvelope *)base;
         env->event_id = nostr_json_parse_string(&p);
-        if (!env->event_id) break;
+        if (!env->event_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
         q = parse_comma(p); if (!q) { ok = 1; break; }
         p = nostr_json_skip_ws(q);
         if (strncmp(p, "true", 4) == 0) { env->ok = true; p += 4; }
         else if (strncmp(p, "false", 5) == 0) { env->ok = false; p += 5; }
-        else break;
+        else { ESET_ENV(NOSTR_JSON_ERR_BAD_BOOL); break; }
         q = parse_comma(p);
-        if (q) { p = q; env->reason = nostr_json_parse_string(&p); if (!env->reason) break; }
+        if (q) { p = q; env->reason = nostr_json_parse_string(&p); if (!env->reason) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; } }
         ok = 1;
         break;
     }
     case NOSTR_ENVELOPE_NOTICE: {
-        if (strcmp(label, "NOTICE") != 0) break;
+        if (strcmp(label, "NOTICE") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)base;
         env->message = nostr_json_parse_string(&p);
-        if (!env->message) break;
+        if (!env->message) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
         ok = 1;
         break;
     }
     case NOSTR_ENVELOPE_EOSE: {
-        if (strcmp(label, "EOSE") != 0) break;
+        if (strcmp(label, "EOSE") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)base;
         env->message = nostr_json_parse_string(&p);
-        if (!env->message) break;
+        if (!env->message) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
         ok = 1;
         break;
     }
     case NOSTR_ENVELOPE_CLOSED: {
-        if (strcmp(label, "CLOSED") != 0) break;
+        if (strcmp(label, "CLOSED") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrClosedEnvelope *env = (NostrClosedEnvelope *)base;
         env->subscription_id = nostr_json_parse_string(&p);
-        if (!env->subscription_id) break;
-        q = parse_comma(p); if (!q) break; // reason is required
+        if (!env->subscription_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
+        q = parse_comma(p); if (!q) { ESET_ENV(NOSTR_JSON_ERR_MISSING_FIELD); break; } // reason is required
         p = q;
         env->reason = nostr_json_parse_string(&p);
-        if (!env->reason) break;
+        if (!env->reason) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
         ok = 1;
         break;
     }
     case NOSTR_ENVELOPE_AUTH: {
-        if (strcmp(label, "AUTH") != 0) break;
+        if (strcmp(label, "AUTH") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrAuthEnvelope *env = (NostrAuthEnvelope *)base;
         p = nostr_json_skip_ws(p);
         if (*p == '{') {
             char *ej = parse_json_object(&p);
-            if (!ej) break;
+            if (!ej) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); break; }
             NostrEvent *ev = nostr_event_new();
             int succ = nostr_event_deserialize(ev, ej);
             free(ej);
-            if (succ != 0) { nostr_event_free(ev); break; }
+            if (succ != 0) { nostr_event_free(ev); ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT); break; }
             env->event = ev;
             ok = 1;
         } else if (*p == '"') {
             env->challenge = nostr_json_parse_string(&p);
-            if (!env->challenge) break;
+            if (!env->challenge) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
             // optional event after comma
             q = parse_comma(p);
             if (q) {
@@ -526,6 +543,8 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
                 }
             }
             ok = 1;
+        } else {
+            ESET_ENV(NOSTR_JSON_ERR_TRUNCATED);
         }
         break;
     }
@@ -542,6 +561,8 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     free(label);
     return ok;
 }
+#undef JFAIL_ENV
+#undef ESET_ENV
 
 static const char *parse_comma(const char *p) {
     if (!p) return NULL;

@@ -298,7 +298,7 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
     json[decrypted_len] = '\0';
     free(decrypted);
 
-    if (!nostr_event_deserialize_compact(inner_event, json)) {
+    if (!nostr_event_deserialize_compact(inner_event, json, NULL)) {
         free(json);
         nostr_event_free(inner_event);
         return NULL;

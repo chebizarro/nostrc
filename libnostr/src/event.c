@@ -177,10 +177,19 @@ static const char *find_key(const char *json, const char *key) {
     return NULL;
 }
 
-int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
-    if (!event || !json) return 0;
+int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
+                                     NostrJsonErrorInfo *err_out) {
+    /* nostrc-737: JFAIL sets error info and returns 0 */
+#define JFAIL_EV(code_val, pos) do { \
+    if (err_out) { err_out->code = (code_val); err_out->offset = (int)((pos) - json); } \
+    return 0; \
+} while (0)
+    if (!event || !json) {
+        if (err_out) { err_out->code = NOSTR_JSON_ERR_NULL_INPUT; err_out->offset = -1; }
+        return 0;
+    }
     const char *p = nostr_json_skip_ws(json);
-    if (*p != '{') return 0;
+    if (*p != '{') JFAIL_EV(NOSTR_JSON_ERR_EXPECTED_OBJECT, p);
     ++p; // after '{'
 
     int have_kind = 0;
@@ -194,118 +203,117 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
         // Dispatch by key (in-place match, no allocation for known keys)
         if (match_key_advance(&p, "kind")) {
             long long v = 0;
-            if (!nostr_json_parse_int64(&p, &v)) { return 0; }
-            if (v < 0 || v > 65535) { return 0; } // nostrc-g4t: valid NIP-01 kind range
+            if (!nostr_json_parse_int64(&p, &v)) JFAIL_EV(NOSTR_JSON_ERR_BAD_NUMBER, p);
+            if (v < 0 || v > 65535) JFAIL_EV(NOSTR_JSON_ERR_KIND_RANGE, p);
             event->kind = (int)v; have_kind = 1;
         } else if (match_key_advance(&p, "created_at")) {
             long long ts = 0;
-            if (!nostr_json_parse_int64(&p, &ts)) { return 0; }
+            if (!nostr_json_parse_int64(&p, &ts)) JFAIL_EV(NOSTR_JSON_ERR_BAD_NUMBER, p);
             event->created_at = (int64_t)ts; have_created_at = 1;
         } else if (match_key_advance(&p, "pubkey")) {
             char *s = nostr_json_parse_string(&p);
-            if (!s) { return 0; }
+            if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->pubkey) free(event->pubkey);
             event->pubkey = s;
         } else if (match_key_advance(&p, "id")) {
             char *s = nostr_json_parse_string(&p);
-            if (!s) { return 0; }
+            if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->id) free(event->id);
             event->id = s;
         } else if (match_key_advance(&p, "sig")) {
             char *s = nostr_json_parse_string(&p);
-            if (!s) { return 0; }
+            if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->sig) free(event->sig);
             event->sig = s;
         } else if (match_key_advance(&p, "content")) {
             char *s = nostr_json_parse_string(&p);
-            if (!s) { return 0; }
+            if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->content) free(event->content);
             event->content = s;
         } else if (match_key_advance(&p, "tags")) {
             const char *t = nostr_json_skip_ws(p);
-            if (*t != '[') { return 0; }
+            if (*t != '[') JFAIL_EV(NOSTR_JSON_ERR_EXPECTED_ARRAY, t);
             ++t; // into tags array
             /* Pre-count number of tags at top-level to reserve capacity */
             const char *scan = t; int depth = 1; int max_depth = 1; size_t tag_count = 0;
             while (*scan && depth) {
                 scan = nostr_json_skip_ws(scan);
                 if (*scan == '[' && depth == 1) { ++tag_count; ++scan; }
-                else if (*scan == '"') { char *d = nostr_json_parse_string(&scan); if (!d) return 0; free(d); }
+                else if (*scan == '"') { char *d = nostr_json_parse_string(&scan); if (!d) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, scan); free(d); }
                 else if (*scan == '[') { ++depth; if (depth > max_depth) max_depth = depth; ++scan; }
                 else if (*scan == ']') { --depth; ++scan; }
                 else { ++scan; }
             }
-            if (depth) { return 0; }
+            if (depth) JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, scan);
             /* Enforce security limits */
-            if (tag_count > (size_t)nostr_limit_max_tags_per_event()) { return 0; }
-            if (max_depth > (int)nostr_limit_max_tag_depth()) { return 0; }
+            if (tag_count > (size_t)nostr_limit_max_tags_per_event()) JFAIL_EV(NOSTR_JSON_ERR_TAG_LIMIT, t);
+            if (max_depth > (int)nostr_limit_max_tag_depth()) JFAIL_EV(NOSTR_JSON_ERR_DEPTH_LIMIT, t);
             NostrTags *parsed = nostr_tags_new(tag_count);
-            if (!parsed) { return 0; }
+            if (!parsed) JFAIL_EV(NOSTR_JSON_ERR_ALLOC, t);
             /* If tags_new pre-filled data slots with garbage, reset count to 0 but keep capacity */
             parsed->count = 0;
             nostr_tags_reserve(parsed, tag_count > 0 ? tag_count : 4);
             t = nostr_json_skip_ws(t);
             while (*t && *t != ']') {
-                if (*t != '[') { nostr_tags_free(parsed); return 0; }
+                if (*t != '[') { nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_EXPECTED_ARRAY, t); }
                 ++t; // into a tag array
                 NostrTag *tag = nostr_tag_new(NULL, NULL);
-                if (!tag) { nostr_tags_free(parsed); return 0; }
+                if (!tag) { nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_ALLOC, t); }
                 /* Reserve elements for this tag by scanning until closing ']' */
                 const char *t2 = t; size_t elem_count = 0;
                 while (*t2 && *t2 != ']') {
                     t2 = nostr_json_skip_ws(t2);
-                    if (*t2 == '"') { char *tmp = nostr_json_parse_string(&t2); if (!tmp) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; } free(tmp); ++elem_count; t2 = nostr_json_skip_ws(t2); if (*t2 == ',') { ++t2; } }
+                    if (*t2 == '"') { char *tmp = nostr_json_parse_string(&t2); if (!tmp) { nostr_tag_free(tag); nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, t2); } free(tmp); ++elem_count; t2 = nostr_json_skip_ws(t2); if (*t2 == ',') { ++t2; } }
                     else { break; }
                 }
                 if (elem_count > 0) nostr_tag_reserve(tag, elem_count);
                 t = nostr_json_skip_ws(t);
                 while (*t && *t != ']') {
                     char *sv = nostr_json_parse_string(&t);
-                    if (!sv) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; }
+                    if (!sv) { nostr_tag_free(tag); nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, t); }
                     nostr_tag_append(tag, sv);
                     free(sv);
                     t = nostr_json_skip_ws(t);
                     if (*t == ',') { ++t; t = nostr_json_skip_ws(t); }
                 }
-                if (*t != ']') { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; }
+                if (*t != ']') { nostr_tag_free(tag); nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t); }
                 ++t; // after closing tag array
                 nostr_tags_append(parsed, tag);
                 t = nostr_json_skip_ws(t);
                 if (*t == ',') { ++t; t = nostr_json_skip_ws(t); }
             }
-            if (*t != ']') { nostr_tags_free(parsed); return 0; }
+            if (*t != ']') { nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t); }
             ++t; // after closing tags
             if (event->tags) nostr_tags_free(event->tags);
             event->tags = parsed;
             p = t; // advance parser position
         } else {
             // Unknown key: skip its value generically (string/number/object/array/true/false/null)
-            // Minimal skipper for compact inputs
             const char *t = p;
             if (*t == '"') {
                 char *dummy = nostr_json_parse_string(&t);
-                if (!dummy) { return 0; }
+                if (!dummy) JFAIL_EV(NOSTR_JSON_ERR_SKIP_VALUE, t);
                 free(dummy);
             } else if (*t == '{') {
                 int depth = 1; ++t;
                 while (*t && depth) {
                     if (*t == '"') {
-                        char *d = nostr_json_parse_string(&t); if (!d) { return 0; } free(d);
+                        char *d = nostr_json_parse_string(&t); if (!d) JFAIL_EV(NOSTR_JSON_ERR_SKIP_VALUE, t); free(d);
                     } else if (*t == '{') { ++depth; ++t; }
                     else if (*t == '}') { --depth; ++t; }
                     else { ++t; }
                 }
-                if (depth) { return 0; }
+                if (depth) JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t);
             } else if (*t == '[') {
                 int depth = 1; ++t;
                 while (*t && depth) {
                     if (*t == '"') {
-                        char *d = nostr_json_parse_string(&t); if (!d) { return 0; } free(d);
+                        char *d = nostr_json_parse_string(&t); if (!d) JFAIL_EV(NOSTR_JSON_ERR_SKIP_VALUE, t); free(d);
                     } else if (*t == '[') { ++depth; ++t; }
                     else if (*t == ']') { --depth; ++t; }
                     else { ++t; }
                 }
-                if (depth) { return 0; }
+                if (depth) JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t);
             } else { // number, true, false, null — advance until delimiter
                 while (*t && *t!=',' && *t!='}' && *t!=']' && *t!='\n' && *t!='\r' && *t!='\t' && *t!=' ') ++t;
             }
@@ -316,11 +324,12 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
         if (*p == ',') { ++p; continue; }
         if (*p == '}') { ++p; break; }
         // otherwise, invalid separator
-        return 0;
+        JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
     }
     (void)have_kind;
     (void)have_created_at;
     return 1;
+#undef JFAIL_EV
 }
 
 void nostr_event_free(NostrEvent *event) {

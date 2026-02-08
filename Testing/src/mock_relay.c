@@ -305,7 +305,7 @@ int nostr_mock_relay_seed_from_json(NostrMockRelay *mock, const char *json_path)
                     event_json[len] = '\0';
 
                     NostrEvent *event = nostr_event_new();
-                    if (event && nostr_event_deserialize_compact(event, event_json) == 1) {
+                    if (event && nostr_event_deserialize_compact(event, event_json, NULL) == 1) {
                         nostr_mock_relay_seed_event(mock, event);
                         count++;
                     }

@@ -861,7 +861,7 @@ static void handle_event_envelope(NostrMockRelayServer *server, MockConnection *
     if (server->config.validate_signatures && event_str) {
         NostrEvent *nostr_event = nostr_event_new();
         if (nostr_event) {
-            if (nostr_event_deserialize_compact(nostr_event, event_str) == 1) {
+            if (nostr_event_deserialize_compact(nostr_event, event_str, NULL) == 1) {
                 valid = nostr_event_check_signature(nostr_event);
             } else {
                 valid = false;  /* Failed to parse event */

@@ -354,7 +354,7 @@ NostrEvent *nostr_nip17_unwrap_gift_wrap(NostrEvent *gift_wrap,
     json[decrypted_len] = '\0';
     free(decrypted);
 
-    if (!nostr_event_deserialize_compact(seal, json)) {
+    if (!nostr_event_deserialize_compact(seal, json, NULL)) {
         free(json);
         nostr_event_free(seal);
         return NULL;
@@ -425,7 +425,7 @@ NostrEvent *nostr_nip17_unwrap_seal(NostrEvent *seal,
     json[decrypted_len] = '\0';
     free(decrypted);
 
-    if (!nostr_event_deserialize_compact(rumor, json)) {
+    if (!nostr_event_deserialize_compact(rumor, json, NULL)) {
         free(json);
         nostr_event_free(rumor);
         return NULL;

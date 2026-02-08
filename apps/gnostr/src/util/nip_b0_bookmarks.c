@@ -68,7 +68,7 @@ GnostrWebBookmark *gnostr_web_bookmark_parse_json(const char *event_json) {
 
   /* Parse with NostrEvent API */
   NostrEvent event = {0};
-  if (!nostr_event_deserialize_compact(&event, event_json)) {
+  if (!nostr_event_deserialize_compact(&event, event_json, NULL)) {
     g_warning("NIP-B0: Failed to parse event JSON");
     return NULL;
   }

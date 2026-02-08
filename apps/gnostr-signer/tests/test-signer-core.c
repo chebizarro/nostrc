@@ -693,7 +693,7 @@ test_event_workflow_serialize_deserialize(void)
 
     /* Deserialize into new event */
     NostrEvent *restored = nostr_event_new();
-    int rc = nostr_event_deserialize_compact(restored, json);
+    int rc = nostr_event_deserialize_compact(restored, json, NULL);
     g_assert_cmpint(rc, ==, 1);
 
     /* Verify fields match */
@@ -741,7 +741,7 @@ test_event_workflow_unicode_content(void)
         /* Serialize and deserialize should preserve content */
         char *json = nostr_event_serialize_compact(event);
         NostrEvent *restored = nostr_event_new();
-        g_assert_cmpint(nostr_event_deserialize_compact(restored, json), ==, 1);
+        g_assert_cmpint(nostr_event_deserialize_compact(restored, json, NULL), ==, 1);
         g_assert_cmpstr(nostr_event_get_content(restored), ==, unicode_tests[i]);
         g_assert_true(nostr_event_check_signature(restored));
 

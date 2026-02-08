@@ -551,7 +551,7 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
 
     /* Parse rumor event */
     NostrEvent *rumor = nostr_event_new();
-    if (!nostr_event_deserialize_compact(rumor, rumor_json)) {
+    if (!nostr_event_deserialize_compact(rumor, rumor_json, NULL)) {
         g_warning("[DM_SERVICE] Failed to parse rumor JSON");
         nostr_event_free(rumor);
         g_free(rumor_json);
@@ -720,7 +720,7 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
 
     /* Parse seal event */
     NostrEvent *seal = nostr_event_new();
-    if (!nostr_event_deserialize_compact(seal, seal_json)) {
+    if (!nostr_event_deserialize_compact(seal, seal_json, NULL)) {
         g_warning("[DM_SERVICE] Failed to parse seal JSON");
         nostr_event_free(seal);
         g_free(seal_json);
@@ -1107,7 +1107,7 @@ on_dm_relays_fetched(GPtrArray *relays, gpointer user_data)
 
     /* Parse gift wrap event for publishing */
     NostrEvent *gift_wrap = nostr_event_new();
-    if (!nostr_event_deserialize_compact(gift_wrap, ctx->gift_wrap_json)) {
+    if (!nostr_event_deserialize_compact(gift_wrap, ctx->gift_wrap_json, NULL)) {
         g_warning("[DM_SERVICE] Failed to parse gift wrap for publishing");
         nostr_event_free(gift_wrap);
         g_ptr_array_unref(relays);
