@@ -1,0 +1,280 @@
+using Gtk 4.0;
+
+template $GnostrArticleReader: Widget {
+    Box root_box {
+        orientation: vertical;
+        hexpand: true;
+        vexpand: true;
+
+        styles [
+            "article-reader",
+        ]
+
+        Box header_box {
+            orientation: horizontal;
+            spacing: 12;
+            margin-start: 12;
+            margin-end: 12;
+            margin-top: 8;
+            margin-bottom: 8;
+
+            Button btn_close {
+                icon-name: "go-previous-symbolic";
+                tooltip-text: "Close article";
+                valign: center;
+
+                styles [
+                    "flat",
+                ]
+            }
+
+            Label header_title {
+                label: "Article";
+                hexpand: true;
+                xalign: 0;
+
+                styles [
+                    "title-3",
+                ]
+            }
+        }
+
+        Separator {
+            orientation: horizontal;
+        }
+
+        /* Loading state */
+        Box loading_box {
+            orientation: vertical;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            spacing: 12;
+            visible: false;
+
+            Spinner loading_spinner {
+                width-request: 32;
+                height-request: 32;
+            }
+
+            Label {
+                label: "Loading article...";
+
+                styles [
+                    "dim-label",
+                ]
+            }
+        }
+
+        /* Error state */
+        Box error_box {
+            orientation: vertical;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            spacing: 12;
+            visible: false;
+
+            Image {
+                icon-name: "dialog-error-symbolic";
+                pixel-size: 48;
+
+                styles [
+                    "dim-label",
+                ]
+            }
+
+            Label error_label {
+                label: "Failed to load article";
+
+                styles [
+                    "dim-label",
+                    "title-4",
+                ]
+            }
+        }
+
+        /* Article content */
+        ScrolledWindow scroll_window {
+            hscrollbar-policy: never;
+            vscrollbar-policy: automatic;
+            hexpand: true;
+            vexpand: true;
+            visible: false;
+
+            Box content_box {
+                orientation: vertical;
+                spacing: 16;
+                margin-start: 24;
+                margin-end: 24;
+                margin-top: 16;
+                margin-bottom: 24;
+
+                styles [
+                    "article-full-view",
+                ]
+
+                /* Header image */
+                Picture header_image {
+                    content-fit: cover;
+                    height-request: 200;
+                    visible: false;
+
+                    styles [
+                        "article-header-image",
+                    ]
+                }
+
+                /* Title */
+                Label lbl_title {
+                    xalign: 0;
+                    wrap: true;
+                    wrap-mode: word_char;
+                    selectable: true;
+
+                    styles [
+                        "article-title",
+                    ]
+                }
+
+                /* Author info row */
+                Box author_box {
+                    orientation: horizontal;
+                    spacing: 8;
+                    valign: center;
+
+                    Overlay avatar_overlay {
+                        [overlay]
+                        Picture avatar_image {
+                            width-request: 32;
+                            height-request: 32;
+                            content-fit: cover;
+                            visible: false;
+
+                            styles [
+                                "avatar",
+                            ]
+                        }
+
+                        Label avatar_initials {
+                            label: "?";
+                            width-request: 32;
+                            height-request: 32;
+                            halign: center;
+                            valign: center;
+
+                            styles [
+                                "avatar-initials",
+                            ]
+                        }
+                    }
+
+                    Button btn_author {
+                        styles [
+                            "flat",
+                        ]
+
+                        child: Label lbl_author_name {
+                            label: "Unknown";
+                            xalign: 0;
+
+                            styles [
+                                "heading",
+                            ]
+                        };
+                    }
+
+                    Label lbl_date {
+                        label: "";
+                        xalign: 0;
+
+                        styles [
+                            "dim-label",
+                            "caption",
+                        ]
+                    }
+
+                    Label lbl_reading_time {
+                        label: "";
+                        xalign: 0;
+
+                        styles [
+                            "dim-label",
+                            "caption",
+                        ]
+                    }
+                }
+
+                /* Hashtags */
+                FlowBox hashtags_flow {
+                    selection-mode: none;
+                    max-children-per-line: 10;
+                    min-children-per-line: 1;
+                    row-spacing: 4;
+                    column-spacing: 4;
+                    visible: false;
+                }
+
+                Separator sep_before_content {
+                    orientation: horizontal;
+                }
+
+                /* Markdown content */
+                Label lbl_content {
+                    xalign: 0;
+                    wrap: true;
+                    wrap-mode: word_char;
+                    use-markup: true;
+                    selectable: true;
+
+                    styles [
+                        "article-content",
+                    ]
+                }
+
+                Separator sep_after_content {
+                    orientation: horizontal;
+                }
+
+                /* Action bar */
+                Box action_box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    halign: center;
+                    margin-top: 8;
+                    margin-bottom: 8;
+
+                    Button btn_zap {
+                        icon-name: "starred-symbolic";
+                        tooltip-text: "Zap author";
+
+                        styles [
+                            "flat",
+                            "circular",
+                        ]
+                    }
+
+                    Button btn_share {
+                        icon-name: "emblem-shared-symbolic";
+                        tooltip-text: "Copy naddr link";
+
+                        styles [
+                            "flat",
+                            "circular",
+                        ]
+                    }
+
+                    Button btn_open_external {
+                        icon-name: "web-browser-symbolic";
+                        tooltip-text: "Open in browser";
+
+                        styles [
+                            "flat",
+                            "circular",
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}

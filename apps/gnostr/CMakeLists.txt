@@ -48,6 +48,8 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-articles-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-reader.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-composer.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-live-card.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-zap-goal-widget.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-list-view.blp

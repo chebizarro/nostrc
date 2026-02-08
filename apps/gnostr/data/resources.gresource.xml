@@ -20,6 +20,8 @@
     <file>ui/widgets/gnostr-search-results-view.ui</file>
     <file>ui/widgets/gnostr-article-card.ui</file>
     <file>ui/widgets/gnostr-articles-view.ui</file>
+    <file>ui/widgets/gnostr-article-reader.ui</file>
+    <file>ui/widgets/gnostr-article-composer.ui</file>
     <file>ui/widgets/gnostr-live-card.ui</file>
     <file>ui/widgets/gnostr-zap-goal-widget.ui</file>
     <file>ui/widgets/gnostr-channel-list-view.ui</file>

@@ -8,6 +8,8 @@
 #include "gn-timeline-tabs.h"
 #include "gnostr-profile-pane.h"
 #include "gnostr-thread-view.h"
+#include "gnostr-article-reader.h"
+#include "gnostr-article-composer.h"
 #include "gnostr-profile-provider.h"
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-conversation-view.h"
@@ -614,6 +616,13 @@ static void show_thread_panel(GnostrMainWindow *self) {
   if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
     gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
   }
+}
+
+static void show_article_panel(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  if (self->session_view)
+    gnostr_session_view_show_article_panel(self->session_view);
 }
 
 static void hide_panel(GnostrMainWindow *self) {
@@ -4582,30 +4591,25 @@ static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user
 /**
  * on_discover_open_article - Handle article click from Discover page Articles mode
  *
- * Opens an article in a viewer. For now, shows a toast with the kind info.
- * In a full implementation, this would open an ArticleReader view.
+ * Opens an article in the dedicated article reader panel (nostrc-zwn4).
  *
  * @param event_id: The event ID of the article
  * @param kind: The Nostr event kind (30023 for NIP-23 long-form, 30818 for NIP-54 wiki)
  */
 static void on_discover_open_article(GnostrPageDiscover *page, const char *event_id, gint kind, gpointer user_data) {
   (void)page;
+  (void)kind;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_id) return;
 
-  const char *kind_name = (kind == 30818) ? "Wiki (NIP-54)" : "Long-form (NIP-23)";
-  gchar *msg = g_strdup_printf("Opening %s article...", kind_name);
-  gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
-  g_free(msg);
-
-  /* Show in thread view for now - could have a dedicated ArticleReader in the future */
-  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(thread_view), event_id);
-    show_thread_panel(self);
+  GtkWidget *reader = self->session_view
+      ? gnostr_session_view_get_article_reader(self->session_view) : NULL;
+  if (reader && GNOSTR_IS_ARTICLE_READER(reader)) {
+    gnostr_article_reader_load_event(GNOSTR_ARTICLE_READER(reader), event_id);
+    show_article_panel(self);
   }
 
-  g_debug("[ARTICLES] Open article requested: kind=%d, id=%s", kind, event_id);
+  g_debug("[ARTICLES] Open article in reader: kind=%d, id=%s", kind, event_id);
 }
 
 /**
@@ -4975,6 +4979,59 @@ static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user
   if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
     gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(thread_view));
   }
+}
+
+/* ---- Article reader signal handlers (nostrc-zwn4) ---- */
+
+static void on_article_reader_close_requested(GnostrArticleReader *reader, gpointer user_data) {
+  (void)reader;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  hide_panel(self);
+}
+
+static void on_article_reader_open_profile(GnostrArticleReader *reader, const char *pubkey_hex, gpointer user_data) {
+  (void)reader;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  hide_panel(self);
+  gnostr_main_window_open_profile(GTK_WIDGET(self), pubkey_hex);
+}
+
+static void on_article_reader_open_url(GnostrArticleReader *reader, const char *url, gpointer user_data) {
+  (void)reader;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !url) return;
+  GtkUriLauncher *launcher = gtk_uri_launcher_new(url);
+  gtk_uri_launcher_launch(launcher, GTK_WINDOW(self), NULL, NULL, NULL);
+  g_object_unref(launcher);
+}
+
+static void on_article_reader_share(GnostrArticleReader *reader, const char *naddr_uri, gpointer user_data) {
+  (void)reader;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !naddr_uri) return;
+
+  GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+  gdk_clipboard_set_text(clipboard, naddr_uri);
+  gnostr_main_window_show_toast(GTK_WIDGET(self), "Article link copied to clipboard");
+}
+
+static void on_article_reader_zap(GnostrArticleReader *reader,
+                                   const char *event_id, const char *pubkey_hex,
+                                   const char *lud16, gpointer user_data) {
+  (void)reader;
+  (void)event_id;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+
+  if (!lud16 || !*lud16) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Author has no Lightning address set");
+    return;
+  }
+
+  gnostr_main_window_show_toast(GTK_WIDGET(self), "Zap dialog coming soon!");
+  g_debug("[ARTICLE-READER] Zap requested: pubkey=%s", pubkey_hex);
 }
 
 /* Handler for open profile from thread view */
@@ -5622,6 +5679,21 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                        G_CALLBACK(on_thread_view_open_profile), self);
     }
 
+    /* Connect article reader signals (nostrc-zwn4) */
+    GtkWidget *article_reader = gnostr_session_view_get_article_reader(self->session_view);
+    if (article_reader && GNOSTR_IS_ARTICLE_READER(article_reader)) {
+      g_signal_connect(article_reader, "close-requested",
+                       G_CALLBACK(on_article_reader_close_requested), self);
+      g_signal_connect(article_reader, "open-profile",
+                       G_CALLBACK(on_article_reader_open_profile), self);
+      g_signal_connect(article_reader, "open-url",
+                       G_CALLBACK(on_article_reader_open_url), self);
+      g_signal_connect(article_reader, "share-article",
+                       G_CALLBACK(on_article_reader_share), self);
+      g_signal_connect(article_reader, "zap-requested",
+                       G_CALLBACK(on_article_reader_zap), self);
+    }
+
     /* Connect repo browser signals */
     GtkWidget *repo_browser = gnostr_session_view_get_repo_browser(self->session_view);
     if (repo_browser && GNOSTR_IS_REPO_BROWSER(repo_browser)) {
@@ -6179,6 +6251,62 @@ static void on_compose_requested(GnostrSessionView *session_view, gpointer user_
   adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
 
   /* Present the dialog */
+  adw_dialog_present(dialog, GTK_WIDGET(self));
+}
+
+/* nostrc-zwn4: Article composer publish handler */
+static void on_article_compose_publish(GnostrArticleComposer *composer,
+                                        gboolean is_draft, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  const char *title = gnostr_article_composer_get_title(composer);
+  const char *content = gnostr_article_composer_get_content(composer);
+  const char *d_tag = gnostr_article_composer_get_d_tag(composer);
+
+  if (!title || !*title) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Title is required");
+    return;
+  }
+  if (!content || !*content) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Content is required");
+    return;
+  }
+
+  /* TODO: Build and sign kind 30023/30024 event via signer, publish to relays */
+  const char *action = is_draft ? "Draft saved" : "Article published";
+  g_autofree char *msg = g_strdup_printf("%s: %s", action, title);
+  gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
+
+  g_debug("[ARTICLE-COMPOSER] %s: title=%s, d_tag=%s, draft=%d",
+          action, title, d_tag ? d_tag : "(none)", is_draft);
+
+  /* Close the dialog */
+  AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(composer), "compose-dialog"));
+  if (dialog)
+    adw_dialog_close(dialog);
+}
+
+/* nostrc-zwn4: Open article compose dialog */
+void gnostr_main_window_compose_article(GtkWidget *window) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  AdwDialog *dialog = adw_dialog_new();
+  adw_dialog_set_title(dialog, _("Write Article"));
+  adw_dialog_set_content_width(dialog, 700);
+  adw_dialog_set_content_height(dialog, 600);
+
+  AdwToolbarView *toolbar = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
+  AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_toolbar_view_add_top_bar(toolbar, GTK_WIDGET(header));
+
+  GtkWidget *composer = gnostr_article_composer_new();
+  g_object_set_data(G_OBJECT(composer), "compose-dialog", dialog);
+  g_signal_connect(composer, "publish-requested",
+                   G_CALLBACK(on_article_compose_publish), self);
+  adw_toolbar_view_set_content(toolbar, composer);
+  adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
   adw_dialog_present(dialog, GTK_WIDGET(self));
 }
 

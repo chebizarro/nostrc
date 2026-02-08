@@ -23,9 +23,10 @@ void gnostr_session_view_set_authenticated(GnostrSessionView *self, gboolean aut
 /* Navigation */
 void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_name);
 
-/* Side panel (profile/thread) controls */
+/* Side panel (profile/thread/article) controls */
 void gnostr_session_view_show_profile_panel(GnostrSessionView *self);
 void gnostr_session_view_show_thread_panel(GnostrSessionView *self);
+void gnostr_session_view_show_article_panel(GnostrSessionView *self);
 void gnostr_session_view_hide_side_panel(GnostrSessionView *self);
 gboolean gnostr_session_view_is_side_panel_visible(GnostrSessionView *self);
 
@@ -45,6 +46,7 @@ GtkWidget *gnostr_session_view_get_classifieds_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_repo_browser(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_profile_pane(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_thread_view(GnostrSessionView *self);
+GtkWidget *gnostr_session_view_get_article_reader(GnostrSessionView *self);
 
 /* Panel state queries */
 gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self);

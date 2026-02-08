@@ -12,6 +12,7 @@
 #include "gnostr-repo-browser.h"
 #include "gnostr-search-results-view.h"
 #include "gnostr-thread-view.h"
+#include "gnostr-article-reader.h"
 #include "gnostr-timeline-view.h"
 #include "page-discover.h"
 
@@ -124,6 +125,7 @@ struct _GnostrSessionView {
   GtkBox *panel_container;
   GtkWidget *profile_pane;
   GtkWidget *thread_view;
+  GtkWidget *article_reader;
 
   AdwViewStack *stack;
   GtkWidget *timeline;
@@ -962,6 +964,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   g_type_ensure(GNOSTR_TYPE_REPO_BROWSER);
   g_type_ensure(GNOSTR_TYPE_PROFILE_PANE);
   g_type_ensure(GNOSTR_TYPE_THREAD_VIEW);
+  g_type_ensure(GNOSTR_TYPE_ARTICLE_READER);
 
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
 
@@ -1015,6 +1018,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, panel_container);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, profile_pane);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, thread_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, article_reader);
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, stack);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, timeline);
@@ -1248,6 +1252,7 @@ void gnostr_session_view_show_profile_panel(GnostrSessionView *self) {
   if (!self->panel_split) return;
 
   if (self->thread_view) gtk_widget_set_visible(self->thread_view, FALSE);
+  if (self->article_reader) gtk_widget_set_visible(self->article_reader, FALSE);
   if (self->profile_pane) gtk_widget_set_visible(self->profile_pane, TRUE);
 
   self->showing_profile = TRUE;
@@ -1259,7 +1264,20 @@ void gnostr_session_view_show_thread_panel(GnostrSessionView *self) {
   if (!self->panel_split) return;
 
   if (self->profile_pane) gtk_widget_set_visible(self->profile_pane, FALSE);
+  if (self->article_reader) gtk_widget_set_visible(self->article_reader, FALSE);
   if (self->thread_view) gtk_widget_set_visible(self->thread_view, TRUE);
+
+  self->showing_profile = FALSE;
+  adw_overlay_split_view_set_show_sidebar(self->panel_split, TRUE);
+}
+
+void gnostr_session_view_show_article_panel(GnostrSessionView *self) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+  if (!self->panel_split) return;
+
+  if (self->profile_pane) gtk_widget_set_visible(self->profile_pane, FALSE);
+  if (self->thread_view) gtk_widget_set_visible(self->thread_view, FALSE);
+  if (self->article_reader) gtk_widget_set_visible(self->article_reader, TRUE);
 
   self->showing_profile = FALSE;
   adw_overlay_split_view_set_show_sidebar(self->panel_split, TRUE);
@@ -1351,6 +1369,11 @@ GtkWidget *gnostr_session_view_get_profile_pane(GnostrSessionView *self) {
 GtkWidget *gnostr_session_view_get_thread_view(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
   return self->thread_view;
+}
+
+GtkWidget *gnostr_session_view_get_article_reader(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
+  return self->article_reader;
 }
 
 gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self) {

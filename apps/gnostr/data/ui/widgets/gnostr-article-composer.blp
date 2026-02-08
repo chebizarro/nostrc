@@ -1,0 +1,169 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrArticleComposer: Widget {
+    Box root_box {
+        orientation: vertical;
+        spacing: 12;
+        margin-start: 16;
+        margin-end: 16;
+        margin-top: 12;
+        margin-bottom: 12;
+        hexpand: true;
+        vexpand: true;
+
+        /* Title */
+        Adw.EntryRow entry_title {
+            title: "Title";
+
+            styles [
+                "article-composer-field",
+            ]
+        }
+
+        /* Summary */
+        Adw.EntryRow entry_summary {
+            title: "Summary (optional)";
+
+            styles [
+                "article-composer-field",
+            ]
+        }
+
+        /* Header image URL */
+        Adw.EntryRow entry_image {
+            title: "Header image URL (optional)";
+
+            styles [
+                "article-composer-field",
+            ]
+        }
+
+        /* Hashtags */
+        Adw.EntryRow entry_hashtags {
+            title: "Hashtags (comma-separated)";
+
+            styles [
+                "article-composer-field",
+            ]
+        }
+
+        /* D-tag identifier */
+        Adw.EntryRow entry_d_tag {
+            title: "Identifier (d-tag, auto-generated)";
+
+            styles [
+                "article-composer-field",
+            ]
+        }
+
+        /* Editor / Preview toggle */
+        Box toolbar_box {
+            orientation: horizontal;
+            spacing: 8;
+
+            Label {
+                label: "Content (Markdown)";
+                hexpand: true;
+                xalign: 0;
+
+                styles [
+                    "heading",
+                ]
+            }
+
+            ToggleButton btn_preview {
+                label: "Preview";
+
+                styles [
+                    "flat",
+                ]
+            }
+        }
+
+        /* Editor stack (edit / preview) */
+        Stack editor_stack {
+            hexpand: true;
+            vexpand: true;
+            transition-type: crossfade;
+
+            StackPage {
+                name: "edit";
+
+                child: ScrolledWindow {
+                    hscrollbar-policy: never;
+                    vscrollbar-policy: automatic;
+                    hexpand: true;
+                    vexpand: true;
+
+                    child: TextView text_editor {
+                        hexpand: true;
+                        vexpand: true;
+                        wrap-mode: word_char;
+                        top-margin: 8;
+                        bottom-margin: 8;
+                        left-margin: 8;
+                        right-margin: 8;
+                        monospace: true;
+
+                        styles [
+                            "article-editor",
+                        ]
+                    };
+                };
+            }
+
+            StackPage {
+                name: "preview";
+
+                child: ScrolledWindow {
+                    hscrollbar-policy: never;
+                    vscrollbar-policy: automatic;
+                    hexpand: true;
+                    vexpand: true;
+
+                    child: Label lbl_preview {
+                        xalign: 0;
+                        yalign: 0;
+                        wrap: true;
+                        wrap-mode: word_char;
+                        use-markup: true;
+                        selectable: true;
+                        margin-start: 8;
+                        margin-end: 8;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        styles [
+                            "article-content",
+                        ]
+                    };
+                };
+            }
+        }
+
+        /* Action buttons */
+        Box action_box {
+            orientation: horizontal;
+            spacing: 12;
+            halign: end;
+            margin-top: 8;
+
+            Button btn_draft {
+                label: "Save Draft";
+
+                styles [
+                    "flat",
+                ]
+            }
+
+            Button btn_publish {
+                label: "Publish";
+
+                styles [
+                    "suggested-action",
+                ]
+            }
+        }
+    }
+}
