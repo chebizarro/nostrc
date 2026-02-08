@@ -1364,7 +1364,7 @@ on_file_uploaded(GnostrDmFileAttachment *attachment, GError *error, gpointer use
 
     /* Parse rumor JSON into NostrEvent */
     NostrEvent *rumor = nostr_event_new();
-    if (!nostr_event_deserialize_compact(rumor, rumor_json)) {
+    if (!nostr_event_deserialize_compact(rumor, rumor_json, NULL)) {
         g_warning("[DM_SERVICE] Failed to parse file rumor JSON");
         nostr_event_free(rumor);
         g_free(rumor_json);

@@ -7880,6 +7880,70 @@ static gboolean on_relay_config_changed_restart(gpointer user_data) {
 static gboolean retry_pool_live(gpointer user_data);
 static gboolean check_relay_health(gpointer user_data);
 
+/* nostrc-p2f6: Context for async relay connect → subscribe pipeline */
+typedef struct {
+    GnostrMainWindow *self;    /* strong ref */
+    NostrFilters     *filters; /* owned */
+} PoolConnectCtx;
+
+static void
+on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
+                         GAsyncResult *result,
+                         gpointer      user_data)
+{
+    PoolConnectCtx *ctx = user_data;
+    GnostrMainWindow *self = ctx->self;
+    NostrFilters *filters = ctx->filters;
+    g_free(ctx);
+
+    if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+        nostr_filters_free(filters);
+        g_object_unref(self);
+        return;
+    }
+
+    GError *err = NULL;
+    gboolean connected = gnostr_pool_connect_all_finish(self->pool, result, &err);
+    if (!connected) {
+        g_warning("[RELAY] No relays connected: %s - retrying in 5 seconds",
+                  err ? err->message : "(unknown)");
+        g_clear_error(&err);
+        nostr_filters_free(filters);
+        /* retry_pool_live expects a ref; reuse the one we hold */
+        g_timeout_add_seconds(5, retry_pool_live, self);
+        self->reconnection_in_progress = FALSE;
+        return;
+    }
+    g_clear_error(&err);
+
+    g_debug("[RELAY] Relays connected, starting live subscription");
+
+    GError *sub_error = NULL;
+    GNostrSubscription *sub = gnostr_pool_subscribe(self->pool, filters, &sub_error);
+    nostr_filters_free(filters);
+
+    if (!sub) {
+        g_warning("live: pool_subscribe failed: %s - retrying in 5 seconds",
+                  sub_error ? sub_error->message : "(unknown)");
+        g_clear_error(&sub_error);
+        g_timeout_add_seconds(5, retry_pool_live, self);
+        self->reconnection_in_progress = FALSE;
+        return;
+    }
+
+    self->live_sub = sub;
+    g_signal_connect(sub, "event", G_CALLBACK(on_pool_sub_event), self);
+    g_signal_connect(sub, "eose", G_CALLBACK(on_pool_sub_eose), self);
+    g_debug("[RELAY] Live subscription started successfully");
+    self->reconnection_in_progress = FALSE;
+
+    if (self->health_check_source_id == 0) {
+        self->health_check_source_id = g_timeout_add_seconds(30, check_relay_health, self);
+    }
+
+    g_object_unref(self); /* balance ref from start_pool_live */
+}
+
 static void start_pool_live(GnostrMainWindow *self) {
   /* Removed noisy debug */
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -7942,32 +8006,16 @@ static void start_pool_live(GnostrMainWindow *self) {
     g_clear_object(&self->live_sub);
   }
 
-  g_debug("[RELAY] Starting live subscription to %zu relays", self->live_url_count);
-  {
-    GError *sub_error = NULL;
-    GNostrSubscription *sub = gnostr_pool_subscribe(self->pool, filters, &sub_error);
-    if (!sub) {
-      g_warning("live: pool_subscribe failed: %s - retrying in 5 seconds",
-                sub_error ? sub_error->message : "(unknown)");
-      g_clear_error(&sub_error);
-      g_timeout_add_seconds(5, retry_pool_live, g_object_ref(self));
-      nostr_filters_free(filters);
-      self->reconnection_in_progress = FALSE;
-      return;
-    }
-    self->live_sub = sub; /* takes ownership */
-    g_signal_connect(sub, "event", G_CALLBACK(on_pool_sub_event), self);
-    g_signal_connect(sub, "eose", G_CALLBACK(on_pool_sub_eose), self);
-    g_debug("[RELAY] Live subscription started successfully");
-    self->reconnection_in_progress = FALSE;
-    /* LEGITIMATE TIMEOUT - Periodic health check (30s intervals). */
-    if (self->health_check_source_id == 0) {
-      self->health_check_source_id = g_timeout_add_seconds(30, check_relay_health, self);
-    }
-  }
-
-  /* Caller owns filters after subscription setup */
-  nostr_filters_free(filters);
+  /* nostrc-p2f6: Connect all relays BEFORE subscribing.
+   * Previously we subscribed immediately after sync_relays(), but relays
+   * start disconnected — pool_subscribe requires at least one connected relay. */
+  g_debug("[RELAY] Connecting %zu relays...", self->live_url_count);
+  PoolConnectCtx *ctx = g_new0(PoolConnectCtx, 1);
+  ctx->self = g_object_ref(self);
+  ctx->filters = filters; /* transfer ownership to callback */
+  gnostr_pool_connect_all_async(self->pool, self->pool_cancellable,
+                                on_pool_relays_connected, ctx);
+  /* subscribe happens in on_pool_relays_connected callback */
 }
 
 static void start_profile_subscription(GnostrMainWindow *self) {
