@@ -556,15 +556,19 @@ query_thread_func(GTask         *task,
 
         g_autoptr(GNostrRelay) grelay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
         NostrRelay *core_relay = gnostr_relay_get_core_relay(grelay);
+        gboolean relay_connected = gnostr_relay_get_connected(grelay);
 
-        if (!core_relay) {
-            /* Relay not yet connected - try to create a temporary one */
+        if (!core_relay || !relay_connected) {
+            /* Relay not connected - create a temporary one for this query.
+             * GNostrRelay always creates a core relay in its constructor,
+             * but it may not be connected. We need a connected relay to
+             * subscribe, so create a fresh temporary one. */
             const gchar *url = gnostr_relay_get_url(grelay);
             if (!url) continue;
 
             Error *err = NULL;
-            core_relay = nostr_relay_new(bg, url, &err);
-            if (!core_relay) {
+            NostrRelay *temp_relay = nostr_relay_new(bg, url, &err);
+            if (!temp_relay) {
                 if (err) {
                     g_debug("Failed to create relay for %s: %s", url,
                             err->message ? err->message : "unknown");
@@ -572,25 +576,25 @@ query_thread_func(GTask         *task,
                 }
                 continue;
             }
-            core_relay->assume_valid = true;
-            if (!nostr_relay_connect(core_relay, &err)) {
+            temp_relay->assume_valid = true;
+            if (!nostr_relay_connect(temp_relay, &err)) {
                 if (err) {
                     g_debug("Failed to connect to %s: %s", url,
                             err->message ? err->message : "unknown");
                     free_error(err);
                 }
-                nostr_relay_free(core_relay);
+                nostr_relay_free(temp_relay);
                 continue;
             }
 
             RelaySubItem *item = g_new0(RelaySubItem, 1);
-            item->core_relay = core_relay;
+            item->core_relay = temp_relay;
             item->owns_relay = TRUE;
 
-            struct NostrSubscription *sub = nostr_relay_prepare_subscription(core_relay, bg, filters);
+            struct NostrSubscription *sub = nostr_relay_prepare_subscription(temp_relay, bg, filters);
             if (!sub) {
-                nostr_relay_disconnect(core_relay);
-                nostr_relay_free(core_relay);
+                nostr_relay_disconnect(temp_relay);
+                nostr_relay_free(temp_relay);
                 g_free(item);
                 continue;
             }
@@ -599,8 +603,8 @@ query_thread_func(GTask         *task,
             if (!nostr_subscription_fire(sub, &fire_err)) {
                 if (fire_err) free_error(fire_err);
                 nostr_subscription_free(sub);
-                nostr_relay_disconnect(core_relay);
-                nostr_relay_free(core_relay);
+                nostr_relay_disconnect(temp_relay);
+                nostr_relay_free(temp_relay);
                 g_free(item);
                 continue;
             }
