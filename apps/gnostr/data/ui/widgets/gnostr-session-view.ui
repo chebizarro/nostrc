@@ -477,9 +477,32 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="title" translatable="yes">Messages</property>
                                     <property name="icon-name">mail-unread-symbolic</property>
                                     <property name="child">
-                                      <object class="GnostrDmInboxView" id="dm_inbox">
+                                      <object class="GtkStack" id="dm_stack">
+                                        <property name="transition-type">6</property>
                                         <property name="hexpand">true</property>
                                         <property name="vexpand">true</property>
+                                        <child>
+                                          <object class="GtkStackPage">
+                                            <property name="name">inbox</property>
+                                            <property name="child">
+                                              <object class="GnostrDmInboxView" id="dm_inbox">
+                                                <property name="hexpand">true</property>
+                                                <property name="vexpand">true</property>
+                                              </object>
+                                            </property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkStackPage">
+                                            <property name="name">conversation</property>
+                                            <property name="child">
+                                              <object class="GnostrDmConversationView" id="dm_conversation">
+                                                <property name="hexpand">true</property>
+                                                <property name="vexpand">true</property>
+                                              </object>
+                                            </property>
+                                          </object>
+                                        </child>
                                       </object>
                                     </property>
                                   </object>

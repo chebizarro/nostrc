@@ -37,6 +37,8 @@ void gnostr_session_view_show_toast(GnostrSessionView *self, const char *message
 GtkWidget *gnostr_session_view_get_timeline(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_notifications_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_dm_inbox(GnostrSessionView *self);
+GtkStack  *gnostr_session_view_get_dm_stack(GnostrSessionView *self);
+GtkWidget *gnostr_session_view_get_dm_conversation(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_discover_page(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_classifieds_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_repo_browser(GnostrSessionView *self);

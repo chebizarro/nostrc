@@ -42,6 +42,7 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-conversation-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.blp

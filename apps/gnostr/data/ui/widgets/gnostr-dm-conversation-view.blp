@@ -1,0 +1,218 @@
+using Gtk 4.0;
+
+template $GnostrDmConversationView: Widget {
+  Box root {
+    orientation: vertical;
+    hexpand: true;
+    vexpand: true;
+
+    Box header_box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-start: 8;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 8;
+
+      styles [
+        "dm-header",
+      ]
+
+      Button btn_back {
+        icon-name: "go-previous-symbolic";
+        tooltip-text: "Back to inbox";
+        valign: center;
+      }
+
+      Button btn_peer_avatar {
+        has-frame: false;
+        valign: center;
+        tooltip-text: "View profile";
+
+        Overlay {
+          width-request: 36;
+          height-request: 36;
+
+          Frame {
+            halign: center;
+            valign: center;
+
+            styles [
+              "avatar-frame",
+            ]
+
+            Label peer_avatar_initials {
+              label: "?";
+              width-request: 36;
+              height-request: 36;
+
+              styles [
+                "avatar-initials",
+                "title-4",
+              ]
+            }
+          }
+
+          [overlay]
+          Picture peer_avatar_image {
+            content-fit: cover;
+            width-request: 36;
+            height-request: 36;
+            visible: false;
+
+            styles [
+              "avatar",
+            ]
+          }
+        }
+      }
+
+      Label lbl_peer_name {
+        label: "";
+        xalign: 0.0;
+        hexpand: true;
+        ellipsize: end;
+        valign: center;
+
+        styles [
+          "title-4",
+        ]
+      }
+    }
+
+    Separator {
+      orientation: horizontal;
+    }
+
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "messages";
+
+        child: ScrolledWindow scroller {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          ListBox message_list {
+            hexpand: true;
+            vexpand: true;
+            selection-mode: none;
+
+            styles [
+              "dm-messages",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "mail-send-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "No Messages Yet";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: "Send a message to start the conversation.";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Loading messages...";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+    }
+
+    Box composer_box {
+      orientation: horizontal;
+      spacing: 8;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 12;
+
+      styles [
+        "dm-composer",
+      ]
+
+      ScrolledWindow {
+        hexpand: true;
+        max-content-height: 100;
+        propagate-natural-height: true;
+        hscrollbar-policy: never;
+
+        TextView message_entry {
+          hexpand: true;
+          wrap-mode: word_char;
+          accepts-tab: false;
+          top-margin: 8;
+          bottom-margin: 8;
+          left-margin: 12;
+          right-margin: 12;
+
+          styles [
+            "dm-entry",
+          ]
+        }
+      }
+
+      Button btn_send {
+        icon-name: "mail-send-symbolic";
+        valign: end;
+        tooltip-text: "Send message";
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+  }
+}

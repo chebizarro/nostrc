@@ -10,6 +10,7 @@
 #include "gnostr-thread-view.h"
 #include "gnostr-profile-provider.h"
 #include "gnostr-dm-inbox-view.h"
+#include "gnostr-dm-conversation-view.h"
 #include "gnostr-dm-row.h"
 #include "gnostr-dm-service.h"
 #include "gnostr-notifications-view.h"
@@ -267,6 +268,13 @@ static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gp
 static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data);
 static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const char *pubkey_hex, const char *lud16, gpointer user_data);
 static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const char *event_id, const char *naddr, gpointer user_data);
+/* Forward declarations for DM conversation signal handlers */
+static void on_dm_inbox_open_conversation(GnostrDmInboxView *inbox, const char *peer_pubkey, gpointer user_data);
+static void on_dm_inbox_compose(GnostrDmInboxView *inbox, gpointer user_data);
+static void on_dm_conversation_go_back(GnostrDmConversationView *view, gpointer user_data);
+static void on_dm_conversation_send_message(GnostrDmConversationView *view, const char *content, gpointer user_data);
+static void on_dm_conversation_open_profile(GnostrDmConversationView *view, const char *pubkey_hex, gpointer user_data);
+static void on_dm_service_message_received(GnostrDmService *service, const char *peer_pubkey, const char *content, gint64 created_at, gboolean is_outgoing, gpointer user_data);
 /* Forward declaration for ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 /* Forward declaration for close-request handler (nostrc-61s.6: background mode) */
@@ -4282,6 +4290,205 @@ static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const ch
   }
 }
 
+/* ============== DM Conversation Signal Handlers ============== */
+
+/* Helper: navigate to conversation view for a peer */
+static void
+navigate_to_dm_conversation(GnostrMainWindow *self, const char *peer_pubkey)
+{
+    if (!self->session_view || !GNOSTR_IS_SESSION_VIEW(self->session_view))
+        return;
+
+    GtkStack *dm_stack = gnostr_session_view_get_dm_stack(self->session_view);
+    GtkWidget *dm_conv = gnostr_session_view_get_dm_conversation(self->session_view);
+    if (!dm_stack || !dm_conv || !GNOSTR_IS_DM_CONVERSATION_VIEW(dm_conv))
+        return;
+
+    GnostrDmConversationView *conv_view = GNOSTR_DM_CONVERSATION_VIEW(dm_conv);
+
+    /* Fetch profile info for the peer */
+    const char *display_name = NULL;
+    const char *avatar_url = NULL;
+    GnostrProfileMeta *meta = gnostr_profile_provider_get(peer_pubkey);
+    if (meta) {
+        display_name = meta->display_name;
+        avatar_url = meta->picture;
+    }
+
+    /* Set peer on conversation view */
+    gnostr_dm_conversation_view_set_peer(conv_view, peer_pubkey,
+                                          display_name, avatar_url);
+
+    /* Set user pubkey if available */
+    if (self->user_pubkey_hex) {
+        gnostr_dm_conversation_view_set_user_pubkey(conv_view, self->user_pubkey_hex);
+    }
+
+    /* Load message history */
+    gnostr_dm_conversation_view_set_loading(conv_view, TRUE);
+
+    GPtrArray *messages = gnostr_dm_service_get_messages(self->dm_service, peer_pubkey);
+    if (messages && messages->len > 0) {
+        gnostr_dm_conversation_view_set_messages(conv_view, messages);
+        gnostr_dm_conversation_view_set_loading(conv_view, FALSE);
+        gnostr_dm_conversation_view_scroll_to_bottom(conv_view);
+    } else {
+        /* Try async loading (Phase 4 will expand this) */
+        gnostr_dm_conversation_view_clear(conv_view);
+        gnostr_dm_conversation_view_set_loading(conv_view, FALSE);
+    }
+
+    if (meta) gnostr_profile_meta_free(meta);
+
+    /* Mark conversation as read */
+    gnostr_dm_service_mark_read(self->dm_service, peer_pubkey);
+
+    /* Switch to conversation page */
+    gtk_stack_set_visible_child_name(dm_stack, "conversation");
+}
+
+static void on_dm_inbox_open_conversation(GnostrDmInboxView *inbox,
+                                           const char *peer_pubkey,
+                                           gpointer user_data)
+{
+    (void)inbox;
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+    if (!GNOSTR_IS_MAIN_WINDOW(self) || !peer_pubkey) return;
+
+    g_message("[DM] Opening conversation with %.8s", peer_pubkey);
+    navigate_to_dm_conversation(self, peer_pubkey);
+}
+
+static void on_dm_inbox_compose(GnostrDmInboxView *inbox, gpointer user_data)
+{
+    (void)inbox;
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+    if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+    /* For now, show a toast — compose dialog is a future feature */
+    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+        gnostr_session_view_show_toast(self->session_view,
+                                        "Compose DM: Enter an npub or pubkey to start a conversation");
+    }
+}
+
+static void on_dm_conversation_go_back(GnostrDmConversationView *view,
+                                        gpointer user_data)
+{
+    (void)view;
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+    if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+    if (!self->session_view || !GNOSTR_IS_SESSION_VIEW(self->session_view))
+        return;
+
+    GtkStack *dm_stack = gnostr_session_view_get_dm_stack(self->session_view);
+    if (dm_stack) {
+        gtk_stack_set_visible_child_name(dm_stack, "inbox");
+    }
+}
+
+/* Callback for send DM completion */
+static void
+on_dm_send_complete(GnostrDmSendResult *result, gpointer user_data)
+{
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+    if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+        gnostr_dm_send_result_free(result);
+        return;
+    }
+
+    if (!result->success) {
+        g_warning("[DM] Send failed: %s", result->error_message ? result->error_message : "unknown");
+        if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+            gnostr_session_view_show_toast(self->session_view, "Failed to send message");
+        }
+    } else {
+        g_message("[DM] Message sent to %u relays", result->relays_published);
+    }
+
+    gnostr_dm_send_result_free(result);
+}
+
+static void on_dm_conversation_send_message(GnostrDmConversationView *view,
+                                             const char *content,
+                                             gpointer user_data)
+{
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+    if (!GNOSTR_IS_MAIN_WINDOW(self) || !content || !*content) return;
+
+    const char *peer_pubkey = gnostr_dm_conversation_view_get_peer_pubkey(view);
+    if (!peer_pubkey) return;
+
+    g_message("[DM] Sending message to %.8s", peer_pubkey);
+
+    /* Optimistically add message bubble */
+    GnostrDmMessage msg = {
+        .event_id = NULL,  /* pending */
+        .content = (char *)content,
+        .created_at = (gint64)(g_get_real_time() / 1000000),
+        .is_outgoing = TRUE,
+    };
+    gnostr_dm_conversation_view_add_message(view, &msg);
+    gnostr_dm_conversation_view_scroll_to_bottom(view);
+
+    /* Send via NIP-17 gift wrap */
+    gnostr_dm_service_send_dm_async(self->dm_service,
+                                     peer_pubkey,
+                                     content,
+                                     NULL, /* cancellable */
+                                     on_dm_send_complete,
+                                     self);
+}
+
+static void on_dm_conversation_open_profile(GnostrDmConversationView *view,
+                                             const char *pubkey_hex,
+                                             gpointer user_data)
+{
+    (void)view;
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+    if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+    on_note_card_open_profile(NULL, pubkey_hex, self);
+}
+
+static void on_dm_service_message_received(GnostrDmService *service,
+                                            const char *peer_pubkey,
+                                            const char *content,
+                                            gint64 created_at,
+                                            gboolean is_outgoing,
+                                            gpointer user_data)
+{
+    (void)service;
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+    if (!GNOSTR_IS_MAIN_WINDOW(self) || !peer_pubkey) return;
+
+    if (!self->session_view || !GNOSTR_IS_SESSION_VIEW(self->session_view))
+        return;
+
+    GtkStack *dm_stack = gnostr_session_view_get_dm_stack(self->session_view);
+    GtkWidget *dm_conv = gnostr_session_view_get_dm_conversation(self->session_view);
+    if (!dm_stack || !dm_conv || !GNOSTR_IS_DM_CONVERSATION_VIEW(dm_conv))
+        return;
+
+    GnostrDmConversationView *conv_view = GNOSTR_DM_CONVERSATION_VIEW(dm_conv);
+
+    /* Only add to conversation view if it's showing this peer */
+    const char *current_peer = gnostr_dm_conversation_view_get_peer_pubkey(conv_view);
+    const char *visible_child = gtk_stack_get_visible_child_name(dm_stack);
+    if (current_peer && visible_child &&
+        strcmp(current_peer, peer_pubkey) == 0 &&
+        strcmp(visible_child, "conversation") == 0) {
+        GnostrDmMessage msg = {
+            .event_id = NULL,
+            .content = (char *)content,
+            .created_at = created_at,
+            .is_outgoing = is_outgoing,
+        };
+        gnostr_dm_conversation_view_add_message(conv_view, &msg);
+        gnostr_dm_conversation_view_scroll_to_bottom(conv_view);
+    }
+}
+
 /**
  * on_discover_open_communities - Handle communities button click from Discover page
  *
@@ -5534,7 +5741,31 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(dm_inbox)) {
     gnostr_dm_service_set_inbox_view(self->dm_service, GNOSTR_DM_INBOX_VIEW(dm_inbox));
     g_debug("[DM_SERVICE] Connected DM service to inbox view");
+
+    /* Wire inbox signals for conversation navigation */
+    g_signal_connect(dm_inbox, "open-conversation",
+                     G_CALLBACK(on_dm_inbox_open_conversation), self);
+    g_signal_connect(dm_inbox, "compose-dm",
+                     G_CALLBACK(on_dm_inbox_compose), self);
   }
+
+  /* Wire conversation view signals */
+  GtkWidget *dm_conv = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
+                         ? gnostr_session_view_get_dm_conversation(self->session_view)
+                         : NULL;
+  if (dm_conv && GNOSTR_IS_DM_CONVERSATION_VIEW(dm_conv)) {
+    g_signal_connect(dm_conv, "go-back",
+                     G_CALLBACK(on_dm_conversation_go_back), self);
+    g_signal_connect(dm_conv, "send-message",
+                     G_CALLBACK(on_dm_conversation_send_message), self);
+    g_signal_connect(dm_conv, "open-profile",
+                     G_CALLBACK(on_dm_conversation_open_profile), self);
+    g_debug("[DM_SERVICE] Connected conversation view signals");
+  }
+
+  /* Wire DM service message-received for live updates */
+  g_signal_connect(self->dm_service, "message-received",
+                   G_CALLBACK(on_dm_service_message_received), self);
 
   /* Background profile prefetch disabled (model emits need-profile when required). */
 

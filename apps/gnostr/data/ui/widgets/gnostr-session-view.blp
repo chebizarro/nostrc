@@ -435,9 +435,28 @@ template $GnostrSessionView: Adw.Bin {
                                         title: _("Messages");
                                         icon-name: "mail-unread-symbolic";
 
-                                        child: $GnostrDmInboxView dm_inbox {
+                                        child: Stack dm_stack {
+                                            transition-type: slide_left_right;
                                             hexpand: true;
                                             vexpand: true;
+
+                                            StackPage {
+                                                name: "inbox";
+
+                                                child: $GnostrDmInboxView dm_inbox {
+                                                    hexpand: true;
+                                                    vexpand: true;
+                                                };
+                                            }
+
+                                            StackPage {
+                                                name: "conversation";
+
+                                                child: $GnostrDmConversationView dm_conversation {
+                                                    hexpand: true;
+                                                    vexpand: true;
+                                                };
+                                            }
                                         };
                                     }
 

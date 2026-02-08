@@ -211,6 +211,45 @@ void gnostr_dm_service_send_dm_async(GnostrDmService *self,
                                       GnostrDmSendCallback callback,
                                       gpointer user_data);
 
+/**
+ * gnostr_dm_service_get_messages:
+ * @self: the DM service
+ * @peer_pubkey: peer's public key (hex)
+ *
+ * Returns cached messages for a conversation (most recent, up to 100).
+ * The returned array contains GnostrDmMessage* elements.
+ *
+ * Returns: (transfer none) (nullable): array of messages, or NULL if no conversation
+ */
+GPtrArray *gnostr_dm_service_get_messages(GnostrDmService *self,
+                                           const char *peer_pubkey);
+
+/**
+ * GnostrDmHistoryCallback:
+ * @messages: (transfer none) (nullable): array of GnostrDmMessage*
+ * @user_data: user data
+ *
+ * Callback for async history loading.
+ */
+typedef void (*GnostrDmHistoryCallback)(GPtrArray *messages, gpointer user_data);
+
+/**
+ * gnostr_dm_service_load_history_async:
+ * @self: the DM service
+ * @peer_pubkey: peer's public key (hex)
+ * @callback: callback when history is loaded
+ * @user_data: user data for callback
+ *
+ * Loads historical messages for a conversation from nostrdb.
+ * If messages are already cached, calls callback immediately.
+ * Otherwise, queries nostrdb for gift wraps, decrypts them,
+ * and fires callback when all are processed.
+ */
+void gnostr_dm_service_load_history_async(GnostrDmService *self,
+                                            const char *peer_pubkey,
+                                            GnostrDmHistoryCallback callback,
+                                            gpointer user_data);
+
 G_END_DECLS
 
 #endif /* GNOSTR_DM_SERVICE_H */

@@ -7,6 +7,7 @@
 
 #include "gnostr-dm-service.h"
 #include "gnostr-dm-inbox-view.h"
+#include "gnostr-dm-conversation-view.h"
 #include "gnostr-profile-provider.h"
 #include "../ipc/signer_ipc.h"
 #include "../util/relays.h"
@@ -18,8 +19,12 @@
 #include "nostr-kinds.h"
 #include "nostr-json.h"
 #include "nostr-tag.h"
+#include "../storage_ndb.h"
 #include <string.h>
 #include <time.h>
+
+/* Maximum messages to keep per conversation */
+#define DM_MAX_MESSAGES 100
 
 /* Conversation state for a peer */
 typedef struct {
@@ -32,6 +37,9 @@ typedef struct {
     char *display_name;
     char *handle;
     char *avatar_url;
+    /* Message history */
+    GPtrArray *messages;        /* GnostrDmMessage*, sorted by created_at */
+    GHashTable *seen_event_ids; /* event_id -> TRUE, for dedup */
 } DmConversation;
 
 static void dm_conversation_free(DmConversation *conv) {
@@ -41,6 +49,8 @@ static void dm_conversation_free(DmConversation *conv) {
     g_clear_pointer(&conv->display_name, g_free);
     g_clear_pointer(&conv->handle, g_free);
     g_clear_pointer(&conv->avatar_url, g_free);
+    if (conv->messages) g_ptr_array_unref(conv->messages);
+    if (conv->seen_event_ids) g_hash_table_destroy(conv->seen_event_ids);
     g_free(conv);
 }
 
@@ -65,9 +75,19 @@ struct _GnostrDmService {
 
     /* Pending decryptions: gift_wrap_id -> DecryptContext* */
     GHashTable *pending_decrypts;
+
+    /* Whether historical gift wraps have been loaded from nostrdb */
+    gboolean history_loaded;
 };
 
 G_DEFINE_TYPE(GnostrDmService, gnostr_dm_service, G_TYPE_OBJECT)
+
+/* Signals */
+enum {
+    SIGNAL_MESSAGE_RECEIVED,
+    N_SIGNALS
+};
+static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void on_pool_gift_wrap_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
@@ -106,6 +126,27 @@ gnostr_dm_service_class_init(GnostrDmServiceClass *klass)
 
     object_class->dispose = gnostr_dm_service_dispose;
     object_class->finalize = gnostr_dm_service_finalize;
+
+    /**
+     * GnostrDmService::message-received:
+     * @self: the DM service
+     * @peer_pubkey: peer's public key (hex)
+     * @content: message content (plaintext)
+     * @created_at: unix timestamp
+     * @is_outgoing: TRUE if sent by us
+     *
+     * Emitted when a new message is decrypted and stored.
+     */
+    signals[SIGNAL_MESSAGE_RECEIVED] = g_signal_new(
+        "message-received",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 4,
+        G_TYPE_STRING,   /* peer_pubkey */
+        G_TYPE_STRING,   /* content */
+        G_TYPE_INT64,    /* created_at */
+        G_TYPE_BOOLEAN); /* is_outgoing */
 }
 
 static void
@@ -309,6 +350,72 @@ get_peer_pubkey_from_rumor(NostrEvent *rumor, const char *user_pubkey)
 
     /* Otherwise, peer is the sender */
     return g_strdup(sender);
+}
+
+/* Compare messages by timestamp for sorting */
+static gint
+compare_dm_messages(gconstpointer a, gconstpointer b)
+{
+    const GnostrDmMessage *ma = *(const GnostrDmMessage **)a;
+    const GnostrDmMessage *mb = *(const GnostrDmMessage **)b;
+    if (ma->created_at < mb->created_at) return -1;
+    if (ma->created_at > mb->created_at) return 1;
+    return 0;
+}
+
+/* Store a message in the conversation's history.
+ * Deduplicates by event_id, caps at DM_MAX_MESSAGES, keeps sorted by timestamp.
+ * Returns TRUE if the message was actually stored (new, not a dup). */
+static gboolean
+store_message(DmConversation *conv,
+              const char *event_id,
+              const char *content,
+              gint64 created_at,
+              gboolean is_outgoing)
+{
+    if (!conv || !content) return FALSE;
+
+    /* Lazy-init storage */
+    if (!conv->messages) {
+        conv->messages = g_ptr_array_new_with_free_func(
+            (GDestroyNotify)gnostr_dm_message_free);
+    }
+    if (!conv->seen_event_ids) {
+        conv->seen_event_ids = g_hash_table_new_full(
+            g_str_hash, g_str_equal, g_free, NULL);
+    }
+
+    /* Dedup by event_id */
+    if (event_id && g_hash_table_contains(conv->seen_event_ids, event_id)) {
+        return FALSE;
+    }
+
+    GnostrDmMessage *msg = g_new0(GnostrDmMessage, 1);
+    msg->event_id = event_id ? g_strdup(event_id) : NULL;
+    msg->content = g_strdup(content);
+    msg->created_at = created_at;
+    msg->is_outgoing = is_outgoing;
+
+    g_ptr_array_add(conv->messages, msg);
+
+    if (event_id) {
+        g_hash_table_insert(conv->seen_event_ids, g_strdup(event_id),
+                            GINT_TO_POINTER(TRUE));
+    }
+
+    /* Sort by timestamp */
+    g_ptr_array_sort(conv->messages, compare_dm_messages);
+
+    /* Cap at DM_MAX_MESSAGES (remove oldest) */
+    while (conv->messages->len > DM_MAX_MESSAGES) {
+        GnostrDmMessage *oldest = g_ptr_array_index(conv->messages, 0);
+        if (oldest->event_id) {
+            g_hash_table_remove(conv->seen_event_ids, oldest->event_id);
+        }
+        g_ptr_array_remove_index(conv->messages, 0);
+    }
+
+    return TRUE;
 }
 
 /* Update conversation state and inbox view */
@@ -516,6 +623,18 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         if (display_content) {
             update_conversation(self, peer_pubkey, display_content, created_at,
                                 is_outgoing, TRUE);
+        }
+
+        /* Store message in conversation history */
+        const char *rumor_id = nostr_event_get_id(rumor);
+        DmConversation *conv = g_hash_table_lookup(self->conversations, peer_pubkey);
+        if (conv && display_content) {
+            gboolean stored = store_message(conv, rumor_id, display_content,
+                                            created_at, is_outgoing);
+            if (stored) {
+                g_signal_emit(self, signals[SIGNAL_MESSAGE_RECEIVED], 0,
+                              peer_pubkey, display_content, created_at, is_outgoing);
+            }
         }
 
         g_free(file_preview);
@@ -1105,4 +1224,80 @@ gnostr_dm_service_send_dm_async(GnostrDmService *self,
         ctx);
 
     nostr_event_free(rumor);
+}
+
+/* ============== Message History API ============== */
+
+GPtrArray *
+gnostr_dm_service_get_messages(GnostrDmService *self,
+                                const char *peer_pubkey)
+{
+    g_return_val_if_fail(GNOSTR_IS_DM_SERVICE(self), NULL);
+    g_return_val_if_fail(peer_pubkey != NULL, NULL);
+
+    DmConversation *conv = g_hash_table_lookup(self->conversations, peer_pubkey);
+    if (!conv) return NULL;
+
+    return conv->messages;
+}
+
+void
+gnostr_dm_service_load_history_async(GnostrDmService *self,
+                                      const char *peer_pubkey,
+                                      GnostrDmHistoryCallback callback,
+                                      gpointer user_data)
+{
+    g_return_if_fail(GNOSTR_IS_DM_SERVICE(self));
+    g_return_if_fail(peer_pubkey != NULL);
+
+    DmConversation *conv = g_hash_table_lookup(self->conversations, peer_pubkey);
+
+    /* If we have cached messages, return immediately */
+    if (conv && conv->messages && conv->messages->len > 0) {
+        g_debug("[DM_SERVICE] Returning %u cached messages for %.8s",
+                conv->messages->len, peer_pubkey);
+        if (callback) callback(conv->messages, user_data);
+        return;
+    }
+
+    /* Load historical gift wraps from nostrdb (once per service lifetime).
+     * NIP-17: can't filter by peer pre-decryption — sender is encrypted.
+     * So we load ALL gift wraps for our user and let decryption sort them. */
+    if (!self->history_loaded && self->user_pubkey) {
+        self->history_loaded = TRUE;
+
+        g_autofree char *filter_json = g_strdup_printf(
+            "{\"kinds\":[1059],\"#p\":[\"%s\"],\"limit\":200}",
+            self->user_pubkey);
+
+        void *txn = NULL;
+        if (storage_ndb_begin_query_retry(&txn, 3, 50) == 0 && txn) {
+            char **results = NULL;
+            int count = 0;
+
+            if (storage_ndb_query(txn, filter_json, &results, &count) == 0 && count > 0) {
+                g_message("[DM_SERVICE] Loading %d historical gift wraps from nostrdb", count);
+
+                for (int i = 0; i < count; i++) {
+                    if (results[i]) {
+                        gnostr_dm_service_process_gift_wrap(self, results[i]);
+                    }
+                }
+                storage_ndb_free_results(results, count);
+            } else {
+                g_debug("[DM_SERVICE] No historical gift wraps in nostrdb");
+            }
+
+            storage_ndb_end_query(txn);
+        }
+    }
+
+    /* Return whatever we have now — more messages will arrive via
+     * the "message-received" signal as async decryptions complete */
+    conv = g_hash_table_lookup(self->conversations, peer_pubkey);
+    if (conv && conv->messages && conv->messages->len > 0) {
+        if (callback) callback(conv->messages, user_data);
+    } else {
+        if (callback) callback(NULL, user_data);
+    }
 }

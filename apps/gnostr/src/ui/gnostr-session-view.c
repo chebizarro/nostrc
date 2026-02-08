@@ -126,7 +126,9 @@ struct _GnostrSessionView {
   AdwViewStack *stack;
   GtkWidget *timeline;
   GtkWidget *notifications_view;
+  GtkStack  *dm_stack;
   GtkWidget *dm_inbox;
+  GtkWidget *dm_conversation;
   GtkWidget *discover_page;
   GtkWidget *classifieds_view;
   GtkWidget *repo_browser;
@@ -1012,7 +1014,9 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, stack);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, timeline);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, notifications_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, dm_stack);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, dm_inbox);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, dm_conversation);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, discover_page);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, classifieds_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, repo_browser);
@@ -1301,6 +1305,16 @@ GtkWidget *gnostr_session_view_get_notifications_view(GnostrSessionView *self) {
 GtkWidget *gnostr_session_view_get_dm_inbox(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
   return self->dm_inbox;
+}
+
+GtkStack *gnostr_session_view_get_dm_stack(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
+  return self->dm_stack;
+}
+
+GtkWidget *gnostr_session_view_get_dm_conversation(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
+  return self->dm_conversation;
 }
 
 GtkWidget *gnostr_session_view_get_discover_page(GnostrSessionView *self) {
