@@ -30,6 +30,7 @@ static guint s_avatar_cap = 0;                    /* max resident textures (0 = 
 static guint s_avatar_size = 0;                   /* target decode size in pixels (0 = not initialized) */
 static gboolean s_avatar_log_started = FALSE;     /* periodic logging started */
 static gboolean s_config_initialized = FALSE;     /* env vars read */
+static GHashTable *s_avatar_bad_urls = NULL;      /* negative cache: URLs that returned invalid data */
 
 /* Metrics */
 static GnostrAvatarMetrics s_avatar_metrics = {0};
@@ -566,6 +567,10 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
     #ifdef HAVE_SOUP3
       if (!url || !*url || !str_has_prefix_http(url)) return;
 
+      /* Skip URLs known to return invalid data */
+      if (s_avatar_bad_urls && g_hash_table_contains(s_avatar_bad_urls, url))
+        return;
+
       s_avatar_metrics.requests_total++;
       ensure_fetch_limiter();
 
@@ -618,6 +623,12 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   if (!tex) {
     g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)",
               ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    /* Add to negative cache to avoid repeated failing fetches */
+    if (ctx && ctx->url) {
+      if (!s_avatar_bad_urls)
+        s_avatar_bad_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      g_hash_table_add(s_avatar_bad_urls, g_strdup(ctx->url));
+    }
     g_clear_error(&error);
     g_bytes_unref(bytes);
     avatar_ctx_free(ctx);

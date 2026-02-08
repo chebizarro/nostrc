@@ -176,9 +176,19 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
         gchar *tag = g_strndup(ptr, len);
-        gchar *esc = g_markup_escape_text(tag, -1);
-        g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc, esc);
-        g_free(esc);
+        /* Validate UTF-8 before inserting into Pango markup */
+        if (!g_utf8_validate(tag, -1, NULL)) {
+          /* Invalid UTF-8: render as plain text with replacement char */
+          gchar *valid = g_utf8_make_valid(tag, -1);
+          gchar *esc = g_markup_escape_text(valid, -1);
+          g_string_append_printf(out, "#%s", esc);
+          g_free(esc);
+          g_free(valid);
+        } else {
+          gchar *esc = g_markup_escape_text(tag, -1);
+          g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc, esc);
+          g_free(esc);
+        }
         g_free(tag);
         break;
       }
