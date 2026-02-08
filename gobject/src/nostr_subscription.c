@@ -22,8 +22,16 @@
 #include "channel.h"              /* GoChannel, go_channel_try_receive */
 #include "error.h"                /* Error, free_error */
 
-/* GObject wrapper header */
+/* GObject wrapper headers */
 #include "nostr_subscription.h"
+#include "nostr_relay.h"                /* gnostr_relay_get_nip11_info */
+#include "nostr_subscription_registry.h" /* relay subscription count */
+
+/* NIP-11 relay information document */
+#ifdef ENABLE_NIP11
+#include "nip11.h"
+#endif
+
 #include <glib.h>
 
 /* Property IDs */
@@ -441,6 +449,41 @@ gnostr_subscription_fire(GNostrSubscription *self, GError **error)
                             "no core subscription");
         return FALSE;
     }
+
+#ifdef ENABLE_NIP11
+    /* nostrc-23: Enforce NIP-11 relay limitations before subscribing */
+    if (self->relay) {
+        const GNostrRelayNip11Info *nip11 = gnostr_relay_get_nip11_info(self->relay);
+        if (nip11 && nip11->limitation) {
+            RelayLimitationDocument *lim = nip11->limitation;
+
+            if (lim->auth_required) {
+                g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
+                            "relay %s requires NIP-42 authentication",
+                            gnostr_relay_get_url(self->relay));
+                return FALSE;
+            }
+            if (lim->payment_required) {
+                g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_PAYMENT_REQUIRED,
+                            "relay %s requires payment",
+                            gnostr_relay_get_url(self->relay));
+                return FALSE;
+            }
+            if (lim->max_subscriptions > 0) {
+                const gchar *url = gnostr_relay_get_url(self->relay);
+                NostrSubscriptionRegistry *reg =
+                    nostr_subscription_registry_get_default();
+                guint current = nostr_subscription_registry_get_relay_subscription_count(reg, url);
+                if ((int)current >= lim->max_subscriptions) {
+                    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_SUBSCRIPTION_LIMIT,
+                                "relay %s max_subscriptions (%d) reached",
+                                url, lim->max_subscriptions);
+                    return FALSE;
+                }
+            }
+        }
+    }
+#endif
 
     /* Send REQ to relay */
     Error *core_err = NULL;

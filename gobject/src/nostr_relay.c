@@ -615,6 +615,39 @@ gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error)
         return FALSE;
     }
 
+#ifdef ENABLE_NIP11
+    /* nostrc-23: Enforce NIP-11 relay limitations before publishing */
+    if (self->nip11_info && self->nip11_info->limitation) {
+        RelayLimitationDocument *lim = self->nip11_info->limitation;
+
+        if (lim->auth_required) {
+            g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
+                        "relay %s requires NIP-42 authentication", self->url);
+            return FALSE;
+        }
+
+        if (lim->payment_required) {
+            g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_PAYMENT_REQUIRED,
+                        "relay %s requires payment", self->url);
+            return FALSE;
+        }
+
+        if (lim->max_message_length > 0) {
+            char *json = nostr_event_serialize_compact(event);
+            if (json) {
+                size_t len = strlen(json);
+                free(json);
+                if ((int)len > lim->max_message_length) {
+                    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_MESSAGE_TOO_LARGE,
+                                "event size %zu exceeds relay %s limit of %d bytes",
+                                len, self->url, lim->max_message_length);
+                    return FALSE;
+                }
+            }
+        }
+    }
+#endif
+
     nostr_relay_publish(self->relay, event);
     return TRUE;
 }

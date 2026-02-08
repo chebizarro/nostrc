@@ -34,6 +34,10 @@
 GType gnostr_subscription_get_type(void);
 NostrSubscriptionState gnostr_subscription_get_state(GNostrSubscription *self);
 void gnostr_subscription_unsubscribe(GNostrSubscription *self);
+/* nostrc-23: needed for relay URL tracking */
+typedef struct _GNostrRelay GNostrRelay;
+GNostrRelay *gnostr_subscription_get_relay(GNostrSubscription *self);
+const gchar *gnostr_relay_get_url(GNostrRelay *self);
 
 /**
  * NostrSubscriptionType:
@@ -186,7 +190,7 @@ notify_state_change(NostrSubscriptionRegistry *registry,
     }
 }
 
-G_GNUC_UNUSED static void
+static void
 increment_relay_count(NostrSubscriptionRegistryPrivate *priv, const gchar *relay_url)
 {
     if (!relay_url)
@@ -363,6 +367,18 @@ nostr_subscription_registry_register_with_group(NostrSubscriptionRegistry *regis
                         subscription_health_new());
 
     priv->total_registered++;
+
+    /* nostrc-23: Track per-relay subscription count */
+    GNostrRelay *relay = gnostr_subscription_get_relay(subscription);
+    if (relay) {
+        const gchar *relay_url = gnostr_relay_get_url(relay);
+        if (relay_url) {
+            increment_relay_count(priv, relay_url);
+            g_hash_table_insert(priv->sub_to_relay,
+                                g_strdup(sub_id),
+                                g_strdup(relay_url));
+        }
+    }
 
     /* Add to group if specified */
     if (group_name) {

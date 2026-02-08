@@ -6541,6 +6541,23 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
         continue;
       }
       gnostr_relay_validation_result_free(validation);
+
+      /* nostrc-23: Check auth_required / payment_required before publishing */
+      GnostrRelayValidationResult *pub_validation =
+          gnostr_relay_info_validate_for_publishing(relay_info);
+      if (!gnostr_relay_validation_result_is_valid(pub_validation)) {
+        gchar *errors = gnostr_relay_validation_result_format_errors(pub_validation);
+        if (errors) {
+          if (limit_warnings->len > 0) g_string_append(limit_warnings, "\n");
+          g_string_append(limit_warnings, errors);
+          g_free(errors);
+        }
+        gnostr_relay_validation_result_free(pub_validation);
+        gnostr_relay_info_free(relay_info);
+        limit_skip_count++;
+        continue;
+      }
+      gnostr_relay_validation_result_free(pub_validation);
       gnostr_relay_info_free(relay_info);
     }
 

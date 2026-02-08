@@ -25,6 +25,10 @@ GQuark nostr_error_quark(void);
  * @NOSTR_ERROR_INVALID_KEY: Invalid key format
  * @NOSTR_ERROR_NOT_FOUND: Requested item not found
  * @NOSTR_ERROR_INVALID_STATE: Operation invalid for current state
+ * @NOSTR_ERROR_MESSAGE_TOO_LARGE: Event exceeds relay max_message_length (NIP-11)
+ * @NOSTR_ERROR_SUBSCRIPTION_LIMIT: Relay max_subscriptions reached (NIP-11)
+ * @NOSTR_ERROR_AUTH_REQUIRED: Relay requires NIP-42 authentication (NIP-11)
+ * @NOSTR_ERROR_PAYMENT_REQUIRED: Relay requires payment (NIP-11)
  */
 typedef enum {
   NOSTR_ERROR_INVALID_EVENT,
@@ -41,7 +45,11 @@ typedef enum {
   NOSTR_ERROR_DECRYPTION_FAILED,
   NOSTR_ERROR_INVALID_KEY,
   NOSTR_ERROR_NOT_FOUND,
-  NOSTR_ERROR_INVALID_STATE
+  NOSTR_ERROR_INVALID_STATE,
+  NOSTR_ERROR_MESSAGE_TOO_LARGE,
+  NOSTR_ERROR_SUBSCRIPTION_LIMIT,
+  NOSTR_ERROR_AUTH_REQUIRED,
+  NOSTR_ERROR_PAYMENT_REQUIRED
 } NostrError;
 
 G_END_DECLS
