@@ -3875,7 +3875,7 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     g_debug("[AUTH] Using NIP-55L local signer");
   }
 
-  /* Update user_pubkey_hex from npub */
+  /* nostrc-daj1: Update user_pubkey_hex from npub (or raw hex fallback) */
   if (npub && g_str_has_prefix(npub, "npub1")) {
     g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
     if (n19) {
@@ -3883,10 +3883,22 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
       if (hex) {
         g_free(self->user_pubkey_hex);
         self->user_pubkey_hex = g_strdup(hex);
-        /* Also set pubkey on signer service */
         gnostr_signer_service_set_pubkey(signer, self->user_pubkey_hex);
+      } else {
+        g_warning("[AUTH] gnostr_nip19_get_pubkey returned NULL for npub: %.12s...", npub);
       }
+    } else {
+      g_warning("[AUTH] Failed to decode npub: %.12s...", npub);
     }
+  } else if (npub && strlen(npub) == 64) {
+    /* Fallback: login dialog may pass hex pubkey directly (e.g. NIP-55L) */
+    g_free(self->user_pubkey_hex);
+    self->user_pubkey_hex = g_strdup(npub);
+    gnostr_signer_service_set_pubkey(signer, self->user_pubkey_hex);
+    g_debug("[AUTH] Using raw hex pubkey from login: %.16s...", npub);
+  } else if (npub) {
+    g_warning("[AUTH] Unrecognized pubkey format from login (len=%zu): %.16s...",
+              strlen(npub), npub);
   }
 
   /* Update UI to show signed-in state */
@@ -4098,6 +4110,27 @@ static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data)
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   if (!self->user_pubkey_hex || !*self->user_pubkey_hex) return;
+
+  /* nostrc-daj1: Validate user_pubkey_hex is actually hex, not npub */
+  if (g_str_has_prefix(self->user_pubkey_hex, "npub1")) {
+    g_warning("[PROFILE] user_pubkey_hex contains npub, not hex: %.16s... — converting",
+              self->user_pubkey_hex);
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(self->user_pubkey_hex, NULL);
+    if (n19) {
+      const char *hex = gnostr_nip19_get_pubkey(n19);
+      if (hex) {
+        g_free(self->user_pubkey_hex);
+        self->user_pubkey_hex = g_strdup(hex);
+      }
+    }
+  }
+
+  if (strlen(self->user_pubkey_hex) != 64) {
+    g_warning("[PROFILE] user_pubkey_hex has invalid length %zu: %.16s...",
+              strlen(self->user_pubkey_hex), self->user_pubkey_hex);
+    return;
+  }
+
   gnostr_main_window_open_profile(GTK_WIDGET(self), self->user_pubkey_hex);
 }
 
@@ -5962,6 +5995,19 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
           const char *pubkey_hex = gnostr_nip19_get_pubkey(n19);
           if (pubkey_hex) {
             gnostr_signer_service_set_pubkey(signer, pubkey_hex);
+            /* nostrc-daj1: Also set user_pubkey_hex if not already set by
+             * start_gift_wrap_subscription (belt-and-suspenders) */
+            if (!self->user_pubkey_hex) {
+              self->user_pubkey_hex = g_strdup(pubkey_hex);
+              g_debug("[AUTH] Restored user_pubkey_hex from session restore: %.16s...", pubkey_hex);
+            }
+          }
+        } else if (strlen(npub) == 64) {
+          /* nostrc-daj1: Settings has raw hex, not npub */
+          gnostr_signer_service_set_pubkey(signer, npub);
+          if (!self->user_pubkey_hex) {
+            self->user_pubkey_hex = g_strdup(npub);
+            g_debug("[AUTH] Restored user_pubkey_hex from raw hex in settings: %.16s...", npub);
           }
         }
       } else {
@@ -8379,21 +8425,28 @@ static char *client_settings_get_current_npub(void) {
 }
 
 /* Get the current user's pubkey as 64-char hex (from npub bech32).
- * Returns newly allocated string or NULL if not signed in. Caller must free. */
+ * Returns newly allocated string or NULL if not signed in. Caller must free.
+ * nostrc-daj1: Also handles case where settings stores raw hex (not npub). */
 static char *get_current_user_pubkey_hex(void) {
   g_autofree char *npub = client_settings_get_current_npub();
   if (!npub) return NULL;
 
+  /* If settings already contains a 64-char hex key (not bech32), use it directly */
+  if (strlen(npub) == 64 && !g_str_has_prefix(npub, "npub1")) {
+    g_debug("[AUTH] current-npub setting contains raw hex pubkey, using directly");
+    return g_strdup(npub);
+  }
+
   /* Decode bech32 npub using GNostrNip19 */
   g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
   if (!n19) {
-    g_warning("[GIFTWRAP] Failed to decode npub to pubkey");
+    g_warning("[AUTH] Failed to decode current-npub to pubkey: %.16s...", npub);
     return NULL;
   }
 
   const char *hex = gnostr_nip19_get_pubkey(n19);
   if (!hex) {
-    g_warning("[GIFTWRAP] Failed to decode npub to pubkey");
+    g_warning("[AUTH] gnostr_nip19_get_pubkey returned NULL for: %.16s...", npub);
     return NULL;
   }
 

@@ -3838,6 +3838,14 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
   g_return_if_fail(pubkey_hex != NULL);
 
+  /* nostrc-daj1: Warn if caller passes npub instead of hex */
+  if (g_str_has_prefix(pubkey_hex, "npub1")) {
+    g_warning("profile_pane: set_pubkey received npub instead of hex: %.16s...", pubkey_hex);
+  } else if (strlen(pubkey_hex) != 64) {
+    g_warning("profile_pane: set_pubkey received invalid pubkey (len=%zu): %.16s...",
+              strlen(pubkey_hex), pubkey_hex);
+  }
+
   /* Check if already showing this profile */
   if (self->current_pubkey && strcmp(self->current_pubkey, pubkey_hex) == 0) {
     return;
