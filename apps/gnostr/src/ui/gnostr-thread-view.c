@@ -12,7 +12,7 @@
 #include "nostr-json.h"
 #include "nostr_filter.h"
 #include "nostr_simple_pool.h"
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>

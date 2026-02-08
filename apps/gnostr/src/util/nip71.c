@@ -4,7 +4,7 @@
 
 #include "nip71.h"
 #include <json-glib/json-glib.h>
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -200,33 +200,13 @@ char *gnostr_video_build_naddr(int kind, const char *pubkey_hex,
                                 const char *d_tag, const char **relays) {
   if (!pubkey_hex || !d_tag) return NULL;
 
-  NostrNAddrConfig cfg = {
-    .kind = kind,
-    .public_key = pubkey_hex,
-    .identifier = d_tag,
-    .relays = (const char *const *)relays,
-    .relays_count = 0
-  };
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_naddr(
+    d_tag, pubkey_hex, kind,
+    (const gchar *const *)relays, NULL);
 
-  /* Count relays if provided */
-  if (relays) {
-    while (relays[cfg.relays_count]) cfg.relays_count++;
-  }
+  if (!n19) return NULL;
 
-  NostrPointer *ptr = NULL;
-  if (nostr_pointer_from_naddr_config(&cfg, &ptr) != 0 || !ptr) {
-    return NULL;
-  }
-
-  char *encoded = NULL;
-  int result = nostr_pointer_to_bech32(ptr, &encoded);
-  nostr_pointer_free(ptr);
-
-  if (result != 0) {
-    return NULL;
-  }
-
-  return encoded;
+  return g_strdup(gnostr_nip19_get_bech32(n19));
 }
 
 char *gnostr_video_build_a_tag(int kind, const char *pubkey_hex,

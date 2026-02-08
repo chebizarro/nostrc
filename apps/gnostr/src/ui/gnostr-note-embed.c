@@ -8,7 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
 #include "../storage_ndb.h"
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 #include <nostr-event.h>
 #include <nostr-filter.h>
 #include "nostr_json.h"
@@ -370,93 +370,85 @@ static gboolean parse_nostr_uri(const char *uri, EmbedType *type, char **target_
   *relay_hints = NULL;
   *relay_count = 0;
 
-  NostrBech32Type b32_type;
-  if (nostr_nip19_inspect(ref, &b32_type) != 0) {
+  /* Decode once, then inspect the entity type */
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(ref, NULL);
+  if (!n19) {
     return FALSE;
   }
 
+  GNostrBech32Type b32_type = gnostr_nip19_get_entity_type(n19);
+
   switch (b32_type) {
-    case NOSTR_B32_NOTE: {
-      unsigned char id32[32];
-      if (nostr_nip19_decode_note(ref, id32) == 0) {
+    case GNOSTR_BECH32_NOTE: {
+      const gchar *event_id = gnostr_nip19_get_event_id(n19);
+      if (event_id) {
         *type = EMBED_TYPE_NOTE;
-        *target_hex = g_malloc(65);
-        bytes_to_hex(id32, 32, *target_hex);
+        *target_hex = g_strdup(event_id);
         return TRUE;
       }
       break;
     }
 
-    case NOSTR_B32_NPUB: {
-      unsigned char pk32[32];
-      if (nostr_nip19_decode_npub(ref, pk32) == 0) {
+    case GNOSTR_BECH32_NPUB: {
+      const gchar *pubkey = gnostr_nip19_get_pubkey(n19);
+      if (pubkey) {
         *type = EMBED_TYPE_PROFILE;
-        *target_hex = g_malloc(65);
-        bytes_to_hex(pk32, 32, *target_hex);
+        *target_hex = g_strdup(pubkey);
         return TRUE;
       }
       break;
     }
 
-    case NOSTR_B32_NEVENT: {
-      NostrEventPointer *ptr = NULL;
-      if (nostr_nip19_decode_nevent(ref, &ptr) == 0 && ptr) {
+    case GNOSTR_BECH32_NEVENT: {
+      const gchar *event_id = gnostr_nip19_get_event_id(n19);
+      if (event_id) {
         *type = EMBED_TYPE_NOTE;
-        *target_hex = g_strdup(ptr->id);
+        *target_hex = g_strdup(event_id);
 
         /* Copy relay hints */
-        if (ptr->relays_count > 0) {
-          *relay_hints = g_new0(char*, ptr->relays_count + 1);
-          for (size_t i = 0; i < ptr->relays_count; i++) {
-            (*relay_hints)[i] = g_strdup(ptr->relays[i]);
-          }
-          *relay_count = ptr->relays_count;
+        const gchar *const *relays = gnostr_nip19_get_relays(n19);
+        if (relays) {
+          *relay_hints = g_strdupv((gchar **)relays);
+          *relay_count = g_strv_length((gchar **)relays);
         }
 
-        nostr_event_pointer_free(ptr);
         return TRUE;
       }
       break;
     }
 
-    case NOSTR_B32_NPROFILE: {
-      NostrProfilePointer *ptr = NULL;
-      if (nostr_nip19_decode_nprofile(ref, &ptr) == 0 && ptr) {
+    case GNOSTR_BECH32_NPROFILE: {
+      const gchar *pubkey = gnostr_nip19_get_pubkey(n19);
+      if (pubkey) {
         *type = EMBED_TYPE_PROFILE;
-        *target_hex = g_strdup(ptr->public_key);
+        *target_hex = g_strdup(pubkey);
 
         /* Copy relay hints */
-        if (ptr->relays_count > 0) {
-          *relay_hints = g_new0(char*, ptr->relays_count + 1);
-          for (size_t i = 0; i < ptr->relays_count; i++) {
-            (*relay_hints)[i] = g_strdup(ptr->relays[i]);
-          }
-          *relay_count = ptr->relays_count;
+        const gchar *const *relays = gnostr_nip19_get_relays(n19);
+        if (relays) {
+          *relay_hints = g_strdupv((gchar **)relays);
+          *relay_count = g_strv_length((gchar **)relays);
         }
 
-        nostr_profile_pointer_free(ptr);
         return TRUE;
       }
       break;
     }
 
-    case NOSTR_B32_NADDR: {
-      NostrEntityPointer *ptr = NULL;
-      if (nostr_nip19_decode_naddr(ref, &ptr) == 0 && ptr) {
+    case GNOSTR_BECH32_NADDR: {
+      const gchar *pubkey = gnostr_nip19_get_pubkey(n19);
+      if (pubkey) {
         *type = EMBED_TYPE_ADDR;
         /* For naddr, we use author pubkey as target (will need special handling) */
-        *target_hex = g_strdup(ptr->public_key);
+        *target_hex = g_strdup(pubkey);
 
         /* Copy relay hints */
-        if (ptr->relays_count > 0) {
-          *relay_hints = g_new0(char*, ptr->relays_count + 1);
-          for (size_t i = 0; i < ptr->relays_count; i++) {
-            (*relay_hints)[i] = g_strdup(ptr->relays[i]);
-          }
-          *relay_count = ptr->relays_count;
+        const gchar *const *relays = gnostr_nip19_get_relays(n19);
+        if (relays) {
+          *relay_hints = g_strdupv((gchar **)relays);
+          *relay_count = g_strv_length((gchar **)relays);
         }
 
-        nostr_entity_pointer_free(ptr);
         return TRUE;
       }
       break;

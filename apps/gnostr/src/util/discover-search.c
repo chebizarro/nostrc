@@ -21,7 +21,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <json-glib/json-glib.h>
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 
 /* Default search limit */
 #define DEFAULT_SEARCH_LIMIT 50
@@ -100,17 +100,11 @@ static char *npub_to_hex(const char *npub)
   }
 
   /* Decode bech32 */
-  uint8_t pubkey_bytes[32];
-  if (nostr_nip19_decode_npub(npub, pubkey_bytes) != 0) {
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
+  if (!n19)
     return NULL;
-  }
 
-  /* Convert to hex */
-  GString *hex = g_string_sized_new(64);
-  for (int i = 0; i < 32; i++) {
-    g_string_append_printf(hex, "%02x", pubkey_bytes[i]);
-  }
-  return g_string_free(hex, FALSE);
+  return g_strdup(gnostr_nip19_get_pubkey(n19));
 }
 
 GnostrSearchQuery *gnostr_search_parse_query(const char *text)

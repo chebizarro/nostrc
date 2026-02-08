@@ -4,10 +4,8 @@
 
 #include "identity.h"
 #include "keystore.h"
-#include "nostr/nip19/nip19.h"
+#include "nostr_keys.h"
 #include <string.h>
-#include <secp256k1.h>
-#include <secp256k1_extrakeys.h>
 
 /* GSettings schema and key names */
 #define SETTINGS_SCHEMA_CLIENT "org.gnostr.Client"
@@ -87,7 +85,7 @@ GList *gnostr_identity_list_stored(GError **error) {
   return g_list_reverse(identities);
 }
 
-/* Helper to derive npub from nsec */
+/* Helper to derive npub from nsec using GNostrKeys */
 static char *derive_npub_from_nsec(const char *nsec, GError **error) {
   if (!nsec || !g_str_has_prefix(nsec, "nsec1")) {
     g_set_error(error, GNOSTR_KEYSTORE_ERROR,
@@ -96,56 +94,19 @@ static char *derive_npub_from_nsec(const char *nsec, GError **error) {
     return NULL;
   }
 
-  /* Decode nsec to get the private key bytes */
-  uint8_t seckey[32];
-  if (nostr_nip19_decode_nsec(nsec, seckey) != 0) {
+  GError *key_error = NULL;
+  g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_nsec(nsec, &key_error);
+  if (!keys) {
     g_set_error(error, GNOSTR_KEYSTORE_ERROR,
                 GNOSTR_KEYSTORE_ERROR_INVALID_KEY,
-                "Failed to decode nsec");
+                "Failed to import nsec: %s",
+                key_error ? key_error->message : "unknown error");
+    g_clear_error(&key_error);
     return NULL;
   }
 
-  /* Derive public key from private key using secp256k1 */
-  uint8_t pubkey[32];
-
-  secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-  if (!ctx) {
-    memset(seckey, 0, sizeof(seckey));
-    g_set_error(error, GNOSTR_KEYSTORE_ERROR,
-                GNOSTR_KEYSTORE_ERROR_FAILED,
-                "Failed to create secp256k1 context");
-    return NULL;
-  }
-
-  secp256k1_keypair keypair;
-  if (!secp256k1_keypair_create(ctx, &keypair, seckey)) {
-    secp256k1_context_destroy(ctx);
-    memset(seckey, 0, sizeof(seckey));
-    g_set_error(error, GNOSTR_KEYSTORE_ERROR,
-                GNOSTR_KEYSTORE_ERROR_INVALID_KEY,
-                "Invalid private key");
-    return NULL;
-  }
-
-  secp256k1_xonly_pubkey xonly_pubkey;
-  if (!secp256k1_keypair_xonly_pub(ctx, &xonly_pubkey, NULL, &keypair)) {
-    secp256k1_context_destroy(ctx);
-    memset(seckey, 0, sizeof(seckey));
-    g_set_error(error, GNOSTR_KEYSTORE_ERROR,
-                GNOSTR_KEYSTORE_ERROR_FAILED,
-                "Failed to derive public key");
-    return NULL;
-  }
-
-  secp256k1_xonly_pubkey_serialize(ctx, pubkey, &xonly_pubkey);
-  secp256k1_context_destroy(ctx);
-
-  /* Clear private key from memory */
-  memset(seckey, 0, sizeof(seckey));
-
-  /* Encode public key as npub */
-  char *npub = NULL;
-  if (nostr_nip19_encode_npub(pubkey, &npub) != 0 || !npub) {
+  gchar *npub = gnostr_keys_get_npub(keys);
+  if (!npub) {
     g_set_error(error, GNOSTR_KEYSTORE_ERROR,
                 GNOSTR_KEYSTORE_ERROR_FAILED,
                 "Failed to encode npub");

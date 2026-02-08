@@ -11,7 +11,7 @@
 #include "../ipc/signer_ipc.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_uri.h"
-#include "nostr/nip19/nip19.h"
+#include "nostr_nip19.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
@@ -301,27 +301,15 @@ static gboolean on_nip46_pubkey_result(gpointer data) {
   g_message("[NIP46_LOGIN] Signer pubkey (for communication): %s", ctx->signer_pubkey_hex);
 
   /* Convert hex pubkey to npub */
-  uint8_t pubkey_bytes[32];
-  for (int j = 0; j < 32; j++) {
-    unsigned int byte;
-    if (sscanf(ctx->user_pubkey_hex + j * 2, "%2x", &byte) != 1) {
-      g_warning("[NIP46_LOGIN] Invalid user pubkey from RPC");
-      set_bunker_status(self, BUNKER_STATUS_ERROR,
-                        "Invalid pubkey received",
-                        "The signer returned an invalid public key");
-      return G_SOURCE_REMOVE;
-    }
-    pubkey_bytes[j] = (uint8_t)byte;
-  }
-
-  char *npub = NULL;
-  if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(ctx->user_pubkey_hex, NULL);
+  if (!n19) {
     g_warning("[NIP46_LOGIN] Failed to encode npub");
     set_bunker_status(self, BUNKER_STATUS_ERROR,
                       "Failed to encode npub",
-                      NULL);
+                      "The signer returned an invalid public key");
     return G_SOURCE_REMOVE;
   }
+  const char *npub = gnostr_nip19_get_bech32(n19);
 
   /* Persist NIP-46 credentials to GSettings */
   if (ctx->nostrconnect_secret && ctx->signer_pubkey_hex) {
@@ -345,7 +333,6 @@ static gboolean on_nip46_pubkey_result(gpointer data) {
   /* Save and show success with the ACTUAL user pubkey */
   save_npub_to_settings(npub);
   show_success(self, npub);
-  free(npub);
 
   return G_SOURCE_REMOVE;
 }
@@ -1199,27 +1186,15 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
   nostr_nip46_uri_bunker_free(&parsed);
 
   /* Convert hex pubkey to npub */
-  uint8_t pubkey_bytes[32];
-  for (int i = 0; i < 32; i++) {
-    unsigned int byte;
-    if (sscanf(pubkey_hex + i * 2, "%2x", &byte) != 1) {
-      free(pubkey_hex);
-      nostr_nip46_session_free(session);
-      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                              "Invalid pubkey format from signer");
-      return;
-    }
-    pubkey_bytes[i] = (uint8_t)byte;
-  }
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(pubkey_hex, NULL);
   free(pubkey_hex);
-
-  char *npub = NULL;
-  if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
+  if (!n19) {
     nostr_nip46_session_free(session);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
                             "Failed to encode npub");
     return;
   }
+  char *npub = g_strdup(gnostr_nip19_get_bech32(n19));
 
   g_message("[NIP46_LOGIN] Bunker connect SUCCESS: %s", npub);
 

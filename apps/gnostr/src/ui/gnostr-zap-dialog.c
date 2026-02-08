@@ -10,7 +10,7 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib/gi18n.h>
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 
 /* QR code generation - using qrencode if available */
 #ifdef HAVE_QRENCODE
@@ -741,15 +741,9 @@ static void on_get_pubkey_for_zap(GObject *source, GAsyncResult *res, gpointer u
    * If it starts with "npub1", decode it using NIP-19; otherwise assume hex. */
   gchar *sender_pubkey_hex = NULL;
   if (g_str_has_prefix(npub, "npub1")) {
-    /* Decode npub to 32-byte pubkey, then convert to hex */
-    uint8_t pubkey_bytes[32];
-    if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
-      /* Convert bytes to hex string */
-      GString *hex = g_string_sized_new(64);
-      for (int i = 0; i < 32; i++) {
-        g_string_append_printf(hex, "%02x", pubkey_bytes[i]);
-      }
-      sender_pubkey_hex = g_string_free(hex, FALSE);
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
+    if (n19) {
+      sender_pubkey_hex = g_strdup(gnostr_nip19_get_pubkey(n19));
       g_debug("[ZAP] Decoded npub to hex: %s", sender_pubkey_hex);
     } else {
       set_processing(self, FALSE, NULL);

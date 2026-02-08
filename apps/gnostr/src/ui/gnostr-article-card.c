@@ -11,7 +11,7 @@
 #include "../util/nip84_highlights.h"
 #include "../util/utils.h"
 #include <glib/gi18n.h>
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -290,27 +290,13 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
   if (!self->event_id || !self->pubkey_hex || !self->d_tag) return;
 
   /* Build naddr for NIP-33 addressable event */
-  NostrNAddrConfig naddr_cfg = {
-    .identifier = self->d_tag,
-    .public_key = self->pubkey_hex,
-    .kind = 30023,
-    .relays = NULL,
-    .relays_count = 0
-  };
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_naddr(
+    self->d_tag, self->pubkey_hex, 30023, NULL, NULL);
 
-  char *encoded = NULL;
-  NostrPointer *ptr = NULL;
-
-  if (nostr_pointer_from_naddr_config(&naddr_cfg, &ptr) == 0 && ptr) {
-    nostr_pointer_to_bech32(ptr, &encoded);
-    nostr_pointer_free(ptr);
-  }
-
-  if (encoded) {
-    char *uri = g_strdup_printf("nostr:%s", encoded);
+  if (n19) {
+    char *uri = g_strdup_printf("nostr:%s", gnostr_nip19_get_bech32(n19));
     g_signal_emit(self, signals[SIGNAL_SHARE_ARTICLE], 0, uri);
     g_free(uri);
-    free(encoded);
   }
 }
 

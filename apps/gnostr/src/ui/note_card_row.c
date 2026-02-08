@@ -23,7 +23,7 @@
 #include "../util/markdown_pango.h"
 #include "../util/nip21_uri.h"
 #include "../storage_ndb.h"
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 #include "gnostr-profile-provider.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -773,34 +773,27 @@ static void on_copy_note_id_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   /* Encode as nevent with relay hints if available, otherwise as note1 */
-  char *encoded = NULL;
+  g_autofree char *encoded = NULL;
 
   /* Try nevent first (includes more metadata) */
-  NostrNEventConfig cfg = {
-    .id = self->id_hex,
-    .author = self->pubkey_hex,
-    .kind = 1,  /* text note */
-    .relays = NULL,
-    .relays_count = 0
-  };
-
-  NostrPointer *ptr = NULL;
-  if (nostr_pointer_from_nevent_config(&cfg, &ptr) == 0 && ptr) {
-    nostr_pointer_to_bech32(ptr, &encoded);
-    nostr_pointer_free(ptr);
+  {
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_nevent(
+        self->id_hex, NULL, self->pubkey_hex, 1, NULL);
+    if (n19) {
+      encoded = g_strdup(gnostr_nip19_get_bech32(n19));
+    }
   }
 
   /* Fallback to simple note1 if nevent encoding failed */
   if (!encoded) {
-    uint8_t id_bytes[32];
-    if (hex_to_bytes_32(self->id_hex, id_bytes)) {
-      nostr_nip19_encode_note(id_bytes, &encoded);
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_note(self->id_hex, NULL);
+    if (n19) {
+      encoded = g_strdup(gnostr_nip19_get_bech32(n19));
     }
   }
 
   if (encoded) {
     copy_to_clipboard(self, encoded);
-    free(encoded);
   }
 }
 
@@ -814,13 +807,12 @@ static void on_copy_pubkey_clicked(GtkButton *btn, gpointer user_data) {
     gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
   }
 
-  /* Encode as npub1 */
-  uint8_t pubkey_bytes[32];
-  if (hex_to_bytes_32(self->pubkey_hex, pubkey_bytes)) {
-    char *npub = NULL;
-    if (nostr_nip19_encode_npub(pubkey_bytes, &npub) == 0 && npub) {
+  /* Encode as npub1 using GNostrNip19 */
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(self->pubkey_hex, NULL);
+  if (n19) {
+    const char *npub = gnostr_nip19_get_bech32(n19);
+    if (npub) {
       copy_to_clipboard(self, npub);
-      free(npub);
     }
   }
 }
@@ -862,33 +854,29 @@ static void on_share_note_clicked(GtkButton *btn, gpointer user_data) {
     gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
   }
 
-  /* Build nostr: URI for sharing */
-  char *encoded = NULL;
-  NostrNEventConfig cfg = {
-    .id = self->id_hex,
-    .author = self->pubkey_hex,
-    .kind = 1,
-    .relays = NULL,
-    .relays_count = 0
-  };
+  /* Build nostr: URI for sharing using GNostrNip19 */
+  g_autofree char *encoded = NULL;
 
-  NostrPointer *ptr = NULL;
-  if (nostr_pointer_from_nevent_config(&cfg, &ptr) == 0 && ptr) {
-    nostr_pointer_to_bech32(ptr, &encoded);
-    nostr_pointer_free(ptr);
+  /* Try nevent first (includes more metadata) */
+  {
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_nevent(
+        self->id_hex, NULL, self->pubkey_hex, 1, NULL);
+    if (n19) {
+      encoded = g_strdup(gnostr_nip19_get_bech32(n19));
+    }
   }
 
   /* Fallback to simple note1 */
   if (!encoded) {
-    uint8_t id_bytes[32];
-    if (hex_to_bytes_32(self->id_hex, id_bytes)) {
-      nostr_nip19_encode_note(id_bytes, &encoded);
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_note(self->id_hex, NULL);
+    if (n19) {
+      encoded = g_strdup(gnostr_nip19_get_bech32(n19));
     }
   }
 
   if (encoded) {
     /* Create nostr: URI */
-    char *uri = g_strdup_printf("nostr:%s", encoded);
+    g_autofree char *uri = g_strdup_printf("nostr:%s", encoded);
 
     /* Use GtkUriLauncher or system share if available */
     GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
@@ -897,9 +885,6 @@ static void on_share_note_clicked(GtkButton *btn, gpointer user_data) {
     /* Copy to clipboard as fallback and show toast */
     copy_to_clipboard(self, uri);
     g_signal_emit(self, signals[SIGNAL_SHARE_NOTE_REQUESTED], 0, uri);
-
-    g_free(uri);
-    free(encoded);
   }
 }
 
@@ -2794,22 +2779,14 @@ static gchar *format_nostr_mention_display(const char *t) {
     /* Profile mention: try to resolve to display name */
     char *pubkey_hex = NULL;
 
-    if (g_str_has_prefix(entity, "npub1")) {
-      /* Decode npub to get pubkey bytes */
-      uint8_t pubkey[32];
-      if (nostr_nip19_decode_npub(entity, pubkey) == 0) {
-        /* Convert bytes to hex string */
-        pubkey_hex = g_malloc(65);
-        for (int i = 0; i < 32; i++) {
-          snprintf(pubkey_hex + i*2, 3, "%02x", pubkey[i]);
+    if (g_str_has_prefix(entity, "npub1") || g_str_has_prefix(entity, "nprofile1")) {
+      /* Decode npub or nprofile using GNostrNip19 */
+      g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(entity, NULL);
+      if (n19) {
+        const char *pk = gnostr_nip19_get_pubkey(n19);
+        if (pk) {
+          pubkey_hex = g_strdup(pk);
         }
-      }
-    } else if (g_str_has_prefix(entity, "nprofile1")) {
-      /* Decode nprofile to get pubkey hex directly */
-      NostrProfilePointer *pp = NULL;
-      if (nostr_nip19_decode_nprofile(entity, &pp) == 0 && pp && pp->public_key) {
-        pubkey_hex = g_strdup(pp->public_key);
-        nostr_profile_pointer_free(pp);
       }
     }
 

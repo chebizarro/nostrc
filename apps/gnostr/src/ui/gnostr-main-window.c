@@ -37,8 +37,8 @@
 /* JSON helpers - GObject wrappers and core interface */
 #include "nostr_json.h"
 #include "json.h"
-/* NIP-19 bech32 encoding */
-#include <nostr/nip19/nip19.h>
+/* NIP-19 bech32 encoding (GObject wrapper) */
+#include "nostr_nip19.h"
 /* SimplePool GObject wrapper for live streaming/backfill */
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
@@ -83,8 +83,7 @@
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
-/* NIP-19 helpers */
-#include "nostr/nip19/nip19.h"
+/* NIP-19 helpers (now via GNostrNip19, included above) */
 /* NIP-10 threading */
 #include "nip10.h"
 /* NIP-46 client (remote signer pairing) */
@@ -3785,12 +3784,15 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
   /* Update user_pubkey_hex from npub */
   if (npub && g_str_has_prefix(npub, "npub1")) {
-    uint8_t pubkey_bytes[32];
-    if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
-      g_free(self->user_pubkey_hex);
-      self->user_pubkey_hex = hex_encode_lower(pubkey_bytes, 32);
-      /* Also set pubkey on signer service */
-      gnostr_signer_service_set_pubkey(signer, self->user_pubkey_hex);
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
+    if (n19) {
+      const char *hex = gnostr_nip19_get_pubkey(n19);
+      if (hex) {
+        g_free(self->user_pubkey_hex);
+        self->user_pubkey_hex = g_strdup(hex);
+        /* Also set pubkey on signer service */
+        gnostr_signer_service_set_pubkey(signer, self->user_pubkey_hex);
+      }
     }
   }
 
@@ -4142,20 +4144,14 @@ static void on_discover_copy_npub(GnostrPageDiscover *page, const char *pubkey_h
   (void)user_data;
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return;
 
-  /* Convert hex pubkey to bytes */
-  uint8_t pubkey_bytes[32];
-  for (int i = 0; i < 32; i++) {
-    unsigned int byte;
-    if (sscanf(pubkey_hex + i * 2, "%2x", &byte) != 1) return;
-    pubkey_bytes[i] = (uint8_t)byte;
-  }
-
-  /* Encode as npub */
-  char *npub = NULL;
-  if (nostr_nip19_encode_npub(pubkey_bytes, &npub) == 0 && npub) {
-    GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
-    gdk_clipboard_set_text(clipboard, npub);
-    free(npub);
+  /* Encode as npub using GNostrNip19 */
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(pubkey_hex, NULL);
+  if (n19) {
+    const char *npub = gnostr_nip19_get_bech32(n19);
+    if (npub) {
+      GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+      gdk_clipboard_set_text(clipboard, npub);
+    }
   }
 }
 
@@ -4434,23 +4430,15 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
     return;
   }
 
-  /* Convert event ID hex to note1 bech32 URI */
-  uint8_t id32[32];
-  if (!hex_to_bytes32(id_hex, id32)) {
-    show_toast(self, "Invalid event ID format");
-    return;
-  }
-
-  char *note_bech32 = NULL;
-  int encode_rc = nostr_nip19_encode_note(id32, &note_bech32);
-  if (encode_rc != 0 || !note_bech32) {
+  /* Convert event ID hex to note1 bech32 URI using GNostrNip19 */
+  g_autoptr(GNostrNip19) n19_note = gnostr_nip19_encode_note(id_hex, NULL);
+  if (!n19_note) {
     show_toast(self, "Failed to encode note ID");
     return;
   }
 
   /* Build nostr: URI */
-  char *nostr_uri = g_strdup_printf("nostr:%s", note_bech32);
-  free(note_bech32);
+  char *nostr_uri = g_strdup_printf("nostr:%s", gnostr_nip19_get_bech32(n19_note));
 
   /* Try to look up the author's display name */
   char *display_name = NULL;
@@ -5520,9 +5508,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       if (gnostr_signer_service_restore_from_settings(signer)) {
         g_message("[MAIN] Restored NIP-46 session from saved credentials");
         /* Also restore pubkey for the signer service */
-        uint8_t pubkey_bytes[32];
-        if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
-          g_autofree char *pubkey_hex = hex_encode_lower(pubkey_bytes, 32);
+        g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
+        if (n19) {
+          const char *pubkey_hex = gnostr_nip19_get_pubkey(n19);
           if (pubkey_hex) {
             gnostr_signer_service_set_pubkey(signer, pubkey_hex);
           }
@@ -7839,25 +7827,23 @@ static char *client_settings_get_current_npub(void) {
 /* Get the current user's pubkey as 64-char hex (from npub bech32).
  * Returns newly allocated string or NULL if not signed in. Caller must free. */
 static char *get_current_user_pubkey_hex(void) {
-  char *npub = client_settings_get_current_npub();
+  g_autofree char *npub = client_settings_get_current_npub();
   if (!npub) return NULL;
 
-  /* Decode bech32 npub to get raw pubkey bytes */
-  uint8_t pubkey_bytes[32];
-
-  /* Use NIP-19 decoder to convert npub to bytes */
-  int decode_result = nostr_nip19_decode_npub(npub, pubkey_bytes);
-  g_free(npub);
-
-  if (decode_result != 0) {
+  /* Decode bech32 npub using GNostrNip19 */
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
+  if (!n19) {
     g_warning("[GIFTWRAP] Failed to decode npub to pubkey");
     return NULL;
   }
 
-  /* Convert to hex string */
-  char *hex = g_malloc0(65);
-  storage_ndb_hex_encode(pubkey_bytes, hex);
-  return hex;
+  const char *hex = gnostr_nip19_get_pubkey(n19);
+  if (!hex) {
+    g_warning("[GIFTWRAP] Failed to decode npub to pubkey");
+    return NULL;
+  }
+
+  return g_strdup(hex);
 }
 
 /* ============== Gift Wrap (NIP-59) Subscription ============== */

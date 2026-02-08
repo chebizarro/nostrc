@@ -8,7 +8,7 @@
 #include "gnostr-mute-list.h"
 #include "../util/mute_list.h"
 #include "../ipc/signer_ipc.h"
-#include "nostr/nip19/nip19.h"
+#include "nostr_nip19.h"
 #include <glib.h>
 #include <glib/gi18n.h>
 
@@ -248,23 +248,13 @@ static void refresh_users_list(GnostrMuteListDialog *self) {
     for (size_t i = 0; i < count; i++) {
         /* Try to convert to npub for display */
         char *npub = NULL;
-        unsigned char pk_bytes[32];
         gboolean converted = FALSE;
 
         if (pubkeys[i] && strlen(pubkeys[i]) == 64) {
-            /* Convert hex to bytes */
-            gboolean valid = TRUE;
-            for (int j = 0; j < 32 && valid; j++) {
-                char byte_str[3] = { pubkeys[i][2*j], pubkeys[i][2*j+1], 0 };
-                char *end = NULL;
-                long v = strtol(byte_str, &end, 16);
-                if (!end || *end) valid = FALSE;
-                else pk_bytes[j] = (unsigned char)v;
-            }
-
-            if (valid) {
-                int rc = nostr_nip19_encode_npub(pk_bytes, &npub);
-                if (rc == 0 && npub) converted = TRUE;
+            g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(pubkeys[i], NULL);
+            if (n19) {
+                npub = g_strdup(gnostr_nip19_get_bech32(n19));
+                converted = TRUE;
             }
         }
 
@@ -272,7 +262,7 @@ static void refresh_users_list(GnostrMuteListDialog *self) {
         GtkWidget *row = create_list_row(self, display, 0);
         gtk_list_box_append(GTK_LIST_BOX(self->list_users), row);
 
-        if (npub) free(npub);
+        g_free(npub);
     }
 
     g_free((void *)pubkeys);
@@ -380,11 +370,9 @@ static void on_add_user_clicked(GtkButton *btn, gpointer user_data) {
 
     /* Try to parse as npub */
     if (g_str_has_prefix(input, "npub1")) {
-        unsigned char pk_bytes[32];
-        if (nostr_nip19_decode_npub(input, pk_bytes) == 0) {
-            for (int i = 0; i < 32; i++) {
-                snprintf(&pubkey_hex[i*2], 3, "%02x", pk_bytes[i]);
-            }
+        g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(input, NULL);
+        if (n19) {
+            g_strlcpy(pubkey_hex, gnostr_nip19_get_pubkey(n19), sizeof(pubkey_hex));
             valid = TRUE;
         }
     }

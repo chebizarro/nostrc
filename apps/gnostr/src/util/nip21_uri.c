@@ -7,7 +7,7 @@
  */
 
 #include "nip21_uri.h"
-#include "nostr/nip19/nip19.h"
+#include "nostr_nip19.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -17,8 +17,6 @@
 
 /* Forward declarations */
 static gchar *url_decode(const gchar *str);
-static gboolean hex_to_bytes(const gchar *hex, guint8 *out, gsize out_len);
-static gchar *bytes_to_hex(const guint8 *bytes, gsize len);
 
 /**
  * URL-decode a string.
@@ -46,38 +44,6 @@ static gchar *url_decode(const gchar *str) {
   decoded[j] = '\0';
 
   return decoded;
-}
-
-/**
- * Convert a hex string to bytes.
- */
-static gboolean hex_to_bytes(const gchar *hex, guint8 *out, gsize out_len) {
-  if (!hex || strlen(hex) != out_len * 2) return FALSE;
-
-  for (gsize i = 0; i < out_len; i++) {
-    gchar byte_hex[3] = { hex[i * 2], hex[i * 2 + 1], '\0' };
-    if (!g_ascii_isxdigit(byte_hex[0]) || !g_ascii_isxdigit(byte_hex[1])) {
-      return FALSE;
-    }
-    out[i] = (guint8)g_ascii_strtoull(byte_hex, NULL, 16);
-  }
-
-  return TRUE;
-}
-
-/**
- * Convert bytes to a hex string.
- */
-static gchar *bytes_to_hex(const guint8 *bytes, gsize len) {
-  if (!bytes || len == 0) return NULL;
-
-  gchar *hex = g_malloc(len * 2 + 1);
-  for (gsize i = 0; i < len; i++) {
-    g_snprintf(hex + i * 2, 3, "%02x", bytes[i]);
-  }
-  hex[len * 2] = '\0';
-
-  return hex;
 }
 
 /**
@@ -168,11 +134,25 @@ gboolean gnostr_uri_is_valid(const gchar *uri_string) {
   }
 
   /* Check for valid HRP using NIP-19 inspect */
-  NostrBech32Type type;
-  int rc = nostr_nip19_inspect(bech32, &type);
+  GNostrBech32Type type = gnostr_nip19_inspect(bech32);
   g_free(bech32);
 
-  return (rc == 0 && type != NOSTR_B32_UNKNOWN);
+  return (type != GNOSTR_BECH32_UNKNOWN);
+}
+
+/**
+ * Helper to copy relays from a GNostrNip19 into a GnostrUri.
+ */
+static void copy_relays_to_uri(GnostrUri *result, GNostrNip19 *n19) {
+  const gchar *const *relays = gnostr_nip19_get_relays(n19);
+  if (!relays || !relays[0]) return;
+
+  gsize count = g_strv_length((gchar **)relays);
+  result->relay_count = count;
+  result->relays = g_new0(gchar *, count + 1);
+  for (gsize i = 0; i < count; i++) {
+    result->relays[i] = g_strdup(relays[i]);
+  }
 }
 
 GnostrUri *gnostr_uri_parse(const gchar *uri) {
@@ -185,12 +165,14 @@ GnostrUri *gnostr_uri_parse(const gchar *uri) {
     return NULL;
   }
 
-  /* Inspect the bech32 type */
-  NostrBech32Type b32_type;
-  if (nostr_nip19_inspect(bech32, &b32_type) != 0) {
+  /* Decode once using the unified GNostrNip19 API */
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(bech32, NULL);
+  if (!n19) {
     g_free(bech32);
     return NULL;
   }
+
+  GNostrBech32Type b32_type = gnostr_nip19_get_entity_type(n19);
 
   /* Create the result structure */
   GnostrUri *result = g_new0(GnostrUri, 1);
@@ -198,97 +180,44 @@ GnostrUri *gnostr_uri_parse(const gchar *uri) {
   result->kind = -1;  /* -1 indicates not specified */
 
   switch (b32_type) {
-    case NOSTR_B32_NPUB: {
+    case GNOSTR_BECH32_NPUB:
       result->type = GNOSTR_URI_TYPE_NPUB;
-      guint8 pubkey[32];
-      if (nostr_nip19_decode_npub(bech32, pubkey) == 0) {
-        result->pubkey_hex = bytes_to_hex(pubkey, 32);
-      } else {
-        gnostr_uri_free(result);
-        return NULL;
-      }
+      result->pubkey_hex = g_strdup(gnostr_nip19_get_pubkey(n19));
       break;
-    }
 
-    case NOSTR_B32_NOTE: {
+    case GNOSTR_BECH32_NOTE:
       result->type = GNOSTR_URI_TYPE_NOTE;
-      guint8 event_id[32];
-      if (nostr_nip19_decode_note(bech32, event_id) == 0) {
-        result->event_id_hex = bytes_to_hex(event_id, 32);
-      } else {
-        gnostr_uri_free(result);
-        return NULL;
-      }
+      result->event_id_hex = g_strdup(gnostr_nip19_get_event_id(n19));
       break;
-    }
 
-    case NOSTR_B32_NPROFILE: {
+    case GNOSTR_BECH32_NPROFILE:
       result->type = GNOSTR_URI_TYPE_NPROFILE;
-      NostrProfilePointer *profile = NULL;
-      if (nostr_nip19_decode_nprofile(bech32, &profile) == 0 && profile) {
-        result->pubkey_hex = g_strdup(profile->public_key);
-        if (profile->relays_count > 0 && profile->relays) {
-          result->relay_count = profile->relays_count;
-          result->relays = g_new0(gchar *, profile->relays_count + 1);
-          for (gsize i = 0; i < profile->relays_count; i++) {
-            result->relays[i] = g_strdup(profile->relays[i]);
-          }
-        }
-        nostr_profile_pointer_free(profile);
-      } else {
-        gnostr_uri_free(result);
-        return NULL;
-      }
+      result->pubkey_hex = g_strdup(gnostr_nip19_get_pubkey(n19));
+      copy_relays_to_uri(result, n19);
       break;
-    }
 
-    case NOSTR_B32_NEVENT: {
+    case GNOSTR_BECH32_NEVENT: {
       result->type = GNOSTR_URI_TYPE_NEVENT;
-      NostrEventPointer *event = NULL;
-      if (nostr_nip19_decode_nevent(bech32, &event) == 0 && event) {
-        result->event_id_hex = g_strdup(event->id);
-        if (event->author) {
-          result->author_hex = g_strdup(event->author);
-        }
-        if (event->kind > 0) {
-          result->kind = event->kind;
-        }
-        if (event->relays_count > 0 && event->relays) {
-          result->relay_count = event->relays_count;
-          result->relays = g_new0(gchar *, event->relays_count + 1);
-          for (gsize i = 0; i < event->relays_count; i++) {
-            result->relays[i] = g_strdup(event->relays[i]);
-          }
-        }
-        nostr_event_pointer_free(event);
-      } else {
-        gnostr_uri_free(result);
-        return NULL;
+      result->event_id_hex = g_strdup(gnostr_nip19_get_event_id(n19));
+      const gchar *author = gnostr_nip19_get_author(n19);
+      if (author) {
+        result->author_hex = g_strdup(author);
       }
+      gint kind = gnostr_nip19_get_kind(n19);
+      if (kind > 0) {
+        result->kind = kind;
+      }
+      copy_relays_to_uri(result, n19);
       break;
     }
 
-    case NOSTR_B32_NADDR: {
+    case GNOSTR_BECH32_NADDR:
       result->type = GNOSTR_URI_TYPE_NADDR;
-      NostrEntityPointer *entity = NULL;
-      if (nostr_nip19_decode_naddr(bech32, &entity) == 0 && entity) {
-        result->pubkey_hex = g_strdup(entity->public_key);
-        result->kind = entity->kind;
-        result->d_tag = g_strdup(entity->identifier);
-        if (entity->relays_count > 0 && entity->relays) {
-          result->relay_count = entity->relays_count;
-          result->relays = g_new0(gchar *, entity->relays_count + 1);
-          for (gsize i = 0; i < entity->relays_count; i++) {
-            result->relays[i] = g_strdup(entity->relays[i]);
-          }
-        }
-        nostr_entity_pointer_free(entity);
-      } else {
-        gnostr_uri_free(result);
-        return NULL;
-      }
+      result->pubkey_hex = g_strdup(gnostr_nip19_get_pubkey(n19));
+      result->kind = gnostr_nip19_get_kind(n19);
+      result->d_tag = g_strdup(gnostr_nip19_get_identifier(n19));
+      copy_relays_to_uri(result, n19);
       break;
-    }
 
     default:
       gnostr_uri_free(result);
@@ -301,35 +230,19 @@ GnostrUri *gnostr_uri_parse(const gchar *uri) {
 gchar *gnostr_uri_build_npub(const gchar *pubkey_hex) {
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return NULL;
 
-  guint8 pubkey[32];
-  if (!hex_to_bytes(pubkey_hex, pubkey, 32)) return NULL;
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(pubkey_hex, NULL);
+  if (!n19) return NULL;
 
-  char *bech32 = NULL;
-  if (nostr_nip19_encode_npub(pubkey, &bech32) != 0 || !bech32) {
-    return NULL;
-  }
-
-  gchar *uri = g_strconcat(NOSTR_URI_PREFIX, bech32, NULL);
-  free(bech32);
-
-  return uri;
+  return g_strconcat(NOSTR_URI_PREFIX, gnostr_nip19_get_bech32(n19), NULL);
 }
 
 gchar *gnostr_uri_build_note(const gchar *event_id_hex) {
   if (!event_id_hex || strlen(event_id_hex) != 64) return NULL;
 
-  guint8 event_id[32];
-  if (!hex_to_bytes(event_id_hex, event_id, 32)) return NULL;
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_note(event_id_hex, NULL);
+  if (!n19) return NULL;
 
-  char *bech32 = NULL;
-  if (nostr_nip19_encode_note(event_id, &bech32) != 0 || !bech32) {
-    return NULL;
-  }
-
-  gchar *uri = g_strconcat(NOSTR_URI_PREFIX, bech32, NULL);
-  free(bech32);
-
-  return uri;
+  return g_strconcat(NOSTR_URI_PREFIX, gnostr_nip19_get_bech32(n19), NULL);
 }
 
 gchar *gnostr_uri_build_nprofile(const gchar *pubkey_hex,
@@ -337,29 +250,12 @@ gchar *gnostr_uri_build_nprofile(const gchar *pubkey_hex,
                                   gsize relay_count) {
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return NULL;
 
-  NostrNProfileConfig cfg = {
-    .public_key = pubkey_hex,
-    .relays = relays,
-    .relays_count = relay_count
-  };
+  (void)relay_count; /* relays is NULL-terminated; count is unused */
 
-  NostrPointer *ptr = NULL;
-  if (nostr_pointer_from_nprofile_config(&cfg, &ptr) != 0 || !ptr) {
-    return NULL;
-  }
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_nprofile(pubkey_hex, relays, NULL);
+  if (!n19) return NULL;
 
-  char *bech32 = NULL;
-  int rc = nostr_pointer_to_bech32(ptr, &bech32);
-  nostr_pointer_free(ptr);
-
-  if (rc != 0 || !bech32) {
-    return NULL;
-  }
-
-  gchar *uri = g_strconcat(NOSTR_URI_PREFIX, bech32, NULL);
-  free(bech32);
-
-  return uri;
+  return g_strconcat(NOSTR_URI_PREFIX, gnostr_nip19_get_bech32(n19), NULL);
 }
 
 gchar *gnostr_uri_build_nevent(const gchar *event_id_hex,
@@ -370,31 +266,13 @@ gchar *gnostr_uri_build_nevent(const gchar *event_id_hex,
   if (!event_id_hex || strlen(event_id_hex) != 64) return NULL;
   if (author_hex && strlen(author_hex) != 64) return NULL;
 
-  NostrNEventConfig cfg = {
-    .id = event_id_hex,
-    .author = author_hex,
-    .kind = kind,
-    .relays = relays,
-    .relays_count = relay_count
-  };
+  (void)relay_count; /* relays is NULL-terminated; count is unused */
 
-  NostrPointer *ptr = NULL;
-  if (nostr_pointer_from_nevent_config(&cfg, &ptr) != 0 || !ptr) {
-    return NULL;
-  }
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_nevent(event_id_hex, relays,
+                                                            author_hex, kind, NULL);
+  if (!n19) return NULL;
 
-  char *bech32 = NULL;
-  int rc = nostr_pointer_to_bech32(ptr, &bech32);
-  nostr_pointer_free(ptr);
-
-  if (rc != 0 || !bech32) {
-    return NULL;
-  }
-
-  gchar *uri = g_strconcat(NOSTR_URI_PREFIX, bech32, NULL);
-  free(bech32);
-
-  return uri;
+  return g_strconcat(NOSTR_URI_PREFIX, gnostr_nip19_get_bech32(n19), NULL);
 }
 
 gchar *gnostr_uri_build_naddr(const gchar *pubkey_hex,
@@ -406,31 +284,13 @@ gchar *gnostr_uri_build_naddr(const gchar *pubkey_hex,
   if (!d_tag) return NULL;
   if (kind <= 0) return NULL;
 
-  NostrNAddrConfig cfg = {
-    .identifier = d_tag,
-    .public_key = pubkey_hex,
-    .kind = kind,
-    .relays = relays,
-    .relays_count = relay_count
-  };
+  (void)relay_count; /* relays is NULL-terminated; count is unused */
 
-  NostrPointer *ptr = NULL;
-  if (nostr_pointer_from_naddr_config(&cfg, &ptr) != 0 || !ptr) {
-    return NULL;
-  }
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_naddr(d_tag, pubkey_hex, kind,
+                                                           relays, NULL);
+  if (!n19) return NULL;
 
-  char *bech32 = NULL;
-  int rc = nostr_pointer_to_bech32(ptr, &bech32);
-  nostr_pointer_free(ptr);
-
-  if (rc != 0 || !bech32) {
-    return NULL;
-  }
-
-  gchar *uri = g_strconcat(NOSTR_URI_PREFIX, bech32, NULL);
-  free(bech32);
-
-  return uri;
+  return g_strconcat(NOSTR_URI_PREFIX, gnostr_nip19_get_bech32(n19), NULL);
 }
 
 const gchar *gnostr_uri_get_bech32(const GnostrUri *uri) {

@@ -17,7 +17,7 @@
 #include <gdk/gdkkeysyms.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 
 /* This must match the compiled resource path for the blueprint template */
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-session-view.ui"
@@ -228,14 +228,9 @@ static char *truncate_npub(const char *npub) {
 /* Helper: Convert npub to hex pubkey. Returns newly allocated string or NULL. */
 static char *npub_to_pubkey_hex(const char *npub) {
   if (!npub || strncmp(npub, "npub1", 5) != 0) return NULL;
-  uint8_t pubkey_bytes[32];
-  if (nostr_nip19_decode_npub(npub, pubkey_bytes) != 0) return NULL;
-  char *hex = g_malloc(65);
-  for (int i = 0; i < 32; i++) {
-    sprintf(hex + i * 2, "%02x", pubkey_bytes[i]);
-  }
-  hex[64] = '\0';
-  return hex;
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
+  if (!n19) return NULL;
+  return g_strdup(gnostr_nip19_get_pubkey(n19));
 }
 
 /* Helper: Generate initials from display name or handle */

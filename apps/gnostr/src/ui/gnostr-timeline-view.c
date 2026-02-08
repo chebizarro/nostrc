@@ -8,7 +8,7 @@
 #include "../storage_ndb.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
-#include "nostr/nip19/nip19.h"
+#include "nostr_nip19.h"
 #include "nostr_simple_pool.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
@@ -130,19 +130,17 @@ static char *get_current_user_pubkey_hex(void) {
     g_free(npub);
     return NULL;
   }
-  /* Decode bech32 npub to get raw pubkey bytes */
-  uint8_t pubkey_bytes[32];
-  int decode_result = nostr_nip19_decode_npub(npub, pubkey_bytes);
+  /* Decode bech32 npub to get raw pubkey hex */
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
   g_free(npub);
-  if (decode_result != 0) {
+  if (!n19) {
     return NULL;
   }
-  /* Convert to hex string (64 chars + null) */
-  char *hex = g_malloc0(65);
-  for (int i = 0; i < 32; i++) {
-    snprintf(hex + i * 2, 3, "%02x", pubkey_bytes[i]);
+  const char *pubkey_hex = gnostr_nip19_get_pubkey(n19);
+  if (!pubkey_hex) {
+    return NULL;
   }
-  return hex;
+  return g_strdup(pubkey_hex);
 }
 
 /* Small TTL cache for embed results */
@@ -277,7 +275,7 @@ static void inflight_detach_row(GtkWidget *row) {
 }
 
 static char *build_key_for_note_hex(const char *idhex) { return g_strdup_printf("id:%s", idhex ? idhex : ""); }
-static char *build_key_for_naddr(const NostrEntityPointer *a) { return g_strdup_printf("a:%d:%s:%s", a ? a->kind : 0, a && a->public_key ? a->public_key : "", a && a->identifier ? a->identifier : ""); }
+static char *build_key_for_naddr_fields(int kind, const char *pubkey, const char *identifier) { return g_strdup_printf("a:%d:%s:%s", kind, pubkey ? pubkey : "", identifier ? identifier : ""); }
 
 /* Start or attach to an inflight request */
 static void start_or_attach_request(const char *key, const char **urls, size_t url_count, NostrFilter *f, GnostrNoteCardRow *row) {
@@ -305,92 +303,97 @@ static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpo
   const char *ref = target;
   if (g_str_has_prefix(ref, "nostr:")) ref = target + 6;
 
-  /* Parse bech32 pointer */
-  NostrPointer *ptr = NULL;
-  if (nostr_pointer_parse(ref, &ptr) != 0 || !ptr) {
-    /* Maybe it's a bare note1 (bech32) without tlv pointer */
+  /* Decode bech32 reference using GNostrNip19 */
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(ref, NULL);
+  if (!n19) {
+    gnostr_note_card_row_set_embed(row, "Reference", ref);
+    return;
+  }
+
+  GNostrBech32Type btype = gnostr_nip19_get_entity_type(n19);
+
+  /* Handle bare note1 */
+  if (btype == GNOSTR_BECH32_NOTE) {
+    const char *event_id_hex = gnostr_nip19_get_event_id(n19);
+    if (!event_id_hex) { gnostr_note_card_row_set_embed(row, "Reference", ref); return; }
     unsigned char id32[32];
-    if (nostr_nip19_decode_note(ref, id32) == 0) {
-      /* Query local store */
-      void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
-        char *json = NULL; int jlen = 0;
-        if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen) == 0 && json) {
+    if (!hex32_from_string(event_id_hex, id32)) { gnostr_note_card_row_set_embed(row, "Reference", ref); return; }
+    /* Query local store */
+    void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
+      char *json = NULL; int jlen = 0;
+      if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen) == 0 && json) {
+        NostrEvent *evt = nostr_event_new();
+        if (evt && nostr_event_deserialize(evt, json) == 0) {
+          const char *content = nostr_event_get_content(evt);
+          if (content && *content) {
+            /* Simple title/snippet */
+            char title[64]; g_strlcpy(title, content, sizeof(title));
+            gnostr_note_card_row_set_embed(row, title, content);
+          } else {
+            gnostr_note_card_row_set_embed(row, "Note", "(empty)");
+          }
+        }
+        if (evt) nostr_event_free(evt);
+        g_free(json);
+      } else {
+        gnostr_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
+      }
+      storage_ndb_end_query(txn);
+    }
+    /* Kick off relay fetch for this note id (dedup + cancellable) */
+    {
+      /* Build filter by id */
+      NostrFilter *f = nostr_filter_new();
+      const char *ids[1] = { event_id_hex };
+      nostr_filter_set_ids(f, ids, 1);
+      /* Cache pre-check */
+      g_autofree char *key = build_key_for_note_hex(event_id_hex);
+      EmbedCacheEntry *ce = embed_cache_get(key, 60);
+      if (ce) {
+        if (!ce->negative && ce->json) {
           NostrEvent *evt = nostr_event_new();
-          if (evt && nostr_event_deserialize(evt, json) == 0) {
+          if (evt && nostr_event_deserialize(evt, ce->json) == 0) {
             const char *content = nostr_event_get_content(evt);
-            if (content && *content) {
-              /* Simple title/snippet */
-              char title[64]; g_strlcpy(title, content, sizeof(title));
-              gnostr_note_card_row_set_embed(row, title, content);
-            } else {
-              gnostr_note_card_row_set_embed(row, "Note", "(empty)");
-            }
+            const char *author_hex = nostr_event_get_pubkey(evt);
+            gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+            char meta[128] = {0}; char author_short[17] = {0}; char timebuf[64] = {0};
+            if (author_hex && strlen(author_hex) >= 8) snprintf(author_short, sizeof(author_short), "%.*s…", 8, author_hex);
+            if (created_at > 0) { time_t t=(time_t)created_at; struct tm tmv; localtime_r(&t,&tmv); strftime(timebuf,sizeof(timebuf), "%Y-%m-%d %H:%M", &tmv); }
+            if (author_short[0] && timebuf[0]) snprintf(meta, sizeof(meta), "%s · %s", author_short, timebuf);
+            else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
+            else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
+            char snipbuf[281]; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
+            gnostr_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
           }
           if (evt) nostr_event_free(evt);
-          g_free(json);
+          nostr_filter_free(f);
+          goto done_note_fetch;
         } else {
-          gnostr_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
+          gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
+          nostr_filter_free(f);
+          goto done_note_fetch;
         }
-        storage_ndb_end_query(txn);
       }
-      /* Kick off relay fetch for this note id (dedup + cancellable) */
-      {
-        /* Build filter by id */
-        NostrFilter *f = nostr_filter_new();
-        char idhex[65];
-        for (int i=0;i<32;i++) snprintf(&idhex[i*2], 3, "%02x", id32[i]);
-        idhex[64] = '\0';
-        const char *ids[1] = { idhex };
-        nostr_filter_set_ids(f, ids, 1);
-        /* Cache pre-check */
-        g_autofree char *key = build_key_for_note_hex(idhex);
-        EmbedCacheEntry *ce = embed_cache_get(key, 60);
-        if (ce) {
-          if (!ce->negative && ce->json) {
-            NostrEvent *evt = nostr_event_new();
-            if (evt && nostr_event_deserialize(evt, ce->json) == 0) {
-              const char *content = nostr_event_get_content(evt);
-              const char *author_hex = nostr_event_get_pubkey(evt);
-              gint64 created_at = (gint64)nostr_event_get_created_at(evt);
-              char meta[128] = {0}; char author_short[17] = {0}; char timebuf[64] = {0};
-              if (author_hex && strlen(author_hex) >= 8) snprintf(author_short, sizeof(author_short), "%.*s…", 8, author_hex);
-              if (created_at > 0) { time_t t=(time_t)created_at; struct tm tmv; localtime_r(&t,&tmv); strftime(timebuf,sizeof(timebuf), "%Y-%m-%d %H:%M", &tmv); }
-              if (author_short[0] && timebuf[0]) snprintf(meta, sizeof(meta), "%s · %s", author_short, timebuf);
-              else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
-              else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
-              char snipbuf[281]; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
-              gnostr_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
-            }
-            if (evt) nostr_event_free(evt);
-            nostr_filter_free(f);
-            goto done_note_fetch;
-          } else {
-            gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
-            nostr_filter_free(f);
-            goto done_note_fetch;
-          }
-        }
-        /* Load relay URLs (owned) */
-        char **urls = NULL; size_t url_count = 0;
-        build_urls_with_hints_owned(NULL, 0, &urls, &url_count);
-        if (url_count > 0 && urls) {
-          start_or_attach_request(key, (const char**)urls, url_count, f, row);
-        }
-        free_urls_owned(urls, url_count);
-        nostr_filter_free(f);
+      /* Load relay URLs (owned) */
+      char **urls = NULL; size_t url_count = 0;
+      build_urls_with_hints_owned(NULL, 0, &urls, &url_count);
+      if (url_count > 0 && urls) {
+        start_or_attach_request(key, (const char**)urls, url_count, f, row);
+      }
+      free_urls_owned(urls, url_count);
+      nostr_filter_free(f);
 done_note_fetch:
-        ;
-      }
-    } else {
-      gnostr_note_card_row_set_embed(row, "Reference", ref);
+      ;
     }
     return;
   }
 
-  /* Pointer OK: handle nevent/naddr */
-  if (ptr->kind == NOSTR_PTR_NEVENT && ptr->u.nevent && ptr->u.nevent->id) {
+  /* Handle nevent */
+  if (btype == GNOSTR_BECH32_NEVENT) {
+    const char *event_id_hex = gnostr_nip19_get_event_id(n19);
+    if (!event_id_hex) { gnostr_note_card_row_set_embed(row, "Reference", ref); return; }
     unsigned char id32[32];
-    if (hex32_from_string(ptr->u.nevent->id, id32)) {
+    if (hex32_from_string(event_id_hex, id32)) {
       void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
         char *json = NULL; int jlen = 0;
         if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen) == 0 && json) {
@@ -414,10 +417,10 @@ done_note_fetch:
       /* Kick off relay fetch using id hex from pointer (dedup + cancellable) */
       {
         NostrFilter *f = nostr_filter_new();
-        const char *ids[1] = { ptr->u.nevent->id };
+        const char *ids[1] = { event_id_hex };
         nostr_filter_set_ids(f, ids, 1);
         /* Cache pre-check */
-        g_autofree char *key = build_key_for_note_hex(ptr->u.nevent->id);
+        g_autofree char *key = build_key_for_note_hex(event_id_hex);
         EmbedCacheEntry *ce = embed_cache_get(key, 60);
         if (ce) {
           if (!ce->negative && ce->json) {
@@ -446,7 +449,10 @@ done_note_fetch:
         }
         char **urls = NULL; size_t url_count = 0;
         /* Prefer relay hints from pointer */
-        build_urls_with_hints_owned((const char* const*)ptr->u.nevent->relays, ptr->u.nevent->relays_count, &urls, &url_count);
+        const gchar *const *hint_relays = gnostr_nip19_get_relays(n19);
+        size_t hint_count = 0;
+        if (hint_relays) { for (; hint_relays[hint_count]; hint_count++) ; }
+        build_urls_with_hints_owned(hint_relays, hint_count, &urls, &url_count);
         if (url_count > 0 && urls) {
           start_or_attach_request(key, (const char**)urls, url_count, f, row);
         }
@@ -456,21 +462,23 @@ done_nevent_fetch:
         ;
       }
     } else {
-      gnostr_note_card_row_set_embed(row, "Reference", ptr->u.nevent->id);
+      gnostr_note_card_row_set_embed(row, "Reference", event_id_hex);
     }
-  } else if (ptr->kind == NOSTR_PTR_NADDR) {
+  } else if (btype == GNOSTR_BECH32_NADDR) {
     /* Addressable entity: build filter (kind+author+tag d) and fetch */
     gnostr_note_card_row_set_embed(row, "Addressable entity", ref);
-    NostrEntityPointer *a = ptr->u.naddr;
-    if (a && a->identifier && a->public_key && a->kind > 0) {
+    const char *naddr_identifier = gnostr_nip19_get_identifier(n19);
+    const char *naddr_pubkey = gnostr_nip19_get_pubkey(n19);
+    gint naddr_kind = gnostr_nip19_get_kind(n19);
+    if (naddr_identifier && naddr_pubkey && naddr_kind > 0) {
       NostrFilter *f = nostr_filter_new();
-      int kinds[1] = { a->kind }; nostr_filter_set_kinds(f, kinds, 1);
-      const char *authors[1] = { a->public_key }; nostr_filter_set_authors(f, authors, 1);
+      int kinds[1] = { naddr_kind }; nostr_filter_set_kinds(f, kinds, 1);
+      const char *authors[1] = { naddr_pubkey }; nostr_filter_set_authors(f, authors, 1);
       /* tag d */
-      nostr_filter_tags_append(f, "d", a->identifier, NULL);
+      nostr_filter_tags_append(f, "d", naddr_identifier, NULL);
       /* Cache pre-check */
       {
-        g_autofree char *cache_key = build_key_for_naddr(a);
+        g_autofree char *cache_key = build_key_for_naddr_fields(naddr_kind, naddr_pubkey, naddr_identifier);
         EmbedCacheEntry *ce = embed_cache_get(cache_key, 60);
         if (ce) {
           if (!ce->negative && ce->json) {
@@ -499,9 +507,12 @@ done_nevent_fetch:
         }
       }
       char **urls = NULL; size_t url_count = 0;
-      build_urls_with_hints_owned((const char* const*)a->relays, a->relays_count, &urls, &url_count);
+      const gchar *const *naddr_relays = gnostr_nip19_get_relays(n19);
+      size_t naddr_relay_count = 0;
+      if (naddr_relays) { for (; naddr_relays[naddr_relay_count]; naddr_relay_count++) ; }
+      build_urls_with_hints_owned(naddr_relays, naddr_relay_count, &urls, &url_count);
       if (url_count > 0 && urls) {
-        g_autofree char *key = build_key_for_naddr(a);
+        g_autofree char *key = build_key_for_naddr_fields(naddr_kind, naddr_pubkey, naddr_identifier);
         start_or_attach_request(key, (const char**)urls, url_count, f, row);
       }
       free_urls_owned(urls, url_count);
@@ -509,12 +520,11 @@ done_nevent_fetch:
 done_naddr_fetch:
       ;
     }
-  } else if (ptr->kind == NOSTR_PTR_NPROFILE) {
+  } else if (btype == GNOSTR_BECH32_NPROFILE) {
     gnostr_note_card_row_set_embed(row, "Profile", ref);
   } else {
     gnostr_note_card_row_set_embed(row, "Reference", ref);
   }
-  nostr_pointer_free(ptr);
 }
 
 /* gnostr_avatar_metrics_log() now comes from avatar_cache. */
@@ -988,18 +998,11 @@ static void on_note_card_zap_requested_relay(GnostrNoteCardRow *row, const char 
   /* Fall back to npub prefix if no profile name available */
   if (!display_name && pubkey_hex) {
     /* Convert hex to npub and use first 12 chars + "..." */
-    uint8_t pk32[32];
-    gboolean valid = TRUE;
-    for (int i = 0; i < 32 && valid; i++) {
-      unsigned int b;
-      if (sscanf(pubkey_hex + i*2, "%2x", &b) != 1) valid = FALSE;
-      else pk32[i] = (uint8_t)b;
-    }
-    if (valid) {
-      char *npub = NULL;
-      if (nostr_nip19_encode_npub(pk32, &npub) == 0 && npub) {
+    g_autoptr(GNostrNip19) npub_n19 = gnostr_nip19_encode_npub(pubkey_hex, NULL);
+    if (npub_n19) {
+      const char *npub = gnostr_nip19_get_bech32(npub_n19);
+      if (npub) {
         display_name = g_strdup_printf("%.12s...", npub);
-        free(npub);
       }
     }
   }

@@ -7,7 +7,7 @@
 #include "gnostr-app-handler-dialog.h"
 #include "gnostr-avatar-cache.h"
 #include "../util/nip89_handlers.h"
-#include <nostr/nip19/nip19.h>
+#include "nostr_nip19.h"
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-app-handler-dialog.ui"
 
@@ -196,40 +196,20 @@ build_event_bech32(GnostrAppHandlerDialog *self)
   /* For addressable events, use naddr. Otherwise use nevent. */
   if (gnostr_nip89_is_addressable_kind(self->event_kind) && self->d_tag && self->event_pubkey_hex) {
     /* Build naddr using proper NIP-19 encoding */
-    NostrEntityPointer *entity = nostr_entity_pointer_new();
-    entity->public_key = g_strdup(self->event_pubkey_hex);
-    entity->kind = (int)self->event_kind;
-    entity->identifier = g_strdup(self->d_tag);
-    entity->relays = NULL;
-    entity->relays_count = 0;
-
-    char *naddr = NULL;
-    int rc = nostr_nip19_encode_naddr(entity, &naddr);
-    nostr_entity_pointer_free(entity);
-
-    if (rc == 0 && naddr) {
-      return naddr;
-    }
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_naddr(
+      self->d_tag, self->event_pubkey_hex, (gint)self->event_kind, NULL, NULL);
+    if (n19)
+      return g_strdup(gnostr_nip19_get_bech32(n19));
     g_warning("app-handler: failed to encode naddr");
     return NULL;
   }
 
   /* Use nevent for regular events */
   if (self->event_id_hex && strlen(self->event_id_hex) == 64) {
-    NostrEventPointer *event = nostr_event_pointer_new();
-    event->id = g_strdup(self->event_id_hex);
-    event->author = self->event_pubkey_hex ? g_strdup(self->event_pubkey_hex) : NULL;
-    event->kind = (int)self->event_kind;
-    event->relays = NULL;
-    event->relays_count = 0;
-
-    char *nevent = NULL;
-    int rc = nostr_nip19_encode_nevent(event, &nevent);
-    nostr_event_pointer_free(event);
-
-    if (rc == 0 && nevent) {
-      return nevent;
-    }
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_nevent(
+      self->event_id_hex, NULL, self->event_pubkey_hex, (gint)self->event_kind, NULL);
+    if (n19)
+      return g_strdup(gnostr_nip19_get_bech32(n19));
     g_warning("app-handler: failed to encode nevent");
     return NULL;
   }
