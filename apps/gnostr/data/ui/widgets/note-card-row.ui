@@ -523,6 +523,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
+                      <object class="GtkButton" id="btn_pin">
+                        <property name="icon-name">view-pin-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Pin</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
                       <object class="GtkButton" id="btn_bookmark">
                         <property name="icon-name">bookmark-new-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Bookmark</property>

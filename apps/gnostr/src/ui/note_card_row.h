@@ -23,6 +23,7 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "mute-user-requested" (gchar* pubkey_hex, gpointer user_data)
  * "mute-thread-requested" (gchar* event_id_hex, gpointer user_data) - mutes the thread root event
  * "show-toast" (gchar* message, gpointer user_data) - requests toast notification display
+ * "pin-toggled" (gchar* id_hex, gboolean is_pinned, gpointer user_data)
  * "bookmark-toggled" (gchar* id_hex, gboolean is_bookmarked, gpointer user_data)
  * "report-note-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-56 report request
  * "share-note-requested" (gchar* nostr_uri, gpointer user_data) - share note URI
@@ -68,6 +69,9 @@ void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
 					  const char *parent_id,
 					  const char *parent_author_name,
 					  gboolean is_reply);
+
+/* Pin state: update the pin button based on state (NIP-51 kind 10001) */
+void gnostr_note_card_row_set_pinned(GnostrNoteCardRow *self, gboolean is_pinned);
 
 /* Bookmark state: update the bookmark button icon based on state */
 void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked);

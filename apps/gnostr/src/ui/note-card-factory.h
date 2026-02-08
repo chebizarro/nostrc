@@ -58,6 +58,7 @@ typedef enum {
  * @NOTE_CARD_SIGNAL_ZAP: Connect zap-requested signal
  * @NOTE_CARD_SIGNAL_MUTE: Connect mute signals
  * @NOTE_CARD_SIGNAL_BOOKMARK: Connect bookmark-toggled signal
+ * @NOTE_CARD_SIGNAL_PIN: Connect pin-toggled signal
  * @NOTE_CARD_SIGNAL_DELETE: Connect delete-note-requested signal
  * @NOTE_CARD_SIGNAL_ALL: All signals connected
  *
@@ -74,10 +75,11 @@ typedef enum {
   NOTE_CARD_SIGNAL_ZAP          = 1 << 6,
   NOTE_CARD_SIGNAL_MUTE         = 1 << 7,
   NOTE_CARD_SIGNAL_BOOKMARK     = 1 << 8,
-  NOTE_CARD_SIGNAL_DELETE       = 1 << 9,
-  NOTE_CARD_SIGNAL_NAVIGATE     = 1 << 10,
-  NOTE_CARD_SIGNAL_HASHTAG      = 1 << 11,
-  NOTE_CARD_SIGNAL_ALL          = 0xFFF
+  NOTE_CARD_SIGNAL_PIN          = 1 << 9,
+  NOTE_CARD_SIGNAL_DELETE       = 1 << 10,
+  NOTE_CARD_SIGNAL_NAVIGATE     = 1 << 11,
+  NOTE_CARD_SIGNAL_HASHTAG      = 1 << 12,
+  NOTE_CARD_SIGNAL_ALL          = 0x1FFF
 } NoteCardFactorySignalFlags;
 
 /**
@@ -252,6 +254,19 @@ void note_card_factory_connect_mute_thread(NoteCardFactory *self,
 void note_card_factory_connect_bookmark(NoteCardFactory *self,
                                          GCallback callback,
                                          gpointer user_data);
+
+/**
+ * note_card_factory_connect_pin:
+ * @self: the factory
+ * @callback: callback function
+ * @user_data: user data for callback
+ *
+ * Connect a custom handler for the pin-toggled signal.
+ * Callback: void (*)(const char *id, gboolean pinned, gpointer)
+ */
+void note_card_factory_connect_pin(NoteCardFactory *self,
+                                    GCallback callback,
+                                    gpointer user_data);
 
 /**
  * note_card_factory_connect_delete:

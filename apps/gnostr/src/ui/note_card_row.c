@@ -133,6 +133,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *lbl_like_count;
   GtkWidget *btn_zap;
   GtkWidget *lbl_zap_count;
+  GtkWidget *btn_pin;
   GtkWidget *btn_bookmark;
   GtkWidget *btn_thread;
   GtkWidget *avatar_box;
@@ -184,6 +185,8 @@ struct _GnostrNoteCardRow {
   /* Reply state */
   gboolean is_reply;
   gboolean is_thread_root;
+  /* Pin state (NIP-51 kind 10001) */
+  gboolean is_pinned;
   /* Bookmark state */
   gboolean is_bookmarked;
   /* Like state (NIP-25 reactions) */
@@ -321,6 +324,7 @@ enum {
   SIGNAL_MUTE_USER_REQUESTED,
   SIGNAL_MUTE_THREAD_REQUESTED,
   SIGNAL_SHOW_TOAST,
+  SIGNAL_PIN_TOGGLED,
   SIGNAL_BOOKMARK_TOGGLED,
   SIGNAL_REPORT_NOTE_REQUESTED,
   SIGNAL_SHARE_NOTE_REQUESTED,
@@ -1561,6 +1565,28 @@ static void on_zap_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+/* nostrc-ch2v: Pin toggle handler */
+static void on_pin_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex) {
+    self->is_pinned = !self->is_pinned;
+
+    if (GTK_IS_BUTTON(self->btn_pin)) {
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_pin),
+        self->is_pinned ? "Unpin" : "Pin");
+      if (self->is_pinned) {
+        gtk_widget_add_css_class(GTK_WIDGET(self->btn_pin), "active");
+      } else {
+        gtk_widget_remove_css_class(GTK_WIDGET(self->btn_pin), "active");
+      }
+    }
+
+    g_signal_emit(self, signals[SIGNAL_PIN_TOGGLED], 0,
+                  self->id_hex, self->is_pinned);
+  }
+}
+
 static void on_bookmark_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
@@ -1672,6 +1698,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_like_count);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_zap);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_zap_count);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_pin);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_bookmark);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_thread);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_box);
@@ -1747,6 +1774,9 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_SHOW_TOAST] = g_signal_new("show-toast",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_PIN_TOGGLED] = g_signal_new("pin-toggled",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_BOOLEAN);
   signals[SIGNAL_BOOKMARK_TOGGLED] = g_signal_new("bookmark-toggled",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_BOOLEAN);
@@ -1859,6 +1889,12 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     g_signal_connect(self->btn_zap, "clicked", G_CALLBACK(on_zap_clicked), self);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_zap),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Zap Note", -1);
+  }
+  /* Connect pin button (nostrc-ch2v) */
+  if (GTK_IS_BUTTON(self->btn_pin)) {
+    g_signal_connect(self->btn_pin, "clicked", G_CALLBACK(on_pin_clicked), self);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_pin),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Pin Note", -1);
   }
   /* Connect bookmark button */
   if (GTK_IS_BUTTON(self->btn_bookmark)) {
@@ -3407,6 +3443,23 @@ void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, 
 }
 
 /* Set bookmark state and update button icon */
+/* nostrc-ch2v: Set pin state and update button */
+void gnostr_note_card_row_set_pinned(GnostrNoteCardRow *self, gboolean is_pinned) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_pinned = is_pinned;
+
+  if (GTK_IS_BUTTON(self->btn_pin)) {
+    gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_pin),
+      is_pinned ? "Unpin" : "Pin");
+    if (is_pinned) {
+      gtk_widget_add_css_class(GTK_WIDGET(self->btn_pin), "active");
+    } else {
+      gtk_widget_remove_css_class(GTK_WIDGET(self->btn_pin), "active");
+    }
+  }
+}
+
 void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
 
@@ -3685,6 +3738,11 @@ void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged
     gtk_widget_set_tooltip_text(self->btn_zap, logged_in ? "Zap" : logged_out_tooltip);
   }
 
+  /* Pin button requires signing (NIP-51 list management) */
+  if (GTK_IS_WIDGET(self->btn_pin)) {
+    gtk_widget_set_sensitive(self->btn_pin, logged_in);
+    gtk_widget_set_tooltip_text(self->btn_pin, logged_in ? "Pin" : logged_out_tooltip);
+  }
   /* Bookmark button requires signing (NIP-51 list management) */
   if (GTK_IS_WIDGET(self->btn_bookmark)) {
     gtk_widget_set_sensitive(self->btn_bookmark, logged_in);

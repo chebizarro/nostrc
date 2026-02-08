@@ -258,6 +258,7 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data);
 static void on_signer_state_changed(GnostrSignerService *signer, guint old_state, guint new_state, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
+static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data);
 /* Forward declarations for discover page signal handlers */
 static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
 static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user_data);
@@ -4220,6 +4221,29 @@ static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer us
   hide_panel(self);
 }
 
+/* nostrc-ch2v: Handle mute user from profile pane */
+static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
+  (void)pane;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) {
+    g_warning("[MUTE] Invalid pubkey hex from profile pane");
+    return;
+  }
+
+  g_debug("[MUTE] Mute user from profile pane for pubkey=%.16s...", pubkey_hex);
+
+  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  gnostr_mute_list_add_pubkey(mute_list, pubkey_hex, FALSE);
+
+  if (self->event_model) {
+    gn_nostr_event_model_refresh(GN_NOSTR_EVENT_MODEL(self->event_model));
+  }
+
+  show_toast(self, "User muted");
+}
+
 /* Discover page signal handlers (nostrc-dr3) */
 static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data) {
   (void)page;
@@ -5580,6 +5604,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
       g_signal_connect(profile_pane, "close-requested",
                        G_CALLBACK(on_profile_pane_close_requested), self);
+      /* nostrc-ch2v: Handle mute from profile pane */
+      g_signal_connect(profile_pane, "mute-user-requested",
+                       G_CALLBACK(on_profile_pane_mute_user_requested), self);
     }
     
     GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;

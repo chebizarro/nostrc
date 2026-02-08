@@ -63,6 +63,13 @@ void gnostr_profile_pane_refresh(GnostrProfilePane *self);
  */
 gboolean gnostr_profile_pane_is_profile_cached(GnostrProfilePane *self);
 
+/**
+ * Signals:
+ * - "close-requested": Emitted when the close button is clicked
+ * - "note-activated": Emitted when a post is clicked (param: note_id string)
+ * - "mute-user-requested": Emitted when the mute button is clicked (param: pubkey_hex string)
+ */
+
 G_END_DECLS
 
 #endif /* GNOSTR_PROFILE_PANE_H */

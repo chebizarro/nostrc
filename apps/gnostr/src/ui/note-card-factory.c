@@ -45,6 +45,8 @@ struct _NoteCardFactory {
   gpointer mute_thread_data;
   GCallback bookmark_cb;
   gpointer bookmark_data;
+  GCallback pin_cb;
+  gpointer pin_data;
   GCallback delete_cb;
   gpointer delete_data;
   GCallback navigate_cb;
@@ -71,6 +73,7 @@ static void on_zap_relay(GnostrNoteCardRow *row, const char *id, const char *pub
 static void on_mute_user_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_data);
 static void on_mute_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data);
 static void on_bookmark_relay(GnostrNoteCardRow *row, const char *id, gboolean bookmarked, gpointer user_data);
+static void on_pin_relay(GnostrNoteCardRow *row, const char *id, gboolean pinned, gpointer user_data);
 static void on_delete_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gpointer user_data);
 static void on_navigate_relay(GnostrNoteCardRow *row, const char *note_id, gpointer user_data);
 
@@ -240,6 +243,16 @@ note_card_factory_connect_bookmark(NoteCardFactory *self,
 }
 
 void
+note_card_factory_connect_pin(NoteCardFactory *self,
+                               GCallback callback,
+                               gpointer user_data)
+{
+  g_return_if_fail(NOTE_CARD_IS_FACTORY(self));
+  self->pin_cb = callback;
+  self->pin_data = user_data;
+}
+
+void
 note_card_factory_connect_delete(NoteCardFactory *self,
                                   GCallback callback,
                                   gpointer user_data)
@@ -312,6 +325,9 @@ factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   }
   if (self->signal_flags & NOTE_CARD_SIGNAL_BOOKMARK) {
     g_signal_connect(row, "bookmark-toggled", G_CALLBACK(on_bookmark_relay), self);
+  }
+  if (self->signal_flags & NOTE_CARD_SIGNAL_PIN) {
+    g_signal_connect(row, "pin-toggled", G_CALLBACK(on_pin_relay), self);
   }
   if (self->signal_flags & NOTE_CARD_SIGNAL_DELETE) {
     g_signal_connect(row, "delete-note-requested", G_CALLBACK(on_delete_relay), self);
@@ -642,6 +658,16 @@ on_bookmark_relay(GnostrNoteCardRow *row, const char *id, gboolean bookmarked, g
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
   if (self->bookmark_cb) {
     ((void (*)(const char *, gboolean, gpointer))self->bookmark_cb)(id, bookmarked, self->bookmark_data);
+  }
+}
+
+static void
+on_pin_relay(GnostrNoteCardRow *row, const char *id, gboolean pinned, gpointer user_data)
+{
+  (void)row;
+  NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
+  if (self->pin_cb) {
+    ((void (*)(const char *, gboolean, gpointer))self->pin_cb)(id, pinned, self->pin_data);
   }
 }
 

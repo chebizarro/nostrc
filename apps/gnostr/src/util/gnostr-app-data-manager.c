@@ -10,6 +10,7 @@
 #include "relays.h"
 #include "mute_list.h"
 #include "bookmarks.h"
+#include "pin_list.h"
 #include "gnostr-drafts.h"
 #include "nostr_json.h"
 #include <json.h>
@@ -615,8 +616,9 @@ void gnostr_app_data_manager_sync_all_async(GnostrAppDataManager *self,
     gnostr_app_data_manager_load_preferences_async(self,
         (GnostrAppDataPreferencesCallback)on_sync_all_item_done, ctx);
 
-    /* Also trigger sync on mutes, bookmarks via their own APIs */
+    /* Also trigger sync on mutes, bookmarks, pins via their own APIs */
     gnostr_bookmarks_sync_on_login(self->user_pubkey);
+    gnostr_pin_list_sync_on_login(self->user_pubkey);
 }
 
 void gnostr_app_data_manager_sync_on_login(const char *pubkey_hex) {

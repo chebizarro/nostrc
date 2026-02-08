@@ -12,6 +12,7 @@
 #include "../util/relays.h"
 #include "../util/utils.h"
 #include "../util/bookmarks.h"
+#include "../util/pin_list.h"
 #include "../util/nip32_labels.h"
 #include "../util/nip23.h"
 #include "../util/nip34.h"
@@ -1140,6 +1141,33 @@ static void on_note_card_show_toast_relay(GnostrNoteCardRow *row, const char *me
   (void)user_data;
 }
 
+/* nostrc-ch2v: Handler for pin-toggled signal - update NIP-51 pin list */
+static void on_note_card_pin_toggled_cb(GnostrNoteCardRow *row, const char *event_id, gboolean is_pinned, gpointer user_data) {
+  (void)user_data;
+  (void)row;
+
+  if (!event_id || strlen(event_id) != 64) {
+    g_warning("[PIN] Invalid event ID for pin toggle");
+    return;
+  }
+
+  GnostrPinList *pin_list = gnostr_pin_list_get_default();
+  if (!pin_list) {
+    g_warning("[PIN] Failed to get pin list instance");
+    return;
+  }
+
+  if (is_pinned) {
+    gnostr_pin_list_add(pin_list, event_id, NULL);
+  } else {
+    gnostr_pin_list_remove(pin_list, event_id);
+  }
+
+  gnostr_pin_list_save_async(pin_list, NULL, NULL);
+
+  g_message("[PIN] Pin %s for event %s", is_pinned ? "added" : "removed", event_id);
+}
+
 /* Handler for bookmark-toggled signal - update NIP-51 bookmark list */
 static void on_note_card_bookmark_toggled_cb(GnostrNoteCardRow *row, const char *event_id, gboolean is_bookmarked, gpointer user_data) {
   (void)user_data;
@@ -1312,6 +1340,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "mute-thread-requested", G_CALLBACK(on_note_card_mute_thread_requested_relay), NULL);
   /* Connect the show-toast signal */
   g_signal_connect(row, "show-toast", G_CALLBACK(on_note_card_show_toast_relay), NULL);
+  /* Connect the pin-toggled signal (nostrc-ch2v) */
+  g_signal_connect(row, "pin-toggled", G_CALLBACK(on_note_card_pin_toggled_cb), NULL);
   /* Connect the bookmark-toggled signal */
   g_signal_connect(row, "bookmark-toggled", G_CALLBACK(on_note_card_bookmark_toggled_cb), NULL);
   /* Connect the delete-note-requested signal (NIP-09) */
@@ -2683,12 +2713,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
     }
 
-    /* NIP-51: Set bookmark state from local cache */
+    /* NIP-51: Set bookmark and pin state from local cache */
     if (id_hex && strlen(id_hex) == 64) {
       GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
       if (bookmarks) {
         gboolean is_bookmarked = gnostr_bookmarks_is_bookmarked(bookmarks, id_hex);
         gnostr_note_card_row_set_bookmarked(GNOSTR_NOTE_CARD_ROW(row), is_bookmarked);
+      }
+      GnostrPinList *pin_list = gnostr_pin_list_get_default();
+      if (pin_list) {
+        gboolean is_pinned = gnostr_pin_list_is_pinned(pin_list, id_hex);
+        gnostr_note_card_row_set_pinned(GNOSTR_NOTE_CARD_ROW(row), is_pinned);
       }
     }
 

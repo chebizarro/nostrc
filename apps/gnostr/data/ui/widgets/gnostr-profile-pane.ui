@@ -228,6 +228,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="tooltip-text" translatable="yes">Send direct message</property>
               </object>
             </child>
+            <child>
+              <object class="GtkButton" id="btn_mute_user">
+                <property name="label" translatable="yes">Mute</property>
+                <property name="sensitive">false</property>
+                <property name="tooltip-text" translatable="yes">Mute this user</property>
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+              </object>
+            </child>
           </object>
         </child>
         <child>

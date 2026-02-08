@@ -275,6 +275,7 @@ struct _GnostrProfilePane {
   GtkWidget *lbl_following_count;
   GtkWidget *btn_follow;
   GtkWidget *btn_message;
+  GtkWidget *btn_mute_user;
   GtkWidget *other_profile_actions;
   GtkWidget *own_profile_actions;
   GtkWidget *btn_edit_profile;
@@ -401,6 +402,7 @@ G_DEFINE_TYPE(GnostrProfilePane, gnostr_profile_pane, GTK_TYPE_WIDGET)
 enum {
   SIGNAL_CLOSE_REQUESTED,
   SIGNAL_NOTE_ACTIVATED,
+  SIGNAL_MUTE_USER_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -538,6 +540,16 @@ static void on_close_clicked(GtkButton *btn, gpointer user_data) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
   (void)btn;
   g_signal_emit(self, signals[SIGNAL_CLOSE_REQUESTED], 0);
+}
+
+/* nostrc-ch2v: Mute user from profile pane */
+static void on_mute_user_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)btn;
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
+
+  g_signal_emit(self, signals[SIGNAL_MUTE_USER_REQUESTED], 0, self->current_pubkey);
 }
 
 static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
@@ -1045,6 +1057,7 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_following_count);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_follow);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_message);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_mute_user);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, other_profile_actions);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, own_profile_actions);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_edit_profile);
@@ -1109,6 +1122,14 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
     G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  /* nostrc-ch2v: Mute user from profile pane */
+  signals[SIGNAL_MUTE_USER_REQUESTED] = g_signal_new(
+    "mute-user-requested",
+    G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST,
+    0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void gnostr_profile_pane_init(GnostrProfilePane *self) {
@@ -1130,6 +1151,11 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   /* Connect set status button (NIP-38) */
   if (self->btn_set_status) {
     g_signal_connect(self->btn_set_status, "clicked", G_CALLBACK(on_set_status_clicked), self);
+  }
+
+  /* nostrc-ch2v: Connect mute user button */
+  if (self->btn_mute_user) {
+    g_signal_connect(self->btn_mute_user, "clicked", G_CALLBACK(on_mute_user_clicked), self);
   }
 
   /* Connect load more button */
@@ -1182,6 +1208,12 @@ static void update_action_buttons_visibility(GnostrProfilePane *self) {
   /* Show follow/message buttons only for other profiles */
   if (self->other_profile_actions) {
     gtk_widget_set_visible(self->other_profile_actions, !is_own_profile);
+  }
+
+  /* nostrc-ch2v: Enable mute button when logged in and viewing another profile */
+  if (self->btn_mute_user) {
+    gboolean can_mute = !is_own_profile && is_user_logged_in();
+    gtk_widget_set_sensitive(self->btn_mute_user, can_mute);
   }
 }
 

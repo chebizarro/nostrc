@@ -214,6 +214,16 @@ template $GnostrProfilePane: Widget {
                 sensitive: false;
                 tooltip-text: _("Send direct message");
             }
+
+            Button btn_mute_user {
+                label: _("Mute");
+                sensitive: false;
+                tooltip-text: _("Mute this user");
+
+                styles [
+                    "destructive-action",
+                ]
+            }
         }
 
         Box own_profile_actions {
