@@ -8,12 +8,17 @@
 #include "../include/nostr_log.h"
 #include <libwebsockets.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/ssl.h>
 
-#define MAX_PAYLOAD_SIZE 1024
+/* nostrc-8zpc: Increased from 1024 to 128KB. With 1024, lws fragments any
+ * Nostr message >1KB into multiple LWS_CALLBACK_CLIENT_RECEIVE calls.
+ * Most Nostr events (kind:0 profiles, kind:1 notes with signatures) are
+ * 1-4KB, causing systematic fragmentation that the old code didn't handle. */
+#define MAX_PAYLOAD_SIZE (128 * 1024)
 #define MAX_HEADER_SIZE 1024
 
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
@@ -24,9 +29,12 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     switch (reason) {
     case LWS_CALLBACK_CLIENT_RECEIVE: {
         if (!conn || !conn->priv) break;
-        // Enforce hard frame cap
-        if (len > (size_t)nostr_limit_max_frame_len()) {
-            nostr_rl_log(NLOG_WARN, "ws", "drop: frame too large (%zu > %lld)", len, (long long)nostr_limit_max_frame_len());
+        // Enforce hard frame cap (check total accumulated size for fragmented messages)
+        size_t total_len = conn->priv->rx_reassembly_len + len;
+        if (total_len > (size_t)nostr_limit_max_frame_len()) {
+            nostr_rl_log(NLOG_WARN, "ws", "drop: frame too large (%zu > %lld)", total_len, (long long)nostr_limit_max_frame_len());
+            // Discard partial reassembly
+            conn->priv->rx_reassembly_len = 0;
             lws_close_reason(wsi, LWS_CLOSE_STATUS_MESSAGE_TOO_LARGE, NULL, 0);
             return -1;
         }
@@ -53,31 +61,85 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             conn->priv->rx_window_bytes = 0;
         }
         conn->priv->rx_window_bytes += (uint64_t)len;
-        // Normal path: deliver to recv_channel as before
+
+        /* nostrc-8zpc: Proper WebSocket frame reassembly.
+         * LWS delivers data in chunks up to rx_buffer_size. When a WebSocket
+         * message exceeds this, we get multiple callbacks. We must accumulate
+         * fragments and only queue the complete message to recv_channel. */
+        int is_final = lws_is_final_fragment(wsi);
+        size_t remaining = lws_remaining_packet_payload(wsi);
+
+        if (is_final && conn->priv->rx_reassembly_len == 0) {
+            /* Fast path: complete message in a single callback (common case
+             * now that rx_buffer_size is 128KB). No reassembly needed. */
+            goto queue_message;
+        }
+
+        /* Accumulate fragment into reassembly buffer */
+        size_t needed = conn->priv->rx_reassembly_len + len + 1;
+        if (needed > conn->priv->rx_reassembly_alloc) {
+            size_t new_alloc = conn->priv->rx_reassembly_alloc;
+            if (new_alloc == 0) new_alloc = 4096;
+            while (new_alloc < needed) new_alloc *= 2;
+            char *new_buf = (char *)realloc(conn->priv->rx_reassembly_buf, new_alloc);
+            if (!new_buf) {
+                nostr_rl_log(NLOG_WARN, "ws", "drop: reassembly OOM (%zu bytes)", new_alloc);
+                conn->priv->rx_reassembly_len = 0;
+                return 0;
+            }
+            conn->priv->rx_reassembly_buf = new_buf;
+            conn->priv->rx_reassembly_alloc = new_alloc;
+        }
+        memcpy(conn->priv->rx_reassembly_buf + conn->priv->rx_reassembly_len, in, len);
+        conn->priv->rx_reassembly_len += len;
+
+        if (!is_final || remaining > 0) {
+            /* More fragments coming - wait for complete message */
+            return 0;
+        }
+
+        /* Reassembly complete - use the reassembled buffer as the message */
+        conn->priv->rx_reassembly_buf[conn->priv->rx_reassembly_len] = '\0';
+        in = conn->priv->rx_reassembly_buf;
+        len = conn->priv->rx_reassembly_len;
+
+queue_message:
         // Check if channel is still valid (it may have been freed during shutdown)
         if (!conn->recv_channel) {
-            /* Connection is being closed, discard message */
+            conn->priv->rx_reassembly_len = 0;
             return 0;
         }
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
-        if (!msg) return -1;
+        if (!msg) { conn->priv->rx_reassembly_len = 0; return -1; }
         msg->length = len;
         msg->data = (char*)malloc(len + 1);
-        if (!msg->data) { free(msg); return -1; }
+        if (!msg->data) { free(msg); conn->priv->rx_reassembly_len = 0; return -1; }
         memcpy(msg->data, in, len);
         msg->data[len] = '\0';
+        // Reset reassembly state
+        conn->priv->rx_reassembly_len = 0;
         // Non-blocking send: the lws service thread is shared across ALL
         // connections. A blocking send here would freeze the entire app if
         // the consumer (message_loop) falls behind. (nostrc-j6h1)
         if (go_channel_try_send(conn->recv_channel, msg) != 0) {
-            // Channel full or closed — drop message to keep service thread alive
+            // Channel full — retry a few times with brief yields before dropping.
+            // With proper reassembly, channel pressure is much lower since we
+            // queue 1 complete message instead of N fragments. (nostrc-8zpc)
+            int retries = 10;
+            while (retries-- > 0) {
+                sched_yield();
+                if (go_channel_try_send(conn->recv_channel, msg) == 0) {
+                    goto send_ok;
+                }
+            }
             nostr_metric_counter_add("ws_rx_drop_full", 1);
-            nostr_rl_log(NLOG_WARN, "ws", "drop: recv_channel full (len=%zu)", len);
+            nostr_rl_log(NLOG_WARN, "ws", "drop: recv_channel full after retries (len=%zu)", len);
             free(msg->data);
             free(msg);
             break;
         }
+send_ok:
         // Metrics
         nostr_metric_counter_add("ws_rx_enqueued_bytes", (uint64_t)len);
         nostr_metric_counter_add("ws_rx_enqueued_messages", 1);
@@ -342,7 +404,10 @@ static void deferred_cleanup_process(void) {
     DeferredPriv *node = g_deferred_cleanup_head;
     while (node) {
         DeferredPriv *next = node->next;
-        if (node->priv) free(node->priv);
+        if (node->priv) {
+            free(node->priv->rx_reassembly_buf);
+            free(node->priv);
+        }
         free(node);
         node = next;
     }
@@ -577,6 +642,7 @@ void nostr_connection_close(NostrConnection *conn) {
 
     if (conn->priv && conn->priv->test_mode) {
         // No libwebsockets context or thread in test mode
+        free(conn->priv->rx_reassembly_buf);
         free(conn->priv);
     } else if (conn->priv) {
         /* Detach the connection from WSI to prevent callbacks from accessing freed memory.
@@ -616,6 +682,7 @@ void nostr_connection_close(NostrConnection *conn) {
         }
         /* Free conn->priv: either immediately if service stopped, or defer until later */
         if (should_free_priv) {
+            free(conn->priv->rx_reassembly_buf);
             free(conn->priv);
         } else if (conn->priv) {
             /* Can't free now - service thread may still reference via WSI callbacks.

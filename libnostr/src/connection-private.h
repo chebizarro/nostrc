@@ -24,6 +24,10 @@ struct _NostrConnectionPrivate {
     uint64_t rx_window_bytes;
     int writable_pending;
     int established;  /* Set when WebSocket handshake completes (LWS_CALLBACK_CLIENT_ESTABLISHED) */
+    /* WebSocket message reassembly buffer for fragmented frames (nostrc-8zpc) */
+    char *rx_reassembly_buf;       /* Dynamically allocated reassembly buffer */
+    size_t rx_reassembly_len;      /* Current bytes accumulated */
+    size_t rx_reassembly_alloc;    /* Allocated size of reassembly buffer */
 };
 
 // Struct to hold WebSocket message
