@@ -24,7 +24,7 @@
 #include "../util/nip21_uri.h"
 #include "../storage_ndb.h"
 #include "nostr_nip19.h"
-#include "gnostr-profile-provider.h"
+#include "../util/content_renderer.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -2597,110 +2597,9 @@ static gboolean is_media_url(const char *u) {
   return is_image_url(u) || is_video_url(u);
 }
 
-/* Extract clean URL from token, stripping trailing punctuation.
- * Handles: trailing periods, commas, semicolons, unbalanced parens/brackets.
- * Returns newly allocated clean URL and sets suffix to trailing characters.
- */
-static gchar *extract_clean_url(const char *token, gchar **suffix) {
-  if (!token || !*token) {
-    if (suffix) *suffix = g_strdup("");
-    return NULL;
-  }
-  size_t len = strlen(token);
-  if (len == 0) {
-    if (suffix) *suffix = g_strdup("");
-    return NULL;
-  }
-  size_t end = len;
-  int paren_balance = 0, bracket_balance = 0;
-  /* Count balanced parens/brackets */
-  for (size_t i = 0; i < len; i++) {
-    if (token[i] == '(') paren_balance++;
-    else if (token[i] == ')') paren_balance--;
-    else if (token[i] == '[') bracket_balance++;
-    else if (token[i] == ']') bracket_balance--;
-  }
-  /* Trim trailing punctuation */
-  while (end > 0) {
-    char c = token[end - 1];
-    if (c == ',' || c == ';' || c == '!' || c == '\'' || c == '"' || c == '.') {
-      end--;
-      continue;
-    }
-    if (c == ':' && end > 1 && !g_ascii_isdigit(token[end - 2])) {
-      end--;
-      continue;
-    }
-    if (c == ')' && paren_balance < 0) {
-      paren_balance++;
-      end--;
-      continue;
-    }
-    if (c == ']' && bracket_balance < 0) {
-      bracket_balance++;
-      end--;
-      continue;
-    }
-    break;
-  }
-  if (suffix) *suffix = g_strdup(token + end);
-  return (end > 0) ? g_strndup(token, end) : NULL;
-}
-
-/* Check if token starts with URL prefix */
-static gboolean token_is_url(const char *t) {
-  return t && (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://") || g_str_has_prefix(t, "www."));
-}
-
-/* Check if token is a nostr entity */
-static gboolean token_is_nostr(const char *t) {
-  return t && (g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") || g_str_has_prefix(t, "npub1") ||
-               g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1"));
-}
-
-/* Check if token is a hashtag (#word) */
-static gboolean token_is_hashtag(const char *t) {
-  if (!t || t[0] != '#' || t[1] == '\0') return FALSE;
-  /* Must have at least one alphanumeric char after # */
-  return g_ascii_isalnum(t[1]) || (unsigned char)t[1] > 127; /* Allow Unicode */
-}
-
-/* Extract hashtag text (without # prefix and trailing punctuation) */
-static gchar *extract_hashtag(const char *t, gchar **suffix) {
-  if (!t || t[0] != '#') { if (suffix) *suffix = NULL; return NULL; }
-  const char *start = t + 1; /* Skip # */
-  size_t len = strlen(start);
-  /* Find end of hashtag (alphanumeric, underscore, or high-byte UTF-8) */
-  size_t end = 0;
-  while (end < len) {
-    unsigned char c = (unsigned char)start[end];
-    if (g_ascii_isalnum(c) || c == '_' || c > 127) {
-      end++;
-    } else {
-      break;
-    }
-  }
-  if (end == 0) { if (suffix) *suffix = NULL; return NULL; }
-  if (suffix) *suffix = (end < len) ? g_strdup(start + end) : NULL;
-  return g_strndup(start, end);
-}
-
-/* NIP-27: Check if nostr token is a profile mention (npub/nprofile) */
-static gboolean token_is_nostr_profile(const char *t) {
-  if (!t) return FALSE;
-  const char *entity = t;
-  if (g_str_has_prefix(t, "nostr:")) entity = t + 6;
-  return g_str_has_prefix(entity, "npub1") || g_str_has_prefix(entity, "nprofile1");
-}
-
-/* NIP-27: Check if nostr token is an event mention (note/nevent/naddr) */
-static gboolean token_is_nostr_event(const char *t) {
-  if (!t) return FALSE;
-  const char *entity = t;
-  if (g_str_has_prefix(t, "nostr:")) entity = t + 6;
-  return g_str_has_prefix(entity, "note1") || g_str_has_prefix(entity, "nevent1") ||
-         g_str_has_prefix(entity, "naddr1");
-}
+/* nostrc-nst: Manual token helpers (extract_clean_url, token_is_url, token_is_nostr,
+ * token_is_hashtag, extract_hashtag, token_is_nostr_profile, token_is_nostr_event)
+ * removed - replaced by NDB content blocks. See content_renderer.c. */
 
 /* Context for NIP-14 subject tag extraction callback */
 typedef struct {
@@ -2761,84 +2660,6 @@ static gchar *extract_subject_from_tags_json(const char *tags_json) {
   return ctx.subject;
 }
 
-/* NIP-27: Format nostr mention for display (truncated bech32 with prefix)
- * Returns a newly allocated string. Caller must free.
- * Profile mentions: @{display_name} or @{name} or @{nip05} or truncated bech32
- * Event mentions: 📝note1abc...xyz (first 9 + last 4 chars of bech32)
- */
-static gchar *format_nostr_mention_display(const char *t) {
-  if (!t) return NULL;
-
-  /* Strip nostr: prefix if present */
-  const char *entity = t;
-  if (g_str_has_prefix(t, "nostr:")) entity = t + 6;
-
-  size_t len = strlen(entity);
-
-  if (token_is_nostr_profile(t)) {
-    /* Profile mention: try to resolve to display name */
-    char *pubkey_hex = NULL;
-
-    if (g_str_has_prefix(entity, "npub1") || g_str_has_prefix(entity, "nprofile1")) {
-      /* Decode npub or nprofile using GNostrNip19 */
-      g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(entity, NULL);
-      if (n19) {
-        const char *pk = gnostr_nip19_get_pubkey(n19);
-        if (pk) {
-          pubkey_hex = g_strdup(pk);
-        }
-      }
-    }
-
-    /* Look up profile if we have a pubkey */
-    if (pubkey_hex) {
-      GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
-      if (meta) {
-        const char *name = NULL;
-        /* Priority: display_name > name > nip05 */
-        if (meta->display_name && meta->display_name[0]) {
-          name = meta->display_name;
-        } else if (meta->name && meta->name[0]) {
-          name = meta->name;
-        } else if (meta->nip05 && meta->nip05[0]) {
-          name = meta->nip05;
-        }
-
-        if (name) {
-          gchar *result = g_strdup_printf("@%s", name);
-          gnostr_profile_meta_free(meta);
-          g_free(pubkey_hex);
-          return result;
-        }
-        gnostr_profile_meta_free(meta);
-      }
-      g_free(pubkey_hex);
-    }
-
-    /* Fallback: truncated bech32 */
-    if (len > 16) {
-      /* Truncate: show first 8 chars + ... + last 4 chars */
-      return g_strdup_printf("@%.*s…%s", 8, entity, entity + len - 4);
-    } else {
-      return g_strdup_printf("@%s", entity);
-    }
-  } else if (token_is_nostr_event(t)) {
-    /* Event mention: show with note emoji */
-    if (len > 17) {
-      /* Truncate: show first 9 chars + ... + last 4 chars */
-      return g_strdup_printf("📝%.*s…%s", 9, entity, entity + len - 4);
-    } else {
-      return g_strdup_printf("📝%s", entity);
-    }
-  }
-
-  /* Fallback: return truncated version */
-  if (len > 20) {
-    return g_strdup_printf("%.*s…%s", 12, entity, entity + len - 4);
-  }
-  return g_strdup(entity);
-}
-
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
   /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying label */
@@ -2849,115 +2670,8 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(content);
 
-  /* Parse content: detect URLs and nostr entities, handle trailing punctuation */
-  GString *out = g_string_new("");
-  if (content && *content) {
-    gchar **tokens = g_strsplit_set(content, " \n\t", -1);
-    for (guint i=0; tokens && tokens[i]; i++) {
-      const char *t = tokens[i];
-      if (t[0]=='\0') { g_string_append(out, " "); continue; }
-      gboolean is_url = token_is_url(t);
-      gboolean is_nostr = token_is_nostr(t);
-      gboolean is_hashtag = token_is_hashtag(t);
-      if (is_nostr) {
-        /* NIP-27: Handle nostr mentions with formatted display text */
-        gchar *suffix = NULL;
-        gchar *clean = extract_clean_url(t, &suffix);
-        if (clean && *clean) {
-          /* Ensure nostr: prefix for href */
-          gchar *href = g_str_has_prefix(clean, "nostr:") ? g_strdup(clean) : g_strdup_printf("nostr:%s", clean);
-          gchar *esc_href = g_markup_escape_text(href, -1);
-          /* Format display text based on mention type (NIP-27) */
-          gchar *display = format_nostr_mention_display(clean);
-          gchar *esc_display = g_markup_escape_text(display ? display : clean, -1);
-          /* Add CSS class for styling via span - profile vs event mentions */
-          if (token_is_nostr_profile(clean)) {
-            g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
-          } else {
-            g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
-          }
-          g_free(display);
-          g_free(esc_href);
-          g_free(esc_display);
-          g_free(href);
-          if (suffix && *suffix) {
-            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
-            g_string_append(out, esc_suffix);
-            g_free(esc_suffix);
-          }
-        } else {
-          gchar *esc = g_markup_escape_text(t, -1);
-          g_string_append(out, esc);
-          g_free(esc);
-        }
-        g_free(clean);
-        g_free(suffix);
-      } else if (is_url) {
-        /* Handle regular URLs */
-        gchar *suffix = NULL;
-        gchar *clean = extract_clean_url(t, &suffix);
-        if (clean && *clean) {
-          /* For www. URLs, use https:// in href */
-          gchar *href = g_str_has_prefix(clean, "www.") ? g_strdup_printf("https://%s", clean) : g_strdup(clean);
-          gchar *esc_href = g_markup_escape_text(href, -1);
-          /* Shorten display URL if longer than 40 chars to fit 640px width */
-          gchar *display_url = NULL;
-          gsize clean_len = strlen(clean);
-          if (clean_len > 40) {
-            display_url = g_strdup_printf("%.35s...", clean);
-          } else {
-            display_url = g_strdup(clean);
-          }
-          gchar *esc_display = g_markup_escape_text(display_url, -1);
-          g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
-          g_free(esc_href);
-          g_free(esc_display);
-          g_free(display_url);
-          g_free(href);
-          if (suffix && *suffix) {
-            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
-            g_string_append(out, esc_suffix);
-            g_free(esc_suffix);
-          }
-        } else {
-          gchar *esc = g_markup_escape_text(t, -1);
-          g_string_append(out, esc);
-          g_free(esc);
-        }
-        g_free(clean);
-        g_free(suffix);
-      } else if (is_hashtag) {
-        gchar *suffix = NULL;
-        gchar *tag = extract_hashtag(t, &suffix);
-        if (tag && *tag) {
-          gchar *esc_tag = g_markup_escape_text(tag, -1);
-          /* Use hashtag: URI scheme for internal handling */
-          g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc_tag, esc_tag);
-          g_free(esc_tag);
-          if (suffix && *suffix) {
-            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
-            g_string_append(out, esc_suffix);
-            g_free(esc_suffix);
-          }
-        } else {
-          gchar *esc = g_markup_escape_text(t, -1);
-          g_string_append(out, esc);
-          g_free(esc);
-        }
-        g_free(tag);
-        g_free(suffix);
-      } else {
-        gchar *esc = g_markup_escape_text(t, -1);
-        g_string_append(out, esc);
-        g_free(esc);
-      }
-      g_string_append_c(out, ' ');
-    }
-    g_strfreev(tokens);
-  }
-  gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
-  gboolean markup_allocated = (markup != NULL);
-  if (!markup) markup = escape_markup(content);
+  /* nostrc-nst: Use NDB content blocks for rendering instead of manual tokenization */
+  gchar *markup = gnostr_render_content_markup(content, -1);
   /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
    * which is false during factory binding, causing content to be silently skipped.
    * Setting label text doesn't require mapping; GTK stores it for later rendering. */
@@ -2965,9 +2679,9 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
   }
-  if (markup_allocated || markup) g_free(markup); /* Only free once */
+  g_free(markup);
 
-  /* Media detection: detect images and videos in content and display them */
+  /* nostrc-nst: Media detection using NDB content blocks */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
     /* Clear existing media widgets */
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
@@ -2977,53 +2691,35 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
       child = next;
     }
     gtk_widget_set_visible(self->media_box, FALSE);
-    
-    if (content) {
-      gchar **tokens = g_strsplit_set(content, " \n\t", -1);
-      for (guint i=0; tokens && tokens[i]; i++) {
-        const char *url = tokens[i];
-        if (!url || !*url) continue;
-        
-        /* Check if it's an HTTP(S) URL */
-        if (g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://")) {
-          /* Handle images */
-          if (is_image_url(url)) {
-            /* Create image container with spinner and error fallback */
-            GtkWidget *container = create_image_container(url, 300, NULL);
-            GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
 
-            /* Add click gesture to the picture to open image viewer */
-            GtkGesture *click_gesture = gtk_gesture_click_new();
-            gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
-            gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
-
-            gtk_box_append(GTK_BOX(self->media_box), container);
-            gtk_widget_set_visible(self->media_box, TRUE);
-
+    GPtrArray *media_urls = gnostr_extract_media_urls(content, -1);
+    if (media_urls) {
+      for (guint i = 0; i < media_urls->len; i++) {
+        const char *url = g_ptr_array_index(media_urls, i);
+        if (is_image_url(url)) {
+          GtkWidget *container = create_image_container(url, 300, NULL);
+          GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
+          GtkGesture *click_gesture = gtk_gesture_click_new();
+          gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
+          g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
+          gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
+          gtk_box_append(GTK_BOX(self->media_box), container);
+          gtk_widget_set_visible(self->media_box, TRUE);
 #ifdef HAVE_SOUP3
-            /* Load image asynchronously */
-            load_media_image(self, url, GTK_PICTURE(pic));
+          load_media_image(self, url, GTK_PICTURE(pic));
 #endif
-          }
-          /* Handle videos - use enhanced video player with controls overlay */
-          else if (is_video_url(url)) {
-            GnostrVideoPlayer *player = gnostr_video_player_new();
-            gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
-            /* Constrain width to prevent window expansion (608 = card width - margins) */
-            gtk_widget_set_size_request(GTK_WIDGET(player), 608, 300);
-            gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
-            gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
-
-            /* Set video URI - settings (autoplay/loop) are read from GSettings */
-            gnostr_video_player_set_uri(player, url);
-
-            gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
-            gtk_widget_set_visible(self->media_box, TRUE);
-          }
+        } else if (is_video_url(url)) {
+          GnostrVideoPlayer *player = gnostr_video_player_new();
+          gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
+          gtk_widget_set_size_request(GTK_WIDGET(player), 608, 300);
+          gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
+          gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
+          gnostr_video_player_set_uri(player, url);
+          gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
+          gtk_widget_set_visible(self->media_box, TRUE);
         }
       }
-      g_strfreev(tokens);
+      g_ptr_array_unref(media_urls);
     }
   }
 
@@ -3175,110 +2871,13 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
     }
   }
 
-  GString *out = g_string_new("");
-  if (content && *content) {
-    gchar **tokens = g_strsplit_set(content, " \n\t", -1);
-    for (guint i = 0; tokens && tokens[i]; i++) {
-      const char *t = tokens[i];
-      if (t[0] == '\0') { g_string_append(out, " "); continue; }
-      gboolean is_url = token_is_url(t);
-      gboolean is_nostr = token_is_nostr(t);
-      gboolean is_hashtag = token_is_hashtag(t);
-      if (is_nostr) {
-        /* NIP-27: Handle nostr mentions with formatted display text */
-        gchar *suffix = NULL;
-        gchar *clean = extract_clean_url(t, &suffix);
-        if (clean && *clean) {
-          gchar *href = g_str_has_prefix(clean, "nostr:") ? g_strdup(clean) : g_strdup_printf("nostr:%s", clean);
-          gchar *esc_href = g_markup_escape_text(href, -1);
-          gchar *display = format_nostr_mention_display(clean);
-          gchar *esc_display = g_markup_escape_text(display ? display : clean, -1);
-          g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
-          g_free(display);
-          g_free(esc_href);
-          g_free(esc_display);
-          g_free(href);
-          if (suffix && *suffix) {
-            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
-            g_string_append(out, esc_suffix);
-            g_free(esc_suffix);
-          }
-        } else {
-          gchar *esc = g_markup_escape_text(t, -1);
-          g_string_append(out, esc);
-          g_free(esc);
-        }
-        g_free(clean);
-        g_free(suffix);
-      } else if (is_url) {
-        gchar *suffix = NULL;
-        gchar *clean = extract_clean_url(t, &suffix);
-        if (clean && *clean) {
-          gchar *href = g_str_has_prefix(clean, "www.") ? g_strdup_printf("https://%s", clean) : g_strdup(clean);
-          gchar *esc_href = g_markup_escape_text(href, -1);
-          /* Shorten display URL if longer than 40 chars to fit 640px width */
-          gchar *display_url = NULL;
-          gsize clean_len = strlen(clean);
-          if (clean_len > 40) {
-            display_url = g_strdup_printf("%.35s...", clean);
-          } else {
-            display_url = g_strdup(clean);
-          }
-          gchar *esc_display = g_markup_escape_text(display_url, -1);
-          g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
-          g_free(esc_href);
-          g_free(esc_display);
-          g_free(display_url);
-          g_free(href);
-          if (suffix && *suffix) {
-            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
-            g_string_append(out, esc_suffix);
-            g_free(esc_suffix);
-          }
-        } else {
-          gchar *esc = g_markup_escape_text(t, -1);
-          g_string_append(out, esc);
-          g_free(esc);
-        }
-        g_free(clean);
-        g_free(suffix);
-      } else if (is_hashtag) {
-        gchar *suffix = NULL;
-        gchar *tag = extract_hashtag(t, &suffix);
-        if (tag && *tag) {
-          gchar *esc_tag = g_markup_escape_text(tag, -1);
-          g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc_tag, esc_tag);
-          g_free(esc_tag);
-          if (suffix && *suffix) {
-            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
-            g_string_append(out, esc_suffix);
-            g_free(esc_suffix);
-          }
-        } else {
-          gchar *esc = g_markup_escape_text(t, -1);
-          g_string_append(out, esc); g_free(esc);
-        }
-        g_free(tag);
-        g_free(suffix);
-      } else {
-        gchar *esc = g_markup_escape_text(t, -1);
-        g_string_append(out, esc); g_free(esc);
-      }
-      g_string_append_c(out, ' ');
-    }
-    g_strfreev(tokens);
-  }
-  gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
-  gboolean markup_allocated = (markup != NULL);
-  if (!markup) markup = escape_markup(content);
-  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
-   * which is false during factory binding, causing content to be silently skipped.
-   * Setting label text doesn't require mapping; GTK stores it for later rendering. */
+  /* nostrc-nst: Use NDB content blocks for text markup rendering */
+  gchar *markup = gnostr_render_content_markup(content, -1);
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
   }
-  if (markup_allocated || markup) g_free(markup);
+  g_free(markup);
 
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);

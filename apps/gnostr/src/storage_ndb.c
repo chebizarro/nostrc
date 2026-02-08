@@ -18,6 +18,7 @@
 #  pragma GCC diagnostic ignored "-Wpedantic"
 #endif
 #include "nostrdb.h"
+#include "block.h"
 #if defined(__clang__)
 #  pragma clang diagnostic pop
 #elif defined(__GNUC__)
@@ -1484,4 +1485,40 @@ char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex)
   g_debug("[STORAGE_NDB] Found %u followed pubkeys for %.16s...",
           ctx.pubkeys->len - 1, user_pubkey_hex);
   return (char **)g_ptr_array_free(ctx.pubkeys, FALSE);
+}
+
+/* ============== Content Blocks API ============== */
+
+storage_ndb_blocks *storage_ndb_get_blocks(void *txn, uint64_t note_key)
+{
+  struct ndb *ndb = get_ndb();
+  if (!ndb || !txn || note_key == 0) return NULL;
+  struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+  return ndb_get_blocks_by_key(ndb, ntxn, note_key);
+}
+
+storage_ndb_blocks *storage_ndb_parse_content_blocks(const char *content, int content_len)
+{
+  if (!content || content_len <= 0) return NULL;
+
+  /* Match ndb_note_to_blocks: use malloc (ndb_blocks_free calls free()) */
+  unsigned char *buf = malloc(2 << 18);  /* 512KB, same as nostrdb internal */
+  if (!buf) return NULL;
+  struct ndb_blocks *blocks = NULL;
+
+  if (ndb_parse_content(buf, content_len, content, content_len, &blocks) != 1) {
+    free(buf);
+    return NULL;
+  }
+
+  /* blocks points into buf; set OWNED flag so ndb_blocks_free() calls free() */
+  blocks->flags |= NDB_BLOCK_FLAG_OWNED;
+  return blocks;
+}
+
+void storage_ndb_blocks_free(storage_ndb_blocks *blocks)
+{
+  if (blocks) {
+    ndb_blocks_free(blocks);
+  }
 }

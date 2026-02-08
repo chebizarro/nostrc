@@ -229,6 +229,23 @@ void storage_ndb_note_get_nip10_thread_full(storage_ndb_note *note,
                                              char **root_relay_hint_out,
                                              char **reply_relay_hint_out);
 
+/* ============== Content Blocks API ============== */
+
+/* Opaque blocks handle - actually struct ndb_blocks* from nostrdb */
+typedef struct ndb_blocks storage_ndb_blocks;
+
+/* Get pre-parsed content blocks from NDB_DB_NOTE_BLOCKS.
+ * Returns NULL if blocks not available. Caller must call storage_ndb_blocks_free().
+ * The blocks reference internal DB memory valid while txn is open. */
+storage_ndb_blocks *storage_ndb_get_blocks(void *txn, uint64_t note_key);
+
+/* Parse content on-the-fly into blocks (fallback when no note_key available).
+ * Returns NULL on failure. Caller must call storage_ndb_blocks_free(). */
+storage_ndb_blocks *storage_ndb_parse_content_blocks(const char *content, int content_len);
+
+/* Free blocks. Safe to call on NULL or DB-owned blocks. */
+void storage_ndb_blocks_free(storage_ndb_blocks *blocks);
+
 #ifdef __cplusplus
 }
 #endif
