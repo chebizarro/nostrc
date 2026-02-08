@@ -239,6 +239,16 @@ int storage_ndb_text_search(void *txn, const char *q, const char *config_json, c
   return LN_OK;
 }
 
+int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count)
+{
+  if (!g_store || !txn || !query || !out_arr || !out_count) return LN_ERR_QUERY;
+  void *results = NULL; int count = 0;
+  int rc = ln_store_search_profile(g_store, txn, query, limit, &results, &count);
+  if (rc != LN_OK) return rc;
+  *out_arr = (char**)results; *out_count = count;
+  return LN_OK;
+}
+
 int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len)
 {
   if (!g_store || !txn || !id32 || !json_out) return LN_ERR_QUERY;

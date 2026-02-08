@@ -39,6 +39,12 @@ int ln_store_text_search(ln_store *s, void *txn, const char *query, const char *
   return s->ops->text_search(s, txn, query, config_json, results, count);
 }
 
+int ln_store_search_profile(ln_store *s, void *txn, const char *query, int limit, void **results, int *count)
+{
+  if (!s || !s->ops || !s->ops->search_profile) return LN_ERR_QUERY;
+  return s->ops->search_profile(s, txn, query, limit, results, count);
+}
+
 int ln_store_get_note_by_id(ln_store *s, void *txn, const unsigned char id[32], const char **json, int *json_len)
 {
   if (!s || !s->ops || !s->ops->get_note_by_id) return LN_ERR_QUERY;

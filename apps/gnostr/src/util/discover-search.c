@@ -548,17 +548,15 @@ static void do_local_search(SearchContext *ctx)
       storage_ndb_end_query(txn);
     }
   } else {
-    /* Text search in nostrdb */
+    /* Profile search using NDB's indexed profile search (prefix-matching on name/display_name) */
     void *txn = NULL;
     if (storage_ndb_begin_query(&txn) == 0 && txn) {
       char **results_arr = NULL;
       int results_count = 0;
 
-      /* Build config JSON for text search (kind 0 profiles only) */
-      char *config_json = g_strdup_printf("{\"kinds\":[0],\"limit\":%d}", ctx->limit);
-
-      if (storage_ndb_text_search(txn, search_text, config_json, &results_arr, &results_count) == 0) {
-        g_debug("search: local text search found %d results", results_count);
+      if (storage_ndb_search_profile(txn, search_text, ctx->limit, &results_arr, &results_count) == 0 &&
+          results_count > 0) {
+        g_debug("search: NDB profile search found %d results", results_count);
         for (int i = 0; i < results_count; i++) {
           if (results_arr[i]) {
             GnostrSearchResult *result = parse_profile_event(results_arr[i], FALSE);
@@ -570,7 +568,27 @@ static void do_local_search(SearchContext *ctx)
         storage_ndb_free_results(results_arr, results_count);
       }
 
-      g_free(config_json);
+      /* Fallback: text search on note content if profile search found nothing */
+      if (results_count == 0) {
+        char *config_json = g_strdup_printf("{\"kinds\":[0],\"limit\":%d}", ctx->limit);
+        char **text_arr = NULL;
+        int text_count = 0;
+
+        if (storage_ndb_text_search(txn, search_text, config_json, &text_arr, &text_count) == 0) {
+          g_debug("search: local text search fallback found %d results", text_count);
+          for (int i = 0; i < text_count; i++) {
+            if (text_arr[i]) {
+              GnostrSearchResult *result = parse_profile_event(text_arr[i], FALSE);
+              if (result) {
+                search_add_result(ctx, result);
+              }
+            }
+          }
+          storage_ndb_free_results(text_arr, text_count);
+        }
+        g_free(config_json);
+      }
+
       storage_ndb_end_query(txn);
     }
   }

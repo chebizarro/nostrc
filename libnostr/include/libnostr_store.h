@@ -26,6 +26,7 @@ typedef struct ln_store_ops {
   /* queries */
   int  (*query)(ln_store *s, void *txn, const char *filters_json, void **results, int *count);
   int  (*text_search)(ln_store *s, void *txn, const char *query, const char *config_json, void **results, int *count);
+  int  (*search_profile)(ln_store *s, void *txn, const char *query, int limit, void **results, int *count);
 
   /* helpers */
   int  (*get_note_by_id)(ln_store *s, void *txn, const unsigned char id[32], const char **json, int *json_len);
@@ -46,6 +47,7 @@ int ln_store_begin_query(ln_store *s, void **txn);
 int ln_store_end_query(ln_store *s, void *txn);
 int ln_store_query(ln_store *s, void *txn, const char *filters_json, void **results, int *count);
 int ln_store_text_search(ln_store *s, void *txn, const char *query, const char *config_json, void **results, int *count);
+int ln_store_search_profile(ln_store *s, void *txn, const char *query, int limit, void **results, int *count);
 int ln_store_get_note_by_id(ln_store *s, void *txn, const unsigned char id[32], const char **json, int *json_len);
 int ln_store_get_profile_by_pubkey(ln_store *s, void *txn, const unsigned char pk[32], const char **json, int *json_len);
 int ln_store_stat_json(ln_store *s, char **json_out);

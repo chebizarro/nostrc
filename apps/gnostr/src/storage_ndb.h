@@ -36,6 +36,7 @@ int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms);
 /* Queries */
 int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count);
 int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count);
+int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count);
 
 /* Getters */
 int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len);

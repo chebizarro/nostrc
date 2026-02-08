@@ -648,6 +648,62 @@ static int ln_ndb_stat_json(ln_store *s, char **json_out)
   return LN_OK;
 }
 
+static int ln_ndb_search_profile(ln_store *s, void *txn, const char *query, int limit, void **results, int *count)
+{
+  if (!s || !s->impl || !txn || !query || !results || !count) return LN_ERR_QUERY;
+  struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+
+  if (limit <= 0) limit = 50;
+  if (limit > 512) limit = 512;
+
+  struct ndb_search search;
+  if (!ndb_search_profile(ntxn, &search, query)) {
+    /* No results found */
+    *results = NULL;
+    *count = 0;
+    return LN_OK;
+  }
+
+  char **arr = (char **)calloc((size_t)limit, sizeof(char *));
+  if (!arr) { ndb_search_profile_end(&search); return LN_ERR_OOM; }
+
+  int got = 0;
+  for (int i = 0; i < limit; i++) {
+    if (i > 0 && !ndb_search_profile_next(&search))
+      break;
+
+    /* profile_key → profile record → note_key → note → JSON */
+    size_t profile_len = 0;
+    void *profile_root = ndb_get_profile_by_key(ntxn, search.profile_key, &profile_len);
+    if (!profile_root) continue;
+
+    NdbProfileRecord_table_t record = NdbProfileRecord_as_root(profile_root);
+    uint64_t note_key = NdbProfileRecord_note_key(record);
+    size_t note_size = 0;
+    struct ndb_note *note = ndb_get_note_by_key(ntxn, note_key, &note_size);
+    if (!note) continue;
+
+    int bufsize = (int)note_size + 256;
+    if (bufsize < 1024) bufsize = 1024;
+    char *buf = NULL;
+    for (;;) {
+      char *nb = (char *)realloc(buf, (size_t)bufsize);
+      if (!nb) { free(buf); buf = NULL; break; }
+      buf = nb;
+      int n = ndb_note_json(note, buf, bufsize);
+      if (n > 0 && n < bufsize) { buf[n] = '\0'; break; }
+      bufsize *= 2;
+      if (bufsize > (32 * 1024 * 1024)) { free(buf); buf = NULL; break; }
+    }
+    if (buf) arr[got++] = buf;
+  }
+
+  ndb_search_profile_end(&search);
+  *results = arr;
+  *count = got;
+  return LN_OK;
+}
+
 static const struct ln_store_ops ndb_ops = {
   .open = ln_ndb_open,
   .close = ln_ndb_close,
@@ -657,6 +713,7 @@ static const struct ln_store_ops ndb_ops = {
   .end_query = ln_ndb_end_query,
   .query = ln_ndb_query,
   .text_search = ln_ndb_text_search,
+  .search_profile = ln_ndb_search_profile,
   .get_note_by_id = ln_ndb_get_note_by_id,
   .get_profile_by_pubkey = ln_ndb_get_profile_by_pubkey,
   .stat_json = ln_ndb_stat_json,
