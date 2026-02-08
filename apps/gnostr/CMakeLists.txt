@@ -881,6 +881,10 @@ endif()
 # ---- GSettings schema install ----
 install(FILES data/schemas/org.gnostr.gnostr.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
+# nostrc-fm2g: Compile schemas after install so the app can find them
+if(GLIB_COMPILE_SCHEMAS)
+  install(CODE "execute_process(COMMAND ${GLIB_COMPILE_SCHEMAS} \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)")
+endif()
 
 # ---- Desktop entry ----
 install(FILES data/org.gnostr.gnostr.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)

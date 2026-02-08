@@ -172,6 +172,12 @@ gnostr_ensure_gsettings_schemas(const char *argv0)
     g_setenv("GSETTINGS_SCHEMA_DIR", inst_dir, FALSE);
     return;
   }
+
+  /* nostrc-fm2g: Warn before GLib's fatal abort so the user knows what to do */
+  g_warning("GSettings schemas not found (tried %s and %s). "
+            "Set GSETTINGS_SCHEMA_DIR to the directory containing "
+            "gschemas.compiled, or run via run-gnostr.sh.",
+            bin_dir, inst_dir);
 }
 
 int main(int argc, char **argv) {
