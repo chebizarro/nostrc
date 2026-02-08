@@ -281,6 +281,43 @@ storage_ndb_blocks *storage_ndb_parse_content_blocks(const char *content, int co
 /* Free blocks. Safe to call on NULL or DB-owned blocks. */
 void storage_ndb_blocks_free(storage_ndb_blocks *blocks);
 
+/* ============== Query Cursor API (nostrc-tbv) ============== */
+
+/* Opaque cursor for streaming NDB query results in pages. */
+typedef struct _StorageNdbCursor StorageNdbCursor;
+
+/* Result entry from cursor iteration. */
+typedef struct {
+  uint64_t note_key;
+  uint32_t created_at;
+} StorageNdbCursorEntry;
+
+/* Create a new cursor for paginated query iteration.
+ * filter_json: NIP-01 filter object (kinds, authors, etc.).
+ *   The cursor manages "until" and "limit" internally for pagination.
+ * batch_size: Number of results per page (e.g., 50).
+ * Returns cursor or NULL on failure. Caller must call storage_ndb_cursor_free(). */
+StorageNdbCursor *storage_ndb_cursor_new(const char *filter_json, guint batch_size);
+
+/* Fetch the next batch of results.
+ * Manages its own read transaction internally.
+ * entries_out: (out) array of results (owned by cursor, valid until next call or free)
+ * count_out: (out) number of entries in this batch (0 when exhausted)
+ * Returns 0 on success, nonzero on failure. */
+int storage_ndb_cursor_next(StorageNdbCursor *cursor,
+                            const StorageNdbCursorEntry **entries_out,
+                            guint *count_out);
+
+/* Check if cursor has more results.
+ * Returns TRUE if there may be more results, FALSE if exhausted. */
+gboolean storage_ndb_cursor_has_more(StorageNdbCursor *cursor);
+
+/* Get total items fetched so far across all batches. */
+guint storage_ndb_cursor_total_fetched(StorageNdbCursor *cursor);
+
+/* Free cursor and all resources. Safe to call on NULL. */
+void storage_ndb_cursor_free(StorageNdbCursor *cursor);
+
 #ifdef __cplusplus
 }
 #endif

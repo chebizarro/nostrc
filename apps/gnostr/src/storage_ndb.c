@@ -1650,3 +1650,184 @@ void storage_ndb_blocks_free(storage_ndb_blocks *blocks)
     ndb_blocks_free(blocks);
   }
 }
+
+/* ============== Query Cursor API (nostrc-tbv) ============== */
+
+struct _StorageNdbCursor {
+  char *filter_json;               /* Base filter JSON (owned) */
+  guint batch_size;                /* Items per page */
+  gint64 until;                    /* Current pagination boundary (0 = use filter's own) */
+  GHashTable *seen_keys;           /* note_key -> TRUE for dedup at boundaries */
+  StorageNdbCursorEntry *entries;  /* Current batch (owned, reallocated each call) */
+  guint entries_capacity;          /* Allocated capacity of entries array */
+  guint total_fetched;             /* Cumulative items returned */
+  gboolean exhausted;              /* No more results available */
+  gboolean first_call;             /* TRUE until first successful next() */
+};
+
+StorageNdbCursor *storage_ndb_cursor_new(const char *filter_json, guint batch_size)
+{
+  if (!filter_json || batch_size == 0) return NULL;
+
+  StorageNdbCursor *cursor = g_new0(StorageNdbCursor, 1);
+  cursor->filter_json = g_strdup(filter_json);
+  cursor->batch_size = batch_size;
+  cursor->seen_keys = g_hash_table_new(g_int64_hash, g_int64_equal);
+  cursor->entries = g_new(StorageNdbCursorEntry, batch_size);
+  cursor->entries_capacity = batch_size;
+  cursor->first_call = TRUE;
+  return cursor;
+}
+
+int storage_ndb_cursor_next(StorageNdbCursor *cursor,
+                            const StorageNdbCursorEntry **entries_out,
+                            guint *count_out)
+{
+  if (!cursor || !entries_out || !count_out) return -1;
+  *entries_out = NULL;
+  *count_out = 0;
+
+  if (cursor->exhausted) return 0;
+
+  struct ndb *ndb = get_ndb();
+  if (!ndb) return -1;
+
+  /* Build paginated filter JSON */
+  char *query_json;
+  if (cursor->first_call) {
+    /* First call: merge in just the limit */
+    char *override = g_strdup_printf("{\"limit\":%u}", cursor->batch_size);
+    query_json = nostr_json_merge_objects(cursor->filter_json, override);
+    g_free(override);
+  } else {
+    /* Subsequent calls: merge in until + limit for pagination */
+    char *override = g_strdup_printf("{\"until\":%" G_GINT64_FORMAT ",\"limit\":%u}",
+                                     cursor->until, cursor->batch_size);
+    query_json = nostr_json_merge_objects(cursor->filter_json, override);
+    g_free(override);
+  }
+
+  if (!query_json) return -1;
+
+  /* Parse filter from JSON */
+  struct ndb_filter filter;
+  unsigned char *tmpbuf = malloc(4096);
+  if (!tmpbuf) { g_free(query_json); return -1; }
+
+  if (!ndb_filter_init(&filter)) {
+    free(tmpbuf);
+    g_free(query_json);
+    return -1;
+  }
+
+  int json_len = (int)strlen(query_json);
+  if (!ndb_filter_from_json(query_json, json_len, &filter, tmpbuf, 4096)) {
+    ndb_filter_destroy(&filter);
+    free(tmpbuf);
+    g_free(query_json);
+    return -1;
+  }
+
+  /* Open read transaction */
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0) {
+    ndb_filter_destroy(&filter);
+    free(tmpbuf);
+    g_free(query_json);
+    return -1;
+  }
+
+  /* Execute query */
+  enum { QUERY_CAP = 256 };
+  struct ndb_query_result qres[QUERY_CAP];
+  int got = 0;
+  int cap = MIN((int)cursor->batch_size * 2, QUERY_CAP); /* fetch extra for dedup headroom */
+
+  if (!ndb_query((struct ndb_txn *)txn, &filter, 1, qres, cap, &got)) {
+    storage_ndb_end_query(txn);
+    ndb_filter_destroy(&filter);
+    free(tmpbuf);
+    g_free(query_json);
+    return -1;
+  }
+
+  /* Process results: extract note_key + created_at, dedup */
+  guint count = 0;
+  gint64 min_ts = G_MAXINT64;
+
+  for (int i = 0; i < got && count < cursor->batch_size; i++) {
+    struct ndb_note *note = qres[i].note;
+    if (!note) continue;
+
+    uint64_t note_key = qres[i].note_id;
+
+    /* Dedup: skip already-seen keys (boundary overlap) */
+    if (g_hash_table_contains(cursor->seen_keys, &note_key))
+      continue;
+
+    uint32_t created_at = ndb_note_created_at(note);
+
+    /* Grow entries array if needed */
+    if (count >= cursor->entries_capacity) {
+      cursor->entries_capacity *= 2;
+      cursor->entries = g_renew(StorageNdbCursorEntry, cursor->entries, cursor->entries_capacity);
+    }
+
+    cursor->entries[count].note_key = note_key;
+    cursor->entries[count].created_at = created_at;
+    count++;
+
+    /* Track for dedup - store the key value in the hash table */
+    uint64_t *key_copy = g_new(uint64_t, 1);
+    *key_copy = note_key;
+    g_hash_table_add(cursor->seen_keys, key_copy);
+
+    /* Track min timestamp for pagination boundary */
+    if ((gint64)created_at < min_ts) {
+      min_ts = created_at;
+    }
+  }
+
+  storage_ndb_end_query(txn);
+  ndb_filter_destroy(&filter);
+  free(tmpbuf);
+  g_free(query_json);
+
+  cursor->first_call = FALSE;
+  cursor->total_fetched += count;
+
+  if (count == 0 || got < (int)cursor->batch_size) {
+    cursor->exhausted = TRUE;
+  }
+
+  if (count > 0 && min_ts > 0) {
+    /* Next page starts before the oldest item in this batch */
+    cursor->until = min_ts - 1;
+  }
+
+  *entries_out = cursor->entries;
+  *count_out = count;
+  return 0;
+}
+
+gboolean storage_ndb_cursor_has_more(StorageNdbCursor *cursor)
+{
+  if (!cursor) return FALSE;
+  return !cursor->exhausted;
+}
+
+guint storage_ndb_cursor_total_fetched(StorageNdbCursor *cursor)
+{
+  if (!cursor) return 0;
+  return cursor->total_fetched;
+}
+
+void storage_ndb_cursor_free(StorageNdbCursor *cursor)
+{
+  if (!cursor) return;
+  g_free(cursor->filter_json);
+  if (cursor->seen_keys)
+    g_hash_table_destroy(cursor->seen_keys);
+  g_free(cursor->entries);
+  g_free(cursor);
+}

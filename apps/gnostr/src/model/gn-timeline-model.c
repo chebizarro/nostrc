@@ -1564,86 +1564,50 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
 
 guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
   g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
-  (void)count;  /* Currently loads whatever the query returns */
 
   if (!self->query || self->oldest_timestamp == 0) return 0;
+  if (count == 0) count = 50;  /* Default page size */
 
-  /* Query with until=oldest_timestamp-1 to get older items */
+  /* Build filter with until=oldest_timestamp-1 for pagination */
   char *filter_json = gn_timeline_query_to_json_with_until(self->query, self->oldest_timestamp - 1);
   if (!filter_json) return 0;
 
-  void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
-    g_free(filter_json);
-    return 0;
-  }
+  /* Use streaming cursor for zero-copy note_key access (nostrc-tbv) */
+  StorageNdbCursor *cursor = storage_ndb_cursor_new(filter_json, count);
+  g_free(filter_json);
+  if (!cursor) return 0;
 
-  char **results = NULL;
-  int n_results = 0;
+  const StorageNdbCursorEntry *entries = NULL;
+  guint n_entries = 0;
   guint added = 0;
 
-  if (storage_ndb_query(txn, filter_json, &results, &n_results) == 0 && n_results > 0) {
-    g_debug("[TIMELINE] load_older: got %d results", n_results);
+  if (storage_ndb_cursor_next(cursor, &entries, &n_entries) == 0 && n_entries > 0) {
+    g_debug("[TIMELINE] load_older: cursor returned %u entries", n_entries);
 
-    for (int i = 0; i < n_results; i++) {
-      if (!results[i]) continue;
+    /* Open txn for mute list checking (need note pubkey) */
+    void *txn = NULL;
+    storage_ndb_begin_query_retry(&txn, 3, 10);
 
-      /* nostrc-3nj: Parse JSON using NostrJsonInterface */
-      char *id_hex = NULL;
-      int64_t created_at = 0;
-      char *pubkey_hex = NULL;
-
-      id_hex = gnostr_json_get_string(results[i], "id", NULL);
-      if (!id_hex) {
-        g_debug("[TIMELINE] Failed to get id from JSON result %d", i);
-        continue;
-      }
-
-      if (strlen(id_hex) != 64) {
-        free(id_hex);
-        continue;
-      }
-
-      created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
-
-      /* Convert hex ID to binary - must convert all 32 bytes */
-      unsigned char id32[32];
-      int bytes_converted = 0;
-      for (int j = 0; j < 32; j++) {
-        unsigned int byte;
-        if (sscanf(id_hex + j*2, "%2x", &byte) != 1) {
-          break;
-        }
-        id32[j] = (unsigned char)byte;
-        bytes_converted++;
-      }
-      if (bytes_converted != 32) {
-        g_debug("[TIMELINE] Incomplete hex conversion: only %d/32 bytes", bytes_converted);
-        free(id_hex);
-        continue;
-      }
-      free(id_hex);
-
-      /* Get note_key from ID */
-      uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
-      if (note_key == 0) {
-        continue;
-      }
+    for (guint i = 0; i < n_entries; i++) {
+      uint64_t note_key = entries[i].note_key;
+      uint32_t created_at = entries[i].created_at;
 
       /* Skip if already have this note */
-      if (has_note_key(self, note_key)) {
-        continue;
-      }
+      if (has_note_key(self, note_key)) continue;
 
-      /* Check mute list */
-      pubkey_hex = gnostr_json_get_string(results[i], "pubkey", NULL);
-      if (pubkey_hex) {
-        GnostrMuteList *mute_list = gnostr_mute_list_get_default();
-        if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
-          free(pubkey_hex);
-          continue;
+      /* Check mute list via direct note access */
+      if (txn) {
+        storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+        if (note) {
+          const unsigned char *pk = storage_ndb_note_pubkey(note);
+          if (pk) {
+            char pk_hex[65];
+            storage_ndb_hex_encode(pk, pk_hex);
+            GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+            if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pk_hex))
+              continue;
+          }
         }
-        free(pubkey_hex);
       }
 
       /* Add to notes array at the end (older items) */
@@ -1653,16 +1617,15 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
       added++;
 
       /* Update oldest timestamp */
-      if (created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
-        self->oldest_timestamp = created_at;
+      if ((gint64)created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
+        self->oldest_timestamp = (gint64)created_at;
       }
     }
 
-    storage_ndb_free_results(results, n_results);
+    if (txn) storage_ndb_end_query(txn);
   }
 
-  storage_ndb_end_query(txn);
-  g_free(filter_json);
+  storage_ndb_cursor_free(cursor);
 
   if (added > 0) {
     guint old_count = self->notes->len - added;
