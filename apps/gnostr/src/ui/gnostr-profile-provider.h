@@ -26,6 +26,7 @@ typedef struct {
   char *display_name;    /* owned, nullable */
   char *name;            /* owned, nullable */
   char *picture;         /* owned, nullable */
+  char *banner;          /* owned, nullable - banner image URL */
   char *nip05;           /* owned, nullable - NIP-05 identifier */
   char *lud16;           /* owned, nullable - Lightning address */
   gint64 created_at;     /* timestamp for staleness checks */

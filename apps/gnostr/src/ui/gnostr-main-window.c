@@ -4195,41 +4195,12 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   /* Different profile or sidebar was closed - show the profile pane */
   show_profile_panel(self);
   
-  /* Set the pubkey on the profile pane */
+  /* Set the pubkey on the profile pane — this triggers NDB cache lookup
+   * and async network fetch internally via fetch_profile_from_cache_or_network().
+   * nostrc-4aen: Previously we duplicated the NDB query here which caused
+   * banner image loads to be cancelled by the redundant update_from_json call. */
   if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
     gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(profile_pane), pubkey_hex);
-    
-    /* Query nostrdb directly for profile using optimized lookup */
-    void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0) {
-      uint8_t pk32[32];
-      gboolean found = FALSE;
-
-      if (hex_to_bytes32(pubkey_hex, pk32)) {
-        char *event_json = NULL;
-        int event_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len) == 0 && event_json) {
-          /* storage_ndb_get_profile_by_pubkey returns full event JSON, extract content field */
-          GNostrEvent *evt = gnostr_event_new_from_json(event_json, NULL);
-          if (evt) {
-            const char *content = gnostr_event_get_content(evt);
-            if (content && *content) {
-              extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
-              gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(profile_pane), content);
-              found = TRUE;
-            }
-            g_object_unref(evt);
-          }
-          free(event_json);
-        }
-      }
-
-      if (!found) {
-        /* Profile not in DB, enqueue for fetching from relays */
-        enqueue_profile_author(self, pubkey_hex);
-      }
-      storage_ndb_end_query(txn);
-    }
   }
 }
 

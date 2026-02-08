@@ -159,6 +159,13 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
     g_free(tmp);
   }
 
+  tmp = gnostr_json_get_string(profile_json, "banner", NULL);
+  if (tmp && *tmp) {
+    m->banner = tmp;
+  } else {
+    g_free(tmp);
+  }
+
   tmp = gnostr_json_get_string(profile_json, "nip05", NULL);
   if (tmp && *tmp) {
     m->nip05 = tmp;
@@ -329,6 +336,7 @@ void gnostr_profile_meta_free(GnostrProfileMeta *m) {
   g_free(m->display_name);
   g_free(m->name);
   g_free(m->picture);
+  g_free(m->banner);
   g_free(m->nip05);
   g_free(m->lud16);
   g_free(m);

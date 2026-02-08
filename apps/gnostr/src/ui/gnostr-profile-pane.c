@@ -3479,7 +3479,7 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
           }
         }
         if (evt) nostr_event_free(evt);
-        /* Note: event_json is owned by nostrdb, do not free */
+        free(event_json);  /* Caller-owned buffer from ln_ndb_get_profile_by_pubkey */
       }
     }
     storage_ndb_end_query(txn);
