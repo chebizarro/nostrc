@@ -67,7 +67,17 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         if (!msg->data) { free(msg); return -1; }
         memcpy(msg->data, in, len);
         msg->data[len] = '\0';
-        go_channel_send(conn->recv_channel, msg);
+        // Non-blocking send: the lws service thread is shared across ALL
+        // connections. A blocking send here would freeze the entire app if
+        // the consumer (message_loop) falls behind. (nostrc-j6h1)
+        if (go_channel_try_send(conn->recv_channel, msg) != 0) {
+            // Channel full or closed — drop message to keep service thread alive
+            nostr_metric_counter_add("ws_rx_drop_full", 1);
+            nostr_rl_log(NLOG_WARN, "ws", "drop: recv_channel full (len=%zu)", len);
+            free(msg->data);
+            free(msg);
+            break;
+        }
         // Metrics
         nostr_metric_counter_add("ws_rx_enqueued_bytes", (uint64_t)len);
         nostr_metric_counter_add("ws_rx_enqueued_messages", 1);
@@ -440,7 +450,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     if (test_mode) {
         fprintf(stderr, "[nostr] NOSTR_TEST_MODE=1: offline mode enabled (no network I/O)\n");
         conn->priv->test_mode = 1;
-        conn->recv_channel = go_channel_create(16);
+        conn->recv_channel = go_channel_create(256);
         conn->send_channel = go_channel_create(16);
         // No context / thread in test mode
         return conn;
@@ -523,7 +533,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     }
     // Attach our Connection* so callbacks can retrieve it safely
     lws_set_opaque_user_data(conn->priv->wsi, conn);
-    conn->recv_channel = go_channel_create(16);
+    conn->recv_channel = go_channel_create(256);
     conn->send_channel = go_channel_create(16);
     // Initialize token buckets for ingress limits (runtime configurable)
     tb_init(&conn->priv->tb_bytes, (double)nostr_limit_max_bytes_per_sec(), (double)nostr_limit_max_bytes_per_sec());
