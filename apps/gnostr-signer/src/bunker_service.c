@@ -19,8 +19,7 @@
 #include <nostr/nip46/nip46_bunker.h>
 #include <nostr/nip46/nip46_uri.h>
 #include <nostr/nip46/nip46_msg.h>
-#include <nostr/nip19/nip19.h>
-#include <keys.h>
+#include <nostr_nip19.h>
 #include <string.h>
 #include <time.h>
 
@@ -379,14 +378,14 @@ gboolean bunker_service_start(BunkerService *bs,
 
   /* Convert npub to hex if needed */
   if (g_str_has_prefix(identity, "npub1")) {
-    guint8 pk[32];
-    if (nostr_nip19_decode_npub(identity, pk) == 0) {
-      gchar *hex = g_malloc(65);
-      for (gint i = 0; i < 32; i++) {
-        g_snprintf(hex + i*2, 3, "%02x", pk[i]);
+    GNostrNip19 *nip19 = gnostr_nip19_decode(identity, NULL);
+    if (nip19) {
+      const gchar *pubkey = gnostr_nip19_get_pubkey(nip19);
+      if (pubkey) {
+        g_free(bs->identity_pubkey_hex);
+        bs->identity_pubkey_hex = g_strdup(pubkey);
       }
-      g_free(bs->identity_pubkey_hex);
-      bs->identity_pubkey_hex = hex;
+      g_object_unref(nip19);
     }
   } else {
     g_free(bs->identity_pubkey_hex);

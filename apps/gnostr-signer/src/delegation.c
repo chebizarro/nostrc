@@ -10,7 +10,7 @@
  */
 #include "delegation.h"
 #include "secret_store.h"
-#include <nostr/nip19/nip19.h>
+#include <nostr_nip19.h>
 #include <json-glib/json-glib.h>
 #include <string.h>
 #include <time.h>
@@ -356,9 +356,11 @@ gchar *gn_delegation_build_tag(const GnDelegation *delegation) {
   /* Get delegator pubkey as hex */
   gchar *delegator_hex = NULL;
   if (g_str_has_prefix(delegation->delegator_npub, "npub1")) {
-    guint8 pk[32];
-    if (nostr_nip19_decode_npub(delegation->delegator_npub, pk) == 0) {
-      delegator_hex = bytes_to_hex(pk, 32);
+    GNostrNip19 *nip19 = gnostr_nip19_decode(delegation->delegator_npub, NULL);
+    if (nip19) {
+      const gchar *pubkey = gnostr_nip19_get_pubkey(nip19);
+      if (pubkey) delegator_hex = g_strdup(pubkey);
+      g_object_unref(nip19);
     }
   } else {
     delegator_hex = g_strdup(delegation->delegator_npub);

@@ -37,10 +37,9 @@
 #endif
 
 /* libnostr for crypto operations */
-#include <keys.h>
+#include <nostr_keys.h>
+#include <keys.h>       /* nostr_key_generate_private() - no GObject equivalent */
 #include <nostr-event.h>
-#include <nostr/nip19/nip19.h>
-#include <nostr-utils.h>
 
 /* OpenSSL for HKDF (if available) */
 #ifdef GNOSTR_HAVE_OPENSSL
@@ -1284,8 +1283,8 @@ tpm_sign_hash(GnHsmProvider *provider,
   gchar *sk_hex = bytes_to_hex(private_key, 32);
   memset(private_key, 0, sizeof(private_key));
 
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) {
+  GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  if (!gkeys) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
     g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
@@ -1293,12 +1292,16 @@ tpm_sign_hash(GnHsmProvider *provider,
     return FALSE;
   }
 
+  const gchar *pk_hex = gnostr_keys_get_pubkey(gkeys);
+
   /* Create a temporary event to sign the hash */
   NostrEvent *event = nostr_event_new();
   nostr_event_set_pubkey(event, pk_hex);
   nostr_event_set_kind(event, 1);
   nostr_event_set_created_at(event, time(NULL));
   nostr_event_set_content(event, "");
+
+  g_object_unref(gkeys);
 
   /* Set the event id to our hash */
   gchar *hash_hex = bytes_to_hex(hash, 32);
@@ -1309,7 +1312,6 @@ tpm_sign_hash(GnHsmProvider *provider,
 
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
-  g_free(pk_hex);
 
   if (sign_result != 0) {
     nostr_event_free(event);

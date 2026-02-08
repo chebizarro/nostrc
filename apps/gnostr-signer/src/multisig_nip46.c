@@ -12,7 +12,7 @@
 
 #include <nostr/nip46/nip46_client.h>
 #include <nostr/nip46/nip46_uri.h>
-#include <nostr/nip19/nip19.h>
+#include <nostr_nip19.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -187,26 +187,15 @@ static gboolean parse_bunker_uri(const gchar *bunker_uri,
   gchar *pk_hex = g_strndup(pk_start, pk_len);
 
   /* Convert hex to npub */
-  guint8 pk_bytes[32];
-  gboolean valid = TRUE;
-  for (gsize i = 0; i < 32 && valid; i++) {
-    gchar byte_str[3] = { pk_hex[i*2], pk_hex[i*2+1], '\0' };
-    gchar *end = NULL;
-    gulong val = strtoul(byte_str, &end, 16);
-    if (end != byte_str + 2) valid = FALSE;
-    else pk_bytes[i] = (guint8)val;
-  }
+  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
   g_free(pk_hex);
 
-  if (!valid) return FALSE;
-
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(pk_bytes, &npub) != 0 || !npub) {
+  if (!nip19) {
     return FALSE;
   }
 
-  if (out_npub) *out_npub = npub;
-  else g_free(npub);
+  if (out_npub) *out_npub = g_strdup(gnostr_nip19_get_bech32(nip19));
+  g_object_unref(nip19);
 
   /* Parse query parameters */
   GPtrArray *relays = g_ptr_array_new_with_free_func(g_free);

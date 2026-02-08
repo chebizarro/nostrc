@@ -10,9 +10,10 @@
 #include <time.h>
 
 /* Include libnostr for crypto operations */
-#include <keys.h>
+#include <nostr_nip19.h>
+#include <nostr_keys.h>
+#include <keys.h>       /* nostr_key_generate_private() - no GObject equivalent */
 #include <nostr-event.h>
-#include <nostr/nip19/nip19.h>
 
 /* Mock device state */
 typedef struct {
@@ -601,8 +602,8 @@ mock_generate_key(GnHsmProvider *provider,
     return NULL;
   }
 
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) {
+  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  if (!keys) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
     g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_KEY_GENERATION_FAILED,
@@ -610,6 +611,8 @@ mock_generate_key(GnHsmProvider *provider,
     g_mutex_unlock(&self->lock);
     return NULL;
   }
+
+  const gchar *pk_hex = gnostr_keys_get_pubkey(keys);
 
   /* Create mock key */
   MockKey *mkey = g_new0(MockKey, 1);
@@ -624,10 +627,10 @@ mock_generate_key(GnHsmProvider *provider,
   mkey->pubkey_hex = g_strdup(pk_hex);
 
   /* Generate npub */
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(mkey->public_key, &npub) == 0 && npub) {
-    mkey->npub = g_strdup(npub);
-    free(npub);
+  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  if (nip19) {
+    mkey->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
+    g_object_unref(nip19);
   } else {
     mkey->npub = g_strdup_printf("npub1%s", pk_hex); /* Fallback */
   }
@@ -635,7 +638,7 @@ mock_generate_key(GnHsmProvider *provider,
   /* Clear sensitive data */
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
-  g_free(pk_hex);
+  g_object_unref(keys);
 
   /* Store in device */
   g_hash_table_insert(dev->keys, g_strdup(mkey->key_id), mkey);
@@ -702,9 +705,9 @@ mock_import_key(GnHsmProvider *provider,
 
   /* Derive public key */
   gchar *sk_hex = bytes_to_hex(private_key, 32);
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
+  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
 
-  if (!pk_hex) {
+  if (!keys) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
     g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
@@ -712,6 +715,8 @@ mock_import_key(GnHsmProvider *provider,
     g_mutex_unlock(&self->lock);
     return FALSE;
   }
+
+  const gchar *pk_hex = gnostr_keys_get_pubkey(keys);
 
   /* Create mock key */
   MockKey *mkey = g_new0(MockKey, 1);
@@ -725,17 +730,17 @@ mock_import_key(GnHsmProvider *provider,
   mkey->pubkey_hex = g_strdup(pk_hex);
 
   /* Generate npub */
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(mkey->public_key, &npub) == 0 && npub) {
-    mkey->npub = g_strdup(npub);
-    free(npub);
+  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  if (nip19) {
+    mkey->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
+    g_object_unref(nip19);
   } else {
     mkey->npub = g_strdup_printf("npub1%s", pk_hex);
   }
 
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
-  g_free(pk_hex);
+  g_object_unref(keys);
 
   /* Store in device */
   g_hash_table_insert(dev->keys, g_strdup(mkey->key_id), mkey);

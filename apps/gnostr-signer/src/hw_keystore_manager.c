@@ -8,8 +8,7 @@
 #include <stdio.h>
 
 /* libnostr for crypto operations */
-#include <keys.h>
-#include <nostr/nip19/nip19.h>
+#include <nostr_keys.h>
 
 /* GSettings keys */
 #define GSETTINGS_HW_KEYSTORE_ENABLED "hardware-keystore-enabled"
@@ -540,20 +539,20 @@ hw_keystore_manager_get_public_key(HwKeystoreManager *self,
   gchar *sk_hex = bytes_to_hex(private_key, 32);
   memset(private_key, 0, sizeof(private_key));
 
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
+  GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
 
-  if (!pk_hex) {
+  if (!gkeys) {
     g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
                 "Failed to derive public key");
     return FALSE;
   }
 
-  /* Convert hex to bytes */
+  const gchar *pk_hex = gnostr_keys_get_pubkey(gkeys);
   gsize pk_len = strlen(pk_hex);
   if (pk_len != 64) {
-    g_free(pk_hex);
+    g_object_unref(gkeys);
     g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
                 "Invalid public key length");
     return FALSE;
@@ -565,7 +564,7 @@ hw_keystore_manager_get_public_key(HwKeystoreManager *self,
     public_key_out[i] = val;
   }
 
-  g_free(pk_hex);
+  g_object_unref(gkeys);
   return TRUE;
 }
 

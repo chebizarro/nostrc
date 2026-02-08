@@ -12,7 +12,7 @@
 #include "secret_store.h"
 #include "secure-memory.h"
 #include "secure-mem.h"
-#include <nostr/nip19/nip19.h>
+#include <nostr_nip19.h>
 #include <json-glib/json-glib.h>
 #include <string.h>
 #include <time.h>
@@ -164,30 +164,17 @@ MultisigCosigner *multisig_cosigner_new_remote(const gchar *bunker_uri,
   gchar *pk_hex = g_strndup(pk_start, pk_len);
 
   /* Convert hex to npub */
-  guint8 pk_bytes[32];
-  gboolean valid = TRUE;
-  for (gsize i = 0; i < 32 && valid; i++) {
-    gchar byte_str[3] = { pk_hex[i*2], pk_hex[i*2+1], '\0' };
-    gchar *end = NULL;
-    gulong val = strtoul(byte_str, &end, 16);
-    if (end != byte_str + 2) valid = FALSE;
-    else pk_bytes[i] = (guint8)val;
-  }
+  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
   g_free(pk_hex);
 
-  if (!valid) {
-    g_warning("multisig_cosigner_new_remote: invalid hex in bunker URI");
-    return NULL;
-  }
-
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(pk_bytes, &npub) != 0 || !npub) {
+  if (!nip19) {
     g_warning("multisig_cosigner_new_remote: failed to encode npub");
     return NULL;
   }
 
+  const gchar *npub = gnostr_nip19_get_bech32(nip19);
   MultisigCosigner *cs = multisig_cosigner_new(npub, label, COSIGNER_TYPE_REMOTE_NIP46);
-  g_free(npub);
+  g_object_unref(nip19);
 
   if (cs) {
     cs->bunker_uri = g_strdup(bunker_uri);

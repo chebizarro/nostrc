@@ -12,7 +12,7 @@
 #include "bunker_service.h"
 #include "secure-memory.h"
 #include "secure-mem.h"
-#include <nostr/nip19/nip19.h>
+#include <nostr_nip19.h>
 #include <nostr/nip46/nip46_client.h>
 #include <stdlib.h>
 #include <string.h>
@@ -368,26 +368,14 @@ static void request_remote_signature(MultisigCoordinator *coordinator,
     conn->state = REMOTE_SIGNER_CONNECTING;
 
     /* Convert hex to npub for storage key */
-    guint8 pk_bytes[32];
-    gboolean valid = TRUE;
-    for (gsize i = 0; i < 32 && valid; i++) {
-      gchar byte_str[3] = { pk_hex[i*2], pk_hex[i*2+1], '\0' };
-      gchar *end = NULL;
-      gulong val = strtoul(byte_str, &end, 16);
-      if (end != byte_str + 2) valid = FALSE;
-      else pk_bytes[i] = (guint8)val;
-    }
-
-    if (valid) {
-      gchar *npub = NULL;
-      nostr_nip19_encode_npub(pk_bytes, &npub);
-      if (npub) {
-        conn->npub = npub;
-        g_hash_table_replace(coordinator->remote_connections, g_strdup(npub), conn);
-      } else {
-        conn->npub = g_strdup(pk_hex);
-        g_hash_table_replace(coordinator->remote_connections, g_strdup(pk_hex), conn);
-      }
+    GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+    if (nip19) {
+      conn->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
+      g_object_unref(nip19);
+      g_hash_table_replace(coordinator->remote_connections, g_strdup(conn->npub), conn);
+    } else {
+      conn->npub = g_strdup(pk_hex);
+      g_hash_table_replace(coordinator->remote_connections, g_strdup(pk_hex), conn);
     }
   }
 
@@ -669,29 +657,30 @@ gboolean multisig_coordinator_connect_remote(MultisigCoordinator *coordinator,
   gchar *pk_hex = g_strndup(pk_start, pk_len);
 
   /* Convert to npub */
-  guint8 pk_bytes[32];
-  gboolean valid = TRUE;
-  for (gsize i = 0; i < 32 && valid; i++) {
-    gchar byte_str[3] = { pk_hex[i*2], pk_hex[i*2+1], '\0' };
-    gchar *end = NULL;
-    gulong val = strtoul(byte_str, &end, 16);
-    if (end != byte_str + 2) valid = FALSE;
-    else pk_bytes[i] = (guint8)val;
+  /* Validate hex string */
+  gboolean valid = (strlen(pk_hex) == 64);
+  for (gsize i = 0; i < 64 && valid; i++) {
+    gchar c = pk_hex[i];
+    if (!g_ascii_isxdigit(c)) valid = FALSE;
   }
-  g_free(pk_hex);
 
   if (!valid) {
+    g_free(pk_hex);
     g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_INVALID_SIGNER,
                 "Invalid hex in bunker URI");
     return FALSE;
   }
 
-  gchar *npub = NULL;
-  if (nostr_nip19_encode_npub(pk_bytes, &npub) != 0 || !npub) {
+  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  g_free(pk_hex);
+
+  if (!nip19) {
     g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_BACKEND,
                 "Failed to encode npub");
     return FALSE;
   }
+
+  const gchar *npub = gnostr_nip19_get_bech32(nip19);
 
   /* Create or update connection */
   RemoteConnection *conn = g_hash_table_lookup(coordinator->remote_connections, npub);
@@ -704,7 +693,7 @@ gboolean multisig_coordinator_connect_remote(MultisigCoordinator *coordinator,
 
   conn->last_contact = (gint64)time(NULL);
 
-  g_free(npub);
+  g_object_unref(nip19);
 
   /* Create NIP-46 client session and connect to bunker */
   if (!conn->nip46_session) {

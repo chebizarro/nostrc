@@ -9,8 +9,8 @@
 #include "key_provider_secp256k1.h"
 #include "secure-mem.h"
 #include "secure-memory.h"
-#include <keys.h>
-#include <nostr-utils.h>
+#include <nostr_keys.h>
+#include <keys.h>       /* nostr_key_generate_private() - no GObject equivalent */
 #include <string.h>
 
 #ifdef HAVE_SECP256K1
@@ -201,23 +201,24 @@ secp256k1_derive_public_key(GnKeyProvider  *self,
     return FALSE;
   }
 
-  gchar *pk_hex = nostr_key_get_public(sk_hex);
+  GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
   gn_secure_strfree(sk_hex);
 
-  if (!pk_hex) {
+  if (!gkeys) {
     g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INVALID_KEY,
                 "Failed to derive public key");
     return FALSE;
   }
 
+  const gchar *pk_hex = gnostr_keys_get_pubkey(gkeys);
   if (!hex_to_bin(pk_hex, public_key_out, GN_SECP256K1_PUBLIC_KEY_SIZE)) {
-    g_free(pk_hex);
+    g_object_unref(gkeys);
     g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INTERNAL,
                 "Failed to decode public key");
     return FALSE;
   }
 
-  g_free(pk_hex);
+  g_object_unref(gkeys);
 
   if (public_key_len_out) {
     *public_key_len_out = GN_SECP256K1_PUBLIC_KEY_SIZE;
