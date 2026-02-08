@@ -1,4 +1,5 @@
 #include "nip11.h"
+#include "json.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -89,9 +90,11 @@ static void test_parse_extended_fields(void) {
 }
 
 int main(void) {
+    nostr_json_init();
     test_parse_minimal();
     test_parse_invalid_returns_null();
     test_parse_extended_fields();
     printf("test_nip11: OK\n");
+    nostr_json_cleanup();
     return 0;
 }

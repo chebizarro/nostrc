@@ -88,6 +88,8 @@ char *nostr_nip11_build_info_json(const RelayInformationDocument *info) {
 
 static RelayInformationDocument *parse_json_to_doc(const char *json, const char *url_opt) {
     if (!json) return NULL;
+    /* NIP-11 requires the document to be a JSON object */
+    if (!nostr_json_is_object_str(json)) return NULL;
     RelayInformationDocument *info = (RelayInformationDocument *)calloc(1, sizeof(RelayInformationDocument));
     if (!info) return NULL;
     if (url_opt) info->url = strdup(url_opt);

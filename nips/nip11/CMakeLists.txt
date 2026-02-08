@@ -15,7 +15,7 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip11 ${SOURCES})
-target_link_libraries(nip11 PUBLIC nostr CURL::libcurl)
+target_link_libraries(nip11 PUBLIC nostr nostr_json CURL::libcurl)
 
 # Example (if present)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/example.c)
