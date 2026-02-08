@@ -110,21 +110,37 @@ static void init_perf_params() {
             CONTROL_CHAN_SIZE, EVENT_CHAN_SIZE);
 }
 
-// Quick heuristic to identify control messages without full parsing
+// Identify control messages by parsing the first JSON array element only.
+// Previous strstr() approach could false-positive on event content containing
+// strings like ["EOSE" — this version only checks the message type token.
 static bool is_control_message(const char *msg) {
-    if (!msg || !*msg) return false;
-    
-    // Look for control message patterns
-    // ["EOSE", ...], ["NOTICE", ...], ["OK", ...], ["CLOSED", ...]
-    if (strstr(msg, "[\"EOSE\"") || 
-        strstr(msg, "[\"NOTICE\"") ||
-        strstr(msg, "[\"OK\"") ||
-        strstr(msg, "[\"CLOSED\"") ||
-        strstr(msg, "[\"AUTH\"") ||
-        strstr(msg, "[\"COUNT\"")) {
+    if (!msg) return false;
+
+    // Skip leading whitespace
+    while (*msg == ' ' || *msg == '\t' || *msg == '\n' || *msg == '\r') msg++;
+
+    // Must start with '['
+    if (*msg != '[') return false;
+    msg++;
+
+    // Skip whitespace after '['
+    while (*msg == ' ' || *msg == '\t' || *msg == '\n' || *msg == '\r') msg++;
+
+    // Must have opening quote for message type
+    if (*msg != '"') return false;
+    msg++;
+
+    // Compare first token against known control message types.
+    // Include closing '"' to prevent partial matches.
+    if (strncmp(msg, "EOSE\"", 5) == 0 ||
+        strncmp(msg, "OK\"", 3) == 0 ||
+        strncmp(msg, "NOTICE\"", 7) == 0 ||
+        strncmp(msg, "CLOSED\"", 7) == 0 ||
+        strncmp(msg, "AUTH\"", 5) == 0 ||
+        strncmp(msg, "COUNT\"", 6) == 0) {
         return true;
     }
-    
+
     return false;
 }
 
