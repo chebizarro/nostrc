@@ -183,6 +183,12 @@ template $GnostrDmConversationView: Widget {
         "dm-composer",
       ]
 
+      Button btn_attach {
+        icon-name: "mail-attachment-symbolic";
+        valign: end;
+        tooltip-text: "Attach file";
+      }
+
       ScrolledWindow {
         hexpand: true;
         max-content-height: 100;

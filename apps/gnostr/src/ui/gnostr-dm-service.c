@@ -11,6 +11,7 @@
 #include "gnostr-profile-provider.h"
 #include "../ipc/signer_ipc.h"
 #include "../util/relays.h"
+#include "../util/dm_files.h"
 #include "nostr_pool.h"
 #include "nostr_subscription.h"
 #include "nostr_relay.h"
@@ -142,11 +143,9 @@ gnostr_dm_service_class_init(GnostrDmServiceClass *klass)
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
-        G_TYPE_NONE, 4,
+        G_TYPE_NONE, 2,
         G_TYPE_STRING,   /* peer_pubkey */
-        G_TYPE_STRING,   /* content */
-        G_TYPE_INT64,    /* created_at */
-        G_TYPE_BOOLEAN); /* is_outgoing */
+        G_TYPE_POINTER); /* GnostrDmMessage* (borrowed) */
 }
 
 static void
@@ -371,7 +370,8 @@ store_message(DmConversation *conv,
               const char *event_id,
               const char *content,
               gint64 created_at,
-              gboolean is_outgoing)
+              gboolean is_outgoing,
+              GnostrDmFileMessage *file_msg)
 {
     if (!conv || !content) return FALSE;
 
@@ -395,6 +395,16 @@ store_message(DmConversation *conv,
     msg->content = g_strdup(content);
     msg->created_at = created_at;
     msg->is_outgoing = is_outgoing;
+
+    /* Copy file metadata if present */
+    if (file_msg) {
+        msg->file_url = g_strdup(file_msg->file_url);
+        msg->file_type = g_strdup(file_msg->file_type);
+        msg->decryption_key = g_strdup(file_msg->decryption_key_b64);
+        msg->decryption_nonce = g_strdup(file_msg->decryption_nonce_b64);
+        msg->original_hash = g_strdup(file_msg->original_hash);
+        msg->file_size = file_msg->size;
+    }
 
     g_ptr_array_add(conv->messages, msg);
 
@@ -629,12 +639,38 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         const char *rumor_id = nostr_event_get_id(rumor);
         DmConversation *conv = g_hash_table_lookup(self->conversations, peer_pubkey);
         if (conv && display_content) {
-            gboolean stored = store_message(conv, rumor_id, display_content,
-                                            created_at, is_outgoing);
-            if (stored) {
-                g_signal_emit(self, signals[SIGNAL_MESSAGE_RECEIVED], 0,
-                              peer_pubkey, display_content, created_at, is_outgoing);
+            /* Parse kind 15 file metadata if applicable */
+            GnostrDmFileMessage *file_msg = NULL;
+            if (rumor_kind == NOSTR_KIND_FILE_MESSAGE) {
+                char *rumor_json_str = nostr_event_serialize_compact(rumor);
+                if (rumor_json_str) {
+                    file_msg = gnostr_dm_file_parse_message(rumor_json_str);
+                    g_free(rumor_json_str);
+                }
             }
+
+            gboolean stored = store_message(conv, rumor_id, display_content,
+                                            created_at, is_outgoing, file_msg);
+            if (stored) {
+                /* Find the just-stored message to pass via signal */
+                GnostrDmMessage *stored_msg = NULL;
+                if (conv->messages && conv->messages->len > 0) {
+                    for (guint i = conv->messages->len; i > 0; i--) {
+                        GnostrDmMessage *m = g_ptr_array_index(conv->messages, i - 1);
+                        if (m->created_at == created_at &&
+                            m->is_outgoing == is_outgoing) {
+                            stored_msg = m;
+                            break;
+                        }
+                    }
+                }
+                if (stored_msg) {
+                    g_signal_emit(self, signals[SIGNAL_MESSAGE_RECEIVED], 0,
+                                  peer_pubkey, stored_msg);
+                }
+            }
+
+            if (file_msg) gnostr_dm_file_message_free(file_msg);
         }
 
         g_free(file_preview);
@@ -1224,6 +1260,176 @@ gnostr_dm_service_send_dm_async(GnostrDmService *self,
         ctx);
 
     nostr_event_free(rumor);
+}
+
+/* ============== Send File as Kind 15 ============== */
+
+typedef struct {
+    GnostrDmService *service;
+    char *recipient_pubkey;
+    char *file_path;
+    GCancellable *cancellable;
+    GnostrDmSendCallback callback;
+    gpointer user_data;
+} DmFileSendCtx;
+
+static void dm_file_send_ctx_free(DmFileSendCtx *ctx) {
+    if (!ctx) return;
+    g_clear_pointer(&ctx->recipient_pubkey, g_free);
+    g_clear_pointer(&ctx->file_path, g_free);
+    g_clear_object(&ctx->cancellable);
+    g_free(ctx);
+}
+
+/* Step 3: gift wrap created → fetch relays → publish (reuses on_dm_relays_fetched) */
+static void
+on_file_gift_wrap_created(GnostrGiftWrapResult *wrap_result, gpointer user_data)
+{
+    DmFileSendCtx *fctx = (DmFileSendCtx *)user_data;
+
+    if (!wrap_result->success || !wrap_result->gift_wrap_json) {
+        g_warning("[DM_SERVICE] File gift wrap failed: %s",
+                  wrap_result->error_message ? wrap_result->error_message : "unknown");
+        GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+        result->success = FALSE;
+        result->error_message = g_strdup(wrap_result->error_message ?
+                                          wrap_result->error_message : "Failed to create gift wrap");
+        if (fctx->callback) fctx->callback(result, fctx->user_data);
+        else gnostr_dm_send_result_free(result);
+        gnostr_gift_wrap_result_free(wrap_result);
+        dm_file_send_ctx_free(fctx);
+        return;
+    }
+
+    /* Reuse DmSendCtx + on_dm_relays_fetched for relay publishing */
+    DmSendCtx *ctx = g_new0(DmSendCtx, 1);
+    ctx->service = fctx->service;
+    ctx->recipient_pubkey = g_strdup(fctx->recipient_pubkey);
+    ctx->content = g_strdup("[File attachment]");
+    ctx->gift_wrap_json = g_strdup(wrap_result->gift_wrap_json);
+    ctx->cancellable = fctx->cancellable ? g_object_ref(fctx->cancellable) : NULL;
+    ctx->callback = fctx->callback;
+    ctx->user_data = fctx->user_data;
+
+    gnostr_gift_wrap_result_free(wrap_result);
+    dm_file_send_ctx_free(fctx);
+
+    g_message("[DM_SERVICE] File gift wrap created, fetching recipient relays");
+    gnostr_dm_service_get_recipient_relays_async(
+        ctx->recipient_pubkey,
+        ctx->cancellable,
+        on_dm_relays_fetched,
+        ctx);
+}
+
+/* Step 2: file uploaded → build kind 15 rumor → gift wrap */
+static void
+on_file_uploaded(GnostrDmFileAttachment *attachment, GError *error, gpointer user_data)
+{
+    DmFileSendCtx *fctx = (DmFileSendCtx *)user_data;
+
+    if (error || !attachment) {
+        g_warning("[DM_SERVICE] File upload failed: %s",
+                  error ? error->message : "unknown");
+        GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+        result->success = FALSE;
+        result->error_message = g_strdup(error ? error->message : "File upload failed");
+        if (fctx->callback) fctx->callback(result, fctx->user_data);
+        else gnostr_dm_send_result_free(result);
+        dm_file_send_ctx_free(fctx);
+        return;
+    }
+
+    GnostrDmService *self = fctx->service;
+
+    /* Build kind 15 rumor JSON */
+    char *rumor_json = gnostr_dm_file_build_rumor_json(
+        self->user_pubkey,
+        fctx->recipient_pubkey,
+        attachment,
+        0); /* 0 = current time */
+
+    gnostr_dm_file_attachment_free(attachment);
+
+    if (!rumor_json) {
+        g_warning("[DM_SERVICE] Failed to build file rumor JSON");
+        GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+        result->success = FALSE;
+        result->error_message = g_strdup("Failed to build file message");
+        if (fctx->callback) fctx->callback(result, fctx->user_data);
+        else gnostr_dm_send_result_free(result);
+        dm_file_send_ctx_free(fctx);
+        return;
+    }
+
+    /* Parse rumor JSON into NostrEvent */
+    NostrEvent *rumor = nostr_event_new();
+    if (!nostr_event_deserialize_compact(rumor, rumor_json)) {
+        g_warning("[DM_SERVICE] Failed to parse file rumor JSON");
+        nostr_event_free(rumor);
+        g_free(rumor_json);
+        GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+        result->success = FALSE;
+        result->error_message = g_strdup("Failed to parse file rumor");
+        if (fctx->callback) fctx->callback(result, fctx->user_data);
+        else gnostr_dm_send_result_free(result);
+        dm_file_send_ctx_free(fctx);
+        return;
+    }
+    g_free(rumor_json);
+
+    g_message("[DM_SERVICE] File uploaded, creating gift wrap for %.8s",
+              fctx->recipient_pubkey);
+
+    /* Gift wrap the kind 15 rumor */
+    gnostr_nip59_create_gift_wrap_async(
+        rumor,
+        fctx->recipient_pubkey,
+        self->user_pubkey,
+        fctx->cancellable,
+        on_file_gift_wrap_created,
+        fctx);
+
+    nostr_event_free(rumor);
+}
+
+void
+gnostr_dm_service_send_file_async(GnostrDmService *self,
+                                    const char *recipient_pubkey,
+                                    const char *file_path,
+                                    GCancellable *cancellable,
+                                    GnostrDmSendCallback callback,
+                                    gpointer user_data)
+{
+    g_return_if_fail(GNOSTR_IS_DM_SERVICE(self));
+    g_return_if_fail(recipient_pubkey != NULL);
+    g_return_if_fail(file_path != NULL);
+
+    if (!self->user_pubkey) {
+        GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+        result->success = FALSE;
+        result->error_message = g_strdup("User not logged in");
+        if (callback) callback(result, user_data);
+        else gnostr_dm_send_result_free(result);
+        return;
+    }
+
+    g_message("[DM_SERVICE] Sending file '%s' to %.8s", file_path, recipient_pubkey);
+
+    DmFileSendCtx *fctx = g_new0(DmFileSendCtx, 1);
+    fctx->service = self;
+    fctx->recipient_pubkey = g_strdup(recipient_pubkey);
+    fctx->file_path = g_strdup(file_path);
+    fctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    fctx->callback = callback;
+    fctx->user_data = user_data;
+
+    /* Step 1: Encrypt and upload file */
+    gnostr_dm_file_encrypt_and_upload_async(file_path,
+                                             NULL, /* auto-detect MIME */
+                                             on_file_uploaded,
+                                             fctx,
+                                             cancellable);
 }
 
 /* ============== Message History API ============== */

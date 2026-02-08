@@ -21,6 +21,8 @@ G_DECLARE_FINAL_TYPE(GnostrDmConversationView, gnostr_dm_conversation_view,
  * Signals:
  * "send-message" (gchar* content, gpointer user_data)
  *   - Emitted when user sends a message
+ * "send-file" (gchar* file_path, gpointer user_data)
+ *   - Emitted when user attaches a file
  * "go-back" (gpointer user_data)
  *   - Emitted when user clicks back button
  * "open-profile" (gchar* pubkey_hex, gpointer user_data)
@@ -37,6 +39,13 @@ typedef struct {
     char *content;          /* Message text (plaintext) */
     gint64 created_at;      /* Unix timestamp */
     gboolean is_outgoing;   /* TRUE if sent by us */
+    /* File attachment fields (all NULL for text messages) */
+    char *file_url;         /* Encrypted file URL (kind 15 content) */
+    char *file_type;        /* MIME type (e.g., "image/jpeg") */
+    char *decryption_key;   /* Base64-encoded AES-256 key */
+    char *decryption_nonce; /* Base64-encoded AES nonce */
+    char *original_hash;    /* SHA-256 of original file (ox tag) */
+    gint64 file_size;       /* File size in bytes */
 } GnostrDmMessage;
 
 GnostrDmMessage *gnostr_dm_message_copy(const GnostrDmMessage *msg);

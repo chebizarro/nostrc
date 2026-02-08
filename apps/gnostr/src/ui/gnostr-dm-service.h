@@ -212,6 +212,30 @@ void gnostr_dm_service_send_dm_async(GnostrDmService *self,
                                       gpointer user_data);
 
 /**
+ * gnostr_dm_service_send_file_async:
+ * @self: the DM service
+ * @recipient_pubkey: recipient's public key (hex)
+ * @file_path: local path to the file to send
+ * @cancellable: (nullable): a GCancellable
+ * @callback: callback when complete
+ * @user_data: user data for callback
+ *
+ * Sends a file as a kind 15 DM using NIP-17/NIP-59 gift wrapping.
+ *
+ * Flow:
+ * 1. Encrypt file with AES-256-GCM and upload to Blossom
+ * 2. Build kind 15 rumor with file metadata tags
+ * 3. Wrap in NIP-59 gift wrap (seal + ephemeral key)
+ * 4. Fetch recipient's DM relays and publish
+ */
+void gnostr_dm_service_send_file_async(GnostrDmService *self,
+                                        const char *recipient_pubkey,
+                                        const char *file_path,
+                                        GCancellable *cancellable,
+                                        GnostrDmSendCallback callback,
+                                        gpointer user_data);
+
+/**
  * gnostr_dm_service_get_messages:
  * @self: the DM service
  * @peer_pubkey: peer's public key (hex)

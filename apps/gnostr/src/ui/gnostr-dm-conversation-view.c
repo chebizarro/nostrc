@@ -7,6 +7,7 @@
 
 #include "gnostr-dm-conversation-view.h"
 #include "gnostr-avatar-cache.h"
+#include "../util/dm_files.h"
 #include <time.h>
 
 struct _GnostrDmConversationView {
@@ -24,6 +25,7 @@ struct _GnostrDmConversationView {
     GtkStack *content_stack;
     GtkSpinner *loading_spinner;
     GtkBox *composer_box;
+    GtkButton *btn_attach;
     GtkTextView *message_entry;
     GtkButton *btn_send;
 
@@ -37,6 +39,7 @@ G_DEFINE_TYPE(GnostrDmConversationView, gnostr_dm_conversation_view, GTK_TYPE_WI
 
 enum {
     SIGNAL_SEND_MESSAGE,
+    SIGNAL_SEND_FILE,
     SIGNAL_GO_BACK,
     SIGNAL_OPEN_PROFILE,
     N_SIGNALS
@@ -55,6 +58,12 @@ gnostr_dm_message_copy(const GnostrDmMessage *msg)
     copy->content = g_strdup(msg->content);
     copy->created_at = msg->created_at;
     copy->is_outgoing = msg->is_outgoing;
+    copy->file_url = g_strdup(msg->file_url);
+    copy->file_type = g_strdup(msg->file_type);
+    copy->decryption_key = g_strdup(msg->decryption_key);
+    copy->decryption_nonce = g_strdup(msg->decryption_nonce);
+    copy->original_hash = g_strdup(msg->original_hash);
+    copy->file_size = msg->file_size;
     return copy;
 }
 
@@ -64,6 +73,11 @@ gnostr_dm_message_free(GnostrDmMessage *msg)
     if (!msg) return;
     g_free(msg->event_id);
     g_free(msg->content);
+    g_free(msg->file_url);
+    g_free(msg->file_type);
+    g_free(msg->decryption_key);
+    g_free(msg->decryption_nonce);
+    g_free(msg->original_hash);
     g_free(msg);
 }
 
@@ -110,6 +124,231 @@ format_msg_time(gint64 timestamp)
     return result;
 }
 
+/* ---- File preview async download ---- */
+
+typedef struct {
+    GWeakRef picture_ref;
+    GnostrDmFileMessage *file_msg;
+} FilePreviewCtx;
+
+static void
+on_file_preview_downloaded(uint8_t *data, gsize size, GError *error, gpointer user_data)
+{
+    FilePreviewCtx *ctx = user_data;
+    GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+
+    if (picture && data && !error) {
+        GBytes *bytes = g_bytes_new_take(data, size);
+        GdkTexture *texture = gdk_texture_new_from_bytes(bytes, NULL);
+        g_bytes_unref(bytes);
+
+        if (texture) {
+            gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+            g_object_unref(texture);
+        }
+        g_object_unref(picture);
+    } else {
+        g_free(data);
+        if (picture) g_object_unref(picture);
+    }
+
+    gnostr_dm_file_message_free(ctx->file_msg);
+    g_weak_ref_clear(&ctx->picture_ref);
+    g_free(ctx);
+}
+
+/* Build a GnostrDmFileMessage from a GnostrDmMessage's file fields */
+static GnostrDmFileMessage *
+build_file_msg_from_dm_message(const GnostrDmMessage *msg)
+{
+    if (!msg->file_url) return NULL;
+
+    GnostrDmFileMessage *fm = g_new0(GnostrDmFileMessage, 1);
+    fm->file_url = g_strdup(msg->file_url);
+    fm->file_type = g_strdup(msg->file_type);
+    fm->decryption_key_b64 = g_strdup(msg->decryption_key);
+    fm->decryption_nonce_b64 = g_strdup(msg->decryption_nonce);
+    fm->original_hash = g_strdup(msg->original_hash);
+    fm->size = msg->file_size;
+    fm->encryption_algorithm = g_strdup("aes-gcm");
+    return fm;
+}
+
+/* Download handler for file save */
+typedef struct {
+    char *save_path;
+} FileSaveCtx;
+
+static void
+on_file_save_downloaded(uint8_t *data, gsize size, GError *error, gpointer user_data)
+{
+    FileSaveCtx *ctx = user_data;
+    if (data && !error && ctx->save_path) {
+        GError *write_err = NULL;
+        if (!g_file_set_contents(ctx->save_path, (const char *)data, size, &write_err)) {
+            g_warning("[DM] Failed to save file: %s",
+                      write_err ? write_err->message : "unknown");
+            g_clear_error(&write_err);
+        } else {
+            g_message("[DM] File saved to %s", ctx->save_path);
+        }
+    }
+    g_free(data);
+    g_free(ctx->save_path);
+    g_free(ctx);
+}
+
+static void
+on_file_save_response(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+    GnostrDmFileMessage *file_msg = user_data;
+    GError *error = NULL;
+
+    GFile *file = gtk_file_dialog_save_finish(dialog, res, &error);
+    if (file) {
+        char *path = g_file_get_path(file);
+        if (path) {
+            FileSaveCtx *ctx = g_new0(FileSaveCtx, 1);
+            ctx->save_path = path;
+            gnostr_dm_file_download_and_decrypt_async(file_msg,
+                                                       on_file_save_downloaded,
+                                                       ctx, NULL);
+        }
+        g_object_unref(file);
+    } else {
+        gnostr_dm_file_message_free(file_msg);
+    }
+    g_clear_error(&error);
+}
+
+static void
+on_file_bubble_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    /* Reconstruct file message from button data */
+    const char *file_url = g_object_get_data(G_OBJECT(button), "dm-file-url");
+    if (!file_url) return;
+
+    GnostrDmFileMessage *fm = g_new0(GnostrDmFileMessage, 1);
+    fm->file_url = g_strdup(file_url);
+    fm->file_type = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-type"));
+    fm->decryption_key_b64 = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-key"));
+    fm->decryption_nonce_b64 = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-nonce"));
+    fm->original_hash = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-hash"));
+    fm->encryption_algorithm = g_strdup("aes-gcm");
+
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Save File");
+
+    /* Suggest filename from hash + extension */
+    const char *ext = "bin";
+    if (fm->file_type) {
+        if (g_str_has_prefix(fm->file_type, "image/jpeg")) ext = "jpg";
+        else if (g_str_has_prefix(fm->file_type, "image/png")) ext = "png";
+        else if (g_str_has_prefix(fm->file_type, "image/gif")) ext = "gif";
+        else if (g_str_has_prefix(fm->file_type, "image/webp")) ext = "webp";
+        else if (g_str_has_prefix(fm->file_type, "video/mp4")) ext = "mp4";
+        else if (g_str_has_prefix(fm->file_type, "audio/mp3") ||
+                 g_str_has_prefix(fm->file_type, "audio/mpeg")) ext = "mp3";
+    }
+    char *suggested = g_strdup_printf("dm-file.%s", ext);
+    gtk_file_dialog_set_initial_name(dialog, suggested);
+    g_free(suggested);
+
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(button));
+    gtk_file_dialog_save(dialog, GTK_WINDOW(root), NULL,
+                          on_file_save_response, fm);
+    g_object_unref(dialog);
+}
+
+/* Create a text message bubble */
+static GtkWidget *
+create_text_bubble(const GnostrDmMessage *msg)
+{
+    GtkWidget *bubble = gtk_label_new(msg->content);
+    gtk_label_set_wrap(GTK_LABEL(bubble), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(bubble), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_xalign(GTK_LABEL(bubble), 0.0);
+    gtk_label_set_selectable(GTK_LABEL(bubble), TRUE);
+    gtk_widget_set_margin_start(bubble, 8);
+    gtk_widget_set_margin_end(bubble, 8);
+    gtk_widget_set_margin_top(bubble, 6);
+    gtk_widget_set_margin_bottom(bubble, 6);
+    gtk_label_set_max_width_chars(GTK_LABEL(bubble), 50);
+    return bubble;
+}
+
+/* Create a file attachment bubble */
+static GtkWidget *
+create_file_bubble(const GnostrDmMessage *msg)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_set_margin_start(box, 8);
+    gtk_widget_set_margin_end(box, 8);
+    gtk_widget_set_margin_top(box, 6);
+    gtk_widget_set_margin_bottom(box, 6);
+
+    gboolean is_image = msg->file_type &&
+                         g_str_has_prefix(msg->file_type, "image/");
+
+    if (is_image) {
+        /* Image preview */
+        GtkWidget *picture = gtk_picture_new();
+        gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_CONTAIN);
+        gtk_widget_set_size_request(picture, 200, 150);
+        gtk_widget_add_css_class(picture, "dm-image-preview");
+        gtk_box_append(GTK_BOX(box), picture);
+
+        /* Async download+decrypt for preview */
+        GnostrDmFileMessage *fm = build_file_msg_from_dm_message(msg);
+        if (fm) {
+            FilePreviewCtx *ctx = g_new0(FilePreviewCtx, 1);
+            g_weak_ref_init(&ctx->picture_ref, picture);
+            ctx->file_msg = fm;
+            gnostr_dm_file_download_and_decrypt_async(fm,
+                                                       on_file_preview_downloaded,
+                                                       ctx, NULL);
+        }
+    } else {
+        /* Non-image file: icon + type + size */
+        GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_widget_set_valign(hbox, GTK_ALIGN_CENTER);
+
+        GtkWidget *icon = gtk_image_new_from_icon_name("document-save-symbolic");
+        gtk_image_set_pixel_size(GTK_IMAGE(icon), 32);
+        gtk_box_append(GTK_BOX(hbox), icon);
+
+        GtkWidget *info_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+
+        const char *type_str = msg->file_type ? msg->file_type : "File";
+        GtkWidget *type_label = gtk_label_new(type_str);
+        gtk_label_set_xalign(GTK_LABEL(type_label), 0.0);
+        gtk_box_append(GTK_BOX(info_box), type_label);
+
+        if (msg->file_size > 0) {
+            char *size_str = g_format_size(msg->file_size);
+            GtkWidget *size_label = gtk_label_new(size_str);
+            gtk_widget_add_css_class(size_label, "dim-label");
+            gtk_label_set_xalign(GTK_LABEL(size_label), 0.0);
+            gtk_box_append(GTK_BOX(info_box), size_label);
+            g_free(size_str);
+        }
+
+        gtk_box_append(GTK_BOX(hbox), info_box);
+        gtk_box_append(GTK_BOX(box), hbox);
+    }
+
+    /* "Tap to save" hint */
+    GtkWidget *save_hint = gtk_label_new("Tap to save");
+    gtk_widget_add_css_class(save_hint, "dim-label");
+    gtk_widget_add_css_class(save_hint, "caption");
+    gtk_box_append(GTK_BOX(box), save_hint);
+
+    return box;
+}
+
 /* Create a message bubble row widget */
 static GtkWidget *
 create_message_row(const GnostrDmMessage *msg)
@@ -120,19 +359,40 @@ create_message_row(const GnostrDmMessage *msg)
     gtk_widget_set_margin_top(outer, 4);
     gtk_widget_set_margin_bottom(outer, 4);
 
-    /* Message bubble */
-    GtkWidget *bubble = gtk_label_new(msg->content);
-    gtk_label_set_wrap(GTK_LABEL(bubble), TRUE);
-    gtk_label_set_wrap_mode(GTK_LABEL(bubble), PANGO_WRAP_WORD_CHAR);
-    gtk_label_set_xalign(GTK_LABEL(bubble), 0.0);
-    gtk_label_set_selectable(GTK_LABEL(bubble), TRUE);
-    gtk_widget_set_margin_start(bubble, 8);
-    gtk_widget_set_margin_end(bubble, 8);
-    gtk_widget_set_margin_top(bubble, 6);
-    gtk_widget_set_margin_bottom(bubble, 6);
+    /* Determine bubble content based on message type */
+    GtkWidget *bubble_content;
+    if (msg->file_url) {
+        bubble_content = create_file_bubble(msg);
+    } else {
+        bubble_content = create_text_bubble(msg);
+    }
 
-    GtkWidget *bubble_frame = gtk_frame_new(NULL);
-    gtk_frame_set_child(GTK_FRAME(bubble_frame), bubble);
+    GtkWidget *bubble_frame;
+
+    if (msg->file_url) {
+        /* File bubbles: wrap in a clickable button for save action */
+        bubble_frame = gtk_button_new();
+        gtk_button_set_has_frame(GTK_BUTTON(bubble_frame), FALSE);
+        gtk_button_set_child(GTK_BUTTON(bubble_frame), bubble_content);
+        gtk_widget_add_css_class(bubble_frame, "flat");
+
+        /* Store file metadata for download on click */
+        g_object_set_data_full(G_OBJECT(bubble_frame), "dm-file-url",
+                               g_strdup(msg->file_url), g_free);
+        g_object_set_data_full(G_OBJECT(bubble_frame), "dm-file-type",
+                               g_strdup(msg->file_type), g_free);
+        g_object_set_data_full(G_OBJECT(bubble_frame), "dm-file-key",
+                               g_strdup(msg->decryption_key), g_free);
+        g_object_set_data_full(G_OBJECT(bubble_frame), "dm-file-nonce",
+                               g_strdup(msg->decryption_nonce), g_free);
+        g_object_set_data_full(G_OBJECT(bubble_frame), "dm-file-hash",
+                               g_strdup(msg->original_hash), g_free);
+        g_signal_connect(bubble_frame, "clicked",
+                         G_CALLBACK(on_file_bubble_clicked), NULL);
+    } else {
+        bubble_frame = gtk_frame_new(NULL);
+        gtk_frame_set_child(GTK_FRAME(bubble_frame), bubble_content);
+    }
     gtk_widget_set_hexpand(bubble_frame, FALSE);
 
     if (msg->is_outgoing) {
@@ -144,10 +404,6 @@ create_message_row(const GnostrDmMessage *msg)
         gtk_widget_add_css_class(bubble_frame, "dm-bubble-incoming");
         gtk_widget_set_halign(outer, GTK_ALIGN_START);
     }
-
-    /* Constrain bubble width to ~70% */
-    gtk_widget_set_size_request(bubble_frame, -1, -1);
-    gtk_label_set_max_width_chars(GTK_LABEL(bubble), 50);
 
     gtk_box_append(GTK_BOX(outer), bubble_frame);
 
@@ -202,6 +458,39 @@ on_send_clicked(GtkButton *button, GnostrDmConversationView *self)
     }
 
     g_free(content);
+}
+
+static void
+on_attach_file_chosen(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+    GnostrDmConversationView *self = GNOSTR_DM_CONVERSATION_VIEW(user_data);
+
+    GError *error = NULL;
+    GFile *file = gtk_file_dialog_open_finish(dialog, res, &error);
+    if (file) {
+        char *path = g_file_get_path(file);
+        if (path) {
+            g_signal_emit(self, signals[SIGNAL_SEND_FILE], 0, path);
+            g_free(path);
+        }
+        g_object_unref(file);
+    }
+    g_clear_error(&error);
+}
+
+static void
+on_attach_clicked(GtkButton *button, GnostrDmConversationView *self)
+{
+    (void)button;
+
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Attach File");
+
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+    gtk_file_dialog_open(dialog, GTK_WINDOW(root), NULL,
+                          on_attach_file_chosen, self);
+    g_object_unref(dialog);
 }
 
 static gboolean
@@ -269,11 +558,19 @@ gnostr_dm_conversation_view_class_init(GnostrDmConversationViewClass *klass)
     gtk_widget_class_bind_template_child(widget_class, GnostrDmConversationView, content_stack);
     gtk_widget_class_bind_template_child(widget_class, GnostrDmConversationView, loading_spinner);
     gtk_widget_class_bind_template_child(widget_class, GnostrDmConversationView, composer_box);
+    gtk_widget_class_bind_template_child(widget_class, GnostrDmConversationView, btn_attach);
     gtk_widget_class_bind_template_child(widget_class, GnostrDmConversationView, message_entry);
     gtk_widget_class_bind_template_child(widget_class, GnostrDmConversationView, btn_send);
 
     signals[SIGNAL_SEND_MESSAGE] = g_signal_new(
         "send-message",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 1, G_TYPE_STRING);
+
+    signals[SIGNAL_SEND_FILE] = g_signal_new(
+        "send-file",
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
@@ -308,6 +605,7 @@ gnostr_dm_conversation_view_init(GnostrDmConversationView *self)
 
     g_signal_connect(self->btn_back, "clicked", G_CALLBACK(on_back_clicked), self);
     g_signal_connect(self->btn_peer_avatar, "clicked", G_CALLBACK(on_peer_avatar_clicked), self);
+    g_signal_connect(self->btn_attach, "clicked", G_CALLBACK(on_attach_clicked), self);
     g_signal_connect(self->btn_send, "clicked", G_CALLBACK(on_send_clicked), self);
 
     GtkEventController *key_controller = gtk_event_controller_key_new();
