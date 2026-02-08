@@ -71,6 +71,8 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
         nostr_metric_counter_add("json_event_oversize_reject", 1);
         return -1;
     }
+    int compact_evt_err_code = NOSTR_JSON_OK;
+    int compact_evt_err_offset = -1;
     if (!json_force_fallback()) {
         // Try compact fast path first using a stack-allocated shadow to avoid partial mutation
         NostrEvent shadow = {0};
@@ -90,9 +92,8 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
         } else {
             // Clean any partial allocations in shadow before falling back
             nostr_metric_counter_add("json_event_compact_fail", 1);
-            if (err.code != NOSTR_JSON_OK)
-                nostr_rl_log(NLOG_WARN, "json", "event compact parse failed: %s (offset %d)",
-                             nostr_json_error_string(err.code), err.offset);
+            compact_evt_err_code = err.code;
+            compact_evt_err_offset = err.offset;
             nostr_event_clear_fields(&shadow);
         }
     }
@@ -100,7 +101,15 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
     if (json_interface && json_interface->deserialize_event) {
         nostr_metric_counter_add("json_event_backend_used", 1);
         int rc = json_interface->deserialize_event(event, json_str);
+        if (rc != 0 && compact_evt_err_code != NOSTR_JSON_OK) {
+            nostr_rl_log(NLOG_WARN, "json", "event parse failed: compact: %s (offset %d)",
+                         nostr_json_error_string(compact_evt_err_code), compact_evt_err_offset);
+        }
         return rc;
+    }
+    if (compact_evt_err_code != NOSTR_JSON_OK) {
+        nostr_rl_log(NLOG_WARN, "json", "event parse failed (no backend): %s (offset %d)",
+                     nostr_json_error_string(compact_evt_err_code), compact_evt_err_offset);
     }
     return -1;
 }
@@ -126,6 +135,8 @@ int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
         nostr_metric_counter_add("json_envelope_oversize_reject", 1);
         return -1;
     }
+    int compact_err_code = NOSTR_JSON_OK;
+    int compact_err_offset = -1;
     if (!json_force_fallback()) {
         // Try compact fast path first
         NostrJsonErrorInfo env_err = {0, -1};
@@ -133,14 +144,24 @@ int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
             nostr_metric_counter_add("json_envelope_compact_ok", 1);
             return 0;
         }
-        if (env_err.code != NOSTR_JSON_OK)
-            nostr_rl_log(NLOG_WARN, "json", "envelope compact parse failed: %s (offset %d)",
-                         nostr_json_error_string(env_err.code), env_err.offset);
+        compact_err_code = env_err.code;
+        compact_err_offset = env_err.offset;
     }
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_envelope) {
         nostr_metric_counter_add("json_envelope_backend_used", 1);
-        return json_interface->deserialize_envelope(envelope, json);
+        int rc = json_interface->deserialize_envelope(envelope, json);
+        if (rc != 0 && compact_err_code != NOSTR_JSON_OK) {
+            /* Both compact and backend failed - log at WARN */
+            nostr_rl_log(NLOG_WARN, "json", "envelope parse failed: compact: %s (offset %d)",
+                         nostr_json_error_string(compact_err_code), compact_err_offset);
+        }
+        return rc;
+    }
+    /* No backend available - log compact failure if any */
+    if (compact_err_code != NOSTR_JSON_OK) {
+        nostr_rl_log(NLOG_WARN, "json", "envelope parse failed (no backend): %s (offset %d)",
+                     nostr_json_error_string(compact_err_code), compact_err_offset);
     }
     return -1;
 }
@@ -166,6 +187,8 @@ int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
         nostr_metric_counter_add("json_filter_oversize_reject", 1);
         return -1;
     }
+    int compact_filt_err_code = NOSTR_JSON_OK;
+    int compact_filt_err_offset = -1;
     if (!json_force_fallback()) {
         // Try compact fast path first
         NostrJsonErrorInfo filt_err = {0, -1};
@@ -173,14 +196,22 @@ int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
             nostr_metric_counter_add("json_filter_compact_ok", 1);
             return 0;
         }
-        if (filt_err.code != NOSTR_JSON_OK)
-            nostr_rl_log(NLOG_WARN, "json", "filter compact parse failed: %s (offset %d)",
-                         nostr_json_error_string(filt_err.code), filt_err.offset);
+        compact_filt_err_code = filt_err.code;
+        compact_filt_err_offset = filt_err.offset;
     }
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_filter) {
         nostr_metric_counter_add("json_filter_backend_used", 1);
-        return json_interface->deserialize_filter(filter, json);
+        int rc = json_interface->deserialize_filter(filter, json);
+        if (rc != 0 && compact_filt_err_code != NOSTR_JSON_OK) {
+            nostr_rl_log(NLOG_WARN, "json", "filter parse failed: compact: %s (offset %d)",
+                         nostr_json_error_string(compact_filt_err_code), compact_filt_err_offset);
+        }
+        return rc;
+    }
+    if (compact_filt_err_code != NOSTR_JSON_OK) {
+        nostr_rl_log(NLOG_WARN, "json", "filter parse failed (no backend): %s (offset %d)",
+                     nostr_json_error_string(compact_filt_err_code), compact_filt_err_offset);
     }
     return -1;
 }
