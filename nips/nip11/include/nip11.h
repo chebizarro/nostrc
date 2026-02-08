@@ -40,7 +40,7 @@ typedef struct {
     bool restricted_writes;
 } RelayLimitationDocument;
 
-typedef struct {
+typedef struct RelayInformationDocument {
     char *url;
     char *name;
     char *description;
