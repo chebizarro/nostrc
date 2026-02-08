@@ -8,7 +8,9 @@
 #include "gnostr-profile-service.h"
 #include "../storage_ndb.h"
 #include "../ui/gnostr-profile-provider.h"
-#include "nostr_simple_pool.h"
+#include "nostr_pool.h"
+#include "nostr_event.h"
+#include "nostr-filter.h"
 #include "relays.h"
 #include <string.h>
 #include <stdlib.h>
@@ -49,7 +51,7 @@ typedef struct {
   size_t relay_url_count;
 
   /* Network fetch */
-  GnostrSimplePool *pool;
+  GNostrPool *pool;
   gboolean owns_pool;
   GCancellable *cancellable;
 
@@ -161,7 +163,8 @@ static gboolean debounce_timeout_cb(gpointer user_data);
 
 typedef struct {
   GnostrProfileService *svc;
-  GPtrArray *batch;  /* owned; char* pubkeys */
+  GPtrArray *batch;      /* owned; char* pubkeys */
+  NostrFilters *filters; /* owned; freed in callback */
 } BatchFetchCtx;
 
 static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -172,8 +175,8 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
   GPtrArray *batch = ctx->batch;
 
   GError *error = NULL;
-  GPtrArray *jsons = gnostr_simple_pool_fetch_profiles_by_authors_finish(
-      GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *jsons = gnostr_pool_query_finish(
+      GNOSTR_POOL(source), res, &error);
 
   if (error) {
     g_warning("[PROFILE_SERVICE] Fetch error: %s", error->message);
@@ -196,25 +199,20 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
         g_debug("[PROFILE_SERVICE] Failed to ingest profile event");
       }
 
-      /* Extract pubkey from event JSON and update provider cache */
-      /* Parse JSON to get pubkey field */
-      const char *pk_start = strstr(evt_json, "\"pubkey\"");
-      if (pk_start) {
-        pk_start = strchr(pk_start + 8, '"');
-        if (pk_start) {
-          pk_start++;
-          char pubkey_hex[65] = {0};
-          strncpy(pubkey_hex, pk_start, 64);
-          if (strlen(pubkey_hex) == 64) {
-            /* Update the profile provider cache */
-            gnostr_profile_provider_update(pubkey_hex, evt_json);
+      /* Extract pubkey from event JSON using GNostrEvent and update provider cache */
+      GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+      if (evt) {
+        const char *pubkey_hex = gnostr_event_get_pubkey(evt);
+        if (pubkey_hex && strlen(pubkey_hex) == 64) {
+          /* Update the profile provider cache */
+          gnostr_profile_provider_update(pubkey_hex, evt_json);
 
-            /* Get the updated profile and fire callbacks */
-            GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
-            fire_callbacks(svc, pubkey_hex, meta);
-            if (meta) gnostr_profile_meta_free(meta);
-          }
+          /* Get the updated profile and fire callbacks */
+          GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+          fire_callbacks(svc, pubkey_hex, meta);
+          if (meta) gnostr_profile_meta_free(meta);
         }
+        g_object_unref(evt);
       }
     }
     g_ptr_array_unref(jsons);
@@ -238,6 +236,7 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
 
   /* Cleanup */
   if (batch) g_ptr_array_free(batch, TRUE);
+  if (ctx->filters) nostr_filters_free(ctx->filters);
   g_free(ctx);
 
   /* Mark fetch no longer in progress and dispatch next batch */
@@ -290,7 +289,7 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
   }
 
   if (!svc->pool) {
-    svc->pool = gnostr_simple_pool_new();
+    svc->pool = gnostr_pool_new();
     svc->owns_pool = TRUE;
   }
 
@@ -333,22 +332,27 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
 
   g_mutex_unlock(&svc->mutex);
 
+  /* Sync relays on the pool */
+  gnostr_pool_sync_relays(svc->pool, (const gchar **)urls, url_count);
+
+  /* Build kind-0 filter for the batch of authors */
+  NostrFilter *f = nostr_filter_new();
+  int kind0 = 0;
+  nostr_filter_set_kinds(f, &kind0, 1);
+  nostr_filter_set_authors(f, (const char *const *)authors, n);
+  NostrFilters *filters = nostr_filters_new();
+  nostr_filters_add(filters, f);
+  nostr_filter_free(f);
+
   /* Create context for callback */
   BatchFetchCtx *ctx = g_new0(BatchFetchCtx, 1);
   ctx->svc = svc;
   ctx->batch = batch; /* transfer ownership */
+  ctx->filters = filters; /* transfer ownership */
 
   /* Start async fetch */
-  gnostr_simple_pool_fetch_profiles_by_authors_async(
-      svc->pool,
-      urls,
-      url_count,
-      (const char* const*)authors,
-      n,
-      0, /* no limit */
-      svc->cancellable,
-      on_profiles_fetched,
-      ctx);
+  gnostr_pool_query_async(svc->pool, filters, svc->cancellable,
+                          on_profiles_fetched, ctx);
 
   g_free((gpointer)authors);
   g_free((gpointer)urls);

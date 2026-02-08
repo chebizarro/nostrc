@@ -44,6 +44,10 @@
 #include "nostr-filter.h"
 /* Canonical JSON helpers (for nostr_event_from_json, etc.) */
 #include "nostr-json.h"
+/* GObject wrappers for profile-related code */
+#include "nostr_event.h"
+#include "nostr_json.h"
+#include "nostr_pool.h"
 /* NostrdB storage */
 #include "../storage_ndb.h"
 #include "../model/gn-ndb-sub-dispatcher.h"
@@ -182,6 +186,8 @@ struct _GnostrMainWindow {
   size_t           live_url_count;     /* number of current live relays */
 
   /* Sequential profile batch dispatch state */
+  GNostrPool     *profile_pool;          /* owned; GObject pool for profile fetching */
+  NostrFilters   *profile_batch_filters; /* owned; kept alive during async query */
   GPtrArray      *profile_batches;       /* owned; elements: GPtrArray* of char* authors */
   guint           profile_batch_pos;     /* next batch index */
   const char    **profile_batch_urls;    /* owned array pointer + strings */
@@ -3587,8 +3593,8 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
   }
 
   GError *error = NULL;
-  GPtrArray *jsons = gnostr_simple_pool_fetch_profiles_by_authors_finish(
-    GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *jsons = gnostr_pool_query_finish(
+    GNOSTR_POOL(source), res, &error);
 
   if (error) {
     g_warning("[AUTH] Profile fetch error: %s", error->message);
@@ -3596,12 +3602,12 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
   }
 
   if (jsons && jsons->len > 0) {
-    /* Parse the first profile event using nostr_event_deserialize (same as profile pane) */
+    /* Parse the first profile event using GNostrEvent */
     const char *evt_json = g_ptr_array_index(jsons, 0);
     if (evt_json) {
-      NostrEvent *evt = nostr_event_new();
-      if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
-        const char *content = nostr_event_get_content(evt);
+      GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+      if (evt) {
+        const char *content = gnostr_event_get_content(evt);
         if (content && *content) {
           /* Ingest into nostrdb for future use */
           storage_ndb_ingest_event_json(evt_json, NULL);
@@ -3625,8 +3631,8 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
             }
           }
         }
+        g_object_unref(evt);
       }
-      if (evt) nostr_event_free(evt);
     }
     g_ptr_array_unref(jsons);
   }
@@ -3692,22 +3698,36 @@ static void on_nip65_loaded_for_profile(GPtrArray *nip65_relays, gpointer user_d
   }
 
   if (relay_urls->len > 0) {
-    const char **urls = g_new0(const char*, relay_urls->len);
+    const gchar **urls = g_new0(const gchar*, relay_urls->len);
     for (guint i = 0; i < relay_urls->len; i++) {
       urls[i] = g_ptr_array_index(relay_urls, i);
     }
+
+    /* Create a GNostrPool, sync relays, build kind-0 filter */
+    GNostrPool *profile_pool = gnostr_pool_new();
+    gnostr_pool_sync_relays(profile_pool, urls, relay_urls->len);
+
+    NostrFilter *f = nostr_filter_new();
+    int kind0 = 0;
+    nostr_filter_set_kinds(f, &kind0, 1);
     const char *authors[1] = { self->user_pubkey_hex };
+    nostr_filter_set_authors(f, (const char *const *)authors, 1);
+    nostr_filter_set_limit(f, 1);
+    NostrFilters *filters = nostr_filters_new();
+    nostr_filters_add(filters, f);
+    nostr_filter_free(f);
+
+    /* Stash filters on the pool so they stay alive during the async query.
+     * The pool outlives the query since the callback receives it as source. */
+    g_object_set_data_full(G_OBJECT(profile_pool), "profile-filters",
+                           filters, (GDestroyNotify)nostr_filters_free);
 
     g_debug("[AUTH] Fetching profile from %u relays (after NIP-65 load)", relay_urls->len);
-    gnostr_simple_pool_fetch_profiles_by_authors_async(
-      gnostr_get_shared_query_pool(),
-      urls, relay_urls->len,
-      authors, 1,
-      1, /* limit */
-      NULL, /* cancellable */
-      on_user_profile_fetched,
-      self); /* self already has a ref from caller */
+    gnostr_pool_query_async(profile_pool, filters, NULL,
+                            on_user_profile_fetched,
+                            self); /* self already has a ref from caller */
 
+    g_object_unref(profile_pool); /* the GTask holds a ref during the query */
     g_free(urls);
   } else {
     g_object_unref(self);
@@ -4081,16 +4101,16 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
         int event_len = 0;
         if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len) == 0 && event_json) {
           /* storage_ndb_get_profile_by_pubkey returns full event JSON, extract content field */
-          NostrEvent *evt = nostr_event_new();
-          if (evt && nostr_event_deserialize(evt, event_json) == 0) {
-            const char *content = nostr_event_get_content(evt);
+          GNostrEvent *evt = gnostr_event_new_from_json(event_json, NULL);
+          if (evt) {
+            const char *content = gnostr_event_get_content(evt);
             if (content && *content) {
               extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
               gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(profile_pane), content);
               found = TRUE;
             }
+            g_object_unref(evt);
           }
-          if (evt) nostr_event_free(evt);
           free(event_json);
         }
       }
@@ -4371,10 +4391,10 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
         if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
           /* Parse JSON to get display name */
           char *dn = NULL;
-          if (nostr_json_get_string(meta_json, "display_name", &dn) != 0 || !dn || !*dn) {
+          dn = gnostr_json_get_string(meta_json, "display_name", NULL);
+          if (!dn || !*dn) {
             g_free(dn);
-            dn = NULL;
-            nostr_json_get_string(meta_json, "name", &dn);
+            dn = gnostr_json_get_string(meta_json, "name", NULL);
           }
           if (dn && *dn) {
             display_name = dn;
@@ -4445,10 +4465,10 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
         int meta_len = 0;
         if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
           char *dn = NULL;
-          if (nostr_json_get_string(meta_json, "display_name", &dn) != 0 || !dn || !*dn) {
+          dn = gnostr_json_get_string(meta_json, "display_name", NULL);
+          if (!dn || !*dn) {
             g_free(dn);
-            dn = NULL;
-            nostr_json_get_string(meta_json, "name", &dn);
+            dn = gnostr_json_get_string(meta_json, "name", NULL);
           }
           if (dn && *dn) {
             display_name = dn;
@@ -4501,10 +4521,10 @@ void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, i
         int meta_len = 0;
         if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
           char *dn = NULL;
-          if (nostr_json_get_string(meta_json, "display_name", &dn) != 0 || !dn || !*dn) {
+          dn = gnostr_json_get_string(meta_json, "display_name", NULL);
+          if (!dn || !*dn) {
             g_free(dn);
-            dn = NULL;
-            nostr_json_get_string(meta_json, "name", &dn);
+            dn = gnostr_json_get_string(meta_json, "name", NULL);
           }
           if (dn && *dn) {
             display_name = dn;
@@ -4859,8 +4879,8 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
       int plen = 0;
       if (storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen) == 0 && pjson && plen > 0) {
         /* Found in DB - apply immediately for fast UI update */
-        char *content_str = NULL;
-        if (nostr_json_get_string(pjson, "content", &content_str) == 0 && content_str) {
+        gchar *content_str = gnostr_json_get_string(pjson, "content", NULL);
+        if (content_str) {
           update_meta_from_profile_json(self, pkhex, content_str);
           cached_applied++;
           g_free(content_str);
@@ -4978,7 +4998,7 @@ typedef struct ProfileBatchCtx {
 } ProfileBatchCtx;
 
 static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source); (void)pool;
+  GNostrPool *pool = GNOSTR_POOL(source); (void)pool;
   ProfileBatchCtx *ctx = (ProfileBatchCtx*)user_data;
   
   if (!ctx) {
@@ -4987,7 +5007,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
   }
   
   GError *error = NULL;
-  GPtrArray *jsons = gnostr_simple_pool_fetch_profiles_by_authors_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *jsons = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
   if (error) {
     g_warning("profile_fetch: error - %s", error->message);
     g_clear_error(&error);
@@ -5005,12 +5025,12 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (evt_json) {
         /* Track unique pubkeys */
-        NostrEvent *evt = nostr_event_new();
-        if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
-          const char *pk = nostr_event_get_pubkey(evt);
+        GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+        if (evt) {
+          const char *pk = gnostr_event_get_pubkey(evt);
           if (pk) g_hash_table_add(unique_pks, g_strdup(pk));
+          g_object_unref(evt);
         }
-        if (evt) nostr_event_free(evt);
       }
     }
     guint unique_count = g_hash_table_size(unique_pks);
@@ -5066,10 +5086,10 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (!evt_json) continue;
-      NostrEvent *evt = nostr_event_new();
-      if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
-        const char *pk_hex = nostr_event_get_pubkey(evt);
-        const char *content = nostr_event_get_content(evt);
+      GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+      if (evt) {
+        const char *pk_hex = gnostr_event_get_pubkey(evt);
+        const char *content = gnostr_event_get_content(evt);
         if (pk_hex && content) {
           /* Collect for bulk dispatch */
           ProfileApplyCtx *pctx = g_new0(ProfileApplyCtx, 1);
@@ -5078,6 +5098,8 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
           g_ptr_array_add(items, pctx);
           dispatched++;
         }
+        deserialized++;
+        g_object_unref(evt);
       } else {
         /* Surface parse problem with a short snippet (first 120 chars) */
         size_t len = strlen(evt_json);
@@ -5087,10 +5109,6 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
         snippet[copy] = '\0';
         g_warning("profile_fetch: deserialize failed at index %u len=%zu json='%s'%s",
                  i, len, snippet, len > 120 ? "…" : "");
-      }
-      if (evt) {
-        deserialized++;
-        nostr_event_free(evt);
       }
     }
     g_debug("[PROFILE] ✓ Batch complete: %u profiles applied", dispatched);
@@ -5152,11 +5170,11 @@ static void prepopulate_all_profiles_from_cache(GnostrMainWindow *self) {
     for (int i = 0; i < n; i++) {
       const char *evt_json = arr[i];
       if (!evt_json) continue;
-      NostrEvent *evt = nostr_event_new();
-      if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
-        if (nostr_event_get_kind(evt) == 0) {
-          const char *pk_hex = nostr_event_get_pubkey(evt);
-          const char *content = nostr_event_get_content(evt);
+      GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+      if (evt) {
+        if (gnostr_event_get_kind(evt) == 0) {
+          const char *pk_hex = gnostr_event_get_pubkey(evt);
+          const char *content = gnostr_event_get_content(evt);
           if (pk_hex && content) {
             ProfileApplyCtx *pctx = g_new0(ProfileApplyCtx, 1);
             pctx->pubkey_hex = g_strdup(pk_hex);
@@ -5164,8 +5182,8 @@ static void prepopulate_all_profiles_from_cache(GnostrMainWindow *self) {
             g_ptr_array_add(items, pctx);
           }
         }
+        g_object_unref(evt);
       }
-      if (evt) nostr_event_free(evt);
     }
     if (items->len > 0) {
       g_debug("prepopulate_all_profiles_from_cache: scheduling %u cached profiles", items->len);
@@ -6015,6 +6033,14 @@ static void gnostr_main_window_dispose(GObject *object) {
     free_urls_owned(self->profile_batch_urls, self->profile_batch_url_count);
     self->profile_batch_urls = NULL;
     self->profile_batch_url_count = 0;
+  }
+  if (self->profile_batch_filters) {
+    nostr_filters_free(self->profile_batch_filters);
+    self->profile_batch_filters = NULL;
+  }
+  if (self->profile_pool) {
+    g_object_unref(self->profile_pool);
+    self->profile_pool = NULL;
   }
   if (self->pool) {
     /* Disconnect signal handlers BEFORE unreffing to prevent use-after-free
@@ -7350,6 +7376,7 @@ static gboolean profile_dispatch_next(gpointer data) {
   }
 
   if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->profile_pool) self->profile_pool = gnostr_pool_new();
   if (!self->profile_fetch_cancellable) self->profile_fetch_cancellable = g_cancellable_new();
   if (g_cancellable_is_cancelled(self->profile_fetch_cancellable)) {
     /* Cancelled: clean up any leftover state */
@@ -7395,24 +7422,35 @@ static gboolean profile_dispatch_next(gpointer data) {
   ctx->self = g_object_ref(self);
   ctx->batch = batch; /* ownership transferred; freed in callback */
 
-  int limit_per_author = 0; /* no limit; filter limit is total, not per author */
   g_debug("[PROFILE] Dispatching batch %u/%u (%zu authors, active=%u/%u)",
           self->profile_batch_pos, self->profile_batches ? self->profile_batches->len : 0, n,
           self->profile_fetch_active, self->profile_fetch_max_concurrent);
-  
+
   /* Increment active fetch counter */
   self->profile_fetch_active++;
-  
-  gnostr_simple_pool_fetch_profiles_by_authors_async(
-      self->pool,
-      self->profile_batch_urls,
-      self->profile_batch_url_count,
-      (const char* const*)authors,
-      n,
-      limit_per_author,
-      self->profile_fetch_cancellable,
-      on_profiles_batch_done,
-      ctx);
+
+  /* Sync relays on the profile pool and build kind-0 filter */
+  gnostr_pool_sync_relays(self->profile_pool,
+                          self->profile_batch_urls,
+                          self->profile_batch_url_count);
+
+  NostrFilter *f = nostr_filter_new();
+  int kind0 = 0;
+  nostr_filter_set_kinds(f, &kind0, 1);
+  nostr_filter_set_authors(f, (const char *const *)authors, n);
+  /* Free any previous filters */
+  if (self->profile_batch_filters) {
+    nostr_filters_free(self->profile_batch_filters);
+  }
+  self->profile_batch_filters = nostr_filters_new();
+  nostr_filters_add(self->profile_batch_filters, f);
+  nostr_filter_free(f);
+
+  gnostr_pool_query_async(self->profile_pool,
+                          self->profile_batch_filters,
+                          self->profile_fetch_cancellable,
+                          on_profiles_batch_done,
+                          ctx);
 
   g_free((gpointer)authors);
   /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */

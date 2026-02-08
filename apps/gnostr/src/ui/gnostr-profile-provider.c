@@ -1,6 +1,7 @@
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
-#include <json.h>
+#include <json.h>          /* nostr_json_is_object_str (no GObject wrapper yet) */
+#include "nostr_json.h"    /* GObject JSON utilities */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -120,7 +121,7 @@ static void lru_evict(void) {
  * We detect which format and extract accordingly. */
 static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   if (!pk || !json_str) return NULL;
-  if (!nostr_json_is_valid(json_str)) return NULL;
+  if (!gnostr_json_is_valid(json_str)) return NULL;
   if (!nostr_json_is_object_str(json_str)) return NULL;
 
   GnostrProfileMeta *m = g_new0(GnostrProfileMeta, 1);
@@ -129,61 +130,59 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   /* Check if this is a kind-0 event by looking for "content" field.
    * If found, the profile metadata is inside the content field as nested JSON. */
   const char *profile_json = json_str;
-  char *content_str = NULL;
-  if (nostr_json_get_string(json_str, "content", &content_str) == 0 && content_str && *content_str) {
+  gchar *content_str = gnostr_json_get_string(json_str, "content", NULL);
+  if (content_str && *content_str) {
     /* This is a kind-0 event - parse the content field */
-    if (nostr_json_is_valid(content_str) && nostr_json_is_object_str(content_str)) {
+    if (gnostr_json_is_valid(content_str) && nostr_json_is_object_str(content_str)) {
       profile_json = content_str;
     }
   }
 
-  char *tmp = NULL;
-  if (nostr_json_get_string(profile_json, "display_name", &tmp) == 0 && tmp && *tmp) {
-    m->display_name = g_strdup(tmp);
-    free(tmp);
+  gchar *tmp = gnostr_json_get_string(profile_json, "display_name", NULL);
+  if (tmp && *tmp) {
+    m->display_name = tmp;
   } else {
-    free(tmp);
+    g_free(tmp);
   }
 
-  tmp = NULL;
-  if (nostr_json_get_string(profile_json, "name", &tmp) == 0 && tmp && *tmp) {
-    m->name = g_strdup(tmp);
-    free(tmp);
+  tmp = gnostr_json_get_string(profile_json, "name", NULL);
+  if (tmp && *tmp) {
+    m->name = tmp;
   } else {
-    free(tmp);
+    g_free(tmp);
   }
 
-  tmp = NULL;
-  if (nostr_json_get_string(profile_json, "picture", &tmp) == 0 && tmp && *tmp) {
-    m->picture = g_strdup(tmp);
-    free(tmp);
+  tmp = gnostr_json_get_string(profile_json, "picture", NULL);
+  if (tmp && *tmp) {
+    m->picture = tmp;
   } else {
-    free(tmp);
+    g_free(tmp);
   }
 
-  tmp = NULL;
-  if (nostr_json_get_string(profile_json, "nip05", &tmp) == 0 && tmp && *tmp) {
-    m->nip05 = g_strdup(tmp);
-    free(tmp);
+  tmp = gnostr_json_get_string(profile_json, "nip05", NULL);
+  if (tmp && *tmp) {
+    m->nip05 = tmp;
   } else {
-    free(tmp);
+    g_free(tmp);
   }
 
-  tmp = NULL;
-  if (nostr_json_get_string(profile_json, "lud16", &tmp) == 0 && tmp && *tmp) {
-    m->lud16 = g_strdup(tmp);
-    free(tmp);
+  tmp = gnostr_json_get_string(profile_json, "lud16", NULL);
+  if (tmp && *tmp) {
+    m->lud16 = tmp;
   } else {
-    free(tmp);
+    g_free(tmp);
   }
 
   /* Extract created_at from kind-0 event if available */
-  int64_t created_at = 0;
-  if (nostr_json_get_int64(json_str, "created_at", &created_at) == 0) {
+  GError *err = NULL;
+  gint64 created_at = gnostr_json_get_int64(json_str, "created_at", &err);
+  if (!err) {
     m->created_at = created_at;
+  } else {
+    g_clear_error(&err);
   }
 
-  free(content_str);
+  g_free(content_str);
   return m;
 }
 
