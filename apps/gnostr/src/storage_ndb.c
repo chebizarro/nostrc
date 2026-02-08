@@ -1418,6 +1418,31 @@ char **storage_ndb_note_get_hashtags(storage_ndb_note *note)
   return (char **)g_ptr_array_free(hashtags, FALSE);
 }
 
+/* nostrc-57j: Get relay URLs that a note was seen on */
+char **storage_ndb_note_get_relays(void *txn, uint64_t note_key)
+{
+  if (!txn || note_key == 0) return NULL;
+  struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+
+  struct ndb_note_relay_iterator iter;
+  if (!ndb_note_relay_iterate_start(ntxn, &iter, note_key))
+    return NULL;
+
+  GPtrArray *relays = g_ptr_array_new();
+  const char *relay;
+  while ((relay = ndb_note_relay_iterate_next(&iter)) != NULL) {
+    g_ptr_array_add(relays, g_strdup(relay));
+  }
+  ndb_note_relay_iterate_close(&iter);
+
+  if (relays->len == 0) {
+    g_ptr_array_free(relays, TRUE);
+    return NULL;
+  }
+  g_ptr_array_add(relays, NULL); /* NULL-terminate */
+  return (char **)g_ptr_array_free(relays, FALSE);
+}
+
 /* ============== Contact List / Following API ============== */
 
 /* Context and callback for extracting p-tags from contact list */

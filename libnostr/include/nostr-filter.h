@@ -28,6 +28,7 @@ typedef struct NostrFilter {
     int limit;
     char *search;
     bool limit_zero;
+    StringArray relays;       /* nostrc-57j: relay URLs for relay-aware filtering */
 } NostrFilter;
 
 typedef struct NostrFilters {
@@ -247,10 +248,17 @@ size_t        nostr_filter_tags_len(const NostrFilter *filter);
 size_t        nostr_filter_tag_len(const NostrFilter *filter, size_t tag_index);
 const char   *nostr_filter_tag_get(const NostrFilter *filter, size_t tag_index, size_t item_index);
 
+/* relays */
+const StringArray *nostr_filter_get_relays(const NostrFilter *filter);
+void nostr_filter_set_relays(NostrFilter *filter, const char *const *relays, size_t count);
+size_t        nostr_filter_relays_len(const NostrFilter *filter);
+const char   *nostr_filter_relays_get(const NostrFilter *filter, size_t index);
+
 /* mutating helpers */
 void          nostr_filter_add_id(NostrFilter *filter, const char *id);
 void          nostr_filter_add_kind(NostrFilter *filter, int kind);
 void          nostr_filter_add_author(NostrFilter *filter, const char *author);
+void          nostr_filter_add_relay(NostrFilter *filter, const char *relay);
 void          nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *value, const char *relay);
 
 /* Compact fast-path JSON (de)serializers */
@@ -384,6 +392,17 @@ NostrFilterBuilder *nostr_filter_builder_limit(NostrFilterBuilder *builder, unsi
  * Returns: (transfer none): The same builder for chaining
  */
 NostrFilterBuilder *nostr_filter_builder_tag(NostrFilterBuilder *builder, const char *key, const char *value);
+
+/**
+ * nostr_filter_builder_relays:
+ * @builder: The builder instance
+ * @...: NULL-terminated list of relay URL strings
+ *
+ * Sets the relay URLs to filter. Pass strings followed by NULL terminator.
+ *
+ * Returns: (transfer none): The same builder for chaining
+ */
+NostrFilterBuilder *nostr_filter_builder_relays(NostrFilterBuilder *builder, ...);
 
 /**
  * nostr_filter_builder_build:

@@ -118,6 +118,11 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note);
  * Caller must g_strfreev() the result. */
 char **storage_ndb_note_get_hashtags(storage_ndb_note *note);
 
+/* nostrc-57j: Get relay URLs that a note was seen on.
+ * Returns NULL-terminated array of relay URL strings, or NULL if none.
+ * Caller must g_strfreev() the result. txn must be open. */
+char **storage_ndb_note_get_relays(void *txn, uint64_t note_key);
+
 /* ============== Contact List / Following API ============== */
 
 /* nostrc-f0ll: Get followed pubkeys from a user's contact list (kind 3).

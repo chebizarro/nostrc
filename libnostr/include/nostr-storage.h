@@ -40,6 +40,10 @@ typedef struct {
   int  (*set_reconcile)(NostrStorage*, void *state, const void *peer_msg, size_t len,
                         void **resp, size_t *resp_len);
   void (*set_free)(NostrStorage*, void *state);
+
+  /* Relay-aware ingestion (optional; NULL means relay provenance not recorded) */
+  int (*put_event_with_relay)(NostrStorage*, const NostrEvent *ev, const char *relay);
+  int (*ingest_ldjson_with_relay)(NostrStorage*, const char *ldjson, size_t len, const char *relay);
 } NostrStorageVTable;
 
 struct NostrStorage { NostrStorageVTable *vt; void *impl; };

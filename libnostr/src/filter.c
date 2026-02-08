@@ -24,6 +24,7 @@ NostrFilter *nostr_filter_new(void) {
     filter->limit = 0;
     filter->search = NULL;
     filter->limit_zero = false;
+    string_array_init(&filter->relays);
 
     return filter;
 }
@@ -65,6 +66,7 @@ static void free_filter_contents(NostrFilter *filter) {
     string_array_free(&filter->ids);
     int_array_free(&filter->kinds);
     string_array_free(&filter->authors);
+    string_array_free(&filter->relays);
     if (filter->tags) {
         nostr_tags_free(filter->tags);
         filter->tags = NULL;
@@ -100,6 +102,7 @@ void nostr_filter_clear(NostrFilter *filter) {
     filter->until = 0;
     filter->limit = 0;
     filter->limit_zero = false;
+    string_array_init(&filter->relays);
 }
 
 /* Deep-copy helpers for tags */
@@ -155,6 +158,11 @@ NostrFilter *nostr_filter_copy(const NostrFilter *src) {
     f->limit_zero = src->limit_zero;
     /* search */
     if (src->search) f->search = strdup(src->search);
+    /* relays */
+    for (size_t i = 0, n = string_array_size((StringArray *)&src->relays); i < n; i++) {
+        const char *s = string_array_get(&src->relays, i);
+        if (s) string_array_add(&f->relays, s);
+    }
     return f;
 }
 
@@ -562,6 +570,37 @@ void nostr_filter_add_author(NostrFilter *filter, const char *author) {
     string_array_add(&filter->authors, author);
 }
 
+/* nostrc-57j: relay accessors */
+const StringArray *nostr_filter_get_relays(const NostrFilter *filter) {
+    return filter ? &filter->relays : NULL;
+}
+
+void nostr_filter_set_relays(NostrFilter *filter, const char *const *relays, size_t count) {
+    if (!filter) return;
+    string_array_free(&filter->relays);
+    string_array_init(&filter->relays);
+    if (!relays) return;
+    for (size_t i = 0; i < count; i++) {
+        if (relays[i]) string_array_add(&filter->relays, relays[i]);
+    }
+}
+
+size_t nostr_filter_relays_len(const NostrFilter *filter) {
+    return filter ? string_array_size((StringArray *)&filter->relays) : 0;
+}
+
+const char *nostr_filter_relays_get(const NostrFilter *filter, size_t index) {
+    if (!filter) return NULL;
+    size_t n = string_array_size((StringArray *)&filter->relays);
+    if (index >= n) return NULL;
+    return string_array_get(&filter->relays, index);
+}
+
+void nostr_filter_add_relay(NostrFilter *filter, const char *relay) {
+    if (!filter || !relay) return;
+    string_array_add(&filter->relays, relay);
+}
+
 void nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *value, const char *relay) {
     if (!filter || !key) return;
     /* Enforce tags-per-event cap */
@@ -731,6 +770,18 @@ char *nostr_filter_serialize_compact(const NostrFilter *f) {
         if (need_comma) ok &= sb_putc(&sb, ',');
         ok &= sb_puts(&sb, "\"search\":");
         ok &= sb_put_quoted(&sb, f->search);
+        need_comma = true;
+    }
+    /* relays */
+    n = string_array_size((StringArray *)&f->relays);
+    if (ok && n > 0) {
+        if (need_comma) ok &= sb_putc(&sb, ',');
+        ok &= sb_puts(&sb, "\"relays\":[");
+        for (size_t i = 0; i < n && ok; i++) {
+            if (i) ok &= sb_putc(&sb, ',');
+            ok &= sb_put_quoted(&sb, string_array_get((StringArray *)&f->relays, i));
+        }
+        ok &= sb_putc(&sb, ']');
         need_comma = true;
     }
     /* tags as dynamic hash keys */
@@ -992,6 +1043,10 @@ int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
             if (filter->search) free(filter->search);
             filter->search = val;
             touched = 1;
+        } else if (strcmp(key, "relays") == 0) {
+            free(key);
+            if (!parse_string_array_to_array(&filter->relays, &p)) return 0;
+            touched = 1;
         } else {
             // skip other values quickly
             const char *q = skip_value(p);
@@ -1080,6 +1135,18 @@ NostrFilterBuilder *nostr_filter_builder_until(NostrFilterBuilder *builder, int6
 NostrFilterBuilder *nostr_filter_builder_limit(NostrFilterBuilder *builder, unsigned int limit) {
     if (!builder || !builder->filter) return builder;
     builder->filter->limit = (int)limit;
+    return builder;
+}
+
+NostrFilterBuilder *nostr_filter_builder_relays(NostrFilterBuilder *builder, ...) {
+    if (!builder || !builder->filter) return builder;
+    va_list args;
+    va_start(args, builder);
+    const char *relay;
+    while ((relay = va_arg(args, const char *)) != NULL) {
+        nostr_filter_add_relay(builder->filter, relay);
+    }
+    va_end(args);
     return builder;
 }
 

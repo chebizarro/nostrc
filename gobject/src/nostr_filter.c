@@ -20,6 +20,7 @@ struct _GNostrFilter {
     gint64 until;
     gint   limit;
     NostrTags *tags;   /* core tag filters (#e, #p, etc.) */
+    gchar **relays;    /* NULL-terminated relay URLs (nostrc-57j) */
 };
 
 G_DEFINE_TYPE(GNostrFilter, gnostr_filter, G_TYPE_OBJECT)
@@ -31,6 +32,7 @@ gnostr_filter_finalize(GObject *object)
     g_strfreev(self->ids);
     g_free(self->kinds);
     g_strfreev(self->authors);
+    g_strfreev(self->relays);
     if (self->tags)
         nostr_tags_free(self->tags);
     G_OBJECT_CLASS(gnostr_filter_parent_class)->finalize(object);
@@ -114,6 +116,40 @@ gnostr_filter_get_authors(GNostrFilter *self, gsize *n_authors)
     else
         *n_authors = 0;
     return (const gchar **)self->authors;
+}
+
+/* nostrc-57j: relay accessors */
+void
+gnostr_filter_set_relays(GNostrFilter *self, const gchar **relays, gsize n_relays)
+{
+    g_return_if_fail(GNOSTR_IS_FILTER(self));
+    g_strfreev(self->relays);
+    self->relays = g_new0(gchar *, n_relays + 1);
+    for (gsize i = 0; i < n_relays; i++)
+        self->relays[i] = g_strdup(relays[i]);
+}
+
+const gchar **
+gnostr_filter_get_relays(GNostrFilter *self, gsize *n_relays)
+{
+    g_return_val_if_fail(GNOSTR_IS_FILTER(self), NULL);
+    if (self->relays)
+        *n_relays = g_strv_length(self->relays);
+    else
+        *n_relays = 0;
+    return (const gchar **)self->relays;
+}
+
+void
+gnostr_filter_add_relay(GNostrFilter *self, const gchar *relay)
+{
+    g_return_if_fail(GNOSTR_IS_FILTER(self));
+    g_return_if_fail(relay != NULL);
+
+    gsize n = self->relays ? g_strv_length(self->relays) : 0;
+    self->relays = g_renew(gchar *, self->relays, n + 2);
+    self->relays[n] = g_strdup(relay);
+    self->relays[n + 1] = NULL;
 }
 
 void
@@ -240,6 +276,10 @@ gnostr_filter_build(GNostrFilter *self)
         }
         nostr_filter_set_tags(core, copy);
     }
+    if (self->relays) {
+        gsize n = g_strv_length(self->relays);
+        nostr_filter_set_relays(core, (const char *const *)self->relays, n);
+    }
 
     return core;
 }
@@ -279,6 +319,10 @@ gnostr_filter_to_core(GNostrFilter *self, NostrFilter *core)
                                      nostr_tag_size(src) > 1 ? nostr_tag_get(src, 1) : NULL,
                                      nostr_tag_size(src) > 2 ? nostr_tag_get(src, 2) : NULL);
         }
+    }
+    if (self->relays) {
+        gsize n = g_strv_length(self->relays);
+        nostr_filter_set_relays(core, (const char *const *)self->relays, n);
     }
 }
 
@@ -353,6 +397,16 @@ gnostr_filter_new_from_json(const gchar *json, GError **error)
                 nostr_tags_append(self->tags, dup);
             }
         }
+    }
+
+    /* Copy relays */
+    size_t n_relays = nostr_filter_relays_len(&core);
+    if (n_relays > 0) {
+        gchar **relays = g_new0(gchar *, n_relays + 1);
+        for (size_t i = 0; i < n_relays; i++)
+            relays[i] = g_strdup(nostr_filter_relays_get(&core, i));
+        g_strfreev(self->relays);
+        self->relays = relays;
     }
 
     nostr_filter_clear(&core);

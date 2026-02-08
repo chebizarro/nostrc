@@ -41,6 +41,11 @@ gint64         gnostr_filter_get_until(GNostrFilter *self);
 void           gnostr_filter_set_limit(GNostrFilter *self, gint limit);
 gint           gnostr_filter_get_limit(GNostrFilter *self);
 
+/* nostrc-57j: relay filtering */
+void           gnostr_filter_set_relays(GNostrFilter *self, const gchar **relays, gsize n_relays);
+const gchar  **gnostr_filter_get_relays(GNostrFilter *self, gsize *n_relays);
+void           gnostr_filter_add_relay(GNostrFilter *self, const gchar *relay);
+
 /* Incremental builders (append single values) */
 void           gnostr_filter_add_id(GNostrFilter *self, const gchar *id);
 void           gnostr_filter_add_kind(GNostrFilter *self, gint kind);

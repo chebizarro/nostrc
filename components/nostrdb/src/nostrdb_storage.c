@@ -111,6 +111,26 @@ static int ndb_ingest_ldjson(NostrStorage *st, const char *ldjson, size_t len) {
   return rc ? 0 : -EIO;
 }
 
+/* nostrc-57j: relay-aware ingestion variants */
+static int ndb_put_event_with_relay(NostrStorage *st, const NostrEvent *ev, const char *relay) {
+  if (!st || !st->impl || !((NDBImpl*)st->impl)->db || !ev) return -EINVAL;
+  char *json = nostr_event_serialize(ev);
+  if (!json) return -EIO;
+  struct ndb_ingest_meta meta;
+  ndb_ingest_meta_init(&meta, 1, relay);
+  int rc = ndb_process_event_with(((NDBImpl*)st->impl)->db, json, (int)strlen(json), &meta);
+  free(json);
+  return rc ? 0 : -EIO;
+}
+
+static int ndb_ingest_ldjson_with_relay(NostrStorage *st, const char *ldjson, size_t len, const char *relay) {
+  if (!st || !st->impl || !((NDBImpl*)st->impl)->db || !ldjson) return -EINVAL;
+  struct ndb_ingest_meta meta;
+  ndb_ingest_meta_init(&meta, 1, relay);
+  int rc = ndb_process_events_with(((NDBImpl*)st->impl)->db, ldjson, len, &meta);
+  return rc ? 0 : -EIO;
+}
+
 static int ndb_delete_event(NostrStorage *st, const char *id_hex) {
   if (!st || !st->impl || !id_hex) return -EINVAL;
   NDBImpl *impl = (NDBImpl*)st->impl;
@@ -291,6 +311,8 @@ static NostrStorageVTable g_vt = {
   .set_digest = ndb_set_digest,
   .set_reconcile = ndb_set_reconcile,
   .set_free = ndb_set_free,
+  .put_event_with_relay = ndb_put_event_with_relay,
+  .ingest_ldjson_with_relay = ndb_ingest_ldjson_with_relay,
 };
 
 NostrStorage* nostrdb_storage_new(void) {
