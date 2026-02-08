@@ -10,6 +10,10 @@
 #include <adwaita.h>
 #include <glib/gi18n.h>
 
+/* nostrc-sykf: One-time check for GTK media backend availability.
+ * Cached to avoid repeated "could not find a media module" warnings. */
+static int s_media_backend_status = -1; /* -1 = unchecked, 0 = unavailable, 1 = available */
+
 /* Controls auto-hide timeout in seconds */
 #define CONTROLS_HIDE_TIMEOUT_SEC 3
 
@@ -870,19 +874,33 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   self->overlay = gtk_overlay_new();
   gtk_widget_set_parent(self->overlay, GTK_WIDGET(self));
 
-  /* Create media file for video playback (no built-in controls) */
-  self->media_file = GTK_MEDIA_FILE(gtk_media_file_new());
-  gtk_media_stream_set_loop(GTK_MEDIA_STREAM(self->media_file), self->loop);
+  /* nostrc-sykf: Probe media backend once to avoid repeated GTK warnings */
+  if (s_media_backend_status == -1) {
+    GtkMediaFile *probe = GTK_MEDIA_FILE(gtk_media_file_new());
+    const GError *probe_err = gtk_media_stream_get_error(GTK_MEDIA_STREAM(probe));
+    s_media_backend_status = probe_err ? 0 : 1;
+    if (!s_media_backend_status)
+      g_info("Video playback disabled: %s", probe_err->message);
+    g_object_unref(probe);
+  }
 
-  /* Connect to media stream signals for error handling and load notification */
-  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
-  self->media_error_handler = g_signal_connect(stream, "notify::error",
-                                                 G_CALLBACK(on_media_error), self);
-  self->media_prepared_handler = g_signal_connect(stream, "notify::prepared",
-                                                    G_CALLBACK(on_media_prepared), self);
+  if (s_media_backend_status == 1) {
+    /* Create media file for video playback (no built-in controls) */
+    self->media_file = GTK_MEDIA_FILE(gtk_media_file_new());
+    gtk_media_stream_set_loop(GTK_MEDIA_STREAM(self->media_file), self->loop);
+
+    /* Connect to media stream signals for error handling and load notification */
+    GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+    self->media_error_handler = g_signal_connect(stream, "notify::error",
+                                                   G_CALLBACK(on_media_error), self);
+    self->media_prepared_handler = g_signal_connect(stream, "notify::prepared",
+                                                      G_CALLBACK(on_media_prepared), self);
+  }
 
   /* Create picture widget to display the media (no controls, unlike GtkVideo) */
-  self->picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(self->media_file));
+  self->picture = self->media_file
+    ? gtk_picture_new_for_paintable(GDK_PAINTABLE(self->media_file))
+    : gtk_picture_new();
   gtk_widget_add_css_class(self->picture, "video-content");
   gtk_picture_set_content_fit(GTK_PICTURE(self->picture), GTK_CONTENT_FIT_CONTAIN);
   gtk_overlay_set_child(GTK_OVERLAY(self->overlay), self->picture);
@@ -941,6 +959,12 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
 
   g_free(self->uri);
   self->uri = g_strdup(uri);
+
+  /* nostrc-sykf: No media backend — show error immediately */
+  if (!self->media_file) {
+    show_error_state(self, "No video playback module installed");
+    return;
+  }
 
   /* Cancel any existing loading timeout */
   cancel_loading_timeout(self);
