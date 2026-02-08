@@ -134,7 +134,48 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
   g_message("gnostr: shutdown complete");
 }
 
+/* nostrc-9bn: Auto-discover GSettings schemas so the app can run without
+ * GSETTINGS_SCHEMA_DIR being set externally. CMake compiles gschemas.compiled
+ * into the same directory as the binary; installed layout puts them under
+ * PREFIX/share/glib-2.0/schemas. */
+static void
+gnostr_ensure_gsettings_schemas(const char *argv0)
+{
+  if (g_getenv("GSETTINGS_SCHEMA_DIR"))
+    return;  /* Already set by run-gnostr.sh or user */
+
+  /* Resolve argv[0] to get the directory containing the binary */
+  g_autofree gchar *bin_dir = NULL;
+  if (g_path_is_absolute(argv0)) {
+    bin_dir = g_path_get_dirname(argv0);
+  } else {
+    g_autofree gchar *cwd = g_get_current_dir();
+    g_autofree gchar *abs_path = g_build_filename(cwd, argv0, NULL);
+    bin_dir = g_path_get_dirname(abs_path);
+  }
+
+  if (!bin_dir)
+    return;
+
+  /* Try 1: Development build — gschemas.compiled alongside binary */
+  g_autofree gchar *dev_schema = g_build_filename(bin_dir, "gschemas.compiled", NULL);
+  if (g_file_test(dev_schema, G_FILE_TEST_EXISTS)) {
+    g_setenv("GSETTINGS_SCHEMA_DIR", bin_dir, FALSE);
+    return;
+  }
+
+  /* Try 2: Installed layout — PREFIX/bin/../share/glib-2.0/schemas */
+  g_autofree gchar *inst_dir = g_build_filename(bin_dir, "..", "share",
+                                                 "glib-2.0", "schemas", NULL);
+  g_autofree gchar *inst_schema = g_build_filename(inst_dir, "gschemas.compiled", NULL);
+  if (g_file_test(inst_schema, G_FILE_TEST_EXISTS)) {
+    g_setenv("GSETTINGS_SCHEMA_DIR", inst_dir, FALSE);
+    return;
+  }
+}
+
 int main(int argc, char **argv) {
+  gnostr_ensure_gsettings_schemas(argv[0]);
   g_set_prgname("gnostr");
 
   /* Initialize libadwaita - required for adaptive/responsive features */
