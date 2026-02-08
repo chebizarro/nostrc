@@ -69,9 +69,8 @@ static int ndb_open(NostrStorage *st, const char *uri, const char *opts_json) {
   ndb_config_set_ingest_threads(&cfg, num_threads);
   fprintf(stderr, "[nostrdb_storage] Using %d ingester threads\n", num_threads);
   
-  /* TEMPORARY: Skip signature verification to test if that's causing ingestion failures */
-  ndb_config_set_flags(&cfg, NDB_FLAG_SKIP_NOTE_VERIFY);
-  fprintf(stderr, "[nostrdb_storage] WARNING: Signature verification is DISABLED for testing\n");
+  /* nostrc-w0n: Signature verification is enabled (default).
+   * The multi-threaded ingester (4 threads) handles the crypto load. */
 
   int rc = ndb_init(&impl->db, path, &cfg);
   /* ndb_init returns nonzero on success, zero on failure */
