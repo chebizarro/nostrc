@@ -257,6 +257,7 @@ static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpoi
 static void on_show_preferences_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
 static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data);
+static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data);
 static void on_signer_state_changed(GnostrSignerService *signer, guint old_state, guint new_state, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
@@ -4091,6 +4092,15 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
   show_toast(self, "Signed out");
 }
 
+/* nostrc-bkor: Navigate to the current user's own profile */
+static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data) {
+  (void)sv;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!self->user_pubkey_hex || !*self->user_pubkey_hex) return;
+  gnostr_main_window_open_profile(GTK_WIDGET(self), self->user_pubkey_hex);
+}
+
 /* Handler for account switch request from session view */
 static void on_account_switch_requested(GnostrSessionView *view, const char *npub, gpointer user_data) {
   (void)view;
@@ -5642,6 +5652,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_avatar_login_clicked), self);
     g_signal_connect(self->session_view, "logout-requested",
                      G_CALLBACK(on_avatar_logout_clicked), self);
+    g_signal_connect(self->session_view, "view-profile-requested",
+                     G_CALLBACK(on_view_profile_requested), self);
     g_signal_connect(self->session_view, "account-switch-requested",
                      G_CALLBACK(on_account_switch_requested), self);
     g_signal_connect(self->session_view, "new-notes-clicked",

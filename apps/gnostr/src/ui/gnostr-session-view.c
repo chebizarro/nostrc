@@ -44,6 +44,7 @@ typedef enum {
   SIGNAL_NEW_NOTES_CLICKED,
   SIGNAL_COMPOSE_REQUESTED,
   SIGNAL_SEARCH_CHANGED,
+  SIGNAL_VIEW_PROFILE_REQUESTED,
   N_SIGNALS
 } GnostrSessionViewSignal;
 
@@ -95,6 +96,7 @@ struct _GnostrSessionView {
   GtkPopover *avatar_popover;
   GtkLabel *lbl_signin_status;
   GtkLabel *lbl_profile_name;
+  GtkButton *btn_view_profile;
   GtkButton *btn_login;
   GtkButton *btn_logout;
   GtkButton *btn_add_account;
@@ -223,6 +225,7 @@ static const char *title_for_page_name(GnostrSessionView *self, const char *page
 }
 
 /* Forward declarations for signal handlers used in ensure_avatar_popover */
+static void on_btn_view_profile_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_login_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_logout_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_add_account_clicked(GtkButton *btn, gpointer user_data);
@@ -462,6 +465,11 @@ static void ensure_avatar_popover(GnostrSessionView *self) {
   gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), FALSE);
   gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->lbl_profile_name));
 
+  /* View Profile button (shown when signed in) — nostrc-bkor */
+  self->btn_view_profile = GTK_BUTTON(gtk_button_new_with_label(_("View Profile")));
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_view_profile), FALSE);
+  gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->btn_view_profile));
+
   /* Separator after profile section */
   GtkWidget *profile_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
   gtk_widget_set_margin_top(profile_separator, 8);
@@ -507,6 +515,7 @@ static void ensure_avatar_popover(GnostrSessionView *self) {
   gtk_menu_button_set_popover(self->btn_avatar, GTK_WIDGET(self->avatar_popover));
 
   /* Connect signals */
+  g_signal_connect(self->btn_view_profile, "clicked", G_CALLBACK(on_btn_view_profile_clicked), self);
   g_signal_connect(self->btn_login, "clicked", G_CALLBACK(on_btn_login_clicked), self);
   g_signal_connect(self->btn_logout, "clicked", G_CALLBACK(on_btn_logout_clicked), self);
   g_signal_connect(self->btn_add_account, "clicked", G_CALLBACK(on_btn_add_account_clicked), self);
@@ -555,6 +564,9 @@ static void update_auth_gating(GnostrSessionView *self) {
   }
   if (self->btn_logout) {
     gtk_widget_set_visible(GTK_WIDGET(self->btn_logout), self->authenticated);
+  }
+  if (self->btn_view_profile) {
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_view_profile), self->authenticated);
   }
 
   /* If we became unauthenticated while on a gated page, go back to timeline */
@@ -668,6 +680,19 @@ static void on_btn_reconnect_clicked(GtkButton *btn, gpointer user_data) {
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
   if (!GNOSTR_IS_SESSION_VIEW(self)) return;
   g_signal_emit(self, signals[SIGNAL_RECONNECT_REQUESTED], 0);
+}
+
+static void on_btn_view_profile_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+
+  /* Close popover before navigating */
+  if (self->avatar_popover) {
+    gtk_popover_popdown(self->avatar_popover);
+  }
+
+  g_signal_emit(self, signals[SIGNAL_VIEW_PROFILE_REQUESTED], 0);
 }
 
 static void on_btn_login_clicked(GtkButton *btn, gpointer user_data) {
@@ -955,6 +980,17 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       1,
       G_TYPE_STRING);
 
+  signals[SIGNAL_VIEW_PROFILE_REQUESTED] = g_signal_new(
+      "view-profile-requested",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      NULL,
+      G_TYPE_NONE,
+      0);
+
   /* Ensure custom widget types used in the template are registered */
   g_type_ensure(GNOSTR_TYPE_TIMELINE_VIEW);
   g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
@@ -1084,6 +1120,7 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
   self->lbl_profile_name = NULL;
   self->btn_login = NULL;
   self->btn_logout = NULL;
+  self->btn_view_profile = NULL;
   ensure_avatar_popover(self);
 
   /* ESC closes profile/thread side panel when visible */
