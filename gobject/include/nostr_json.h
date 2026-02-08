@@ -341,6 +341,221 @@ gboolean gnostr_json_get_boolean_path(const gchar *json, const gchar *path, GErr
  */
 gchar *gnostr_json_get_raw_path(const gchar *json, const gchar *path, GError **error);
 
+/* ---- Array Validation ---- */
+
+/**
+ * gnostr_json_is_array_str:
+ * @json: a string to check
+ *
+ * Checks whether a string represents a JSON array.
+ *
+ * Returns: %TRUE if the string is a JSON array
+ */
+gboolean gnostr_json_is_array_str(const gchar *json);
+
+/**
+ * gnostr_json_is_object_str:
+ * @json: a string to check
+ *
+ * Checks whether a string represents a JSON object.
+ *
+ * Returns: %TRUE if the string is a JSON object
+ */
+gboolean gnostr_json_is_object_str(const gchar *json);
+
+/**
+ * gnostr_json_has_key:
+ * @json: a JSON string
+ * @key: the key to check for
+ *
+ * Checks whether a top-level key exists in a JSON object.
+ *
+ * Returns: %TRUE if the key exists
+ */
+gboolean gnostr_json_has_key(const gchar *json, const gchar *key);
+
+/* ---- Array Access ---- */
+
+/**
+ * gnostr_json_get_array_length:
+ * @json: a JSON string
+ * @key: (nullable): the top-level key holding the array, or %NULL for root array
+ * @error: (nullable): return location for a #GError
+ *
+ * Gets the length of a JSON array at a top-level key, or of the
+ * root array when @key is %NULL.
+ *
+ * Returns: the array length, or -1 on error
+ */
+gint gnostr_json_get_array_length(const gchar *json, const gchar *key, GError **error);
+
+/**
+ * gnostr_json_get_array_string:
+ * @json: a JSON string
+ * @key: (nullable): the top-level key holding the array, or %NULL for root array
+ * @index: the array index
+ * @error: (nullable): return location for a #GError
+ *
+ * Gets a string element from a JSON array at a top-level key, or from
+ * the root array when @key is %NULL.
+ *
+ * Returns: (transfer full) (nullable): the string value, or %NULL on error
+ */
+gchar *gnostr_json_get_array_string(const gchar *json, const gchar *key, gint index, GError **error);
+
+/* ---- Nested Object Access ---- */
+
+/**
+ * gnostr_json_get_string_at:
+ * @json: a JSON string
+ * @object_key: the top-level object key
+ * @entry_key: the key within the nested object
+ * @error: (nullable): return location for a #GError
+ *
+ * Gets a string from a nested object: json[object_key][entry_key].
+ *
+ * Returns: (transfer full) (nullable): the string value, or %NULL on error
+ */
+gchar *gnostr_json_get_string_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+
+/**
+ * gnostr_json_get_int_at:
+ * @json: a JSON string
+ * @object_key: the top-level object key
+ * @entry_key: the key within the nested object
+ * @error: (nullable): return location for a #GError
+ *
+ * Gets an integer from a nested object: json[object_key][entry_key].
+ *
+ * Returns: the integer value, or 0 on error
+ */
+gint gnostr_json_get_int_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+
+/**
+ * gnostr_json_get_int64_at:
+ * @json: a JSON string
+ * @object_key: the top-level object key
+ * @entry_key: the key within the nested object
+ * @error: (nullable): return location for a #GError
+ *
+ * Gets a 64-bit integer from a nested object: json[object_key][entry_key].
+ *
+ * Returns: the int64 value, or 0 on error
+ */
+gint64 gnostr_json_get_int64_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+
+/**
+ * gnostr_json_get_bool_at:
+ * @json: a JSON string
+ * @object_key: the top-level object key
+ * @entry_key: the key within the nested object
+ * @error: (nullable): return location for a #GError
+ *
+ * Gets a boolean from a nested object: json[object_key][entry_key].
+ *
+ * Returns: the boolean value, or %FALSE on error
+ */
+gboolean gnostr_json_get_bool_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+
+/**
+ * gnostr_json_get_string_array_at:
+ * @json: a JSON string
+ * @object_key: the top-level object key
+ * @entry_key: the key within the nested object holding the array
+ * @error: (nullable): return location for a #GError
+ *
+ * Extracts an array of strings from a nested object: json[object_key][entry_key].
+ *
+ * Returns: (transfer full) (nullable): a %NULL-terminated string array, or %NULL on error.
+ *   Free with g_strfreev().
+ */
+GStrv gnostr_json_get_string_array_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+
+/* ---- Array Iteration ---- */
+
+/**
+ * GNostrJsonArrayIterCb:
+ * @index: the element index
+ * @element_json: the serialized JSON element
+ * @user_data: (closure): user data
+ *
+ * Callback for iterating over JSON array elements.
+ *
+ * Returns: %TRUE to continue iteration, %FALSE to stop
+ */
+typedef gboolean (*GNostrJsonArrayIterCb)(gsize index, const gchar *element_json, gpointer user_data);
+
+/**
+ * gnostr_json_array_foreach:
+ * @json: a JSON string
+ * @key: the top-level key holding the array
+ * @callback: (scope call): callback for each element
+ * @user_data: (closure): user data for the callback
+ *
+ * Iterates over elements of a JSON array at a top-level key.
+ */
+void gnostr_json_array_foreach(const gchar *json, const gchar *key, GNostrJsonArrayIterCb callback, gpointer user_data);
+
+/**
+ * gnostr_json_array_foreach_root:
+ * @json: a JSON string (must be a root array)
+ * @callback: (scope call): callback for each element
+ * @user_data: (closure): user data for the callback
+ *
+ * Iterates over elements of a root-level JSON array.
+ */
+void gnostr_json_array_foreach_root(const gchar *json, GNostrJsonArrayIterCb callback, gpointer user_data);
+
+/* ---- Type Introspection ---- */
+
+/**
+ * GNostrJsonType:
+ * @GNOSTR_JSON_TYPE_NULL: JSON null
+ * @GNOSTR_JSON_TYPE_BOOL: JSON boolean
+ * @GNOSTR_JSON_TYPE_INTEGER: JSON integer
+ * @GNOSTR_JSON_TYPE_REAL: JSON floating-point
+ * @GNOSTR_JSON_TYPE_STRING: JSON string
+ * @GNOSTR_JSON_TYPE_ARRAY: JSON array
+ * @GNOSTR_JSON_TYPE_OBJECT: JSON object
+ * @GNOSTR_JSON_TYPE_INVALID: parse error or key not found
+ *
+ * JSON value types.
+ */
+typedef enum {
+    GNOSTR_JSON_TYPE_NULL = 0,
+    GNOSTR_JSON_TYPE_BOOL,
+    GNOSTR_JSON_TYPE_INTEGER,
+    GNOSTR_JSON_TYPE_REAL,
+    GNOSTR_JSON_TYPE_STRING,
+    GNOSTR_JSON_TYPE_ARRAY,
+    GNOSTR_JSON_TYPE_OBJECT,
+    GNOSTR_JSON_TYPE_INVALID = -1
+} GNostrJsonType;
+
+/**
+ * gnostr_json_get_type:
+ * @json: a JSON string
+ * @key: the top-level key
+ *
+ * Gets the type of a value at a top-level key.
+ *
+ * Returns: the value type, or %GNOSTR_JSON_TYPE_INVALID on error
+ */
+GNostrJsonType gnostr_json_get_value_type(const gchar *json, const gchar *key);
+
+/* ---- Convenience Builders ---- */
+
+/**
+ * gnostr_json_build_string_array:
+ * @first: first string element
+ * @...: remaining string elements, terminated by %NULL
+ *
+ * Builds a JSON array of strings.
+ *
+ * Returns: (transfer full) (nullable): a newly allocated JSON string
+ */
+gchar *gnostr_json_build_string_array(const gchar *first, ...);
+
 /* ---- Validation & Transformation ---- */
 
 /**

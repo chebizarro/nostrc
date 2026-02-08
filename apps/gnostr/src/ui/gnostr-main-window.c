@@ -34,7 +34,8 @@
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include <time.h>
-/* Metadata helpers - NostrJsonInterface */
+/* JSON helpers - GObject wrappers and core interface */
+#include "nostr_json.h"
 #include "json.h"
 /* NIP-19 bech32 encoding */
 #include <nostr/nip19/nip19.h>
@@ -46,7 +47,6 @@
 #include "nostr-json.h"
 /* GObject wrappers for profile-related code */
 #include "nostr_event.h"
-#include "nostr_json.h"
 #include "nostr_pool.h"
 /* NostrdB storage */
 #include "../storage_ndb.h"
@@ -54,8 +54,6 @@
 #include "libnostr_errors.h"
 /* Nostr event kinds */
 #include "nostr-kinds.h"
-/* JSON interface */
-#include "json.h"
 /* Relays helpers */
 #include "../util/relays.h"
 /* NIP-11 relay information */
@@ -6351,42 +6349,42 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
 
   show_toast(self, "Reposting...");
 
-  /* Build unsigned kind 6 repost event JSON using NostrJsonBuilder */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  /* Build unsigned kind 6 repost event JSON using GNostrJsonBuilder */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, 6);
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, "");
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, 6);
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, "");
 
   /* Build tags array: e-tag and p-tag */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* e-tag: ["e", "<reposted-event-id>", "<relay-hint>"] */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "e");
-  nostr_json_builder_add_string(builder, id_hex);
-  nostr_json_builder_add_string(builder, ""); /* relay hint - empty for now */
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "e");
+  gnostr_json_builder_add_string(builder, id_hex);
+  gnostr_json_builder_add_string(builder, ""); /* relay hint - empty for now */
+  gnostr_json_builder_end_array(builder);
 
   /* p-tag: ["p", "<original-author-pubkey>"] */
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "p");
-    nostr_json_builder_add_string(builder, pubkey_hex);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "p");
+    gnostr_json_builder_add_string(builder, pubkey_hex);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder); /* end tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder); /* end tags */
+  gnostr_json_builder_end_object(builder);
 
   /* Serialize */
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize repost event");
@@ -6451,42 +6449,42 @@ void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_he
 
   show_toast(self, "Deleting note...");
 
-  /* Build unsigned kind 5 deletion event JSON per NIP-09 using NostrJsonBuilder */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  /* Build unsigned kind 5 deletion event JSON per NIP-09 using GNostrJsonBuilder */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, 5);  /* NOSTR_KIND_DELETION */
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, ""); /* Optional deletion reason */
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, 5);  /* NOSTR_KIND_DELETION */
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, ""); /* Optional deletion reason */
 
   /* Build tags array per NIP-09:
    * - ["e", "<event-id-to-delete>"]
    * - ["k", "<kind-of-deleted-event>"] (kind 1 for text notes)
    */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* e-tag: ["e", "<event-id-to-delete>"] */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "e");
-  nostr_json_builder_add_string(builder, id_hex);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "e");
+  gnostr_json_builder_add_string(builder, id_hex);
+  gnostr_json_builder_end_array(builder);
 
   /* k-tag: ["k", "1"] to indicate we're deleting a kind 1 note */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "k");
-  nostr_json_builder_add_string(builder, "1");
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "k");
+  gnostr_json_builder_add_string(builder, "1");
+  gnostr_json_builder_end_array(builder);
 
-  nostr_json_builder_end_array(builder); /* end tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder); /* end tags */
+  gnostr_json_builder_end_object(builder);
 
   /* Serialize */
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize deletion event");
@@ -6583,16 +6581,16 @@ void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex
     return;
   }
 
-  /* Build unsigned kind 1985 label event JSON per NIP-32 using NostrJsonBuilder */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  /* Build unsigned kind 1985 label event JSON per NIP-32 using GNostrJsonBuilder */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, 1985);  /* NOSTR_KIND_LABEL */
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, "");
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, 1985);  /* NOSTR_KIND_LABEL */
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, "");
 
   /* Build tags array per NIP-32:
    * - ["L", "<namespace>"]
@@ -6600,41 +6598,41 @@ void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex
    * - ["e", "<event-id>"]
    * - ["p", "<event-author-pubkey>"]
    */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* L-tag: ["L", "<namespace>"] */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "L");
-  nostr_json_builder_add_string(builder, namespace);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "L");
+  gnostr_json_builder_add_string(builder, namespace);
+  gnostr_json_builder_end_array(builder);
 
   /* l-tag: ["l", "<label>", "<namespace>"] */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "l");
-  nostr_json_builder_add_string(builder, label);
-  nostr_json_builder_add_string(builder, namespace);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "l");
+  gnostr_json_builder_add_string(builder, label);
+  gnostr_json_builder_add_string(builder, namespace);
+  gnostr_json_builder_end_array(builder);
 
   /* e-tag: ["e", "<event-id>"] */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "e");
-  nostr_json_builder_add_string(builder, id_hex);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "e");
+  gnostr_json_builder_add_string(builder, id_hex);
+  gnostr_json_builder_end_array(builder);
 
   /* p-tag: ["p", "<event-author-pubkey>"] */
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "p");
-    nostr_json_builder_add_string(builder, pubkey_hex);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "p");
+    gnostr_json_builder_add_string(builder, pubkey_hex);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder); /* end tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder); /* end tags */
+  gnostr_json_builder_end_object(builder);
 
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to create label event");
@@ -6857,49 +6855,49 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
     g_free(msg);
   }
 
-  /* Build unsigned kind 7 reaction event JSON (NIP-25) using NostrJsonBuilder */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  /* Build unsigned kind 7 reaction event JSON (NIP-25) using GNostrJsonBuilder */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, NOSTR_KIND_REACTION);
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, reaction_content);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, NOSTR_KIND_REACTION);
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, reaction_content);
 
   /* Build tags array: e-tag, p-tag, and k-tag per NIP-25 */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* e-tag: ["e", "<event-id-being-reacted-to>"] */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "e");
-  nostr_json_builder_add_string(builder, id_hex);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "e");
+  gnostr_json_builder_add_string(builder, id_hex);
+  gnostr_json_builder_end_array(builder);
 
   /* p-tag: ["p", "<pubkey-of-event-author>"] */
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "p");
-    nostr_json_builder_add_string(builder, pubkey_hex);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "p");
+    gnostr_json_builder_add_string(builder, pubkey_hex);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* k-tag: ["k", "<kind-of-reacted-event>"] per NIP-25 */
   char kind_str[16];
   snprintf(kind_str, sizeof(kind_str), "%d", event_kind > 0 ? event_kind : 1);
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "k");
-  nostr_json_builder_add_string(builder, kind_str);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "k");
+  gnostr_json_builder_add_string(builder, kind_str);
+  gnostr_json_builder_end_array(builder);
 
-  nostr_json_builder_end_array(builder); /* end tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder); /* end tags */
+  gnostr_json_builder_end_object(builder);
 
   /* Serialize */
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize reaction event");
@@ -6945,9 +6943,9 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
 
   show_toast(self, "Signing...");
 
-  /* Build unsigned event JSON using NostrJsonBuilder */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  /* Build unsigned event JSON using GNostrJsonBuilder */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* NIP-22: Check if this is a comment (kind 1111) - takes precedence over reply/quote */
   gboolean is_comment = (composer && GNOSTR_IS_COMPOSER(composer) &&
@@ -6964,17 +6962,17 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
             comment_root_pubkey ? comment_root_pubkey : "(null)");
 
     /* Set kind 1111 for comment */
-    nostr_json_builder_set_key(builder, "kind");
-    nostr_json_builder_add_int(builder, 1111);
+    gnostr_json_builder_set_key(builder, "kind");
+    gnostr_json_builder_add_int(builder, 1111);
 
-    nostr_json_builder_set_key(builder, "created_at");
-    nostr_json_builder_add_int(builder, (int64_t)time(NULL));
-    nostr_json_builder_set_key(builder, "content");
-    nostr_json_builder_add_string(builder, text);
+    gnostr_json_builder_set_key(builder, "created_at");
+    gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
+    gnostr_json_builder_set_key(builder, "content");
+    gnostr_json_builder_add_string(builder, text);
 
     /* Build tags array */
-    nostr_json_builder_set_key(builder, "tags");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "tags");
+    gnostr_json_builder_begin_array(builder);
 
     /* NIP-22 requires these tags:
      * - ["K", "<root-kind>"] - kind of the root event
@@ -6985,36 +6983,36 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     /* K tag: root event kind */
     char kind_str[16];
     g_snprintf(kind_str, sizeof(kind_str), "%d", comment_root_kind);
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "K");
-    nostr_json_builder_add_string(builder, kind_str);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "K");
+    gnostr_json_builder_add_string(builder, kind_str);
+    gnostr_json_builder_end_array(builder);
 
     /* E tag: root event reference */
     if (comment_root_id && strlen(comment_root_id) == 64) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "E");
-      nostr_json_builder_add_string(builder, comment_root_id);
-      nostr_json_builder_add_string(builder, ""); /* relay hint */
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "E");
+      gnostr_json_builder_add_string(builder, comment_root_id);
+      gnostr_json_builder_add_string(builder, ""); /* relay hint */
       if (comment_root_pubkey && strlen(comment_root_pubkey) == 64) {
-        nostr_json_builder_add_string(builder, comment_root_pubkey); /* author hint */
+        gnostr_json_builder_add_string(builder, comment_root_pubkey); /* author hint */
       }
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_end_array(builder);
     }
 
     /* P tag: root event author */
     if (comment_root_pubkey && strlen(comment_root_pubkey) == 64) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "P");
-      nostr_json_builder_add_string(builder, comment_root_pubkey);
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "P");
+      gnostr_json_builder_add_string(builder, comment_root_pubkey);
+      gnostr_json_builder_end_array(builder);
     }
 
-    nostr_json_builder_end_array(builder); /* end tags */
-    nostr_json_builder_end_object(builder);
+    gnostr_json_builder_end_array(builder); /* end tags */
+    gnostr_json_builder_end_object(builder);
 
-    char *event_json = nostr_json_builder_finish(builder);
-    nostr_json_builder_free(builder);
+    char *event_json = gnostr_json_builder_finish(builder);
+    g_object_unref(builder);
 
     if (!event_json) {
       show_toast(self, "Failed to build event JSON");
@@ -7042,16 +7040,16 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   }
 
   /* Regular kind 1 text note */
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, 1);
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, text);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, 1);
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, text);
 
   /* Build tags array */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* Check if this is a reply - add NIP-10 threading tags (only for kind 1, not comments) */
   if (!is_comment && composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_reply(GNOSTR_COMPOSER(composer))) {
@@ -7072,31 +7070,31 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
 
     /* Add root e-tag (always present for replies) */
     if (root_id && strlen(root_id) == 64) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "e");
-      nostr_json_builder_add_string(builder, root_id);
-      nostr_json_builder_add_string(builder, ""); /* relay hint */
-      nostr_json_builder_add_string(builder, "root");
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "e");
+      gnostr_json_builder_add_string(builder, root_id);
+      gnostr_json_builder_add_string(builder, ""); /* relay hint */
+      gnostr_json_builder_add_string(builder, "root");
+      gnostr_json_builder_end_array(builder);
     }
 
     /* Add reply e-tag if different from root (nested reply) */
     if (reply_to_id && strlen(reply_to_id) == 64 &&
         (!root_id || strcmp(reply_to_id, root_id) != 0)) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "e");
-      nostr_json_builder_add_string(builder, reply_to_id);
-      nostr_json_builder_add_string(builder, ""); /* relay hint */
-      nostr_json_builder_add_string(builder, "reply");
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "e");
+      gnostr_json_builder_add_string(builder, reply_to_id);
+      gnostr_json_builder_add_string(builder, ""); /* relay hint */
+      gnostr_json_builder_add_string(builder, "reply");
+      gnostr_json_builder_end_array(builder);
     }
 
     /* Add p-tag for the author being replied to */
     if (reply_to_pubkey && strlen(reply_to_pubkey) == 64) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "p");
-      nostr_json_builder_add_string(builder, reply_to_pubkey);
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "p");
+      gnostr_json_builder_add_string(builder, reply_to_pubkey);
+      gnostr_json_builder_end_array(builder);
     }
   }
 
@@ -7111,19 +7109,19 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
 
     /* q-tag: ["q", "<quoted-event-id>", "<relay-hint>"] */
     if (quote_id && strlen(quote_id) == 64) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "q");
-      nostr_json_builder_add_string(builder, quote_id);
-      nostr_json_builder_add_string(builder, ""); /* relay hint */
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "q");
+      gnostr_json_builder_add_string(builder, quote_id);
+      gnostr_json_builder_add_string(builder, ""); /* relay hint */
+      gnostr_json_builder_end_array(builder);
     }
 
     /* p-tag: ["p", "<quoted-author-pubkey>"] */
     if (quote_pubkey && strlen(quote_pubkey) == 64) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "p");
-      nostr_json_builder_add_string(builder, quote_pubkey);
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "p");
+      gnostr_json_builder_add_string(builder, quote_pubkey);
+      gnostr_json_builder_end_array(builder);
     }
   }
 
@@ -7131,10 +7129,10 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   if (composer && GNOSTR_IS_COMPOSER(composer)) {
     const char *subject = gnostr_composer_get_subject(GNOSTR_COMPOSER(composer));
     if (subject && *subject) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "subject");
-      nostr_json_builder_add_string(builder, subject);
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "subject");
+      gnostr_json_builder_add_string(builder, subject);
+      gnostr_json_builder_end_array(builder);
       g_debug("[PUBLISH] Added subject tag: %s", subject);
     }
   }
@@ -7149,36 +7147,36 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
         if (!m->url) continue;
 
         /* Build imeta tag: ["imeta", "url <url>", "m <mime>", "x <sha256>", "size <bytes>"] */
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "imeta");
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "imeta");
 
         /* url field (required) */
         char *url_field = g_strdup_printf("url %s", m->url);
-        nostr_json_builder_add_string(builder, url_field);
+        gnostr_json_builder_add_string(builder, url_field);
         g_free(url_field);
 
         /* m field (MIME type) */
         if (m->mime_type && *m->mime_type) {
           char *mime_field = g_strdup_printf("m %s", m->mime_type);
-          nostr_json_builder_add_string(builder, mime_field);
+          gnostr_json_builder_add_string(builder, mime_field);
           g_free(mime_field);
         }
 
         /* x field (SHA-256 hash) */
         if (m->sha256 && *m->sha256) {
           char *hash_field = g_strdup_printf("x %s", m->sha256);
-          nostr_json_builder_add_string(builder, hash_field);
+          gnostr_json_builder_add_string(builder, hash_field);
           g_free(hash_field);
         }
 
         /* size field */
         if (m->size > 0) {
           char *size_field = g_strdup_printf("size %" G_GINT64_FORMAT, m->size);
-          nostr_json_builder_add_string(builder, size_field);
+          gnostr_json_builder_add_string(builder, size_field);
           g_free(size_field);
         }
 
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_end_array(builder);
         g_debug("[PUBLISH] Added imeta tag for: %s (type=%s, sha256=%.16s...)",
                 m->url, m->mime_type ? m->mime_type : "?",
                 m->sha256 ? m->sha256 : "?");
@@ -7190,12 +7188,12 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   if (composer && GNOSTR_IS_COMPOSER(composer)) {
     gint64 expiration = gnostr_composer_get_expiration(GNOSTR_COMPOSER(composer));
     if (expiration > 0) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "expiration");
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "expiration");
       char expiration_str[32];
       g_snprintf(expiration_str, sizeof(expiration_str), "%" G_GINT64_FORMAT, expiration);
-      nostr_json_builder_add_string(builder, expiration_str);
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_add_string(builder, expiration_str);
+      gnostr_json_builder_end_array(builder);
       g_debug("[PUBLISH] Added expiration tag: %s", expiration_str);
     }
   }
@@ -7203,20 +7201,20 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   /* NIP-36: Add content-warning tag if note is marked as sensitive */
   if (composer && GNOSTR_IS_COMPOSER(composer)) {
     if (gnostr_composer_is_sensitive(GNOSTR_COMPOSER(composer))) {
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "content-warning");
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "content-warning");
       /* Empty reason - users can customize in future */
-      nostr_json_builder_add_string(builder, "");
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_add_string(builder, "");
+      gnostr_json_builder_end_array(builder);
       g_debug("[PUBLISH] Added content-warning tag (sensitive content)");
     }
   }
 
-  nostr_json_builder_end_array(builder); /* end tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder); /* end tags */
+  gnostr_json_builder_end_object(builder);
 
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to build event JSON");

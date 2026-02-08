@@ -7,7 +7,7 @@
 #define G_LOG_DOMAIN "gnostr-drafts"
 
 #include "gnostr-drafts.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <glib/gstdio.h>
 #include <time.h>
 #include <string.h>
@@ -134,106 +134,106 @@ char *gnostr_draft_generate_d_tag(void) {
 char *gnostr_draft_to_json(const GnostrDraft *draft) {
   if (!draft) return NULL;
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* Required fields */
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, draft->target_kind);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, draft->target_kind);
 
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, draft->content ? draft->content : "");
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, draft->content ? draft->content : "");
 
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int64(builder, draft->created_at);
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int64(builder, draft->created_at);
 
   /* Build tags array */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* NIP-14: Subject tag */
   if (draft->subject && *draft->subject) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "subject");
-    nostr_json_builder_add_string(builder, draft->subject);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "subject");
+    gnostr_json_builder_add_string(builder, draft->subject);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* NIP-10: Reply context */
   if (draft->root_id && strlen(draft->root_id) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "e");
-    nostr_json_builder_add_string(builder, draft->root_id);
-    nostr_json_builder_add_string(builder, ""); /* relay hint */
-    nostr_json_builder_add_string(builder, "root");
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "e");
+    gnostr_json_builder_add_string(builder, draft->root_id);
+    gnostr_json_builder_add_string(builder, ""); /* relay hint */
+    gnostr_json_builder_add_string(builder, "root");
+    gnostr_json_builder_end_array(builder);
   }
 
   if (draft->reply_to_id && strlen(draft->reply_to_id) == 64 &&
       (!draft->root_id || strcmp(draft->reply_to_id, draft->root_id) != 0)) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "e");
-    nostr_json_builder_add_string(builder, draft->reply_to_id);
-    nostr_json_builder_add_string(builder, ""); /* relay hint */
-    nostr_json_builder_add_string(builder, "reply");
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "e");
+    gnostr_json_builder_add_string(builder, draft->reply_to_id);
+    gnostr_json_builder_add_string(builder, ""); /* relay hint */
+    gnostr_json_builder_add_string(builder, "reply");
+    gnostr_json_builder_end_array(builder);
   }
 
   if (draft->reply_to_pubkey && strlen(draft->reply_to_pubkey) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "p");
-    nostr_json_builder_add_string(builder, draft->reply_to_pubkey);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "p");
+    gnostr_json_builder_add_string(builder, draft->reply_to_pubkey);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* NIP-18: Quote context */
   if (draft->quote_id && strlen(draft->quote_id) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "q");
-    nostr_json_builder_add_string(builder, draft->quote_id);
-    nostr_json_builder_add_string(builder, ""); /* relay hint */
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "q");
+    gnostr_json_builder_add_string(builder, draft->quote_id);
+    gnostr_json_builder_add_string(builder, ""); /* relay hint */
+    gnostr_json_builder_end_array(builder);
   }
 
   if (draft->quote_pubkey && strlen(draft->quote_pubkey) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "p");
-    nostr_json_builder_add_string(builder, draft->quote_pubkey);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "p");
+    gnostr_json_builder_add_string(builder, draft->quote_pubkey);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* NIP-36: Content warning */
   if (draft->is_sensitive) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "content-warning");
-    nostr_json_builder_add_string(builder, "");
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "content-warning");
+    gnostr_json_builder_add_string(builder, "");
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder);  /* end tags */
+  gnostr_json_builder_end_array(builder);  /* end tags */
 
   /* Draft metadata (not part of the actual event, but useful for drafts) */
-  nostr_json_builder_set_key(builder, "_draft_meta");
-  nostr_json_builder_begin_object(builder);
+  gnostr_json_builder_set_key(builder, "_draft_meta");
+  gnostr_json_builder_begin_object(builder);
 
   if (draft->d_tag) {
-    nostr_json_builder_set_key(builder, "d_tag");
-    nostr_json_builder_add_string(builder, draft->d_tag);
+    gnostr_json_builder_set_key(builder, "d_tag");
+    gnostr_json_builder_add_string(builder, draft->d_tag);
   }
-  nostr_json_builder_set_key(builder, "updated_at");
-  nostr_json_builder_add_int64(builder, draft->updated_at);
+  gnostr_json_builder_set_key(builder, "updated_at");
+  gnostr_json_builder_add_int64(builder, draft->updated_at);
 
   if (draft->quote_nostr_uri) {
-    nostr_json_builder_set_key(builder, "quote_nostr_uri");
-    nostr_json_builder_add_string(builder, draft->quote_nostr_uri);
+    gnostr_json_builder_set_key(builder, "quote_nostr_uri");
+    gnostr_json_builder_add_string(builder, draft->quote_nostr_uri);
   }
 
-  nostr_json_builder_end_object(builder);  /* end _draft_meta */
+  gnostr_json_builder_end_object(builder);  /* end _draft_meta */
 
-  nostr_json_builder_end_object(builder);  /* end root */
+  gnostr_json_builder_end_object(builder);  /* end root */
 
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 
@@ -242,26 +242,26 @@ typedef struct {
   GnostrDraft *draft;
 } DraftTagParseCtx;
 
-static bool parse_draft_tag_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean parse_draft_tag_cb(gsize idx, const gchar *element_json, gpointer user_data) {
   (void)idx;
   DraftTagParseCtx *ctx = (DraftTagParseCtx *)user_data;
 
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   char *tag_name = NULL;
   char *tag_val = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
-      nostr_json_get_array_string(element_json, NULL, 1, &tag_val) != 0) {
+  if ((tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL)) == NULL ||
+      (tag_val = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) == NULL) {
     g_free(tag_name);
     g_free(tag_val);
-    return true;
+    return TRUE;
   }
 
   if (!tag_name || !tag_val) {
     g_free(tag_name);
     g_free(tag_val);
-    return true;
+    return TRUE;
   }
 
   if (strcmp(tag_name, "subject") == 0) {
@@ -270,7 +270,7 @@ static bool parse_draft_tag_cb(size_t idx, const char *element_json, void *user_
   } else if (strcmp(tag_name, "e") == 0) {
     /* Check marker (element 3) */
     char *marker = NULL;
-    nostr_json_get_array_string(element_json, NULL, 3, &marker);
+    marker = gnostr_json_get_array_string(element_json, NULL, 3, NULL);
 
     if (marker && strcmp(marker, "root") == 0) {
       ctx->draft->root_id = tag_val;
@@ -301,13 +301,13 @@ static bool parse_draft_tag_cb(size_t idx, const char *element_json, void *user_
 
   g_free(tag_name);
   g_free(tag_val);
-  return true;
+  return TRUE;
 }
 
 GnostrDraft *gnostr_draft_from_json(const char *json_str) {
   if (!json_str) return NULL;
 
-  if (!nostr_json_is_valid(json_str)) {
+  if (!gnostr_json_is_valid(json_str)) {
     g_warning("drafts: failed to parse draft JSON");
     return NULL;
   }
@@ -316,43 +316,47 @@ GnostrDraft *gnostr_draft_from_json(const char *json_str) {
 
   /* Kind */
   int kind_val = 0;
-  if (nostr_json_get_int(json_str, "kind", &kind_val) == 0) {
+  kind_val = gnostr_json_get_int(json_str, "kind", NULL);
+  /* Note: check error if 0 is a valid value */
+  {
     draft->target_kind = kind_val;
   }
 
   /* Content */
   char *content_val = NULL;
-  if (nostr_json_get_string(json_str, "content", &content_val) == 0) {
+  content_val = gnostr_json_get_string(json_str, "content", NULL);
+  if (content_val) {
     draft->content = content_val;
   }
 
   /* Created at */
   int64_t created_val = 0;
-  if (nostr_json_get_int64(json_str, "created_at", &created_val) == 0) {
+  if ((created_val = gnostr_json_get_int64(json_str, "created_at", NULL), TRUE)) {
     draft->created_at = created_val;
   }
 
   /* Parse tags using callback */
   char *tags_json = NULL;
-  if (nostr_json_get_raw(json_str, "tags", &tags_json) == 0 && tags_json) {
+  tags_json = gnostr_json_get_raw(json_str, "tags", NULL);
+  if (tags_json) {
     DraftTagParseCtx ctx = { .draft = draft };
-    nostr_json_array_foreach_root(tags_json, parse_draft_tag_cb, &ctx);
+    gnostr_json_array_foreach_root(tags_json, parse_draft_tag_cb, &ctx);
     g_free(tags_json);
   }
 
   /* Draft metadata from _draft_meta object */
   char *d_tag_val = NULL;
-  if (nostr_json_get_string_at(json_str, "_draft_meta", "d_tag", &d_tag_val) == 0) {
+  if ((d_tag_val = gnostr_json_get_string_at(json_str, "_draft_meta", "d_tag", NULL)) != NULL ) {
     draft->d_tag = d_tag_val;
   }
 
-  int64_t updated_val = 0;
-  if (nostr_json_get_int64_at(json_str, "_draft_meta", "updated_at", &updated_val) == 0) {
+  gint64 updated_val = gnostr_json_get_int64_at(json_str, "_draft_meta", "updated_at", NULL);
+  if (updated_val != 0) {
     draft->updated_at = updated_val;
   }
 
   char *quote_uri_val = NULL;
-  if (nostr_json_get_string_at(json_str, "_draft_meta", "quote_nostr_uri", &quote_uri_val) == 0) {
+  if ((quote_uri_val = gnostr_json_get_string_at(json_str, "_draft_meta", "quote_nostr_uri", NULL)) != NULL ) {
     draft->quote_nostr_uri = quote_uri_val;
   }
 

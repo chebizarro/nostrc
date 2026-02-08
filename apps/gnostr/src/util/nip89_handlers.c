@@ -8,6 +8,7 @@
 #include "../storage_ndb.h"
 #include "relays.h"
 #include <string.h>
+#include "nostr_json.h"
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -178,28 +179,36 @@ GnostrNip89HandlerInfo *gnostr_nip89_parse_handler_info(const char *event_json)
   const char *content_str = nostr_event_get_content(&event);
   if (content_str && *content_str) {
     char *val = NULL;
-    if (nostr_json_get_string(content_str, "name", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "name", NULL);
+    if (val) {
       info->name = val;
     }
-    if (nostr_json_get_string(content_str, "display_name", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "display_name", NULL);
+    if (val) {
       info->display_name = val;
     }
-    if (nostr_json_get_string(content_str, "picture", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "picture", NULL);
+    if (val) {
       info->picture = val;
     }
-    if (nostr_json_get_string(content_str, "about", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "about", NULL);
+    if (val) {
       info->about = val;
     }
-    if (nostr_json_get_string(content_str, "banner", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "banner", NULL);
+    if (val) {
       info->banner = val;
     }
-    if (nostr_json_get_string(content_str, "website", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "website", NULL);
+    if (val) {
       info->website = val;
     }
-    if (nostr_json_get_string(content_str, "nip05", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "nip05", NULL);
+    if (val) {
       info->nip05 = val;
     }
-    if (nostr_json_get_string(content_str, "lud16", &val) == 0) {
+    val = gnostr_json_get_string(content_str, "lud16", NULL);
+    if (val) {
       info->lud16 = val;
     }
   }
@@ -770,34 +779,34 @@ void gnostr_nip89_clear_all_preferences(void)
 
 char *gnostr_nip89_build_handler_filter(const guint *kinds, gsize n_kinds)
 {
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* kinds: [31989] */
-  nostr_json_builder_set_key(builder, "kinds");
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_int(builder, GNOSTR_NIP89_KIND_HANDLER_INFO);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_set_key(builder, "kinds");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_int(builder, GNOSTR_NIP89_KIND_HANDLER_INFO);
+  gnostr_json_builder_end_array(builder);
 
   /* limit: 100 */
-  nostr_json_builder_set_key(builder, "limit");
-  nostr_json_builder_add_int(builder, 100);
+  gnostr_json_builder_set_key(builder, "limit");
+  gnostr_json_builder_add_int(builder, 100);
 
   /* If specific kinds are requested, add them as #k tag filter */
   if (kinds && n_kinds > 0) {
-    nostr_json_builder_set_key(builder, "#k");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "#k");
+    gnostr_json_builder_begin_array(builder);
     for (gsize i = 0; i < n_kinds; i++) {
       char kind_str[16];
       snprintf(kind_str, sizeof(kind_str), "%u", kinds[i]);
-      nostr_json_builder_add_string(builder, kind_str);
+      gnostr_json_builder_add_string(builder, kind_str);
     }
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_object(builder);
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 
@@ -805,40 +814,40 @@ char *gnostr_nip89_build_recommendation_filter(guint event_kind,
                                                 const char **followed_pubkeys,
                                                 gsize n_pubkeys)
 {
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* kinds: [31990] */
-  nostr_json_builder_set_key(builder, "kinds");
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_int(builder, GNOSTR_NIP89_KIND_HANDLER_RECOMMEND);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_set_key(builder, "kinds");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_int(builder, GNOSTR_NIP89_KIND_HANDLER_RECOMMEND);
+  gnostr_json_builder_end_array(builder);
 
   /* Filter by d-tag (the event kind being recommended) */
-  nostr_json_builder_set_key(builder, "#d");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "#d");
+  gnostr_json_builder_begin_array(builder);
   char kind_str[16];
   snprintf(kind_str, sizeof(kind_str), "%u", event_kind);
-  nostr_json_builder_add_string(builder, kind_str);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_add_string(builder, kind_str);
+  gnostr_json_builder_end_array(builder);
 
   /* Optionally filter by authors (followed users) */
   if (followed_pubkeys && n_pubkeys > 0) {
-    nostr_json_builder_set_key(builder, "authors");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "authors");
+    gnostr_json_builder_begin_array(builder);
     for (gsize i = 0; i < n_pubkeys; i++) {
-      nostr_json_builder_add_string(builder, followed_pubkeys[i]);
+      gnostr_json_builder_add_string(builder, followed_pubkeys[i]);
     }
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* limit: 50 */
-  nostr_json_builder_set_key(builder, "limit");
-  nostr_json_builder_add_int(builder, 50);
+  gnostr_json_builder_set_key(builder, "limit");
+  gnostr_json_builder_add_int(builder, 50);
 
-  nostr_json_builder_end_object(builder);
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 

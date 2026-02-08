@@ -1,6 +1,6 @@
 #include "nip39_identity.h"
 #include <string.h>
-#include "json.h"
+#include "nostr_json.h"
 
 /* Platform string mappings */
 static const struct {
@@ -138,20 +138,22 @@ typedef struct {
 } ParseIdentitiesCtx;
 
 /* Callback for iterating over tags array */
-static bool parse_identity_tag_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean parse_identity_tag_cb(gsize index, const gchar *element_json, gpointer user_data) {
   (void)index;
   ParseIdentitiesCtx *ctx = user_data;
 
   /* Each tag element is an array like ["i", "platform:identity", "proof_url"] */
   /* Get array length first */
   size_t arr_len = 0;
-  if (nostr_json_get_array_length(element_json, NULL, &arr_len) != 0 || arr_len < 2) {
+  arr_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+  if (arr_len < 0 || arr_len < 2) {
     return true; /* continue iteration */
   }
 
   /* Get tag key (first element) */
   char *tag_key = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_key) != 0 || !tag_key) {
+  tag_key = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_key) {
     return true;
   }
 
@@ -164,14 +166,15 @@ static bool parse_identity_tag_cb(size_t index, const char *element_json, void *
 
   /* Get identity value (second element) */
   char *tag_value = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+  tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (!tag_value) {
     return true;
   }
 
   /* Get optional proof URL (third element) */
   char *proof_url = NULL;
   if (arr_len >= 3) {
-    nostr_json_get_array_string(element_json, NULL, 2, &proof_url);
+    proof_url = gnostr_json_get_array_string(element_json, NULL, 2, NULL);
   }
 
   GnostrExternalIdentity *identity = gnostr_nip39_parse_identity(tag_value, proof_url);
@@ -190,13 +193,13 @@ GPtrArray *gnostr_nip39_parse_identities_from_event(const char *event_json_str) 
   }
 
   /* Validate JSON first */
-  if (!nostr_json_is_valid(event_json_str)) {
+  if (!gnostr_json_is_valid(event_json_str)) {
     g_warning("nip39: failed to parse event JSON");
     return NULL;
   }
 
   /* Check if tags key exists */
-  if (!nostr_json_has_key(event_json_str, "tags")) {
+  if (!gnostr_json_has_key(event_json_str, "tags")) {
     return NULL;
   }
 
@@ -204,7 +207,7 @@ GPtrArray *gnostr_nip39_parse_identities_from_event(const char *event_json_str) 
   ParseIdentitiesCtx ctx = { .identities = identities };
 
   /* Iterate over tags array using facade */
-  nostr_json_array_foreach(event_json_str, "tags", parse_identity_tag_cb, &ctx);
+  gnostr_json_array_foreach(event_json_str, "tags", parse_identity_tag_cb, &ctx);
 
   if (identities->len == 0) {
     g_ptr_array_unref(identities);
@@ -287,12 +290,12 @@ char *gnostr_nip39_build_tags_json(GPtrArray *identities) {
     return g_strdup("[]");
   }
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
   if (!builder) {
     return g_strdup("[]");
   }
 
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_begin_array(builder);
 
   for (guint i = 0; i < identities->len; i++) {
     GnostrExternalIdentity *identity = g_ptr_array_index(identities, i);
@@ -301,26 +304,26 @@ char *gnostr_nip39_build_tags_json(GPtrArray *identities) {
     }
 
     /* Begin tag array: ["i", "platform:identity", "proof_url"] */
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "i");
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "i");
 
     /* Build "platform:identity" string */
     char *tag_value = g_strdup_printf("%s:%s", identity->platform_name, identity->identity);
-    nostr_json_builder_add_string(builder, tag_value);
+    gnostr_json_builder_add_string(builder, tag_value);
     g_free(tag_value);
 
     /* Add proof URL if present */
     if (identity->proof_url && *identity->proof_url) {
-      nostr_json_builder_add_string(builder, identity->proof_url);
+      gnostr_json_builder_add_string(builder, identity->proof_url);
     }
 
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_end_array(builder);
 
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 

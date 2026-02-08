@@ -18,6 +18,7 @@
 #include <nostr/nip77/negentropy.h>
 #include <nostr-relay.h>
 #include <nostr-json.h>
+#include "nostr_json.h"
 #include <channel.h>
 #include <string.h>
 #include <stdlib.h>
@@ -125,9 +126,9 @@ build_kind_datasource(const int *kinds, size_t kind_count,
     g_autofree char *id_hex = NULL;
     g_autofree char *ca_str = NULL;
 
-    if (nostr_json_get_string(results[i], "id", &id_hex) != 0 || !id_hex)
+    if ((id_hex = gnostr_json_get_string(results[i], "id", NULL)) == NULL)
       continue;
-    if (nostr_json_get_raw(results[i], "created_at", &ca_str) != 0 || !ca_str)
+    if ((ca_str = gnostr_json_get_raw(results[i], "created_at", NULL)) == NULL)
       continue;
 
     NostrIndexItem *item = &ctx_out->items[ctx_out->count];
@@ -176,7 +177,7 @@ neg_handler(const char *raw)
   if (!q || strncmp(q + 1, "NEG-", 4) != 0) return false;
 
   char *type = NULL;
-  if (nostr_json_get_array_string(raw, NULL, 0, &type) != 0 || !type)
+  if ((type = gnostr_json_get_array_string(raw, NULL, 0, NULL)) == NULL)
     return false;
 
   gboolean is_msg = (strcmp(type, "NEG-MSG") == 0);
@@ -185,13 +186,13 @@ neg_handler(const char *raw)
   if (!is_msg && !is_err) return false;
 
   char *sub = NULL;
-  nostr_json_get_array_string(raw, NULL, 1, &sub);
+  sub = gnostr_json_get_array_string(raw, NULL, 1, NULL);
 
   g_mutex_lock(&g_neg_mu);
   gboolean match = (sub && g_neg_sub_id && strcmp(sub, g_neg_sub_id) == 0);
   if (match) {
     char *val = NULL;
-    nostr_json_get_array_string(raw, NULL, 2, &val);
+    val = gnostr_json_get_array_string(raw, NULL, 2, NULL);
     if (is_msg) {
       g_free(g_neg_hex);
       g_neg_hex = val ? g_strdup(val) : NULL;

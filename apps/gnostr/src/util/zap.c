@@ -6,7 +6,7 @@
 
 #include "zap.h"
 #include "relays.h"
-#include "json.h"
+#include "nostr_json.h"
 #include "utils.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -303,7 +303,7 @@ static void on_lnurl_info_http_done(GObject *source, GAsyncResult *res, gpointer
   gchar *json_str = g_strndup(data, len);
   g_bytes_unref(bytes);
 
-  if (!nostr_json_is_valid(json_str)) {
+  if (!gnostr_json_is_valid(json_str)) {
     if (ctx->callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
                                 "Failed to parse LNURL response");
@@ -317,10 +317,11 @@ static void on_lnurl_info_http_done(GObject *source, GAsyncResult *res, gpointer
 
   /* Check for error response */
   char *status = NULL;
-  if (nostr_json_get_string(json_str, "status", &status) == 0 && status) {
+  status = gnostr_json_get_string(json_str, "status", NULL);
+  if (status) {
     if (g_ascii_strcasecmp(status, "ERROR") == 0) {
       char *reason = NULL;
-      nostr_json_get_string(json_str, "reason", &reason);
+      reason = gnostr_json_get_string(json_str, "reason", NULL);
       if (ctx->callback) {
         GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_HTTP_FAILED,
                                   "LNURL error: %s", reason ? reason : "Unknown error");
@@ -339,26 +340,27 @@ static void on_lnurl_info_http_done(GObject *source, GAsyncResult *res, gpointer
   /* Parse LNURL pay info */
   GnostrLnurlPayInfo *info = g_new0(GnostrLnurlPayInfo, 1);
 
-  nostr_json_get_string(json_str, "callback", &info->callback);
+  info->callback = gnostr_json_get_string(json_str, "callback", NULL);
 
   int64_t min_val = 0, max_val = 0;
-  if (nostr_json_get_int64(json_str, "minSendable", &min_val) == 0) {
+  if ((min_val = gnostr_json_get_int64(json_str, "minSendable", NULL), TRUE)) {
     info->min_sendable = min_val;
   }
-  if (nostr_json_get_int64(json_str, "maxSendable", &max_val) == 0) {
+  if ((max_val = gnostr_json_get_int64(json_str, "maxSendable", NULL), TRUE)) {
     info->max_sendable = max_val;
   }
 
-  bool allows_nostr_val = false;
-  if (nostr_json_get_bool(json_str, "allowsNostr", &allows_nostr_val) == 0) {
+  gboolean allows_nostr_val = FALSE;
+  allows_nostr_val = gnostr_json_get_boolean(json_str, "allowsNostr", NULL);
+  {
     info->allows_nostr = allows_nostr_val;
   }
 
-  nostr_json_get_string(json_str, "nostrPubkey", &info->nostr_pubkey);
-  nostr_json_get_string(json_str, "metadata", &info->metadata);
+  info->nostr_pubkey = gnostr_json_get_string(json_str, "nostrPubkey", NULL);
+  info->metadata = gnostr_json_get_string(json_str, "metadata", NULL);
 
   int64_t comment_allowed_val = 0;
-  if (nostr_json_get_int64(json_str, "commentAllowed", &comment_allowed_val) == 0) {
+  if ((comment_allowed_val = gnostr_json_get_int64(json_str, "commentAllowed", NULL), TRUE)) {
     info->comment_allowed = g_strdup_printf("%lld", (long long)comment_allowed_val);
   }
 
@@ -570,7 +572,7 @@ static void on_invoice_http_done(GObject *source, GAsyncResult *res, gpointer us
   gchar *json_str = g_strndup(data, len);
   g_bytes_unref(bytes);
 
-  if (!nostr_json_is_valid(json_str)) {
+  if (!gnostr_json_is_valid(json_str)) {
     if (ctx->callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
                                 "Failed to parse invoice response");
@@ -584,10 +586,11 @@ static void on_invoice_http_done(GObject *source, GAsyncResult *res, gpointer us
 
   /* Check for error response */
   char *status = NULL;
-  if (nostr_json_get_string(json_str, "status", &status) == 0 && status) {
+  status = gnostr_json_get_string(json_str, "status", NULL);
+  if (status) {
     if (g_ascii_strcasecmp(status, "ERROR") == 0) {
       char *reason = NULL;
-      nostr_json_get_string(json_str, "reason", &reason);
+      reason = gnostr_json_get_string(json_str, "reason", NULL);
       if (ctx->callback) {
         GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVOICE_FAILED,
                                   "Invoice error: %s", reason ? reason : "Unknown error");
@@ -605,7 +608,8 @@ static void on_invoice_http_done(GObject *source, GAsyncResult *res, gpointer us
 
   /* Extract the invoice */
   char *bolt11 = NULL;
-  if (nostr_json_get_string(json_str, "pr", &bolt11) != 0 || !bolt11) {
+  bolt11 = gnostr_json_get_string(json_str, "pr", NULL);
+  if (!bolt11) {
     if (ctx->callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVOICE_FAILED,
                                 "No invoice in response");
@@ -759,93 +763,93 @@ gchar *gnostr_zap_create_request_event(const GnostrZapRequest *req,
     return NULL;
   }
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* Kind 9734 - zap request */
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, 9734);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, 9734);
 
   /* Content - optional comment */
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, req->comment ? req->comment : "");
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, req->comment ? req->comment : "");
 
   /* Pubkey - the sender's pubkey */
-  nostr_json_builder_set_key(builder, "pubkey");
-  nostr_json_builder_add_string(builder, sender_pubkey);
+  gnostr_json_builder_set_key(builder, "pubkey");
+  gnostr_json_builder_add_string(builder, sender_pubkey);
 
   /* Created at */
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
 
   /* Tags */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* relays tag - required */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "relays");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "relays");
   if (req->relays) {
     for (int i = 0; req->relays[i]; i++) {
-      nostr_json_builder_add_string(builder, req->relays[i]);
+      gnostr_json_builder_add_string(builder, req->relays[i]);
     }
   } else {
     /* Get relays from config (GSettings defaults if none configured) */
     GPtrArray *cfg_relays = gnostr_get_write_relay_urls();
     for (guint i = 0; i < cfg_relays->len; i++) {
-      nostr_json_builder_add_string(builder, g_ptr_array_index(cfg_relays, i));
+      gnostr_json_builder_add_string(builder, g_ptr_array_index(cfg_relays, i));
     }
     g_ptr_array_unref(cfg_relays);
   }
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_end_array(builder);
 
   /* amount tag - recommended */
   if (req->amount_msat > 0) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "amount");
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "amount");
     gchar *amount_str = g_strdup_printf("%lld", (long long)req->amount_msat);
-    nostr_json_builder_add_string(builder, amount_str);
+    gnostr_json_builder_add_string(builder, amount_str);
     g_free(amount_str);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* lnurl tag - recommended (bech32 encoded) */
   if (req->lnurl) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "lnurl");
-    nostr_json_builder_add_string(builder, req->lnurl);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "lnurl");
+    gnostr_json_builder_add_string(builder, req->lnurl);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* p tag - required (recipient pubkey) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "p");
-  nostr_json_builder_add_string(builder, req->recipient_pubkey);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "p");
+  gnostr_json_builder_add_string(builder, req->recipient_pubkey);
+  gnostr_json_builder_end_array(builder);
 
   /* e tag - required if zapping an event */
   if (req->event_id) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "e");
-    nostr_json_builder_add_string(builder, req->event_id);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "e");
+    gnostr_json_builder_add_string(builder, req->event_id);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* k tag - optional, kind of target event */
   if (req->event_id && req->event_kind > 0) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "k");
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "k");
     gchar *kind_str = g_strdup_printf("%d", req->event_kind);
-    nostr_json_builder_add_string(builder, kind_str);
+    gnostr_json_builder_add_string(builder, kind_str);
     g_free(kind_str);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder);  /* end tags */
-  nostr_json_builder_end_object(builder); /* end event */
+  gnostr_json_builder_end_array(builder);  /* end tags */
+  gnostr_json_builder_end_object(builder); /* end event */
 
-  gchar *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gchar *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return result;
 }
@@ -858,20 +862,20 @@ typedef struct {
 } ZapReceiptTagCtx;
 
 /* Callback for parsing receipt tags */
-static bool parse_receipt_tag_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean parse_receipt_tag_cb(gsize idx, const gchar *element_json, gpointer user_data) {
   (void)idx;
   ZapReceiptTagCtx *ctx = (ZapReceiptTagCtx *)user_data;
 
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   char *tag_name = NULL;
   char *tag_value = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
-      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+  if ((tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL)) == NULL ||
+      (tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) == NULL) {
     g_free(tag_name);
     g_free(tag_value);
-    return true;
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, "bolt11") == 0) {
@@ -896,7 +900,7 @@ static bool parse_receipt_tag_cb(size_t idx, const char *element_json, void *use
 
   g_free(tag_name);
   g_free(tag_value);
-  return true;
+  return TRUE;
 }
 
 /* Context for parsing zap request tags (from description) */
@@ -906,21 +910,21 @@ typedef struct {
 } ZapReqAmountCtx;
 
 /* Callback for parsing zap request amount tag */
-static bool parse_zap_req_amount_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean parse_zap_req_amount_cb(gsize idx, const gchar *element_json, gpointer user_data) {
   (void)idx;
   ZapReqAmountCtx *ctx = (ZapReqAmountCtx *)user_data;
 
-  if (ctx->found) return false;  /* Stop if already found */
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (ctx->found) return FALSE;  /* Stop if already found */
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   char *tag_name = NULL;
   char *tag_value = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
-      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+  if ((tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL)) == NULL ||
+      (tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) == NULL) {
     g_free(tag_name);
     g_free(tag_value);
-    return true;
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, "amount") == 0) {
@@ -939,40 +943,43 @@ GnostrZapReceipt *gnostr_zap_parse_receipt(const gchar *event_json) {
     return NULL;
   }
 
-  if (!nostr_json_is_valid(event_json)) {
+  if (!gnostr_json_is_valid(event_json)) {
     g_debug("zap: failed to parse receipt JSON");
     return NULL;
   }
 
   /* Verify kind 9735 */
-  int64_t kind_val = 0;
-  if (nostr_json_get_int64(event_json, "kind", &kind_val) != 0 || kind_val != 9735) {
+  int64_t kind_val = gnostr_json_get_int64(event_json, "kind", NULL);
+  if (kind_val != 9735) {
     return NULL;
   }
 
   GnostrZapReceipt *receipt = g_new0(GnostrZapReceipt, 1);
 
   char *id_val = NULL;
-  if (nostr_json_get_string(event_json, "id", &id_val) == 0 && id_val) {
+  id_val = gnostr_json_get_string(event_json, "id", NULL);
+  if (id_val) {
     receipt->id = id_val;
   }
 
   /* Extract event pubkey for validation against expected_nostr_pubkey */
   char *pubkey_val = NULL;
-  if (nostr_json_get_string(event_json, "pubkey", &pubkey_val) == 0 && pubkey_val) {
+  pubkey_val = gnostr_json_get_string(event_json, "pubkey", NULL);
+  if (pubkey_val) {
     receipt->event_pubkey = pubkey_val;
   }
 
   int64_t created_val = 0;
-  if (nostr_json_get_int64(event_json, "created_at", &created_val) == 0) {
+  if ((created_val = gnostr_json_get_int64(event_json, "created_at", NULL), TRUE)) {
     receipt->created_at = created_val;
   }
 
   /* Parse tags */
   char *tags_json = NULL;
-  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+  tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (tags_json) {
     ZapReceiptTagCtx ctx = { .receipt = receipt };
-    nostr_json_array_foreach_root(tags_json, parse_receipt_tag_cb, &ctx);
+    gnostr_json_array_foreach_root(tags_json, parse_receipt_tag_cb, &ctx);
     g_free(tags_json);
   }
 
@@ -997,11 +1004,12 @@ GnostrZapReceipt *gnostr_zap_parse_receipt(const gchar *event_json) {
   }
 
   /* Parse zap request amount from description for validation */
-  if (receipt->description && nostr_json_is_valid(receipt->description)) {
+  if (receipt->description && gnostr_json_is_valid(receipt->description)) {
     char *zap_tags_json = NULL;
-    if (nostr_json_get_raw(receipt->description, "tags", &zap_tags_json) == 0 && zap_tags_json) {
+    zap_tags_json = gnostr_json_get_raw(receipt->description, "tags", NULL);
+    if (zap_tags_json) {
       ZapReqAmountCtx ctx = { .amount_msat = &receipt->zap_request_amount_msat, .found = FALSE };
-      nostr_json_array_foreach_root(zap_tags_json, parse_zap_req_amount_cb, &ctx);
+      gnostr_json_array_foreach_root(zap_tags_json, parse_zap_req_amount_cb, &ctx);
       g_free(zap_tags_json);
     }
   }

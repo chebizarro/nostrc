@@ -10,7 +10,7 @@
  */
 
 #include "gnostr-nip10-thread-manager.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <string.h>
 
 /* Maximum cache entries before eviction */
@@ -83,21 +83,22 @@ typedef struct {
     char *last_relay;
 } ParseCtx;
 
-static bool tag_scan_cb(size_t index, const char *tag_json, void *user_data) {
+static gboolean tag_scan_cb(gsize index, const gchar *tag_json, gpointer user_data) {
     (void)index;
     ParseCtx *ctx = user_data;
 
-    if (!nostr_json_is_array_str(tag_json)) return true;
+    if (!gnostr_json_is_array_str(tag_json)) return TRUE;
 
     /* Get tag type (index 0) */
     char *tag_type = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_type) != 0 || !tag_type)
-        return true;
+    if ((tag_type = gnostr_json_get_array_string(tag_json, NULL, 0, NULL)) == NULL || !tag_type)
+        return TRUE;
 
     /* Handle "k" tag (NIP-22: root event kind) */
     if (strcmp(tag_type, "k") == 0) {
         char *kind_str = NULL;
-        if (nostr_json_get_array_string(tag_json, NULL, 1, &kind_str) == 0 && kind_str) {
+        kind_str = gnostr_json_get_array_string(tag_json, NULL, 1, NULL);
+        if (kind_str) {
             char *endptr;
             long val = strtol(kind_str, &endptr, 10);
             if (*endptr == '\0' && val >= 0 && val <= G_MAXINT)
@@ -105,45 +106,47 @@ static bool tag_scan_cb(size_t index, const char *tag_json, void *user_data) {
             free(kind_str);
         }
         free(tag_type);
-        return true;
+        return TRUE;
     }
 
     /* Handle "A"/"a" tag (NIP-22: addressable event reference) */
     if (strcmp(tag_type, "a") == 0 || strcmp(tag_type, "A") == 0) {
         char *addr = NULL;
-        if (nostr_json_get_array_string(tag_json, NULL, 1, &addr) == 0 && addr) {
+        addr = gnostr_json_get_array_string(tag_json, NULL, 1, NULL);
+        if (addr) {
             g_free(ctx->root_addr);
             ctx->root_addr = g_strdup(addr);
             free(addr);
             char *relay = NULL;
-            if (nostr_json_get_array_string(tag_json, NULL, 2, &relay) == 0 && relay) {
+            relay = gnostr_json_get_array_string(tag_json, NULL, 2, NULL);
+            if (relay) {
                 g_free(ctx->root_addr_relay);
                 ctx->root_addr_relay = (relay[0] != '\0') ? g_strdup(relay) : NULL;
                 free(relay);
             }
         }
         free(tag_type);
-        return true;
+        return TRUE;
     }
 
     /* Accept "e" (NIP-10) and "E" (NIP-22) */
     gboolean is_etag = (strcmp(tag_type, "e") == 0 || strcmp(tag_type, "E") == 0);
     free(tag_type);
-    if (!is_etag) return true;
+    if (!is_etag) return TRUE;
 
     /* Get event ID (index 1) */
     char *event_id = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 1, &event_id) != 0 || !event_id)
-        return true;
+    if ((event_id = gnostr_json_get_array_string(tag_json, NULL, 1, NULL)) == NULL || !event_id)
+        return TRUE;
 
     if (strlen(event_id) != 64) {
         free(event_id);
-        return true;
+        return TRUE;
     }
 
     /* Get relay hint (index 2) */
     char *relay = NULL;
-    nostr_json_get_array_string(tag_json, NULL, 2, &relay);
+    relay = gnostr_json_get_array_string(tag_json, NULL, 2, NULL);
 
     /* Track positional info */
     ctx->etag_count++;
@@ -159,7 +162,8 @@ static bool tag_scan_cb(size_t index, const char *tag_json, void *user_data) {
 
     /* Check for explicit marker (index 3) */
     char *marker = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 3, &marker) == 0 && marker) {
+    marker = gnostr_json_get_array_string(tag_json, NULL, 3, NULL);
+    if (marker) {
         if (strcmp(marker, "root") == 0) {
             ctx->has_explicit_markers = TRUE;
             g_free(ctx->root_id);
@@ -179,7 +183,7 @@ static bool tag_scan_cb(size_t index, const char *tag_json, void *user_data) {
 
     free(event_id);
     free(relay);
-    return true;
+    return TRUE;
 }
 
 /* ========== Core parsing ========== */
@@ -187,7 +191,7 @@ static bool tag_scan_cb(size_t index, const char *tag_json, void *user_data) {
 static CacheEntry *parse_event_json(const char *event_json) {
     /* Extract event ID */
     char *id = NULL;
-    if (nostr_json_get_string(event_json, "id", &id) != 0 || !id || strlen(id) != 64) {
+    if ((id = gnostr_json_get_string(event_json, "id", NULL)) == NULL || !id || strlen(id) != 64) {
         free(id);
         return NULL;
     }
@@ -195,7 +199,7 @@ static CacheEntry *parse_event_json(const char *event_json) {
     /* Scan tags */
     ParseCtx ctx = {0};
     ctx.root_kind = -1;
-    nostr_json_array_foreach(event_json, "tags", tag_scan_cb, &ctx);
+    gnostr_json_array_foreach(event_json, "tags", tag_scan_cb, &ctx);
 
     CacheEntry *entry = g_new0(CacheEntry, 1);
     entry->event_id = g_strdup(id);
@@ -281,7 +285,7 @@ gboolean gnostr_nip10_parse_thread(const char *event_json,
 
     /* Check cache first */
     char *id = NULL;
-    if (nostr_json_get_string(event_json, "id", &id) == 0 && id && strlen(id) == 64) {
+    if ((id = gnostr_json_get_string(event_json, "id", NULL)) != NULL && id && strlen(id) == 64) {
         CacheEntry *cached = g_hash_table_lookup(cache, id);
         if (cached) {
             fill_info_from_entry(cached, info);

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include <glib/gi18n.h>
+#include "nostr_json.h"
 #include "json.h"
 #include "nostr_event.h"
 #include "nostr-tag.h"
@@ -143,19 +144,21 @@ typedef struct {
     char *subject;
 } ParseSubjectCtx;
 
-static bool parse_subject_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean parse_subject_cb(gsize idx, const gchar *element_json, gpointer user_data) {
     (void)idx;
     ParseSubjectCtx *ctx = (ParseSubjectCtx *)user_data;
 
-    if (!nostr_json_is_array_str(element_json)) return true;
+    if (!gnostr_json_is_array_str(element_json)) return true;
 
     size_t tag_len = 0;
-    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+    tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+    if (tag_len < 0 || tag_len < 2) {
         return true;
     }
 
     char *tag_name = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+    if (!tag_name) {
         return true;
     }
 
@@ -166,7 +169,7 @@ static bool parse_subject_cb(size_t idx, const char *element_json, void *user_da
     free(tag_name);
 
     char *value = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &value) == 0 && value && *value) {
+    if ((value = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) != NULL && value && *value) {
         ctx->subject = g_strdup(value);
         free(value);
         return false;  /* Stop iteration */
@@ -180,12 +183,12 @@ gnostr_thread_parse_subject(const char *tags_json)
 {
     if (!tags_json) return NULL;
 
-    if (!nostr_json_is_array_str(tags_json)) {
+    if (!gnostr_json_is_array_str(tags_json)) {
         return NULL;
     }
 
     ParseSubjectCtx ctx = { .subject = NULL };
-    nostr_json_array_foreach_root(tags_json, parse_subject_cb, &ctx);
+    gnostr_json_array_foreach_root(tags_json, parse_subject_cb, &ctx);
     return ctx.subject;
 }
 
@@ -194,19 +197,21 @@ typedef struct {
     GPtrArray *hashtags;
 } ParseHashtagsCtx;
 
-static bool parse_hashtags_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean parse_hashtags_cb(gsize idx, const gchar *element_json, gpointer user_data) {
     (void)idx;
     ParseHashtagsCtx *ctx = (ParseHashtagsCtx *)user_data;
 
-    if (!nostr_json_is_array_str(element_json)) return true;
+    if (!gnostr_json_is_array_str(element_json)) return true;
 
     size_t tag_len = 0;
-    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+    tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+    if (tag_len < 0 || tag_len < 2) {
         return true;
     }
 
     char *tag_name = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+    if (!tag_name) {
         return true;
     }
 
@@ -217,7 +222,7 @@ static bool parse_hashtags_cb(size_t idx, const char *element_json, void *user_d
     free(tag_name);
 
     char *value = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &value) == 0 && value && *value) {
+    if ((value = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) != NULL && value && *value) {
         g_ptr_array_add(ctx->hashtags, g_strdup(value));
     }
     free(value);
@@ -229,13 +234,13 @@ gnostr_thread_parse_hashtags(const char *tags_json)
 {
     if (!tags_json) return NULL;
 
-    if (!nostr_json_is_array_str(tags_json)) {
+    if (!gnostr_json_is_array_str(tags_json)) {
         return NULL;
     }
 
     GPtrArray *hashtags = g_ptr_array_new_with_free_func(g_free);
     ParseHashtagsCtx ctx = { .hashtags = hashtags };
-    nostr_json_array_foreach_root(tags_json, parse_hashtags_cb, &ctx);
+    gnostr_json_array_foreach_root(tags_json, parse_hashtags_cb, &ctx);
     return hashtags;
 }
 
@@ -246,28 +251,30 @@ typedef struct {
     gboolean found_explicit;
 } ExtractRootIdCtx;
 
-static bool extract_root_id_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean extract_root_id_cb(gsize idx, const gchar *element_json, gpointer user_data) {
     (void)idx;
     ExtractRootIdCtx *ctx = (ExtractRootIdCtx *)user_data;
 
     if (ctx->found_explicit) return false;  /* Stop if we found explicit root */
 
-    if (!nostr_json_is_array_str(element_json)) return true;
+    if (!gnostr_json_is_array_str(element_json)) return true;
 
     size_t tag_len = 0;
-    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+    tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+    if (tag_len < 0 || tag_len < 2) {
         return true;
     }
 
     char *tag_name = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+    if (!tag_name) {
         return true;
     }
 
     /* Check for "E" tag (NIP-22 uppercase for root event) */
     if (strcmp(tag_name, "E") == 0) {
         char *event_id = NULL;
-        if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) == 0 &&
+        if ((event_id = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) != NULL &&
             event_id && strlen(event_id) == 64) {
             ctx->root_id = g_strdup(event_id);
             ctx->found_explicit = TRUE;
@@ -280,7 +287,7 @@ static bool extract_root_id_cb(size_t idx, const char *element_json, void *user_
     /* Check for "e" tag with "root" marker */
     if (strcmp(tag_name, "e") == 0) {
         char *event_id = NULL;
-        if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) != 0 ||
+        if ((event_id = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) == NULL ||
             !event_id || strlen(event_id) != 64) {
             free(event_id);
             free(tag_name);
@@ -290,7 +297,7 @@ static bool extract_root_id_cb(size_t idx, const char *element_json, void *user_
         /* Check for NIP-10 marker at index 3 */
         if (tag_len >= 4) {
             char *marker = NULL;
-            if (nostr_json_get_array_string(element_json, NULL, 3, &marker) == 0 &&
+            if ((marker = gnostr_json_get_array_string(element_json, NULL, 3, NULL)) != NULL &&
                 marker && strcmp(marker, "root") == 0) {
                 ctx->root_id = g_strdup(event_id);
                 ctx->found_explicit = TRUE;
@@ -315,12 +322,12 @@ gnostr_thread_reply_extract_root_id(const char *tags_json)
 {
     if (!tags_json) return NULL;
 
-    if (!nostr_json_is_array_str(tags_json)) {
+    if (!gnostr_json_is_array_str(tags_json)) {
         return NULL;
     }
 
     ExtractRootIdCtx ctx = { .root_id = NULL, .first_e_id = NULL, .found_explicit = FALSE };
-    nostr_json_array_foreach_root(tags_json, extract_root_id_cb, &ctx);
+    gnostr_json_array_foreach_root(tags_json, extract_root_id_cb, &ctx);
 
     /* Fallback to first "e" tag if no explicit root marker */
     if (!ctx.root_id && ctx.first_e_id) {
@@ -339,21 +346,23 @@ typedef struct {
     gboolean found_explicit;
 } ExtractParentIdCtx;
 
-static bool extract_parent_id_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean extract_parent_id_cb(gsize idx, const gchar *element_json, gpointer user_data) {
     (void)idx;
     ExtractParentIdCtx *ctx = (ExtractParentIdCtx *)user_data;
 
     if (ctx->found_explicit) return false;  /* Stop if found explicit reply marker */
 
-    if (!nostr_json_is_array_str(element_json)) return true;
+    if (!gnostr_json_is_array_str(element_json)) return true;
 
     size_t tag_len = 0;
-    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+    tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+    if (tag_len < 0 || tag_len < 2) {
         return true;
     }
 
     char *tag_name = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+    if (!tag_name) {
         return true;
     }
 
@@ -364,7 +373,7 @@ static bool extract_parent_id_cb(size_t idx, const char *element_json, void *use
     free(tag_name);
 
     char *event_id = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) != 0 ||
+    if ((event_id = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) == NULL ||
         !event_id || strlen(event_id) != 64) {
         free(event_id);
         return true;
@@ -373,7 +382,7 @@ static bool extract_parent_id_cb(size_t idx, const char *element_json, void *use
     /* Check for NIP-10 marker at index 3 */
     if (tag_len >= 4) {
         char *marker = NULL;
-        if (nostr_json_get_array_string(element_json, NULL, 3, &marker) == 0 &&
+        if ((marker = gnostr_json_get_array_string(element_json, NULL, 3, NULL)) != NULL &&
             marker && strcmp(marker, "reply") == 0) {
             ctx->parent_id = g_strdup(event_id);
             ctx->found_explicit = TRUE;
@@ -394,12 +403,12 @@ gnostr_thread_reply_extract_parent_id(const char *tags_json)
 {
     if (!tags_json) return NULL;
 
-    if (!nostr_json_is_array_str(tags_json)) {
+    if (!gnostr_json_is_array_str(tags_json)) {
         return NULL;
     }
 
     ExtractParentIdCtx ctx = { .parent_id = NULL, .last_e_id = NULL, .found_explicit = FALSE };
-    nostr_json_array_foreach_root(tags_json, extract_parent_id_cb, &ctx);
+    gnostr_json_array_foreach_root(tags_json, extract_parent_id_cb, &ctx);
 
     /* Fallback to last "e" tag (NIP-10 positional) */
     if (!ctx.parent_id && ctx.last_e_id) {
@@ -541,30 +550,30 @@ gnostr_thread_reply_parse_from_json(const char *json_str)
 char *
 gnostr_thread_create_tags(const char *subject, const char * const *hashtags)
 {
-    NostrJsonBuilder *builder = nostr_json_builder_new();
-    nostr_json_builder_begin_array(builder);
+    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    gnostr_json_builder_begin_array(builder);
 
     /* Add subject tag */
     if (subject && *subject) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "subject");
-        nostr_json_builder_add_string(builder, subject);
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "subject");
+        gnostr_json_builder_add_string(builder, subject);
+        gnostr_json_builder_end_array(builder);
     }
 
     /* Add hashtag tags */
     if (hashtags) {
         for (int i = 0; hashtags[i] != NULL; i++) {
-            nostr_json_builder_begin_array(builder);
-            nostr_json_builder_add_string(builder, "t");
-            nostr_json_builder_add_string(builder, hashtags[i]);
-            nostr_json_builder_end_array(builder);
+            gnostr_json_builder_begin_array(builder);
+            gnostr_json_builder_add_string(builder, "t");
+            gnostr_json_builder_add_string(builder, hashtags[i]);
+            gnostr_json_builder_end_array(builder);
         }
     }
 
-    nostr_json_builder_end_array(builder);
-    char *result = nostr_json_builder_finish(builder);
-    nostr_json_builder_free(builder);
+    gnostr_json_builder_end_array(builder);
+    char *result = gnostr_json_builder_finish(builder);
+    g_object_unref(builder);
     return result;
 }
 
@@ -576,54 +585,54 @@ gnostr_thread_reply_create_tags(const char *thread_root_id,
 {
     if (!thread_root_id) return NULL;
 
-    NostrJsonBuilder *builder = nostr_json_builder_new();
-    nostr_json_builder_begin_array(builder);
+    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    gnostr_json_builder_begin_array(builder);
 
     /* Add "K" tag indicating the root event kind (NIP-22) */
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "K");
-    nostr_json_builder_add_string(builder, "11");
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "K");
+    gnostr_json_builder_add_string(builder, "11");
+    gnostr_json_builder_end_array(builder);
 
     /* Add "E" tag for root event reference (NIP-22 uppercase) */
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "E");
-    nostr_json_builder_add_string(builder, thread_root_id);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "E");
+    gnostr_json_builder_add_string(builder, thread_root_id);
     if (recommended_relay)
-        nostr_json_builder_add_string(builder, recommended_relay);
-    nostr_json_builder_end_array(builder);
+        gnostr_json_builder_add_string(builder, recommended_relay);
+    gnostr_json_builder_end_array(builder);
 
     /* Also add lowercase "e" tag with root marker for NIP-10 compatibility */
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "e");
-    nostr_json_builder_add_string(builder, thread_root_id);
-    nostr_json_builder_add_string(builder, recommended_relay ? recommended_relay : "");
-    nostr_json_builder_add_string(builder, "root");
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "e");
+    gnostr_json_builder_add_string(builder, thread_root_id);
+    gnostr_json_builder_add_string(builder, recommended_relay ? recommended_relay : "");
+    gnostr_json_builder_add_string(builder, "root");
+    gnostr_json_builder_end_array(builder);
 
     /* Add parent reference if this is a nested reply */
     if (parent_id && strcmp(parent_id, thread_root_id) != 0) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "e");
-        nostr_json_builder_add_string(builder, parent_id);
-        nostr_json_builder_add_string(builder, recommended_relay ? recommended_relay : "");
-        nostr_json_builder_add_string(builder, "reply");
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "e");
+        gnostr_json_builder_add_string(builder, parent_id);
+        gnostr_json_builder_add_string(builder, recommended_relay ? recommended_relay : "");
+        gnostr_json_builder_add_string(builder, "reply");
+        gnostr_json_builder_end_array(builder);
     }
 
     /* Add "p" tags for author mentions */
     if (author_pubkeys) {
         for (int i = 0; author_pubkeys[i] != NULL; i++) {
-            nostr_json_builder_begin_array(builder);
-            nostr_json_builder_add_string(builder, "p");
-            nostr_json_builder_add_string(builder, author_pubkeys[i]);
-            nostr_json_builder_end_array(builder);
+            gnostr_json_builder_begin_array(builder);
+            gnostr_json_builder_add_string(builder, "p");
+            gnostr_json_builder_add_string(builder, author_pubkeys[i]);
+            gnostr_json_builder_end_array(builder);
         }
     }
 
-    nostr_json_builder_end_array(builder);
-    char *result = nostr_json_builder_finish(builder);
-    nostr_json_builder_free(builder);
+    gnostr_json_builder_end_array(builder);
+    char *result = gnostr_json_builder_finish(builder);
+    g_object_unref(builder);
     return result;
 }
 

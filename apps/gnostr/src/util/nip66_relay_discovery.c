@@ -5,6 +5,7 @@
  */
 
 #include "nip66_relay_discovery.h"
+#include "nostr_json.h"
 #include "json.h"
 #include <string.h>
 #include <time.h>
@@ -154,7 +155,8 @@ const gchar *gnostr_nip66_network_to_string(GnostrNip66RelayNetwork network)
 static gchar *nip66_get_string_or_null(const char *json, const gchar *key)
 {
   char *val = NULL;
-  if (nostr_json_get_string(json, key, &val) == 0) {
+  val = gnostr_json_get_string(json, key, NULL);
+  if (val) {
     return val;
   }
   return NULL;
@@ -164,7 +166,7 @@ static gchar *nip66_get_string_or_null(const char *json, const gchar *key)
 static gchar *nip66_get_string_at_or_null(const char *json, const gchar *obj_key, const gchar *key)
 {
   char *val = NULL;
-  if (nostr_json_get_string_at(json, obj_key, key, &val) == 0) {
+  if ((val = gnostr_json_get_string_at(json, obj_key, key, NULL)) != NULL ) {
     return val;
   }
   return NULL;
@@ -174,7 +176,7 @@ static gchar *nip66_get_string_at_or_null(const char *json, const gchar *obj_key
 static gint64 nip66_get_int_or_zero(const char *json, const gchar *key)
 {
   int64_t val = 0;
-  nostr_json_get_int64(json, key, &val);
+  val = gnostr_json_get_int64(json, key, NULL);
   return val;
 }
 
@@ -182,7 +184,7 @@ static gint64 nip66_get_int_or_zero(const char *json, const gchar *key)
 static gint nip66_get_int_at_or_zero(const char *json, const gchar *obj_key, const gchar *key)
 {
   int val = 0;
-  nostr_json_get_int_at(json, obj_key, key, &val);
+  val = gnostr_json_get_int_at(json, obj_key, key, NULL);
   return val;
 }
 
@@ -190,23 +192,23 @@ static gint nip66_get_int_at_or_zero(const char *json, const gchar *obj_key, con
 static gdouble nip66_get_double_or_zero(const char *json, const gchar *key)
 {
   double val = 0.0;
-  nostr_json_get_double(json, key, &val);
+  val = gnostr_json_get_double(json, key, NULL);
   return val;
 }
 
 /* Helper: get bool from JSON object (returns FALSE on failure) */
 static gboolean nip66_get_bool_or_false(const char *json, const gchar *key)
 {
-  bool val = false;
-  nostr_json_get_bool(json, key, &val);
+  gboolean val = FALSE;
+  val = gnostr_json_get_boolean(json, key, NULL);
   return val;
 }
 
 /* Helper: get bool from nested object */
 static gboolean nip66_get_bool_at_or_false(const char *json, const gchar *obj_key, const gchar *key)
 {
-  bool val = false;
-  nostr_json_get_bool_at(json, obj_key, key, &val);
+  gboolean val = FALSE;
+  val = gnostr_json_get_bool_at(json, obj_key, key, NULL);
   return val;
 }
 
@@ -224,22 +226,23 @@ typedef struct {
 } FindAllTagsCtx;
 
 /* Callback for finding a specific tag value */
-static bool find_tag_value_cb(size_t idx, const char *element_json, void *user_data)
+static gboolean find_tag_value_cb(gsize idx, const gchar *element_json, gpointer user_data)
 {
   (void)idx;
   FindTagCtx *ctx = (FindTagCtx *)user_data;
 
-  if (ctx->found_value) return false; /* Already found, stop */
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (ctx->found_value) return FALSE; /* Already found, stop */
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, ctx->tag_name) == 0) {
     char *val = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, (size_t)ctx->value_index, &val) == 0) {
+    if ((val = gnostr_json_get_array_string(element_json, NULL, (size_t)ctx->value_index, NULL)) != NULL) {
       ctx->found_value = val;
     }
     g_free(tag_name);
@@ -247,31 +250,33 @@ static bool find_tag_value_cb(size_t idx, const char *element_json, void *user_d
   }
 
   g_free(tag_name);
-  return true;
+  return TRUE;
 }
 
 /* Callback for finding all values for a tag name */
-static bool find_all_tag_values_cb(size_t idx, const char *element_json, void *user_data)
+static gboolean find_all_tag_values_cb(gsize idx, const gchar *element_json, gpointer user_data)
 {
   (void)idx;
   FindAllTagsCtx *ctx = (FindAllTagsCtx *)user_data;
 
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, ctx->tag_name) == 0) {
     char *val = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &val) == 0 && val) {
+    val = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (val) {
       g_ptr_array_add(ctx->values, val);
     }
   }
 
   g_free(tag_name);
-  return true;
+  return TRUE;
 }
 
 /* Find first tag value by name (returns newly allocated string or NULL) */
@@ -280,7 +285,7 @@ static gchar *find_tag_value(const char *tags_json, const gchar *tag_name, gint 
   if (!tags_json) return NULL;
 
   FindTagCtx ctx = { .tag_name = tag_name, .value_index = value_index, .found_value = NULL, .first_only = TRUE };
-  nostr_json_array_foreach_root(tags_json, find_tag_value_cb, &ctx);
+  gnostr_json_array_foreach_root(tags_json, find_tag_value_cb, &ctx);
   return ctx.found_value;
 }
 
@@ -291,37 +296,39 @@ static GPtrArray *find_all_tag_values(const char *tags_json, const gchar *tag_na
   if (!tags_json) return values;
 
   FindAllTagsCtx ctx = { .tag_name = tag_name, .values = values };
-  nostr_json_array_foreach_root(tags_json, find_all_tag_values_cb, &ctx);
+  gnostr_json_array_foreach_root(tags_json, find_all_tag_values_cb, &ctx);
   return values;
 }
 
 /* Callback for parsing rtt (round-trip time) tags
  * NIP-66 format: ["rtt-open", 234], ["rtt-read", 150], ["rtt-write", 200]
  * The tag name includes the type, value is at index 1 */
-static bool parse_rtt_tag_cb(size_t idx, const char *element_json, void *user_data)
+static gboolean parse_rtt_tag_cb(gsize idx, const gchar *element_json, gpointer user_data)
 {
   (void)idx;
   GnostrNip66RelayMeta *meta = (GnostrNip66RelayMeta *)user_data;
 
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   /* Get tag name */
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
 
   /* Check if this is an rtt-* tag */
   if (!g_str_has_prefix(tag_name, "rtt")) {
     g_free(tag_name);
-    return true;
+    return TRUE;
   }
 
   /* Get value at index 1 - can be string or number */
   char *rtt_val = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 1, &rtt_val) != 0 || !rtt_val) {
+  rtt_val = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (!rtt_val) {
     g_free(tag_name);
-    return true;
+    return TRUE;
   }
 
   gint64 latency = g_ascii_strtoll(rtt_val, NULL, 10);
@@ -340,8 +347,10 @@ static bool parse_rtt_tag_cb(size_t idx, const char *element_json, void *user_da
     /* Legacy format: ["rtt", "<type>", "<ms>"] - try to parse */
     char *rtt_type = NULL;
     char *rtt_ms = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &rtt_type) == 0 && rtt_type) {
-      if (nostr_json_get_array_string(element_json, NULL, 2, &rtt_ms) == 0 && rtt_ms) {
+    rtt_type = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (rtt_type) {
+      rtt_ms = gnostr_json_get_array_string(element_json, NULL, 2, NULL);
+      if (rtt_ms) {
         gint64 legacy_latency = g_ascii_strtoll(rtt_ms, NULL, 10);
         if (g_strcmp0(rtt_type, "open") == 0) {
           meta->latency_open_ms = legacy_latency;
@@ -358,7 +367,7 @@ static bool parse_rtt_tag_cb(size_t idx, const char *element_json, void *user_da
   }
 
   g_free(tag_name);
-  return true; /* Continue to find more rtt tags */
+  return TRUE; /* Continue to find more rtt tags */
 }
 
 /* Context for collecting int array */
@@ -366,7 +375,7 @@ typedef struct {
   GArray *arr;
 } IntArrayCtx;
 
-static bool collect_int_array_cb(size_t idx, const char *element_json, void *user_data)
+static gboolean collect_int_array_cb(gsize idx, const gchar *element_json, gpointer user_data)
 {
   (void)idx;
   IntArrayCtx *ctx = (IntArrayCtx *)user_data;
@@ -379,7 +388,7 @@ static bool collect_int_array_cb(size_t idx, const char *element_json, void *use
     gint int_val = (gint)val;
     g_array_append_val(ctx->arr, int_val);
   }
-  return true;
+  return TRUE;
 }
 
 /* Convert JSON array to int array */
@@ -389,7 +398,7 @@ static gint *nip66_array_to_int_array(const char *arr_json, gsize *out_count)
 
   GArray *arr = g_array_new(FALSE, FALSE, sizeof(gint));
   IntArrayCtx ctx = { .arr = arr };
-  nostr_json_array_foreach_root(arr_json, collect_int_array_cb, &ctx);
+  gnostr_json_array_foreach_root(arr_json, collect_int_array_cb, &ctx);
 
   *out_count = arr->len;
   if (arr->len == 0) {
@@ -405,15 +414,14 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  if (!nostr_json_is_valid(event_json)) {
+  if (!gnostr_json_is_valid(event_json)) {
     g_debug("nip66: failed to parse relay meta JSON");
     return NULL;
   }
 
   /* Validate kind */
-  int64_t kind_val = 0;
-  if (nostr_json_get_int64(event_json, "kind", &kind_val) != 0 ||
-      kind_val != GNOSTR_NIP66_KIND_RELAY_META) {
+  int64_t kind_val = gnostr_json_get_int64(event_json, "kind", NULL);
+  if (kind_val != GNOSTR_NIP66_KIND_RELAY_META) {
     return NULL;
   }
 
@@ -427,7 +435,8 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
 
   /* Parse tags */
   char *tags_json = NULL;
-  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+  tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (tags_json) {
     /* d tag = relay URL */
     gchar *d_val = find_tag_value(tags_json, "d", 1);
     if (d_val) {
@@ -539,15 +548,16 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
      * Format: ["rtt", "<type>", "<milliseconds>"]
      * where type is "open", "read", or "write"
      * Need to iterate all rtt tags since there may be multiple */
-    nostr_json_array_foreach_root(tags_json, parse_rtt_tag_cb, meta);
+    gnostr_json_array_foreach_root(tags_json, parse_rtt_tag_cb, meta);
 
     g_free(tags_json);
   }
 
   /* Parse content JSON (NIP-11 style info) */
   char *content_str = NULL;
-  if (nostr_json_get_string(event_json, "content", &content_str) == 0 && content_str) {
-    if (nostr_json_is_valid(content_str)) {
+  content_str = gnostr_json_get_string(event_json, "content", NULL);
+  if (content_str) {
+    if (gnostr_json_is_valid(content_str)) {
       meta->name = nip66_get_string_or_null(content_str, "name");
       meta->description = nip66_get_string_or_null(content_str, "description");
       meta->pubkey = nip66_get_string_or_null(content_str, "pubkey");
@@ -559,7 +569,8 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
       /* supported_nips from content (if not in tags) */
       if (!meta->supported_nips) {
         char *nips_arr_json = NULL;
-        if (nostr_json_get_raw(content_str, "supported_nips", &nips_arr_json) == 0 && nips_arr_json) {
+        nips_arr_json = gnostr_json_get_raw(content_str, "supported_nips", NULL);
+        if (nips_arr_json) {
           meta->supported_nips = nip66_array_to_int_array(nips_arr_json, &meta->supported_nips_count);
           g_free(nips_arr_json);
         }
@@ -598,9 +609,9 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
       }
 
       /* Check for geolocation */
-      double lat = 0.0, lon = 0.0;
-      if (nostr_json_get_double(content_str, "latitude", &lat) == 0 &&
-          nostr_json_get_double(content_str, "longitude", &lon) == 0) {
+      double lat = gnostr_json_get_double(content_str, "latitude", NULL);
+      double lon = gnostr_json_get_double(content_str, "longitude", NULL);
+      if (lat != 0.0 || lon != 0.0) {
         meta->latitude = lat;
         meta->longitude = lon;
         meta->has_geolocation = TRUE;
@@ -624,15 +635,14 @@ GnostrNip66RelayMonitor *gnostr_nip66_parse_relay_monitor(const gchar *event_jso
 {
   if (!event_json || !*event_json) return NULL;
 
-  if (!nostr_json_is_valid(event_json)) {
+  if (!gnostr_json_is_valid(event_json)) {
     g_debug("nip66: failed to parse relay monitor JSON");
     return NULL;
   }
 
   /* Validate kind */
-  int64_t kind_val = 0;
-  if (nostr_json_get_int64(event_json, "kind", &kind_val) != 0 ||
-      kind_val != GNOSTR_NIP66_KIND_RELAY_MONITOR) {
+  int64_t kind_val = gnostr_json_get_int64(event_json, "kind", NULL);
+  if (kind_val != GNOSTR_NIP66_KIND_RELAY_MONITOR) {
     return NULL;
   }
 
@@ -646,7 +656,8 @@ GnostrNip66RelayMonitor *gnostr_nip66_parse_relay_monitor(const gchar *event_jso
 
   /* Parse tags */
   char *tags_json = NULL;
-  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+  tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (tags_json) {
     /* frequency tag */
     gchar *freq_val = find_tag_value(tags_json, "frequency", 1);
     if (freq_val) monitor->frequency = freq_val;
@@ -678,8 +689,9 @@ GnostrNip66RelayMonitor *gnostr_nip66_parse_relay_monitor(const gchar *event_jso
 
   /* Parse content JSON */
   char *content_str = NULL;
-  if (nostr_json_get_string(event_json, "content", &content_str) == 0 && content_str) {
-    if (nostr_json_is_valid(content_str)) {
+  content_str = gnostr_json_get_string(event_json, "content", NULL);
+  if (content_str) {
+    if (gnostr_json_is_valid(content_str)) {
       monitor->name = nip66_get_string_or_null(content_str, "name");
       monitor->description = nip66_get_string_or_null(content_str, "description");
       monitor->operator_pubkey = nip66_get_string_or_null(content_str, "pubkey");
@@ -949,57 +961,57 @@ gchar *gnostr_nip66_build_relay_meta_filter(const gchar **relay_urls,
                                              gsize n_urls,
                                              gint limit)
 {
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kinds");
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_int(builder, GNOSTR_NIP66_KIND_RELAY_META);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_set_key(builder, "kinds");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_int(builder, GNOSTR_NIP66_KIND_RELAY_META);
+  gnostr_json_builder_end_array(builder);
 
   if (relay_urls && n_urls > 0) {
-    nostr_json_builder_set_key(builder, "#d");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "#d");
+    gnostr_json_builder_begin_array(builder);
     for (gsize i = 0; i < n_urls; i++) {
-      nostr_json_builder_add_string(builder, relay_urls[i]);
+      gnostr_json_builder_add_string(builder, relay_urls[i]);
     }
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_set_key(builder, "limit");
-  nostr_json_builder_add_int(builder, limit > 0 ? limit : 500);
+  gnostr_json_builder_set_key(builder, "limit");
+  gnostr_json_builder_add_int(builder, limit > 0 ? limit : 500);
 
-  nostr_json_builder_end_object(builder);
-  gchar *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  gchar *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 
 gchar *gnostr_nip66_build_monitor_filter(const gchar **monitor_pubkeys, gsize n_pubkeys)
 {
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kinds");
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_int(builder, GNOSTR_NIP66_KIND_RELAY_MONITOR);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_set_key(builder, "kinds");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_int(builder, GNOSTR_NIP66_KIND_RELAY_MONITOR);
+  gnostr_json_builder_end_array(builder);
 
   if (monitor_pubkeys && n_pubkeys > 0) {
-    nostr_json_builder_set_key(builder, "authors");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "authors");
+    gnostr_json_builder_begin_array(builder);
     for (gsize i = 0; i < n_pubkeys; i++) {
-      nostr_json_builder_add_string(builder, monitor_pubkeys[i]);
+      gnostr_json_builder_add_string(builder, monitor_pubkeys[i]);
     }
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_set_key(builder, "limit");
-  nostr_json_builder_add_int(builder, 50);
+  gnostr_json_builder_set_key(builder, "limit");
+  gnostr_json_builder_add_int(builder, 50);
 
-  nostr_json_builder_end_object(builder);
-  gchar *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  gchar *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 

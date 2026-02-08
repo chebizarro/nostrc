@@ -6,7 +6,7 @@
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
-#include "json.h"
+#include "nostr_json.h"
 
 /* Cache configuration */
 #define NIP05_CACHE_TTL_SECONDS (60 * 60)  /* 1 hour cache validity */
@@ -323,7 +323,7 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
   char *json_str = g_strndup(data, len);
   g_bytes_unref(bytes);
 
-  if (!nostr_json_is_valid(json_str)) {
+  if (!gnostr_json_is_valid(json_str)) {
     g_debug("nip05: JSON parse error for %s", ctx->identifier);
     g_free(json_str);
     goto done;
@@ -331,7 +331,8 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
 
   /* Look up the local-part in names object using facade */
   char *found_pubkey = NULL;
-  if (nostr_json_get_string_at(json_str, "names", ctx->local_part, &found_pubkey) != 0 || !found_pubkey) {
+  found_pubkey = gnostr_json_get_string_at(json_str, "names", ctx->local_part, NULL);
+  if (!found_pubkey) {
     g_debug("nip05: no entry for '%s' in names for %s", ctx->local_part, ctx->identifier);
     g_free(json_str);
     goto done;
@@ -359,21 +360,21 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
   g_debug("nip05: verified %s -> %s", ctx->identifier, found_pubkey);
 
   /* Optionally extract relays using facade */
-  char **relay_array = NULL;
-  size_t relay_count = 0;
-  if (nostr_json_get_string_array_at(json_str, "relays", found_pubkey, &relay_array, &relay_count) == 0 &&
-      relay_array && relay_count > 0) {
-    result->relays = g_new0(char *, relay_count + 1);
-    size_t valid = 0;
-    for (size_t i = 0; i < relay_count; i++) {
-      const char *relay_url = relay_array[i];
-      if (relay_url && (g_str_has_prefix(relay_url, "wss://") ||
-                        g_str_has_prefix(relay_url, "ws://"))) {
-        result->relays[valid++] = g_strdup(relay_url);
+  GStrv relay_array = gnostr_json_get_string_array_at(json_str, "relays", found_pubkey, NULL);
+  if (relay_array) {
+    guint relay_count = g_strv_length(relay_array);
+    guint valid = 0;
+    if (relay_count > 0) {
+      result->relays = g_new0(char *, relay_count + 1);
+      for (guint i = 0; i < relay_count; i++) {
+        const char *relay_url = relay_array[i];
+        if (relay_url && (g_str_has_prefix(relay_url, "wss://") ||
+                          g_str_has_prefix(relay_url, "ws://"))) {
+          result->relays[valid++] = g_strdup(relay_url);
+        }
       }
-      free(relay_array[i]);
     }
-    free(relay_array);
+    g_strfreev(relay_array);
     if (valid == 0) {
       g_free(result->relays);
       result->relays = NULL;

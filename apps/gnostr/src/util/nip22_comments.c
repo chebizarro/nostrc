@@ -4,6 +4,7 @@
  */
 
 #include "nip22_comments.h"
+#include "nostr_json.h"
 #include <json.h>
 #include <string.h>
 
@@ -79,26 +80,29 @@ typedef struct {
 } CommentParseContext;
 
 /* nostrc-3nj: Callback for iterating tags array */
-static bool parse_comment_tag_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean parse_comment_tag_cb(gsize index, const gchar *element_json, gpointer user_data) {
     (void)index;
     CommentParseContext *ctx = (CommentParseContext *)user_data;
 
     /* Each element should be an array (a tag) */
-    if (!element_json || !nostr_json_is_array_str(element_json)) return true;
+    if (!element_json || !gnostr_json_is_array_str(element_json)) return true;
 
     /* Get tag length */
     size_t tag_len = 0;
-    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+    tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+    if (tag_len < 0 || tag_len < 2) {
         return true;  /* Skip invalid tags */
     }
 
     /* Get tag name and value */
     char *tag_name = NULL;
     char *tag_value = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+    if (!tag_name) {
         return true;
     }
-    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+    tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (!tag_value) {
         free(tag_name);
         return true;
     }
@@ -109,10 +113,10 @@ static bool parse_comment_tag_cb(size_t index, const char *element_json, void *u
         char *marker = NULL;
 
         if (tag_len >= 3) {
-            nostr_json_get_array_string(element_json, NULL, 2, &relay);
+            relay = gnostr_json_get_array_string(element_json, NULL, 2, NULL);
         }
         if (tag_len >= 4) {
-            nostr_json_get_array_string(element_json, NULL, 3, &marker);
+            marker = gnostr_json_get_array_string(element_json, NULL, 3, NULL);
         }
 
         if (marker && g_strcmp0(marker, "root") == 0) {
@@ -164,7 +168,7 @@ static bool parse_comment_tag_cb(size_t index, const char *element_json, void *u
 
         if (tag_len >= 3) {
             char *relay = NULL;
-            nostr_json_get_array_string(element_json, NULL, 2, &relay);
+            relay = gnostr_json_get_array_string(element_json, NULL, 2, NULL);
             g_free(ctx->comment->root_addr_relay);
             ctx->comment->root_addr_relay = (relay && *relay) ? g_strdup(relay) : NULL;
             free(relay);
@@ -182,7 +186,7 @@ gnostr_comment_parse(const gchar *tags_json, const gchar *content)
     if (!tags_json || !*tags_json) return NULL;
 
     /* Validate it's an array */
-    if (!nostr_json_is_array_str(tags_json)) {
+    if (!gnostr_json_is_array_str(tags_json)) {
         g_warning("NIP-22: Tags is not an array");
         return NULL;
     }
@@ -197,7 +201,7 @@ gnostr_comment_parse(const gchar *tags_json, const gchar *content)
         .comment = comment,
         .mentions_arr = mentions_arr
     };
-    nostr_json_array_foreach_root(tags_json, parse_comment_tag_cb, &ctx);
+    gnostr_json_array_foreach_root(tags_json, parse_comment_tag_cb, &ctx);
 
     /* Convert mentions array */
     comment->mention_count = mentions_arr->len;
@@ -224,69 +228,69 @@ gnostr_comment_build_tags(const GnostrComment *comment)
         return NULL;
     }
 
-    /* nostrc-3nj: Use NostrJsonBuilder for JSON construction */
-    NostrJsonBuilder *builder = nostr_json_builder_new();
+    /* nostrc-3nj: Use GNostrJsonBuilder for JSON construction */
+    GNostrJsonBuilder *builder = gnostr_json_builder_new();
     if (!builder) return NULL;
 
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_begin_array(builder);
 
     /* Root event e-tag: ["e", "<event-id>", "<relay>", "root"] */
     if (comment->root_id) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "e");
-        nostr_json_builder_add_string(builder, comment->root_id);
-        nostr_json_builder_add_string(builder, comment->root_relay ? comment->root_relay : "");
-        nostr_json_builder_add_string(builder, "root");
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "e");
+        gnostr_json_builder_add_string(builder, comment->root_id);
+        gnostr_json_builder_add_string(builder, comment->root_relay ? comment->root_relay : "");
+        gnostr_json_builder_add_string(builder, "root");
+        gnostr_json_builder_end_array(builder);
     }
 
     /* Reply e-tag: ["e", "<event-id>", "<relay>", "reply"] */
     if (comment->reply_id) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "e");
-        nostr_json_builder_add_string(builder, comment->reply_id);
-        nostr_json_builder_add_string(builder, comment->reply_relay ? comment->reply_relay : "");
-        nostr_json_builder_add_string(builder, "reply");
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "e");
+        gnostr_json_builder_add_string(builder, comment->reply_id);
+        gnostr_json_builder_add_string(builder, comment->reply_relay ? comment->reply_relay : "");
+        gnostr_json_builder_add_string(builder, "reply");
+        gnostr_json_builder_end_array(builder);
     }
 
     /* Kind tag: ["k", "<kind>"] */
     if (comment->root_kind >= 0) {
         gchar *kind_str = g_strdup_printf("%d", comment->root_kind);
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "k");
-        nostr_json_builder_add_string(builder, kind_str);
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "k");
+        gnostr_json_builder_add_string(builder, kind_str);
+        gnostr_json_builder_end_array(builder);
         g_free(kind_str);
     }
 
     /* Addressable event a-tag: ["a", "<kind:pubkey:d-tag>", "<relay>"] */
     if (comment->root_addr) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "a");
-        nostr_json_builder_add_string(builder, comment->root_addr);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "a");
+        gnostr_json_builder_add_string(builder, comment->root_addr);
         if (comment->root_addr_relay) {
-            nostr_json_builder_add_string(builder, comment->root_addr_relay);
+            gnostr_json_builder_add_string(builder, comment->root_addr_relay);
         }
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_end_array(builder);
     }
 
     /* Pubkey mentions: ["p", "<pubkey>"] */
     if (comment->mentions) {
         for (gsize i = 0; i < comment->mention_count; i++) {
             if (comment->mentions[i]) {
-                nostr_json_builder_begin_array(builder);
-                nostr_json_builder_add_string(builder, "p");
-                nostr_json_builder_add_string(builder, comment->mentions[i]);
-                nostr_json_builder_end_array(builder);
+                gnostr_json_builder_begin_array(builder);
+                gnostr_json_builder_add_string(builder, "p");
+                gnostr_json_builder_add_string(builder, comment->mentions[i]);
+                gnostr_json_builder_end_array(builder);
             }
         }
     }
 
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
 
-    gchar *result = nostr_json_builder_finish(builder);
-    nostr_json_builder_free(builder);
+    gchar *result = gnostr_json_builder_finish(builder);
+    g_object_unref(builder);
 
     return result;
 }

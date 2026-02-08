@@ -19,6 +19,7 @@
 #include "nostr-kinds.h"
 #include "nostr-keys.h"
 #include <glib/gi18n.h>
+#include "nostr_json.h"
 #include <json.h>
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
@@ -1514,7 +1515,7 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
      * {"id":"...","result":"<signer_pubkey>","error":null}
      * For connect request, result contains the signer's pubkey
      */
-    if (!nostr_json_is_valid(plaintext)) {
+    if (!gnostr_json_is_valid(plaintext)) {
       g_warning("[NIP46_LOGIN] Failed to parse NIP-46 JSON");
       g_free(plaintext);
       continue;
@@ -1522,9 +1523,9 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
 
     /* Check for error - if key exists and is a non-null string */
     char *err_msg = NULL;
-    if (nostr_json_has_key(plaintext, "error") &&
-        nostr_json_get_type(plaintext, "error") == NOSTR_JSON_STRING &&
-        nostr_json_get_string(plaintext, "error", &err_msg) == 0 && err_msg && *err_msg) {
+    if (gnostr_json_has_key(plaintext, "error") &&
+        gnostr_json_get_value_type(plaintext, "error") == GNOSTR_JSON_TYPE_STRING &&
+        (err_msg = gnostr_json_get_string(plaintext, "error", NULL)) != NULL && err_msg && *err_msg) {
       g_warning("[NIP46_LOGIN] Signer error: %s", err_msg);
       set_bunker_status(self, BUNKER_STATUS_ERROR, err_msg,
                         "The remote signer rejected the request");
@@ -1536,7 +1537,8 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
 
     /* Get the connect result - should be "ack" or may match our connect secret */
     char *result = NULL;
-    if (nostr_json_get_string(plaintext, "result", &result) != 0 || !result) {
+    result = gnostr_json_get_string(plaintext, "result", NULL);
+    if (!result) {
       g_warning("[NIP46_LOGIN] No result in NIP-46 response");
       free(result);
       g_free(plaintext);

@@ -16,6 +16,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr_simple_pool.h"
+#include "nostr_json.h"
 #include <json.h>
 #include <string.h>
 

@@ -24,6 +24,7 @@
 #include "../util/mute_list.h"
 #include <string.h>
 #include <stdio.h>
+#include "nostr_json.h"
 #include <json.h>
 #include <gtk/gtk.h>
 
@@ -1568,7 +1569,8 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
       int64_t created_at = 0;
       char *pubkey_hex = NULL;
 
-      if (nostr_json_get_string(results[i], "id", &id_hex) != 0 || !id_hex) {
+      id_hex = gnostr_json_get_string(results[i], "id", NULL);
+      if (!id_hex) {
         g_debug("[TIMELINE] Failed to get id from JSON result %d", i);
         continue;
       }
@@ -1578,7 +1580,7 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
         continue;
       }
 
-      nostr_json_get_int64(results[i], "created_at", &created_at);
+      created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
 
       /* Convert hex ID to binary - must convert all 32 bytes */
       unsigned char id32[32];
@@ -1610,7 +1612,8 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
       }
 
       /* Check mute list */
-      if (nostr_json_get_string(results[i], "pubkey", &pubkey_hex) == 0 && pubkey_hex) {
+      pubkey_hex = gnostr_json_get_string(results[i], "pubkey", NULL);
+      if (pubkey_hex) {
         GnostrMuteList *mute_list = gnostr_mute_list_get_default();
         if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
           free(pubkey_hex);

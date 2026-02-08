@@ -7,7 +7,7 @@
 
 #include "nip03_opentimestamps.h"
 #include "../storage_ndb.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <string.h>
 #include <time.h>
 
@@ -69,8 +69,8 @@ typedef struct {
   GnostrOtsProof *result;
 } OtsParseCtx;
 
-static bool
-ots_tag_callback(size_t index, const char *element_json, void *user_data)
+static gboolean
+ots_tag_callback(gsize index, const gchar *element_json, gpointer user_data)
 {
   (void)index;
   OtsParseCtx *ctx = user_data;
@@ -78,19 +78,21 @@ ots_tag_callback(size_t index, const char *element_json, void *user_data)
   char *tag_name = NULL;
   char *tag_value = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
 
   if (strcmp(tag_name, "ots") != 0) {
     free(tag_name);
-    return true;
+    return TRUE;
   }
 
   free(tag_name);
 
-  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
-    return true;
+  tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (!tag_value) {
+    return TRUE;
   }
 
   if (*tag_value) {
@@ -105,7 +107,7 @@ GnostrOtsProof *gnostr_nip03_parse_ots_tag(const char *tags_json,
                                             const char *event_id_hex) {
   if (!tags_json || !*tags_json || !event_id_hex) return NULL;
 
-  if (!nostr_json_is_array_str(tags_json)) {
+  if (!gnostr_json_is_array_str(tags_json)) {
     return NULL;
   }
 
@@ -114,7 +116,7 @@ GnostrOtsProof *gnostr_nip03_parse_ots_tag(const char *tags_json,
     .result = NULL
   };
 
-  nostr_json_array_foreach_root(tags_json, ots_tag_callback, &ctx);
+  gnostr_json_array_foreach_root(tags_json, ots_tag_callback, &ctx);
   return ctx.result;
 }
 

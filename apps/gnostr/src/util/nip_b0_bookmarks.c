@@ -5,6 +5,7 @@
  */
 
 #include "nip_b0_bookmarks.h"
+#include "nostr_json.h"
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -178,14 +179,15 @@ typedef struct {
   gsize t_count;
 } BookmarkTagCountCtx;
 
-static bool count_t_tags_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean count_t_tags_cb(gsize idx, const gchar *element_json, gpointer user_data) {
   (void)idx;
   BookmarkTagCountCtx *ctx = (BookmarkTagCountCtx *)user_data;
 
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (!gnostr_json_is_array_str(element_json)) return true;
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) == 0) {
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (tag_name) {
     if (tag_name && strcmp(tag_name, "t") == 0) {
       ctx->t_count++;
     }
@@ -200,17 +202,17 @@ typedef struct {
   gsize t_count;
 } BookmarkTagParseCtx;
 
-static bool parse_bookmark_tag_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean parse_bookmark_tag_cb(gsize idx, const gchar *element_json, gpointer user_data) {
   (void)idx;
   BookmarkTagParseCtx *ctx = (BookmarkTagParseCtx *)user_data;
 
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (!gnostr_json_is_array_str(element_json)) return true;
 
   char *tag_name = NULL;
   char *tag_value = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
-      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+  if ((tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL)) == NULL ||
+      (tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) == NULL) {
     g_free(tag_name);
     g_free(tag_value);
     return true;
@@ -264,7 +266,7 @@ GnostrWebBookmark *gnostr_web_bookmark_parse_tags(const char *tags_json,
                                                    const char *content) {
   if (!tags_json || !*tags_json) return NULL;
 
-  if (!nostr_json_is_array_str(tags_json)) {
+  if (!gnostr_json_is_array_str(tags_json)) {
     return NULL;
   }
 
@@ -275,7 +277,7 @@ GnostrWebBookmark *gnostr_web_bookmark_parse_tags(const char *tags_json,
 
   /* First pass: count "t" tags */
   BookmarkTagCountCtx count_ctx = {0};
-  nostr_json_array_foreach_root(tags_json, count_t_tags_cb, &count_ctx);
+  gnostr_json_array_foreach_root(tags_json, count_t_tags_cb, &count_ctx);
 
   /* Allocate tags array if needed */
   if (count_ctx.t_count > 0) {
@@ -285,7 +287,7 @@ GnostrWebBookmark *gnostr_web_bookmark_parse_tags(const char *tags_json,
 
   /* Second pass: parse all tags */
   BookmarkTagParseCtx parse_ctx = { .b = b, .t_count = count_ctx.t_count };
-  nostr_json_array_foreach_root(tags_json, parse_bookmark_tag_cb, &parse_ctx);
+  gnostr_json_array_foreach_root(tags_json, parse_bookmark_tag_cb, &parse_ctx);
 
   /* URL is required */
   if (!b->url || !*b->url) {
@@ -308,47 +310,47 @@ gchar *gnostr_web_bookmark_build_tags(const GnostrWebBookmark *bookmark) {
     return NULL;
   }
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_array(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_array(builder);
 
   /* Add URL tag (required) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "r");
-  nostr_json_builder_add_string(builder, bookmark->url);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "r");
+  gnostr_json_builder_add_string(builder, bookmark->url);
+  gnostr_json_builder_end_array(builder);
 
   /* Add title tag if provided */
   if (bookmark->title && *bookmark->title) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "title");
-    nostr_json_builder_add_string(builder, bookmark->title);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "title");
+    gnostr_json_builder_add_string(builder, bookmark->title);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* Add description tag if provided */
   if (bookmark->description && *bookmark->description) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "description");
-    nostr_json_builder_add_string(builder, bookmark->description);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "description");
+    gnostr_json_builder_add_string(builder, bookmark->description);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* Add image tag if provided */
   if (bookmark->image && *bookmark->image) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "image");
-    nostr_json_builder_add_string(builder, bookmark->image);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "image");
+    gnostr_json_builder_add_string(builder, bookmark->image);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* Add t tags for categories */
   if (bookmark->tags && bookmark->tag_count > 0) {
     for (gsize i = 0; i < bookmark->tag_count; i++) {
       if (bookmark->tags[i] && *bookmark->tags[i]) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "t");
-        nostr_json_builder_add_string(builder, bookmark->tags[i]);
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "t");
+        gnostr_json_builder_add_string(builder, bookmark->tags[i]);
+        gnostr_json_builder_end_array(builder);
       }
     }
   }
@@ -356,16 +358,16 @@ gchar *gnostr_web_bookmark_build_tags(const GnostrWebBookmark *bookmark) {
   /* Add published_at tag if provided */
   if (bookmark->published_at > 0) {
     gchar *ts_str = g_strdup_printf("%" G_GINT64_FORMAT, bookmark->published_at);
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "published_at");
-    nostr_json_builder_add_string(builder, ts_str);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "published_at");
+    gnostr_json_builder_add_string(builder, ts_str);
+    gnostr_json_builder_end_array(builder);
     g_free(ts_str);
   }
 
-  nostr_json_builder_end_array(builder);
-  char *tags_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_array(builder);
+  char *tags_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return tags_json;
 }
@@ -388,30 +390,30 @@ gchar *gnostr_web_bookmark_build_event_json(const GnostrWebBookmark *bookmark) {
     return NULL;
   }
 
-  /* Build the unsigned event using NostrJsonBuilder */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  /* Build the unsigned event using GNostrJsonBuilder */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* kind */
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, NIPB0_KIND_BOOKMARK);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, NIPB0_KIND_BOOKMARK);
 
   /* created_at */
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
   /* content */
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, bookmark->notes ? bookmark->notes : "");
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, bookmark->notes ? bookmark->notes : "");
 
   /* tags (inject as raw JSON) */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_add_raw(builder, tags_json);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_add_raw(builder, tags_json);
   g_free(tags_json);
 
-  nostr_json_builder_end_object(builder);
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return event_json;
 }

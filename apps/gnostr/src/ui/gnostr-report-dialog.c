@@ -10,6 +10,7 @@
 #include "../ipc/gnostr-signer-service.h"
 #include "../util/relays.h"
 #include <glib/gi18n.h>
+#include "nostr_json.h"
 #include <json.h>
 #include "nostr_relay.h"
 #include "nostr-event.h"
@@ -400,47 +401,47 @@ static void on_submit_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   /* Build unsigned kind 1984 report event JSON per NIP-56 */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, NOSTR_KIND_REPORTING);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, NOSTR_KIND_REPORTING);
 
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, comment);
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, comment);
 
   /* Build tags array per NIP-56:
    * - ["p", "<pubkey>", "<report-type>"] - report user with reason
    * - ["e", "<event-id>", "<report-type>"] - report event with reason (optional)
    */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* p-tag: ["p", "<pubkey>", "<report-type>"] */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "p");
-  nostr_json_builder_add_string(builder, self->pubkey_hex);
-  nostr_json_builder_add_string(builder, report_type);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "p");
+  gnostr_json_builder_add_string(builder, self->pubkey_hex);
+  gnostr_json_builder_add_string(builder, report_type);
+  gnostr_json_builder_end_array(builder);
 
   /* e-tag if event ID provided: ["e", "<event-id>", "<report-type>"] */
   if (self->event_id_hex && strlen(self->event_id_hex) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "e");
-    nostr_json_builder_add_string(builder, self->event_id_hex);
-    nostr_json_builder_add_string(builder, report_type);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "e");
+    gnostr_json_builder_add_string(builder, self->event_id_hex);
+    gnostr_json_builder_add_string(builder, report_type);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder); /* end tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder); /* end tags */
+  gnostr_json_builder_end_object(builder);
 
   /* Serialize */
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize report event");

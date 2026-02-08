@@ -9,6 +9,7 @@
 #include "../storage_ndb.h"
 #include "../util/gnostr-profile-service.h"
 #include "gn-nostr-profile.h"
+#include "nostr_json.h"
 #include <json.h>
 #include <string.h>
 #include <stdio.h>
@@ -366,18 +367,19 @@ parse_profile_from_event_json(const char *json_str, int json_len)
 
     /* Get pubkey */
     char *pubkey = NULL;
-    if (nostr_json_get_string(json_copy, "pubkey", &pubkey) != 0 || !pubkey) {
+    pubkey = gnostr_json_get_string(json_copy, "pubkey", NULL);
+    if (!pubkey) {
         g_free(json_copy);
         return NULL;
     }
 
     /* Get created_at */
     int64_t created_at = 0;
-    nostr_json_get_int64(json_copy, "created_at", &created_at);
+    created_at = gnostr_json_get_int64(json_copy, "created_at", NULL);
 
     /* Get content (profile metadata JSON) */
     char *content = NULL;
-    nostr_json_get_string(json_copy, "content", &content);
+    content = gnostr_json_get_string(json_copy, "content", NULL);
 
     /* Create profile */
     GnNostrProfile *profile = gn_nostr_profile_new(pubkey);

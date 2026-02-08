@@ -6,6 +6,7 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+#include "nostr_json.h"
 #include <json.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
@@ -633,7 +634,7 @@ static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
 static char *pretty_print_json(const char *json_str) {
   if (!json_str) return NULL;
 
-  char *pretty = nostr_json_prettify(json_str);
+  char *pretty = gnostr_json_prettify(json_str, NULL);
   if (!pretty) {
     /* Return original if prettify fails */
     return g_strdup(json_str);
@@ -2722,15 +2723,16 @@ typedef struct {
 } SubjectExtractContext;
 
 /* Callback for extracting subject tag */
-static bool extract_subject_callback(size_t index, const char *tag_json, void *user_data) {
+static gboolean extract_subject_callback(gsize index, const gchar *tag_json, gpointer user_data) {
   (void)index;
   SubjectExtractContext *ctx = (SubjectExtractContext *)user_data;
   if (!tag_json || !ctx || ctx->subject) return true; /* Stop if already found */
 
-  if (!nostr_json_is_array_str(tag_json)) return true;
+  if (!gnostr_json_is_array_str(tag_json)) return true;
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+  tag_name = gnostr_json_get_array_string(tag_json, NULL, 0, NULL);
+  if (!tag_name) {
     return true;
   }
 
@@ -2741,7 +2743,7 @@ static bool extract_subject_callback(size_t index, const char *tag_json, void *u
   free(tag_name);
 
   char *subject_value = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 1, &subject_value) != 0 || !subject_value || !*subject_value) {
+  if ((subject_value = gnostr_json_get_array_string(tag_json, NULL, 1, NULL)) == NULL || !subject_value || !*subject_value) {
     free(subject_value);
     return true;
   }
@@ -2766,10 +2768,10 @@ static bool extract_subject_callback(size_t index, const char *tag_json, void *u
  */
 static gchar *extract_subject_from_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
-  if (!nostr_json_is_array_str(tags_json)) return NULL;
+  if (!gnostr_json_is_array_str(tags_json)) return NULL;
 
   SubjectExtractContext ctx = { .subject = NULL };
-  nostr_json_array_foreach_root(tags_json, extract_subject_callback, &ctx);
+  gnostr_json_array_foreach_root(tags_json, extract_subject_callback, &ctx);
 
   return ctx.subject;
 }

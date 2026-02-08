@@ -10,7 +10,7 @@
  */
 
 #include "gnostr-thread-graph-model.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <string.h>
 
 struct _GnostrThreadGraphModel {
@@ -61,28 +61,28 @@ typedef struct {
     char *last_etag;
 } NIP10ScanCtx;
 
-static bool nip10_tag_scan_cb(size_t index, const char *tag_json, void *user_data) {
+static gboolean nip10_tag_scan_cb(gsize index, const gchar *tag_json, gpointer user_data) {
     (void)index;
     NIP10ScanCtx *ctx = user_data;
 
-    if (!nostr_json_is_array_str(tag_json)) return true;
+    if (!gnostr_json_is_array_str(tag_json)) return TRUE;
 
     char *tag_type = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_type) != 0 || !tag_type)
-        return true;
+    if ((tag_type = gnostr_json_get_array_string(tag_json, NULL, 0, NULL)) == NULL || !tag_type)
+        return TRUE;
 
     /* Accept both lowercase "e" (NIP-10) and uppercase "E" (NIP-22) */
     gboolean is_etag = (strcmp(tag_type, "e") == 0 || strcmp(tag_type, "E") == 0);
     free(tag_type);
-    if (!is_etag) return true;
+    if (!is_etag) return TRUE;
 
     char *event_id = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 1, &event_id) != 0 || !event_id)
-        return true;
+    if ((event_id = gnostr_json_get_array_string(tag_json, NULL, 1, NULL)) == NULL || !event_id)
+        return TRUE;
 
     if (strlen(event_id) != 64) {
         free(event_id);
-        return true;
+        return TRUE;
     }
 
     ctx->etag_count++;
@@ -92,7 +92,8 @@ static bool nip10_tag_scan_cb(size_t index, const char *tag_json, void *user_dat
 
     /* Check for explicit marker (NIP-10 index 3) */
     char *marker = NULL;
-    if (nostr_json_get_array_string(tag_json, NULL, 3, &marker) == 0 && marker) {
+    marker = gnostr_json_get_array_string(tag_json, NULL, 3, NULL);
+    if (marker) {
         if (strcmp(marker, "root") == 0) {
             g_free(ctx->root_id);
             ctx->root_id = g_strdup(event_id);
@@ -104,7 +105,7 @@ static bool nip10_tag_scan_cb(size_t index, const char *tag_json, void *user_dat
     }
 
     free(event_id);
-    return true;
+    return TRUE;
 }
 
 /**
@@ -120,7 +121,7 @@ static void parse_nip10_from_json(const char *json,
     *out_reply = NULL;
 
     NIP10ScanCtx ctx = {0};
-    nostr_json_array_foreach(json, "tags", nip10_tag_scan_cb, &ctx);
+    gnostr_json_array_foreach(json, "tags", nip10_tag_scan_cb, &ctx);
 
     /* Prefer explicit markers */
     if (ctx.root_id) {
@@ -152,7 +153,7 @@ static void parse_nip10_from_json(const char *json,
  */
 static char *parse_reaction_target(const char *json) {
     NIP10ScanCtx ctx = {0};
-    nostr_json_array_foreach(json, "tags", nip10_tag_scan_cb, &ctx);
+    gnostr_json_array_foreach(json, "tags", nip10_tag_scan_cb, &ctx);
     char *result = ctx.last_etag ? g_strdup(ctx.last_etag) : NULL;
     g_free(ctx.root_id);
     g_free(ctx.reply_id);
@@ -247,7 +248,7 @@ gboolean gnostr_thread_graph_model_add_event_json(GnostrThreadGraphModel *self,
 
     /* Extract event ID */
     char *id = NULL;
-    if (nostr_json_get_string(event_json, "id", &id) != 0 || !id || strlen(id) != 64) {
+    if ((id = gnostr_json_get_string(event_json, "id", NULL)) == NULL || !id || strlen(id) != 64) {
         free(id);
         return FALSE;
     }
@@ -260,15 +261,15 @@ gboolean gnostr_thread_graph_model_add_event_json(GnostrThreadGraphModel *self,
 
     /* Extract kind */
     int kind = 0;
-    nostr_json_get_int(event_json, "kind", &kind);
+    kind = gnostr_json_get_int(event_json, "kind", NULL);
 
     /* Extract other fields */
     char *pubkey = NULL;
     char *content = NULL;
     int64_t created_at = 0;
-    nostr_json_get_string(event_json, "pubkey", &pubkey);
-    nostr_json_get_string(event_json, "content", &content);
-    nostr_json_get_int64(event_json, "created_at", &created_at);
+    pubkey = gnostr_json_get_string(event_json, "pubkey", NULL);
+    content = gnostr_json_get_string(event_json, "content", NULL);
+    created_at = gnostr_json_get_int64(event_json, "created_at", NULL);
 
     if (kind == 7) {
         /* Reaction: find target event and increment its counter */

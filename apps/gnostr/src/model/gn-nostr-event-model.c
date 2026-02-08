@@ -7,6 +7,7 @@
 #include "../util/mute_list.h"
 #include <nostr.h>
 #include <string.h>
+#include "nostr_json.h"
 #include <json.h>
 
 /* Window sizing and cache sizes */
@@ -526,24 +527,27 @@ typedef struct {
   gboolean found_e;
 } TagIterCtx;
 
-static bool find_etag_iter_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean find_etag_iter_cb(gsize index, const gchar *element_json, gpointer user_data) {
   TagIterCtx *ctx = (TagIterCtx *)user_data;
   (void)index;
 
   /* Each tag is an array like ["e", "<event_id>", ...] */
   size_t arr_len = 0;
-  if (nostr_json_get_array_length(element_json, NULL, &arr_len) != 0 || arr_len < 2) {
+  arr_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+  if (arr_len < 0 || arr_len < 2) {
     return true;  /* Continue */
   }
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
     return true;
   }
 
   if (g_strcmp0(tag_name, "e") == 0 && !ctx->target_event_id) {
     char *tag_value = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) == 0 && tag_value) {
+    tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (tag_value) {
       if (strlen(tag_value) == 64) {
         ctx->target_event_id = tag_value;  /* Transfer ownership */
         ctx->found_e = TRUE;
@@ -553,7 +557,7 @@ static bool find_etag_iter_cb(size_t index, const char *element_json, void *user
     }
   } else if (g_strcmp0(tag_name, "bolt11") == 0 && !ctx->bolt11) {
     char *tag_value = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) == 0 && tag_value && *tag_value) {
+    if ((tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) != NULL && tag_value && *tag_value) {
       ctx->bolt11 = tag_value;  /* Transfer ownership */
     } else {
       free(tag_value);
@@ -569,12 +573,13 @@ static char *extract_first_etag_from_event_json(const char *event_json) {
   if (!event_json) return NULL;
 
   char *tags_raw = NULL;
-  if (nostr_json_get_raw(event_json, "tags", &tags_raw) != 0 || !tags_raw) {
+  tags_raw = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (!tags_raw) {
     return NULL;
   }
 
   TagIterCtx ctx = { .target_event_id = NULL, .bolt11 = NULL, .found_e = FALSE };
-  nostr_json_array_foreach_root(tags_raw, find_etag_iter_cb, &ctx);
+  gnostr_json_array_foreach_root(tags_raw, find_etag_iter_cb, &ctx);
 
   free(tags_raw);
   free(ctx.bolt11);  /* Not needed for this function */

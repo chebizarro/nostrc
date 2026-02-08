@@ -14,6 +14,7 @@
 #include "../util/relays.h"
 #include "../util/nip64_chess.h"
 #include <glib/gi18n.h>
+#include "nostr_json.h"
 #include <json.h>
 /* Use gobject relay wrapper for GLib integration */
 #include "nostr_relay.h"
@@ -470,39 +471,39 @@ on_publish_clicked(GtkButton *btn, gpointer user_data)
     g_debug("[NIP-64] Exporting PGN:\n%s", pgn);
 
     /* Build unsigned kind 64 event JSON */
-    NostrJsonBuilder *builder = nostr_json_builder_new();
-    nostr_json_builder_begin_object(builder);
+    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    gnostr_json_builder_begin_object(builder);
 
-    nostr_json_builder_set_key(builder, "kind");
-    nostr_json_builder_add_int(builder, NOSTR_KIND_CHESS);
+    gnostr_json_builder_set_key(builder, "kind");
+    gnostr_json_builder_add_int(builder, NOSTR_KIND_CHESS);
 
-    nostr_json_builder_set_key(builder, "created_at");
-    nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
+    gnostr_json_builder_set_key(builder, "created_at");
+    gnostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
-    nostr_json_builder_set_key(builder, "content");
-    nostr_json_builder_add_string(builder, pgn);
+    gnostr_json_builder_set_key(builder, "content");
+    gnostr_json_builder_add_string(builder, pgn);
 
     /* Build tags array */
-    nostr_json_builder_set_key(builder, "tags");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "tags");
+    gnostr_json_builder_begin_array(builder);
 
     /* ["t", "chess"] - topic tag */
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "t");
-    nostr_json_builder_add_string(builder, "chess");
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "t");
+    gnostr_json_builder_add_string(builder, "chess");
+    gnostr_json_builder_end_array(builder);
 
     /* ["subject", "Chess Game"] */
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "subject");
-    nostr_json_builder_add_string(builder, "Chess Game");
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "subject");
+    gnostr_json_builder_add_string(builder, "Chess Game");
+    gnostr_json_builder_end_array(builder);
 
-    nostr_json_builder_end_array(builder);  /* end tags */
-    nostr_json_builder_end_object(builder);
+    gnostr_json_builder_end_array(builder);  /* end tags */
+    gnostr_json_builder_end_object(builder);
 
-    char *event_json = nostr_json_builder_finish(builder);
-    nostr_json_builder_free(builder);
+    char *event_json = gnostr_json_builder_finish(builder);
+    g_object_unref(builder);
 
     if (!event_json) {
         show_toast(self, _("Failed to create event"));

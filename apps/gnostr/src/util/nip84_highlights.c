@@ -3,6 +3,7 @@
  */
 
 #include "nip84_highlights.h"
+#include "nostr_json.h"
 #include <json.h>
 #include <nostr-event.h>
 #include <string.h>

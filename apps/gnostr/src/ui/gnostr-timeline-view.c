@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <gio/gio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include "nostr_json.h"
 #include <json.h>
 #include <json-glib/json-glib.h>
 #ifdef HAVE_SOUP3
@@ -1460,15 +1461,16 @@ typedef struct {
 } HashtagExtractContext;
 
 /* Callback for extracting hashtags */
-static bool extract_hashtag_callback(size_t index, const char *tag_json, void *user_data) {
+static gboolean extract_hashtag_callback(gsize index, const gchar *tag_json, gpointer user_data) {
   (void)index;
   HashtagExtractContext *ctx = (HashtagExtractContext *)user_data;
   if (!tag_json || !ctx) return true;
 
-  if (!nostr_json_is_array_str(tag_json)) return true;
+  if (!gnostr_json_is_array_str(tag_json)) return true;
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+  tag_name = gnostr_json_get_array_string(tag_json, NULL, 0, NULL);
+  if (!tag_name) {
     return true;
   }
 
@@ -1479,7 +1481,7 @@ static bool extract_hashtag_callback(size_t index, const char *tag_json, void *u
   free(tag_name);
 
   char *hashtag = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 1, &hashtag) == 0 && hashtag && *hashtag) {
+  if ((hashtag = gnostr_json_get_array_string(tag_json, NULL, 1, NULL)) != NULL && hashtag && *hashtag) {
     g_ptr_array_add(ctx->hashtags, g_strdup(hashtag));
   }
   free(hashtag);
@@ -1499,10 +1501,10 @@ static bool extract_hashtag_callback(size_t index, const char *tag_json, void *u
  */
 static gchar **parse_hashtags_from_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
-  if (!nostr_json_is_array_str(tags_json)) return NULL;
+  if (!gnostr_json_is_array_str(tags_json)) return NULL;
 
   HashtagExtractContext ctx = { .hashtags = g_ptr_array_new() };
-  nostr_json_array_foreach_root(tags_json, extract_hashtag_callback, &ctx);
+  gnostr_json_array_foreach_root(tags_json, extract_hashtag_callback, &ctx);
 
   if (ctx.hashtags->len == 0) {
     g_ptr_array_free(ctx.hashtags, TRUE);
@@ -1519,15 +1521,16 @@ typedef struct {
 } ContentWarningContext;
 
 /* Callback for extracting content-warning tag */
-static bool extract_content_warning_callback(size_t index, const char *tag_json, void *user_data) {
+static gboolean extract_content_warning_callback(gsize index, const gchar *tag_json, gpointer user_data) {
   (void)index;
   ContentWarningContext *ctx = (ContentWarningContext *)user_data;
   if (!tag_json || !ctx || ctx->reason) return true; /* Stop if already found */
 
-  if (!nostr_json_is_array_str(tag_json)) return true;
+  if (!gnostr_json_is_array_str(tag_json)) return true;
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+  tag_name = gnostr_json_get_array_string(tag_json, NULL, 0, NULL);
+  if (!tag_name) {
     return true;
   }
 
@@ -1540,7 +1543,8 @@ static bool extract_content_warning_callback(size_t index, const char *tag_json,
 
   /* Get reason if present */
   char *reason_str = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 1, &reason_str) == 0 && reason_str) {
+  reason_str = gnostr_json_get_array_string(tag_json, NULL, 1, NULL);
+  if (reason_str) {
     ctx->reason = g_strdup(reason_str);
     free(reason_str);
   } else {
@@ -1562,10 +1566,10 @@ static bool extract_content_warning_callback(size_t index, const char *tag_json,
  */
 static gchar *parse_content_warning_from_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
-  if (!nostr_json_is_array_str(tags_json)) return NULL;
+  if (!gnostr_json_is_array_str(tags_json)) return NULL;
 
   ContentWarningContext ctx = { .reason = NULL };
-  nostr_json_array_foreach_root(tags_json, extract_content_warning_callback, &ctx);
+  gnostr_json_array_foreach_root(tags_json, extract_content_warning_callback, &ctx);
 
   return ctx.reason;
 }
@@ -2433,20 +2437,21 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                     int profile_len = 0;
                     if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len) == 0 && profile_json) {
                       /* Parse profile JSON to get display name */
-                      if (nostr_json_is_valid(profile_json)) {
+                      if (gnostr_json_is_valid(profile_json)) {
                         /* Profile is stored as event - need to parse content */
                         char *profile_content = NULL;
-                        if (nostr_json_get_string(profile_json, "content", &profile_content) == 0 && profile_content) {
-                          if (nostr_json_is_valid(profile_content)) {
+                        profile_content = gnostr_json_get_string(profile_json, "content", NULL);
+                        if (profile_content) {
+                          if (gnostr_json_is_valid(profile_content)) {
                             char *orig_name = NULL;
                             char *orig_display = NULL;
                             char *orig_avatar = NULL;
                             char *orig_nip05_str = NULL;
 
-                            nostr_json_get_string(profile_content, "display_name", &orig_display);
-                            nostr_json_get_string(profile_content, "name", &orig_name);
-                            nostr_json_get_string(profile_content, "picture", &orig_avatar);
-                            nostr_json_get_string(profile_content, "nip05", &orig_nip05_str);
+                            orig_display = gnostr_json_get_string(profile_content, "display_name", NULL);
+                            orig_name = gnostr_json_get_string(profile_content, "name", NULL);
+                            orig_avatar = gnostr_json_get_string(profile_content, "picture", NULL);
+                            orig_nip05_str = gnostr_json_get_string(profile_content, "nip05", NULL);
 
                             /* Update author display with original author */
                             gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),

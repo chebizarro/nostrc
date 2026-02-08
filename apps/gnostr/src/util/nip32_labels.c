@@ -7,6 +7,7 @@
 
 #include "nip32_labels.h"
 #include "../storage_ndb.h"
+#include "nostr_json.h"
 #include <json.h>
 #include <string.h>
 #include <time.h>
@@ -67,28 +68,31 @@ typedef struct {
 } LabelParseContext;
 
 /* nostrc-3nj: Callback for iterating tags array */
-static bool parse_label_tag_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean parse_label_tag_cb(gsize index, const gchar *element_json, gpointer user_data) {
   (void)index;
   LabelParseContext *ctx = (LabelParseContext *)user_data;
 
   /* Each element should be an array (a tag) */
-  if (!element_json || !nostr_json_is_array_str(element_json)) return true;
+  if (!element_json || !gnostr_json_is_array_str(element_json)) return TRUE;
 
   /* Get tag length */
   size_t tag_len = 0;
-  if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
-    return true;  /* Skip invalid tags */
+  tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+  if (tag_len < 0 || tag_len < 2) {
+    return TRUE;  /* Skip invalid tags */
   }
 
   /* Get tag name and value */
   char *tag_name = NULL;
   char *tag_value = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
-  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+  tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (!tag_value) {
     free(tag_name);
-    return true;
+    return TRUE;
   }
 
   if (strcmp(tag_name, "L") == 0) {
@@ -100,7 +104,7 @@ static bool parse_label_tag_cb(size_t index, const char *element_json, void *use
     const char *label_namespace = ctx->current_namespace;
     char *ns_from_tag = NULL;
     if (tag_len >= 3) {
-      if (nostr_json_get_array_string(element_json, NULL, 2, &ns_from_tag) == 0 && ns_from_tag && *ns_from_tag) {
+      if ((ns_from_tag = gnostr_json_get_array_string(element_json, NULL, 2, NULL)) != NULL && ns_from_tag && *ns_from_tag) {
         label_namespace = ns_from_tag;
       }
     }
@@ -128,39 +132,40 @@ static bool parse_label_tag_cb(size_t index, const char *element_json, void *use
 
   free(tag_name);
   free(tag_value);
-  return true;  /* Continue iteration */
+  return TRUE;  /* Continue iteration */
 }
 
 GPtrArray *gnostr_nip32_parse_label_event(const char *event_json) {
   if (!event_json || !*event_json) return NULL;
 
   /* Validate JSON */
-  if (!nostr_json_is_valid(event_json)) {
+  if (!gnostr_json_is_valid(event_json)) {
     g_warning("[NIP-32] Failed to parse label event JSON");
     return NULL;
   }
 
   /* Verify this is a kind 1985 event */
-  int kind = 0;
-  if (nostr_json_get_int(event_json, "kind", &kind) != 0 || kind != NOSTR_KIND_LABEL) {
+  int kind = gnostr_json_get_int(event_json, "kind", NULL);
+  if (kind != NOSTR_KIND_LABEL) {
     return NULL;
   }
 
   /* Get event metadata */
   char *label_author = NULL;
-  nostr_json_get_string(event_json, "pubkey", &label_author);
+  label_author = gnostr_json_get_string(event_json, "pubkey", NULL);
 
   int64_t created_at = 0;
-  nostr_json_get_int64(event_json, "created_at", &created_at);
+  created_at = gnostr_json_get_int64(event_json, "created_at", NULL);
 
   /* Get tags array */
   char *tags_raw = NULL;
-  if (nostr_json_get_raw(event_json, "tags", &tags_raw) != 0 || !tags_raw) {
+  tags_raw = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (!tags_raw) {
     free(label_author);
     return NULL;
   }
 
-  if (!nostr_json_is_array_str(tags_raw)) {
+  if (!gnostr_json_is_array_str(tags_raw)) {
     free(tags_raw);
     free(label_author);
     return NULL;
@@ -176,7 +181,7 @@ GPtrArray *gnostr_nip32_parse_label_event(const char *event_json) {
     .created_at = created_at
   };
 
-  nostr_json_array_foreach_root(tags_raw, parse_label_tag_cb, &ctx);
+  gnostr_json_array_foreach_root(tags_raw, parse_label_tag_cb, &ctx);
 
   /* Cleanup */
   free(tags_raw);
@@ -303,56 +308,56 @@ char *gnostr_nip32_build_label_event_json(const char *namespace,
                                            const char *event_pubkey_hex) {
   if (!namespace || !label || !event_id_hex) return NULL;
 
-  /* nostrc-3nj: Use NostrJsonBuilder for JSON construction */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
+  /* nostrc-3nj: Use GNostrJsonBuilder for JSON construction */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
   if (!builder) return NULL;
 
-  nostr_json_builder_begin_object(builder);
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, NOSTR_KIND_LABEL);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, NOSTR_KIND_LABEL);
 
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, "");
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, "");
 
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* L tag (namespace) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "L");
-  nostr_json_builder_add_string(builder, namespace);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "L");
+  gnostr_json_builder_add_string(builder, namespace);
+  gnostr_json_builder_end_array(builder);
 
   /* l tag (label with namespace) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "l");
-  nostr_json_builder_add_string(builder, label);
-  nostr_json_builder_add_string(builder, namespace);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "l");
+  gnostr_json_builder_add_string(builder, label);
+  gnostr_json_builder_add_string(builder, namespace);
+  gnostr_json_builder_end_array(builder);
 
   /* e tag (event reference) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "e");
-  nostr_json_builder_add_string(builder, event_id_hex);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "e");
+  gnostr_json_builder_add_string(builder, event_id_hex);
+  gnostr_json_builder_end_array(builder);
 
   /* p tag (event author - recommended) */
   if (event_pubkey_hex && strlen(event_pubkey_hex) == 64) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "p");
-    nostr_json_builder_add_string(builder, event_pubkey_hex);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "p");
+    gnostr_json_builder_add_string(builder, event_pubkey_hex);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder);  /* End tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder);  /* End tags */
+  gnostr_json_builder_end_object(builder);
 
-  char *json_str = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *json_str = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return json_str;
 }
@@ -362,48 +367,48 @@ char *gnostr_nip32_build_profile_label_event_json(const char *namespace,
                                                    const char *pubkey_hex) {
   if (!namespace || !label || !pubkey_hex) return NULL;
 
-  /* nostrc-3nj: Use NostrJsonBuilder for JSON construction */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
+  /* nostrc-3nj: Use GNostrJsonBuilder for JSON construction */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
   if (!builder) return NULL;
 
-  nostr_json_builder_begin_object(builder);
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, NOSTR_KIND_LABEL);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, NOSTR_KIND_LABEL);
 
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, "");
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, "");
 
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* L tag (namespace) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "L");
-  nostr_json_builder_add_string(builder, namespace);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "L");
+  gnostr_json_builder_add_string(builder, namespace);
+  gnostr_json_builder_end_array(builder);
 
   /* l tag (label with namespace) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "l");
-  nostr_json_builder_add_string(builder, label);
-  nostr_json_builder_add_string(builder, namespace);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "l");
+  gnostr_json_builder_add_string(builder, label);
+  gnostr_json_builder_add_string(builder, namespace);
+  gnostr_json_builder_end_array(builder);
 
   /* p tag (pubkey reference) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "p");
-  nostr_json_builder_add_string(builder, pubkey_hex);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "p");
+  gnostr_json_builder_add_string(builder, pubkey_hex);
+  gnostr_json_builder_end_array(builder);
 
-  nostr_json_builder_end_array(builder);  /* End tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder);  /* End tags */
+  gnostr_json_builder_end_object(builder);
 
-  char *json_str = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *json_str = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return json_str;
 }
@@ -411,35 +416,35 @@ char *gnostr_nip32_build_profile_label_event_json(const char *namespace,
 uint64_t gnostr_nip32_subscribe_labels(const char **event_ids, size_t count) {
   if (!event_ids || count == 0) return 0;
 
-  /* nostrc-3nj: Use NostrJsonBuilder for filter construction */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
+  /* nostrc-3nj: Use GNostrJsonBuilder for filter construction */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
   if (!builder) return 0;
 
-  nostr_json_builder_begin_object(builder);
+  gnostr_json_builder_begin_object(builder);
 
   /* kinds array */
-  nostr_json_builder_set_key(builder, "kinds");
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_int(builder, NOSTR_KIND_LABEL);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_set_key(builder, "kinds");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_int(builder, NOSTR_KIND_LABEL);
+  gnostr_json_builder_end_array(builder);
 
   /* #e array (event IDs) */
-  nostr_json_builder_set_key(builder, "#e");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "#e");
+  gnostr_json_builder_begin_array(builder);
   for (size_t i = 0; i < count; i++) {
     if (event_ids[i]) {
-      nostr_json_builder_add_string(builder, event_ids[i]);
+      gnostr_json_builder_add_string(builder, event_ids[i]);
     }
   }
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_end_array(builder);
 
-  nostr_json_builder_set_key(builder, "limit");
-  nostr_json_builder_add_int(builder, 100);
+  gnostr_json_builder_set_key(builder, "limit");
+  gnostr_json_builder_add_int(builder, 100);
 
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_object(builder);
 
-  char *filter_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *filter_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!filter_json) return 0;
 

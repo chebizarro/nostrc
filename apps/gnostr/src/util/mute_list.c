@@ -13,6 +13,7 @@
 #include <glib.h>
 #include <string.h>
 #include <time.h>
+#include "nostr_json.h"
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -350,26 +351,29 @@ typedef struct {
 } PrivateEntriesCtx;
 
 /* Callback for iterating private entry tags */
-static bool parse_private_entry_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean parse_private_entry_cb(gsize idx, const gchar *element_json, gpointer user_data) {
     (void)idx;
     PrivateEntriesCtx *ctx = (PrivateEntriesCtx *)user_data;
     GnostrMuteList *self = ctx->self;
 
     /* Each element is a tag array like ["p", "pubkey"] */
-    if (!nostr_json_is_array_str(element_json)) return true;
+    if (!gnostr_json_is_array_str(element_json)) return true;
 
     size_t tag_len = 0;
-    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+    tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+    if (tag_len < 0 || tag_len < 2) {
         return true;
     }
 
     char *tag_name = NULL;
     char *value = NULL;
     /* Get tag name (index 0) and value (index 1) from the root array */
-    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+    if (!tag_name) {
         return true;
     }
-    if (nostr_json_get_array_string(element_json, NULL, 1, &value) != 0 || !value) {
+    value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (!value) {
         free(tag_name);
         return true;
     }
@@ -422,7 +426,7 @@ static void parse_private_entries(GnostrMuteList *self, const char *decrypted_js
     if (!self || !decrypted_json || !*decrypted_json) return;
 
     /* Validate that it's an array */
-    if (!nostr_json_is_array_str(decrypted_json)) {
+    if (!gnostr_json_is_array_str(decrypted_json)) {
         g_warning("mute_list: decrypted content is not an array");
         return;
     }
@@ -431,7 +435,7 @@ static void parse_private_entries(GnostrMuteList *self, const char *decrypted_js
 
     /* Iterate over root array using callback */
     PrivateEntriesCtx ctx = { .self = self };
-    nostr_json_array_foreach_root(decrypted_json, parse_private_entry_cb, &ctx);
+    gnostr_json_array_foreach_root(decrypted_json, parse_private_entry_cb, &ctx);
 
     g_mutex_unlock(&self->lock);
 
@@ -1167,24 +1171,24 @@ static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpoin
 #endif
 }
 
-/* Helper to build JSON array of private tags using NostrJsonBuilder */
+/* Helper to build JSON array of private tags using GNostrJsonBuilder */
 static char *build_private_tags_json(GnostrMuteList *self) {
-    NostrJsonBuilder *builder = nostr_json_builder_new();
+    GNostrJsonBuilder *builder = gnostr_json_builder_new();
     GHashTableIter iter;
     gpointer key, value;
     int tag_count = 0;
 
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_begin_array(builder);
 
     /* Add private pubkeys */
     g_hash_table_iter_init(&iter, self->muted_pubkeys);
     while (g_hash_table_iter_next(&iter, &key, &value)) {
         MuteEntry *entry = (MuteEntry *)value;
         if (entry->is_private) {
-            nostr_json_builder_begin_array(builder);
-            nostr_json_builder_add_string(builder, "p");
-            nostr_json_builder_add_string(builder, entry->value);
-            nostr_json_builder_end_array(builder);
+            gnostr_json_builder_begin_array(builder);
+            gnostr_json_builder_add_string(builder, "p");
+            gnostr_json_builder_add_string(builder, entry->value);
+            gnostr_json_builder_end_array(builder);
             tag_count++;
         }
     }
@@ -1194,10 +1198,10 @@ static char *build_private_tags_json(GnostrMuteList *self) {
     while (g_hash_table_iter_next(&iter, &key, &value)) {
         MuteEntry *entry = (MuteEntry *)value;
         if (entry->is_private) {
-            nostr_json_builder_begin_array(builder);
-            nostr_json_builder_add_string(builder, "e");
-            nostr_json_builder_add_string(builder, entry->value);
-            nostr_json_builder_end_array(builder);
+            gnostr_json_builder_begin_array(builder);
+            gnostr_json_builder_add_string(builder, "e");
+            gnostr_json_builder_add_string(builder, entry->value);
+            gnostr_json_builder_end_array(builder);
             tag_count++;
         }
     }
@@ -1207,10 +1211,10 @@ static char *build_private_tags_json(GnostrMuteList *self) {
     while (g_hash_table_iter_next(&iter, &key, &value)) {
         MuteEntry *entry = (MuteEntry *)value;
         if (entry->is_private) {
-            nostr_json_builder_begin_array(builder);
-            nostr_json_builder_add_string(builder, "t");
-            nostr_json_builder_add_string(builder, entry->value);
-            nostr_json_builder_end_array(builder);
+            gnostr_json_builder_begin_array(builder);
+            gnostr_json_builder_add_string(builder, "t");
+            gnostr_json_builder_add_string(builder, entry->value);
+            gnostr_json_builder_end_array(builder);
             tag_count++;
         }
     }
@@ -1220,24 +1224,24 @@ static char *build_private_tags_json(GnostrMuteList *self) {
     while (g_hash_table_iter_next(&iter, &key, &value)) {
         MuteEntry *entry = (MuteEntry *)value;
         if (entry->is_private) {
-            nostr_json_builder_begin_array(builder);
-            nostr_json_builder_add_string(builder, "word");
-            nostr_json_builder_add_string(builder, entry->value);
-            nostr_json_builder_end_array(builder);
+            gnostr_json_builder_begin_array(builder);
+            gnostr_json_builder_add_string(builder, "word");
+            gnostr_json_builder_add_string(builder, entry->value);
+            gnostr_json_builder_end_array(builder);
             tag_count++;
         }
     }
 
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
 
     /* Return NULL if no private tags */
     if (tag_count == 0) {
-        nostr_json_builder_free(builder);
+        g_object_unref(builder);
         return NULL;
     }
 
-    char *result = nostr_json_builder_finish(builder);
-    nostr_json_builder_free(builder);
+    char *result = gnostr_json_builder_finish(builder);
+    g_object_unref(builder);
     return result;
 }
 

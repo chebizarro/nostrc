@@ -19,6 +19,7 @@
 #include "nostr-filter.h"
 #include "nostr_simple_pool.h"
 #include <glib/gi18n.h>
+#include "nostr_json.h"
 #include <json.h>
 #include <string.h>
 #include "../util/debounce.h"
@@ -205,40 +206,40 @@ static void populate_author_info(GnostrArticleItem *item, void *txn) {
   if (content && *content) {
     /* Parse profile JSON content using nostr_json helpers */
     char *dn = NULL;
-    if (nostr_json_get_string(content, "display_name", &dn) == 0 && dn && *dn) {
+    if ((dn = gnostr_json_get_string(content, "display_name", NULL)) != NULL && dn && *dn) {
       item->author_name = dn;
     } else {
       free(dn);
     }
     if (!item->author_name) {
       char *n = NULL;
-      if (nostr_json_get_string(content, "name", &n) == 0 && n && *n) {
+      if ((n = gnostr_json_get_string(content, "name", NULL)) != NULL && n && *n) {
         item->author_name = n;
       } else {
         free(n);
       }
     }
     char *name = NULL;
-    if (nostr_json_get_string(content, "name", &name) == 0 && name && *name) {
+    if ((name = gnostr_json_get_string(content, "name", NULL)) != NULL && name && *name) {
       item->author_handle = g_strdup_printf("@%s", name);
       free(name);
     } else {
       free(name);
     }
     char *pic = NULL;
-    if (nostr_json_get_string(content, "picture", &pic) == 0 && pic && *pic) {
+    if ((pic = gnostr_json_get_string(content, "picture", NULL)) != NULL && pic && *pic) {
       item->author_avatar = pic;
     } else {
       free(pic);
     }
     char *nip05 = NULL;
-    if (nostr_json_get_string(content, "nip05", &nip05) == 0 && nip05 && *nip05) {
+    if ((nip05 = gnostr_json_get_string(content, "nip05", NULL)) != NULL && nip05 && *nip05) {
       item->author_nip05 = nip05;
     } else {
       free(nip05);
     }
     char *lud16 = NULL;
-    if (nostr_json_get_string(content, "lud16", &lud16) == 0 && lud16 && *lud16) {
+    if ((lud16 = gnostr_json_get_string(content, "lud16", NULL)) != NULL && lud16 && *lud16) {
       item->author_lud16 = lud16;
     } else {
       free(lud16);
@@ -319,7 +320,8 @@ static GnostrArticleItem *create_article_item_from_json(const char *event_json, 
     /* KIND_LONG_FORM - parse via NIP-23 */
     /* Extract raw tags JSON using nostr_json_get_raw helper */
     char *tags_json = NULL;
-    if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+    tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+    if (tags_json) {
       GnostrArticleMeta *meta = gnostr_article_parse_tags(tags_json);
       if (meta) {
         item->d_tag = g_strdup(meta->d_tag);

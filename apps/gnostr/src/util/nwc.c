@@ -18,6 +18,7 @@
 #include <nostr-relay.h>
 #include <nostr-subscription.h>
 #include <nostr-simple-pool.h>
+#include "nostr_json.h"
 #include <json.h>
 #include <channel.h>
 #include <select.h>
@@ -352,20 +353,20 @@ static NostrEvent *build_signed_nwc_request(GnostrNwcService *self,
   }
 
   /* Build request body JSON */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
-  nostr_json_builder_set_key(builder, "method");
-  nostr_json_builder_add_string(builder, method);
-  nostr_json_builder_set_key(builder, "params");
-  if (params_json && *params_json && nostr_json_is_valid(params_json)) {
-    nostr_json_builder_add_raw(builder, params_json);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
+  gnostr_json_builder_set_key(builder, "method");
+  gnostr_json_builder_add_string(builder, method);
+  gnostr_json_builder_set_key(builder, "params");
+  if (params_json && *params_json && gnostr_json_is_valid(params_json)) {
+    gnostr_json_builder_add_raw(builder, params_json);
   } else {
-    nostr_json_builder_begin_object(builder);
-    nostr_json_builder_end_object(builder);
+    gnostr_json_builder_begin_object(builder);
+    gnostr_json_builder_end_object(builder);
   }
-  nostr_json_builder_end_object(builder);
-  gchar *body_str = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  gchar *body_str = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!body_str) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
@@ -513,7 +514,7 @@ static gboolean parse_nwc_response(GnostrNwcService *self,
   }
 
   /* Validate decrypted JSON */
-  if (!nostr_json_is_valid(decrypted)) {
+  if (!gnostr_json_is_valid(decrypted)) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
                 "Failed to parse response JSON");
     free(decrypted);
@@ -523,8 +524,8 @@ static gboolean parse_nwc_response(GnostrNwcService *self,
   /* Check for error in response - look for error.code or error.message */
   char *err_code = NULL;
   char *err_msg = NULL;
-  if (nostr_json_get_string_at(decrypted, "error", "code", &err_code) == 0 ||
-      nostr_json_get_string_at(decrypted, "error", "message", &err_msg) == 0) {
+  if ((err_code = gnostr_json_get_string_at(decrypted, "error", "code", NULL)) != NULL  ||
+      (err_msg = gnostr_json_get_string_at(decrypted, "error", "message", NULL)) != NULL ) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_WALLET_ERROR,
                 "Wallet error [%s]: %s",
                 err_code ? err_code : "UNKNOWN",
@@ -538,7 +539,8 @@ static gboolean parse_nwc_response(GnostrNwcService *self,
   /* Extract result as raw JSON */
   if (out_result_json) {
     char *result_json = NULL;
-    if (nostr_json_get_raw(decrypted, "result", &result_json) == 0 && result_json) {
+    result_json = gnostr_json_get_raw(decrypted, "result", NULL);
+    if (result_json) {
       *out_result_json = result_json;
     } else {
       *out_result_json = NULL;
@@ -825,7 +827,7 @@ gboolean gnostr_nwc_service_get_balance_finish(GnostrNwcService *self,
   /* Extract balance from response: {"balance": <msats>} */
   if (balance_msat) {
     int64_t bal_val = 0;
-    if (nostr_json_get_int64(response_json, "balance", &bal_val) == 0) {
+    if ((bal_val = gnostr_json_get_int64(response_json, "balance", NULL), TRUE)) {
       *balance_msat = bal_val;
     } else {
       *balance_msat = 0;
@@ -850,17 +852,17 @@ void gnostr_nwc_service_pay_invoice_async(GnostrNwcService *self,
   g_return_if_fail(bolt11 != NULL);
 
   /* Build params JSON */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
-  nostr_json_builder_set_key(builder, "invoice");
-  nostr_json_builder_add_string(builder, bolt11);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
+  gnostr_json_builder_set_key(builder, "invoice");
+  gnostr_json_builder_add_string(builder, bolt11);
   if (amount_msat > 0) {
-    nostr_json_builder_set_key(builder, "amount");
-    nostr_json_builder_add_int(builder, amount_msat);
+    gnostr_json_builder_set_key(builder, "amount");
+    gnostr_json_builder_add_int(builder, amount_msat);
   }
-  nostr_json_builder_end_object(builder);
-  gchar *params_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  gchar *params_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   g_message("[NWC] Initiating pay_invoice for: %.40s...", bolt11);
 
@@ -881,7 +883,8 @@ gboolean gnostr_nwc_service_pay_invoice_finish(GnostrNwcService *self,
   /* Extract preimage from response: {"preimage": "..."} */
   if (preimage) {
     char *preimage_val = NULL;
-    if (nostr_json_get_string(response_json, "preimage", &preimage_val) == 0) {
+    preimage_val = gnostr_json_get_string(response_json, "preimage", NULL);
+    if (preimage_val) {
       *preimage = preimage_val;
     } else {
       *preimage = NULL;
@@ -903,21 +906,21 @@ void gnostr_nwc_service_make_invoice_async(GnostrNwcService *self,
   g_return_if_fail(GNOSTR_IS_NWC_SERVICE(self));
 
   /* Build params JSON */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
-  nostr_json_builder_set_key(builder, "amount");
-  nostr_json_builder_add_int(builder, amount_msat);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
+  gnostr_json_builder_set_key(builder, "amount");
+  gnostr_json_builder_add_int(builder, amount_msat);
   if (description && *description) {
-    nostr_json_builder_set_key(builder, "description");
-    nostr_json_builder_add_string(builder, description);
+    gnostr_json_builder_set_key(builder, "description");
+    gnostr_json_builder_add_string(builder, description);
   }
   if (expiry_secs > 0) {
-    nostr_json_builder_set_key(builder, "expiry");
-    nostr_json_builder_add_int(builder, expiry_secs);
+    gnostr_json_builder_set_key(builder, "expiry");
+    gnostr_json_builder_add_int(builder, expiry_secs);
   }
-  nostr_json_builder_end_object(builder);
-  gchar *params_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  gchar *params_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   g_message("[NWC] Initiating make_invoice for %ld msat", (long)amount_msat);
 
@@ -939,7 +942,8 @@ gboolean gnostr_nwc_service_make_invoice_finish(GnostrNwcService *self,
   /* Extract invoice from response: {"invoice": "...", "payment_hash": "..."} */
   if (bolt11) {
     char *invoice_val = NULL;
-    if (nostr_json_get_string(response_json, "invoice", &invoice_val) == 0) {
+    invoice_val = gnostr_json_get_string(response_json, "invoice", NULL);
+    if (invoice_val) {
       *bolt11 = invoice_val;
     } else {
       *bolt11 = NULL;
@@ -948,7 +952,8 @@ gboolean gnostr_nwc_service_make_invoice_finish(GnostrNwcService *self,
 
   if (payment_hash) {
     char *hash_val = NULL;
-    if (nostr_json_get_string(response_json, "payment_hash", &hash_val) == 0) {
+    hash_val = gnostr_json_get_string(response_json, "payment_hash", NULL);
+    if (hash_val) {
       *payment_hash = hash_val;
     } else {
       *payment_hash = NULL;

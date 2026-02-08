@@ -7,6 +7,7 @@
 #include "nip78_app_data.h"
 #include "relays.h"
 #include "../ipc/gnostr-signer-service.h"
+#include "nostr_json.h"
 #include "json.h"
 #include <string.h>
 #include <time.h>
@@ -60,18 +61,19 @@ typedef struct {
 } FindDTagCtx;
 
 /* Callback for iterating tags to find d-tag */
-static bool find_d_tag_cb(size_t idx, const char *element_json, void *user_data) {
+static gboolean find_d_tag_cb(gsize idx, const gchar *element_json, gpointer user_data) {
     (void)idx;
     FindDTagCtx *ctx = (FindDTagCtx *)user_data;
-    if (ctx->found) return false;
+    if (ctx->found) return FALSE;
 
     char *tag_name = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0) {
-        return true; /* continue */
+    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+    if (!tag_name) {
+        return TRUE; /* continue */
     }
 
     if (g_strcmp0(tag_name, "d") == 0) {
-        nostr_json_get_array_string(element_json, NULL, 1, &ctx->d_tag_value);
+        ctx->d_tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
         ctx->found = TRUE;
     }
     g_free(tag_name);
@@ -117,9 +119,8 @@ GnostrAppData *gnostr_app_data_parse_event(const char *event_json) {
     if (!event_json) return NULL;
 
     /* Verify kind */
-    int64_t kind = 0;
-    if (nostr_json_get_int64(event_json, "kind", &kind) != 0 ||
-        kind != GNOSTR_NIP78_KIND_APP_DATA) {
+    int64_t kind = gnostr_json_get_int64(event_json, "kind", NULL);
+    if (kind != GNOSTR_NIP78_KIND_APP_DATA) {
         g_debug("nip78: not a kind %d event", GNOSTR_NIP78_KIND_APP_DATA);
         return NULL;
     }
@@ -127,18 +128,19 @@ GnostrAppData *gnostr_app_data_parse_event(const char *event_json) {
     GnostrAppData *data = gnostr_app_data_new();
 
     /* Extract event metadata */
-    nostr_json_get_string(event_json, "id", &data->event_id);
-    nostr_json_get_string(event_json, "pubkey", &data->pubkey);
-    nostr_json_get_int64(event_json, "created_at", &data->created_at);
+    data->event_id = gnostr_json_get_string(event_json, "id", NULL);
+    data->pubkey = gnostr_json_get_string(event_json, "pubkey", NULL);
+    data->created_at = gnostr_json_get_int64(event_json, "created_at", NULL);
 
     /* Extract content */
-    nostr_json_get_string(event_json, "content", &data->content);
+    data->content = gnostr_json_get_string(event_json, "content", NULL);
 
     /* Find d-tag using callback-based tag iteration */
     char *tags_json = NULL;
-    if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+    tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+    if (tags_json) {
         FindDTagCtx ctx = { .d_tag_value = NULL, .found = FALSE };
-        nostr_json_array_foreach_root(tags_json, find_d_tag_cb, &ctx);
+        gnostr_json_array_foreach_root(tags_json, find_d_tag_cb, &ctx);
         if (ctx.found && ctx.d_tag_value) {
             data->d_tag = ctx.d_tag_value;
             gnostr_app_data_parse_d_tag(data->d_tag, &data->app_id, &data->data_key);
@@ -173,30 +175,30 @@ char *gnostr_app_data_build_event_json_full(const char *app_id,
     g_autofree char *d_tag_value = gnostr_app_data_build_d_tag(app_id, data_key);
     if (!d_tag_value) return NULL;
 
-    NostrJsonBuilder *builder = nostr_json_builder_new();
-    nostr_json_builder_begin_object(builder);
+    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    gnostr_json_builder_begin_object(builder);
 
     /* kind */
-    nostr_json_builder_set_key(builder, "kind");
-    nostr_json_builder_add_int(builder, GNOSTR_NIP78_KIND_APP_DATA);
+    gnostr_json_builder_set_key(builder, "kind");
+    gnostr_json_builder_add_int(builder, GNOSTR_NIP78_KIND_APP_DATA);
 
     /* created_at */
-    nostr_json_builder_set_key(builder, "created_at");
-    nostr_json_builder_add_int(builder, (int64_t)time(NULL));
+    gnostr_json_builder_set_key(builder, "created_at");
+    gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
 
     /* content */
-    nostr_json_builder_set_key(builder, "content");
-    nostr_json_builder_add_string(builder, content ? content : "");
+    gnostr_json_builder_set_key(builder, "content");
+    gnostr_json_builder_add_string(builder, content ? content : "");
 
     /* tags array */
-    nostr_json_builder_set_key(builder, "tags");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "tags");
+    gnostr_json_builder_begin_array(builder);
 
     /* Add d-tag ["d", "app_id/data_key"] */
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "d");
-    nostr_json_builder_add_string(builder, d_tag_value);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "d");
+    gnostr_json_builder_add_string(builder, d_tag_value);
+    gnostr_json_builder_end_array(builder);
 
     /* Add extra tags if provided (JSON array string) */
     if (extra_tags_json && *extra_tags_json) {
@@ -205,12 +207,12 @@ char *gnostr_app_data_build_event_json_full(const char *app_id,
         /* A better approach would iterate, but we don't have a caller using this */
     }
 
-    nostr_json_builder_end_array(builder); /* end tags */
+    gnostr_json_builder_end_array(builder); /* end tags */
 
-    nostr_json_builder_end_object(builder);
+    gnostr_json_builder_end_object(builder);
 
-    char *result = nostr_json_builder_finish(builder);
-    nostr_json_builder_free(builder);
+    char *result = gnostr_json_builder_finish(builder);
+    g_object_unref(builder);
 
     return result;
 }
@@ -226,7 +228,8 @@ const char *gnostr_app_data_get_json_string(const GnostrAppData *data,
     g_free(s_cached_string);
     s_cached_string = NULL;
 
-    if (nostr_json_get_string(data->content, key, &s_cached_string) == 0) {
+    s_cached_string = gnostr_json_get_string(data->content, key, NULL);
+    if (s_cached_string) {
         return s_cached_string;
     }
     return NULL;
@@ -238,7 +241,7 @@ gint64 gnostr_app_data_get_json_int(const GnostrAppData *data,
     if (!data || !data->content || !key) return default_val;
 
     int64_t val = 0;
-    if (nostr_json_get_int64(data->content, key, &val) == 0) {
+    if ((val = gnostr_json_get_int64(data->content, key, NULL), TRUE)) {
         return (gint64)val;
     }
     return default_val;
@@ -250,7 +253,8 @@ gboolean gnostr_app_data_get_json_bool(const GnostrAppData *data,
     if (!data || !data->content || !key) return default_val;
 
     bool val = false;
-    if (nostr_json_get_bool(data->content, key, &val) == 0) {
+    val = gnostr_json_get_boolean(data->content, key, NULL);
+    {
         return val ? TRUE : FALSE;
     }
     return default_val;
@@ -261,7 +265,7 @@ char *gnostr_app_data_get_json_raw(const GnostrAppData *data,
     if (!data || !data->content || !key) return NULL;
 
     char *raw = NULL;
-    if (nostr_json_get_raw(data->content, key, &raw) == 0) {
+    if ((raw = gnostr_json_get_raw(data->content, key, NULL)) != NULL) {
         return raw;
     }
     return NULL;

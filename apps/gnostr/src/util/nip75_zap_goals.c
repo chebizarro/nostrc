@@ -6,7 +6,7 @@
 
 #include "nip75_zap_goals.h"
 #include "zap.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <string.h>
 #include <time.h>
 
@@ -20,30 +20,32 @@ typedef struct {
   GPtrArray *relays_arr;
 } ZapGoalParseCtx;
 
-static bool
-zap_goal_tag_callback(size_t index, const char *element_json, void *user_data)
+static gboolean
+zap_goal_tag_callback(gsize index, const gchar *element_json, gpointer user_data)
 {
   (void)index;
   ZapGoalParseCtx *ctx = user_data;
 
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, "amount") == 0) {
     char *amount_str = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &amount_str) == 0 && amount_str) {
+    amount_str = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (amount_str) {
       ctx->goal->target_msats = g_ascii_strtoll(amount_str, NULL, 10);
       free(amount_str);
     }
   } else if (g_strcmp0(tag_name, "relays") == 0) {
     /* Get all relay URLs starting from index 1 */
     size_t arr_len = 0;
-    if (nostr_json_get_array_length(element_json, NULL, &arr_len) == 0) {
+    if ((arr_len = gnostr_json_get_array_length(element_json, NULL, NULL)) >= 0) {
       for (size_t j = 1; j < arr_len; j++) {
         char *relay = NULL;
-        if (nostr_json_get_array_string(element_json, NULL, j, &relay) == 0 && relay && *relay) {
+        if ((relay = gnostr_json_get_array_string(element_json, NULL, j, NULL)) != NULL && relay && *relay) {
           g_ptr_array_add(ctx->relays_arr, g_strdup(relay));
           free(relay);
         }
@@ -51,49 +53,53 @@ zap_goal_tag_callback(size_t index, const char *element_json, void *user_data)
     }
   } else if (g_strcmp0(tag_name, "closed_at") == 0) {
     char *ts_str = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &ts_str) == 0 && ts_str) {
+    ts_str = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (ts_str) {
       ctx->goal->end_time = g_ascii_strtoll(ts_str, NULL, 10);
       free(ts_str);
     }
   } else if (g_strcmp0(tag_name, "e") == 0 && !ctx->goal->linked_event_id) {
     char *event_id = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) == 0 && event_id) {
+    event_id = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (event_id) {
       ctx->goal->linked_event_id = g_strdup(event_id);
       free(event_id);
     }
   } else if (g_strcmp0(tag_name, "p") == 0 && !ctx->goal->linked_pubkey) {
     char *pubkey = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &pubkey) == 0 && pubkey) {
+    pubkey = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (pubkey) {
       ctx->goal->linked_pubkey = g_strdup(pubkey);
       free(pubkey);
     }
   } else if (g_strcmp0(tag_name, "r") == 0 && !ctx->goal->external_url) {
     char *url = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &url) == 0 && url) {
+    url = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+    if (url) {
       ctx->goal->external_url = g_strdup(url);
       free(url);
     }
   }
 
   free(tag_name);
-  return true;
+  return TRUE;
 }
 
 GnostrZapGoal *gnostr_zap_goal_parse(const gchar *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  if (!nostr_json_is_valid(json_str)) {
+  if (!gnostr_json_is_valid(json_str)) {
     g_debug("NIP-75: Failed to parse goal JSON");
     return NULL;
   }
 
-  if (!nostr_json_is_object_str(json_str)) {
+  if (!gnostr_json_is_object_str(json_str)) {
     return NULL;
   }
 
   /* Check kind */
-  int kind = 0;
-  if (nostr_json_get_int(json_str, "kind", &kind) != 0 || kind != NIP75_KIND_ZAP_GOAL) {
+  int kind = gnostr_json_get_int(json_str, "kind", NULL);
+  if (kind != NIP75_KIND_ZAP_GOAL) {
     return NULL;
   }
 
@@ -101,35 +107,38 @@ GnostrZapGoal *gnostr_zap_goal_parse(const gchar *json_str) {
 
   /* Get event ID */
   char *event_id = NULL;
-  if (nostr_json_get_string(json_str, "id", &event_id) == 0 && event_id) {
+  event_id = gnostr_json_get_string(json_str, "id", NULL);
+  if (event_id) {
     goal->event_id = g_strdup(event_id);
     free(event_id);
   }
 
   /* Get pubkey */
   char *pubkey = NULL;
-  if (nostr_json_get_string(json_str, "pubkey", &pubkey) == 0 && pubkey) {
+  pubkey = gnostr_json_get_string(json_str, "pubkey", NULL);
+  if (pubkey) {
     goal->pubkey = g_strdup(pubkey);
     free(pubkey);
   }
 
   /* Get title from content */
   char *content = NULL;
-  if (nostr_json_get_string(json_str, "content", &content) == 0 && content) {
+  content = gnostr_json_get_string(json_str, "content", NULL);
+  if (content) {
     goal->title = g_strdup(content);
     free(content);
   }
 
   /* Get created_at */
   int64_t created_at = 0;
-  if (nostr_json_get_int64(json_str, "created_at", &created_at) == 0) {
+  if ((created_at = gnostr_json_get_int64(json_str, "created_at", NULL), TRUE)) {
     goal->created_at = created_at;
   }
 
   /* Parse tags */
   GPtrArray *relays_arr = g_ptr_array_new();
   ZapGoalParseCtx ctx = { .goal = goal, .relays_arr = relays_arr };
-  nostr_json_array_foreach(json_str, "tags", zap_goal_tag_callback, &ctx);
+  gnostr_json_array_foreach(json_str, "tags", zap_goal_tag_callback, &ctx);
 
   /* Convert relays array to NULL-terminated string array */
   if (relays_arr->len > 0) {
@@ -226,82 +235,82 @@ gchar *gnostr_zap_goal_create_event(const gchar *title,
     return NULL;
   }
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* Kind 9041 - zap goal */
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, NIP75_KIND_ZAP_GOAL);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, NIP75_KIND_ZAP_GOAL);
 
   /* Content - goal title/description */
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, title ? title : "");
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, title ? title : "");
 
   /* Created at */
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
   /* Tags array */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* Amount tag - required */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "amount");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "amount");
   gchar *amount_str = g_strdup_printf("%" G_GINT64_FORMAT, target_msats);
-  nostr_json_builder_add_string(builder, amount_str);
+  gnostr_json_builder_add_string(builder, amount_str);
   g_free(amount_str);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_end_array(builder);
 
   /* Relays tag */
   if (relays && relays[0]) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "relays");
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "relays");
     for (gsize i = 0; relays[i]; i++) {
-      nostr_json_builder_add_string(builder, relays[i]);
+      gnostr_json_builder_add_string(builder, relays[i]);
     }
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* Closed at tag - optional deadline */
   if (closed_at > 0) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "closed_at");
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "closed_at");
     gchar *ts_str = g_strdup_printf("%" G_GINT64_FORMAT, closed_at);
-    nostr_json_builder_add_string(builder, ts_str);
+    gnostr_json_builder_add_string(builder, ts_str);
     g_free(ts_str);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* Linked event - optional */
   if (linked_event_id && *linked_event_id) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "e");
-    nostr_json_builder_add_string(builder, linked_event_id);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "e");
+    gnostr_json_builder_add_string(builder, linked_event_id);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* Linked profile - optional */
   if (linked_pubkey && *linked_pubkey) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "p");
-    nostr_json_builder_add_string(builder, linked_pubkey);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "p");
+    gnostr_json_builder_add_string(builder, linked_pubkey);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* External URL - optional */
   if (external_url && *external_url) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "r");
-    nostr_json_builder_add_string(builder, external_url);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "r");
+    gnostr_json_builder_add_string(builder, external_url);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder);  /* tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder);  /* tags */
+  gnostr_json_builder_end_object(builder);
 
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return result;
 }

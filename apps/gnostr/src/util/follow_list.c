@@ -13,6 +13,7 @@
 #include <nostr-filter.h>
 #include <nostr_simple_pool.h>
 #include <nostr-json.h>
+#include "nostr_json.h"
 #include <string.h>
 
 /* Free a follow entry */
@@ -86,23 +87,23 @@ static GPtrArray *parse_p_tags_to_entries(const gchar *tags_json)
     /* Check if this is a "p" tag.
      * tag_str is the array itself e.g. ["p", "pubkey", "relay", "petname"]
      * We need to parse it as a root array, not an array at a key. */
-    size_t tag_len_check = 0;
-    if (nostr_json_get_array_length(tag_str, NULL, &tag_len_check) != 0 || tag_len_check == 0) {
+    gint tag_len_check = 0;
+    if ((tag_len_check = gnostr_json_get_array_length(tag_str, NULL, NULL)) <= 0) {
       g_free(tag_str);
       p = tag_end + 1;
       continue;
     }
 
     gchar *tag_type = NULL;
-    if (nostr_json_get_array_string(tag_str, NULL, 0, &tag_type) == 0 && tag_type) {
+    if ((tag_type = gnostr_json_get_array_string(tag_str, NULL, 0, NULL)) != NULL) {
       if (g_strcmp0(tag_type, "p") == 0) {
         gchar *pubkey = NULL;
         gchar *relay = NULL;
         gchar *petname = NULL;
 
-        nostr_json_get_array_string(tag_str, NULL, 1, &pubkey);
-        nostr_json_get_array_string(tag_str, NULL, 2, &relay);
-        nostr_json_get_array_string(tag_str, NULL, 3, &petname);
+        pubkey = gnostr_json_get_array_string(tag_str, NULL, 1, NULL);
+        relay = gnostr_json_get_array_string(tag_str, NULL, 2, NULL);
+        petname = gnostr_json_get_array_string(tag_str, NULL, 3, NULL);
 
         /* Validate pubkey is 64 hex chars */
         if (pubkey && strlen(pubkey) == 64) {
@@ -122,7 +123,7 @@ static GPtrArray *parse_p_tags_to_entries(const gchar *tags_json)
         g_free(relay);
         g_free(petname);
       }
-      g_free(tag_type);
+      free(tag_type);
     }
 
     g_free(tag_str);
@@ -161,7 +162,7 @@ GPtrArray *gnostr_follow_list_get_cached(const gchar *pubkey_hex)
   /* Parse p-tags from the contact list JSON */
   GPtrArray *entries = NULL;
   g_autofree char *tags_json = NULL;
-  if (nostr_json_get_raw(results[0], "tags", &tags_json) == 0 && tags_json) {
+  if ((tags_json = gnostr_json_get_raw(results[0], "tags", NULL)) != NULL) {
     entries = parse_p_tags_to_entries(tags_json);
   }
 
@@ -234,7 +235,7 @@ static void on_follow_list_query_done(GObject *source, GAsyncResult *res, gpoint
 
       /* Extract created_at */
       g_autofree gchar *created_at_str = NULL;
-      if (nostr_json_get_raw(ev, "created_at", &created_at_str) == 0 && created_at_str) {
+      if ((created_at_str = gnostr_json_get_raw(ev, "created_at", NULL)) != NULL) {
         created_at = g_ascii_strtoll(created_at_str, NULL, 10);
       }
 
@@ -247,7 +248,7 @@ static void on_follow_list_query_done(GObject *source, GAsyncResult *res, gpoint
     if (best_event) {
       /* Parse p-tags */
       g_autofree char *tags_json = NULL;
-      if (nostr_json_get_raw(best_event, "tags", &tags_json) == 0 && tags_json) {
+      if ((tags_json = gnostr_json_get_raw(best_event, "tags", NULL)) != NULL) {
         entries = parse_p_tags_to_entries(tags_json);
       }
 

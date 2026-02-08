@@ -2,7 +2,7 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../util/nip39_identity.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
@@ -182,7 +182,7 @@ void gnostr_profile_edit_set_profile_json(GnostrProfileEdit *self, const char *p
     return;
   }
 
-  if (!nostr_json_is_valid(profile_json)) {
+  if (!gnostr_json_is_valid(profile_json)) {
     g_warning("ProfileEdit: failed to parse profile JSON");
     return;
   }
@@ -193,50 +193,69 @@ void gnostr_profile_edit_set_profile_json(GnostrProfileEdit *self, const char *p
   /* Extract and populate fields */
   char *val = NULL;
 
-  if (nostr_json_get_string(profile_json, "display_name", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "display_name", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_display_name), val);
     g_free(val); val = NULL;
   }
-  if (nostr_json_get_string(profile_json, "name", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "name", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_name), val);
     g_free(val); val = NULL;
   }
-  if (nostr_json_get_string(profile_json, "about", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "about", NULL);
+  if (val) {
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_about));
     gtk_text_buffer_set_text(buffer, val, -1);
     g_free(val); val = NULL;
   }
-  if (nostr_json_get_string(profile_json, "picture", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "picture", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_picture), val);
     g_free(val); val = NULL;
   }
-  if (nostr_json_get_string(profile_json, "banner", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "banner", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_banner), val);
     g_free(val); val = NULL;
   }
-  if (nostr_json_get_string(profile_json, "nip05", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "nip05", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_nip05), val);
     g_free(val); val = NULL;
   }
-  if (nostr_json_get_string(profile_json, "website", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "website", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_website), val);
     g_free(val); val = NULL;
   }
-  if (nostr_json_get_string(profile_json, "lud16", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "lud16", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_lud16), val);
     g_free(val); val = NULL;
   }
   /* NIP-24: lud06 LNURL pay address */
-  if (nostr_json_get_string(profile_json, "lud06", &val) == 0 && val) {
+  val = gnostr_json_get_string(profile_json, "lud06", NULL);
+  if (val) {
     gtk_editable_set_text(GTK_EDITABLE(self->entry_lud06), val);
     g_free(val); val = NULL;
   }
   /* NIP-24: bot indicator - can be boolean or string "true" */
   gboolean is_bot = FALSE;
-  bool bot_val = false;
-  if (nostr_json_get_bool(profile_json, "bot", &bot_val) == 0) {
-    is_bot = bot_val;
-  } else if (nostr_json_get_string(profile_json, "bot", &val) == 0 && val) {
+  if (gnostr_json_has_key(profile_json, "bot")) {
+    GError *bot_err = NULL;
+    gboolean bot_val = gnostr_json_get_boolean(profile_json, "bot", &bot_err);
+    if (!bot_err) {
+      is_bot = bot_val;
+    } else {
+      g_error_free(bot_err);
+      val = gnostr_json_get_string(profile_json, "bot", NULL);
+      if (val) {
+        is_bot = (g_ascii_strcasecmp(val, "true") == 0);
+        g_free(val); val = NULL;
+      }
+    }
+  } else if ((val = gnostr_json_get_string(profile_json, "bot", NULL)) != NULL && val) {
     is_bot = (g_ascii_strcasecmp(val, "true") == 0);
     g_free(val); val = NULL;
   }
@@ -247,15 +266,15 @@ char *gnostr_profile_edit_get_profile_json(GnostrProfileEdit *self) {
   g_return_val_if_fail(GNOSTR_IS_PROFILE_EDIT(self), NULL);
 
   /* Build profile JSON from form fields */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* Helper macro to add field if non-empty */
   #define ADD_IF_SET(field_name, widget) do { \
     const char *text = gtk_editable_get_text(GTK_EDITABLE(widget)); \
     if (text && *text) { \
-      nostr_json_builder_set_key(builder, field_name); \
-      nostr_json_builder_add_string(builder, text); \
+      gnostr_json_builder_set_key(builder, field_name); \
+      gnostr_json_builder_add_string(builder, text); \
     } \
   } while (0)
 
@@ -273,8 +292,8 @@ char *gnostr_profile_edit_get_profile_json(GnostrProfileEdit *self) {
   /* NIP-24: Handle bot field - only include if true */
   gboolean is_bot = gtk_switch_get_active(GTK_SWITCH(self->switch_bot));
   if (is_bot) {
-    nostr_json_builder_set_key(builder, "bot");
-    nostr_json_builder_add_bool(builder, true);
+    gnostr_json_builder_set_key(builder, "bot");
+    gnostr_json_builder_add_boolean(builder, true);
   }
 
   /* Handle about field (TextView) */
@@ -283,14 +302,14 @@ char *gnostr_profile_edit_get_profile_json(GnostrProfileEdit *self) {
   gtk_text_buffer_get_bounds(buffer, &start, &end);
   char *about_text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
   if (about_text && *about_text) {
-    nostr_json_builder_set_key(builder, "about");
-    nostr_json_builder_add_string(builder, about_text);
+    gnostr_json_builder_set_key(builder, "about");
+    gnostr_json_builder_add_string(builder, about_text);
   }
   g_free(about_text);
 
-  nostr_json_builder_end_object(builder);
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  gnostr_json_builder_end_object(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 
@@ -386,22 +405,22 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data) {
     return;
   }
 
-  /* Build unsigned kind 0 event JSON with NostrJsonBuilder */
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  /* Build unsigned kind 0 event JSON with GNostrJsonBuilder */
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, 0);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, 0);
 
-  nostr_json_builder_set_key(builder, "created_at");
-  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
+  gnostr_json_builder_set_key(builder, "created_at");
+  gnostr_json_builder_add_int(builder, (int64_t)time(NULL));
 
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, profile_content);
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, profile_content);
 
   /* Build tags array including NIP-39 identity tags */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* Add NIP-39 external identity "i" tags */
   if (self->external_identities && self->external_identities->len > 0) {
@@ -411,28 +430,28 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data) {
         continue;
       }
 
-      nostr_json_builder_begin_array(builder);
-      nostr_json_builder_add_string(builder, "i");
+      gnostr_json_builder_begin_array(builder);
+      gnostr_json_builder_add_string(builder, "i");
 
       /* Build "platform:identity" string */
       char *tag_value = g_strdup_printf("%s:%s", identity->platform_name, identity->identity);
-      nostr_json_builder_add_string(builder, tag_value);
+      gnostr_json_builder_add_string(builder, tag_value);
       g_free(tag_value);
 
       /* Add proof URL if present */
       if (identity->proof_url && *identity->proof_url) {
-        nostr_json_builder_add_string(builder, identity->proof_url);
+        gnostr_json_builder_add_string(builder, identity->proof_url);
       }
 
-      nostr_json_builder_end_array(builder);
+      gnostr_json_builder_end_array(builder);
     }
   }
 
-  nostr_json_builder_end_array(builder);  /* end tags */
-  nostr_json_builder_end_object(builder); /* end event */
+  gnostr_json_builder_end_array(builder);  /* end tags */
+  gnostr_json_builder_end_object(builder); /* end event */
 
-  char *event_json = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *event_json = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to build event JSON");

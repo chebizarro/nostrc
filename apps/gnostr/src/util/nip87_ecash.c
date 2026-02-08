@@ -8,7 +8,7 @@
 #define G_LOG_DOMAIN "nip87-ecash"
 
 #include "nip87_ecash.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -333,8 +333,8 @@ typedef struct {
   gboolean found_url;
 } EcashMintParseCtx;
 
-static bool
-ecash_mint_tag_callback(size_t index, const char *element_json, void *user_data)
+static gboolean
+ecash_mint_tag_callback(gsize index, const gchar *element_json, gpointer user_data)
 {
   (void)index;
   EcashMintParseCtx *ctx = user_data;
@@ -342,13 +342,15 @@ ecash_mint_tag_callback(size_t index, const char *element_json, void *user_data)
   char *tag_name = NULL;
   char *tag_value = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
 
-  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+  tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (!tag_value) {
     free(tag_name);
-    return true;
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, "d") == 0) {
@@ -383,7 +385,7 @@ ecash_mint_tag_callback(size_t index, const char *element_json, void *user_data)
 
   free(tag_name);
   free(tag_value);
-  return true;
+  return TRUE;
 }
 
 gboolean
@@ -393,13 +395,13 @@ gnostr_ecash_mint_parse_tags(GnostrEcashMint *mint, const gchar *tags_json)
     return FALSE;
   }
 
-  if (!nostr_json_is_valid(tags_json) || !nostr_json_is_array_str(tags_json)) {
+  if (!gnostr_json_is_valid(tags_json) || !gnostr_json_is_array_str(tags_json)) {
     g_warning("ecash: failed to parse tags JSON or not an array");
     return FALSE;
   }
 
   EcashMintParseCtx ctx = { .mint = mint, .found_url = FALSE };
-  nostr_json_array_foreach_root(tags_json, ecash_mint_tag_callback, &ctx);
+  gnostr_json_array_foreach_root(tags_json, ecash_mint_tag_callback, &ctx);
 
   /* Must have a valid mint URL */
   if (!ctx.found_url && !mint->mint_url) {
@@ -419,15 +421,14 @@ gnostr_ecash_mint_parse_event(const gchar *event_json)
     return NULL;
   }
 
-  if (!nostr_json_is_valid(event_json)) {
+  if (!gnostr_json_is_valid(event_json)) {
     g_warning("ecash: failed to parse event JSON");
     return NULL;
   }
 
   /* Verify kind */
-  int kind = 0;
-  if (nostr_json_get_int(event_json, "kind", &kind) != 0 ||
-      kind != NIP87_KIND_MINT_RECOMMENDATION) {
+  int kind = gnostr_json_get_int(event_json, "kind", NULL);
+  if (kind != NIP87_KIND_MINT_RECOMMENDATION) {
     g_debug("ecash: event is not kind 38000");
     return NULL;
   }
@@ -436,27 +437,30 @@ gnostr_ecash_mint_parse_event(const gchar *event_json)
 
   /* Extract event ID */
   char *id_val = NULL;
-  if (nostr_json_get_string(event_json, "id", &id_val) == 0 && id_val) {
+  id_val = gnostr_json_get_string(event_json, "id", NULL);
+  if (id_val) {
     mint->event_id_hex = g_strdup(id_val);
     free(id_val);
   }
 
   /* Extract pubkey */
   char *pubkey_val = NULL;
-  if (nostr_json_get_string(event_json, "pubkey", &pubkey_val) == 0 && pubkey_val) {
+  pubkey_val = gnostr_json_get_string(event_json, "pubkey", NULL);
+  if (pubkey_val) {
     mint->pubkey = g_strdup(pubkey_val);
     free(pubkey_val);
   }
 
   /* Extract created_at */
   int64_t created_at = 0;
-  if (nostr_json_get_int64(event_json, "created_at", &created_at) == 0) {
+  if ((created_at = gnostr_json_get_int64(event_json, "created_at", NULL), TRUE)) {
     mint->created_at = created_at;
   }
 
   /* Parse tags */
   char *tags_str = NULL;
-  if (nostr_json_get_raw(event_json, "tags", &tags_str) == 0 && tags_str) {
+  tags_str = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (tags_str) {
     if (!gnostr_ecash_mint_parse_tags(mint, tags_str)) {
       g_debug("ecash: failed to parse required tags");
       free(tags_str);
@@ -488,49 +492,49 @@ gnostr_ecash_build_recommendation_tags(const GnostrEcashMint *mint)
     return NULL;
   }
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_array(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_array(builder);
 
   /* d tag - unique identifier (mint URL) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "d");
-  nostr_json_builder_add_string(builder, mint->d_tag ? mint->d_tag : mint->mint_url);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "d");
+  gnostr_json_builder_add_string(builder, mint->d_tag ? mint->d_tag : mint->mint_url);
+  gnostr_json_builder_end_array(builder);
 
   /* u tag - mint URL */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "u");
-  nostr_json_builder_add_string(builder, mint->mint_url);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "u");
+  gnostr_json_builder_add_string(builder, mint->mint_url);
+  gnostr_json_builder_end_array(builder);
 
   /* network tag (if not unknown) */
   if (mint->network != GNOSTR_ECASH_NETWORK_UNKNOWN) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "network");
-    nostr_json_builder_add_string(builder, gnostr_ecash_network_to_string(mint->network));
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "network");
+    gnostr_json_builder_add_string(builder, gnostr_ecash_network_to_string(mint->network));
+    gnostr_json_builder_end_array(builder);
   }
 
   /* k tags - currency units */
   for (gsize i = 0; i < mint->unit_count; i++) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "k");
-    nostr_json_builder_add_string(builder, mint->units[i]);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "k");
+    gnostr_json_builder_add_string(builder, mint->units[i]);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* t tags - categories/tags */
   for (gsize i = 0; i < mint->tag_count; i++) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "t");
-    nostr_json_builder_add_string(builder, mint->tags[i]);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "t");
+    gnostr_json_builder_add_string(builder, mint->tags[i]);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_end_array(builder);
 
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return result;
 }
@@ -585,35 +589,35 @@ gnostr_ecash_build_mint_filter(const gchar **pubkeys,
                                 gsize n_pubkeys,
                                 gint limit)
 {
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
   /* Set kind */
-  nostr_json_builder_set_key(builder, "kinds");
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_int(builder, NIP87_KIND_MINT_RECOMMENDATION);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_set_key(builder, "kinds");
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_int(builder, NIP87_KIND_MINT_RECOMMENDATION);
+  gnostr_json_builder_end_array(builder);
 
   /* Set authors if provided */
   if (pubkeys && n_pubkeys > 0) {
-    nostr_json_builder_set_key(builder, "authors");
-    nostr_json_builder_begin_array(builder);
+    gnostr_json_builder_set_key(builder, "authors");
+    gnostr_json_builder_begin_array(builder);
     for (gsize i = 0; i < n_pubkeys; i++) {
       if (pubkeys[i]) {
-        nostr_json_builder_add_string(builder, pubkeys[i]);
+        gnostr_json_builder_add_string(builder, pubkeys[i]);
       }
     }
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* Set limit */
-  nostr_json_builder_set_key(builder, "limit");
-  nostr_json_builder_add_int(builder, limit > 0 ? limit : 100);
+  gnostr_json_builder_set_key(builder, "limit");
+  gnostr_json_builder_add_int(builder, limit > 0 ? limit : 100);
 
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_object(builder);
 
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return result;
 }

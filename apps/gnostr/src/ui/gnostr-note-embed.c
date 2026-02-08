@@ -11,6 +11,7 @@
 #include <nostr/nip19/nip19.h>
 #include <nostr-event.h>
 #include <nostr-filter.h>
+#include "nostr_json.h"
 #include <json.h>
 #include <nostr_simple_pool.h>
 #include "../util/relays.h"
@@ -772,26 +773,26 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
             if (profile_content && *profile_content) {
               /* Parse the profile content JSON using nostr_json helpers */
               char *dn = NULL;
-              if (nostr_json_get_string(profile_content, "display_name", &dn) == 0 && dn && *dn) {
+              if ((dn = gnostr_json_get_string(profile_content, "display_name", NULL)) != NULL && dn && *dn) {
                 author_display = g_strdup(dn);
               }
               free(dn);
               if (!author_display) {
                 char *nm = NULL;
-                if (nostr_json_get_string(profile_content, "name", &nm) == 0 && nm && *nm) {
+                if ((nm = gnostr_json_get_string(profile_content, "name", NULL)) != NULL && nm && *nm) {
                   author_display = g_strdup(nm);
                 }
                 free(nm);
               }
               /* Get handle/name */
               char *name = NULL;
-              if (nostr_json_get_string(profile_content, "name", &name) == 0 && name && *name) {
+              if ((name = gnostr_json_get_string(profile_content, "name", NULL)) != NULL && name && *name) {
                 author_handle = g_strdup(name);
               }
               free(name);
               /* Get picture URL */
               char *pic = NULL;
-              if (nostr_json_get_string(profile_content, "picture", &pic) == 0 && pic && *pic) {
+              if ((pic = gnostr_json_get_string(profile_content, "picture", NULL)) != NULL && pic && *pic) {
                 avatar_url = g_strdup(pic);
               }
               free(pic);
@@ -1121,29 +1122,29 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
     if (content && *content) {
       /* Parse profile content JSON using nostr_json helpers */
       char *dn = NULL;
-      if (nostr_json_get_string(content, "display_name", &dn) == 0 && dn && *dn) {
+      if ((dn = gnostr_json_get_string(content, "display_name", NULL)) != NULL && dn && *dn) {
         display_name = g_strdup(dn);
       }
       free(dn);
       if (!display_name) {
         char *nm = NULL;
-        if (nostr_json_get_string(content, "name", &nm) == 0 && nm && *nm) {
+        if ((nm = gnostr_json_get_string(content, "name", NULL)) != NULL && nm && *nm) {
           display_name = g_strdup(nm);
         }
         free(nm);
       }
       char *name = NULL;
-      if (nostr_json_get_string(content, "name", &name) == 0 && name && *name) {
+      if ((name = gnostr_json_get_string(content, "name", NULL)) != NULL && name && *name) {
         handle = g_strdup(name);
       }
       free(name);
       char *ab = NULL;
-      if (nostr_json_get_string(content, "about", &ab) == 0 && ab && *ab) {
+      if ((ab = gnostr_json_get_string(content, "about", NULL)) != NULL && ab && *ab) {
         about = g_strdup(ab);
       }
       free(ab);
       char *pic = NULL;
-      if (nostr_json_get_string(content, "picture", &pic) == 0 && pic && *pic) {
+      if ((pic = gnostr_json_get_string(content, "picture", NULL)) != NULL && pic && *pic) {
         picture = g_strdup(pic);
       }
       free(pic);
@@ -1248,32 +1249,32 @@ static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char 
       if (content && *content) {
         /* Parse the profile content JSON using nostr_json helpers */
         char *dn = NULL;
-        if (nostr_json_get_string(content, "display_name", &dn) == 0 && dn && *dn) {
+        if ((dn = gnostr_json_get_string(content, "display_name", NULL)) != NULL && dn && *dn) {
           display_name = g_strdup(dn);
         }
         free(dn);
         if (!display_name) {
           char *nm = NULL;
-          if (nostr_json_get_string(content, "name", &nm) == 0 && nm && *nm) {
+          if ((nm = gnostr_json_get_string(content, "name", NULL)) != NULL && nm && *nm) {
             display_name = g_strdup(nm);
           }
           free(nm);
         }
         /* Get handle/name */
         char *name = NULL;
-        if (nostr_json_get_string(content, "name", &name) == 0 && name && *name) {
+        if ((name = gnostr_json_get_string(content, "name", NULL)) != NULL && name && *name) {
           handle = g_strdup(name);
         }
         free(name);
         /* Get about text */
         char *ab = NULL;
-        if (nostr_json_get_string(content, "about", &ab) == 0 && ab && *ab) {
+        if ((ab = gnostr_json_get_string(content, "about", NULL)) != NULL && ab && *ab) {
           about = g_strdup(ab);
         }
         free(ab);
         /* Get picture URL */
         char *pic = NULL;
-        if (nostr_json_get_string(content, "picture", &pic) == 0 && pic && *pic) {
+        if ((pic = gnostr_json_get_string(content, "picture", NULL)) != NULL && pic && *pic) {
           picture = g_strdup(pic);
         }
         free(pic);

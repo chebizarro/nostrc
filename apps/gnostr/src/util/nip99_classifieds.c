@@ -14,7 +14,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr_simple_pool.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -139,8 +139,8 @@ typedef struct {
   GnostrClassified *classified;
 } ClassifiedParseCtx;
 
-static bool
-classified_tag_callback(size_t index, const char *element_json, void *user_data)
+static gboolean
+classified_tag_callback(gsize index, const gchar *element_json, gpointer user_data)
 {
   (void)index;
   ClassifiedParseCtx *ctx = user_data;
@@ -148,13 +148,15 @@ classified_tag_callback(size_t index, const char *element_json, void *user_data)
   char *tag_name = NULL;
   char *tag_value = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
-    return true;
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE;
   }
 
-  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+  tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (!tag_value) {
     free(tag_name);
-    return true;
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, "d") == 0) {
@@ -174,7 +176,7 @@ classified_tag_callback(size_t index, const char *element_json, void *user_data)
   } else if (g_strcmp0(tag_name, "price") == 0) {
     /* Price tag: ["price", "amount", "currency"] */
     char *currency = NULL;
-    nostr_json_get_array_string(element_json, NULL, 2, &currency);
+    currency = gnostr_json_get_array_string(element_json, NULL, 2, NULL);
     gnostr_classified_price_free(ctx->classified->price);
     ctx->classified->price = gnostr_classified_price_parse(tag_value, currency);
     free(currency);
@@ -188,7 +190,7 @@ classified_tag_callback(size_t index, const char *element_json, void *user_data)
 
   free(tag_name);
   free(tag_value);
-  return true;
+  return TRUE;
 }
 
 GnostrClassified *
@@ -196,15 +198,14 @@ gnostr_classified_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  if (!nostr_json_is_valid(event_json)) {
+  if (!gnostr_json_is_valid(event_json)) {
     g_warning("classified: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind */
-  int kind = 0;
-  if (nostr_json_get_int(event_json, "kind", &kind) != 0 ||
-      kind != NIP99_KIND_CLASSIFIED_LISTING) {
+  int kind = gnostr_json_get_int(event_json, "kind", NULL);
+  if (kind != NIP99_KIND_CLASSIFIED_LISTING) {
     return NULL;
   }
 
@@ -212,36 +213,40 @@ gnostr_classified_parse(const gchar *event_json)
 
   /* Extract event ID */
   char *id_val = NULL;
-  if (nostr_json_get_string(event_json, "id", &id_val) == 0 && id_val) {
+  id_val = gnostr_json_get_string(event_json, "id", NULL);
+  if (id_val) {
     classified->event_id = g_strdup(id_val);
     free(id_val);
   }
 
   /* Extract pubkey (seller) */
   char *pubkey_val = NULL;
-  if (nostr_json_get_string(event_json, "pubkey", &pubkey_val) == 0 && pubkey_val) {
+  pubkey_val = gnostr_json_get_string(event_json, "pubkey", NULL);
+  if (pubkey_val) {
     classified->pubkey = g_strdup(pubkey_val);
     free(pubkey_val);
   }
 
   /* Extract created_at */
   int64_t created_at = 0;
-  if (nostr_json_get_int64(event_json, "created_at", &created_at) == 0) {
+  if ((created_at = gnostr_json_get_int64(event_json, "created_at", NULL), TRUE)) {
     classified->created_at = created_at;
   }
 
   /* Extract content (full description) */
   char *content_val = NULL;
-  if (nostr_json_get_string(event_json, "content", &content_val) == 0 && content_val) {
+  content_val = gnostr_json_get_string(event_json, "content", NULL);
+  if (content_val) {
     classified->description = g_strdup(content_val);
     free(content_val);
   }
 
   /* Parse tags for classified metadata */
   char *tags_json = NULL;
-  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+  tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (tags_json) {
     ClassifiedParseCtx ctx = { .classified = classified };
-    nostr_json_array_foreach_root(tags_json, classified_tag_callback, &ctx);
+    gnostr_json_array_foreach_root(tags_json, classified_tag_callback, &ctx);
     free(tags_json);
   }
 
@@ -308,69 +313,69 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
 {
   if (!classified || !classified->d_tag) return NULL;
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_object(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(builder);
 
-  nostr_json_builder_set_key(builder, "kind");
-  nostr_json_builder_add_int(builder, NIP99_KIND_CLASSIFIED_LISTING);
+  gnostr_json_builder_set_key(builder, "kind");
+  gnostr_json_builder_add_int(builder, NIP99_KIND_CLASSIFIED_LISTING);
 
   /* Content is the full description */
-  nostr_json_builder_set_key(builder, "content");
-  nostr_json_builder_add_string(builder, classified->description ? classified->description : "");
+  gnostr_json_builder_set_key(builder, "content");
+  gnostr_json_builder_add_string(builder, classified->description ? classified->description : "");
 
   /* Build tags array */
-  nostr_json_builder_set_key(builder, "tags");
-  nostr_json_builder_begin_array(builder);
+  gnostr_json_builder_set_key(builder, "tags");
+  gnostr_json_builder_begin_array(builder);
 
   /* d tag (required) */
-  nostr_json_builder_begin_array(builder);
-  nostr_json_builder_add_string(builder, "d");
-  nostr_json_builder_add_string(builder, classified->d_tag);
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_begin_array(builder);
+  gnostr_json_builder_add_string(builder, "d");
+  gnostr_json_builder_add_string(builder, classified->d_tag);
+  gnostr_json_builder_end_array(builder);
 
   /* title tag */
   if (classified->title && *classified->title) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "title");
-    nostr_json_builder_add_string(builder, classified->title);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "title");
+    gnostr_json_builder_add_string(builder, classified->title);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* summary tag */
   if (classified->summary && *classified->summary) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "summary");
-    nostr_json_builder_add_string(builder, classified->summary);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "summary");
+    gnostr_json_builder_add_string(builder, classified->summary);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* published_at tag */
   if (classified->published_at > 0) {
     gchar *ts_str = g_strdup_printf("%" G_GINT64_FORMAT, classified->published_at);
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "published_at");
-    nostr_json_builder_add_string(builder, ts_str);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "published_at");
+    gnostr_json_builder_add_string(builder, ts_str);
+    gnostr_json_builder_end_array(builder);
     g_free(ts_str);
   }
 
   /* location tag */
   if (classified->location && *classified->location) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "location");
-    nostr_json_builder_add_string(builder, classified->location);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "location");
+    gnostr_json_builder_add_string(builder, classified->location);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* price tag */
   if (classified->price && classified->price->amount) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "price");
-    nostr_json_builder_add_string(builder, classified->price->amount);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "price");
+    gnostr_json_builder_add_string(builder, classified->price->amount);
     if (classified->price->currency && *classified->price->currency) {
-      nostr_json_builder_add_string(builder, classified->price->currency);
+      gnostr_json_builder_add_string(builder, classified->price->currency);
     }
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* category (t) tags */
@@ -378,10 +383,10 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
     for (guint i = 0; i < classified->categories->len; i++) {
       const gchar *cat = g_ptr_array_index(classified->categories, i);
       if (cat && *cat) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "t");
-        nostr_json_builder_add_string(builder, cat);
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "t");
+        gnostr_json_builder_add_string(builder, cat);
+        gnostr_json_builder_end_array(builder);
       }
     }
   }
@@ -391,19 +396,19 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
     for (guint i = 0; i < classified->images->len; i++) {
       const gchar *img = g_ptr_array_index(classified->images, i);
       if (img && *img) {
-        nostr_json_builder_begin_array(builder);
-        nostr_json_builder_add_string(builder, "image");
-        nostr_json_builder_add_string(builder, img);
-        nostr_json_builder_end_array(builder);
+        gnostr_json_builder_begin_array(builder);
+        gnostr_json_builder_add_string(builder, "image");
+        gnostr_json_builder_add_string(builder, img);
+        gnostr_json_builder_end_array(builder);
       }
     }
   }
 
-  nostr_json_builder_end_array(builder);  /* tags */
-  nostr_json_builder_end_object(builder);
+  gnostr_json_builder_end_array(builder);  /* tags */
+  gnostr_json_builder_end_object(builder);
 
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
 
   return result;
 }

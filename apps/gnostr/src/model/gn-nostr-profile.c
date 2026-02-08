@@ -1,4 +1,5 @@
 #include "gn-nostr-profile.h"
+#include "nostr_json.h"
 #include <json.h>
 #include <string.h>
 
@@ -198,8 +199,9 @@ void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_st
   gboolean changed = FALSE;
   char *str = NULL;
 
-  if (nostr_json_has_key(json_str, "display_name")) {
-    if (nostr_json_get_string(json_str, "display_name", &str) == 0 && str) {
+  if (gnostr_json_has_key(json_str, "display_name")) {
+    str = gnostr_json_get_string(json_str, "display_name", NULL);
+    if (str) {
       if (g_strcmp0(self->display_name, str) != 0) {
         g_free(self->display_name);
         self->display_name = g_strdup(str);
@@ -210,8 +212,9 @@ void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_st
     }
   }
 
-  if (nostr_json_has_key(json_str, "name")) {
-    if (nostr_json_get_string(json_str, "name", &str) == 0 && str) {
+  if (gnostr_json_has_key(json_str, "name")) {
+    str = gnostr_json_get_string(json_str, "name", NULL);
+    if (str) {
       if (g_strcmp0(self->name, str) != 0) {
         g_free(self->name);
         self->name = g_strdup(str);
@@ -222,8 +225,9 @@ void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_st
     }
   }
 
-  if (nostr_json_has_key(json_str, "about")) {
-    if (nostr_json_get_string(json_str, "about", &str) == 0 && str) {
+  if (gnostr_json_has_key(json_str, "about")) {
+    str = gnostr_json_get_string(json_str, "about", NULL);
+    if (str) {
       if (g_strcmp0(self->about, str) != 0) {
         g_free(self->about);
         self->about = g_strdup(str);
@@ -234,8 +238,9 @@ void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_st
     }
   }
 
-  if (nostr_json_has_key(json_str, "picture")) {
-    if (nostr_json_get_string(json_str, "picture", &str) == 0 && str) {
+  if (gnostr_json_has_key(json_str, "picture")) {
+    str = gnostr_json_get_string(json_str, "picture", NULL);
+    if (str) {
       if (g_strcmp0(self->picture_url, str) != 0) {
         g_free(self->picture_url);
         self->picture_url = g_strdup(str);
@@ -246,8 +251,9 @@ void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_st
     }
   }
 
-  if (nostr_json_has_key(json_str, "nip05")) {
-    if (nostr_json_get_string(json_str, "nip05", &str) == 0 && str) {
+  if (gnostr_json_has_key(json_str, "nip05")) {
+    str = gnostr_json_get_string(json_str, "nip05", NULL);
+    if (str) {
       if (g_strcmp0(self->nip05, str) != 0) {
         g_free(self->nip05);
         self->nip05 = g_strdup(str);
@@ -258,8 +264,9 @@ void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_st
     }
   }
 
-  if (nostr_json_has_key(json_str, "lud16")) {
-    if (nostr_json_get_string(json_str, "lud16", &str) == 0 && str) {
+  if (gnostr_json_has_key(json_str, "lud16")) {
+    str = gnostr_json_get_string(json_str, "lud16", NULL);
+    if (str) {
       if (g_strcmp0(self->lud16, str) != 0) {
         g_free(self->lud16);
         self->lud16 = g_strdup(str);

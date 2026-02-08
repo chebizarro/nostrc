@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <glib/gstdio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include "nostr_json.h"
 #include <json.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -68,22 +69,24 @@ typedef struct {
 } EmojiParseContext;
 
 /* nostrc-3nj: Callback for outer tags array iteration */
-static bool parse_emoji_tag_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean parse_emoji_tag_cb(gsize index, const gchar *element_json, gpointer user_data) {
   (void)index;
   EmojiParseContext *ctx = (EmojiParseContext *)user_data;
 
   /* Each element should be an array (a tag) */
-  if (!element_json || !nostr_json_is_array_str(element_json)) return true;
+  if (!element_json || !gnostr_json_is_array_str(element_json)) return true;
 
   /* Get tag length - NIP-30 emoji tag format: ["emoji", "shortcode", "url"] */
   size_t tag_len = 0;
-  if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 3) {
+  tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+  if (tag_len < 0 || tag_len < 3) {
     return true;  /* Skip invalid tags, continue iteration */
   }
 
   /* Check if first element is "emoji" */
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
     return true;
   }
 
@@ -95,14 +98,14 @@ static bool parse_emoji_tag_cb(size_t index, const char *element_json, void *use
 
   /* Get shortcode (index 1) */
   char *shortcode = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 1, &shortcode) != 0 || !shortcode || !*shortcode) {
+  if ((shortcode = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) == NULL || !shortcode || !*shortcode) {
     free(shortcode);
     return true;
   }
 
   /* Get URL (index 2) */
   char *url = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 2, &url) != 0 || !url || !*url) {
+  if ((url = gnostr_json_get_array_string(element_json, NULL, 2, NULL)) == NULL || !url || !*url) {
     free(shortcode);
     free(url);
     return true;
@@ -133,7 +136,7 @@ GnostrEmojiList *gnostr_emoji_parse_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
 
   /* Validate it's an array */
-  if (!nostr_json_is_array_str(tags_json)) {
+  if (!gnostr_json_is_array_str(tags_json)) {
     g_debug("emoji: Tags JSON is not an array");
     return NULL;
   }
@@ -142,7 +145,7 @@ GnostrEmojiList *gnostr_emoji_parse_tags_json(const char *tags_json) {
 
   /* nostrc-3nj: Use NostrJsonInterface to iterate over tags array */
   EmojiParseContext ctx = { .list = list };
-  nostr_json_array_foreach_root(tags_json, parse_emoji_tag_cb, &ctx);
+  gnostr_json_array_foreach_root(tags_json, parse_emoji_tag_cb, &ctx);
 
   if (list->count == 0) {
     gnostr_emoji_list_free(list);

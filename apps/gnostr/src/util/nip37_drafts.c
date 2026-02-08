@@ -7,7 +7,7 @@
 #define G_LOG_DOMAIN "nip37-drafts"
 
 #include "nip37_drafts.h"
-#include "json.h"
+#include "nostr_json.h"
 #include <string.h>
 #include <time.h>
 
@@ -43,10 +43,7 @@ extract_kind_from_json(const gchar *json_str)
 {
   if (!json_str || !*json_str) return 0;
 
-  int kind = 0;
-  if (nostr_json_get_int(json_str, "kind", &kind) != 0) {
-    return 0;
-  }
+  int kind = gnostr_json_get_int(json_str, "kind", NULL);
   return kind;
 }
 
@@ -55,10 +52,7 @@ gnostr_nip37_is_draft_event(const gchar *event_json)
 {
   if (!event_json || !*event_json) return FALSE;
 
-  int kind = 0;
-  if (nostr_json_get_int(event_json, "kind", &kind) != 0) {
-    return FALSE;
-  }
+  int kind = gnostr_json_get_int(event_json, "kind", NULL);
   return kind == NIP37_KIND_DRAFT;
 }
 
@@ -67,8 +61,8 @@ typedef struct {
   GnostrNip37Draft *draft;
 } DraftParseCtx;
 
-static bool
-nip37_tag_callback(size_t index, const char *element_json, void *user_data)
+static gboolean
+nip37_tag_callback(gsize index, const gchar *element_json, gpointer user_data)
 {
   (void)index;
   DraftParseCtx *ctx = user_data;
@@ -77,13 +71,15 @@ nip37_tag_callback(size_t index, const char *element_json, void *user_data)
   char *tag_name = NULL;
   char *tag_value = NULL;
 
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
-    return true; /* Continue iteration */
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
+    return TRUE; /* Continue iteration */
   }
 
-  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+  tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (!tag_value) {
     free(tag_name);
-    return true;
+    return TRUE;
   }
 
   if (g_strcmp0(tag_name, "d") == 0) {
@@ -99,7 +95,7 @@ nip37_tag_callback(size_t index, const char *element_json, void *user_data)
 
   free(tag_name);
   free(tag_value);
-  return true; /* Continue iteration */
+  return TRUE; /* Continue iteration */
 }
 
 GnostrNip37Draft *
@@ -107,14 +103,14 @@ gnostr_nip37_draft_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  if (!nostr_json_is_valid(event_json)) {
+  if (!gnostr_json_is_valid(event_json)) {
     g_warning("nip37: failed to parse event JSON");
     return NULL;
   }
 
   /* Verify kind is 31234 */
-  int kind = 0;
-  if (nostr_json_get_int(event_json, "kind", &kind) != 0 || kind != NIP37_KIND_DRAFT) {
+  int kind = gnostr_json_get_int(event_json, "kind", NULL);
+  if (kind != NIP37_KIND_DRAFT) {
     g_debug("nip37: event is not a draft (kind != 31234)");
     return NULL;
   }
@@ -123,20 +119,21 @@ gnostr_nip37_draft_parse(const gchar *event_json)
 
   /* Extract created_at */
   int64_t created_at = 0;
-  if (nostr_json_get_int64(event_json, "created_at", &created_at) == 0) {
+  if ((created_at = gnostr_json_get_int64(event_json, "created_at", NULL), TRUE)) {
     draft->created_at = created_at;
   }
 
   /* Extract content (the inner draft event JSON) */
   char *content = NULL;
-  if (nostr_json_get_string(event_json, "content", &content) == 0 && content) {
+  content = gnostr_json_get_string(event_json, "content", NULL);
+  if (content) {
     draft->draft_json = g_strdup(content);
     free(content);
   }
 
   /* Parse tags for draft metadata */
   DraftParseCtx ctx = { .draft = draft };
-  nostr_json_array_foreach(event_json, "tags", nip37_tag_callback, &ctx);
+  gnostr_json_array_foreach(event_json, "tags", nip37_tag_callback, &ctx);
 
   /* Validate: must have draft_id (d tag) */
   if (!draft->draft_id || !*draft->draft_id) {
@@ -166,47 +163,47 @@ gnostr_nip37_draft_build_tags(const GnostrNip37Draft *draft)
 {
   if (!draft) return g_strdup("[]");
 
-  NostrJsonBuilder *builder = nostr_json_builder_new();
-  nostr_json_builder_begin_array(builder);
+  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  gnostr_json_builder_begin_array(builder);
 
   /* "d" tag - required */
   if (draft->draft_id && *draft->draft_id) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "d");
-    nostr_json_builder_add_string(builder, draft->draft_id);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "d");
+    gnostr_json_builder_add_string(builder, draft->draft_id);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* "k" tag - target kind */
   if (draft->target_kind > 0) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "k");
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "k");
     gchar *kind_str = g_strdup_printf("%d", draft->target_kind);
-    nostr_json_builder_add_string(builder, kind_str);
+    gnostr_json_builder_add_string(builder, kind_str);
     g_free(kind_str);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* "e" tag - event being edited */
   if (draft->edit_event_id && *draft->edit_event_id) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "e");
-    nostr_json_builder_add_string(builder, draft->edit_event_id);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "e");
+    gnostr_json_builder_add_string(builder, draft->edit_event_id);
+    gnostr_json_builder_end_array(builder);
   }
 
   /* "a" tag - addressable event being edited */
   if (draft->edit_addr && *draft->edit_addr) {
-    nostr_json_builder_begin_array(builder);
-    nostr_json_builder_add_string(builder, "a");
-    nostr_json_builder_add_string(builder, draft->edit_addr);
-    nostr_json_builder_end_array(builder);
+    gnostr_json_builder_begin_array(builder);
+    gnostr_json_builder_add_string(builder, "a");
+    gnostr_json_builder_add_string(builder, draft->edit_addr);
+    gnostr_json_builder_end_array(builder);
   }
 
-  nostr_json_builder_end_array(builder);
+  gnostr_json_builder_end_array(builder);
 
-  char *result = nostr_json_builder_finish(builder);
-  nostr_json_builder_free(builder);
+  char *result = gnostr_json_builder_finish(builder);
+  g_object_unref(builder);
   return result;
 }
 

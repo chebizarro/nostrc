@@ -122,7 +122,7 @@ static void lru_evict(void) {
 static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   if (!pk || !json_str) return NULL;
   if (!gnostr_json_is_valid(json_str)) return NULL;
-  if (!nostr_json_is_object_str(json_str)) return NULL;
+  if (!gnostr_json_is_object_str(json_str)) return NULL;
 
   GnostrProfileMeta *m = g_new0(GnostrProfileMeta, 1);
   m->pubkey_hex = g_strdup(pk);
@@ -133,7 +133,7 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   gchar *content_str = gnostr_json_get_string(json_str, "content", NULL);
   if (content_str && *content_str) {
     /* This is a kind-0 event - parse the content field */
-    if (gnostr_json_is_valid(content_str) && nostr_json_is_object_str(content_str)) {
+    if (gnostr_json_is_valid(content_str) && gnostr_json_is_object_str(content_str)) {
       profile_json = content_str;
     }
   }

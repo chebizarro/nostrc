@@ -490,10 +490,13 @@ target_include_directories(gnostr-live-log PRIVATE
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
 # nostrc-7typ: nostr_simple_pool now depends on nostr_event_bus
+# hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by storage_ndb.c
 target_sources(gnostr-live-log PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
   ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
   ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
+  ${PROJECT_ROOT}/gobject/src/nostr_json.c
+  ${PROJECT_ROOT}/gobject/src/nostr-error.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
@@ -692,11 +695,14 @@ if (BUILD_TESTING)
     LABELS "thread;graph;unit;gnostr")
 
   # Thread subscription unit tests (nostrc-pp64)
+  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by storage_ndb.c
   add_executable(gnostr-test-thread-sub tests/test_thread_subscription.c
     src/model/gnostr-thread-subscription.c
     src/model/gn-ndb-sub-dispatcher.c
     src/storage_ndb.c
-    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
+    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
+    ${PROJECT_ROOT}/gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
   target_compile_features(gnostr-test-thread-sub PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-sub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -732,8 +738,11 @@ if (BUILD_TESTING)
     LABELS "thread;subscription;unit;gnostr")
 
   # Thread graph model unit tests (nostrc-pp64 4.2)
+  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by gnostr-thread-graph-model.c
   add_executable(gnostr-test-thread-graph-model tests/test_thread_graph_model.c
-    src/model/gnostr-thread-graph-model.c)
+    src/model/gnostr-thread-graph-model.c
+    ${PROJECT_ROOT}/gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
   target_compile_features(gnostr-test-thread-graph-model PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-graph-model PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -752,8 +761,11 @@ if (BUILD_TESTING)
     LABELS "thread;graph;model;unit;gnostr")
 
   # NIP-10 thread manager unit tests (nostrc-pp64 4.3)
+  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by gnostr-nip10-thread-manager.c
   add_executable(gnostr-test-nip10-thread-mgr tests/test_nip10_thread_manager.c
-    src/model/gnostr-nip10-thread-manager.c)
+    src/model/gnostr-nip10-thread-manager.c
+    ${PROJECT_ROOT}/gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
   target_compile_features(gnostr-test-nip10-thread-mgr PRIVATE c_std_11)
   target_include_directories(gnostr-test-nip10-thread-mgr PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -787,11 +799,16 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-nip66-relay-discovery PRIVATE c_std_11)
   target_include_directories(gnostr-test-nip66-relay-discovery PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${PROJECT_ROOT}/libjson/include
     ${PROJECT_ROOT}/libgo/include
     ${_NOSTR_CONFIG_DIR})
-  target_sources(gnostr-test-nip66-relay-discovery PRIVATE src/util/nip66_relay_discovery.c)
+  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by nip66_relay_discovery.c
+  target_sources(gnostr-test-nip66-relay-discovery PRIVATE
+    src/util/nip66_relay_discovery.c
+    ${PROJECT_ROOT}/gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
   # Disable async discovery (avoids nostr_simple_pool and relay dependencies)
   target_compile_definitions(gnostr-test-nip66-relay-discovery PRIVATE GNOSTR_NIP66_TEST_ONLY=1)
   target_link_libraries(gnostr-test-nip66-relay-discovery PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_json libgo)

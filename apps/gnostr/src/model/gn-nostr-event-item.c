@@ -1,6 +1,7 @@
 #include "gn-nostr-event-item.h"
 #include "../storage_ndb.h"
 #include <string.h>
+#include "nostr_json.h"
 #include <json.h>
 
 struct _GnNostrEventItem {
@@ -711,19 +712,21 @@ typedef struct {
   char *result;
 } RepostTagIterData;
 
-static bool repost_tag_iter_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean repost_tag_iter_cb(gsize index, const gchar *element_json, gpointer user_data) {
   RepostTagIterData *data = (RepostTagIterData *)user_data;
   if (data->result) return false;  /* Already found, stop */
 
   /* Each tag is an array like ["e", "<event_id>", ...] */
   size_t arr_len = 0;
-  if (nostr_json_get_array_length(element_json, NULL, &arr_len) != 0 || arr_len < 2) {
+  arr_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+  if (arr_len < 0 || arr_len < 2) {
     return true;  /* Continue to next tag */
   }
 
   /* Get tag type (first element) */
   char *tag_type = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_type) != 0 || !tag_type) {
+  tag_type = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_type) {
     return true;
   }
 
@@ -735,7 +738,8 @@ static bool repost_tag_iter_cb(size_t index, const char *element_json, void *use
 
   /* Get event ID (second element) */
   char *event_id = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) == 0 && event_id) {
+  event_id = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  if (event_id) {
     if (strlen(event_id) == 64) {
       data->result = event_id;  /* Transfer ownership */
       return false;  /* Stop iteration */
@@ -763,7 +767,7 @@ char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self) {
 
   /* Use NostrJsonInterface to iterate over tags array */
   RepostTagIterData data = { .result = NULL };
-  nostr_json_array_foreach_root(self->cached_tags_json, repost_tag_iter_cb, &data);
+  gnostr_json_array_foreach_root(self->cached_tags_json, repost_tag_iter_cb, &data);
 
   /* data.result is already allocated by nostr_json_get_array_string; convert to glib-allocated */
   if (data.result) {

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "nostr_json.h"
 #include <json.h>
 
 /* Unused: Helper for strdup with NULL check
@@ -245,7 +246,7 @@ typedef struct {
   size_t count;
 } TagValuesContext;
 
-static bool collect_tag_values_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean collect_tag_values_cb(gsize index, const gchar *element_json, gpointer user_data) {
   TagValuesContext *ctx = (TagValuesContext *)user_data;
   if (index >= ctx->capacity) return false;  /* Stop if exceeded capacity */
 
@@ -290,22 +291,24 @@ static bool collect_tag_values_cb(size_t index, const char *element_json, void *
 }
 
 /* nostrc-3nj: Callback for outer tags array iteration */
-static bool parse_imeta_tag_cb(size_t index, const char *element_json, void *user_data) {
+static gboolean parse_imeta_tag_cb(gsize index, const gchar *element_json, gpointer user_data) {
   (void)index;
   ImetaParseContext *ctx = (ImetaParseContext *)user_data;
 
   /* Each element should be an array (a tag) */
-  if (!element_json || !nostr_json_is_array_str(element_json)) return true;
+  if (!element_json || !gnostr_json_is_array_str(element_json)) return true;
 
   /* Get tag length */
   size_t tag_len = 0;
-  if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+  tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
+  if (tag_len < 0 || tag_len < 2) {
     return true;  /* Skip invalid tags, continue iteration */
   }
 
   /* Check if first element is "imeta" */
   char *tag_name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!tag_name) {
     return true;
   }
 
@@ -322,7 +325,7 @@ static bool parse_imeta_tag_cb(size_t index, const char *element_json, void *use
     .count = 0
   };
 
-  nostr_json_array_foreach_root(element_json, collect_tag_values_cb, &values_ctx);
+  gnostr_json_array_foreach_root(element_json, collect_tag_values_cb, &values_ctx);
 
   /* Parse the imeta tag */
   if (values_ctx.count >= 2) {
@@ -345,7 +348,7 @@ GnostrImetaList *gnostr_imeta_parse_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
 
   /* Validate it's an array */
-  if (!nostr_json_is_array_str(tags_json)) {
+  if (!gnostr_json_is_array_str(tags_json)) {
     g_debug("imeta: Tags JSON is not an array");
     return NULL;
   }
@@ -354,7 +357,7 @@ GnostrImetaList *gnostr_imeta_parse_tags_json(const char *tags_json) {
 
   /* nostrc-3nj: Use NostrJsonInterface to iterate over tags array */
   ImetaParseContext ctx = { .list = list };
-  nostr_json_array_foreach_root(tags_json, parse_imeta_tag_cb, &ctx);
+  gnostr_json_array_foreach_root(tags_json, parse_imeta_tag_cb, &ctx);
 
   if (list->count == 0) {
     gnostr_imeta_list_free(list);

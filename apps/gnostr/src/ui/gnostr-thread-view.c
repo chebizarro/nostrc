@@ -18,6 +18,7 @@
 #include <gio/gio.h>
 #include <string.h>
 #include <time.h>
+#include "nostr_json.h"
 #include <json.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-thread-view.ui"
@@ -265,17 +266,18 @@ static char *dup_relay_hint(const char *url) {
 }
 
 /* Callback for processing each tag in the tags array */
-static bool parse_nip10_tag_callback(size_t index, const char *tag_json, void *user_data) {
+static gboolean parse_nip10_tag_callback(gsize index, const gchar *tag_json, gpointer user_data) {
   (void)index;
   Nip10ParseContext *ctx = (Nip10ParseContext *)user_data;
   if (!tag_json || !ctx) return true;
 
   /* Validate tag is an array */
-  if (!nostr_json_is_array_str(tag_json)) return true;
+  if (!gnostr_json_is_array_str(tag_json)) return true;
 
   /* Get tag type (first element) */
   char *tag_type = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_type) != 0 || !tag_type) {
+  tag_type = gnostr_json_get_array_string(tag_json, NULL, 0, NULL);
+  if (!tag_type) {
     return true;
   }
 
@@ -288,7 +290,8 @@ static bool parse_nip10_tag_callback(size_t index, const char *tag_json, void *u
 
   /* Get event ID (second element) */
   char *event_id = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 1, &event_id) != 0 || !event_id) {
+  event_id = gnostr_json_get_array_string(tag_json, NULL, 1, NULL);
+  if (!event_id) {
     return true;
   }
 
@@ -299,11 +302,11 @@ static bool parse_nip10_tag_callback(size_t index, const char *tag_json, void *u
 
   /* Get relay hint (third element) - NIP-10 relay hint */
   char *relay_hint = NULL;
-  nostr_json_get_array_string(tag_json, NULL, 2, &relay_hint);
+  relay_hint = gnostr_json_get_array_string(tag_json, NULL, 2, NULL);
 
   /* Check for marker (NIP-10 preferred markers) - fourth element */
   char *marker = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 3, &marker) == 0 && marker && *marker) {
+  if ((marker = gnostr_json_get_array_string(tag_json, NULL, 3, NULL)) != NULL && marker && *marker) {
     if (strcmp(marker, "root") == 0) {
       g_free(*ctx->root_id);
       *ctx->root_id = g_strdup(event_id);
@@ -351,7 +354,7 @@ static void parse_nip10_from_json_full(const char *json_str, char **root_id, cha
   if (reply_relay_hint) *reply_relay_hint = NULL;
   if (!json_str) return;
 
-  if (!nostr_json_is_valid(json_str)) return;
+  if (!gnostr_json_is_valid(json_str)) return;
 
   Nip10ParseContext ctx = {
     .root_id = root_id,
@@ -365,7 +368,7 @@ static void parse_nip10_from_json_full(const char *json_str, char **root_id, cha
   };
 
   /* Iterate through tags array */
-  nostr_json_array_foreach(json_str, "tags", parse_nip10_tag_callback, &ctx);
+  gnostr_json_array_foreach(json_str, "tags", parse_nip10_tag_callback, &ctx);
 
   /* If no markers found, use positional (NIP-10 fallback):
    * - First e-tag = root
@@ -408,14 +411,15 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
 }
 
 /* nostrc-hb7c: Callback for extracting p-tags (mentioned pubkeys) */
-static bool parse_ptag_callback(size_t index, const char *tag_json, void *user_data) {
+static gboolean parse_ptag_callback(gsize index, const gchar *tag_json, gpointer user_data) {
   (void)index;  /* unused */
   GPtrArray *pubkeys = (GPtrArray *)user_data;
   if (!tag_json || !pubkeys) return true;
 
   /* Check if this is a p-tag */
   char *tag_type = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_type) != 0 || !tag_type) {
+  tag_type = gnostr_json_get_array_string(tag_json, NULL, 0, NULL);
+  if (!tag_type) {
     return true;
   }
   if (strcmp(tag_type, "p") != 0 && strcmp(tag_type, "P") != 0) {
@@ -426,7 +430,8 @@ static bool parse_ptag_callback(size_t index, const char *tag_json, void *user_d
 
   /* Get the pubkey (second element) */
   char *pubkey = NULL;
-  if (nostr_json_get_array_string(tag_json, NULL, 1, &pubkey) != 0 || !pubkey) {
+  pubkey = gnostr_json_get_array_string(tag_json, NULL, 1, NULL);
+  if (!pubkey) {
     return true;
   }
 
@@ -452,10 +457,10 @@ static bool parse_ptag_callback(size_t index, const char *tag_json, void *user_d
 /* nostrc-hb7c: Extract p-tag pubkeys from event JSON */
 static GPtrArray *extract_ptags_from_json(const char *json_str) {
   GPtrArray *pubkeys = g_ptr_array_new_with_free_func(g_free);
-  if (!json_str || !nostr_json_is_valid(json_str)) {
+  if (!json_str || !gnostr_json_is_valid(json_str)) {
     return pubkeys;
   }
-  nostr_json_array_foreach(json_str, "tags", parse_ptag_callback, pubkeys);
+  gnostr_json_array_foreach(json_str, "tags", parse_ptag_callback, pubkeys);
   return pubkeys;
 }
 

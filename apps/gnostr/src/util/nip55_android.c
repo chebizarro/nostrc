@@ -7,6 +7,7 @@
 
 #include "nip55_android.h"
 #include <string.h>
+#include "nostr_json.h"
 #include <json.h>
 
 /* Intent URI components */
@@ -149,7 +150,7 @@ char *gnostr_android_build_sign_intent(const char *unsigned_event_json,
   }
 
   /* Validate JSON before encoding */
-  if (!nostr_json_is_valid(unsigned_event_json)) {
+  if (!gnostr_json_is_valid(unsigned_event_json)) {
     g_warning("nip55: invalid event JSON for sign intent");
     return NULL;
   }
@@ -389,7 +390,7 @@ GnostrAndroidSignerResponse *gnostr_android_parse_sign_response_json(const char 
   response->success = FALSE;
 
   /* Validate JSON first */
-  if (!nostr_json_is_valid(json_str)) {
+  if (!gnostr_json_is_valid(json_str)) {
     g_warning("nip55: failed to parse sign response JSON");
     response->error_message = g_strdup("JSON parse error");
     return response;
@@ -397,7 +398,8 @@ GnostrAndroidSignerResponse *gnostr_android_parse_sign_response_json(const char 
 
   /* Check if this is a full event or just a signature object */
   char *sig = NULL;
-  if (nostr_json_get_string(json_str, "sig", &sig) == 0 && sig) {
+  sig = gnostr_json_get_string(json_str, "sig", NULL);
+  if (sig) {
     if (strlen(sig) == 128) {
       response->signature = sig;
       sig = NULL; /* ownership transferred */
@@ -407,9 +409,9 @@ GnostrAndroidSignerResponse *gnostr_android_parse_sign_response_json(const char 
       char *id_str = NULL;
       char *pubkey_str = NULL;
       int kind = 0;
-      gboolean has_id = (nostr_json_get_string(json_str, "id", &id_str) == 0 && id_str);
-      gboolean has_pubkey = (nostr_json_get_string(json_str, "pubkey", &pubkey_str) == 0 && pubkey_str);
-      gboolean has_kind = (nostr_json_get_int(json_str, "kind", &kind) == 0);
+      gboolean has_id = ((id_str = gnostr_json_get_string(json_str, "id", NULL)) != NULL && id_str);
+      gboolean has_pubkey = ((pubkey_str = gnostr_json_get_string(json_str, "pubkey", NULL)) != NULL && pubkey_str);
+      gboolean has_kind = ((kind = gnostr_json_get_int(json_str, "kind", NULL), TRUE));
 
       if (has_id && has_pubkey && has_kind) {
         /* This is a full signed event, store the JSON */
@@ -428,7 +430,7 @@ GnostrAndroidSignerResponse *gnostr_android_parse_sign_response_json(const char 
 
   /* Check for error field */
   char *err_str = NULL;
-  if (nostr_json_get_string(json_str, "error", &err_str) == 0 && err_str && *err_str) {
+  if ((err_str = gnostr_json_get_string(json_str, "error", NULL)) != NULL && err_str && *err_str) {
     response->error_message = err_str;
     err_str = NULL; /* ownership transferred */
     response->success = FALSE;

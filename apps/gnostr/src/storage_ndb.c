@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <glib.h>
+#include "nostr_json.h"
 #include "json.h"
 #include "libnostr_store.h"
 #include "storage_ndb.h"
@@ -708,12 +709,12 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
     if (!results[i]) continue;
 
     /* Parse the JSON to extract content and pubkey */
-    if (!nostr_json_is_valid(results[i])) continue;
+    if (!gnostr_json_is_valid(results[i])) continue;
 
     char *content_val = NULL;
     char *pubkey_val = NULL;
-    nostr_json_get_string(results[i], "content", &content_val);
-    nostr_json_get_string(results[i], "pubkey", &pubkey_val);
+    content_val = gnostr_json_get_string(results[i], "content", NULL);
+    pubkey_val = gnostr_json_get_string(results[i], "pubkey", NULL);
 
     /* Default to "+" if content is empty */
     const char *content = (content_val && *content_val) ? content_val : "+";
@@ -777,18 +778,18 @@ typedef struct {
   gboolean found;
 } StorageNdbBolt11Ctx;
 
-static bool storage_ndb_find_bolt11_cb(size_t idx, const char *element_json, void *user_data)
+static gboolean storage_ndb_find_bolt11_cb(gsize idx, const gchar *element_json, gpointer user_data)
 {
   (void)idx;
   StorageNdbBolt11Ctx *ctx = (StorageNdbBolt11Ctx *)user_data;
-  if (ctx->found) return false;
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (ctx->found) return FALSE;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   char *name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &name) != 0) return true;
+  if ((name = gnostr_json_get_array_string(element_json, NULL, 0, NULL)) == NULL) return TRUE;
 
   if (g_strcmp0(name, "bolt11") == 0) {
-    nostr_json_get_array_string(element_json, NULL, 1, &ctx->bolt11);
+    ctx->bolt11 = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
     ctx->found = TRUE;
   }
   g_free(name);
@@ -827,16 +828,16 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
   /* Parse each zap receipt to extract amount from bolt11 */
   gint64 total = 0;
   for (int i = 0; i < count; i++) {
-    if (!results[i] || !nostr_json_is_valid(results[i])) continue;
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
 
     /* Get raw tags array */
     char *tags_json = NULL;
-    if (nostr_json_get_raw(results[i], "tags", &tags_json) != 0 || !tags_json) continue;
+    if ((tags_json = gnostr_json_get_raw(results[i], "tags", NULL)) == NULL || !tags_json) continue;
 
     /* Find bolt11 tag by iterating through tags */
     char *bolt11_value = NULL;
     size_t tags_len = 0;
-    if (nostr_json_get_array_length(tags_json, NULL, &tags_len) == 0) {
+    if ((tags_len = gnostr_json_get_array_length(tags_json, NULL, NULL)) >= 0) {
       for (size_t j = 0; j < tags_len && !bolt11_value; j++) {
         /* Each tag is an array like ["bolt11", "lnbc..."] */
         /* Get the raw tag element first */
@@ -855,7 +856,7 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
 
     /* Use callback to find bolt11 */
     StorageNdbBolt11Ctx bctx = { .bolt11 = NULL, .found = FALSE };
-    nostr_json_array_foreach_root(tags_json, storage_ndb_find_bolt11_cb, &bctx);
+    gnostr_json_array_foreach_root(tags_json, storage_ndb_find_bolt11_cb, &bctx);
 
     if (bctx.bolt11 && *bctx.bolt11) {
       /* Parse bolt11 invoice to get amount */
@@ -1201,25 +1202,25 @@ typedef struct {
   GPtrArray *pubkeys;
 } StorageNdbPTagCtx;
 
-static bool storage_ndb_extract_p_tag_cb(size_t idx, const char *element_json, void *user_data)
+static gboolean storage_ndb_extract_p_tag_cb(gsize idx, const gchar *element_json, gpointer user_data)
 {
   (void)idx;
   StorageNdbPTagCtx *ctx = (StorageNdbPTagCtx *)user_data;
-  if (!nostr_json_is_array_str(element_json)) return true;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
 
   char *name = NULL;
-  if (nostr_json_get_array_string(element_json, NULL, 0, &name) != 0) return true;
+  if ((name = gnostr_json_get_array_string(element_json, NULL, 0, NULL)) == NULL) return TRUE;
 
   if (g_strcmp0(name, "p") == 0) {
     char *pubkey = NULL;
-    if (nostr_json_get_array_string(element_json, NULL, 1, &pubkey) == 0 &&
+    if ((pubkey = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) != NULL &&
         pubkey && strlen(pubkey) == 64) {
       g_ptr_array_add(ctx->pubkeys, g_strdup(pubkey));
     }
     g_free(pubkey);
   }
   g_free(name);
-  return true; /* continue iterating */
+  return TRUE; /* continue iterating */
 }
 
 /* nostrc-f0ll: Get followed pubkeys from a user's contact list (kind 3).
@@ -1259,8 +1260,9 @@ char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex)
 
   /* Get tags array from the JSON result */
   char *tags_json = NULL;
-  if (nostr_json_get_raw(results[0], "tags", &tags_json) == 0 && tags_json) {
-    nostr_json_array_foreach_root(tags_json, storage_ndb_extract_p_tag_cb, &ctx);
+  tags_json = gnostr_json_get_raw(results[0], "tags", NULL);
+  if (tags_json) {
+    gnostr_json_array_foreach_root(tags_json, storage_ndb_extract_p_tag_cb, &ctx);
     g_free(tags_json);
   }
 
