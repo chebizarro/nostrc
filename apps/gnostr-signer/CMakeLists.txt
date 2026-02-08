@@ -158,6 +158,14 @@ target_compile_definitions(${APP_SIGNER_BIN} PRIVATE
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/include)
 # NIP-46 core headers for bunker service
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip46/include)
+# GObject NIP-46 wrappers (GNostrNip46Client, GNostrNip46Bunker)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/include)
+target_sources(${APP_SIGNER_BIN} PRIVATE
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip46_client.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip46_bunker.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-enums.c
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-error.c
+)
 # NIP-19 for bech32 encoding
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/include)
 # NIP-49 for encrypted key backup (ncryptsec)

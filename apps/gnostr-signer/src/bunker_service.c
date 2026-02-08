@@ -16,9 +16,8 @@
 #include "client_session.h"
 #include "event_history.h"
 
-#include <nostr/nip46/nip46_bunker.h>
+#include "nostr_nip46_bunker.h"
 #include <nostr/nip46/nip46_uri.h>
-#include <nostr/nip46/nip46_msg.h>
 #include <nostr_nip19.h>
 #include <string.h>
 #include <time.h>
@@ -27,8 +26,8 @@ struct _BunkerService {
   BunkerState state;
   gchar *error_message;
 
-  /* NIP-46 session */
-  NostrNip46Session *session;
+  /* NIP-46 bunker (GObject wrapper) */
+  GNostrNip46Bunker *bunker;
 
   /* Identity */
   gchar *identity_npub;
@@ -87,10 +86,12 @@ static void set_state(BunkerService *bs, BunkerState state, const gchar *error) 
   }
 }
 
-/* NIP-46 callbacks */
-static int bunker_authorize_cb(const char *client_pubkey_hex,
-                               const char *perms_csv,
-                               void *user_data) {
+/* GNostrNip46Bunker signal handlers (hq-m2k0n) */
+static gboolean
+on_bunker_authorize_request(GNostrNip46Bunker *bunker G_GNUC_UNUSED,
+                            const gchar *client_pubkey_hex,
+                            const gchar *perms_csv,
+                            gpointer user_data) {
   BunkerService *bs = (BunkerService*)user_data;
   if (!bs) return 0;
 
@@ -105,7 +106,7 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
     gchar *error_msg = gn_rate_limiter_format_error_message(rate_status, remaining_seconds);
     g_message("bunker: rejecting rate-limited client %s: %s", client_pubkey_hex, error_msg);
     g_free(error_msg);
-    return 0;
+    return FALSE;
   }
 
   /* Check allowed pubkeys */
@@ -121,7 +122,7 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
       /* Record failed attempt for rate limiting */
       gn_rate_limiter_record_client_attempt(limiter, client_pubkey_hex, FALSE);
       g_message("bunker: rejecting unauthorized client %s", client_pubkey_hex);
-      return 0;
+      return FALSE;
     }
   }
 
@@ -148,11 +149,13 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
   }
 
   g_message("bunker: authorized client %s", client_pubkey_hex);
-  return 1;
+  return TRUE;
 }
 
-static char *bunker_sign_cb(const char *event_json,
-                            void *user_data) {
+static gchar *
+on_bunker_sign_request(GNostrNip46Bunker *bunker G_GNUC_UNUSED,
+                       const gchar *event_json,
+                       gpointer user_data) {
   BunkerService *bs = (BunkerService*)user_data;
   if (!bs || !event_json) return NULL;
 
@@ -404,26 +407,28 @@ gboolean bunker_service_start(BunkerService *bs,
     }
   }
 
-  /* Create NIP-46 bunker session */
-  NostrNip46BunkerCallbacks cbs = {
-    .authorize_cb = bunker_authorize_cb,
-    .sign_cb = bunker_sign_cb,
-    .user_data = bs
-  };
-
-  bs->session = nostr_nip46_bunker_new(&cbs);
-  if (!bs->session) {
-    set_state(bs, BUNKER_STATE_ERROR, "Failed to create bunker session");
+  /* Create NIP-46 bunker (GObject wrapper - hq-m2k0n) */
+  bs->bunker = gnostr_nip46_bunker_new();
+  if (!bs->bunker) {
+    set_state(bs, BUNKER_STATE_ERROR, "Failed to create bunker");
     return FALSE;
   }
 
+  /* Connect signal handlers (replaces C function pointer callbacks) */
+  g_signal_connect(bs->bunker, "authorize-request",
+                   G_CALLBACK(on_bunker_authorize_request), bs);
+  g_signal_connect(bs->bunker, "sign-request",
+                   G_CALLBACK(on_bunker_sign_request), bs);
+
   /* Start listening */
   if (bs->relays && bs->n_relays > 0) {
-    int rc = nostr_nip46_bunker_listen(bs->session,
-                                       (const char *const *)bs->relays,
-                                       bs->n_relays);
-    if (rc != 0) {
-      g_warning("bunker: listen returned %d (may be expected for stub)", rc);
+    GError *error = NULL;
+    if (!gnostr_nip46_bunker_listen(bs->bunker,
+                                     (const gchar *const *)bs->relays,
+                                     bs->n_relays, &error)) {
+      g_warning("bunker: listen failed: %s (may be expected for stub)",
+                error ? error->message : "unknown");
+      g_clear_error(&error);
       /* Don't fail - the library may not have full relay support yet */
     }
   }
@@ -436,9 +441,9 @@ gboolean bunker_service_start(BunkerService *bs,
 void bunker_service_stop(BunkerService *bs) {
   if (!bs) return;
 
-  if (bs->session) {
-    nostr_nip46_session_free(bs->session);
-    bs->session = NULL;
+  if (bs->bunker) {
+    g_object_unref(bs->bunker);
+    bs->bunker = NULL;
   }
 
   g_hash_table_remove_all(bs->connections);
@@ -456,13 +461,16 @@ gchar *bunker_service_get_bunker_uri(BunkerService *bs, const gchar *secret) {
   if (!bs || !bs->identity_pubkey_hex) return NULL;
 
   gchar *uri = NULL;
-  int rc = nostr_nip46_bunker_issue_bunker_uri(bs->session,
-                                               bs->identity_pubkey_hex,
-                                               (const char *const *)bs->relays,
-                                               bs->n_relays,
-                                               secret,
-                                               &uri);
-  if (rc != 0 || !uri) {
+  GError *err = NULL;
+  gboolean ok = bs->bunker ?
+    gnostr_nip46_bunker_issue_uri(bs->bunker,
+                                   bs->identity_pubkey_hex,
+                                   (const gchar *const *)bs->relays,
+                                   bs->n_relays,
+                                   secret,
+                                   &uri, &err) : FALSE;
+  g_clear_error(&err);
+  if (!ok || !uri) {
     /* Build manually if library fails
      * Use GnSecureString for the secret parameter handling */
     GString *s = g_string_new("bunker://");

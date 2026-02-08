@@ -10,8 +10,7 @@
 #include "secret_store.h"
 #include "secure-mem.h"
 
-#include <nostr/nip46/nip46_client.h>
-#include <nostr/nip46/nip46_uri.h>
+#include "nostr_nip46_client.h"
 #include <nostr_nip19.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +25,7 @@ typedef struct {
   RemoteSignerState state;
   gchar *error_message;
   gint64 last_contact;
-  NostrNip46Session *session;
+  GNostrNip46Client *client;
 
   /* Pending request tracking */
   gchar *pending_session_id;
@@ -56,8 +55,8 @@ static void remote_connection_free(RemoteSignerConnection *conn) {
   if (conn->relays) {
     g_strfreev(conn->relays);
   }
-  if (conn->session) {
-    nostr_nip46_session_free(conn->session);
+  if (conn->client) {
+    g_object_unref(conn->client);
   }
   g_free(conn);
 }
@@ -282,24 +281,27 @@ gboolean multisig_nip46_connect(MultisigNip46Client *client,
 
   g_hash_table_replace(client->connections, g_strdup(npub), conn);
 
-  /* Create NIP-46 client session */
-  conn->session = nostr_nip46_client_new();
-  if (!conn->session) {
-    set_connection_state(client, conn, REMOTE_SIGNER_ERROR, "Failed to create session");
+  /* Create NIP-46 client (GObject wrapper - hq-m2k0n) */
+  conn->client = gnostr_nip46_client_new();
+  if (!conn->client) {
+    set_connection_state(client, conn, REMOTE_SIGNER_ERROR, "Failed to create client");
     g_free(secret);
     g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_BACKEND,
-                "Failed to create NIP-46 session");
+                "Failed to create NIP-46 client");
     return FALSE;
   }
 
-  /* Initiate connection - new API: (session, bunker_uri, perms_csv)
-   * Note: secret and our_identity_npub are embedded in the bunker URI */
+  /* Parse bunker URI and configure session */
   (void)secret;
   (void)our_identity_npub;
-  int rc = nostr_nip46_client_connect(conn->session,
-                                       bunker_uri,
-                                       NULL /* permissions */);
+  GError *connect_error = NULL;
+  gboolean ok = gnostr_nip46_client_connect_to_bunker(conn->client,
+                                                       bunker_uri,
+                                                       NULL /* permissions */,
+                                                       &connect_error);
   g_free(secret);
+  int rc = ok ? 0 : -1;
+  g_clear_error(&connect_error);
 
   if (rc != 0) {
     set_connection_state(client, conn, REMOTE_SIGNER_ERROR, "Connection initiation failed");
@@ -318,9 +320,10 @@ void multisig_nip46_disconnect(MultisigNip46Client *client,
 
   RemoteSignerConnection *conn = g_hash_table_lookup(client->connections, signer_npub);
   if (conn) {
-    if (conn->session) {
-      nostr_nip46_session_free(conn->session);
-      conn->session = NULL;
+    if (conn->client) {
+      gnostr_nip46_client_stop(conn->client);
+      g_object_unref(conn->client);
+      conn->client = NULL;
     }
     set_connection_state(client, conn, REMOTE_SIGNER_DISCONNECTED, NULL);
     g_message("multisig_nip46: disconnected from %s", signer_npub);
@@ -353,9 +356,9 @@ gboolean multisig_nip46_request_signature(MultisigNip46Client *client,
     return FALSE;
   }
 
-  if (!conn->session) {
+  if (!conn->client) {
     g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_BACKEND,
-                "No NIP-46 session for signer");
+                "No NIP-46 client for signer");
     return FALSE;
   }
 
@@ -363,16 +366,20 @@ gboolean multisig_nip46_request_signature(MultisigNip46Client *client,
   g_free(conn->pending_session_id);
   conn->pending_session_id = g_strdup(session_id);
 
-  /* Send sign_event request - new API has output parameter */
-  char *signed_event_json = NULL;
-  int rc = nostr_nip46_client_sign_event(conn->session, event_json, &signed_event_json);
+  /* Send sign_event request via GObject wrapper */
+  gchar *signed_event_json = NULL;
+  GError *sign_error = NULL;
+  gboolean ok = gnostr_nip46_client_sign_event(conn->client, event_json,
+                                                &signed_event_json, &sign_error);
 
-  if (rc != 0) {
+  if (!ok) {
     g_free(conn->pending_session_id);
     conn->pending_session_id = NULL;
 
     g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_REMOTE_FAILED,
-                "Failed to send sign request");
+                "Failed to send sign request: %s",
+                sign_error ? sign_error->message : "unknown");
+    g_clear_error(&sign_error);
     return FALSE;
   }
 
@@ -468,7 +475,7 @@ gboolean multisig_nip46_request_signature(MultisigNip46Client *client,
     /* Clear pending session after processing */
     g_clear_pointer(&conn->pending_session_id, g_free);
 
-    free(signed_event_json);
+    g_free(signed_event_json);
   } else {
     /* No immediate response - request is pending asynchronously */
     g_message("multisig_nip46: sign_event request sent to %s for session %s (async)",
