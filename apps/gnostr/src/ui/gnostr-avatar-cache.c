@@ -614,15 +614,33 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
     process_pending_fetch_queue();
     return;
   }
-  gsize blen = 0; (void)g_bytes_get_data(bytes, &blen);
+  gsize blen = 0; const guint8 *bdata = g_bytes_get_data(bytes, &blen);
   s_avatar_metrics.http_ok++;
   g_debug("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
+
+  /* nostrc-tqaj: Quick-reject non-image responses before expensive decode.
+   * Servers often return HTML error pages with 200 OK for broken CDN URLs. */
+  if (blen > 0 && (bdata[0] == '<' || bdata[0] == '{')) {
+    g_debug("avatar http: response is HTML/JSON, not an image for url=%s", ctx->url);
+    if (ctx && ctx->url) {
+      if (!s_avatar_bad_urls)
+        s_avatar_bad_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      g_hash_table_add(s_avatar_bad_urls, g_strdup(ctx->url));
+    }
+    g_bytes_unref(bytes);
+    avatar_ctx_free(ctx);
+    g_mutex_lock(&s_fetch_mutex);
+    if (s_active_fetches > 0) s_active_fetches--;
+    g_mutex_unlock(&s_fetch_mutex);
+    process_pending_fetch_queue();
+    return;
+  }
 
   /* CRITICAL: Validate it's actually an image BEFORE caching, and decode at bounded size */
   GdkTexture *tex = avatar_texture_from_bytes_scaled(bytes, &error);
   if (!tex) {
-    g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)",
-              ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    g_debug("avatar http: invalid image data for url=%s: %s",
+            ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     /* Add to negative cache to avoid repeated failing fetches */
     if (ctx && ctx->url) {
       if (!s_avatar_bad_urls)
