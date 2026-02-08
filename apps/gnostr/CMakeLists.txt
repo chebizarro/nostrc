@@ -16,6 +16,7 @@ pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
 pkg_check_modules(SOUP3 QUIET IMPORTED_TARGET libsoup-3.0)
 pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
+pkg_check_modules(WEBKITGTK QUIET IMPORTED_TARGET webkitgtk-6.0)
 pkg_check_modules(LIBPEAS REQUIRED IMPORTED_TARGET libpeas-2)
 
 # Find blueprint-compiler for compiling .blp files to .ui files
@@ -323,6 +324,14 @@ endif()
 if (QRENCODE_FOUND)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::QRENCODE)
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_QRENCODE=1)
+endif()
+# ---- WebKitGTK for inline YouTube playback (nostrc-1du) ----
+if (WEBKITGTK_FOUND)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::WEBKITGTK)
+  target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_WEBKITGTK=1)
+  message(STATUS "webkitgtk-6.0 found — YouTube inline playback enabled")
+else()
+  message(STATUS "webkitgtk-6.0 not found — YouTube links open in browser")
 endif()
 
 # ---- libpeas for plugin system (required) ----
@@ -837,6 +846,17 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-nip66-relay-discovery PROPERTIES
     TIMEOUT 30
     LABELS "nip66;relay;discovery;unit;gnostr")
+
+  # YouTube URL parsing unit tests (nostrc-1du)
+  add_executable(gnostr-test-youtube-url tests/test_youtube_url.c src/util/youtube_url.c)
+  target_compile_features(gnostr-test-youtube-url PRIVATE c_std_11)
+  target_include_directories(gnostr-test-youtube-url PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-youtube-url PRIVATE PkgConfig::GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-youtube-url)
+  add_test(NAME gnostr-test-youtube-url COMMAND gnostr-test-youtube-url)
+  set_tests_properties(gnostr-test-youtube-url PROPERTIES
+    TIMEOUT 30
+    LABELS "youtube;url;unit;gnostr")
 
   # Chess engine unit tests (nostrc-vwe8)
   add_executable(gnostr-test-chess-engine tests/test_chess_engine.c src/util/chess_engine.c)

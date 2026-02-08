@@ -3530,3 +3530,23 @@ profile-row.muted .profile-row-avatar {
 		border: 1px solid #5c524a;
 	}
 }
+
+/* ===== YouTube Embed (nostrc-1du) ===== */
+
+.youtube-play-overlay {
+	min-width: 48px;
+	min-height: 48px;
+	padding: 12px;
+	background: rgba(0, 0, 0, 0.65);
+	color: white;
+}
+
+.youtube-play-overlay image {
+	-gtk-icon-size: 24px;
+}
+
+youtube-embed {
+	border-radius: 12px;
+	overflow: hidden;
+	margin: 8px 0;
+}

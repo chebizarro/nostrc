@@ -1,5 +1,7 @@
 #include "og-preview-widget.h"
+#include "gnostr-youtube-embed.h"
 #include "../util/utils.h"
+#include "../util/youtube_url.h"
 #include <libsoup/soup.h>
 #include <string.h>
 #include <ctype.h>
@@ -40,6 +42,12 @@ struct _OgPreviewWidget {
 
   /* External cancellable from parent widget (not owned, just referenced) */
   GCancellable *external_cancellable;
+
+  /* YouTube inline playback (nostrc-1du) */
+  GtkWidget *play_overlay;        /* Play button overlay on card image */
+#ifdef HAVE_WEBKITGTK
+  GtkWidget *youtube_embed;       /* GnostrYoutubeEmbed widget (lazily created) */
+#endif
 
   /* Disposal flag - set during dispose to prevent callbacks from accessing widget */
   gboolean disposed;
@@ -415,6 +423,24 @@ static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta) {
   } else if (self->image_widget) {
     gtk_widget_set_visible(self->image_widget, FALSE);
   }
+
+  /* Show play button overlay for YouTube URLs (nostrc-1du) */
+  if (self->current_url && gnostr_youtube_url_is_youtube(self->current_url)) {
+    if (!self->play_overlay) {
+      self->play_overlay = gtk_button_new_from_icon_name("media-playback-start-symbolic");
+      gtk_widget_add_css_class(self->play_overlay, "youtube-play-overlay");
+      gtk_widget_add_css_class(self->play_overlay, "osd");
+      gtk_widget_add_css_class(self->play_overlay, "circular");
+      gtk_widget_set_halign(self->play_overlay, GTK_ALIGN_CENTER);
+      gtk_widget_set_valign(self->play_overlay, GTK_ALIGN_CENTER);
+      /* The play button is purely visual — clicks are handled by card_box gesture */
+      gtk_widget_set_can_target(self->play_overlay, FALSE);
+      gtk_widget_set_parent(self->play_overlay, GTK_WIDGET(self));
+    }
+    gtk_widget_set_visible(self->play_overlay, TRUE);
+  } else if (self->play_overlay) {
+    gtk_widget_set_visible(self->play_overlay, FALSE);
+  }
 }
 
 /* Async HTML fetch callback.
@@ -622,6 +648,10 @@ static void og_preview_widget_dispose(GObject *object) {
     gtk_label_set_text(GTK_LABEL(self->error_label), "");
   }
 
+  g_clear_pointer(&self->play_overlay, gtk_widget_unparent);
+#ifdef HAVE_WEBKITGTK
+  g_clear_pointer(&self->youtube_embed, gtk_widget_unparent);
+#endif
   g_clear_pointer(&self->spinner, gtk_widget_unparent);
   g_clear_pointer(&self->error_label, gtk_widget_unparent);
   g_clear_pointer(&self->card_box, gtk_widget_unparent);
@@ -678,11 +708,39 @@ static void on_card_clicked(GtkGestureClick *gesture, int n_press, double x, dou
   /* Check disposed flag before accessing widget state (nostrc-oa9) */
   if (self->disposed) return;
 
-  if (self->current_url && *self->current_url) {
-    GtkUriLauncher *launcher = gtk_uri_launcher_new(self->current_url);
-    gtk_uri_launcher_launch(launcher, NULL, NULL, NULL, NULL);
-    g_object_unref(launcher);
+  if (!self->current_url || !*self->current_url) return;
+
+  /* YouTube: inline embed if WebKit available (nostrc-1du) */
+  if (gnostr_youtube_url_is_youtube(self->current_url)) {
+#ifdef HAVE_WEBKITGTK
+    g_autofree char *vid = gnostr_youtube_url_extract_video_id(self->current_url);
+    if (vid) {
+      /* Hide OG card, show YouTube embed */
+      gtk_widget_set_visible(self->card_box, FALSE);
+      if (self->play_overlay)
+        gtk_widget_set_visible(self->play_overlay, FALSE);
+
+      if (!self->youtube_embed) {
+        self->youtube_embed = gnostr_youtube_embed_new(vid);
+        gtk_widget_set_parent(self->youtube_embed, GTK_WIDGET(self));
+      } else {
+        /* Re-load with new video */
+        gnostr_youtube_embed_stop(GNOSTR_YOUTUBE_EMBED(self->youtube_embed));
+        g_clear_pointer(&self->youtube_embed, gtk_widget_unparent);
+        self->youtube_embed = gnostr_youtube_embed_new(vid);
+        gtk_widget_set_parent(self->youtube_embed, GTK_WIDGET(self));
+      }
+      gtk_widget_set_visible(self->youtube_embed, TRUE);
+      return;
+    }
+#endif
+    /* Fallthrough: no WebKit or no video ID — open in browser */
   }
+
+  /* Default: open in browser */
+  GtkUriLauncher *launcher = gtk_uri_launcher_new(self->current_url);
+  gtk_uri_launcher_launch(launcher, NULL, NULL, NULL, NULL);
+  g_object_unref(launcher);
 }
 
 static void og_preview_widget_init(OgPreviewWidget *self) {
