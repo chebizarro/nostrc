@@ -68,6 +68,19 @@
 /* EventBus active subscriber count */
 #define METRIC_BUS_SUBSCRIBERS         "bus_subscribers"
 
+/* NDB storage gauges (nostrc-o6w) */
+#define METRIC_NDB_NOTE_COUNT          "ndb_note_count"
+#define METRIC_NDB_PROFILE_COUNT       "ndb_profile_count"
+#define METRIC_NDB_STORAGE_BYTES       "ndb_storage_bytes"
+#define METRIC_NDB_KIND_TEXT           "ndb_kind_text"
+#define METRIC_NDB_KIND_CONTACTS       "ndb_kind_contacts"
+#define METRIC_NDB_KIND_DM             "ndb_kind_dm"
+#define METRIC_NDB_KIND_REPOST         "ndb_kind_repost"
+#define METRIC_NDB_KIND_REACTION       "ndb_kind_reaction"
+#define METRIC_NDB_KIND_ZAP            "ndb_kind_zap"
+#define METRIC_NDB_INGEST_COUNT        "ndb_ingest_count"
+#define METRIC_NDB_INGEST_BYTES        "ndb_ingest_bytes"
+
 /* ========================================================================
  * Histograms — Distributions (values in nanoseconds unless noted)
  * ======================================================================== */

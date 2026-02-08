@@ -7,6 +7,8 @@
 #include "json.h"
 #include "libnostr_store.h"
 #include "storage_ndb.h"
+#include "nostr/metrics.h"
+#include "nostr/metrics_schema.h"
 
 /* Direct nostrdb access for subscription API */
 #if defined(__clang__)
@@ -273,6 +275,48 @@ int storage_ndb_stat_json(char **json_out)
 {
   if (!g_store || !json_out) return LN_ERR_QUERY;
   return ln_store_stat_json(g_store, json_out);
+}
+
+int storage_ndb_get_stat(StorageNdbStat *out)
+{
+  if (!out) return -1;
+  memset(out, 0, sizeof(*out));
+  struct ndb *db = get_ndb();
+  if (!db) return -1;
+  struct ndb_stat st;
+  if (!ndb_stat(db, &st)) return -1;
+
+  out->note_count    = st.dbs[NDB_DB_NOTE].count;
+  out->profile_count = st.dbs[NDB_DB_PROFILE].count;
+
+  for (int i = 0; i < NDB_DBS; i++)
+    out->total_bytes += st.dbs[i].key_size + st.dbs[i].value_size;
+
+  out->kind_text     = st.common_kinds[NDB_CKIND_TEXT].count;
+  out->kind_contacts = st.common_kinds[NDB_CKIND_CONTACTS].count;
+  out->kind_dm       = st.common_kinds[NDB_CKIND_DM].count;
+  out->kind_repost   = st.common_kinds[NDB_CKIND_REPOST].count;
+  out->kind_reaction = st.common_kinds[NDB_CKIND_REACTION].count;
+  out->kind_zap      = st.common_kinds[NDB_CKIND_ZAP].count;
+  return 0;
+}
+
+void storage_ndb_update_metrics(void)
+{
+  StorageNdbStat st;
+  if (storage_ndb_get_stat(&st) != 0) return;
+
+  nostr_metric_gauge_set(METRIC_NDB_NOTE_COUNT,    (int64_t)st.note_count);
+  nostr_metric_gauge_set(METRIC_NDB_PROFILE_COUNT, (int64_t)st.profile_count);
+  nostr_metric_gauge_set(METRIC_NDB_STORAGE_BYTES, (int64_t)st.total_bytes);
+  nostr_metric_gauge_set(METRIC_NDB_KIND_TEXT,     (int64_t)st.kind_text);
+  nostr_metric_gauge_set(METRIC_NDB_KIND_CONTACTS, (int64_t)st.kind_contacts);
+  nostr_metric_gauge_set(METRIC_NDB_KIND_DM,       (int64_t)st.kind_dm);
+  nostr_metric_gauge_set(METRIC_NDB_KIND_REPOST,   (int64_t)st.kind_repost);
+  nostr_metric_gauge_set(METRIC_NDB_KIND_REACTION, (int64_t)st.kind_reaction);
+  nostr_metric_gauge_set(METRIC_NDB_KIND_ZAP,      (int64_t)st.kind_zap);
+  nostr_metric_gauge_set(METRIC_NDB_INGEST_COUNT,  (int64_t)g_ingest_count);
+  nostr_metric_gauge_set(METRIC_NDB_INGEST_BYTES,  (int64_t)g_ingest_bytes);
 }
 
 void storage_ndb_free_results(char **arr, int n)

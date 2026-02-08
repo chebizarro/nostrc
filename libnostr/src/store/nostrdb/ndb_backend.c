@@ -631,15 +631,28 @@ static int ln_ndb_stat_json(ln_store *s, char **json_out)
   if (!db) return LN_ERR_QUERY;
   struct ndb_stat st;
   if (!ndb_stat(db, &st)) return LN_ERR_QUERY;
-  /* Minimal JSON with a few totals; extend later */
-  char buf[512];
-  size_t total = 0;
-  for (int i = 0; i < NDB_DBS; i++) total += st.dbs[i].count;
+
+  size_t total_entries = 0, total_bytes = 0;
+  for (int i = 0; i < NDB_DBS; i++) {
+    total_entries += st.dbs[i].count;
+    total_bytes += st.dbs[i].key_size + st.dbs[i].value_size;
+  }
+
+  char buf[1024];
   int n = snprintf(buf, sizeof(buf),
-                   "{\"dbs\":%zu,\"notes\":%zu}",
-                   total,
-                   st.dbs[NDB_DB_NOTE].count);
-  if (n < 0) return LN_ERR_QUERY;
+    "{\"total_entries\":%zu,\"total_bytes\":%zu,"
+    "\"notes\":%zu,\"profiles\":%zu,"
+    "\"kinds\":{\"text\":%zu,\"contacts\":%zu,\"dm\":%zu,"
+    "\"repost\":%zu,\"reaction\":%zu,\"zap\":%zu}}",
+    total_entries, total_bytes,
+    st.dbs[NDB_DB_NOTE].count, st.dbs[NDB_DB_PROFILE].count,
+    st.common_kinds[NDB_CKIND_TEXT].count,
+    st.common_kinds[NDB_CKIND_CONTACTS].count,
+    st.common_kinds[NDB_CKIND_DM].count,
+    st.common_kinds[NDB_CKIND_REPOST].count,
+    st.common_kinds[NDB_CKIND_REACTION].count,
+    st.common_kinds[NDB_CKIND_ZAP].count);
+  if (n < 0 || (size_t)n >= sizeof(buf)) return LN_ERR_QUERY;
   char *out = (char *)malloc((size_t)n + 1);
   if (!out) return LN_ERR_OOM;
   memcpy(out, buf, (size_t)n);

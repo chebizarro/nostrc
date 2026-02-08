@@ -3214,6 +3214,14 @@ typedef struct {
   GtkLabel *lbl_dispatch_p50;
   GtkLabel *lbl_dispatch_p99;
   GtkLabel *lbl_status_icon;
+  /* NDB storage stats (nostrc-o6w) */
+  GtkLabel *lbl_ndb_notes;
+  GtkLabel *lbl_ndb_profiles;
+  GtkLabel *lbl_ndb_storage;
+  GtkLabel *lbl_ndb_text;
+  GtkLabel *lbl_ndb_reactions;
+  GtkLabel *lbl_ndb_zaps;
+  GtkLabel *lbl_ndb_ingest;
   GtkWidget *panel;
   guint timer_id;
 } MetricsPanelCtx;
@@ -3336,6 +3344,46 @@ static void metrics_panel_refresh(MetricsPanelCtx *mctx) {
     gtk_label_set_text(mctx->lbl_status_icon, "Healthy");
 
   nostr_metrics_snapshot_free(&snap);
+
+  /* NDB storage stats (nostrc-o6w) */
+  StorageNdbStat nst;
+  if (storage_ndb_get_stat(&nst) == 0) {
+    snprintf(buf, sizeof(buf), "%zu", nst.note_count);
+    gtk_label_set_text(mctx->lbl_ndb_notes, buf);
+
+    snprintf(buf, sizeof(buf), "%zu", nst.profile_count);
+    gtk_label_set_text(mctx->lbl_ndb_profiles, buf);
+
+    if (nst.total_bytes >= 1024 * 1024)
+      snprintf(buf, sizeof(buf), "%.1f MB", nst.total_bytes / (1024.0 * 1024.0));
+    else if (nst.total_bytes >= 1024)
+      snprintf(buf, sizeof(buf), "%.1f KB", nst.total_bytes / 1024.0);
+    else
+      snprintf(buf, sizeof(buf), "%zu B", nst.total_bytes);
+    gtk_label_set_text(mctx->lbl_ndb_storage, buf);
+
+    snprintf(buf, sizeof(buf), "%zu", nst.kind_text);
+    gtk_label_set_text(mctx->lbl_ndb_text, buf);
+
+    snprintf(buf, sizeof(buf), "%zu", nst.kind_reaction);
+    gtk_label_set_text(mctx->lbl_ndb_reactions, buf);
+
+    snprintf(buf, sizeof(buf), "%zu", nst.kind_zap);
+    gtk_label_set_text(mctx->lbl_ndb_zaps, buf);
+
+    uint64_t ic = storage_ndb_get_ingest_count();
+    uint64_t ib = storage_ndb_get_ingest_bytes();
+    if (ib >= 1024 * 1024)
+      snprintf(buf, sizeof(buf), "%llu events / %.1f MB",
+               (unsigned long long)ic, ib / (1024.0 * 1024.0));
+    else
+      snprintf(buf, sizeof(buf), "%llu events / %llu B",
+               (unsigned long long)ic, (unsigned long long)ib);
+    gtk_label_set_text(mctx->lbl_ndb_ingest, buf);
+
+    /* Also push to metrics gauges for Prometheus export */
+    storage_ndb_update_metrics();
+  }
 }
 
 static gboolean metrics_panel_tick(gpointer user_data) {
@@ -3405,6 +3453,25 @@ static void settings_dialog_setup_metrics_panel(SettingsDialogCtx *ctx) {
 
   mctx->lbl_dispatch_p50 = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(lat_list), "p50", "0.0 \xC2\xB5s"));
   mctx->lbl_dispatch_p99 = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(lat_list), "p99", "0.0 \xC2\xB5s"));
+
+  /* NDB Storage section (nostrc-o6w) */
+  GtkWidget *ndb_label = gtk_label_new("Storage");
+  gtk_label_set_xalign(GTK_LABEL(ndb_label), 0);
+  gtk_widget_add_css_class(ndb_label, "heading");
+  gtk_box_append(panel, ndb_label);
+
+  GtkWidget *ndb_list = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(ndb_list), GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(ndb_list, "boxed-list");
+  gtk_box_append(panel, ndb_list);
+
+  mctx->lbl_ndb_notes     = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(ndb_list), "Notes", "0"));
+  mctx->lbl_ndb_profiles  = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(ndb_list), "Profiles", "0"));
+  mctx->lbl_ndb_storage   = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(ndb_list), "DB Size", "0 B"));
+  mctx->lbl_ndb_text      = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(ndb_list), "Text Notes", "0"));
+  mctx->lbl_ndb_reactions = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(ndb_list), "Reactions", "0"));
+  mctx->lbl_ndb_zaps      = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(ndb_list), "Zaps", "0"));
+  mctx->lbl_ndb_ingest    = GTK_LABEL(metrics_add_row(GTK_LIST_BOX(ndb_list), "Ingested", "0 events / 0 B"));
 
   /* Initial refresh */
   metrics_panel_refresh(mctx);

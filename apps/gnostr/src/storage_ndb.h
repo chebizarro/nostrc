@@ -53,6 +53,27 @@ int storage_ndb_get_note_json_by_key(uint64_t note_key, char **json_out, int *js
 /* Stats */
 int storage_ndb_stat_json(char **json_out);
 
+/* Structured NDB statistics (nostrc-o6w) */
+typedef struct {
+  size_t note_count;        /* NDB_DB_NOTE entries */
+  size_t profile_count;     /* NDB_DB_PROFILE entries */
+  size_t total_bytes;       /* key_size + value_size across all DBs */
+  /* Per-kind note counts */
+  size_t kind_text;         /* kind 1 */
+  size_t kind_contacts;     /* kind 3 */
+  size_t kind_dm;           /* kind 4 */
+  size_t kind_repost;       /* kind 6 */
+  size_t kind_reaction;     /* kind 7 */
+  size_t kind_zap;          /* kind 9735 */
+} StorageNdbStat;
+
+/* Populate structured statistics from NDB. Returns 0 on success. */
+int storage_ndb_get_stat(StorageNdbStat *out);
+
+/* Update metrics gauges from current NDB statistics.
+ * Call periodically (e.g. from dashboard refresh timer). */
+void storage_ndb_update_metrics(void);
+
 /* Diagnostic counters */
 uint64_t storage_ndb_get_ingest_count(void);
 uint64_t storage_ndb_get_ingest_bytes(void);
