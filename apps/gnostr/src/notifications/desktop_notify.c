@@ -410,6 +410,11 @@ send_notification_internal(GnostrDesktopNotify *self,
 
   GNotification *notification = g_notification_new(title);
 
+  /* Set application icon so notifications show the app icon
+   * instead of a generic fallback (hq-h0kvq) */
+  g_autoptr(GIcon) icon = g_themed_icon_new("org.gnostr.gnostr");
+  g_notification_set_icon(notification, icon);
+
   if (body) {
     g_notification_set_body(notification, body);
   }

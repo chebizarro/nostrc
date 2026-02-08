@@ -35,6 +35,7 @@ static const gchar *sni_introspection_xml =
   "    <property name='IconName' type='s' access='read'/>"
   "    <property name='AttentionIconName' type='s' access='read'/>"
   "    <property name='ToolTip' type='(sa(iiay)ss)' access='read'/>"
+  "    <property name='IconThemePath' type='s' access='read'/>"
   "    <property name='ItemIsMenu' type='b' access='read'/>"
   "    <property name='Menu' type='o' access='read'/>"
   "    <signal name='NewTitle'/>"
@@ -88,6 +89,7 @@ struct _GnostrTrayIcon {
   gchar *status;           /* "Active", "Passive", or "Attention" */
   gchar *icon_name;
   gchar *attention_icon_name;
+  gchar *icon_theme_path;
   int unread_count;
 
 #ifdef HAVE_DBUSMENU
@@ -196,6 +198,8 @@ handle_get_property(GDBusConnection  *connection,
     return g_variant_new_string(self->icon_name ? self->icon_name : "org.gnostr.gnostr");
   } else if (g_strcmp0(property_name, "AttentionIconName") == 0) {
     return g_variant_new_string(self->attention_icon_name ? self->attention_icon_name : "org.gnostr.gnostr");
+  } else if (g_strcmp0(property_name, "IconThemePath") == 0) {
+    return g_variant_new_string(self->icon_theme_path ? self->icon_theme_path : "");
   } else if (g_strcmp0(property_name, "ToolTip") == 0) {
     /* ToolTip is a struct: (icon_name, icon_pixmap[], title, description) */
     GVariantBuilder pixmap_builder;
@@ -424,6 +428,7 @@ gnostr_tray_icon_dispose(GObject *object)
   g_clear_pointer(&self->status, g_free);
   g_clear_pointer(&self->icon_name, g_free);
   g_clear_pointer(&self->attention_icon_name, g_free);
+  g_clear_pointer(&self->icon_theme_path, g_free);
 
   self->app = NULL;
   self->window = NULL;
@@ -450,6 +455,7 @@ gnostr_tray_icon_init(GnostrTrayIcon *self)
   self->status = g_strdup("Active");
   self->icon_name = g_strdup("org.gnostr.gnostr");
   self->attention_icon_name = g_strdup("org.gnostr.gnostr");
+  self->icon_theme_path = NULL;
   self->unread_count = 0;
 #ifdef HAVE_DBUSMENU
   self->menu_server = NULL;
@@ -477,6 +483,22 @@ gnostr_tray_icon_new(GtkApplication *app)
 
   GnostrTrayIcon *self = g_object_new(GNOSTR_TYPE_TRAY_ICON, NULL);
   self->app = app;  /* weak reference, app outlives tray icon */
+
+  /* Resolve icon theme path so the SNI host can find our app icon.
+   * Prefer installed location; fall back to source tree for dev builds. */
+#ifdef GNOSTR_ICON_THEME_DIR
+  if (g_file_test(GNOSTR_ICON_THEME_DIR "/hicolor/scalable/apps/org.gnostr.gnostr.svg",
+                  G_FILE_TEST_EXISTS)) {
+    self->icon_theme_path = g_strdup(GNOSTR_ICON_THEME_DIR);
+  }
+#endif
+#ifdef GNOSTR_ICON_THEME_DIR_DEV
+  if (!self->icon_theme_path &&
+      g_file_test(GNOSTR_ICON_THEME_DIR_DEV "/hicolor/scalable/apps/org.gnostr.gnostr.svg",
+                  G_FILE_TEST_EXISTS)) {
+    self->icon_theme_path = g_strdup(GNOSTR_ICON_THEME_DIR_DEV);
+  }
+#endif
 
   /* Generate unique bus name and object path using PID */
   self->bus_name = g_strdup_printf("org.kde.StatusNotifierItem-%d-1", getpid());

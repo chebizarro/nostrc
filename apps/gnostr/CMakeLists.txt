@@ -181,7 +181,10 @@ list(APPEND APP_SRC ${SIGNER_PROXY_C})
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 add_executable(${APP_CLIENT_BIN} ${APP_SRC})
 target_compile_features(${APP_CLIENT_BIN} PRIVATE c_std_11)
-target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}")
+target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}"
+  GNOSTR_ICON_THEME_DIR="${CMAKE_INSTALL_FULL_DATAROOTDIR}/icons"
+  GNOSTR_ICON_THEME_DIR_DEV="${CMAKE_CURRENT_SOURCE_DIR}/data/icons"
+)
 # Enable real SimplePool-backed timeline fetching in the UI
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
 # Plugin search path for development builds - points to build/plugins directory
