@@ -11,8 +11,7 @@
 #include "../util/utils.h"
 #include "../storage_ndb.h"
 #include "../util/relays.h"
-#include "nostr-event.h"
-#include "nostr-filter.h"
+#include "nostr_filter.h"
 #include "nostr_simple_pool.h"
 #include <glib/gi18n.h>
 #include <string.h>
@@ -1001,43 +1000,49 @@ fetch_thread_from_relays(GnostrNip7dThreadView *self)
     }
 
     /* Query for kind 1111 replies referencing this thread */
-    NostrFilter *filter = nostr_filter_new();
-    int kinds[1] = { NIP7D_KIND_THREAD_REPLY };
-    nostr_filter_set_kinds(filter, kinds, 1);
+    {
+      GNostrFilter *gf = gnostr_filter_new();
+      gint kinds[1] = { NIP7D_KIND_THREAD_REPLY };
+      gnostr_filter_set_kinds(gf, kinds, 1);
+      /* NIP-22: Use uppercase E tag for root event reference */
+      gnostr_filter_tags_append(gf, "E", self->thread->event_id);
+      gnostr_filter_set_limit(gf, DEFAULT_REPLY_LIMIT);
+      NostrFilter *filter = gnostr_filter_build(gf);
+      g_object_unref(gf);
 
-    /* NIP-22: Use uppercase E tag for root event reference */
-    nostr_filter_tags_append(filter, "E", self->thread->event_id, NULL);
-    nostr_filter_set_limit(filter, DEFAULT_REPLY_LIMIT);
-
-    gnostr_simple_pool_query_single_async(
-        gnostr_get_shared_query_pool(),
-        urls,
-        relay_arr->len,
-        filter,
-        self->fetch_cancellable,
-        on_replies_fetch_done,
-        self
-    );
-
-    nostr_filter_free(filter);
+      gnostr_simple_pool_query_single_async(
+          gnostr_get_shared_query_pool(),
+          urls,
+          relay_arr->len,
+          filter,
+          self->fetch_cancellable,
+          on_replies_fetch_done,
+          self
+      );
+      nostr_filter_free(filter);
+    }
 
     /* Also query with lowercase e tag for compatibility */
-    NostrFilter *filter2 = nostr_filter_new();
-    nostr_filter_set_kinds(filter2, kinds, 1);
-    nostr_filter_tags_append(filter2, "e", self->thread->event_id, NULL);
-    nostr_filter_set_limit(filter2, DEFAULT_REPLY_LIMIT);
+    {
+      GNostrFilter *gf = gnostr_filter_new();
+      gint kinds[1] = { NIP7D_KIND_THREAD_REPLY };
+      gnostr_filter_set_kinds(gf, kinds, 1);
+      gnostr_filter_tags_append(gf, "e", self->thread->event_id);
+      gnostr_filter_set_limit(gf, DEFAULT_REPLY_LIMIT);
+      NostrFilter *filter2 = gnostr_filter_build(gf);
+      g_object_unref(gf);
 
-    gnostr_simple_pool_query_single_async(
-        gnostr_get_shared_query_pool(),
-        urls,
-        relay_arr->len,
-        filter2,
-        self->fetch_cancellable,
-        on_replies_fetch_done,
-        self
-    );
-
-    nostr_filter_free(filter2);
+      gnostr_simple_pool_query_single_async(
+          gnostr_get_shared_query_pool(),
+          urls,
+          relay_arr->len,
+          filter2,
+          self->fetch_cancellable,
+          on_replies_fetch_done,
+          self
+      );
+      nostr_filter_free(filter2);
+    }
     g_free(urls);
     g_ptr_array_unref(relay_arr);
 }
@@ -1207,14 +1212,16 @@ fetch_missing_ancestors(GnostrNip7dThreadView *self)
     }
 
     /* Build filter with missing IDs - include both kind 11 (thread root) and 1111 (replies) */
-    NostrFilter *filter = nostr_filter_new();
-    int kinds[2] = { NIP7D_KIND_THREAD_ROOT, NIP7D_KIND_THREAD_REPLY };
-    nostr_filter_set_kinds(filter, kinds, 2);
+    GNostrFilter *gf = gnostr_filter_new();
+    gint kinds[2] = { NIP7D_KIND_THREAD_ROOT, NIP7D_KIND_THREAD_REPLY };
+    gnostr_filter_set_kinds(gf, kinds, 2);
 
     for (guint i = 0; i < missing_ids->len; i++) {
-        nostr_filter_add_id(filter, g_ptr_array_index(missing_ids, i));
+        gnostr_filter_add_id(gf, g_ptr_array_index(missing_ids, i));
     }
-    nostr_filter_set_limit(filter, DEFAULT_REPLY_LIMIT);
+    gnostr_filter_set_limit(gf, DEFAULT_REPLY_LIMIT);
+    NostrFilter *filter = gnostr_filter_build(gf);
+    g_object_unref(gf);
 
     g_ptr_array_unref(missing_ids);
 
@@ -1460,23 +1467,27 @@ gnostr_nip7d_thread_view_load_thread(GnostrNip7dThreadView *self,
         urls[i] = g_ptr_array_index(relay_arr, i);
     }
 
-    NostrFilter *filter = nostr_filter_new();
-    int kinds[1] = { NIP7D_KIND_THREAD_ROOT };
-    nostr_filter_set_kinds(filter, kinds, 1);
-    nostr_filter_add_id(filter, event_id_hex);
-    nostr_filter_set_limit(filter, 1);
+    {
+      GNostrFilter *gf = gnostr_filter_new();
+      gint kinds[1] = { NIP7D_KIND_THREAD_ROOT };
+      gnostr_filter_set_kinds(gf, kinds, 1);
+      gnostr_filter_add_id(gf, event_id_hex);
+      gnostr_filter_set_limit(gf, 1);
+      NostrFilter *filter = gnostr_filter_build(gf);
+      g_object_unref(gf);
 
-    gnostr_simple_pool_query_single_async(
-        gnostr_get_shared_query_pool(),
-        urls,
-        relay_arr->len,
-        filter,
-        self->fetch_cancellable,
-        on_thread_fetch_done,
-        self
-    );
+      gnostr_simple_pool_query_single_async(
+          gnostr_get_shared_query_pool(),
+          urls,
+          relay_arr->len,
+          filter,
+          self->fetch_cancellable,
+          on_thread_fetch_done,
+          self
+      );
 
-    nostr_filter_free(filter);
+      nostr_filter_free(filter);
+    }
     g_free(urls);
     g_ptr_array_unref(relay_arr);
 }
@@ -1702,26 +1713,30 @@ gnostr_nip7d_thread_view_load_more_replies(GnostrNip7dThreadView *self,
         }
     }
 
-    NostrFilter *filter = nostr_filter_new();
-    int kinds[1] = { NIP7D_KIND_THREAD_REPLY };
-    nostr_filter_set_kinds(filter, kinds, 1);
-    nostr_filter_tags_append(filter, "E", self->thread->event_id, NULL);
-    nostr_filter_set_limit(filter, limit);
-    if (oldest < G_MAXINT64) {
-        nostr_filter_set_until_i64(filter, oldest - 1);
+    {
+      GNostrFilter *gf = gnostr_filter_new();
+      gint kinds[1] = { NIP7D_KIND_THREAD_REPLY };
+      gnostr_filter_set_kinds(gf, kinds, 1);
+      gnostr_filter_tags_append(gf, "E", self->thread->event_id);
+      gnostr_filter_set_limit(gf, limit);
+      if (oldest < G_MAXINT64) {
+          gnostr_filter_set_until(gf, oldest - 1);
+      }
+      NostrFilter *filter = gnostr_filter_build(gf);
+      g_object_unref(gf);
+
+      gnostr_simple_pool_query_single_async(
+          gnostr_get_shared_query_pool(),
+          urls,
+          relay_arr->len,
+          filter,
+          self->fetch_cancellable,
+          on_replies_fetch_done,
+          self
+      );
+
+      nostr_filter_free(filter);
     }
-
-    gnostr_simple_pool_query_single_async(
-        gnostr_get_shared_query_pool(),
-        urls,
-        relay_arr->len,
-        filter,
-        self->fetch_cancellable,
-        on_replies_fetch_done,
-        self
-    );
-
-    nostr_filter_free(filter);
     g_free(urls);
     g_ptr_array_unref(relay_arr);
 }

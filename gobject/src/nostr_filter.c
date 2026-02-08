@@ -1,8 +1,9 @@
 #include "nostr_filter.h"
 #include <glib.h>
 
-/* Core libnostr headers for JSON serialization */
+/* Core libnostr headers for JSON serialization and tags */
 #include "nostr-filter.h"
+#include "nostr-tag.h"
 #include "json.h"
 
 /* GNostrFilter - standalone GObject filter (no core embedding).
@@ -18,6 +19,7 @@ struct _GNostrFilter {
     gint64 since;
     gint64 until;
     gint   limit;
+    NostrTags *tags;   /* core tag filters (#e, #p, etc.) */
 };
 
 G_DEFINE_TYPE(GNostrFilter, gnostr_filter, G_TYPE_OBJECT)
@@ -29,6 +31,8 @@ gnostr_filter_finalize(GObject *object)
     g_strfreev(self->ids);
     g_free(self->kinds);
     g_strfreev(self->authors);
+    if (self->tags)
+        nostr_tags_free(self->tags);
     G_OBJECT_CLASS(gnostr_filter_parent_class)->finalize(object);
 }
 
@@ -154,6 +158,92 @@ gnostr_filter_get_limit(GNostrFilter *self)
     return self->limit;
 }
 
+/* ---- Incremental builders ---- */
+
+void
+gnostr_filter_add_id(GNostrFilter *self, const gchar *id)
+{
+    g_return_if_fail(GNOSTR_IS_FILTER(self));
+    g_return_if_fail(id != NULL);
+
+    gsize n = self->ids ? g_strv_length(self->ids) : 0;
+    self->ids = g_renew(gchar *, self->ids, n + 2);
+    self->ids[n] = g_strdup(id);
+    self->ids[n + 1] = NULL;
+}
+
+void
+gnostr_filter_add_kind(GNostrFilter *self, gint kind)
+{
+    g_return_if_fail(GNOSTR_IS_FILTER(self));
+
+    self->kinds = g_renew(gint, self->kinds, self->n_kinds + 1);
+    self->kinds[self->n_kinds] = kind;
+    self->n_kinds++;
+}
+
+void
+gnostr_filter_tags_append(GNostrFilter *self, const gchar *key, const gchar *value)
+{
+    g_return_if_fail(GNOSTR_IS_FILTER(self));
+    g_return_if_fail(key != NULL);
+
+    /* Store tag as [key, value] — same format as core nostr_filter_tags_append.
+     * nostr_tag_new is NULL-terminated variadic. */
+    NostrTag *tag = nostr_tag_new(key, value ? value : "", NULL);
+    if (!tag) return;
+
+    if (!self->tags)
+        self->tags = nostr_tags_new(0);
+    nostr_tags_append(self->tags, tag);
+}
+
+NostrFilter *
+gnostr_filter_build(GNostrFilter *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_FILTER(self), NULL);
+
+    NostrFilter *core = nostr_filter_new();
+
+    if (self->ids) {
+        gsize n = g_strv_length(self->ids);
+        nostr_filter_set_ids(core, (const char *const *)self->ids, n);
+    }
+    if (self->kinds && self->n_kinds > 0)
+        nostr_filter_set_kinds(core, self->kinds, self->n_kinds);
+    if (self->authors) {
+        gsize n = g_strv_length(self->authors);
+        nostr_filter_set_authors(core, (const char *const *)self->authors, n);
+    }
+    if (self->since != 0)
+        nostr_filter_set_since_i64(core, self->since);
+    if (self->until != 0)
+        nostr_filter_set_until_i64(core, self->until);
+    if (self->limit >= 0)
+        nostr_filter_set_limit(core, self->limit);
+    if (self->tags) {
+        /* Deep-copy tags into core filter (core takes ownership) */
+        gsize n = nostr_tags_size(self->tags);
+        NostrTags *copy = nostr_tags_new(0);
+        nostr_tags_reserve(copy, n);
+        for (gsize i = 0; i < n; i++) {
+            NostrTag *src = nostr_tags_get(self->tags, i);
+            gsize tag_len = nostr_tag_size(src);
+            NostrTag *dup;
+            if (tag_len >= 3)
+                dup = nostr_tag_new(nostr_tag_get(src, 0), nostr_tag_get(src, 1), nostr_tag_get(src, 2), NULL);
+            else if (tag_len == 2)
+                dup = nostr_tag_new(nostr_tag_get(src, 0), nostr_tag_get(src, 1), NULL);
+            else
+                dup = nostr_tag_new(nostr_tag_get(src, 0), NULL);
+            nostr_tags_append(copy, dup);
+        }
+        nostr_filter_set_tags(core, copy);
+    }
+
+    return core;
+}
+
 /* ---- JSON Serialization ---- */
 
 /**
@@ -181,6 +271,15 @@ gnostr_filter_to_core(GNostrFilter *self, NostrFilter *core)
         nostr_filter_set_until_i64(core, self->until);
     if (self->limit >= 0)
         nostr_filter_set_limit(core, self->limit);
+    if (self->tags) {
+        gsize n = nostr_tags_size(self->tags);
+        for (gsize i = 0; i < n; i++) {
+            NostrTag *src = nostr_tags_get(self->tags, i);
+            nostr_filter_tags_append(core, nostr_tag_get(src, 0),
+                                     nostr_tag_size(src) > 1 ? nostr_tag_get(src, 1) : NULL,
+                                     nostr_tag_size(src) > 2 ? nostr_tag_get(src, 2) : NULL);
+        }
+    }
 }
 
 GNostrFilter *
@@ -233,6 +332,28 @@ gnostr_filter_new_from_json(const gchar *json, GError **error)
     self->since = nostr_filter_get_since_i64(&core);
     self->until = nostr_filter_get_until_i64(&core);
     self->limit = nostr_filter_get_limit(&core);
+
+    /* Copy tags */
+    NostrTags *core_tags = nostr_filter_get_tags(&core);
+    if (core_tags) {
+        gsize n_tags = nostr_tags_size(core_tags);
+        if (n_tags > 0) {
+            self->tags = nostr_tags_new(0);
+            nostr_tags_reserve(self->tags, n_tags);
+            for (gsize i = 0; i < n_tags; i++) {
+                NostrTag *src = nostr_tags_get(core_tags, i);
+                gsize tag_len = nostr_tag_size(src);
+                NostrTag *dup;
+                if (tag_len >= 3)
+                    dup = nostr_tag_new(nostr_tag_get(src, 0), nostr_tag_get(src, 1), nostr_tag_get(src, 2), NULL);
+                else if (tag_len == 2)
+                    dup = nostr_tag_new(nostr_tag_get(src, 0), nostr_tag_get(src, 1), NULL);
+                else
+                    dup = nostr_tag_new(nostr_tag_get(src, 0), NULL);
+                nostr_tags_append(self->tags, dup);
+            }
+        }
+    }
 
     nostr_filter_clear(&core);
     return self;

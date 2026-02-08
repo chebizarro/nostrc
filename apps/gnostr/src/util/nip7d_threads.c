@@ -9,7 +9,7 @@
 #include <time.h>
 #include <glib/gi18n.h>
 #include "json.h"
-#include "nostr-event.h"
+#include "nostr_event.h"
 #include "nostr-tag.h"
 
 /* ============================================================================
@@ -416,42 +416,36 @@ gnostr_thread_parse_from_json(const char *json_str)
 {
     if (!json_str) return NULL;
 
-    /* Parse event using NostrEvent API */
-    NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, json_str);
-    if (parse_rc != 1) {
-        nostr_event_free(event);
-        return NULL;
-    }
+    /* Parse event using GNostrEvent API */
+    GNostrEvent *event = gnostr_event_new_from_json(json_str, NULL);
+    if (!event) return NULL;
 
     /* Verify it's a kind-11 event */
-    int kind = nostr_event_get_kind(event);
+    guint kind = gnostr_event_get_kind(event);
     if (kind != NIP7D_KIND_THREAD_ROOT) {
-        nostr_event_free(event);
+        g_object_unref(event);
         return NULL;
     }
 
     GnostrThread *thread = gnostr_thread_new();
 
-    /* Extract basic fields using NostrEvent API */
-    char *id = nostr_event_get_id(event);
-    if (id) {
+    /* Extract basic fields using GNostrEvent API */
+    const gchar *id = gnostr_event_get_id(event);
+    if (id)
         thread->event_id = g_strdup(id);
-        free(id);
-    }
 
-    const char *pubkey = nostr_event_get_pubkey(event);
+    const gchar *pubkey = gnostr_event_get_pubkey(event);
     if (pubkey)
         thread->pubkey = g_strdup(pubkey);
 
-    const char *content = nostr_event_get_content(event);
+    const gchar *content = gnostr_event_get_content(event);
     if (content)
         thread->content = g_strdup(content);
 
-    thread->created_at = nostr_event_get_created_at(event);
+    thread->created_at = gnostr_event_get_created_at(event);
 
-    /* Parse tags using NostrTags API */
-    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+    /* Parse tags using NostrTags API (gnostr_event_get_tags returns NostrTags*) */
+    NostrTags *tags = (NostrTags *)gnostr_event_get_tags(event);
     if (tags) {
         /* Serialize tags for the helper functions that expect JSON */
         char *tags_str = nostr_tags_to_json(tags);
@@ -486,7 +480,7 @@ gnostr_thread_parse_from_json(const char *json_str)
     thread->last_activity = thread->created_at;
     thread->replies_count = 0;
 
-    nostr_event_free(event);
+    g_object_unref(event);
     return thread;
 }
 
@@ -495,42 +489,36 @@ gnostr_thread_reply_parse_from_json(const char *json_str)
 {
     if (!json_str) return NULL;
 
-    /* Parse event using NostrEvent API */
-    NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, json_str);
-    if (parse_rc != 1) {
-        nostr_event_free(event);
-        return NULL;
-    }
+    /* Parse event using GNostrEvent API */
+    GNostrEvent *event = gnostr_event_new_from_json(json_str, NULL);
+    if (!event) return NULL;
 
     /* Verify it's a kind-1111 event */
-    int kind = nostr_event_get_kind(event);
+    guint kind = gnostr_event_get_kind(event);
     if (kind != NIP7D_KIND_THREAD_REPLY) {
-        nostr_event_free(event);
+        g_object_unref(event);
         return NULL;
     }
 
     GnostrThreadReply *reply = gnostr_thread_reply_new();
 
-    /* Extract basic fields using NostrEvent API */
-    char *id = nostr_event_get_id(event);
-    if (id) {
+    /* Extract basic fields using GNostrEvent API */
+    const gchar *id = gnostr_event_get_id(event);
+    if (id)
         reply->event_id = g_strdup(id);
-        free(id);
-    }
 
-    const char *pubkey = nostr_event_get_pubkey(event);
+    const gchar *pubkey = gnostr_event_get_pubkey(event);
     if (pubkey)
         reply->pubkey = g_strdup(pubkey);
 
-    const char *content = nostr_event_get_content(event);
+    const gchar *content = gnostr_event_get_content(event);
     if (content)
         reply->content = g_strdup(content);
 
-    reply->created_at = nostr_event_get_created_at(event);
+    reply->created_at = gnostr_event_get_created_at(event);
 
     /* Parse tags for root and parent references */
-    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+    NostrTags *tags = (NostrTags *)gnostr_event_get_tags(event);
     if (tags) {
         char *tags_str = nostr_tags_to_json(tags);
         if (tags_str) {
@@ -542,7 +530,7 @@ gnostr_thread_reply_parse_from_json(const char *json_str)
 
     reply->depth = 0; /* Will be calculated later */
 
-    nostr_event_free(event);
+    g_object_unref(event);
     return reply;
 }
 

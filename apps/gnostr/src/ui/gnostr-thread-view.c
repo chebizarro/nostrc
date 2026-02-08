@@ -8,9 +8,9 @@
 #include "../model/gn-nostr-profile.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
-#include "nostr-event.h"
+#include "nostr_event.h"
 #include "nostr-json.h"
-#include "nostr-filter.h"
+#include "nostr_filter.h"
 #include "nostr_simple_pool.h"
 #include <nostr/nip19/nip19.h>
 #include <glib.h>
@@ -929,30 +929,27 @@ static void show_empty_state(GnostrThreadView *self, const char *message) {
 static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  NostrEvent *evt = nostr_event_new();
-  if (!evt || nostr_event_deserialize(evt, json_str) != 0) {
-    if (evt) nostr_event_free(evt);
-    return NULL;
-  }
+  GNostrEvent *evt = gnostr_event_new_from_json(json_str, NULL);
+  if (!evt) return NULL;
 
-  const char *id = nostr_event_get_id(evt);
+  const gchar *id = gnostr_event_get_id(evt);
   if (!id || strlen(id) != 64) {
-    nostr_event_free(evt);
+    g_object_unref(evt);
     return NULL;
   }
 
   /* Check if already exists */
   if (g_hash_table_contains(self->events_by_id, id)) {
-    nostr_event_free(evt);
+    g_object_unref(evt);
     return g_hash_table_lookup(self->events_by_id, id);
   }
 
   /* Create new item */
   ThreadEventItem *item = g_new0(ThreadEventItem, 1);
   item->id_hex = g_strdup(id);
-  item->pubkey_hex = g_strdup(nostr_event_get_pubkey(evt));
-  item->content = g_strdup(nostr_event_get_content(evt));
-  item->created_at = (gint64)nostr_event_get_created_at(evt);
+  item->pubkey_hex = g_strdup(gnostr_event_get_pubkey(evt));
+  item->content = g_strdup(gnostr_event_get_content(evt));
+  item->created_at = gnostr_event_get_created_at(evt);
 
   /* Parse NIP-10 tags with relay hints */
   parse_nip10_from_json_full(json_str, &item->root_id, &item->parent_id,
@@ -961,7 +958,7 @@ static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *
   /* nostrc-hb7c: Extract p-tags for NIP-65 relay lookup of missing authors */
   item->mentioned_pubkeys = extract_ptags_from_json(json_str);
 
-  nostr_event_free(evt);
+  g_object_unref(evt);
 
   /* Debug: log what we parsed */
   g_message("[THREAD_VIEW] Added event %.16s... root=%.16s%s parent=%.16s%s",
@@ -2236,14 +2233,16 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
   }
 
   /* Build filter with missing IDs */
-  NostrFilter *filter = nostr_filter_new();
-  int kinds[2] = { 1, 1111 };
-  nostr_filter_set_kinds(filter, kinds, 2);
+  GNostrFilter *gf = gnostr_filter_new();
+  gint kinds[2] = { 1, 1111 };
+  gnostr_filter_set_kinds(gf, kinds, 2);
 
   for (guint i = 0; i < missing_ids->len; i++) {
-    nostr_filter_add_id(filter, g_ptr_array_index(missing_ids, i));
+    gnostr_filter_add_id(gf, g_ptr_array_index(missing_ids, i));
   }
-  nostr_filter_set_limit(filter, MAX_THREAD_EVENTS);
+  gnostr_filter_set_limit(gf, MAX_THREAD_EVENTS);
+  NostrFilter *filter = gnostr_filter_build(gf);
+  g_object_unref(gf);
 
   g_ptr_array_unref(missing_ids);
 
@@ -2343,96 +2342,112 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
 
   /* Query 1: Fetch all replies and comments (events with #e tag referencing root)
    * NIP-22: kind 1111 is for comments, which use E tag (uppercase) for root reference */
-  NostrFilter *filter_replies = nostr_filter_new();
-  int kinds[2] = { 1, 1111 }; /* Text notes and NIP-22 comments */
-  nostr_filter_set_kinds(filter_replies, kinds, 2);
-  nostr_filter_tags_append(filter_replies, "e", root, NULL);
-  nostr_filter_set_limit(filter_replies, MAX_THREAD_EVENTS);
+  {
+    GNostrFilter *gf = gnostr_filter_new();
+    gint kinds[2] = { 1, 1111 }; /* Text notes and NIP-22 comments */
+    gnostr_filter_set_kinds(gf, kinds, 2);
+    gnostr_filter_tags_append(gf, "e", root);
+    gnostr_filter_set_limit(gf, MAX_THREAD_EVENTS);
+    NostrFilter *filter_replies = gnostr_filter_build(gf);
+    g_object_unref(gf);
 
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    all_relays->len,
-    filter_replies,
-    self->fetch_cancellable,
-    on_thread_query_done,
-    self
-  );
+    gnostr_simple_pool_query_single_async(
+      gnostr_get_shared_query_pool(),
+      urls,
+      all_relays->len,
+      filter_replies,
+      self->fetch_cancellable,
+      on_thread_query_done,
+      self
+    );
 
-  nostr_filter_free(filter_replies);
+    nostr_filter_free(filter_replies);
+  }
 
   /* Query 2: Fetch root event and focus event by ID (they may not reference themselves) */
   g_message("[THREAD_VIEW] Query 2: fetching root=%.16s... focus=%.16s...",
             root, focus ? focus : "(same)");
 
-  NostrFilter *filter_ids = nostr_filter_new();
-  nostr_filter_set_kinds(filter_ids, kinds, 2);  /* Include both kind 1 and 1111 */
+  {
+    GNostrFilter *gf = gnostr_filter_new();
+    gint kinds2[2] = { 1, 1111 };
+    gnostr_filter_set_kinds(gf, kinds2, 2);  /* Include both kind 1 and 1111 */
 
-  /* Add root ID */
-  nostr_filter_add_id(filter_ids, root);
+    /* Add root ID */
+    gnostr_filter_add_id(gf, root);
 
-  /* Add focus ID if different from root */
-  if (focus && g_strcmp0(focus, root) != 0) {
-    nostr_filter_add_id(filter_ids, focus);
-    g_message("[THREAD_VIEW] Query 2: also fetching focus (different from root)");
-  }
-
-  /* Also fetch any parent IDs we know about from loaded events */
-  GHashTableIter iter;
-  gpointer key, value;
-  g_hash_table_iter_init(&iter, self->events_by_id);
-  while (g_hash_table_iter_next(&iter, &key, &value)) {
-    ThreadEventItem *item = (ThreadEventItem *)value;
-    if (item->parent_id && !g_hash_table_contains(self->events_by_id, item->parent_id)) {
-      nostr_filter_add_id(filter_ids, item->parent_id);
+    /* Add focus ID if different from root */
+    if (focus && g_strcmp0(focus, root) != 0) {
+      gnostr_filter_add_id(gf, focus);
+      g_message("[THREAD_VIEW] Query 2: also fetching focus (different from root)");
     }
-    if (item->root_id && !g_hash_table_contains(self->events_by_id, item->root_id)) {
-      nostr_filter_add_id(filter_ids, item->root_id);
+
+    /* Also fetch any parent IDs we know about from loaded events */
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->events_by_id);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      ThreadEventItem *item = (ThreadEventItem *)value;
+      if (item->parent_id && !g_hash_table_contains(self->events_by_id, item->parent_id)) {
+        gnostr_filter_add_id(gf, item->parent_id);
+      }
+      if (item->root_id && !g_hash_table_contains(self->events_by_id, item->root_id)) {
+        gnostr_filter_add_id(gf, item->root_id);
+      }
     }
+
+    gnostr_filter_set_limit(gf, MAX_THREAD_EVENTS);
+    NostrFilter *filter_ids = gnostr_filter_build(gf);
+    g_object_unref(gf);
+
+    gnostr_simple_pool_query_single_async(
+      gnostr_get_shared_query_pool(),
+      urls,
+      all_relays->len,
+      filter_ids,
+      self->fetch_cancellable,
+      on_root_fetch_done,
+      self
+    );
+
+    nostr_filter_free(filter_ids);
   }
-
-  nostr_filter_set_limit(filter_ids, MAX_THREAD_EVENTS);
-
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    all_relays->len,
-    filter_ids,
-    self->fetch_cancellable,
-    on_root_fetch_done,
-    self
-  );
-
-  nostr_filter_free(filter_ids);
 
   /* Query 3: NIP-22 comments use uppercase E tag for root event reference */
-  NostrFilter *filter_nip22 = nostr_filter_new();
-  int comment_kind[1] = { 1111 };
-  nostr_filter_set_kinds(filter_nip22, comment_kind, 1);
-  nostr_filter_tags_append(filter_nip22, "E", root, NULL);
-  nostr_filter_set_limit(filter_nip22, MAX_THREAD_EVENTS);
+  {
+    GNostrFilter *gf = gnostr_filter_new();
+    gint comment_kind[1] = { 1111 };
+    gnostr_filter_set_kinds(gf, comment_kind, 1);
+    gnostr_filter_tags_append(gf, "E", root);
+    gnostr_filter_set_limit(gf, MAX_THREAD_EVENTS);
+    NostrFilter *filter_nip22 = gnostr_filter_build(gf);
+    g_object_unref(gf);
 
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    all_relays->len,
-    filter_nip22,
-    self->fetch_cancellable,
-    on_thread_query_done,  /* Reuse same callback */
-    self
-  );
+    gnostr_simple_pool_query_single_async(
+      gnostr_get_shared_query_pool(),
+      urls,
+      all_relays->len,
+      filter_nip22,
+      self->fetch_cancellable,
+      on_thread_query_done,  /* Reuse same callback */
+      self
+    );
 
-  nostr_filter_free(filter_nip22);
+    nostr_filter_free(filter_nip22);
+  }
   g_free(urls);
   g_ptr_array_unref(all_relays);
 
   /* Query 4: Fetch replies to the focus event specifically (children)
    * This enables bidirectional traversal - we want to see replies TO the focus event */
   if (focus && g_strcmp0(focus, root) != 0) {
-    NostrFilter *filter_focus_replies = nostr_filter_new();
-    nostr_filter_set_kinds(filter_focus_replies, kinds, 2);
-    nostr_filter_tags_append(filter_focus_replies, "e", focus, NULL);
-    nostr_filter_set_limit(filter_focus_replies, MAX_THREAD_EVENTS);
+    GNostrFilter *gf = gnostr_filter_new();
+    gint kinds4[2] = { 1, 1111 };
+    gnostr_filter_set_kinds(gf, kinds4, 2);
+    gnostr_filter_tags_append(gf, "e", focus);
+    gnostr_filter_set_limit(gf, MAX_THREAD_EVENTS);
+    NostrFilter *filter_focus_replies = gnostr_filter_build(gf);
+    g_object_unref(gf);
 
     /* Mark focus as fetched for children */
     if (!g_hash_table_contains(self->children_fetched, focus)) {
@@ -2558,15 +2573,17 @@ static void fetch_children_from_relays(GnostrThreadView *self) {
           unfetched_ids->len, self->child_discovery_iteration);
 
   /* Build filter with #e tags for all unfetched event IDs */
-  NostrFilter *filter = nostr_filter_new();
-  int kinds[2] = { 1, 1111 };
-  nostr_filter_set_kinds(filter, kinds, 2);
+  GNostrFilter *gf = gnostr_filter_new();
+  gint kinds[2] = { 1, 1111 };
+  gnostr_filter_set_kinds(gf, kinds, 2);
 
   /* Add all event IDs as #e tag values (replies reference parent via #e) */
   for (guint i = 0; i < unfetched_ids->len; i++) {
-    nostr_filter_tags_append(filter, "e", g_ptr_array_index(unfetched_ids, i), NULL);
+    gnostr_filter_tags_append(gf, "e", g_ptr_array_index(unfetched_ids, i));
   }
-  nostr_filter_set_limit(filter, MAX_THREAD_EVENTS);
+  gnostr_filter_set_limit(gf, MAX_THREAD_EVENTS);
+  NostrFilter *filter = gnostr_filter_build(gf);
+  g_object_unref(gf);
 
   g_ptr_array_unref(unfetched_ids);
 

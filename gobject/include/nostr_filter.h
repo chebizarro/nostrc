@@ -4,6 +4,9 @@
 #include <glib-object.h>
 #include "nostr-error.h"
 
+/* Forward-declare core NostrFilter for build() return type */
+typedef struct NostrFilter NostrFilter;
+
 G_BEGIN_DECLS
 
 /**
@@ -37,6 +40,32 @@ gint64         gnostr_filter_get_until(GNostrFilter *self);
 
 void           gnostr_filter_set_limit(GNostrFilter *self, gint limit);
 gint           gnostr_filter_get_limit(GNostrFilter *self);
+
+/* Incremental builders (append single values) */
+void           gnostr_filter_add_id(GNostrFilter *self, const gchar *id);
+void           gnostr_filter_add_kind(GNostrFilter *self, gint kind);
+
+/**
+ * gnostr_filter_tags_append:
+ * @self: a #GNostrFilter
+ * @key: tag key (e.g. "e", "p", "E")
+ * @value: tag value (event id, pubkey, etc.)
+ *
+ * Appends a tag filter requirement. Maps to core
+ * nostr_filter_tags_append(filter, key, value, NULL).
+ */
+void           gnostr_filter_tags_append(GNostrFilter *self, const gchar *key, const gchar *value);
+
+/**
+ * gnostr_filter_build:
+ * @self: a #GNostrFilter
+ *
+ * Builds a heap-allocated core NostrFilter from this GObject filter.
+ * Caller must free with nostr_filter_free().
+ *
+ * Returns: (transfer full): a new NostrFilter, or NULL on error
+ */
+NostrFilter   *gnostr_filter_build(GNostrFilter *self);
 
 /**
  * gnostr_filter_new_from_json:
