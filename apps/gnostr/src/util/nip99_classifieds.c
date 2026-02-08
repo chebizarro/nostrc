@@ -552,9 +552,12 @@ gnostr_fetch_classifieds_async(const gchar *filter_category,
   GNostrPool *pool = get_classifieds_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
   {
+    static gint _qf_counter_cl = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_cl, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-cl-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, ctx->cancellable, on_classifieds_fetched, ctx);
   }
 
@@ -604,9 +607,12 @@ gnostr_fetch_user_classifieds_async(const gchar *pubkey_hex,
   GNostrPool *pool = get_classifieds_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
   {
+    static gint _qf_counter_ucl = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_ucl, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-ucl-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, ctx->cancellable, on_classifieds_fetched, ctx);
   }
 
@@ -716,9 +722,12 @@ gnostr_fetch_classified_by_naddr_async(const gchar *naddr,
 
     gnostr_pool_sync_relays(get_classifieds_pool(), (const gchar **)urls, relay_urls->len);
   {
+    static gint _qf_counter_scl = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_scl, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-scl-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(get_classifieds_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    g_object_set_data_full(G_OBJECT(get_classifieds_pool()), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(get_classifieds_pool(), _qf, ctx->cancellable, on_single_classified_fetched, ctx);
   }
 
