@@ -39,8 +39,7 @@
 #include "json.h"
 /* NIP-19 bech32 encoding (GObject wrapper) */
 #include "nostr_nip19.h"
-/* SimplePool GObject wrapper for live streaming/backfill */
-#include "nostr_simple_pool.h"
+/* nostr_pool.h already included below; simple pool removed */
 #include "nostr-event.h"
 #include "nostr-filter.h"
 /* Canonical JSON helpers (for nostr_event_from_json, etc.) */
@@ -48,6 +47,7 @@
 /* GObject wrappers for profile-related code */
 #include "nostr_event.h"
 #include "nostr_pool.h"
+#include "nostr_subscription.h"
 /* NostrdB storage */
 #include "../storage_ndb.h"
 #include "../model/gn-ndb-sub-dispatcher.h"
@@ -172,8 +172,9 @@ struct _GnostrMainWindow {
   guint backfill_interval_sec; /* default 0; disabled when 0 */
   guint backfill_source_id;    /* GLib source id, 0 if none */
 
-  /* SimplePool live stream */
-  GnostrSimplePool *pool;       /* owned */
+  /* GNostrPool live stream */
+  GNostrPool      *pool;       /* owned */
+  GNostrSubscription *live_sub; /* owned; current live subscription */
   GCancellable    *pool_cancellable; /* owned */
   NostrFilters    *live_filters; /* owned; current live filter set */
   gulong           pool_events_handler; /* signal handler id */
@@ -342,9 +343,9 @@ static void free_urls_owned(const char **urls, size_t count);
 /* Avatar HTTP downloader (libsoup) helpers declared later, after struct definition */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
 static void refresh_thread_view_profiles_if_visible(GnostrMainWindow *self);
-static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
-static void on_bg_prefetch_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
+static void on_pool_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
+static void on_pool_sub_eose(GNostrSubscription *sub, gpointer user_data);
+static void on_bg_prefetch_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
 static gboolean periodic_model_refresh(gpointer user_data);
 
 /* Demand-driven profile fetch helpers */
@@ -2130,7 +2131,7 @@ static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, Gtk
 
   /* Update connection status indicator */
   if (widgets->connection_icon && ctx && ctx->main_window && ctx->main_window->pool) {
-    gboolean connected = gnostr_simple_pool_is_relay_connected(ctx->main_window->pool, url);
+    gboolean connected = (gnostr_pool_get_relay(ctx->main_window->pool, url) != NULL);
     if (connected) {
       gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-wired-symbolic");
       gtk_widget_remove_css_class(widgets->connection_icon, "dim-label");
@@ -5443,7 +5444,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Init debounced NostrDB profile sweep */
   self->ndb_sweep_source_id = 0;
   self->ndb_sweep_debounce_ms = 1000; /* 1 second - prevents transaction contention */
-  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->pool) self->pool = gnostr_pool_new();
 
   /* Init gift wrap (NIP-59) subscription state */
   self->sub_gift_wrap = 0;
@@ -7361,7 +7362,7 @@ static gboolean profile_dispatch_next(gpointer data) {
     return G_SOURCE_REMOVE;
   }
 
-  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->pool) self->pool = gnostr_pool_new();
   if (!self->profile_pool) self->profile_pool = gnostr_pool_new();
   if (!self->profile_fetch_cancellable) self->profile_fetch_cancellable = g_cancellable_new();
   if (g_cancellable_is_cancelled(self->profile_fetch_cancellable)) {
@@ -7468,7 +7469,7 @@ static void on_relay_config_changed(gpointer user_data) {
       urls[i] = g_ptr_array_index(read_relays, i);
     }
 
-    gnostr_simple_pool_sync_relays(self->pool, urls, read_relays->len);
+    gnostr_pool_sync_relays(self->pool, (const gchar **)urls, read_relays->len);
     g_free(urls);
   }
 
@@ -7524,6 +7525,9 @@ static gboolean on_relay_config_changed_restart(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
+static gboolean retry_pool_live(gpointer user_data);
+static gboolean check_relay_health(gpointer user_data);
+
 static void start_pool_live(GnostrMainWindow *self) {
   /* Removed noisy debug */
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -7535,7 +7539,7 @@ static void start_pool_live(GnostrMainWindow *self) {
   }
   self->reconnection_in_progress = TRUE;
 
-  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->pool) self->pool = gnostr_pool_new();
 
   /* Cancel any existing subscription before starting a new one to prevent FD leak */
   if (self->pool_cancellable) {
@@ -7578,23 +7582,39 @@ static void start_pool_live(GnostrMainWindow *self) {
    * We call sync_relays() here BEFORE starting subscriptions to populate the pool.
    * This is acceptable because start_pool_live() runs early at startup, not on main loop yet. */
   g_debug("[RELAY] Initializing %zu relays in pool", self->live_url_count);
-  gnostr_simple_pool_sync_relays(self->pool, self->live_urls, self->live_url_count);
+  gnostr_pool_sync_relays(self->pool, (const gchar **)self->live_urls, self->live_url_count);
   g_debug("[RELAY] ✓ All relays initialized");
-  /* Hook up events signal exactly once */
-  if (self->pool_events_handler == 0) {
-    self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_pool_events), self);
+  /* Close previous subscription if any */
+  if (self->live_sub) {
+    gnostr_subscription_close(self->live_sub);
+    g_clear_object(&self->live_sub);
   }
 
   g_debug("[RELAY] Starting live subscription to %zu relays", self->live_url_count);
-  gnostr_simple_pool_subscribe_many_async(self->pool,
-                                         self->live_urls,
-                                         self->live_url_count,
-                                         filters,
-                                         self->pool_cancellable,
-                                         on_pool_subscribe_done,
-                                         g_object_ref(self));
+  {
+    GError *sub_error = NULL;
+    GNostrSubscription *sub = gnostr_pool_subscribe(self->pool, filters, &sub_error);
+    if (!sub) {
+      g_warning("live: pool_subscribe failed: %s - retrying in 5 seconds",
+                sub_error ? sub_error->message : "(unknown)");
+      g_clear_error(&sub_error);
+      g_timeout_add_seconds(5, retry_pool_live, g_object_ref(self));
+      nostr_filters_free(filters);
+      self->reconnection_in_progress = FALSE;
+      return;
+    }
+    self->live_sub = sub; /* takes ownership */
+    g_signal_connect(sub, "event", G_CALLBACK(on_pool_sub_event), self);
+    g_signal_connect(sub, "eose", G_CALLBACK(on_pool_sub_eose), self);
+    g_debug("[RELAY] Live subscription started successfully");
+    self->reconnection_in_progress = FALSE;
+    /* LEGITIMATE TIMEOUT - Periodic health check (30s intervals). */
+    if (self->health_check_source_id == 0) {
+      self->health_check_source_id = g_timeout_add_seconds(30, check_relay_health, self);
+    }
+  }
 
-  /* Caller owns arrays and filters after async setup */
+  /* Caller owns filters after subscription setup */
   nostr_filters_free(filters);
 }
 
@@ -7605,7 +7625,7 @@ static void start_profile_subscription(GnostrMainWindow *self) {
 
 static void start_bg_profile_prefetch(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->pool) self->pool = gnostr_pool_new();
   if (!self->bg_prefetch_cancellable) self->bg_prefetch_cancellable = g_cancellable_new();
 
   const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
@@ -7617,22 +7637,11 @@ static void start_bg_profile_prefetch(GnostrMainWindow *self) {
     return;
   }
 
-  /* Connect a temporary events handler for prefetch-only author enqueue */
-  g_signal_connect(self->pool, "events", G_CALLBACK(on_bg_prefetch_events), self);
-  guint interval = self->bg_prefetch_interval_ms ? self->bg_prefetch_interval_ms : 250;
-  g_debug("start_bg_profile_prefetch: paginate %zu relay(s) interval=%ums", url_count, interval);
-  /* Build a standalone filter for paginator: kind=1 with same since/limit */
-  NostrFilter *pf = nostr_filter_new();
-  int kind1 = 1;
-  nostr_filter_set_kinds(pf, &kind1, 1);
-  if (self->default_limit > 0) nostr_filter_set_limit(pf, (int)self->default_limit);
-  if (self->use_since && self->since_seconds > 0) {
-    time_t now = time(NULL);
-    int64_t since = (int64_t)(now - (time_t)self->since_seconds);
-    if (since > 0) nostr_filter_set_since_i64(pf, since);
-  }
-  gnostr_simple_pool_paginate_with_interval_async(self->pool, urls, url_count, pf, interval, self->bg_prefetch_cancellable, NULL, NULL);
-  nostr_filter_free(pf);
+  /* TODO: paginate_with_interval not yet available on GNostrPool.
+   * The old paginator is disabled until GNostrPool gains equivalent API.
+   * For now, bg prefetch relies on the live subscription to discover authors. */
+  g_debug("start_bg_profile_prefetch: paginate disabled (GNostrPool migration)");
+  (void)url_count;
   /* filters owned by us; urls array free */
   nostr_filters_free(filters);
   free_urls_owned(urls, url_count);
@@ -7654,10 +7663,10 @@ static gboolean check_relay_health(gpointer user_data) {
     return G_SOURCE_CONTINUE;
   }
 
-  /* Get list of relay URLs from the pool */
-  GPtrArray *relay_urls = gnostr_simple_pool_get_relay_urls(self->pool);
-  if (!relay_urls || relay_urls->len == 0) {
-    if (relay_urls) g_ptr_array_unref(relay_urls);
+  /* Get relay list from the pool (GListStore of GNostrRelay) */
+  GListStore *relay_store = gnostr_pool_get_relays(self->pool);
+  guint n_relays = g_list_model_get_n_items(G_LIST_MODEL(relay_store));
+  if (n_relays == 0) {
     return G_SOURCE_CONTINUE;
   }
 
@@ -7665,26 +7674,26 @@ static gboolean check_relay_health(gpointer user_data) {
   guint disconnected_count = 0;
   guint connected_count = 0;
 
-  for (guint i = 0; i < relay_urls->len; i++) {
-    const char *url = g_ptr_array_index(relay_urls, i);
-    if (!url) continue;
-
-    gboolean is_connected = gnostr_simple_pool_is_relay_connected(self->pool, url);
-    if (is_connected) {
+  for (guint i = 0; i < n_relays; i++) {
+    GNostrRelay *relay = g_list_model_get_item(G_LIST_MODEL(relay_store), i);
+    if (!relay) continue;
+    /* Check if relay is present (added to pool = considered "connected" for health check) */
+    if (gnostr_pool_get_relay(self->pool, gnostr_relay_get_url(relay)) != NULL) {
       connected_count++;
     } else {
       disconnected_count++;
     }
+    g_object_unref(relay);
   }
 
   /* Update tray icon with current relay status */
-  gnostr_app_update_relay_status((int)connected_count, (int)relay_urls->len);
+  gnostr_app_update_relay_status((int)connected_count, (int)n_relays);
 
   /* Update relay status indicator in UI */
   if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
     gnostr_session_view_set_relay_status(self->session_view,
                                          connected_count,
-                                         relay_urls->len);
+                                         n_relays);
   }
 
   /* If ALL relays are disconnected, trigger reconnection */
@@ -7693,8 +7702,6 @@ static gboolean check_relay_health(gpointer user_data) {
               disconnected_count);
     start_pool_live(self);
   }
-
-  g_ptr_array_unref(relay_urls);
   return G_SOURCE_CONTINUE; /* Keep checking every interval */
 }
 
@@ -7722,92 +7729,70 @@ static gboolean retry_pool_live(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-/* Live stream setup completion */
-static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GError *error = NULL;
-  gboolean ok = gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+/* Live subscription event handler: ingest individual events into nostrdb. */
+static void on_pool_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data) {
+  (void)sub;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  
-  /* Clear reconnection flag */
-  if (GNOSTR_IS_MAIN_WINDOW(self)) {
-    self->reconnection_in_progress = FALSE;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_json) return;
+
+  /* Parse event to get kind for filtering */
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
+    if (evt) nostr_event_free(evt);
+    return;
   }
-  
-  if (!ok) {
-    g_warning("live: subscribe_many failed: %s - retrying in 5 seconds",
-              error ? error->message : "(unknown)");
-    /* LEGITIMATE TIMEOUT - Retry with backoff after connection failure.
-     * nostrc-b0h: Audited - exponential backoff is standard practice. */
-    g_timeout_add_seconds(5, retry_pool_live, g_object_ref(self));
-  } else {
-    g_debug("[RELAY] Live subscription started successfully");
-    /* LEGITIMATE TIMEOUT - Periodic health check (30s intervals).
-     * nostrc-b0h: Audited - monitoring connection health is appropriate. */
-    if (GNOSTR_IS_MAIN_WINDOW(self) && self->health_check_source_id == 0) {
-      self->health_check_source_id = g_timeout_add_seconds(30, check_relay_health, self);
-    }
+
+  int kind = nostr_event_get_kind(evt);
+  /* Ingest timeline events and NIP-34 git events (30617 repos, 1617 patches, 1621 issues, 1622 replies) */
+  if (!(kind == 0 || kind == 1 || kind == 5 || kind == 6 || kind == 7 || kind == 16 || kind == 1111 ||
+        kind == 30617 || kind == 1617 || kind == 1621 || kind == 1622)) {
+    nostr_event_free(evt);
+    return;
   }
-  if (error) g_clear_error(&error);
-  if (self) g_object_unref(self);
+
+  const char *id = nostr_event_get_id(evt);
+  if (!id || strlen(id) != 64) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  /* Ingest to nostrdb for persistence; UI models subscribe to nostrdb and update from there. */
+  int ingest_rc = storage_ndb_ingest_event_json(event_json, NULL);
+  if (ingest_rc != 0) {
+    g_debug("[INGEST] Failed to ingest event %.8s kind=%d: rc=%d json_len=%zu",
+            id, kind, ingest_rc, strlen(event_json));
+  }
+
+  nostr_event_free(evt);
 }
 
-/* Main handler for live batches: ingest events into nostrdb (UI follows via subscriptions). */
-static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
-  (void)pool;
+/* Live subscription EOSE handler */
+static void on_pool_sub_eose(GNostrSubscription *sub, gpointer user_data) {
+  (void)sub;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
-
-  guint ingested = 0;
-  for (guint i = 0; i < batch->len; i++) {
-    NostrEvent *evt = (NostrEvent*)batch->pdata[i];
-    if (!evt) continue;
-
-    int kind = nostr_event_get_kind(evt);
-    /* Ingest timeline events and NIP-34 git events (30617 repos, 1617 patches, 1621 issues, 1622 replies) */
-    if (!(kind == 0 || kind == 1 || kind == 5 || kind == 6 || kind == 7 || kind == 16 || kind == 1111 ||
-          kind == 30617 || kind == 1617 || kind == 1621 || kind == 1622)) {
-      continue;
-    }
-
-    const char *id = nostr_event_get_id(evt);
-    if (!id || strlen(id) != 64) continue;
-
-    /* Ingest to nostrdb for persistence; UI models subscribe to nostrdb and update from there. */
-    char *evt_json = nostr_event_serialize_compact(evt);
-    if (evt_json) {
-      int ingest_rc = storage_ndb_ingest_event_json(evt_json, NULL);
-      if (ingest_rc != 0) {
-        g_debug("[INGEST] Failed to ingest event %.8s kind=%d: rc=%d json_len=%zu",
-                id, kind, ingest_rc, strlen(evt_json));
-      } else {
-        ingested++;
-      }
-      free(evt_json);
-    } else {
-      g_debug("[INGEST] Failed to serialize event %.8s kind=%d", id, kind);
-    }
-  }
-
-  if (ingested > 0) {
-    g_debug("[INGEST] Ingested %u event(s) from relays (batch_len=%u)", ingested, batch->len);
-  }
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  g_debug("[RELAY] Live subscription received EOSE");
 }
 
-/* Background paginator event handler: only enqueue authors for profile fetch */
-static void on_bg_prefetch_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
-  (void)pool;
+/* Background prefetch event handler: only enqueue authors for profile fetch */
+static void on_bg_prefetch_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data) {
+  (void)sub;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
-  guint enq = 0;
-  for (guint i = 0; i < batch->len; i++) {
-    NostrEvent *evt = (NostrEvent*)batch->pdata[i];
-    if (!evt) continue;
-    if (nostr_event_get_kind(evt) != 1) continue;
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_json) return;
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
+    if (evt) nostr_event_free(evt);
+    return;
+  }
+  if (nostr_event_get_kind(evt) == 1) {
     const char *pk = nostr_event_get_pubkey(evt);
-    if (pk && strlen(pk) == 64) { enqueue_profile_author(self, pk); enq++; }
+    if (pk && strlen(pk) == 64) {
+      enqueue_profile_author(self, pk);
+    }
   }
-  if (enq > 0) g_debug("[PROFILE] Background prefetch queued %u authors", enq);
+  nostr_event_free(evt);
 }
 
 /* Get the current user's npub from GSettings */

@@ -54,7 +54,7 @@ typedef struct _GnostrPluginContext GnostrPluginContext;
 typedef struct _GnostrPluginEvent GnostrPluginEvent;
 
 /* Forward declaration for relay pool (internal use) */
-typedef struct _GnostrSimplePool GnostrSimplePool;
+typedef struct _GNostrPool GNostrPool;
 
 /* ============================================================================
  * GNOSTR_PLUGIN INTERFACE
@@ -587,13 +587,13 @@ void gnostr_plugin_context_set_main_window(GnostrPluginContext *context, GtkWind
 /**
  * gnostr_plugin_context_set_pool:
  * @context: A #GnostrPluginContext
- * @pool: A #GnostrSimplePool (or compatible GObject)
+ * @pool: A #GNostrPool
  *
  * Set the relay pool on a context. For host internal use.
  *
  * @stability: Private
  */
-void gnostr_plugin_context_set_pool(GnostrPluginContext *context, GnostrSimplePool *pool);
+void gnostr_plugin_context_set_pool(GnostrPluginContext *context, GNostrPool *pool);
 
 /* --- Application Access --- */
 

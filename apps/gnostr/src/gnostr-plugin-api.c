@@ -16,7 +16,7 @@
 #include "util/relays.h"
 #include "ipc/gnostr-signer-service.h"
 #include "util/utils.h"
-#include "nostr_simple_pool.h"
+/* nostr_pool.h provided via utils.h */
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-relay.h"
@@ -40,7 +40,7 @@ struct _GnostrPluginContext
 {
   GtkApplication *app;
   GtkWindow      *main_window;
-  GnostrSimplePool *pool;
+  GNostrPool       *pool;
   char           *plugin_id;  /* For namespacing plugin data */
 
   /* Event subscriptions */
@@ -125,7 +125,7 @@ gnostr_plugin_context_set_main_window(GnostrPluginContext *ctx, GtkWindow *windo
 }
 
 void
-gnostr_plugin_context_set_pool(GnostrPluginContext *ctx, GnostrSimplePool *pool)
+gnostr_plugin_context_set_pool(GnostrPluginContext *ctx, GNostrPool *pool)
 {
   if (ctx) ctx->pool = pool;
 }
@@ -654,8 +654,8 @@ on_request_relay_events_done(GObject      *source,
 
   /* query_single returns JSON strings - we need to ingest them to nostrdb
    * so that plugin subscriptions can fire. */
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(
-      GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *events = gnostr_pool_query_finish(
+      GNOSTR_POOL(source), res, &error);
 
   if (error) {
     g_debug("[plugin-api] Relay request failed: %s", error->message);
@@ -701,8 +701,10 @@ gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *context,
 
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
 
+  static gint _plugin_qf_counter = 0;
+
   /* Get pool and relay URLs */
-  GnostrSimplePool *pool = context->pool;
+  GNostrPool *pool = context->pool;
   if (!pool) {
     pool = gnostr_get_shared_query_pool();
   }
@@ -742,13 +744,19 @@ gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *context,
   g_debug("[plugin-api] Requesting events from %zu relays, kinds=%d... limit=%d",
           url_count, kinds[0], limit);
 
-  /* Use query_single for one-shot query - waits for EOSE on all relays
+  /* Use query_async for one-shot query - waits for EOSE on all relays
    * then returns all events. We ingest them to nostrdb in the callback
    * so plugin subscriptions can fire. */
-  gnostr_simple_pool_query_single_async(pool, urls, url_count, filter,
-                                        cancellable,
-                                        on_request_relay_events_done,
-                                        task);
+  gnostr_pool_sync_relays(pool, (const gchar **)urls, url_count);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    int _qfid = g_atomic_int_add(&_plugin_qf_counter, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, cancellable,
+                            on_request_relay_events_done, task);
+  }
 
   /* Cleanup - pool copies what it needs */
   nostr_filter_free(filter);

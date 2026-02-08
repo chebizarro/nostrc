@@ -5,6 +5,10 @@
 
 #include <gio/gio.h>
 #include <string.h>
+#ifndef GNOSTR_RELAY_TEST_ONLY
+#include "nostr_pool.h"
+#include "nostr_relay.h"
+#endif
 
 /* -- Settings persistence (GKeyFile) -- */
 gchar *gnostr_config_path(void) {
@@ -200,7 +204,6 @@ void gnostr_save_relays_from(GPtrArray *list) {
 
 #ifndef GNOSTR_RELAY_TEST_ONLY
 /* Full NIP-65 async support requires SimplePool */
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #endif
@@ -349,7 +352,7 @@ static void on_nip65_query_done(GObject *source, GAsyncResult *res, gpointer use
   if (!ctx) return;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -442,18 +445,16 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
   }
 
   /* Use static pool */
-  static GnostrSimplePool *nip65_pool = NULL;
-  if (!nip65_pool) nip65_pool = gnostr_simple_pool_new();
+  static GNostrPool *nip65_pool = NULL;
+  if (!nip65_pool) nip65_pool = gnostr_pool_new();
 
-  gnostr_simple_pool_query_single_async(
-    nip65_pool,
-    urls,
-    relay_arr->len,
-    filter,
-    ctx->cancellable,
-    on_nip65_query_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(nip65_pool, (const gchar **)urls, relay_arr->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(nip65_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(nip65_pool, _qf, ctx->cancellable, on_nip65_query_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_arr);
@@ -689,7 +690,7 @@ static void on_nip17_dm_query_done(GObject *source, GAsyncResult *res, gpointer 
   if (!ctx) return;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -766,18 +767,16 @@ void gnostr_nip17_fetch_dm_relays_async(const gchar *pubkey_hex,
   }
 
   /* Use static pool for NIP-17 queries */
-  static GnostrSimplePool *nip17_dm_pool = NULL;
-  if (!nip17_dm_pool) nip17_dm_pool = gnostr_simple_pool_new();
+  static GNostrPool *nip17_dm_pool = NULL;
+  if (!nip17_dm_pool) nip17_dm_pool = gnostr_pool_new();
 
-  gnostr_simple_pool_query_single_async(
-    nip17_dm_pool,
-    urls,
-    relay_arr->len,
-    filter,
-    ctx->cancellable,
-    on_nip17_dm_query_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(nip17_dm_pool, (const gchar **)urls, relay_arr->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(nip17_dm_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(nip17_dm_pool, _qf, ctx->cancellable, on_nip17_dm_query_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_arr);

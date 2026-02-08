@@ -9,7 +9,7 @@
  * 2. Requests are queued and deduplicated internally
  * 3. After 150ms debounce, all queued pubkeys are batch-fetched
  * 4. First checks nostrdb cache for immediate results
- * 5. Network fetch for cache misses via gnostr_simple_pool_fetch_profiles_by_authors_async
+ * 5. Network fetch for cache misses via gnostr_pool_query_async (kind-0 filter with authors)
  * 6. Fetched profiles are stored to nostrdb
  * 7. All pending callbacks for each pubkey are notified when profile arrives
  */
@@ -95,10 +95,10 @@ void gnostr_profile_service_set_relays(gpointer service,
 void gnostr_profile_service_set_debounce(gpointer service, guint debounce_ms);
 
 /* Get the simple pool used by the service for testing/debugging.
- * Returns the internal GnostrSimplePool instance.
+ * Returns the internal GNostrPool instance.
  *
  * @param service  The profile service instance
- * @return The GnostrSimplePool instance (do not unref)
+ * @return The GNostrPool instance (do not unref)
  */
 gpointer gnostr_profile_service_get_pool(gpointer service);
 
@@ -106,7 +106,7 @@ gpointer gnostr_profile_service_get_pool(gpointer service);
  * Useful for sharing a pool with the main window.
  *
  * @param service  The profile service instance
- * @param pool     The GnostrSimplePool to use (service takes a ref)
+ * @param pool     The GNostrPool to use (service takes a ref)
  */
 void gnostr_profile_service_set_pool(gpointer service, gpointer pool);
 

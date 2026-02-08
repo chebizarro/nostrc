@@ -15,8 +15,8 @@
 #include "../ui/gnostr-avatar-cache.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
-#include "nostr_simple_pool.h"
 #include "nostr_json.h"
+#include "nostr_pool.h"
 #include <json.h>
 #include <string.h>
 
@@ -352,7 +352,7 @@ typedef struct _BadgeFetchCtx {
   GnostrBadgeFetchCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  GnostrSimplePool *pool;
+  GNostrPool *pool;
   gchar *pubkey_hex;
   GPtrArray *badges;           /* GnostrProfileBadge* */
   guint pending_definitions;   /* Count of definitions still being fetched */
@@ -399,7 +399,7 @@ gnostr_fetch_profile_badges_async(const gchar *pubkey_hex,
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
   ctx->pubkey_hex = g_strdup(pubkey_hex);
-  ctx->pool = gnostr_simple_pool_new();
+  ctx->pool = gnostr_pool_new();
   ctx->badges = NULL;
   ctx->pending_definitions = 0;
 
@@ -428,9 +428,13 @@ gnostr_fetch_profile_badges_async(const gchar *pubkey_hex,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  gnostr_simple_pool_query_single_async(ctx->pool, urls, relay_urls->len,
-                                         filter, ctx->cancellable,
-                                         on_profile_badges_fetched, ctx);
+    gnostr_pool_sync_relays(ctx->pool, (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_profile_badges_fetched, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);
@@ -441,10 +445,10 @@ static void
 on_profile_badges_fetched(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   BadgeFetchCtx *ctx = user_data;
-  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source);
+  GNostrPool *pool = GNOSTR_POOL(source);
   GError *error = NULL;
 
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(pool, res, &error);
+  GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -530,10 +534,13 @@ fetch_badge_definitions(BadgeFetchCtx *ctx)
     /* Store badge index in user_data via pointer arithmetic */
     gpointer badge_ptr = badge;
 
-    gnostr_simple_pool_query_single_async(ctx->pool, urls, relay_urls->len,
-                                           filter, ctx->cancellable,
-                                           on_badge_definition_fetched,
-                                           badge_ptr);
+        gnostr_pool_sync_relays(ctx->pool, (const gchar **)urls, relay_urls->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_badge_definition_fetched, badge_ptr);
+    }
 
     nostr_filter_free(filter);
   }
@@ -558,10 +565,10 @@ on_badge_definition_fetched(GObject *source, GAsyncResult *res, gpointer user_da
 {
   /* We passed the badge pointer directly - find the main context from it */
   GnostrProfileBadge *badge = user_data;
-  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source);
+  GNostrPool *pool = GNOSTR_POOL(source);
   GError *error = NULL;
 
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(pool, res, &error);
+  GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -608,7 +615,7 @@ typedef struct _DefSingleFetchCtx {
   GnostrBadgeDefinitionCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  GnostrSimplePool *pool;
+  GNostrPool *pool;
   gchar *naddr;
 } DefSingleFetchCtx;
 
@@ -626,10 +633,10 @@ static void
 on_single_definition_fetched(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   DefSingleFetchCtx *ctx = user_data;
-  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source);
+  GNostrPool *pool = GNOSTR_POOL(source);
   GError *error = NULL;
 
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(pool, res, &error);
+  GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
   GnostrBadgeDefinition *def = NULL;
 
   if (error) {
@@ -676,7 +683,7 @@ gnostr_fetch_badge_definition_async(const gchar *naddr,
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->pool = gnostr_simple_pool_new();
+  ctx->pool = gnostr_pool_new();
   ctx->naddr = g_strdup(naddr);
 
   /* Get relay URLs */
@@ -704,9 +711,13 @@ gnostr_fetch_badge_definition_async(const gchar *naddr,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  gnostr_simple_pool_query_single_async(ctx->pool, urls, relay_urls->len,
-                                         filter, ctx->cancellable,
-                                         on_single_definition_fetched, ctx);
+    gnostr_pool_sync_relays(ctx->pool, (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_single_definition_fetched, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);

@@ -13,9 +13,9 @@
 #include "discover-search.h"
 #include "relays.h"
 #include "nip05.h"
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
+#include "nostr_pool.h"
 #include "../storage_ndb.h"
 
 #include <string.h>
@@ -403,7 +403,7 @@ static void on_network_search_done(GObject *source, GAsyncResult *res, gpointer 
   if (!ctx) return;
 
   GError *err = NULL;
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *events = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -488,22 +488,20 @@ static void do_network_search(SearchContext *ctx)
   }
 
   /* Use shared pool */
-  static GnostrSimplePool *search_pool = NULL;
+  static GNostrPool *search_pool = NULL;
   if (!search_pool) {
-    search_pool = gnostr_simple_pool_new();
+    search_pool = gnostr_pool_new();
   }
 
   g_debug("search: querying %u index relays for '%s'", relay_urls->len, ctx->query->normalized);
 
-  gnostr_simple_pool_query_single_async(
-    search_pool,
-    urls,
-    relay_urls->len,
-    filter,
-    ctx->cancellable,
-    on_network_search_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(search_pool, (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(search_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(search_pool, _qf, ctx->cancellable, on_network_search_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);

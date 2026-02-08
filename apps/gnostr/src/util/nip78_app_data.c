@@ -13,10 +13,10 @@
 #include <time.h>
 
 #ifndef GNOSTR_NIP78_TEST_ONLY
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-relay.h"
+#include "nostr_pool.h"
 #endif
 
 /* ---- Memory Management ---- */
@@ -303,11 +303,11 @@ gboolean gnostr_app_data_is_valid_data_key(const char *data_key) {
 #ifndef GNOSTR_NIP78_TEST_ONLY
 
 /* Singleton pool for NIP-78 queries */
-static GnostrSimplePool *s_nip78_pool = NULL;
+static GNostrPool *s_nip78_pool = NULL;
 
-static GnostrSimplePool *get_nip78_pool(void) {
+static GNostrPool *get_nip78_pool(void) {
     if (!s_nip78_pool) {
-        s_nip78_pool = gnostr_simple_pool_new();
+        s_nip78_pool = gnostr_pool_new();
     }
     return s_nip78_pool;
 }
@@ -337,8 +337,8 @@ static void on_fetch_single_done(GObject *source, GAsyncResult *res, gpointer us
     if (!ctx) return;
 
     GError *err = NULL;
-    GPtrArray *results = gnostr_simple_pool_query_single_finish(
-        GNOSTR_SIMPLE_POOL(source), res, &err);
+    GPtrArray *results = gnostr_pool_query_finish(
+        GNOSTR_POOL(source), res, &err);
 
     if (err) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -439,15 +439,13 @@ void gnostr_app_data_fetch_async(const char *pubkey_hex,
     g_message("nip78: fetching app data %s/%s for %.8s...",
               app_id, data_key ? data_key : "", pubkey_hex);
 
-    gnostr_simple_pool_query_single_async(
-        get_nip78_pool(),
-        urls,
-        relay_arr->len,
-        filter,
-        NULL,
-        on_fetch_single_done,
-        ctx
-    );
+        gnostr_pool_sync_relays(get_nip78_pool(), (const gchar **)urls, relay_arr->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(get_nip78_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(get_nip78_pool(), _qf, NULL, on_fetch_single_done, ctx);
+    }
 
     g_free(urls);
     g_ptr_array_unref(relay_arr);
@@ -475,8 +473,8 @@ static void on_fetch_all_done(GObject *source, GAsyncResult *res, gpointer user_
     if (!ctx) return;
 
     GError *err = NULL;
-    GPtrArray *results = gnostr_simple_pool_query_single_finish(
-        GNOSTR_SIMPLE_POOL(source), res, &err);
+    GPtrArray *results = gnostr_pool_query_finish(
+        GNOSTR_POOL(source), res, &err);
 
     if (err) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -595,15 +593,13 @@ void gnostr_app_data_fetch_all_async(const char *pubkey_hex,
 
     g_message("nip78: fetching all app data for %s from %.8s...", app_id, pubkey_hex);
 
-    gnostr_simple_pool_query_single_async(
-        get_nip78_pool(),
-        urls,
-        relay_arr->len,
-        filter,
-        NULL,
-        on_fetch_all_done,
-        ctx
-    );
+        gnostr_pool_sync_relays(get_nip78_pool(), (const gchar **)urls, relay_arr->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(get_nip78_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(get_nip78_pool(), _qf, NULL, on_fetch_all_done, ctx);
+    }
 
     g_free(urls);
     g_ptr_array_unref(relay_arr);

@@ -19,10 +19,10 @@
 #include <time.h>
 
 #ifndef GNOSTR_BOOKMARKS_TEST_ONLY
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-relay.h"
+#include "nostr_pool.h"
 #endif
 
 /* Kind 10003 = Bookmark List per NIP-51 */
@@ -483,7 +483,7 @@ static void on_bookmarks_query_done(GObject *source, GAsyncResult *res, gpointer
     if (!ctx) return;
 
     GError *err = NULL;
-    GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+    GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
     if (err) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -562,7 +562,7 @@ static void on_bookmarks_query_done(GObject *source, GAsyncResult *res, gpointer
 }
 
 /* Singleton pool for bookmark queries */
-static GnostrSimplePool *s_bookmarks_pool = NULL;
+static GNostrPool *s_bookmarks_pool = NULL;
 
 void gnostr_bookmarks_fetch_with_strategy_async(GnostrBookmarks *self,
                                                  const char *pubkey_hex,
@@ -629,20 +629,19 @@ void gnostr_bookmarks_fetch_with_strategy_async(GnostrBookmarks *self,
     }
 
     /* Use static pool */
-    if (!s_bookmarks_pool) s_bookmarks_pool = gnostr_simple_pool_new();
+    if (!s_bookmarks_pool) s_bookmarks_pool = gnostr_pool_new();
 
     g_message("bookmarks: fetching kind %d from %u relays for pubkey %.8s...",
               BOOKMARK_LIST_KIND, relay_arr->len, pubkey_hex);
 
-    gnostr_simple_pool_query_single_async(
-        s_bookmarks_pool,
-        urls,
-        relay_arr->len,
-        filter,
-        NULL, /* cancellable */
-        on_bookmarks_query_done,
-        ctx
-    );
+        gnostr_pool_sync_relays(s_bookmarks_pool, (const gchar **)urls, relay_arr->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(s_bookmarks_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(s_bookmarks_pool, _qf, NULL, /* cancellable */
+        on_bookmarks_query_done, ctx);
+    }
 
     g_free(urls);
     g_ptr_array_unref(relay_arr);

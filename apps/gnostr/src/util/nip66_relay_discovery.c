@@ -12,9 +12,9 @@
 
 #ifndef GNOSTR_NIP66_TEST_ONLY
 #include "relays.h"
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
+#include "nostr_pool.h"
 #endif
 
 /* ============== Cache Configuration ============== */
@@ -1138,11 +1138,11 @@ typedef struct {
   gboolean phase2_started;
 } Nip66DiscoveryCtx;
 
-static GnostrSimplePool *g_nip66_pool = NULL;
+static GNostrPool *g_nip66_pool = NULL;
 
-static GnostrSimplePool *get_nip66_pool(void)
+static GNostrPool *get_nip66_pool(void)
 {
-  if (!g_nip66_pool) g_nip66_pool = gnostr_simple_pool_new();
+  if (!g_nip66_pool) g_nip66_pool = gnostr_pool_new();
   return g_nip66_pool;
 }
 
@@ -1167,7 +1167,7 @@ static void on_phase1_monitors_done(GObject *source, GAsyncResult *res, gpointer
   ctx->pending_queries--;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -1304,15 +1304,13 @@ static void start_phase2_relay_discovery(Nip66DiscoveryCtx *ctx)
 
   ctx->pending_queries = 1;
 
-  gnostr_simple_pool_query_single_async(
-    get_nip66_pool(),
-    urls,
-    n_relays,
-    filter,
-    ctx->cancellable,
-    on_phase2_relay_meta_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(get_nip66_pool(), (const gchar **)urls, n_relays);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(get_nip66_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(get_nip66_pool(), _qf, ctx->cancellable, on_phase2_relay_meta_done, ctx);
+  }
 
   g_free(urls);
   g_free(pubkeys);
@@ -1330,7 +1328,7 @@ static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpoint
   ctx->pending_queries--;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -1418,7 +1416,7 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
 
   /* Clean up any stale connections in the NIP-66 pool before starting.
    * Even though query_single uses temporary connections, we ensure a clean state. */
-  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
+  gnostr_pool_disconnect_all(get_nip66_pool());
 
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
@@ -1472,15 +1470,13 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
 
   ctx->pending_queries = 1;
 
-  gnostr_simple_pool_query_single_async(
-    get_nip66_pool(),
-    urls,
-    relay_urls->len,
-    filter,
-    ctx->cancellable,
-    on_phase2_relay_meta_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(get_nip66_pool(), (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(get_nip66_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(get_nip66_pool(), _qf, ctx->cancellable, on_phase2_relay_meta_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
@@ -1502,7 +1498,7 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
   }
 
   /* Clean up any stale connections in the NIP-66 pool before starting. */
-  gnostr_simple_pool_disconnect_all_relays(get_nip66_pool());
+  gnostr_pool_disconnect_all(get_nip66_pool());
 
   Nip66DiscoveryCtx *ctx = g_new0(Nip66DiscoveryCtx, 1);
   ctx->callback = callback;
@@ -1544,15 +1540,13 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
 
   ctx->pending_queries = 1;
 
-  gnostr_simple_pool_query_single_async(
-    get_nip66_pool(),
-    urls,
-    relay_urls->len,
-    filter,
-    ctx->cancellable,
-    on_phase2_relay_meta_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(get_nip66_pool(), (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(get_nip66_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(get_nip66_pool(), _qf, ctx->cancellable, on_phase2_relay_meta_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
@@ -1570,7 +1564,7 @@ typedef struct {
   GPtrArray *relays_found;
   GPtrArray *monitors_found;
   GHashTable *seen_urls;  /* For deduplication */
-  GnostrSimplePool *pool;
+  GNostrPool *pool;
   gulong events_handler_id;
   guint timeout_source_id;
   NostrFilter *filter;  /* Single filter for query_single_streaming */
@@ -1647,7 +1641,7 @@ static gboolean nip66_should_filter_url(const gchar *url)
 }
 
 /* Handle batch of events from pool signal */
-static void on_streaming_events(GnostrSimplePool *pool, GPtrArray *events, gpointer user_data)
+static void on_streaming_events(GNostrPool *pool, GPtrArray *events, gpointer user_data)
 {
   (void)pool;
   Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
@@ -1752,7 +1746,7 @@ static gboolean on_streaming_timeout(gpointer user_data)
 
   /* Clean up any relay connections that might still be open */
   if (ctx->pool) {
-    gnostr_simple_pool_disconnect_all_relays(ctx->pool);
+    gnostr_pool_disconnect_all(ctx->pool);
   }
 
   /* Drop our ref - may free if query_complete already dropped its ref */
@@ -1767,7 +1761,7 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
   if (!ctx) return;
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -1776,8 +1770,33 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     g_error_free(error);
   }
 
-  /* Results array returned here but we already processed events via signal.
-   * Free it since we don't need duplicates. */
+  /* hq-r248b: Process results here (previously handled via streaming signal).
+   * Results are JSON strings - parse each as relay metadata. */
+  if (results && results->len > 0) {
+    g_message("nip66 streaming: processing %u results from query", results->len);
+    for (guint i = 0; i < results->len; i++) {
+      const char *json = g_ptr_array_index(results, i);
+      if (!json) continue;
+      GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(json);
+      if (!meta) continue;
+      if (nip66_should_filter_url(meta->relay_url)) {
+        gnostr_nip66_relay_meta_free(meta);
+        continue;
+      }
+      gchar *url_lower = g_ascii_strdown(meta->relay_url, -1);
+      if (g_hash_table_contains(ctx->seen_urls, url_lower)) {
+        g_free(url_lower);
+        gnostr_nip66_relay_meta_free(meta);
+        continue;
+      }
+      g_hash_table_add(ctx->seen_urls, url_lower);
+      /* Cache it */
+      GnostrNip66RelayMeta *meta_copy = gnostr_nip66_parse_relay_meta(json);
+      if (meta_copy) gnostr_nip66_cache_add_relay(meta_copy);
+      if (ctx->on_relay_found) ctx->on_relay_found(meta, ctx->user_data);
+      g_ptr_array_add(ctx->relays_found, meta);
+    }
+  }
   if (results) g_ptr_array_unref(results);
 
   /* Atomically check and set completion_handled to ensure on_complete called once */
@@ -1825,8 +1844,8 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
    * Even though streaming queries create temporary connections, we clean up
    * the pool in case previous queries left anything behind (e.g., if cancelled
    * before all relays sent EOSE). */
-  GnostrSimplePool *pool = get_nip66_pool();
-  gnostr_simple_pool_disconnect_all_relays(pool);
+  GNostrPool *pool = get_nip66_pool();
+  gnostr_pool_disconnect_all(pool);
 
   Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
   ctx->on_relay_found = on_relay_found;
@@ -1875,25 +1894,21 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   nostr_filter_set_kinds(ctx->filter, kinds, 1);
   nostr_filter_set_limit(ctx->filter, 500);
 
-  /* Connect to events signal for streaming updates */
-  ctx->events_handler_id = g_signal_connect(ctx->pool, "events",
-                                             G_CALLBACK(on_streaming_events), ctx);
+  /* hq-r248b: No streaming signal in GNostrPool - events processed in completion callback */
 
   /* LEGITIMATE TIMEOUT - Fallback timeout for streaming discovery.
    * Completes discovery after 10s if EOSE never arrives (relay issue).
    * nostrc-b0h: Audited - timeout for error handling is appropriate. */
   ctx->timeout_source_id = g_timeout_add_seconds(10, on_streaming_timeout, ctx);
 
-  /* Start streaming query - emits events via signal, closes connections after EOSE */
-  gnostr_simple_pool_query_single_streaming_async(
-    ctx->pool,
-    url_ptrs,
-    ctx->url_count,
-    ctx->filter,
-    ctx->cancellable,
-    on_streaming_query_complete,
-    ctx
-  );
+  /* Query relays - results processed in on_streaming_query_complete (hq-r248b) */
+  gnostr_pool_sync_relays(ctx->pool, (const gchar **)url_ptrs, ctx->url_count);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, ctx->filter);
+    g_object_set_data_full(G_OBJECT(ctx->pool), "qf-stream", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_streaming_query_complete, ctx);
+  }
 
   g_free(url_ptrs);
   g_ptr_array_unref(relay_urls);

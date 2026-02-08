@@ -13,7 +13,7 @@
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-filter.h"
-#include "nostr_simple_pool.h"
+#include "nostr_pool.h"
 
 /* ============== Cache Configuration ============== */
 
@@ -949,7 +949,7 @@ gboolean gnostr_nip89_is_addressable_kind(guint kind)
 #define NIP89_KIND_RECOMMENDATION  31990
 
 /* Static pool for NIP-89 queries */
-static GnostrSimplePool *s_nip89_pool = NULL;
+static GNostrPool *s_nip89_pool = NULL;
 
 /* Context for relay query */
 typedef struct {
@@ -993,8 +993,8 @@ static void on_nip89_relay_query_done(GObject *source, GAsyncResult *res, gpoint
   if (!ctx) return;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(
-      GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(
+      GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -1125,22 +1125,20 @@ void gnostr_nip89_query_handlers_async(guint event_kind,
 
   /* Initialize pool */
   if (!s_nip89_pool) {
-    s_nip89_pool = gnostr_simple_pool_new();
+    s_nip89_pool = gnostr_pool_new();
   }
 
   g_debug("nip89: querying %u relays for kind %u handlers", relay_arr->len, event_kind);
 
   ctx->pending_queries = 1;
 
-  gnostr_simple_pool_query_single_async(
-      s_nip89_pool,
-      urls,
-      relay_arr->len,
-      filter,
-      ctx->cancellable,
-      on_nip89_relay_query_done,
-      ctx
-  );
+    gnostr_pool_sync_relays(s_nip89_pool, (const gchar **)urls, relay_arr->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(s_nip89_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(s_nip89_pool, _qf, ctx->cancellable, on_nip89_relay_query_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_arr);

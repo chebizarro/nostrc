@@ -10,8 +10,8 @@
 #include "../ipc/gnostr-signer-service.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
-#include "nostr_simple_pool.h"
 #include "nostr_relay.h"
+#include "nostr_pool.h"
 #include "nostr_json.h"
 #include "json.h"
 #include <string.h>
@@ -283,7 +283,7 @@ typedef struct {
   GCancellable *cancellable;
   GnostrUserStatusCallback callback;
   gpointer user_data;
-  GnostrSimplePool *pool;
+  GNostrPool *pool;
 } StatusFetchContext;
 
 static void status_fetch_context_free(StatusFetchContext *ctx) {
@@ -298,8 +298,8 @@ static void on_status_fetch_done(GObject *source, GAsyncResult *res, gpointer us
   StatusFetchContext *ctx = user_data;
   GError *error = NULL;
 
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(
-    GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(
+    GNOSTR_POOL(source), res, &error);
 
   if (g_cancellable_is_cancelled(ctx->cancellable)) {
     g_clear_error(&error);
@@ -409,7 +409,7 @@ void gnostr_user_status_fetch_async(const gchar *pubkey_hex,
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
   ctx->callback = callback;
   ctx->user_data = user_data;
-  ctx->pool = gnostr_simple_pool_new();
+  ctx->pool = gnostr_pool_new();
 
   /* Get relay URLs */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
@@ -456,15 +456,13 @@ void gnostr_user_status_fetch_async(const gchar *pubkey_hex,
   }
 
   /* Start async query */
-  gnostr_simple_pool_query_single_async(
-    ctx->pool,
-    urls,
-    relay_urls->len,
-    filter,
-    ctx->cancellable,
-    on_status_fetch_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(ctx->pool, (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_status_fetch_done, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);

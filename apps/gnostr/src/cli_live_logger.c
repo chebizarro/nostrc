@@ -5,8 +5,9 @@
 
 /* Storage (app-local header path) */
 #include "storage_ndb.h"
-/* GObject SimplePool wrapper */
-#include "nostr_simple_pool.h"
+/* GObject pool wrapper */
+#include "nostr_pool.h"
+#include "nostr_subscription.h"
 /* Canonical nostr headers used in the app */
 #include "nostr-event.h"
 #include "nostr-filter.h"
@@ -33,54 +34,57 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
   return TRUE;
 }
 
-static void on_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
-  (void)pool; (void)user_data;
-  if (!batch) return;
-  for (guint i = 0; i < batch->len; i++) {
-    NostrEvent *evt = (NostrEvent*)g_ptr_array_index(batch, i);
-    int kind = nostr_event_get_kind(evt);
-    const char *id = nostr_event_get_id(evt);
-    char *json = nostr_event_serialize(evt);
-    int irc = storage_ndb_ingest_event_json(json, NULL);
-    g_message("ndb_ingest(profile_sub): kind=%d id=%s rc=%d", kind, id ? id : "<null>", irc);
-    if (kind == 0) {
-      const char *pk = nostr_event_get_pubkey(evt);
-      if (pk && strlen(pk) == 64) {
-        uint8_t pk32[32];
-        if (hex_to_bytes32(pk, pk32)) {
-          /* verify event presence for author/kind=0 */
-          {
-            void *txn = NULL;
-            if (storage_ndb_begin_query(&txn) == 0) {
-              char filt[256];
-              snprintf(filt, sizeof(filt), "{\"kinds\":[0],\"authors\":[\"%s\"],\"limit\":1}", pk);
-              char **arr = NULL; int n = 0;
-              int qrc = storage_ndb_query(txn, filt, &arr, &n);
-              g_message("ndb_events_by_author(profile_sub): pk=%s qrc=%d count=%d present=%s", pk, qrc, n, (qrc==0 && n>0)?"yes":"no");
-              if (qrc == 0 && arr) storage_ndb_free_results(arr, n);
-              storage_ndb_end_query(txn);
-            }
+static void on_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data) {
+  (void)sub; (void)user_data;
+  if (!event_json) return;
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
+    if (evt) nostr_event_free(evt);
+    return;
+  }
+
+  int kind = nostr_event_get_kind(evt);
+  const char *id = nostr_event_get_id(evt);
+  int irc = storage_ndb_ingest_event_json(event_json, NULL);
+  g_message("ndb_ingest(profile_sub): kind=%d id=%s rc=%d", kind, id ? id : "<null>", irc);
+  if (kind == 0) {
+    const char *pk = nostr_event_get_pubkey(evt);
+    if (pk && strlen(pk) == 64) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(pk, pk32)) {
+        /* verify event presence for author/kind=0 */
+        {
+          void *txn = NULL;
+          if (storage_ndb_begin_query(&txn) == 0) {
+            char filt[256];
+            snprintf(filt, sizeof(filt), "{\"kinds\":[0],\"authors\":[\"%s\"],\"limit\":1}", pk);
+            char **arr = NULL; int n = 0;
+            int qrc = storage_ndb_query(txn, filt, &arr, &n);
+            g_message("ndb_events_by_author(profile_sub): pk=%s qrc=%d count=%d present=%s", pk, qrc, n, (qrc==0 && n>0)?"yes":"no");
+            if (qrc == 0 && arr) storage_ndb_free_results(arr, n);
+            storage_ndb_end_query(txn);
           }
-          /* nostrc-3gd6: Reduced from 10×250ms polling loop (2.5s max blocking) to
-           * 3×200ms (600ms max). Profile indexing is async; a future improvement
-           * would emit a storage event via EventBus when indexing completes. */
-          for (int attempt = 0; attempt < 3; attempt++) {
-            if (attempt > 0) g_usleep(200000); /* 200ms between retries only */
-            void *txn = NULL;
-            if (storage_ndb_begin_query(&txn) == 0) {
-              char *pjson = NULL; int plen = 0;
-              int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
-              g_message("ndb_profile_readback(profile_sub): pk=%s rc=%d len=%d present=%s attempt=%d", pk, prc, plen, pjson?"yes":"no", attempt+1);
-              storage_ndb_end_query(txn);
-              if (pjson) { free(pjson); }
-              if (pjson || prc == 0) break;
-            }
+        }
+        /* nostrc-3gd6: Reduced from 10x250ms polling loop (2.5s max blocking) to
+         * 3x200ms (600ms max). Profile indexing is async; a future improvement
+         * would emit a storage event via EventBus when indexing completes. */
+        for (int attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) g_usleep(200000); /* 200ms between retries only */
+          void *txn = NULL;
+          if (storage_ndb_begin_query(&txn) == 0) {
+            char *pjson = NULL; int plen = 0;
+            int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
+            g_message("ndb_profile_readback(profile_sub): pk=%s rc=%d len=%d present=%s attempt=%d", pk, prc, plen, pjson?"yes":"no", attempt+1);
+            storage_ndb_end_query(txn);
+            if (pjson) { free(pjson); }
+            if (pjson || prc == 0) break;
           }
         }
       }
     }
-    free(json);
   }
+  nostr_event_free(evt);
 }
 
 static void build_defaults(const char ***out_urls, size_t *out_count) {
@@ -151,19 +155,33 @@ int main(int argc, char **argv) {
   g_free(dbdir);
 
   GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-  GnostrSimplePool *pool = gnostr_simple_pool_new();
-  g_signal_connect(pool, "events", G_CALLBACK(on_events), NULL);
+  GNostrPool *pool = gnostr_pool_new();
 
   const char **urls = NULL; size_t url_count = 0; build_defaults(&urls, &url_count);
   fprintf(stdout, "gnostr-live-log: urls(%zu):\n", url_count);
   for (size_t i = 0; i < url_count; i++) { fprintf(stdout, "  %s\n", urls[i]); }
   fflush(stdout);
+
+  gnostr_pool_sync_relays(pool, (const gchar **)urls, url_count);
   NostrFilters *filters = build_filters();
 
-  GCancellable *canc = g_cancellable_new();
-  gnostr_simple_pool_subscribe_many_async(pool, urls, url_count, filters, canc, NULL, NULL);
+  GError *sub_error = NULL;
+  GNostrSubscription *sub = gnostr_pool_subscribe(pool, filters, &sub_error);
+  nostr_filters_free(filters);
+  if (!sub) {
+    fprintf(stderr, "gnostr-live-log: subscribe failed: %s\n",
+            sub_error ? sub_error->message : "(unknown)");
+    g_clear_error(&sub_error);
+    for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
+    g_free((void*)urls);
+    g_object_unref(pool);
+    g_main_loop_unref(loop);
+    return 1;
+  }
+  g_signal_connect(sub, "event", G_CALLBACK(on_event), NULL);
   fprintf(stdout, "gnostr-live-log: subscription started\n"); fflush(stdout);
 
+  GCancellable *canc = g_cancellable_new();
   for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
   g_free((void*)urls);
 
@@ -177,6 +195,8 @@ int main(int argc, char **argv) {
 
   g_cancellable_cancel(canc);
   g_clear_object(&canc);
+  gnostr_subscription_close(sub);
+  g_object_unref(sub);
   g_object_unref(pool);
   g_main_loop_unref(loop);
   fprintf(stdout, "gnostr-live-log: exit\n"); fflush(stdout);

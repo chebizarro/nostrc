@@ -13,7 +13,7 @@
 #include <nostr-filter.h>
 #include "nostr_json.h"
 #include <json.h>
-#include <nostr_simple_pool.h>
+/* nostr_pool.h provided via utils.h */
 #include "../util/relays.h"
 #include <string.h>
 #include <time.h>
@@ -827,7 +827,7 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
 /* Callback for relay query */
 static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   /* ASAN fix: We hold a ref on self during async, so it's always valid.
    * Cast immediately - the ref ensures the object stays alive until we unref. */
@@ -913,8 +913,9 @@ cleanup:
 }
 
 /* Shared pool for embed queries - initialized lazily with pre-connected relays */
-static GnostrSimplePool *embed_pool = NULL;
+static GNostrPool *embed_pool = NULL;
 static gboolean embed_pool_initialized = FALSE;
+static gint _embed_qf_counter = 0;
 static gulong embed_relay_change_handler_id = 0;
 
 /* Relay change callback for embed pool (nostrc-36y.4: live relay switching) */
@@ -929,7 +930,7 @@ static void on_embed_relay_config_changed(gpointer user_data) {
       urls[i] = g_ptr_array_index(read_relays, i);
     }
     g_message("[EMBED_POOL] Syncing embed pool with %u read relays", read_relays->len);
-    gnostr_simple_pool_sync_relays(embed_pool, urls, read_relays->len);
+    gnostr_pool_sync_relays(embed_pool, (const gchar **)urls, read_relays->len);
     g_free(urls);
   }
   g_ptr_array_unref(read_relays);
@@ -941,7 +942,7 @@ static void ensure_embed_pool_initialized(void) {
   embed_pool_initialized = TRUE;
 
   if (!embed_pool) {
-    embed_pool = gnostr_simple_pool_new();
+    embed_pool = gnostr_pool_new();
   }
 
   /* Pre-load read-capable relays into pool for embed queries (NIP-65) */
@@ -996,8 +997,15 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
 
     /* Hold ref during async - callback will unref */
     g_object_ref(self);
-    gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
-                                           get_effective_cancellable(self), on_relay_query_done, self);
+    gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
+      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
+      g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
+    }
 
     g_free(url_arr);
     g_ptr_array_free(urls, TRUE);
@@ -1032,8 +1040,15 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
 
   /* Hold ref during async - callback will unref */
   g_object_ref(self);
-  gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
-                                         get_effective_cancellable(self), on_relay_query_done, self);
+  gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
+    g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
+  }
 
   g_free(url_arr);
   g_ptr_array_free(urls, TRUE);
@@ -1046,7 +1061,7 @@ static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubk
 /* Callback for profile relay query */
 static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_fetch_profiles_by_authors_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   /* ASAN fix: We hold a ref on self during async, so it's always valid.
    * Cast immediately - the ref ensures the object stays alive until we unref. */
@@ -1176,13 +1191,25 @@ static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_
       url_arr[i] = self->relay_hints[i];
     }
 
-    const char *authors[1] = { pubkey_hex };
-
     /* Hold ref during async - callback will unref */
     g_object_ref(self);
-    gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, self->relay_hints_count,
-                                                        authors, 1, 1,
-                                                        get_effective_cancellable(self), on_profile_relay_query_done, self);
+    gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, self->relay_hints_count);
+    {
+      /* Build kind-0 filter with author for profile fetch */
+      NostrFilter *filter = nostr_filter_new();
+      int kind0 = 0;
+      nostr_filter_set_kinds(filter, &kind0, 1);
+      const char *authors[1] = { pubkey_hex };
+      nostr_filter_set_authors(filter, authors, 1);
+      nostr_filter_set_limit(filter, 1);
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
+      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
+      g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_profile_relay_query_done, self);
+      nostr_filter_free(filter);
+    }
 
     g_free(url_arr);
     return;
@@ -1205,13 +1232,25 @@ static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubk
     url_arr[i] = (const char*)g_ptr_array_index(urls, i);
   }
 
-  const char *authors[1] = { pubkey_hex };
-
   /* Hold ref during async - callback will unref */
   g_object_ref(self);
-  gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, urls->len,
-                                                      authors, 1, 1,
-                                                      get_effective_cancellable(self), on_profile_relay_query_done, self);
+  gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
+  {
+    /* Build kind-0 filter with author for profile fetch */
+    NostrFilter *filter = nostr_filter_new();
+    int kind0 = 0;
+    nostr_filter_set_kinds(filter, &kind0, 1);
+    const char *authors[1] = { pubkey_hex };
+    nostr_filter_set_authors(filter, authors, 1);
+    nostr_filter_set_limit(filter, 1);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
+    g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_profile_relay_query_done, self);
+    nostr_filter_free(filter);
+  }
 
   g_free(url_arr);
   g_ptr_array_free(urls, TRUE);

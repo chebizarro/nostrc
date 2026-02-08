@@ -17,8 +17,8 @@
 #include "nostr-event.h"
 /* GObject relay wrapper for publishing (includes nostr-relay.h internally) */
 #include "nostr_relay.h"
+#include "nostr_pool.h"
 /* GObject simple pool wrapper for fetching */
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 
 /* GSettings schema IDs */
@@ -495,7 +495,7 @@ static void on_blossom_fetch_complete(GObject *source, GAsyncResult *res, gpoint
   if (!ctx) return;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     g_warning("blossom: fetch failed: %s", err->message);
@@ -597,10 +597,15 @@ void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
   }
 
   /* Create pool and query */
-  GnostrSimplePool *pool = gnostr_simple_pool_new();
+  GNostrPool *pool = gnostr_pool_new();
 
-  gnostr_simple_pool_query_single_async(pool, urls, relay_arr->len, filter, NULL,
-                                         on_blossom_fetch_complete, ctx);
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_arr->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, NULL, on_blossom_fetch_complete, ctx);
+  }
 
   g_ptr_array_unref(relay_arr);
   g_free(urls);

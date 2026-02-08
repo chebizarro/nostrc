@@ -13,8 +13,8 @@
 #include "../ui/gnostr-avatar-cache.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
-#include "nostr_simple_pool.h"
 #include "nostr_json.h"
+#include "nostr_pool.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -416,13 +416,13 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
 /* ============== Async Fetch Context ============== */
 
 /* Static pool for classifieds queries - reused to maintain relay connections */
-static GnostrSimplePool *s_classifieds_pool = NULL;
+static GNostrPool *s_classifieds_pool = NULL;
 
-static GnostrSimplePool *
+static GNostrPool *
 get_classifieds_pool(void)
 {
   if (!s_classifieds_pool) {
-    s_classifieds_pool = gnostr_simple_pool_new();
+    s_classifieds_pool = gnostr_pool_new();
   }
   return s_classifieds_pool;
 }
@@ -448,10 +448,10 @@ static void
 on_classifieds_fetched(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   ClassifiedFetchCtx *ctx = user_data;
-  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source);
+  GNostrPool *pool = GNOSTR_POOL(source);
   GError *error = NULL;
 
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(pool, res, &error);
+  GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -549,10 +549,14 @@ gnostr_fetch_classifieds_async(const gchar *filter_category,
   }
 
   /* Use shared pool for better connection reuse */
-  GnostrSimplePool *pool = get_classifieds_pool();
-  gnostr_simple_pool_query_single_async(pool, urls, relay_urls->len,
-                                         filter, ctx->cancellable,
-                                         on_classifieds_fetched, ctx);
+  GNostrPool *pool = get_classifieds_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, ctx->cancellable, on_classifieds_fetched, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);
@@ -597,10 +601,14 @@ gnostr_fetch_user_classifieds_async(const gchar *pubkey_hex,
   }
 
   /* Use shared pool for better connection reuse */
-  GnostrSimplePool *pool = get_classifieds_pool();
-  gnostr_simple_pool_query_single_async(pool, urls, relay_urls->len,
-                                         filter, ctx->cancellable,
-                                         on_classifieds_fetched, ctx);
+  GNostrPool *pool = get_classifieds_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, ctx->cancellable, on_classifieds_fetched, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);
@@ -630,10 +638,10 @@ static void
 on_single_classified_fetched(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   ClassifiedSingleCtx *ctx = user_data;
-  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source);
+  GNostrPool *pool = GNOSTR_POOL(source);
   GError *error = NULL;
 
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(pool, res, &error);
+  GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
   GnostrClassified *classified = NULL;
 
   if (error) {
@@ -706,9 +714,13 @@ gnostr_fetch_classified_by_naddr_async(const gchar *naddr,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  gnostr_simple_pool_query_single_async(get_classifieds_pool(), urls, relay_urls->len,
-                                         filter, ctx->cancellable,
-                                         on_single_classified_fetched, ctx);
+    gnostr_pool_sync_relays(get_classifieds_pool(), (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(get_classifieds_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(get_classifieds_pool(), _qf, ctx->cancellable, on_single_classified_fetched, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);

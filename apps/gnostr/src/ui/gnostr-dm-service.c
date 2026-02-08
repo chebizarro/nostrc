@@ -10,7 +10,8 @@
 #include "gnostr-profile-provider.h"
 #include "../ipc/signer_ipc.h"
 #include "../util/relays.h"
-#include "nostr_simple_pool.h"
+#include "nostr_pool.h"
+#include "nostr_subscription.h"
 #include "nostr_relay.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
@@ -56,7 +57,8 @@ struct _GnostrDmService {
     GHashTable *conversations;
 
     /* Relay subscription */
-    GnostrSimplePool *pool;
+    GNostrPool       *pool;
+    GNostrSubscription *sub;
     GCancellable *cancellable;
     gulong events_handler;
     gboolean running;
@@ -68,7 +70,7 @@ struct _GnostrDmService {
 G_DEFINE_TYPE(GnostrDmService, gnostr_dm_service, G_TYPE_OBJECT)
 
 /* Forward declarations */
-static void on_pool_gift_wrap_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
+static void on_pool_gift_wrap_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
 static void decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap);
 typedef struct _DecryptContext DecryptContext;
 static void decrypt_ctx_free(DecryptContext *ctx);
@@ -158,24 +160,6 @@ gnostr_dm_service_set_user_pubkey(GnostrDmService *self,
     }
 }
 
-static void
-on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data)
-{
-    GnostrDmService *self = GNOSTR_DM_SERVICE(user_data);
-    GError *error = NULL;
-
-    gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
-
-    if (error) {
-        g_warning("[DM_SERVICE] Gift wrap subscription failed: %s", error->message);
-        g_clear_error(&error);
-    } else {
-        g_message("[DM_SERVICE] Gift wrap subscription started successfully");
-    }
-
-    if (self) g_object_unref(self);
-}
-
 void
 gnostr_dm_service_start(GnostrDmService *self,
                          const char **relay_urls)
@@ -205,8 +189,11 @@ gnostr_dm_service_start(GnostrDmService *self,
     g_message("[DM_SERVICE] Starting gift wrap subscription to %zu relays", url_count);
 
     /* Create pool and cancellable */
-    self->pool = gnostr_simple_pool_new();
+    self->pool = gnostr_pool_new();
     self->cancellable = g_cancellable_new();
+
+    /* Add relays to pool */
+    gnostr_pool_sync_relays(self->pool, (const gchar **)relay_urls, url_count);
 
     /* Build filter for gift wraps addressed to us (kind 1059 with p-tag) */
     NostrFilter *filter = nostr_filter_new();
@@ -214,29 +201,30 @@ gnostr_dm_service_start(GnostrDmService *self,
     nostr_filter_set_kinds(filter, kinds, 1);
 
     /* Filter by p-tag for our pubkey */
-    const char *p_tags[] = { self->user_pubkey };
-    nostr_filter_tags_append(filter, "p", p_tags[0], NULL);
+    nostr_filter_tags_append(filter, "p", self->user_pubkey, NULL);
 
     NostrFilters *filters = nostr_filters_new();
     nostr_filters_add(filters, filter);
 
-    /* Connect events signal */
-    self->events_handler = g_signal_connect(
-        self->pool, "events",
-        G_CALLBACK(on_pool_gift_wrap_events), self);
-
-    /* Start subscription */
-    gnostr_simple_pool_subscribe_many_async(
-        self->pool,
-        relay_urls,
-        url_count,
-        filters,
-        self->cancellable,
-        on_pool_subscribe_done,
-        g_object_ref(self));
-
+    /* Subscribe */
+    GError *sub_error = NULL;
+    GNostrSubscription *sub = gnostr_pool_subscribe(self->pool, filters, &sub_error);
     nostr_filters_free(filters);
+    nostr_filter_free(filter);
 
+    if (!sub) {
+        g_warning("[DM_SERVICE] Gift wrap subscription failed: %s",
+                  sub_error ? sub_error->message : "(unknown)");
+        g_clear_error(&sub_error);
+        return;
+    }
+
+    self->sub = sub; /* takes ownership */
+    self->events_handler = g_signal_connect(
+        sub, "event",
+        G_CALLBACK(on_pool_gift_wrap_event), self);
+
+    g_message("[DM_SERVICE] Gift wrap subscription started successfully");
     self->running = TRUE;
 
     /* Show loading state on inbox */
@@ -261,13 +249,15 @@ gnostr_dm_service_stop(GnostrDmService *self)
         g_clear_object(&self->cancellable);
     }
 
-    if (self->pool) {
+    if (self->sub) {
         if (self->events_handler > 0) {
-            g_signal_handler_disconnect(self->pool, self->events_handler);
+            g_signal_handler_disconnect(self->sub, self->events_handler);
             self->events_handler = 0;
         }
-        g_clear_object(&self->pool);
+        gnostr_subscription_close(self->sub);
+        g_clear_object(&self->sub);
     }
+    g_clear_object(&self->pool);
 
     self->running = FALSE;
 }
@@ -680,32 +670,36 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
         ctx);
 }
 
-/* Pool events callback for gift wraps */
+/* Subscription event callback for gift wraps */
 static void
-on_pool_gift_wrap_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data)
+on_pool_gift_wrap_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data)
 {
-    (void)pool;
+    (void)sub;
     GnostrDmService *self = GNOSTR_DM_SERVICE(user_data);
 
-    if (!GNOSTR_IS_DM_SERVICE(self) || !batch) return;
+    if (!GNOSTR_IS_DM_SERVICE(self) || !event_json) return;
 
-    g_debug("[DM_SERVICE] Received %u gift wrap events", batch->len);
-
-    for (guint i = 0; i < batch->len; i++) {
-        NostrEvent *evt = (NostrEvent*)batch->pdata[i];
-        if (!evt) continue;
-
-        int kind = nostr_event_get_kind(evt);
-        if (kind != NOSTR_KIND_GIFT_WRAP) continue;
-
-        /* Validate gift wrap signature */
-        if (!nostr_event_check_signature(evt)) {
-            g_warning("[DM_SERVICE] Invalid gift wrap signature");
-            continue;
-        }
-
-        decrypt_gift_wrap_async(self, evt);
+    NostrEvent *evt = nostr_event_new();
+    if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
+        if (evt) nostr_event_free(evt);
+        return;
     }
+
+    int kind = nostr_event_get_kind(evt);
+    if (kind != NOSTR_KIND_GIFT_WRAP) {
+        nostr_event_free(evt);
+        return;
+    }
+
+    /* Validate gift wrap signature */
+    if (!nostr_event_check_signature(evt)) {
+        g_warning("[DM_SERVICE] Invalid gift wrap signature");
+        nostr_event_free(evt);
+        return;
+    }
+
+    decrypt_gift_wrap_async(self, evt);
+    nostr_event_free(evt);
 }
 
 void

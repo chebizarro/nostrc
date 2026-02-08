@@ -13,7 +13,8 @@
 #include "nostr/nip46/nip46_uri.h"
 #include "nostr_nip19.h"
 #include "nostr/nip44/nip44.h"
-#include "nostr_simple_pool.h"
+#include "nostr_pool.h"
+#include "nostr_subscription.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-kinds.h"
@@ -96,7 +97,8 @@ struct _GnostrLogin {
   GCancellable *cancellable;       /* For async operations */
 
   /* NIP-46 relay subscription for receiving signer responses */
-  GnostrSimplePool *nip46_pool;
+  GNostrPool       *nip46_pool;
+  GNostrSubscription *nip46_sub;
   gulong nip46_events_handler;
   gboolean listening_for_response;
 };
@@ -131,7 +133,7 @@ static void save_nip46_credentials_to_settings(const char *client_secret_hex,
 static void show_success(GnostrLogin *self, const char *npub);
 static void start_nip46_listener(GnostrLogin *self, const char *relay_url);
 static void stop_nip46_listener(GnostrLogin *self);
-static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
+static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
 
 /* Status state enum for bunker connection */
 typedef enum {
@@ -1411,175 +1413,163 @@ static void on_done_clicked(GtkButton *btn, gpointer user_data) {
 /* NIP-46 response kind */
 #define NIP46_RESPONSE_KIND 24133
 
-static void on_nip46_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrLogin *self = GNOSTR_LOGIN(user_data);
-  GError *error = NULL;
-
-  gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
-
-  if (error) {
-    g_warning("[NIP46_LOGIN] Subscription failed: %s", error->message);
-    if (GNOSTR_IS_LOGIN(self)) {
-      set_bunker_status(self, BUNKER_STATUS_ERROR,
-                        "Failed to connect to relay",
-                        "Check your internet connection and try again");
-    }
-    g_clear_error(&error);
-  } else {
-    g_message("[NIP46_LOGIN] Listening for signer response...");
-  }
-
-  if (self) g_object_unref(self);
-}
-
-/* Handle incoming NIP-46 events from the relay */
-static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
-  (void)pool;
+/* Handle incoming NIP-46 events from subscription */
+static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data) {
+  (void)sub;
   GnostrLogin *self = GNOSTR_LOGIN(user_data);
 
-  if (!GNOSTR_IS_LOGIN(self) || !batch) return;
+  if (!GNOSTR_IS_LOGIN(self) || !event_json) return;
 
-  for (guint i = 0; i < batch->len; i++) {
-    NostrEvent *event = g_ptr_array_index(batch, i);
-    if (!event) continue;
-
-    int kind = nostr_event_get_kind(event);
-    if (kind != NIP46_RESPONSE_KIND) continue;
-
-    const char *content = nostr_event_get_content(event);
-    const char *sender_pubkey = nostr_event_get_pubkey(event);
-
-    if (!content || !sender_pubkey) continue;
-
-    g_message("[NIP46_LOGIN] Received NIP-46 event from %s", sender_pubkey);
-
-    /* Decrypt content using NIP-44 with our client secret and the sender's pubkey */
-    uint8_t sender_pubkey_bytes[32];
-    for (int j = 0; j < 32; j++) {
-      unsigned int byte;
-      if (sscanf(sender_pubkey + j * 2, "%2x", &byte) != 1) {
-        g_warning("[NIP46_LOGIN] Invalid sender pubkey");
-        continue;
-      }
-      sender_pubkey_bytes[j] = (uint8_t)byte;
-    }
-
-    /* Decrypt the content using NIP-44 v2 */
-    uint8_t *plaintext_bytes = NULL;
-    size_t plaintext_len = 0;
-    int rc = nostr_nip44_decrypt_v2(
-      self->nostrconnect_secret_bytes,
-      sender_pubkey_bytes,
-      content,
-      &plaintext_bytes,
-      &plaintext_len
-    );
-
-    if (rc != 0 || !plaintext_bytes) {
-      g_warning("[NIP46_LOGIN] Failed to decrypt NIP-46 response: %d", rc);
-      continue;
-    }
-
-    /* Null-terminate the plaintext for JSON parsing */
-    char *plaintext = g_strndup((const char*)plaintext_bytes, plaintext_len);
-    free(plaintext_bytes);
-
-    g_message("[NIP46_LOGIN] Decrypted response: %s", plaintext);
-
-    /* Parse the NIP-46 response JSON:
-     * {"id":"...","result":"<signer_pubkey>","error":null}
-     * For connect request, result contains the signer's pubkey
-     */
-    if (!gnostr_json_is_valid(plaintext)) {
-      g_warning("[NIP46_LOGIN] Failed to parse NIP-46 JSON");
-      g_free(plaintext);
-      continue;
-    }
-
-    /* Check for error - if key exists and is a non-null string */
-    char *err_msg = NULL;
-    if (gnostr_json_has_key(plaintext, "error") &&
-        gnostr_json_get_value_type(plaintext, "error") == GNOSTR_JSON_TYPE_STRING &&
-        (err_msg = gnostr_json_get_string(plaintext, "error", NULL)) != NULL && err_msg && *err_msg) {
-      g_warning("[NIP46_LOGIN] Signer error: %s", err_msg);
-      set_bunker_status(self, BUNKER_STATUS_ERROR, err_msg,
-                        "The remote signer rejected the request");
-      free(err_msg);
-      g_free(plaintext);
-      continue;
-    }
-    free(err_msg);
-
-    /* Get the connect result - should be "ack" or may match our connect secret */
-    char *result = NULL;
-    result = gnostr_json_get_string(plaintext, "result", NULL);
-    if (!result) {
-      g_warning("[NIP46_LOGIN] No result in NIP-46 response");
-      free(result);
-      g_free(plaintext);
-      continue;
-    }
-
-    g_message("[NIP46_LOGIN] Connect response result: %s", result);
-
-    /* Validate the connect response:
-     * - "ack" means simple acknowledgment
-     * - A 64-char hex may be the connect secret (we validate it matches)
-     * The signer's communication pubkey is always the sender_pubkey. */
-    gboolean connect_valid = FALSE;
-    if (strcmp(result, "ack") == 0) {
-      connect_valid = TRUE;
-      g_message("[NIP46_LOGIN] Connect acknowledged with 'ack'");
-    } else if (self->nostrconnect_secret && strlen(result) == 64 &&
-               strcmp(result, self->nostrconnect_secret) == 0) {
-      /* Result matches our connect secret - this is valid per NIP-46 */
-      connect_valid = TRUE;
-      g_message("[NIP46_LOGIN] Connect acknowledged with matching secret");
-    } else if (strlen(result) == 64) {
-      /* Some signers return the secret, accept it even if we can't verify */
-      connect_valid = TRUE;
-      g_message("[NIP46_LOGIN] Connect acknowledged with 64-char result (assuming valid)");
-    } else {
-      g_warning("[NIP46_LOGIN] Unexpected connect result format: %s", result);
-    }
-
-    free(result);
-    g_free(plaintext);
-
-    if (!connect_valid) {
-      continue;
-    }
-
-    /* The signer's communication pubkey is ALWAYS the sender of the event.
-     * This is NOT the user's pubkey - we need to call get_public_key RPC for that. */
-    g_message("[NIP46_LOGIN] Signer communication pubkey (sender): %s", sender_pubkey);
-
-    /* Defer connect success handling - will call get_public_key RPC to get
-     * the user's ACTUAL pubkey (which may differ from signer communication key) */
-    Nip46ConnectCtx *ctx = g_new0(Nip46ConnectCtx, 1);
-    ctx->self = g_object_ref(self);
-    ctx->signer_pubkey_hex = g_strdup(sender_pubkey);
-    ctx->nostrconnect_uri = g_strdup(self->nostrconnect_uri);
-    ctx->nostrconnect_secret = g_strdup(self->nostrconnect_secret);
-
-    /* Extract relay URL from the nostrconnect URI, fall back to default */
-    ctx->relay_url = NULL;
-    if (self->nostrconnect_uri) {
-      NostrNip46ConnectURI parsed_uri = {0};
-      if (nostr_nip46_uri_parse_connect(self->nostrconnect_uri, &parsed_uri) == 0) {
-        if (parsed_uri.n_relays > 0 && parsed_uri.relays && parsed_uri.relays[0]) {
-          ctx->relay_url = g_strdup(parsed_uri.relays[0]);
-        }
-        nostr_nip46_uri_connect_free(&parsed_uri);
-      }
-    }
-    if (!ctx->relay_url) {
-      ctx->relay_url = g_strdup(NIP46_DEFAULT_RELAY);
-    }
-
-    g_idle_add_full(G_PRIORITY_HIGH, on_nip46_connect_success, ctx, NULL);
+  NostrEvent *event = nostr_event_new();
+  if (!event || nostr_event_deserialize(event, event_json) != 0) {
+    if (event) nostr_event_free(event);
     return;
   }
+
+  int kind = nostr_event_get_kind(event);
+  if (kind != NIP46_RESPONSE_KIND) {
+    nostr_event_free(event);
+    return;
+  }
+
+  const char *content = nostr_event_get_content(event);
+  const char *sender_pubkey = nostr_event_get_pubkey(event);
+
+  if (!content || !sender_pubkey) { nostr_event_free(event); return; }
+
+  g_message("[NIP46_LOGIN] Received NIP-46 event from %s", sender_pubkey);
+
+  /* Decrypt content using NIP-44 with our client secret and the sender's pubkey */
+  uint8_t sender_pubkey_bytes[32];
+  for (int j = 0; j < 32; j++) {
+    unsigned int byte;
+    if (sscanf(sender_pubkey + j * 2, "%2x", &byte) != 1) {
+      g_warning("[NIP46_LOGIN] Invalid sender pubkey");
+      continue;
+    }
+    sender_pubkey_bytes[j] = (uint8_t)byte;
+  }
+
+  /* Decrypt the content using NIP-44 v2 */
+  uint8_t *plaintext_bytes = NULL;
+  size_t plaintext_len = 0;
+  int rc = nostr_nip44_decrypt_v2(
+    self->nostrconnect_secret_bytes,
+    sender_pubkey_bytes,
+    content,
+    &plaintext_bytes,
+    &plaintext_len
+  );
+
+  if (rc != 0 || !plaintext_bytes) {
+    g_warning("[NIP46_LOGIN] Failed to decrypt NIP-46 response: %d", rc);
+    nostr_event_free(event);
+    return;
+  }
+
+  /* Null-terminate the plaintext for JSON parsing */
+  char *plaintext = g_strndup((const char*)plaintext_bytes, plaintext_len);
+  free(plaintext_bytes);
+
+  g_message("[NIP46_LOGIN] Decrypted response: %s", plaintext);
+
+  /* Parse the NIP-46 response JSON:
+   * {"id":"...","result":"<signer_pubkey>","error":null}
+   * For connect request, result contains the signer's pubkey
+   */
+  if (!gnostr_json_is_valid(plaintext)) {
+    g_warning("[NIP46_LOGIN] Failed to parse NIP-46 JSON");
+    g_free(plaintext);
+    nostr_event_free(event);
+    return;
+  }
+
+  /* Check for error - if key exists and is a non-null string */
+  char *err_msg = NULL;
+  if (gnostr_json_has_key(plaintext, "error") &&
+      gnostr_json_get_value_type(plaintext, "error") == GNOSTR_JSON_TYPE_STRING &&
+      (err_msg = gnostr_json_get_string(plaintext, "error", NULL)) != NULL && err_msg && *err_msg) {
+    g_warning("[NIP46_LOGIN] Signer error: %s", err_msg);
+    set_bunker_status(self, BUNKER_STATUS_ERROR, err_msg,
+                      "The remote signer rejected the request");
+    free(err_msg);
+    g_free(plaintext);
+    nostr_event_free(event);
+    return;
+  }
+  free(err_msg);
+
+  /* Get the connect result - should be "ack" or may match our connect secret */
+  char *result = NULL;
+  result = gnostr_json_get_string(plaintext, "result", NULL);
+  if (!result) {
+    g_warning("[NIP46_LOGIN] No result in NIP-46 response");
+    free(result);
+    g_free(plaintext);
+    nostr_event_free(event);
+    return;
+  }
+
+  g_message("[NIP46_LOGIN] Connect response result: %s", result);
+
+  /* Validate the connect response:
+   * - "ack" means simple acknowledgment
+   * - A 64-char hex may be the connect secret (we validate it matches)
+   * The signer's communication pubkey is always the sender_pubkey. */
+  gboolean connect_valid = FALSE;
+  if (strcmp(result, "ack") == 0) {
+    connect_valid = TRUE;
+    g_message("[NIP46_LOGIN] Connect acknowledged with 'ack'");
+  } else if (self->nostrconnect_secret && strlen(result) == 64 &&
+             strcmp(result, self->nostrconnect_secret) == 0) {
+    /* Result matches our connect secret - this is valid per NIP-46 */
+    connect_valid = TRUE;
+    g_message("[NIP46_LOGIN] Connect acknowledged with matching secret");
+  } else if (strlen(result) == 64) {
+    /* Some signers return the secret, accept it even if we can't verify */
+    connect_valid = TRUE;
+    g_message("[NIP46_LOGIN] Connect acknowledged with 64-char result (assuming valid)");
+  } else {
+    g_warning("[NIP46_LOGIN] Unexpected connect result format: %s", result);
+  }
+
+  free(result);
+  g_free(plaintext);
+
+  if (!connect_valid) {
+    nostr_event_free(event);
+    return;
+  }
+
+  /* The signer's communication pubkey is ALWAYS the sender of the event.
+   * This is NOT the user's pubkey - we need to call get_public_key RPC for that. */
+  g_message("[NIP46_LOGIN] Signer communication pubkey (sender): %s", sender_pubkey);
+
+  /* Defer connect success handling - will call get_public_key RPC to get
+   * the user's ACTUAL pubkey (which may differ from signer communication key) */
+  Nip46ConnectCtx *ctx = g_new0(Nip46ConnectCtx, 1);
+  ctx->self = g_object_ref(self);
+  ctx->signer_pubkey_hex = g_strdup(sender_pubkey);
+  ctx->nostrconnect_uri = g_strdup(self->nostrconnect_uri);
+  ctx->nostrconnect_secret = g_strdup(self->nostrconnect_secret);
+
+  /* Extract relay URL from the nostrconnect URI, fall back to default */
+  ctx->relay_url = NULL;
+  if (self->nostrconnect_uri) {
+    NostrNip46ConnectURI parsed_uri = {0};
+    if (nostr_nip46_uri_parse_connect(self->nostrconnect_uri, &parsed_uri) == 0) {
+      if (parsed_uri.n_relays > 0 && parsed_uri.relays && parsed_uri.relays[0]) {
+        ctx->relay_url = g_strdup(parsed_uri.relays[0]);
+      }
+      nostr_nip46_uri_connect_free(&parsed_uri);
+    }
+  }
+  if (!ctx->relay_url) {
+    ctx->relay_url = g_strdup(NIP46_DEFAULT_RELAY);
+  }
+
+  nostr_event_free(event);
+  g_idle_add_full(G_PRIORITY_HIGH, on_nip46_connect_success, ctx, NULL);
 }
 
 static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
@@ -1599,7 +1589,7 @@ static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
             relay_url, self->client_pubkey_hex);
 
   /* Create pool */
-  self->nip46_pool = gnostr_simple_pool_new();
+  self->nip46_pool = gnostr_pool_new();
   if (!self->nip46_pool) {
     g_warning("[NIP46_LOGIN] Failed to create pool");
     return;
@@ -1616,24 +1606,31 @@ static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
   NostrFilters *filters = nostr_filters_new();
   nostr_filters_add(filters, filter);
 
-  /* Connect events signal */
-  self->nip46_events_handler = g_signal_connect(
-    self->nip46_pool, "events",
-    G_CALLBACK(on_nip46_events), self);
+  /* Add relay and subscribe */
+  const char *relays[] = { relay_url };
+  gnostr_pool_sync_relays(self->nip46_pool, (const gchar **)relays, 1);
 
-  /* Start subscription */
-  const char *relays[] = { relay_url, NULL };
-  gnostr_simple_pool_subscribe_many_async(
-    self->nip46_pool,
-    relays,
-    1,
-    filters,
-    self->cancellable,
-    on_nip46_subscribe_done,
-    g_object_ref(self));
-
+  GError *sub_error = NULL;
+  GNostrSubscription *sub = gnostr_pool_subscribe(self->nip46_pool, filters, &sub_error);
   nostr_filters_free(filters);
+  nostr_filter_free(filter);
 
+  if (!sub) {
+    g_warning("[NIP46_LOGIN] Subscription failed: %s",
+              sub_error ? sub_error->message : "(unknown)");
+    set_bunker_status(self, BUNKER_STATUS_ERROR,
+                      "Failed to connect to relay",
+                      "Check your internet connection and try again");
+    g_clear_error(&sub_error);
+    return;
+  }
+
+  self->nip46_sub = sub; /* takes ownership */
+  self->nip46_events_handler = g_signal_connect(
+    sub, "event",
+    G_CALLBACK(on_nip46_sub_event), self);
+
+  g_message("[NIP46_LOGIN] Listening for signer response...");
   self->listening_for_response = TRUE;
 }
 
@@ -1644,13 +1641,15 @@ static void stop_nip46_listener(GnostrLogin *self) {
 
   g_message("[NIP46_LOGIN] Stopping listener");
 
-  if (self->nip46_pool) {
+  if (self->nip46_sub) {
     if (self->nip46_events_handler > 0) {
-      g_signal_handler_disconnect(self->nip46_pool, self->nip46_events_handler);
+      g_signal_handler_disconnect(self->nip46_sub, self->nip46_events_handler);
       self->nip46_events_handler = 0;
     }
-    g_clear_object(&self->nip46_pool);
+    gnostr_subscription_close(self->nip46_sub);
+    g_clear_object(&self->nip46_sub);
   }
+  g_clear_object(&self->nip46_pool);
 
   self->listening_for_response = FALSE;
   gtk_widget_set_visible(self->spinner_bunker, FALSE);

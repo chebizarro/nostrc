@@ -13,10 +13,10 @@
 #include <string.h>
 
 #ifndef GNOSTR_NIP02_CONTACTS_TEST_ONLY
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
+#include "nostr_pool.h"
 #endif
 
 /* Kind 3 = Contact List per NIP-02 */
@@ -219,7 +219,7 @@ static void fetch_context_free(FetchContext *ctx) {
 #ifndef GNOSTR_NIP02_CONTACTS_TEST_ONLY
 
 /* Static pool for contact list operations */
-static GnostrSimplePool *s_contact_list_pool = NULL;
+static GNostrPool *s_contact_list_pool = NULL;
 
 /* Callback when relay query completes */
 static void on_contact_list_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -227,8 +227,8 @@ static void on_contact_list_query_done(GObject *source, GAsyncResult *res, gpoin
     if (!ctx) return;
 
     GError *err = NULL;
-    GPtrArray *results = gnostr_simple_pool_query_single_finish(
-        GNOSTR_SIMPLE_POOL(source), res, &err);
+    GPtrArray *results = gnostr_pool_query_finish(
+        GNOSTR_POOL(source), res, &err);
 
     if (err) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -346,21 +346,20 @@ void gnostr_contact_list_fetch_async(GnostrContactList *self,
 
     /* Use static pool */
     if (!s_contact_list_pool) {
-        s_contact_list_pool = gnostr_simple_pool_new();
+        s_contact_list_pool = gnostr_pool_new();
     }
 
     g_message("nip02_contacts: fetching kind %d for pubkey %.8s from %u relays",
               CONTACT_LIST_KIND, pubkey_hex, relay_arr->len);
 
-    gnostr_simple_pool_query_single_async(
-        s_contact_list_pool,
-        urls,
-        relay_arr->len,
-        filter,
-        NULL,  /* cancellable */
-        on_contact_list_query_done,
-        ctx
-    );
+        gnostr_pool_sync_relays(s_contact_list_pool, (const gchar **)urls, relay_arr->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(s_contact_list_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(s_contact_list_pool, _qf, NULL, /* cancellable */
+        on_contact_list_query_done, ctx);
+    }
 
     g_free(urls);
     g_ptr_array_unref(relay_arr);

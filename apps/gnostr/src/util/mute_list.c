@@ -19,10 +19,10 @@
 #include "nostr-tag.h"
 
 #ifndef GNOSTR_MUTE_LIST_TEST_ONLY
-#include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr_relay.h"
+#include "nostr_pool.h"
 #endif
 
 /* Kind 10000 = Mute List per NIP-51 */
@@ -507,8 +507,8 @@ static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer
     if (!ctx) return;
 
     GError *err = NULL;
-    GPtrArray *results = gnostr_simple_pool_query_single_finish(
-        GNOSTR_SIMPLE_POOL(source), res, &err);
+    GPtrArray *results = gnostr_pool_query_finish(
+        GNOSTR_POOL(source), res, &err);
 
     if (err) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -623,7 +623,7 @@ static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer
 }
 
 /* Static pool for mute list operations */
-static GnostrSimplePool *s_mute_list_pool = NULL;
+static GNostrPool *s_mute_list_pool = NULL;
 
 #endif /* GNOSTR_MUTE_LIST_TEST_ONLY */
 
@@ -682,21 +682,20 @@ void gnostr_mute_list_fetch_async(GnostrMuteList *self,
 
     /* Use static pool */
     if (!s_mute_list_pool) {
-        s_mute_list_pool = gnostr_simple_pool_new();
+        s_mute_list_pool = gnostr_pool_new();
     }
 
     g_message("mute_list: fetching kind %d for pubkey %.8s from %u relays",
               MUTE_LIST_KIND, pubkey_hex, relay_arr->len);
 
-    gnostr_simple_pool_query_single_async(
-        s_mute_list_pool,
-        urls,
-        relay_arr->len,
-        filter,
-        NULL,  /* cancellable */
-        on_mute_list_query_done,
-        ctx
-    );
+        gnostr_pool_sync_relays(s_mute_list_pool, (const gchar **)urls, relay_arr->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(s_mute_list_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(s_mute_list_pool, _qf, NULL, /* cancellable */
+        on_mute_list_query_done, ctx);
+    }
 
     g_free(urls);
     g_ptr_array_unref(relay_arr);
@@ -758,21 +757,19 @@ void gnostr_mute_list_fetch_with_strategy_async(GnostrMuteList *self,
     }
 
     if (!s_mute_list_pool) {
-        s_mute_list_pool = gnostr_simple_pool_new();
+        s_mute_list_pool = gnostr_pool_new();
     }
 
     g_message("mute_list: fetching kind %d for pubkey %.8s from %u relays (strategy=%d)",
               MUTE_LIST_KIND, pubkey_hex, relay_arr->len, strategy);
 
-    gnostr_simple_pool_query_single_async(
-        s_mute_list_pool,
-        urls,
-        relay_arr->len,
-        filter,
-        NULL,
-        on_mute_list_query_done,
-        ctx
-    );
+        gnostr_pool_sync_relays(s_mute_list_pool, (const gchar **)urls, relay_arr->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(s_mute_list_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(s_mute_list_pool, _qf, NULL, on_mute_list_query_done, ctx);
+    }
 
     g_free(urls);
     g_ptr_array_unref(relay_arr);

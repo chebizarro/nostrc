@@ -502,6 +502,10 @@ target_sources(gnostr-live-log PRIVATE
   ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
   ${PROJECT_ROOT}/gobject/src/nostr_json.c
   ${PROJECT_ROOT}/gobject/src/nostr-error.c
+  ${PROJECT_ROOT}/gobject/src/nostr-enums.c
+  ${PROJECT_ROOT}/gobject/src/nostr_pool.c
+  ${PROJECT_ROOT}/gobject/src/nostr_relay.c
+  ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
@@ -583,6 +587,8 @@ if (BUILD_TESTING)
     ${SIGNER_PROXY_C}
     ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
     ${PROJECT_ROOT}/gobject/src/nostr_relay.c
+    ${PROJECT_ROOT}/gobject/src/nostr_pool.c
+    ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
     ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
     ${PROJECT_ROOT}/gobject/src/nostr-enums.c
     ${PROJECT_ROOT}/gobject/src/nostr-error.c
@@ -618,6 +624,8 @@ if (BUILD_TESTING)
     ${SIGNER_PROXY_C}
     ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
     ${PROJECT_ROOT}/gobject/src/nostr_relay.c
+    ${PROJECT_ROOT}/gobject/src/nostr_pool.c
+    ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
     ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
     ${PROJECT_ROOT}/gobject/src/nostr-enums.c
     ${PROJECT_ROOT}/gobject/src/nostr-error.c
