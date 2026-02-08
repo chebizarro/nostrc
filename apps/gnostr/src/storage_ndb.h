@@ -160,6 +160,40 @@ guint storage_ndb_count_zaps(const char *event_id_hex);
  * Returns TRUE on success, FALSE on error. */
 gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, gint64 *total_msat);
 
+/* ============== Batch Reaction/Zap API (nostrc-qff) ============== */
+
+/* Result struct for batch zap stats */
+typedef struct {
+  guint zap_count;
+  gint64 total_msat;
+} StorageNdbZapStats;
+
+/* Batch count reactions (kind 7) for multiple events in a single query.
+ * event_ids: array of 64-char hex event IDs
+ * n_ids: number of event IDs
+ * Returns GHashTable mapping event_id_hex (owned) -> GUINT_TO_POINTER(count).
+ * Only events with count > 0 appear in the table.
+ * Caller must g_hash_table_unref(). */
+GHashTable *storage_ndb_count_reactions_batch(const char * const *event_ids, guint n_ids);
+
+/* Batch check if user has reacted to multiple events in a single query.
+ * event_ids: array of 64-char hex event IDs
+ * n_ids: number of event IDs
+ * user_pubkey_hex: 64-char hex pubkey of the user
+ * Returns GHashTable mapping event_id_hex (owned) -> GINT_TO_POINTER(TRUE).
+ * Only events the user HAS reacted to appear in the table.
+ * Caller must g_hash_table_unref(). */
+GHashTable *storage_ndb_user_has_reacted_batch(const char * const *event_ids, guint n_ids,
+                                                const char *user_pubkey_hex);
+
+/* Batch get zap stats for multiple events in a single query.
+ * event_ids: array of 64-char hex event IDs
+ * n_ids: number of event IDs
+ * Returns GHashTable mapping event_id_hex (owned) -> StorageNdbZapStats* (owned).
+ * Only events with zaps appear in the table.
+ * Caller must g_hash_table_unref(). */
+GHashTable *storage_ndb_get_zap_stats_batch(const char * const *event_ids, guint n_ids);
+
 /* ============== NIP-40 Expiration Timestamp API ============== */
 
 /* Get expiration timestamp from note tags.

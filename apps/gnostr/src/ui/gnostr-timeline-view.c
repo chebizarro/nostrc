@@ -763,6 +763,10 @@ struct _GnostrTimelineView {
   gdouble scroll_velocity;            /* Scroll velocity in pixels/ms */
   gboolean is_fast_scrolling;         /* TRUE if user is scrolling fast (>threshold) */
   guint scroll_idle_id;               /* Source ID for scroll idle timeout */
+
+  /* nostrc-qff: Debounced batch metadata loading */
+  GPtrArray *pending_metadata_items;  /* GnNostrEventItem* awaiting batch metadata */
+  guint metadata_batch_idle_id;       /* g_idle source for batch metadata load */
 };
 
 G_DEFINE_TYPE(GnostrTimelineView, gnostr_timeline_view, GTK_TYPE_WIDGET)
@@ -847,6 +851,16 @@ static void gnostr_timeline_view_dispose(GObject *obj) {
   }
   g_clear_pointer(&self->nip65_pending_authors, g_ptr_array_unref);
   g_clear_pointer(&self->nip65_pending_events, g_hash_table_unref);
+
+  /* nostrc-qff: Clean up batch metadata state */
+  if (self->metadata_batch_idle_id > 0) {
+    g_source_remove(self->metadata_batch_idle_id);
+    self->metadata_batch_idle_id = 0;
+  }
+  if (self->pending_metadata_items) {
+    g_ptr_array_unref(self->pending_metadata_items);
+    self->pending_metadata_items = NULL;
+  }
 
   /* Dispose template children before chaining up so they are unparented first */
   gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_TIMELINE_VIEW);
@@ -2145,6 +2159,123 @@ static void fetch_reactions_from_author_relays(GnostrTimelineView *self,
 
 /* ============== End nostrc-lig9 ============== */
 
+/* nostrc-qff: Batch metadata idle callback.
+ * Fires after all factory_bind_cb calls in the current main loop iteration,
+ * processes pending items' reaction/zap metadata in batch. */
+static gboolean metadata_batch_idle_cb(gpointer user_data)
+{
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  self->metadata_batch_idle_id = 0;
+
+  if (!self->pending_metadata_items || self->pending_metadata_items->len == 0)
+    return G_SOURCE_REMOVE;
+
+  guint n = self->pending_metadata_items->len;
+  g_debug("[BATCH] Processing %u pending metadata items", n);
+
+  /* Collect event IDs */
+  g_autofree const char **event_ids = g_new0(const char *, n);
+  g_autofree gchar **owned_ids = g_new0(gchar *, n);
+  guint id_count = 0;
+
+  for (guint i = 0; i < n; i++) {
+    GObject *obj = g_ptr_array_index(self->pending_metadata_items, i);
+    if (!G_IS_OBJECT(obj)) continue;
+
+    gchar *id_hex = NULL;
+    g_object_get(obj, "event-id", &id_hex, NULL);
+    if (id_hex && strlen(id_hex) == 64) {
+      owned_ids[id_count] = id_hex;
+      event_ids[id_count] = id_hex;
+      id_count++;
+    } else {
+      g_free(id_hex);
+    }
+  }
+
+  if (id_count == 0) {
+    g_ptr_array_set_size(self->pending_metadata_items, 0);
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Batch queries: 3 queries instead of 3*N */
+  g_autoptr(GHashTable) reaction_counts = storage_ndb_count_reactions_batch(event_ids, id_count);
+
+  gchar *user_pubkey = get_current_user_pubkey_hex();
+  g_autoptr(GHashTable) user_reacted = user_pubkey
+    ? storage_ndb_user_has_reacted_batch(event_ids, id_count, user_pubkey)
+    : NULL;
+
+  g_autoptr(GHashTable) zap_stats = storage_ndb_get_zap_stats_batch(event_ids, id_count);
+
+  /* Distribute results to items */
+  for (guint i = 0; i < n; i++) {
+    GObject *obj = g_ptr_array_index(self->pending_metadata_items, i);
+    if (!G_IS_OBJECT(obj)) continue;
+
+    gchar *id_hex = NULL;
+    gchar *pubkey = NULL;
+    g_object_get(obj, "event-id", &id_hex, "pubkey", &pubkey, NULL);
+
+    if (id_hex && strlen(id_hex) == 64) {
+      /* Reactions */
+      gpointer val = g_hash_table_lookup(reaction_counts, id_hex);
+      if (val) {
+        guint count = GPOINTER_TO_UINT(val);
+        if (count > 0)
+          gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), count);
+      }
+
+      /* User has reacted */
+      if (user_reacted && g_hash_table_lookup(user_reacted, id_hex)) {
+        gn_nostr_event_item_set_is_liked(GN_NOSTR_EVENT_ITEM(obj), TRUE);
+      }
+
+      /* Zap stats */
+      StorageNdbZapStats *zs = g_hash_table_lookup(zap_stats, id_hex);
+      if (zs && zs->zap_count > 0) {
+        gn_nostr_event_item_set_zap_count(GN_NOSTR_EVENT_ITEM(obj), zs->zap_count);
+        gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), zs->total_msat);
+      }
+
+      /* Trigger NIP-65 relay fetch for reactions */
+      if (pubkey && strlen(pubkey) == 64) {
+        fetch_reactions_from_author_relays(self, id_hex, pubkey);
+      }
+    }
+
+    g_free(id_hex);
+    g_free(pubkey);
+  }
+
+  g_free(user_pubkey);
+
+  /* Free owned ID strings */
+  for (guint i = 0; i < id_count; i++)
+    g_free(owned_ids[i]);
+
+  /* Clear pending list */
+  g_ptr_array_set_size(self->pending_metadata_items, 0);
+
+  g_debug("[BATCH] Completed batch metadata load for %u events", id_count);
+  return G_SOURCE_REMOVE;
+}
+
+/* nostrc-qff: Schedule a batch metadata load for items that need it.
+ * Adds the item to the pending list and schedules an idle callback. */
+static void schedule_metadata_batch(GnostrTimelineView *self, GObject *item)
+{
+  if (!self->pending_metadata_items) {
+    self->pending_metadata_items = g_ptr_array_new_with_free_func(g_object_unref);
+  }
+
+  g_ptr_array_add(self->pending_metadata_items, g_object_ref(item));
+
+  if (self->metadata_batch_idle_id == 0) {
+    self->metadata_batch_idle_id = g_idle_add(metadata_batch_idle_cb, self);
+  }
+}
+
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f;
   GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(data);
@@ -2563,42 +2694,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       gboolean is_visible = gnostr_timeline_view_is_item_visible(self, item_position);
       gboolean defer_metadata = self && (gnostr_timeline_view_is_fast_scrolling(self) || !is_visible);
 
+      /* nostrc-qff: Batch metadata loading. Instead of 3 individual DB queries
+       * per item (N+1 pattern), schedule for batch processing. The idle callback
+       * fires after all bind calls in this main loop iteration complete, doing
+       * 3 total queries instead of 3*N. */
       if (!defer_metadata) {
-        /* If model doesn't have reaction data, fetch from local storage */
-        if (like_count == 0 && id_hex && strlen(id_hex) == 64) {
-          like_count = storage_ndb_count_reactions(id_hex);
-          if (like_count > 0) {
-            gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), like_count);
-          }
+        if ((like_count == 0 || zap_count == 0) && id_hex && strlen(id_hex) == 64) {
+          schedule_metadata_batch(self, obj);
         }
-
-        /* Check if current user has liked this event (from local storage) */
-        if (!is_liked && id_hex && strlen(id_hex) == 64 && user_pubkey) {
-          is_liked = storage_ndb_user_has_reacted(id_hex, user_pubkey);
-          if (is_liked) {
-            gn_nostr_event_item_set_is_liked(GN_NOSTR_EVENT_ITEM(obj), is_liked);
-          }
-        }
-
-        /* NIP-57: If model doesn't have zap data, fetch from local storage */
-        if (zap_count == 0 && id_hex && strlen(id_hex) == 64) {
-          guint fetched_count = 0;
-          gint64 fetched_total = 0;
-          if (storage_ndb_get_zap_stats(id_hex, &fetched_count, &fetched_total)) {
-            if (fetched_count > 0) {
-              gn_nostr_event_item_set_zap_count(GN_NOSTR_EVENT_ITEM(obj), fetched_count);
-              gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), fetched_total);
-              zap_count = fetched_count;
-              zap_total = fetched_total;
-            }
-          }
-        }
-
-        /* nostrc-lig9: Fetch reactions from post author's NIP-65 relays if we haven't already */
-        if (self && id_hex && pubkey && strlen(id_hex) == 64 && strlen(pubkey) == 64) {
-          fetch_reactions_from_author_relays(self, id_hex, pubkey);
-        }
-
         gtk_widget_remove_css_class(row, "needs-metadata-refresh");
       } else {
         /* Mark for deferred refresh when scroll stops or item becomes visible */
@@ -2757,6 +2860,7 @@ static void update_visible_range(GnostrTimelineView *self) {
 }
 
 /* nostrc-nke8: Refresh metadata for visible items that were deferred during fast scroll */
+/* nostrc-qff: Batch version — 3 queries total instead of 3*N */
 static void refresh_visible_items_metadata(GnostrTimelineView *self) {
   if (!self || !self->selection_model) return;
 
@@ -2766,80 +2870,98 @@ static void refresh_visible_items_metadata(GnostrTimelineView *self) {
   guint n_items = g_list_model_get_n_items(model);
   if (n_items == 0) return;
 
-  /* Get current user pubkey for reaction checks */
-  gchar *user_pubkey = get_current_user_pubkey_hex();
+  /* Pass 1: Collect items needing metadata refresh */
+  GPtrArray *items = g_ptr_array_new_with_free_func(g_object_unref);
+  GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
 
-  /* Iterate visible range and load deferred metadata */
-  guint refresh_count = 0;
+  extern GType gn_nostr_event_item_get_type(void);
+
   for (guint i = self->visible_range_start; i < self->visible_range_end && i < n_items; i++) {
     GObject *obj = g_list_model_get_item(model, i);
     if (!obj) continue;
 
-    /* Only handle GnNostrEventItem */
-    extern GType gn_nostr_event_item_get_type(void);
     if (!G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       g_object_unref(obj);
       continue;
     }
 
-    /* Check if metadata was already loaded (like_count > 0 or zap_count > 0) */
     guint like_count = gn_nostr_event_item_get_like_count(GN_NOSTR_EVENT_ITEM(obj));
     guint zap_count = gn_nostr_event_item_get_zap_count(GN_NOSTR_EVENT_ITEM(obj));
 
-    /* If metadata seems missing, fetch it */
     if (like_count == 0 || zap_count == 0) {
       gchar *id_hex = NULL;
-      gchar *pubkey = NULL;
-      g_object_get(obj, "event-id", &id_hex, "pubkey", &pubkey, NULL);
+      g_object_get(obj, "event-id", &id_hex, NULL);
 
       if (id_hex && strlen(id_hex) == 64) {
-        /* Fetch reaction count from local storage */
-        if (like_count == 0) {
-          like_count = storage_ndb_count_reactions(id_hex);
-          if (like_count > 0) {
-            gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), like_count);
-          }
-        }
-
-        /* Check if user has liked */
-        if (user_pubkey && !gn_nostr_event_item_get_is_liked(GN_NOSTR_EVENT_ITEM(obj))) {
-          gboolean is_liked = storage_ndb_user_has_reacted(id_hex, user_pubkey);
-          if (is_liked) {
-            gn_nostr_event_item_set_is_liked(GN_NOSTR_EVENT_ITEM(obj), is_liked);
-          }
-        }
-
-        /* Fetch zap stats from local storage */
-        if (zap_count == 0) {
-          guint fetched_count = 0;
-          gint64 fetched_total = 0;
-          if (storage_ndb_get_zap_stats(id_hex, &fetched_count, &fetched_total) && fetched_count > 0) {
-            gn_nostr_event_item_set_zap_count(GN_NOSTR_EVENT_ITEM(obj), fetched_count);
-            gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), fetched_total);
-          }
-        }
-
-        /* Trigger NIP-65 relay fetch for reactions */
-        if (pubkey && strlen(pubkey) == 64) {
-          fetch_reactions_from_author_relays(self, id_hex, pubkey);
-        }
-
-        refresh_count++;
+        g_ptr_array_add(items, obj); /* takes ownership of ref */
+        g_ptr_array_add(ids, id_hex); /* takes ownership */
+        continue; /* skip unref below */
       }
-
       g_free(id_hex);
-      g_free(pubkey);
     }
 
     g_object_unref(obj);
   }
 
-  g_free(user_pubkey);
-
-  if (refresh_count > 0) {
-    g_debug("[SCROLL] Refreshed metadata for %u deferred items in visible range [%u, %u)",
-            refresh_count, self->visible_range_start, self->visible_range_end);
+  if (ids->len == 0) {
+    g_ptr_array_unref(items);
+    g_ptr_array_unref(ids);
+    return;
   }
+
+  guint id_count = ids->len;
+  const char **event_ids = (const char **)ids->pdata;
+
+  g_debug("[SCROLL] Batch-refreshing metadata for %u deferred items in visible range [%u, %u)",
+          id_count, self->visible_range_start, self->visible_range_end);
+
+  /* Pass 2: 3 batch queries */
+  GHashTable *reaction_counts = storage_ndb_count_reactions_batch(event_ids, id_count);
+
+  gchar *user_pubkey = get_current_user_pubkey_hex();
+  GHashTable *user_reacted = user_pubkey
+    ? storage_ndb_user_has_reacted_batch(event_ids, id_count, user_pubkey)
+    : NULL;
+
+  GHashTable *zap_stats = storage_ndb_get_zap_stats_batch(event_ids, id_count);
+
+  /* Pass 3: Distribute results to items */
+  for (guint i = 0; i < items->len; i++) {
+    GObject *obj = g_ptr_array_index(items, i);
+    const char *id_hex = g_ptr_array_index(ids, i);
+
+    gpointer val = g_hash_table_lookup(reaction_counts, id_hex);
+    if (val) {
+      guint count = GPOINTER_TO_UINT(val);
+      if (count > 0)
+        gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), count);
+    }
+
+    if (user_reacted && g_hash_table_lookup(user_reacted, id_hex)) {
+      gn_nostr_event_item_set_is_liked(GN_NOSTR_EVENT_ITEM(obj), TRUE);
+    }
+
+    StorageNdbZapStats *zs = g_hash_table_lookup(zap_stats, id_hex);
+    if (zs && zs->zap_count > 0) {
+      gn_nostr_event_item_set_zap_count(GN_NOSTR_EVENT_ITEM(obj), zs->zap_count);
+      gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), zs->total_msat);
+    }
+
+    /* Trigger NIP-65 relay fetch for reactions */
+    gchar *pubkey = NULL;
+    g_object_get(obj, "pubkey", &pubkey, NULL);
+    if (pubkey && strlen(pubkey) == 64) {
+      fetch_reactions_from_author_relays(self, id_hex, pubkey);
+    }
+    g_free(pubkey);
+  }
+
+  g_hash_table_unref(reaction_counts);
+  if (user_reacted) g_hash_table_unref(user_reacted);
+  g_hash_table_unref(zap_stats);
+  g_free(user_pubkey);
+  g_ptr_array_unref(items);
+  g_ptr_array_unref(ids);
 }
 
 static void on_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {

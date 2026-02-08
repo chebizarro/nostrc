@@ -883,6 +883,212 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
   return TRUE;
 }
 
+/* ============== Batch Reaction/Zap API (nostrc-qff) ============== */
+
+/* Helper: extract the last "e" tag value from an event JSON's tags.
+ * In NIP-25/NIP-57, the last "e" tag references the target event.
+ * Returns newly allocated string or NULL. Caller must g_free(). */
+typedef struct {
+  gchar *last_e_value;
+} StorageNdbExtractECtx;
+
+static gboolean storage_ndb_extract_e_tag_cb(gsize idx, const gchar *element_json, gpointer user_data)
+{
+  (void)idx;
+  StorageNdbExtractECtx *ctx = user_data;
+  if (!gnostr_json_is_array_str(element_json)) return TRUE;
+
+  char *name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
+  if (!name) return TRUE;
+
+  if (g_strcmp0(name, "e") == 0) {
+    g_free(ctx->last_e_value);
+    ctx->last_e_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
+  }
+  g_free(name);
+  return TRUE; /* continue to find the LAST "e" tag */
+}
+
+static gchar *storage_ndb_extract_referenced_event_id(const char *event_json)
+{
+  if (!event_json || !gnostr_json_is_valid(event_json)) return NULL;
+
+  char *tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (!tags_json) return NULL;
+
+  StorageNdbExtractECtx ctx = { .last_e_value = NULL };
+  gnostr_json_array_foreach_root(tags_json, storage_ndb_extract_e_tag_cb, &ctx);
+
+  g_free(tags_json);
+  return ctx.last_e_value;
+}
+
+/* Build a JSON filter with multiple event IDs in the #e array.
+ * kind: event kind (7 for reactions, 9735 for zaps)
+ * event_ids: array of 64-char hex event IDs
+ * n_ids: number of IDs
+ * extra: optional extra filter JSON fragment (e.g. "\"authors\":[\"...\"],")
+ * Returns newly allocated filter JSON string. */
+static gchar *storage_ndb_build_batch_filter(int kind, const char * const *event_ids, guint n_ids,
+                                              const char *extra)
+{
+  GString *filter = g_string_new("{\"kinds\":[");
+  g_string_append_printf(filter, "%d],", kind);
+  if (extra) g_string_append(filter, extra);
+  g_string_append(filter, "\"#e\":[");
+  for (guint i = 0; i < n_ids; i++) {
+    if (i > 0) g_string_append_c(filter, ',');
+    g_string_append_printf(filter, "\"%s\"", event_ids[i]);
+  }
+  g_string_append(filter, "]}");
+  return g_string_free(filter, FALSE);
+}
+
+GHashTable *storage_ndb_count_reactions_batch(const char * const *event_ids, guint n_ids)
+{
+  GHashTable *counts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!event_ids || n_ids == 0) return counts;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return counts;
+
+  gchar *filter_json = storage_ndb_build_batch_filter(7, event_ids, n_ids, NULL);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  storage_ndb_end_query(txn);
+
+  if (rc != 0 || count == 0) {
+    if (results) storage_ndb_free_results(results, count);
+    return counts;
+  }
+
+  /* Group by referenced event ID */
+  for (int i = 0; i < count; i++) {
+    if (!results[i]) continue;
+    gchar *ref_id = storage_ndb_extract_referenced_event_id(results[i]);
+    if (!ref_id || strlen(ref_id) != 64) { g_free(ref_id); continue; }
+
+    gpointer existing = g_hash_table_lookup(counts, ref_id);
+    guint cur = existing ? GPOINTER_TO_UINT(existing) : 0;
+    g_hash_table_insert(counts, ref_id, GUINT_TO_POINTER(cur + 1));
+    /* ref_id ownership transferred to hash table */
+  }
+
+  if (results) storage_ndb_free_results(results, count);
+  return counts;
+}
+
+GHashTable *storage_ndb_user_has_reacted_batch(const char * const *event_ids, guint n_ids,
+                                                const char *user_pubkey_hex)
+{
+  GHashTable *reacted = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!event_ids || n_ids == 0 || !user_pubkey_hex || strlen(user_pubkey_hex) != 64)
+    return reacted;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return reacted;
+
+  /* Build filter with author constraint */
+  gchar *author_frag = g_strdup_printf("\"authors\":[\"%s\"],", user_pubkey_hex);
+  gchar *filter_json = storage_ndb_build_batch_filter(7, event_ids, n_ids, author_frag);
+  g_free(author_frag);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  storage_ndb_end_query(txn);
+
+  if (rc != 0 || count == 0) {
+    if (results) storage_ndb_free_results(results, count);
+    return reacted;
+  }
+
+  /* Mark each referenced event as reacted-to */
+  for (int i = 0; i < count; i++) {
+    if (!results[i]) continue;
+    gchar *ref_id = storage_ndb_extract_referenced_event_id(results[i]);
+    if (!ref_id || strlen(ref_id) != 64) { g_free(ref_id); continue; }
+
+    g_hash_table_insert(reacted, ref_id, GINT_TO_POINTER(TRUE));
+  }
+
+  if (results) storage_ndb_free_results(results, count);
+  return reacted;
+}
+
+GHashTable *storage_ndb_get_zap_stats_batch(const char * const *event_ids, guint n_ids)
+{
+  GHashTable *stats = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  if (!event_ids || n_ids == 0) return stats;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return stats;
+
+  gchar *filter_json = storage_ndb_build_batch_filter(9735, event_ids, n_ids, NULL);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  storage_ndb_end_query(txn);
+
+  if (rc != 0 || count == 0) {
+    if (results) storage_ndb_free_results(results, count);
+    return stats;
+  }
+
+  /* Group by referenced event ID and accumulate amounts */
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    gchar *ref_id = storage_ndb_extract_referenced_event_id(results[i]);
+    if (!ref_id || strlen(ref_id) != 64) { g_free(ref_id); continue; }
+
+    /* Get or create stats entry for this event */
+    StorageNdbZapStats *entry = g_hash_table_lookup(stats, ref_id);
+    if (!entry) {
+      entry = g_new0(StorageNdbZapStats, 1);
+      g_hash_table_insert(stats, g_strdup(ref_id), entry);
+    }
+    entry->zap_count++;
+
+    /* Parse bolt11 invoice for amount */
+    char *tags_json = gnostr_json_get_raw(results[i], "tags", NULL);
+    if (tags_json) {
+      StorageNdbBolt11Ctx bctx = { .bolt11 = NULL, .found = FALSE };
+      gnostr_json_array_foreach_root(tags_json, storage_ndb_find_bolt11_cb, &bctx);
+
+      if (bctx.bolt11 && *bctx.bolt11) {
+        char *fail = NULL;
+        struct bolt11 *b11 = bolt11_decode_minimal(NULL, bctx.bolt11, &fail);
+        if (b11) {
+          if (b11->msat) {
+            entry->total_msat += (gint64)b11->msat->millisatoshis;
+          }
+          tal_free(b11);
+        } else if (fail) {
+          g_debug("storage_ndb: batch zap bolt11 parse fail: %s", fail);
+          free(fail);
+        }
+      }
+      g_free(bctx.bolt11);
+      g_free(tags_json);
+    }
+
+    g_free(ref_id);
+  }
+
+  if (results) storage_ndb_free_results(results, count);
+  return stats;
+}
+
 /* ============== NIP-40 Expiration Timestamp API ============== */
 
 /* Get expiration timestamp from note tags.
