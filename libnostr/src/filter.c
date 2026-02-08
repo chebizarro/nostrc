@@ -6,6 +6,7 @@
 #include "security_limits_runtime.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include "nostr-json-parse.h"
 
 #define INITIAL_CAPACITY 4  // Initial capacity for Filters array
 
@@ -740,11 +741,6 @@ char *nostr_filter_serialize_compact(const NostrFilter *f) {
 }
 
 /* --- Compact deserializer helpers --- */
-static const char *skip_ws_f(const char *p) {
-    if (!p) return p;
-    while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
-    return p;
-}
 static const char *skip_literal(const char *p) {
     if (!p) return NULL;
     // skip true/false/null or number
@@ -770,7 +766,7 @@ static const char *skip_array_d(const char *p, int depth);
 static const char *skip_object_d(const char *p, int depth);
 static const char *skip_value_d(const char *p, int depth) {
     if (!p || depth > SKIP_MAX_DEPTH) return NULL;
-    p = skip_ws_f(p);
+    p = nostr_json_skip_ws(p);
     if (*p == '{') return skip_object_d(p, depth + 1);
     if (*p == '[') return skip_array_d(p, depth + 1);
     if (*p == '"') return skip_string(p);
@@ -779,13 +775,13 @@ static const char *skip_value_d(const char *p, int depth) {
 static const char *skip_array_d(const char *p, int depth) {
     if (!p || *p != '[' || depth > SKIP_MAX_DEPTH) return NULL;
     ++p;
-    p = skip_ws_f(p);
+    p = nostr_json_skip_ws(p);
     if (*p == ']') return p+1;
     while (*p) {
         const char *q = skip_value_d(p, depth);
         if (!q) return NULL;
-        p = skip_ws_f(q);
-        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        p = nostr_json_skip_ws(q);
+        if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == ']') return p+1;
         return NULL;
     }
@@ -794,19 +790,19 @@ static const char *skip_array_d(const char *p, int depth) {
 static const char *skip_object_d(const char *p, int depth) {
     if (!p || *p != '{' || depth > SKIP_MAX_DEPTH) return NULL;
     ++p;
-    p = skip_ws_f(p);
+    p = nostr_json_skip_ws(p);
     if (*p == '}') return p+1;
     while (*p) {
         const char *q = skip_string(p);
         if (!q) return NULL;
-        p = skip_ws_f(q);
+        p = nostr_json_skip_ws(q);
         if (*p != ':') return NULL;
         ++p;
-        p = skip_ws_f(p);
+        p = nostr_json_skip_ws(p);
         q = skip_value_d(p, depth);
         if (!q) return NULL;
-        p = skip_ws_f(q);
-        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        p = nostr_json_skip_ws(q);
+        if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == '}') return p+1;
         return NULL;
     }
@@ -816,7 +812,7 @@ static const char *skip_value(const char *p) { return skip_value_d(p, 0); }
 
 static char *parse_string_dup(const char **pp) {
     if (!pp || !*pp) return NULL;
-    const char *p = skip_ws_f(*pp);
+    const char *p = nostr_json_skip_ws(*pp);
     if (*p != '"') return NULL;
     ++p;
     sb_t sb; sb_init(&sb); if (!sb.buf) return NULL;
@@ -838,10 +834,10 @@ static char *parse_string_dup(const char **pp) {
 
 static int parse_string_array_values_as_tags(NostrFilter *filter, const char *tag_key, const char **pp) {
     if (!filter || !tag_key || !pp || !*pp) return 0;
-    const char *p = skip_ws_f(*pp);
+    const char *p = nostr_json_skip_ws(*pp);
     if (*p != '[') return 0;
     ++p;
-    p = skip_ws_f(p);
+    p = nostr_json_skip_ws(p);
     if (*p == ']') { *pp = p+1; return 1; }
     while (*p) {
         // value must be string
@@ -862,8 +858,8 @@ static int parse_string_array_values_as_tags(NostrFilter *filter, const char *ta
                 return 0;
             }
         }
-        p = skip_ws_f(ps);
-        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        p = nostr_json_skip_ws(ps);
+        if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == ']') { *pp = p+1; return 1; }
         return 0;
     }
@@ -873,10 +869,10 @@ static int parse_string_array_values_as_tags(NostrFilter *filter, const char *ta
 /* Parse a JSON string array into a StringArray */
 static int parse_string_array_to_array(StringArray *arr, const char **pp) {
     if (!arr || !pp || !*pp) return 0;
-    const char *p = skip_ws_f(*pp);
+    const char *p = nostr_json_skip_ws(*pp);
     if (*p != '[') return 0;
     ++p;
-    p = skip_ws_f(p);
+    p = nostr_json_skip_ws(p);
     if (*p == ']') { *pp = p+1; return 1; }
     while (*p) {
         if (*p != '"') return 0;
@@ -885,8 +881,8 @@ static int parse_string_array_to_array(StringArray *arr, const char **pp) {
         if (!val) return 0;
         string_array_add(arr, val);
         free(val);
-        p = skip_ws_f(ps);
-        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        p = nostr_json_skip_ws(ps);
+        if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == ']') { *pp = p+1; return 1; }
         return 0;
     }
@@ -896,10 +892,10 @@ static int parse_string_array_to_array(StringArray *arr, const char **pp) {
 /* Parse a JSON integer array into an IntArray */
 static int parse_int_array_to_array(IntArray *arr, const char **pp) {
     if (!arr || !pp || !*pp) return 0;
-    const char *p = skip_ws_f(*pp);
+    const char *p = nostr_json_skip_ws(*pp);
     if (*p != '[') return 0;
     ++p;
-    p = skip_ws_f(p);
+    p = nostr_json_skip_ws(p);
     if (*p == ']') { *pp = p+1; return 1; }
     while (*p) {
         int sign = 1;
@@ -909,8 +905,8 @@ static int parse_int_array_to_array(IntArray *arr, const char **pp) {
         long val = 0;
         while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); ++p; }
         int_array_add(arr, (int)(sign * val));
-        p = skip_ws_f(p);
-        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        p = nostr_json_skip_ws(p);
+        if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == ']') { *pp = p+1; return 1; }
         return 0;
     }
@@ -920,7 +916,7 @@ static int parse_int_array_to_array(IntArray *arr, const char **pp) {
 /* Parse a JSON integer value */
 static int parse_int64_value(const char **pp, int64_t *out) {
     if (!pp || !*pp || !out) return 0;
-    const char *p = skip_ws_f(*pp);
+    const char *p = nostr_json_skip_ws(*pp);
     int sign = 1;
     if (*p == '-') { sign = -1; ++p; }
     else if (*p == '+') { ++p; }
@@ -938,19 +934,19 @@ static int parse_int64_value(const char **pp, int64_t *out) {
 
 int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
     if (!filter || !json) return 0;
-    const char *p = skip_ws_f(json);
+    const char *p = nostr_json_skip_ws(json);
     if (*p != '{') return 0;
     ++p;
-    p = skip_ws_f(p);
+    p = nostr_json_skip_ws(p);
     int touched = 0;
     if (*p == '}') return 1; // empty object ok
     while (*p) {
         // parse key
         char *key = parse_string_dup(&p);
         if (!key) return 0;
-        p = skip_ws_f(p);
+        p = nostr_json_skip_ws(p);
         if (*p != ':') { free(key); return 0; }
-        ++p; p = skip_ws_f(p);
+        ++p; p = nostr_json_skip_ws(p);
         if (key[0] == '#' && key[1] != '\0' && key[2] == '\0') {
             // dynamic tag key of form "#e"
             if (*p != '[') { free(key); return 0; }
@@ -1003,8 +999,8 @@ int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
             if (!q) return 0;
             p = q;
         }
-        p = skip_ws_f(p);
-        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        p = nostr_json_skip_ws(p);
+        if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == '}') return touched ? 1 : 0;
         return 0;
     }

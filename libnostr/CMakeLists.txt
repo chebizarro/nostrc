@@ -44,6 +44,7 @@ set(LIBNOSTR_SOURCES
   src/json.c
   src/relay_store.c
   src/utils.c
+  src/nostr_json_parse.c
   src/simplepool.c
   src/brown_list.c
   src/secure_buf.c

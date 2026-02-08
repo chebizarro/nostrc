@@ -16,14 +16,7 @@
 #include <stdarg.h>
 #include "string_array.h"
 #include <stdint.h>
-#include <limits.h>
-
-static inline int hexval_char(char ch) {
-    if (ch >= '0' && ch <= '9') return ch - '0';
-    if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
-    if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
-    return -1;
-}
+#include "nostr-json-parse.h"
 
 /* === NIP-01 canonical preimage serializer ===
  * Build the exact JSON array: [0, pubkey, created_at, kind, tags, content]
@@ -146,25 +139,19 @@ NostrEvent *nostr_event_new(void) {
 
 /* ---- Compact JSON object deserializer (simple, unescaped, no-tags fast path) ---- */
 
-static const char *skip_ws_local(const char *p) {
-    if (!p) return p;
-    while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
-    return p;
-}
-
 /* Match a JSON key in-place: expects p to point at '"'. If it matches
  * the given key literal, advances *pp to the character after the colon
  * (value start, possibly with whitespace) and returns 1. Otherwise 0. */
 static int match_key_advance(const char **pp, const char *key) {
     if (!pp || !*pp || !key) return 0;
-    const char *p = skip_ws_local(*pp);
+    const char *p = nostr_json_skip_ws(*pp);
     if (*p != '"') return 0;
     ++p;
     const char *k = key;
     while (*k && *p == *k) { ++p; ++k; }
     if (*k != '\0' || *p != '"') return 0; /* not exact match */
     ++p; /* after closing quote */
-    p = skip_ws_local(p);
+    p = nostr_json_skip_ws(p);
     if (*p != ':') return 0;
     ++p; /* after ':' */
     *pp = p;
@@ -182,7 +169,7 @@ static const char *find_key(const char *json, const char *key) {
         // ensure it's a JSON key: preceded by '"' and followed by '"'
         if (p > json && *(p-1) == '"' && *(p + klen) == '"') {
             const char *q = p + klen + 1; // after closing quote
-            q = skip_ws_local(q);
+            q = nostr_json_skip_ws(q);
             if (*q == ':') return q + 1; // point to value start (maybe ws)
         }
         p += klen;
@@ -190,136 +177,9 @@ static const char *find_key(const char *json, const char *key) {
     return NULL;
 }
 
-// nostrc-g4t: max realloc cap for JSON string buffers (16 MB)
-#define JSON_STRING_MAX_CAP (16 * 1024 * 1024)
-
-static int parse_json_string_fast(const char **pp, char **out) {
-    if (!pp || !*pp || !out) return 0;
-    const char *p = skip_ws_local(*pp);
-    if (*p != '"') return 0;
-    ++p;
-    const char *start = p;
-    // First scan to see if there are any escapes; if none, copy directly
-    const char *q = p;
-    int has_escape = 0;
-    while (*q && *q != '"') {
-        if (*q == '\\') { has_escape = 1; break; }
-        ++q;
-    }
-    if (!*q) return 0; // missing closing quote
-    if (!has_escape) {
-        size_t len = (size_t)(q - start);
-        char *s = (char *)malloc(len + 1);
-        if (!s) return 0;
-        memcpy(s, start, len);
-        s[len] = '\0';
-        *out = s;
-        *pp = q + 1;
-        return 1;
-    }
-    // Has escapes: decode common ones; bail on unicode (\u)
-    // Allocate buffer equal to remaining length as upper bound
-    size_t cap = (size_t)(strlen(p) + 1);
-    char *buf = (char *)malloc(cap);
-    if (!buf) return 0;
-    size_t len = 0;
-    while (*p && *p != '"') {
-        unsigned char c = (unsigned char)*p++;
-        if (c == '\\') {
-            if (!*p) { free(buf); return 0; } // nostrc-g4t: null-check after backslash
-            char e = *p++;
-            switch (e) {
-                case '"': buf[len++] = '"'; break;
-                case '\\': buf[len++] = '\\'; break;
-                case '/': buf[len++] = '/'; break;
-                case 'b': buf[len++] = '\b'; break;
-                case 'f': buf[len++] = '\f'; break;
-                case 'n': buf[len++] = '\n'; break;
-                case 'r': buf[len++] = '\r'; break;
-                case 't': buf[len++] = '\t'; break;
-                case 'u': {
-                    // nostrc-g4t: Validate 4 hex digits remain before dereferencing
-                    if (!p[0] || !p[1] || !p[2] || !p[3]) { free(buf); return 0; }
-                    // Decode \uXXXX (with surrogate pair support) into UTF-8
-                    int h0 = hexval_char(*p); if (h0 < 0) { free(buf); return 0; } ++p;
-                    int h1 = hexval_char(*p); if (h1 < 0) { free(buf); return 0; } ++p;
-                    int h2 = hexval_char(*p); if (h2 < 0) { free(buf); return 0; } ++p;
-                    int h3 = hexval_char(*p); if (h3 < 0) { free(buf); return 0; } ++p;
-                    uint32_t cp = (uint32_t)((h0 << 12) | (h1 << 8) | (h2 << 4) | h3);
-                    // Handle surrogate pairs
-                    if (cp >= 0xD800 && cp <= 0xDBFF) {
-                        // nostrc-g4t: Validate \uXXXX sequence exists for low surrogate
-                        if (!p[0] || !p[1] || p[0] != '\\' || p[1] != 'u') { free(buf); return 0; }
-                        p += 2;
-                        if (!p[0] || !p[1] || !p[2] || !p[3]) { free(buf); return 0; }
-                        int g0 = hexval_char(*p); if (g0 < 0) { free(buf); return 0; } ++p;
-                        int g1 = hexval_char(*p); if (g1 < 0) { free(buf); return 0; } ++p;
-                        int g2 = hexval_char(*p); if (g2 < 0) { free(buf); return 0; } ++p;
-                        int g3 = hexval_char(*p); if (g3 < 0) { free(buf); return 0; } ++p;
-                        uint32_t low = (uint32_t)((g0 << 12) | (g1 << 8) | (g2 << 4) | g3);
-                        if (low < 0xDC00 || low > 0xDFFF) { free(buf); return 0; }
-                        cp = 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
-                    } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-                        // Lone low surrogate is invalid
-                        free(buf); return 0;
-                    }
-                    // UTF-8 encode
-                    if (cp <= 0x7F) {
-                        if (len + 1 + 1 > cap) { size_t ncap = cap * 2; while (len + 2 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
-                        buf[len++] = (char)cp;
-                    } else if (cp <= 0x7FF) {
-                        if (len + 2 + 1 > cap) { size_t ncap = cap * 2; while (len + 3 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
-                        buf[len++] = (char)(0xC0 | (cp >> 6));
-                        buf[len++] = (char)(0x80 | (cp & 0x3F));
-                    } else if (cp <= 0xFFFF) {
-                        if (len + 3 + 1 > cap) { size_t ncap = cap * 2; while (len + 4 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
-                        buf[len++] = (char)(0xE0 | (cp >> 12));
-                        buf[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-                        buf[len++] = (char)(0x80 | (cp & 0x3F));
-                    } else {
-                        if (len + 4 + 1 > cap) { size_t ncap = cap * 2; while (len + 5 > ncap) ncap *= 2; if (ncap > JSON_STRING_MAX_CAP) { free(buf); return 0; } char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
-                        buf[len++] = (char)(0xF0 | (cp >> 18));
-                        buf[len++] = (char)(0x80 | ((cp >> 12) & 0x3F));
-                        buf[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-                        buf[len++] = (char)(0x80 | (cp & 0x3F));
-                    }
-                    break;
-                }
-                default:
-                    // invalid escape
-                    free(buf);
-                    return 0;
-            }
-        } else {
-            buf[len++] = (char)c;
-        }
-    }
-    if (*p != '"') { free(buf); return 0; }
-    buf[len] = '\0';
-    *out = buf;
-    *pp = p + 1;
-    return 1;
-}
-
-static int parse_json_int64_simple(const char **pp, long long *out) {
-    if (!pp || !*pp || !out) return 0;
-    const char *p = skip_ws_local(*pp);
-    int neg = 0; long long v = 0; int any = 0;
-    if (*p == '-') { neg = 1; ++p; }
-    while (*p >= '0' && *p <= '9') {
-        // nostrc-g4t: overflow check before accumulate
-        if (v > (LLONG_MAX - 9) / 10) return 0;
-        v = v * 10 + (*p - '0'); ++p; any = 1;
-    }
-    if (!any) return 0;
-    *out = neg ? -v : v;
-    *pp = p;
-    return 1;
-}
-
 int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
     if (!event || !json) return 0;
-    const char *p = skip_ws_local(json);
+    const char *p = nostr_json_skip_ws(json);
     if (*p != '{') return 0;
     ++p; // after '{'
 
@@ -327,50 +187,50 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
     int have_created_at = 0;
 
     while (1) {
-        p = skip_ws_local(p);
+        p = nostr_json_skip_ws(p);
         /* Allow and skip commas between members */
         if (*p == ',') { ++p; continue; }
         if (*p == '}') { ++p; break; }
         // Dispatch by key (in-place match, no allocation for known keys)
         if (match_key_advance(&p, "kind")) {
             long long v = 0;
-            if (!parse_json_int64_simple(&p, &v)) { return 0; }
+            if (!nostr_json_parse_int64(&p, &v)) { return 0; }
             if (v < 0 || v > 65535) { return 0; } // nostrc-g4t: valid NIP-01 kind range
             event->kind = (int)v; have_kind = 1;
         } else if (match_key_advance(&p, "created_at")) {
             long long ts = 0;
-            if (!parse_json_int64_simple(&p, &ts)) { return 0; }
+            if (!nostr_json_parse_int64(&p, &ts)) { return 0; }
             event->created_at = (int64_t)ts; have_created_at = 1;
         } else if (match_key_advance(&p, "pubkey")) {
-            char *s = NULL;
-            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            char *s = nostr_json_parse_string(&p);
+            if (!s) { return 0; }
             if (event->pubkey) free(event->pubkey);
             event->pubkey = s;
         } else if (match_key_advance(&p, "id")) {
-            char *s = NULL;
-            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            char *s = nostr_json_parse_string(&p);
+            if (!s) { return 0; }
             if (event->id) free(event->id);
             event->id = s;
         } else if (match_key_advance(&p, "sig")) {
-            char *s = NULL;
-            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            char *s = nostr_json_parse_string(&p);
+            if (!s) { return 0; }
             if (event->sig) free(event->sig);
             event->sig = s;
         } else if (match_key_advance(&p, "content")) {
-            char *s = NULL;
-            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            char *s = nostr_json_parse_string(&p);
+            if (!s) { return 0; }
             if (event->content) free(event->content);
             event->content = s;
         } else if (match_key_advance(&p, "tags")) {
-            const char *t = skip_ws_local(p);
+            const char *t = nostr_json_skip_ws(p);
             if (*t != '[') { return 0; }
             ++t; // into tags array
             /* Pre-count number of tags at top-level to reserve capacity */
             const char *scan = t; int depth = 1; int max_depth = 1; size_t tag_count = 0;
             while (*scan && depth) {
-                scan = skip_ws_local(scan);
+                scan = nostr_json_skip_ws(scan);
                 if (*scan == '[' && depth == 1) { ++tag_count; ++scan; }
-                else if (*scan == '"') { char *d=NULL; if (!parse_json_string_fast(&scan, &d)) return 0; free(d); }
+                else if (*scan == '"') { char *d = nostr_json_parse_string(&scan); if (!d) return 0; free(d); }
                 else if (*scan == '[') { ++depth; if (depth > max_depth) max_depth = depth; ++scan; }
                 else if (*scan == ']') { --depth; ++scan; }
                 else { ++scan; }
@@ -384,7 +244,7 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
             /* If tags_new pre-filled data slots with garbage, reset count to 0 but keep capacity */
             parsed->count = 0;
             nostr_tags_reserve(parsed, tag_count > 0 ? tag_count : 4);
-            t = skip_ws_local(t);
+            t = nostr_json_skip_ws(t);
             while (*t && *t != ']') {
                 if (*t != '[') { nostr_tags_free(parsed); return 0; }
                 ++t; // into a tag array
@@ -393,25 +253,25 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
                 /* Reserve elements for this tag by scanning until closing ']' */
                 const char *t2 = t; size_t elem_count = 0;
                 while (*t2 && *t2 != ']') {
-                    t2 = skip_ws_local(t2);
-                    if (*t2 == '"') { char *tmp=NULL; if (!parse_json_string_fast(&t2, &tmp)) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; } free(tmp); ++elem_count; t2 = skip_ws_local(t2); if (*t2 == ',') { ++t2; } }
+                    t2 = nostr_json_skip_ws(t2);
+                    if (*t2 == '"') { char *tmp = nostr_json_parse_string(&t2); if (!tmp) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; } free(tmp); ++elem_count; t2 = nostr_json_skip_ws(t2); if (*t2 == ',') { ++t2; } }
                     else { break; }
                 }
                 if (elem_count > 0) nostr_tag_reserve(tag, elem_count);
-                t = skip_ws_local(t);
+                t = nostr_json_skip_ws(t);
                 while (*t && *t != ']') {
-                    char *sv = NULL;
-                    if (!parse_json_string_fast(&t, &sv)) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; }
+                    char *sv = nostr_json_parse_string(&t);
+                    if (!sv) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; }
                     nostr_tag_append(tag, sv);
                     free(sv);
-                    t = skip_ws_local(t);
-                    if (*t == ',') { ++t; t = skip_ws_local(t); }
+                    t = nostr_json_skip_ws(t);
+                    if (*t == ',') { ++t; t = nostr_json_skip_ws(t); }
                 }
                 if (*t != ']') { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; }
                 ++t; // after closing tag array
                 nostr_tags_append(parsed, tag);
-                t = skip_ws_local(t);
-                if (*t == ',') { ++t; t = skip_ws_local(t); }
+                t = nostr_json_skip_ws(t);
+                if (*t == ',') { ++t; t = nostr_json_skip_ws(t); }
             }
             if (*t != ']') { nostr_tags_free(parsed); return 0; }
             ++t; // after closing tags
@@ -423,14 +283,14 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
             // Minimal skipper for compact inputs
             const char *t = p;
             if (*t == '"') {
-                char *dummy = NULL;
-                if (!parse_json_string_fast(&t, &dummy)) { return 0; }
+                char *dummy = nostr_json_parse_string(&t);
+                if (!dummy) { return 0; }
                 free(dummy);
             } else if (*t == '{') {
                 int depth = 1; ++t;
                 while (*t && depth) {
                     if (*t == '"') {
-                        char *d = NULL; if (!parse_json_string_fast(&t, &d)) { return 0; } free(d);
+                        char *d = nostr_json_parse_string(&t); if (!d) { return 0; } free(d);
                     } else if (*t == '{') { ++depth; ++t; }
                     else if (*t == '}') { --depth; ++t; }
                     else { ++t; }
@@ -440,7 +300,7 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
                 int depth = 1; ++t;
                 while (*t && depth) {
                     if (*t == '"') {
-                        char *d = NULL; if (!parse_json_string_fast(&t, &d)) { return 0; } free(d);
+                        char *d = nostr_json_parse_string(&t); if (!d) { return 0; } free(d);
                     } else if (*t == '[') { ++depth; ++t; }
                     else if (*t == ']') { --depth; ++t; }
                     else { ++t; }
@@ -452,7 +312,7 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
             p = t;
         }
         // consume comma or closing brace between pairs
-        p = skip_ws_local(p);
+        p = nostr_json_skip_ws(p);
         if (*p == ',') { ++p; continue; }
         if (*p == '}') { ++p; break; }
         // otherwise, invalid separator

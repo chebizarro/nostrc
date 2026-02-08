@@ -6,6 +6,7 @@
 #include "nostr/metrics.h"
 #include <string.h>
 #include <stdlib.h>
+#include "nostr-json-parse.h"
 
 // Helper function to create a new Envelope
 NostrEnvelope *create_envelope(NostrEnvelopeType type) {
@@ -300,8 +301,6 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
 }
 
 /* Forward decls for local JSON helpers used below */
-static const char *skip_ws(const char *p);
-static char *parse_json_string(const char **pp);
 static const char *parse_comma(const char *p);
 static char *parse_json_object(const char **pp);
 
@@ -316,18 +315,18 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     if (debug_enabled()) {
         fprintf(stderr, "[compact] parse envelope: %s\n", json);
     }
-    const char *p = skip_ws(json);
+    const char *p = nostr_json_skip_ws(json);
     if (*p != '[') return 0;
     ++p; // skip [
     // first: label
-    char *label = parse_json_string(&p);
+    char *label = nostr_json_parse_string(&p);
     if (!label) {
         if (debug_enabled()) fprintf(stderr, "[compact] failed to parse label string at: %.32s\n", p);
         return 0;
     }
     const char *q = parse_comma(p);
     if (!q) { if (debug_enabled()) fprintf(stderr, "[compact] missing comma after label '%s' at: %.32s\n", label, p); free(label); return 0; }
-    p = q; p = skip_ws(p);
+    p = q; p = nostr_json_skip_ws(p);
 
     int ok = 0;
     switch (base->type) {
@@ -336,9 +335,9 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         NostrEventEnvelope *env = (NostrEventEnvelope *)base;
         // Optional sub id
         if (*p == '"') {
-            env->subscription_id = parse_json_string(&p);
+            env->subscription_id = nostr_json_parse_string(&p);
             if (!env->subscription_id) break;
-            q = parse_comma(p); if (!q) break; p = skip_ws(q);
+            q = parse_comma(p); if (!q) break; p = nostr_json_skip_ws(q);
         }
         // Next must be event object
         char *event_json = parse_json_object(&p);
@@ -354,7 +353,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     case NOSTR_ENVELOPE_REQ: {
         if (strcmp(label, "REQ") != 0) break;
         NostrReqEnvelope *env = (NostrReqEnvelope *)base;
-        env->subscription_id = parse_json_string(&p);
+        env->subscription_id = nostr_json_parse_string(&p);
         if (!env->subscription_id) break;
         // zero or more filter objects
         NostrFilters *filters = nostr_filters_new();
@@ -364,7 +363,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         while (1) {
             q = parse_comma(p);
             if (!q) break;
-            p = skip_ws(q);
+            p = nostr_json_skip_ws(q);
             if (*p != '{') break;
             char *obj = parse_json_object(&p);
             if (!obj) break;
@@ -391,7 +390,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     case NOSTR_ENVELOPE_COUNT: {
         if (strcmp(label, "COUNT") != 0) break;
         NostrCountEnvelope *env = (NostrCountEnvelope *)base;
-        env->subscription_id = parse_json_string(&p);
+        env->subscription_id = nostr_json_parse_string(&p);
         if (!env->subscription_id) break;
         NostrFilters *filters = nostr_filters_new();
         if (!filters) break;
@@ -401,16 +400,16 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         while (1) {
             q = parse_comma(p);
             if (!q) break;
-            p = skip_ws(q);
+            p = nostr_json_skip_ws(q);
             if (*p != '{') break;
             const char *savep = p;
             char *obj = parse_json_object(&p);
             if (!obj) break;
             // Detect count object strictly: first key must be "count" and value a number
             const char *op = obj;
-            op = skip_ws(op);
+            op = nostr_json_skip_ws(op);
             if (*op == '{') op++;
-            op = skip_ws(op);
+            op = nostr_json_skip_ws(op);
             int is_count_obj = 0;
             if (*op == '"') {
                 // parse key string
@@ -421,8 +420,8 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
                 }
                 size_t klen = (size_t)(op - ks);
                 if (*op == '"') op++;
-                op = skip_ws(op);
-                if (*op == ':') { op++; op = skip_ws(op); }
+                op = nostr_json_skip_ws(op);
+                if (*op == ':') { op++; op = nostr_json_skip_ws(op); }
                 if (klen == 5 && strncmp(ks, "count", 5) == 0) {
                     // number may be negative, but count should be >=0; parse int
                     int sign = 1; if (*op == '+') { op++; } else if (*op == '-') { sign = -1; op++; }
@@ -456,22 +455,22 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     case NOSTR_ENVELOPE_OK: {
         if (strcmp(label, "OK") != 0) break;
         NostrOKEnvelope *env = (NostrOKEnvelope *)base;
-        env->event_id = parse_json_string(&p);
+        env->event_id = nostr_json_parse_string(&p);
         if (!env->event_id) break;
         q = parse_comma(p); if (!q) { ok = 1; break; }
-        p = skip_ws(q);
+        p = nostr_json_skip_ws(q);
         if (strncmp(p, "true", 4) == 0) { env->ok = true; p += 4; }
         else if (strncmp(p, "false", 5) == 0) { env->ok = false; p += 5; }
         else break;
         q = parse_comma(p);
-        if (q) { p = q; env->reason = parse_json_string(&p); if (!env->reason) break; }
+        if (q) { p = q; env->reason = nostr_json_parse_string(&p); if (!env->reason) break; }
         ok = 1;
         break;
     }
     case NOSTR_ENVELOPE_NOTICE: {
         if (strcmp(label, "NOTICE") != 0) break;
         NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)base;
-        env->message = parse_json_string(&p);
+        env->message = nostr_json_parse_string(&p);
         if (!env->message) break;
         ok = 1;
         break;
@@ -479,7 +478,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     case NOSTR_ENVELOPE_EOSE: {
         if (strcmp(label, "EOSE") != 0) break;
         NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)base;
-        env->message = parse_json_string(&p);
+        env->message = nostr_json_parse_string(&p);
         if (!env->message) break;
         ok = 1;
         break;
@@ -487,11 +486,11 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     case NOSTR_ENVELOPE_CLOSED: {
         if (strcmp(label, "CLOSED") != 0) break;
         NostrClosedEnvelope *env = (NostrClosedEnvelope *)base;
-        env->subscription_id = parse_json_string(&p);
+        env->subscription_id = nostr_json_parse_string(&p);
         if (!env->subscription_id) break;
         q = parse_comma(p); if (!q) break; // reason is required
         p = q;
-        env->reason = parse_json_string(&p);
+        env->reason = nostr_json_parse_string(&p);
         if (!env->reason) break;
         ok = 1;
         break;
@@ -499,7 +498,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     case NOSTR_ENVELOPE_AUTH: {
         if (strcmp(label, "AUTH") != 0) break;
         NostrAuthEnvelope *env = (NostrAuthEnvelope *)base;
-        p = skip_ws(p);
+        p = nostr_json_skip_ws(p);
         if (*p == '{') {
             char *ej = parse_json_object(&p);
             if (!ej) break;
@@ -510,12 +509,12 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
             env->event = ev;
             ok = 1;
         } else if (*p == '"') {
-            env->challenge = parse_json_string(&p);
+            env->challenge = nostr_json_parse_string(&p);
             if (!env->challenge) break;
             // optional event after comma
             q = parse_comma(p);
             if (q) {
-                p = skip_ws(q);
+                p = nostr_json_skip_ws(q);
                 if (*p == '{') {
                     char *ej = parse_json_object(&p);
                     if (ej) {
@@ -537,113 +536,16 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
 
     if (!ok && debug_enabled()) {
         // Try to show where we are
-        const char *tail = skip_ws(p);
+        const char *tail = nostr_json_skip_ws(p);
         fprintf(stderr, "[compact] parse failed for type %d after label '%s' near: %.64s\n", base->type, label, tail);
     }
     free(label);
     return ok;
 }
 
-// Helpers to parse JSON array framing quickly without full JSON
-static const char *skip_ws(const char *p) {
-    if (!p) return p;
-    while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
-    return p;
-}
-
-// Encode a Unicode code point as UTF-8 into out, return bytes written (1-4)
-static int utf8_encode(uint32_t cp, char *out) {
-    if (cp <= 0x7F) { out[0] = (char)cp; return 1; }
-    if (cp <= 0x7FF) { out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
-    if (cp <= 0xFFFF) { out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
-    out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F)); out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F)); return 4;
-}
-
-static int hexval(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-    return -1;
-}
-
-// nostrc-g4t: max realloc cap for JSON string buffers (16 MB)
-#define ENVELOPE_JSON_STRING_MAX_CAP (16 * 1024 * 1024)
-
-static char *parse_json_string(const char **pp) {
-    if (!pp || !*pp) return NULL;
-    const char *p = skip_ws(*pp);
-    if (*p != '"') return NULL;
-    ++p; // after opening quote
-    // Allocate a buffer pessimistically equal to remaining input segment length
-    size_t cap = 64; size_t len = 0;
-    char *buf = (char *)malloc(cap);
-    if (!buf) return NULL;
-    while (*p) {
-        char c = *p++;
-        if (c == '"') { // end of string
-            break;
-        } else if (c == '\\') { // escape sequence
-            if (!*p) { free(buf); return NULL; } // nostrc-g4t: null-check after backslash
-            char e = *p++;
-            char outc;
-            switch (e) {
-            case '"': outc = '"'; goto emit_one;
-            case '\\': outc = '\\'; goto emit_one;
-            case '/': outc = '/'; goto emit_one;
-            case 'b': outc = '\b'; goto emit_one;
-            case 'f': outc = '\f'; goto emit_one;
-            case 'n': outc = '\n'; goto emit_one;
-            case 'r': outc = '\r'; goto emit_one;
-            case 't': outc = '\t'; goto emit_one;
-            case 'u': {
-                // nostrc-g4t: validate 4 chars remain before dereferencing
-                if (!p[0] || !p[1] || !p[2] || !p[3]) { free(buf); return NULL; }
-                // parse 4 hex digits
-                int h1 = hexval(p[0]); int h2 = hexval(p[1]); int h3 = hexval(p[2]); int h4 = hexval(p[3]);
-                if (h1 < 0 || h2 < 0 || h3 < 0 || h4 < 0) { free(buf); return NULL; }
-                uint32_t cp = (uint32_t)((h1<<12) | (h2<<8) | (h3<<4) | h4);
-                p += 4;
-                // Handle UTF-16 surrogate pairs \uD800-\uDBFF followed by \uDC00-\uDFFF
-                // nostrc-g4t: validate bounds before accessing p[0..5]
-                if (cp >= 0xD800 && cp <= 0xDBFF &&
-                    p[0] && p[1] && p[0] == '\\' && p[1] == 'u' &&
-                    p[2] && p[3] && p[4] && p[5]) {
-                    int h5 = hexval(p[2]); int h6 = hexval(p[3]); int h7 = hexval(p[4]); int h8 = hexval(p[5]);
-                    if (h5 >= 0 && h6 >= 0 && h7 >= 0 && h8 >= 0) {
-                        uint32_t low = (uint32_t)((h5<<12) | (h6<<8) | (h7<<4) | h8);
-                        if (low >= 0xDC00 && low <= 0xDFFF) {
-                            p += 6;
-                            cp = 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
-                        }
-                    }
-                }
-                char tmp[4];
-                int n = utf8_encode(cp, tmp);
-                if (len + (size_t)n >= cap) { cap *= 2; if (cap > ENVELOPE_JSON_STRING_MAX_CAP) { free(buf); return NULL; } char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
-                for (int i=0;i<n;i++) buf[len++] = tmp[i];
-                continue;
-            }
-            default:
-                free(buf); return NULL;
-            }
-emit_one:
-            if (len + 1 >= cap) { cap *= 2; if (cap > ENVELOPE_JSON_STRING_MAX_CAP) { free(buf); return NULL; } char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
-            buf[len++] = outc;
-        } else {
-            if (len + 1 >= cap) { cap *= 2; if (cap > ENVELOPE_JSON_STRING_MAX_CAP) { free(buf); return NULL; } char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
-            buf[len++] = c;
-        }
-    }
-    // Null-terminate
-    if (len + 1 >= cap) { char *nb = (char *)realloc(buf, len + 1); if (!nb) { free(buf); return NULL; } buf = nb; }
-    buf[len] = '\0';
-    *pp = p; // already after closing quote
-    return buf;
-}
-
 static const char *parse_comma(const char *p) {
     if (!p) return NULL;
-    p = skip_ws(p);
+    p = nostr_json_skip_ws(p);
     if (*p != ',') return NULL;
     return p + 1;
 }
@@ -654,7 +556,7 @@ static const char *parse_comma(const char *p) {
 #define PARSE_JSON_OBJECT_MAX_DEPTH 64
 static char *parse_json_object(const char **pp) {
     if (!pp || !*pp) return NULL;
-    const char *p = skip_ws(*pp);
+    const char *p = nostr_json_skip_ws(*pp);
     if (*p != '{') return NULL;
     int depth = 0;
     const char *start = p;
@@ -694,11 +596,11 @@ static char *parse_json_object(const char **pp) {
 // Function to parse a message and return the appropriate Envelope struct
 NostrEnvelope *nostr_envelope_parse(const char *message) {
     if (!message) return NULL;
-    const char *p = skip_ws(message);
+    const char *p = nostr_json_skip_ws(message);
     if (*p != '[') return NULL;
     ++p; // skip [
     // Peek label to decide which envelope to allocate
-    char *label = parse_json_string(&p);
+    char *label = nostr_json_parse_string(&p);
     if (!label) return NULL;
     NostrEnvelope *env = NULL;
     if (strcmp(label, "EVENT") == 0) {

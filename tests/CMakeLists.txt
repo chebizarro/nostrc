@@ -95,6 +95,7 @@ add_test(NAME GoChannelIncremental COMMAND test_channel_incremental)
 # New tests for event canonicalization and NIP-04 AEAD
 add_executable(test_event_canonical test_event_canonical.c)
 add_executable(test_event_priority test_event_priority.c)
+add_executable(test_json_parse test_json_parse.c)
 add_executable(test_nip04_aead test_nip04_aead.c)
 add_executable(test_relay_ingress_policy test_relay_ingress_policy.c)
 
@@ -133,6 +134,7 @@ target_link_libraries(test_nip04_aead PRIVATE nip04 libnostr ${NSYNC_LIB} nostr_
 target_include_directories(test_nip04_aead PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip04/include)
 target_link_libraries(test_relay_ingress_policy PRIVATE relayd_core libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_include_directories(test_relay_ingress_policy PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/apps/relayd/include)
+target_link_libraries(test_json_parse PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
 # Apply sanitizers to tests if enabled
 apply_sanitizers(test_nostr)
@@ -160,6 +162,7 @@ apply_sanitizers(test_event_canonical)
 apply_sanitizers(test_event_priority)
 apply_sanitizers(test_nip04_aead)
 apply_sanitizers(test_relay_ingress_policy)
+apply_sanitizers(test_json_parse)
 
 # Register tests for CTest. Run with: `ctest --output-on-failure`
 add_test(NAME test_nostr COMMAND test_nostr)
@@ -174,6 +177,7 @@ add_test(NAME test_connection_shutdown_order COMMAND test_connection_shutdown_or
 add_test(NAME test_envelope_parse COMMAND test_envelope_parse)
 add_test(NAME test_json_event COMMAND test_json_event)
 add_test(NAME test_json_event_fuzzlite COMMAND test_json_event_fuzzlite)
+add_test(NAME test_json_parse COMMAND test_json_parse)
 
 # LibFuzzer target for event deserialization (optional)
 if(ENABLE_FUZZING)
