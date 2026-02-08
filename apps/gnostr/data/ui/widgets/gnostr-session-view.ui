@@ -178,6 +178,34 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
+                              <object class="GtkListBoxRow" id="row_search">
+                                <property name="child">
+                                  <object class="GtkBox">
+                                    <property name="orientation">0</property>
+                                    <property name="spacing">12</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">10</property>
+                                    <property name="margin-bottom">10</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">edit-find-symbolic</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Search</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
                               <object class="GtkListBoxRow" id="row_classifieds">
                                 <property name="child">
                                   <object class="GtkBox">
@@ -514,6 +542,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="icon-name">system-search-symbolic</property>
                                     <property name="child">
                                       <object class="GnostrPageDiscover" id="discover_page">
+                                        <property name="hexpand">true</property>
+                                        <property name="vexpand">true</property>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwViewStackPage">
+                                    <property name="name">search</property>
+                                    <property name="title" translatable="yes">Search</property>
+                                    <property name="icon-name">edit-find-symbolic</property>
+                                    <property name="child">
+                                      <object class="GnostrSearchResultsView" id="search_results_view">
                                         <property name="hexpand">true</property>
                                         <property name="vexpand">true</property>
                                       </object>

@@ -264,6 +264,11 @@ static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user
 static void on_discover_open_article(GnostrPageDiscover *page, const char *event_id, gint kind, gpointer user_data);
 static void on_discover_zap_article(GnostrPageDiscover *page, const char *event_id, const char *pubkey_hex, const char *lud16, gpointer user_data);
 static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gpointer user_data);
+/* Forward declaration (nostrc-29) */
+void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
+/* Forward declarations for search results view signal handlers (nostrc-29) */
+static void on_search_open_note(GnostrSearchResultsView *view, const char *event_id_hex, gpointer user_data);
+static void on_search_open_profile(GnostrSearchResultsView *view, const char *pubkey_hex, gpointer user_data);
 /* Forward declarations for marketplace/classifieds signal handlers */
 static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data);
 static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const char *pubkey_hex, const char *lud16, gpointer user_data);
@@ -4239,6 +4244,21 @@ static void on_discover_copy_npub(GnostrPageDiscover *page, const char *pubkey_h
   }
 }
 
+/* Search results view signal handlers (nostrc-29) */
+static void on_search_open_note(GnostrSearchResultsView *view, const char *event_id_hex, gpointer user_data) {
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_id_hex) return;
+  gnostr_main_window_view_thread(GTK_WIDGET(self), event_id_hex);
+}
+
+static void on_search_open_profile(GnostrSearchResultsView *view, const char *pubkey_hex, gpointer user_data) {
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+  on_note_card_open_profile(NULL, pubkey_hex, self);
+}
+
 /* Marketplace/Classifieds signal handlers (NIP-15/NIP-99) */
 static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data) {
   (void)view;
@@ -5697,6 +5717,16 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                        G_CALLBACK(on_discover_open_article), self);
       g_signal_connect(discover_page, "zap-article-requested",
                        G_CALLBACK(on_discover_zap_article), self);
+    }
+  }
+  /* Connect search results view signals (nostrc-29) */
+  {
+    GtkWidget *search_view = self->session_view ? gnostr_session_view_get_search_results_view(self->session_view) : NULL;
+    if (search_view && GNOSTR_IS_SEARCH_RESULTS_VIEW(search_view)) {
+      g_signal_connect(search_view, "open-note",
+                       G_CALLBACK(on_search_open_note), self);
+      g_signal_connect(search_view, "open-profile",
+                       G_CALLBACK(on_search_open_profile), self);
     }
   }
   /* Connect marketplace/classifieds view signals (NIP-15/NIP-99) - accessed via session view */

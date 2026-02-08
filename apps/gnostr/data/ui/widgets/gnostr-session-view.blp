@@ -157,6 +157,30 @@ template $GnostrSessionView: Adw.Bin {
                                 };
                             }
 
+                            ListBoxRow row_search {
+                                child: Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "edit-find-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Search");
+                                        xalign: 0;
+                                    }
+                                };
+                            }
+
                             ListBoxRow row_classifieds {
                                 child: Box {
                                     orientation: horizontal;
@@ -466,6 +490,17 @@ template $GnostrSessionView: Adw.Bin {
                                         icon-name: "system-search-symbolic";
 
                                         child: $GnostrPageDiscover discover_page {
+                                            hexpand: true;
+                                            vexpand: true;
+                                        };
+                                    }
+
+                                    Adw.ViewStackPage {
+                                        name: "search";
+                                        title: _("Search");
+                                        icon-name: "edit-find-symbolic";
+
+                                        child: $GnostrSearchResultsView search_results_view {
                                             hexpand: true;
                                             vexpand: true;
                                         };
