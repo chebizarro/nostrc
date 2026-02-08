@@ -21,6 +21,7 @@
 #include <nostr/nip19/nip19.h>
 #include <keys.h>
 #include <gio/gio.h>  /* For GTask async API */
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 

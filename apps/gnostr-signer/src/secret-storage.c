@@ -12,6 +12,7 @@
 #include <nostr_keys.h>
 /* Core nsec decode still needed (GObject NIP-19 doesn't expose decoded secret key) */
 #include <nostr/nip19/nip19.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
