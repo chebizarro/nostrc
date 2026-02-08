@@ -107,6 +107,7 @@ target_include_directories(nostr_glib
   PRIVATE
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
     ${CMAKE_SOURCE_DIR}/nips/nip06/include
+    ${CMAKE_SOURCE_DIR}/nips/nip11/include
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
     ${NSYNC_INCLUDE_DIR}
 )
@@ -133,7 +134,7 @@ target_link_libraries(nostr_glib
 )
 
 # Conditionally link NIP libraries (guards handle missing targets)
-foreach(_nip nip04 nip06 nip19
+foreach(_nip nip04 nip06 nip11 nip19
              nostr_nip44_core nostr_nip46_core
              nostr_nip49_core nostr_nip49_glib)
   if(TARGET ${_nip})

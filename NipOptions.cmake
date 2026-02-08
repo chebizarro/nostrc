@@ -30,7 +30,7 @@ if(ENABLE_NIP10)
     add_subdirectory(nips/nip10)
 endif()
 
-option(ENABLE_NIP11 "Enable nip11" OFF)
+option(ENABLE_NIP11 "Enable nip11" ON)
 if(ENABLE_NIP11)
     add_subdirectory(nips/nip11)
 endif()

@@ -55,6 +55,7 @@ enum {
     GNOSTR_RELAY_SIGNAL_EOSE,
     GNOSTR_RELAY_SIGNAL_CLOSED,
     GNOSTR_RELAY_SIGNAL_ERROR,
+    GNOSTR_RELAY_SIGNAL_NIP11_INFO,
     GNOSTR_RELAY_SIGNALS_COUNT
 };
 
@@ -199,6 +200,44 @@ gboolean gnostr_relay_get_connected(GNostrRelay *self);
  * Returns: (transfer none) (nullable): the core NostrRelay pointer
  */
 NostrRelay *gnostr_relay_get_core_relay(GNostrRelay *self);
+
+/* ---- NIP-11 Relay Information (nostrc-20) ---- */
+
+/* Opaque NIP-11 info type - actually RelayInformationDocument* from nip11.h */
+typedef struct RelayInformationDocument GNostrRelayNip11Info;
+
+/**
+ * gnostr_relay_get_nip11_info:
+ * @self: a #GNostrRelay
+ *
+ * Gets the cached NIP-11 relay information document, if available.
+ * The info is fetched automatically when the relay connects.
+ *
+ * Returns: (transfer none) (nullable): the NIP-11 info, or %NULL if not yet fetched
+ */
+const GNostrRelayNip11Info *gnostr_relay_get_nip11_info(GNostrRelay *self);
+
+/**
+ * gnostr_relay_supports_nip:
+ * @self: a #GNostrRelay
+ * @nip: the NIP number to check (e.g. 11, 42, 50)
+ *
+ * Checks if the relay advertises support for a given NIP.
+ * Returns %FALSE if NIP-11 info has not been fetched yet.
+ *
+ * Returns: %TRUE if the relay supports the given NIP
+ */
+gboolean gnostr_relay_supports_nip(GNostrRelay *self, gint nip);
+
+/**
+ * gnostr_relay_fetch_nip11_async:
+ * @self: a #GNostrRelay
+ *
+ * Manually triggers a NIP-11 info fetch. Normally this happens
+ * automatically on connect, but can be called to refresh.
+ * Emits "nip11-info-fetched" signal when complete.
+ */
+void gnostr_relay_fetch_nip11_async(GNostrRelay *self);
 
 G_END_DECLS
 

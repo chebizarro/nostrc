@@ -215,6 +215,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${_NOSTR_CONFIG_DIR}
   ${PROJECT_ROOT}/libgo/include
   ${PROJECT_ROOT}/nips/nip04/include
+  ${PROJECT_ROOT}/nips/nip11/include
   ${PROJECT_ROOT}/nips/nip44/include
   ${PROJECT_ROOT}/nips/nip46/include
   ${PROJECT_ROOT}/nips/nip47/include
@@ -296,6 +297,10 @@ endif()
 # nostrc-x8lj: Link NIP-77 negentropy for sync client
 if (TARGET nostr_nip77)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip77)
+endif()
+# nostrc-20: Link NIP-11 relay information
+if (TARGET nip11)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip11)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB)
 # Link secp256k1 for identity/key derivation
