@@ -165,7 +165,14 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
         struct ndb_str_block *sb = ndb_block_str(block);
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
-        gchar *escaped = g_markup_escape_text(ptr, len);
+        /* nostrc-dct8: Sanitize invalid UTF-8 before Pango markup */
+        g_autofree gchar *text = g_strndup(ptr, len);
+        if (!g_utf8_validate(text, -1, NULL)) {
+          gchar *valid = g_utf8_make_valid(text, -1);
+          g_free(text);
+          text = g_steal_pointer(&valid);
+        }
+        gchar *escaped = g_markup_escape_text(text, -1);
         g_string_append(out, escaped);
         g_free(escaped);
         break;
