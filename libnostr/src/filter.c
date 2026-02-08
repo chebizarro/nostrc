@@ -741,10 +741,12 @@ char *nostr_filter_serialize_compact(const NostrFilter *f) {
 
 /* --- Compact deserializer helpers --- */
 static const char *skip_ws_f(const char *p) {
+    if (!p) return p;
     while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
     return p;
 }
 static const char *skip_literal(const char *p) {
+    if (!p) return NULL;
     // skip true/false/null or number
     if (*p == '-' || (*p >= '0' && *p <= '9')) { while ((*p >= '0' && *p <= '9') || *p=='.' || *p=='e' || *p=='E' || *p=='+' || *p=='-') ++p; return p; }
     if (strncmp(p, "true", 4) == 0) return p+4;
@@ -753,7 +755,7 @@ static const char *skip_literal(const char *p) {
     return p;
 }
 static const char *skip_string(const char *p) {
-    if (*p != '"') return NULL;
+    if (!p || *p != '"') return NULL;
     ++p;
     while (*p) {
         if (*p == '\\') { if (*(p+1)) p += 2; else return NULL; }
@@ -762,22 +764,25 @@ static const char *skip_string(const char *p) {
     }
     return NULL;
 }
-static const char *skip_array(const char *p);
-static const char *skip_object(const char *p);
-static const char *skip_value(const char *p) {
+/* nostrc-g4t: depth-limited recursive skip functions to prevent stack overflow */
+#define SKIP_MAX_DEPTH 64
+static const char *skip_array_d(const char *p, int depth);
+static const char *skip_object_d(const char *p, int depth);
+static const char *skip_value_d(const char *p, int depth) {
+    if (!p || depth > SKIP_MAX_DEPTH) return NULL;
     p = skip_ws_f(p);
-    if (*p == '{') return skip_object(p);
-    if (*p == '[') return skip_array(p);
+    if (*p == '{') return skip_object_d(p, depth + 1);
+    if (*p == '[') return skip_array_d(p, depth + 1);
     if (*p == '"') return skip_string(p);
     return skip_literal(p);
 }
-static const char *skip_array(const char *p) {
-    if (*p != '[') return NULL;
+static const char *skip_array_d(const char *p, int depth) {
+    if (!p || *p != '[' || depth > SKIP_MAX_DEPTH) return NULL;
     ++p;
     p = skip_ws_f(p);
     if (*p == ']') return p+1;
     while (*p) {
-        const char *q = skip_value(p);
+        const char *q = skip_value_d(p, depth);
         if (!q) return NULL;
         p = skip_ws_f(q);
         if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
@@ -786,8 +791,8 @@ static const char *skip_array(const char *p) {
     }
     return NULL;
 }
-static const char *skip_object(const char *p) {
-    if (*p != '{') return NULL;
+static const char *skip_object_d(const char *p, int depth) {
+    if (!p || *p != '{' || depth > SKIP_MAX_DEPTH) return NULL;
     ++p;
     p = skip_ws_f(p);
     if (*p == '}') return p+1;
@@ -798,7 +803,7 @@ static const char *skip_object(const char *p) {
         if (*p != ':') return NULL;
         ++p;
         p = skip_ws_f(p);
-        q = skip_value(p);
+        q = skip_value_d(p, depth);
         if (!q) return NULL;
         p = skip_ws_f(q);
         if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
@@ -807,8 +812,10 @@ static const char *skip_object(const char *p) {
     }
     return NULL;
 }
+static const char *skip_value(const char *p) { return skip_value_d(p, 0); }
 
 static char *parse_string_dup(const char **pp) {
+    if (!pp || !*pp) return NULL;
     const char *p = skip_ws_f(*pp);
     if (*p != '"') return NULL;
     ++p;
@@ -830,6 +837,7 @@ static char *parse_string_dup(const char **pp) {
 }
 
 static int parse_string_array_values_as_tags(NostrFilter *filter, const char *tag_key, const char **pp) {
+    if (!filter || !tag_key || !pp || !*pp) return 0;
     const char *p = skip_ws_f(*pp);
     if (*p != '[') return 0;
     ++p;
@@ -864,6 +872,7 @@ static int parse_string_array_values_as_tags(NostrFilter *filter, const char *ta
 
 /* Parse a JSON string array into a StringArray */
 static int parse_string_array_to_array(StringArray *arr, const char **pp) {
+    if (!arr || !pp || !*pp) return 0;
     const char *p = skip_ws_f(*pp);
     if (*p != '[') return 0;
     ++p;
@@ -886,6 +895,7 @@ static int parse_string_array_to_array(StringArray *arr, const char **pp) {
 
 /* Parse a JSON integer array into an IntArray */
 static int parse_int_array_to_array(IntArray *arr, const char **pp) {
+    if (!arr || !pp || !*pp) return 0;
     const char *p = skip_ws_f(*pp);
     if (*p != '[') return 0;
     ++p;
@@ -909,6 +919,7 @@ static int parse_int_array_to_array(IntArray *arr, const char **pp) {
 
 /* Parse a JSON integer value */
 static int parse_int64_value(const char **pp, int64_t *out) {
+    if (!pp || !*pp || !out) return 0;
     const char *p = skip_ws_f(*pp);
     int sign = 1;
     if (*p == '-') { sign = -1; ++p; }

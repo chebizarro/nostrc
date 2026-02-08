@@ -546,6 +546,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
 
 // Helpers to parse JSON array framing quickly without full JSON
 static const char *skip_ws(const char *p) {
+    if (!p) return p;
     while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
     return p;
 }
@@ -569,6 +570,7 @@ static int hexval(char c) {
 #define ENVELOPE_JSON_STRING_MAX_CAP (16 * 1024 * 1024)
 
 static char *parse_json_string(const char **pp) {
+    if (!pp || !*pp) return NULL;
     const char *p = skip_ws(*pp);
     if (*p != '"') return NULL;
     ++p; // after opening quote
@@ -640,6 +642,7 @@ emit_one:
 }
 
 static const char *parse_comma(const char *p) {
+    if (!p) return NULL;
     p = skip_ws(p);
     if (*p != ',') return NULL;
     return p + 1;
@@ -648,7 +651,9 @@ static const char *parse_comma(const char *p) {
 // Extract a balanced JSON object starting at '{'. Returns malloc'ed substring
 // containing exactly the object text (from '{' to matching '}'), and advances
 // *pp to just after the object.
+#define PARSE_JSON_OBJECT_MAX_DEPTH 64
 static char *parse_json_object(const char **pp) {
+    if (!pp || !*pp) return NULL;
     const char *p = skip_ws(*pp);
     if (*p != '{') return NULL;
     int depth = 0;
@@ -665,7 +670,10 @@ static char *parse_json_object(const char **pp) {
             }
             continue;
         }
-        if (*p == '{') depth++;
+        if (*p == '{') {
+            depth++;
+            if (depth > PARSE_JSON_OBJECT_MAX_DEPTH) return NULL; /* nostrc-g4t: depth limit */
+        }
         if (*p == '}') {
             depth--;
             if (depth == 0) {

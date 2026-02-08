@@ -147,6 +147,7 @@ NostrEvent *nostr_event_new(void) {
 /* ---- Compact JSON object deserializer (simple, unescaped, no-tags fast path) ---- */
 
 static const char *skip_ws_local(const char *p) {
+    if (!p) return p;
     while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
     return p;
 }
@@ -155,6 +156,7 @@ static const char *skip_ws_local(const char *p) {
  * the given key literal, advances *pp to the character after the colon
  * (value start, possibly with whitespace) and returns 1. Otherwise 0. */
 static int match_key_advance(const char **pp, const char *key) {
+    if (!pp || !*pp || !key) return 0;
     const char *p = skip_ws_local(*pp);
     if (*p != '"') return 0;
     ++p;
@@ -173,6 +175,7 @@ static int match_key_advance(const char **pp, const char *key) {
 __attribute__((unused))
 #endif
 static const char *find_key(const char *json, const char *key) {
+    if (!json || !key) return NULL;
     size_t klen = strlen(key);
     const char *p = json;
     while ((p = strstr(p, key)) != NULL) {
@@ -191,6 +194,7 @@ static const char *find_key(const char *json, const char *key) {
 #define JSON_STRING_MAX_CAP (16 * 1024 * 1024)
 
 static int parse_json_string_fast(const char **pp, char **out) {
+    if (!pp || !*pp || !out) return 0;
     const char *p = skip_ws_local(*pp);
     if (*p != '"') return 0;
     ++p;
@@ -298,6 +302,7 @@ static int parse_json_string_fast(const char **pp, char **out) {
 }
 
 static int parse_json_int64_simple(const char **pp, long long *out) {
+    if (!pp || !*pp || !out) return 0;
     const char *p = skip_ws_local(*pp);
     int neg = 0; long long v = 0; int any = 0;
     if (*p == '-') { neg = 1; ++p; }
