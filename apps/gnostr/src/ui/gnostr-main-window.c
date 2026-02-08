@@ -5634,9 +5634,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     /* nostrc-7vm: Connect tab filter changed signal for hashtag/author feeds */
     g_signal_connect(timeline, "tab-filter-changed", G_CALLBACK(on_timeline_tab_filter_changed), self);
 
-    /* nostrc-80i1: Connect timeline view need-profile signal to trigger relay fetches */
-    g_signal_connect(timeline, "need-profile", G_CALLBACK(on_event_model_need_profile), self);
-
     /* Do NOT call refresh here; we refresh once in initial_refresh_timeout_cb to avoid duplicate rebuilds. */
   }
   
