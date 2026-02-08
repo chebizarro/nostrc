@@ -30,21 +30,22 @@ void gnostr_cleanup_shared_soup_session(void);
 
 #endif /* HAVE_SOUP3 */
 
-#include <nostr_simple_pool.h>
+#include <nostr_pool.h>
 
 /**
  * gnostr_get_shared_query_pool:
  *
- * Returns a shared GnostrSimplePool instance for one-shot relay queries.
+ * Returns a shared GNostrPool instance for one-shot relay queries.
  * Using a shared pool reduces connection churn and improves connection reuse.
- * 
- * This pool is intended for query_single_async operations. For long-lived
- * subscriptions (subscribe_many_async), widgets should use their own pool
- * to properly manage signal handlers.
  *
- * Returns: (transfer none): The shared GnostrSimplePool. Do NOT unref this.
+ * Callers must sync relays on the pool before querying:
+ *   gnostr_pool_sync_relays(pool, urls, count);
+ *
+ * For long-lived subscriptions, widgets should create their own pool.
+ *
+ * Returns: (transfer none): The shared GNostrPool. Do NOT unref this.
  */
-GnostrSimplePool *gnostr_get_shared_query_pool(void);
+GNostrPool *gnostr_get_shared_query_pool(void);
 
 /**
  * gnostr_cleanup_shared_query_pool:

@@ -11,7 +11,6 @@
 #include "utils.h"
 #include "../storage_ndb.h"
 #include <nostr-filter.h>
-#include <nostr_simple_pool.h>
 #include <nostr-json.h>
 #include "nostr_json.h"
 #include <string.h>
@@ -217,10 +216,10 @@ static void follow_list_fetch_ctx_free(FollowListFetchCtx *ctx)
 static void on_follow_list_query_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   FollowListFetchCtx *ctx = user_data;
-  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source);
+  GNostrPool *pool = GNOSTR_POOL(source);
   GError *error = NULL;
 
-  GPtrArray *events = gnostr_simple_pool_query_single_finish(pool, res, &error);
+  GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
 
   GPtrArray *entries = NULL;
 
@@ -295,17 +294,15 @@ static void query_relays_for_follow_list(FollowListFetchCtx *ctx, GPtrArray *rel
   }
 
   /* Use shared pool */
-  GnostrSimplePool *pool = gnostr_get_shared_query_pool();
+  GNostrPool *pool = gnostr_get_shared_query_pool();
 
-  gnostr_simple_pool_query_single_async(
-    pool,
-    urls,
-    relay_urls->len,
-    filter,
-    ctx->cancellable,
-    on_follow_list_query_done,
-    ctx
-  );
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+  {
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, ctx->cancellable, on_follow_list_query_done, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);

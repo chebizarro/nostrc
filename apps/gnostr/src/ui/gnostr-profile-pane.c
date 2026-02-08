@@ -22,7 +22,6 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
-#include "nostr_simple_pool.h"
 #include "nostr_json.h"
 #include "json.h"
 #ifdef HAVE_SOUP3
@@ -2388,7 +2387,7 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
   if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   /* Hide loading indicator */
   if (self->posts_loading_box)
@@ -2515,15 +2514,17 @@ static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_url
   }
 
   /* Start query */
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    relay_urls->len,
-    filter,
-    self->posts_cancellable,
-    on_posts_query_done,
-    self
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+    static gint _qf_counter_posts = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_posts, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-posts-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->posts_cancellable, on_posts_query_done, self);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);
@@ -2947,7 +2948,7 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
   if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -3284,15 +3285,17 @@ static void load_media(GnostrProfilePane *self) {
   }
 
   /* Start query */
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    relay_urls->len,
-    filter,
-    self->media_cancellable,
-    on_media_query_done,
-    self
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+    static gint _qf_counter_media = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_media, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-media-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->media_cancellable, on_media_query_done, self);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
@@ -3316,8 +3319,8 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t *out32) {
 static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   /* Check result BEFORE accessing user_data - if cancelled, the pane may be destroyed */
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_fetch_profiles_by_authors_finish(
-    GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(
+    GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -3474,18 +3477,25 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   g_debug("profile_pane: fetching profile from %u relays for %.8s",
           relay_urls->len, self->current_pubkey);
 
-  /* Fetch profile from network */
-  gnostr_simple_pool_fetch_profiles_by_authors_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    relay_urls->len,
-    authors,
-    1,      /* author_count */
-    1,      /* limit - we only need the latest */
-    self->profile_cancellable,
-    on_profile_fetch_done,
-    self
-  );
+  /* Fetch profile from network - build kind:0 filter for the author */
+  {
+    NostrFilter *pf = nostr_filter_new();
+    int pf_kinds[1] = { 0 };
+    nostr_filter_set_kinds(pf, pf_kinds, 1);
+    nostr_filter_set_authors(pf, authors, 1);
+    nostr_filter_set_limit(pf, 1);
+
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+    static gint _qf_counter_prof = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_prof, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-prof-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, pf);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->profile_cancellable, on_profile_fetch_done, self);
+    nostr_filter_free(pf);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
@@ -3580,7 +3590,7 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
   if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   /* Hide loading indicator */
   if (GTK_IS_SPINNER(self->highlights_spinner)) {
@@ -3747,15 +3757,17 @@ static void load_highlights(GnostrProfilePane *self) {
   }
 
   /* Start query */
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    relay_urls->len,
-    filter,
-    self->highlights_cancellable,
-    on_highlights_query_done,
-    self
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+    static gint _qf_counter_hl = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_hl, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-hl-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->highlights_cancellable, on_highlights_query_done, self);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);

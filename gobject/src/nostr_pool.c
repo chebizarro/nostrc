@@ -737,7 +737,10 @@ gnostr_pool_query_async(GNostrPool          *self,
 
     g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
 
-    /* Stash filters on the task so the thread can access them */
+    /* Stash filters on the task so the thread can access them.
+     * Caller retains ownership but filters must outlive the task thread's
+     * initial subscription setup. We store without destroy notify since
+     * the caller manages lifetime (typically via context struct or pool stash). */
     g_object_set_data(G_OBJECT(task), "filters", filters);
 
     g_task_run_in_thread(task, query_thread_func);

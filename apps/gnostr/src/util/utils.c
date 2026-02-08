@@ -53,12 +53,12 @@ void gnostr_cleanup_shared_soup_session(void) {
 
 #endif /* HAVE_SOUP3 */
 
-/* Shared GnostrSimplePool singleton for one-shot queries */
-static GnostrSimplePool *s_shared_query_pool = NULL;
+/* Shared GNostrPool singleton for one-shot queries (hq-r248b) */
+static GNostrPool *s_shared_query_pool = NULL;
 static GMutex s_query_pool_mutex;
 static gboolean s_query_pool_shutdown = FALSE;
 
-GnostrSimplePool *gnostr_get_shared_query_pool(void) {
+GNostrPool *gnostr_get_shared_query_pool(void) {
   g_mutex_lock(&s_query_pool_mutex);
 
   /* nostrc-b1vg: Prevent creating new pool after shutdown */
@@ -69,8 +69,8 @@ GnostrSimplePool *gnostr_get_shared_query_pool(void) {
   }
 
   if (!s_shared_query_pool) {
-    s_shared_query_pool = gnostr_simple_pool_new();
-    g_debug("gnostr: Created shared query pool for relay queries");
+    s_shared_query_pool = gnostr_pool_new();
+    g_debug("gnostr: Created shared GNostrPool for relay queries");
   }
 
   g_mutex_unlock(&s_query_pool_mutex);

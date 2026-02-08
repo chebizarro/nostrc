@@ -9,7 +9,6 @@
 #include "nostr-event.h"
 #include "nostr-json.h"
 #include "nostr_nip19.h"
-#include "nostr_simple_pool.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
 #include "../util/bookmarks.h"
@@ -173,7 +172,7 @@ static void on_query_single_done_multi(GObject *source, GAsyncResult *res, gpoin
   (void)source;
   InflightCtx *ctx = (InflightCtx*)user_data;
   GError *err = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
   ensure_inflight();
   Inflight *in = ctx && ctx->key ? (Inflight*)g_hash_table_lookup(s_inflight, ctx->key) : NULL;
   /* Prepare parsed view if we got a result */
@@ -287,9 +286,15 @@ static void start_or_attach_request(const char *key, const char **urls, size_t u
     in->rows = g_ptr_array_new_with_free_func(rowref_free);
     g_hash_table_insert(s_inflight, g_strdup(key), in);
     /* Start the network request */
-    static GnostrSimplePool *s_pool = NULL; if (!s_pool) s_pool = gnostr_simple_pool_new();
+    static GNostrPool *s_pool = NULL; if (!s_pool) s_pool = gnostr_pool_new();
     InflightCtx *ctx = g_new0(InflightCtx, 1); ctx->key = g_strdup(key);
-    gnostr_simple_pool_query_single_async(s_pool, urls, url_count, f, in->canc, on_query_single_done_multi, ctx);
+    gnostr_pool_sync_relays(s_pool, (const gchar **)urls, url_count);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, f);
+      g_object_set_data_full(G_OBJECT(s_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(s_pool, _qf, in->canc, on_query_single_done_multi, ctx);
+    }
   }
   /* Attach row */
   RowRef *rr = g_new0(RowRef, 1); g_weak_ref_init(&rr->ref, row);
@@ -1641,15 +1646,17 @@ static void reaction_count_fallback_query(GnostrTimelineView *self, ReactionFetc
   }
 
   /* Query relays for reaction events */
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    ctx->write_relays->len,
-    filter,
-    self->reaction_cancellable,
-    on_reaction_query_done,
-    ctx  /* transfer ownership */
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, ctx->write_relays->len);
+    static gint _qf_counter_rxn = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_rxn, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-rxn-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->reaction_cancellable, on_reaction_query_done, ctx);
+  }
 
   g_free(urls);
   nostr_filter_free(filter);
@@ -1662,7 +1669,7 @@ static void on_reaction_count_done(GObject *source, GAsyncResult *res, gpointer 
   if (!ctx) return;
 
   GError *error = NULL;
-  gint64 count = gnostr_simple_pool_count_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *count_results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   /* nostrc-0u5h: On error (relay may not support NIP-45), fall back to regular query */
   if (error) {
@@ -1688,21 +1695,16 @@ static void on_reaction_count_done(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
+  gint64 count = count_results ? (gint64)count_results->len : 0;
+  if (count_results) g_ptr_array_unref(count_results);
+
   GnostrTimelineView *self = g_weak_ref_get(&ctx->view_ref);
   if (!self) {
     reaction_fetch_ctx_free(ctx);
     return;
   }
 
-  /* nostrc-0u5h: count < 0 means COUNT unsupported, fall back to regular query */
-  if (count < 0) {
-    g_debug("timeline_view: COUNT unsupported (returned %lld) for %.16s, falling back to query",
-            (long long)count, ctx->event_id_hex);
-    reaction_count_fallback_query(self, ctx);
-    return;
-  }
-
-  /* count == 0 means no reactions, no need to fallback */
+  /* count == 0 means no reactions */
   if (count == 0) {
     g_debug("timeline_view: COUNT returned 0 for %.16s", ctx->event_id_hex);
     g_object_unref(self);
@@ -1744,7 +1746,7 @@ static void on_reaction_query_done(GObject *source, GAsyncResult *res, gpointer 
   if (!ctx) return;
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -1862,15 +1864,17 @@ static void on_author_nip65_for_reactions(GPtrArray *relays, gpointer user_data)
   }
 
   /* Query author's relays for reactions */
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    write_relays->len,
-    filter,
-    self->reaction_cancellable,
-    on_reaction_query_done,
-    ctx  /* transfer ownership of ctx */
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, write_relays->len);
+    static gint _qf_counter_rxn2 = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_rxn2, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-rxn2-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->reaction_cancellable, on_reaction_query_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(write_relays);
@@ -1914,7 +1918,7 @@ static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpoint
   }
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -2017,16 +2021,18 @@ static void on_batch_nip65_query_done(GObject *source, GAsyncResult *res, gpoint
       urls[j] = g_ptr_array_index(write_relays, j);
     }
 
-    /* nostrc-x8z3.2: Use NIP-45 COUNT for efficiency - just get the count, not full events */
-    gnostr_simple_pool_count_async(
-      gnostr_get_shared_query_pool(),
-      urls,
-      write_relays->len,
-      filter,
-      self->reaction_cancellable,
-      on_reaction_count_done,
-      rctx
-    );
+    /* nostrc-x8z3.2: Use query to count reactions (NIP-45 COUNT not available in new API) */
+    {
+      GNostrPool *pool = gnostr_get_shared_query_pool();
+      gnostr_pool_sync_relays(pool, (const gchar **)urls, write_relays->len);
+      static gint _qf_counter_cnt = 0;
+      int _qfid = g_atomic_int_add(&_qf_counter_cnt, 1);
+      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-count-%d", _qfid);
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(pool, _qf, self->reaction_cancellable, on_reaction_count_done, rctx);
+    }
 
     g_free(urls);
     /* Note: write_relays ownership transferred to rctx for fallback, freed in reaction_fetch_ctx_free */
@@ -2101,15 +2107,17 @@ static gboolean nip65_batch_dispatch(gpointer user_data) {
   }
 
   /* Query all authors' NIP-65 in one request */
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    relay_arr->len,
-    filter,
-    self->reaction_cancellable,
-    on_batch_nip65_query_done,
-    ctx
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_arr->len);
+    static gint _qf_counter_nip65 = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_nip65, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-nip65-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->reaction_cancellable, on_batch_nip65_query_done, ctx);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_arr);

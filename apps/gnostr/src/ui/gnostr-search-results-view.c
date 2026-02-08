@@ -14,7 +14,7 @@
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
 #include "../util/relays.h"
-#include "nostr_simple_pool.h"
+#include "nostr_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
@@ -593,8 +593,8 @@ on_relay_search_done(GObject *source, GAsyncResult *result, gpointer user_data)
     }
 
     GError *error = NULL;
-    GPtrArray *events = gnostr_simple_pool_query_single_finish(
-        GNOSTR_SIMPLE_POOL(source), result, &error);
+    GPtrArray *events = gnostr_pool_query_finish(
+        GNOSTR_POOL(source), result, &error);
 
     gnostr_search_results_view_set_loading(self, FALSE);
 
@@ -677,19 +677,20 @@ execute_relay_search(GnostrSearchResultsView *self, const char *query)
     nostr_filter_set_search(filter, query);
 
     /* Create pool and execute search */
-    static GnostrSimplePool *s_pool = NULL;
-    if (!s_pool) s_pool = gnostr_simple_pool_new();
+    static GNostrPool *s_pool = NULL;
+    if (!s_pool) s_pool = gnostr_pool_new();
 
     RelaySearchCtx *ctx = g_new0(RelaySearchCtx, 1);
     ctx->view = self;
     ctx->cancellable = g_object_ref(self->search_cancellable);
 
-    gnostr_simple_pool_query_single_async(
-        s_pool,
-        urls, relay_urls->len,
-        filter,
-        self->search_cancellable,
-        on_relay_search_done, ctx);
+    gnostr_pool_sync_relays(s_pool, (const gchar **)urls, relay_urls->len);
+    {
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter);
+      g_object_set_data_full(G_OBJECT(s_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(s_pool, _qf, self->search_cancellable, on_relay_search_done, ctx);
+    }
 
     nostr_filter_free(filter);
     g_free(urls);

@@ -17,7 +17,6 @@
 #include "nostr-event.h"
 #include "nostr-json.h"
 #include "nostr-filter.h"
-#include "nostr_simple_pool.h"
 #include <glib/gi18n.h>
 #include "nostr_json.h"
 #include <json.h>
@@ -434,7 +433,7 @@ static void on_relay_fetch_complete(GObject *source, GAsyncResult *res, gpointer
   self->fetch_in_progress = FALSE;
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
   g_debug("articles-view: fetch complete, results=%p, results_len=%u, error=%s",
           (void*)results, results ? results->len : 0, error ? error->message : "none");
 
@@ -532,7 +531,7 @@ static void fetch_articles_from_relays(GnostrArticlesView *self) {
 
   self->fetch_in_progress = TRUE;
 
-  GnostrSimplePool *pool = gnostr_get_shared_query_pool();
+  GNostrPool *pool = gnostr_get_shared_query_pool();
   g_debug("articles-view: Fetching articles from %u relays, pool=%p", relay_arr->len, (void*)pool);
 
   if (!pool) {
@@ -545,15 +544,16 @@ static void fetch_articles_from_relays(GnostrArticlesView *self) {
     return;
   }
 
-  gnostr_simple_pool_query_single_async(
-    pool,
-    urls,
-    relay_arr->len,
-    filter,
-    self->fetch_cancellable,
-    on_relay_fetch_complete,
-    self
-  );
+  gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_arr->len);
+  {
+    static gint _qf_counter = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_relay_fetch_complete, self);
+  }
 
   g_free(urls);
   g_ptr_array_unref(relay_arr);

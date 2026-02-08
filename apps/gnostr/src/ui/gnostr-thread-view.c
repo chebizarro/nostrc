@@ -11,7 +11,6 @@
 #include "nostr_event.h"
 #include "nostr-json.h"
 #include "nostr_filter.h"
-#include "nostr_simple_pool.h"
 #include "nostr_nip19.h"
 #include <glib.h>
 #include <glib/gi18n.h>
@@ -1933,7 +1932,7 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
   if (self->disposed) return;
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -1996,7 +1995,7 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
   }
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -2047,7 +2046,7 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
   if (self->disposed) return;
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -2278,15 +2277,17 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
     self->fetch_cancellable = g_cancellable_new();
   }
 
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    all_relays->len,
-    filter,
-    self->fetch_cancellable,
-    on_missing_ancestors_done,
-    self
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
+    static gint _qf_counter_anc = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_anc, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-anc-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_missing_ancestors_done, self);
+  }
 
   nostr_filter_free(filter);
   g_free(urls);
@@ -2356,15 +2357,17 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     NostrFilter *filter_replies = gnostr_filter_build(gf);
     g_object_unref(gf);
 
-    gnostr_simple_pool_query_single_async(
-      gnostr_get_shared_query_pool(),
-      urls,
-      all_relays->len,
-      filter_replies,
-      self->fetch_cancellable,
-      on_thread_query_done,
-      self
-    );
+    {
+      GNostrPool *pool = gnostr_get_shared_query_pool();
+      gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
+      static gint _qf_counter_thr = 0;
+      int _qfid = g_atomic_int_add(&_qf_counter_thr, 1);
+      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-thr-%d", _qfid);
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter_replies);
+      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
+    }
 
     nostr_filter_free(filter_replies);
   }
@@ -2405,15 +2408,17 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     NostrFilter *filter_ids = gnostr_filter_build(gf);
     g_object_unref(gf);
 
-    gnostr_simple_pool_query_single_async(
-      gnostr_get_shared_query_pool(),
-      urls,
-      all_relays->len,
-      filter_ids,
-      self->fetch_cancellable,
-      on_root_fetch_done,
-      self
-    );
+    {
+      GNostrPool *pool = gnostr_get_shared_query_pool();
+      gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
+      static gint _qf_counter_root = 0;
+      int _qfid = g_atomic_int_add(&_qf_counter_root, 1);
+      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-root-%d", _qfid);
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter_ids);
+      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_root_fetch_done, self);
+    }
 
     nostr_filter_free(filter_ids);
   }
@@ -2428,15 +2433,17 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     NostrFilter *filter_nip22 = gnostr_filter_build(gf);
     g_object_unref(gf);
 
-    gnostr_simple_pool_query_single_async(
-      gnostr_get_shared_query_pool(),
-      urls,
-      all_relays->len,
-      filter_nip22,
-      self->fetch_cancellable,
-      on_thread_query_done,  /* Reuse same callback */
-      self
-    );
+    {
+      GNostrPool *pool = gnostr_get_shared_query_pool();
+      gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
+      static gint _qf_counter_nip22 = 0;
+      int _qfid = g_atomic_int_add(&_qf_counter_nip22, 1);
+      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-nip22-%d", _qfid);
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter_nip22);
+      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
+    }
 
     nostr_filter_free(filter_nip22);
   }
@@ -2465,15 +2472,17 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
       urls2[i] = g_ptr_array_index(relay_arr2, i);
     }
 
-    gnostr_simple_pool_query_single_async(
-      gnostr_get_shared_query_pool(),
-      urls2,
-      relay_arr2->len,
-      filter_focus_replies,
-      self->fetch_cancellable,
-      on_thread_query_done,
-      self
-    );
+    {
+      GNostrPool *pool = gnostr_get_shared_query_pool();
+      gnostr_pool_sync_relays(pool, (const gchar **)urls2, relay_arr2->len);
+      static gint _qf_counter_focus = 0;
+      int _qfid = g_atomic_int_add(&_qf_counter_focus, 1);
+      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-focus-%d", _qfid);
+      NostrFilters *_qf = nostr_filters_new();
+      nostr_filters_add(_qf, filter_focus_replies);
+      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
+    }
 
     nostr_filter_free(filter_focus_replies);
     g_free(urls2);
@@ -2495,7 +2504,7 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
   if (self->disposed) return;
 
   GError *error = NULL;
-  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -2604,15 +2613,17 @@ static void fetch_children_from_relays(GnostrThreadView *self) {
     self->fetch_cancellable = g_cancellable_new();
   }
 
-  gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
-    urls,
-    relay_arr->len,
-    filter,
-    self->fetch_cancellable,
-    on_children_query_done,
-    self
-  );
+  {
+    GNostrPool *pool = gnostr_get_shared_query_pool();
+    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_arr->len);
+    static gint _qf_counter_child = 0;
+    int _qfid = g_atomic_int_add(&_qf_counter_child, 1);
+    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-child-%d", _qfid);
+    NostrFilters *_qf = nostr_filters_new();
+    nostr_filters_add(_qf, filter);
+    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_children_query_done, self);
+  }
 
   nostr_filter_free(filter);
   g_free(urls);
