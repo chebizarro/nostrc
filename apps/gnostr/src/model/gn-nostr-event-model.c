@@ -2067,6 +2067,254 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   g_debug("[MODEL] Refresh complete: %u total items (%u added)", self->notes->len, added);
 }
 
+/* --- Async refresh: moves NDB I/O + JSON deserialization off main thread --- */
+
+typedef struct {
+  uint64_t note_key;
+  gint64   created_at;
+  char    *pubkey_hex;   /* owned */
+  char    *root_id;      /* owned, may be NULL */
+  char    *reply_id;     /* owned, may be NULL */
+  gboolean has_profile;
+} RefreshEntry;
+
+static void refresh_entry_free(gpointer p) {
+  RefreshEntry *e = p;
+  if (!e) return;
+  g_free(e->pubkey_hex);
+  g_free(e->root_id);
+  g_free(e->reply_id);
+  g_free(e);
+}
+
+/* Snapshot of query params for the worker (immutable after creation) */
+typedef struct {
+  gint  *kinds;
+  gsize  n_kinds;
+  char **authors;
+  gsize  n_authors;
+  gint64 since;
+  gint64 until;
+  guint  qlimit;
+} RefreshQuerySnap;
+
+static void refresh_snap_free(RefreshQuerySnap *s) {
+  if (!s) return;
+  g_free(s->kinds);
+  if (s->authors) {
+    for (gsize i = 0; i < s->n_authors; i++) g_free(s->authors[i]);
+    g_free(s->authors);
+  }
+  g_free(s);
+}
+
+static gboolean snap_matches_query(RefreshQuerySnap *snap, int kind,
+                                   const char *pubkey_hex, gint64 created_at) {
+  if (snap->n_kinds > 0) {
+    gboolean ok = FALSE;
+    for (gsize i = 0; i < snap->n_kinds; i++)
+      if (snap->kinds[i] == kind) { ok = TRUE; break; }
+    if (!ok) return FALSE;
+  }
+  if (snap->n_authors > 0) {
+    gboolean ok = FALSE;
+    for (gsize i = 0; i < snap->n_authors; i++)
+      if (snap->authors[i] && pubkey_hex && g_strcmp0(snap->authors[i], pubkey_hex) == 0)
+        { ok = TRUE; break; }
+    if (!ok) return FALSE;
+  }
+  if (snap->since > 0 && created_at > 0 && created_at < snap->since) return FALSE;
+  if (snap->until > 0 && created_at > 0 && created_at > snap->until) return FALSE;
+  return TRUE;
+}
+
+static RefreshQuerySnap *refresh_snap_new(GnNostrEventModel *self) {
+  RefreshQuerySnap *s = g_new0(RefreshQuerySnap, 1);
+  if (self->n_kinds > 0) {
+    s->kinds = g_memdup2(self->kinds, self->n_kinds * sizeof(gint));
+    s->n_kinds = self->n_kinds;
+  }
+  if (self->n_authors > 0) {
+    s->authors = g_new0(char*, self->n_authors);
+    for (gsize i = 0; i < self->n_authors; i++)
+      s->authors[i] = g_strdup(self->authors[i]);
+    s->n_authors = self->n_authors;
+  }
+  s->since = self->since;
+  s->until = self->until;
+  s->qlimit = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
+  return s;
+}
+
+static char *refresh_build_filter(RefreshQuerySnap *snap) {
+  GString *f = g_string_new("[{");
+  if (snap->n_kinds > 0) {
+    g_string_append(f, "\"kinds\":[");
+    for (gsize i = 0; i < snap->n_kinds; i++) {
+      if (i > 0) g_string_append_c(f, ',');
+      g_string_append_printf(f, "%d", snap->kinds[i]);
+    }
+    g_string_append(f, "],");
+  } else {
+    g_string_append(f, "\"kinds\":[1,6],");
+  }
+  if (snap->n_authors > 0) {
+    g_string_append(f, "\"authors\":[");
+    for (gsize i = 0; i < snap->n_authors; i++) {
+      if (i > 0) g_string_append_c(f, ',');
+      g_string_append_printf(f, "\"%s\"", snap->authors[i]);
+    }
+    g_string_append(f, "],");
+  }
+  if (snap->since > 0) g_string_append_printf(f, "\"since\":%" G_GINT64_FORMAT ",", snap->since);
+  if (snap->until > 0) g_string_append_printf(f, "\"until\":%" G_GINT64_FORMAT ",", snap->until);
+  g_string_append_printf(f, "\"limit\":%u}]", snap->qlimit);
+  return g_string_free(f, FALSE);
+}
+
+/* Worker thread: query NDB + deserialize events (no GObject access) */
+static void
+refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
+                    gpointer task_data, GCancellable *cancellable G_GNUC_UNUSED)
+{
+  RefreshQuerySnap *snap = task_data;
+  GPtrArray *entries = g_ptr_array_new_with_free_func(refresh_entry_free);
+
+  char *filter_str = refresh_build_filter(snap);
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("[MODEL] refresh_thread: begin_query failed");
+    g_free(filter_str);
+    g_task_return_pointer(task, entries, (GDestroyNotify)g_ptr_array_unref);
+    return;
+  }
+
+  char **json_results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_str, &json_results, &count);
+  g_free(filter_str);
+
+  guint ready = 0;
+  if (rc == 0 && json_results && count > 0) {
+    for (int i = 0; i < count; i++) {
+      const char *ej = json_results[i];
+      if (!ej) continue;
+
+      NostrEvent *evt = nostr_event_new();
+      if (!evt) continue;
+      if (nostr_event_deserialize(evt, ej) != 0) { nostr_event_free(evt); continue; }
+
+      int kind = nostr_event_get_kind(evt);
+      if (kind != 1 && kind != 6 && kind != 1111) { nostr_event_free(evt); continue; }
+
+      const char *eid = nostr_event_get_id(evt);
+      const char *pk  = nostr_event_get_pubkey(evt);
+      gint64 cat = nostr_event_get_created_at(evt);
+      if (!eid || !pk) { nostr_event_free(evt); continue; }
+
+      if (!snap_matches_query(snap, kind, pk, cat)) { nostr_event_free(evt); continue; }
+
+      uint8_t id32[32];
+      if (!hex_to_bytes32(eid, id32)) { nostr_event_free(evt); continue; }
+
+      storage_ndb_note *note_ptr = NULL;
+      uint64_t nk = storage_ndb_get_note_key_by_id(txn, id32, &note_ptr);
+      if (nk == 0) { nostr_event_free(evt); continue; }
+      if (note_ptr && storage_ndb_note_is_expired(note_ptr)) { nostr_event_free(evt); continue; }
+
+      uint8_t pk32[32];
+      gboolean has_prof = FALSE;
+      if (hex_to_bytes32(pk, pk32))
+        has_prof = db_has_profile_event_for_pubkey(txn, pk32);
+
+      char *root_id = NULL, *reply_id = NULL;
+      if (has_prof)
+        parse_nip10_tags(evt, &root_id, &reply_id);
+
+      RefreshEntry *e = g_new0(RefreshEntry, 1);
+      e->note_key = nk;
+      e->created_at = cat;
+      e->pubkey_hex = g_strdup(pk);
+      e->root_id = root_id;
+      e->reply_id = reply_id;
+      e->has_profile = has_prof;
+      g_ptr_array_add(entries, e);
+
+      if (has_prof) ready++;
+      if (ready >= snap->qlimit) { nostr_event_free(evt); break; }
+
+      nostr_event_free(evt);
+    }
+    storage_ndb_free_results(json_results, count);
+  }
+
+  storage_ndb_end_query(txn);
+  g_task_return_pointer(task, entries, (GDestroyNotify)g_ptr_array_unref);
+}
+
+/* Main-thread callback: apply pre-processed results to model */
+static void
+on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)user_data;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(source);
+  GPtrArray *entries = g_task_propagate_pointer(G_TASK(result), NULL);
+  if (!entries) return;
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) { g_ptr_array_unref(entries); return; }
+
+  gn_nostr_event_model_clear(self);
+
+  /* Open a quick read txn for profile cache fills */
+  void *txn = NULL;
+  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
+
+  guint added = 0;
+  for (guint i = 0; i < entries->len; i++) {
+    RefreshEntry *e = g_ptr_array_index(entries, i);
+    if (!e) continue;
+
+    /* Mute list check (must be on main thread) */
+    GnostrMuteList *ml = gnostr_mute_list_get_default();
+    if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
+      continue;
+
+    if (!e->has_profile) {
+      gboolean first = add_pending(self, e->pubkey_hex, e->note_key, e->created_at);
+      if (first)
+        g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
+      continue;
+    }
+
+    /* Ensure profile is in cache */
+    if (have_txn) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(e->pubkey_hex, pk32))
+        (void)profile_cache_ensure_from_db(self, txn, pk32, e->pubkey_hex);
+    }
+
+    add_note_internal(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0);
+    added++;
+  }
+
+  if (have_txn) storage_ndb_end_query(txn);
+
+  enforce_window(self);
+  g_debug("[MODEL] Async refresh complete: %u total items (%u added)", self->notes->len, added);
+
+  g_ptr_array_unref(entries);
+}
+
+void gn_nostr_event_model_refresh_async(GnNostrEventModel *self) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+
+  RefreshQuerySnap *snap = refresh_snap_new(self);
+  GTask *task = g_task_new(self, NULL, on_refresh_async_done, NULL);
+  g_task_set_task_data(task, snap, (GDestroyNotify)refresh_snap_free);
+  g_task_run_in_thread(task, refresh_thread_func);
+  g_object_unref(task);
+}
+
 void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(model));
   g_return_if_fail(pubkey_hex != NULL);

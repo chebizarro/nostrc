@@ -425,9 +425,12 @@ typedef struct {
 } ProfileApplyCtx;
 
 /* ---- Bulk profile apply support ---- */
+#define PROFILES_PER_TICK 20  /* Max profiles to apply per main loop iteration */
+
 typedef struct IdleApplyProfilesCtx {
   GnostrMainWindow *self; /* strong ref */
   GPtrArray *items;       /* ProfileApplyCtx* */
+  guint pos;              /* current position for batched iteration */
 } IdleApplyProfilesCtx;
 
 static void profile_apply_item_free(gpointer p) {
@@ -452,17 +455,29 @@ static gboolean apply_profiles_idle(gpointer user_data) {
     idle_apply_profiles_ctx_free(c);
     return G_SOURCE_REMOVE;
   }
+
+  /* Process up to PROFILES_PER_TICK items per main loop iteration
+   * to avoid blocking the GTK main loop when hundreds of profiles
+   * arrive at once (e.g., from NDB prepopulation). */
   guint applied = 0;
-  for (guint i = 0; i < c->items->len; i++) {
+  guint end = MIN(c->pos + PROFILES_PER_TICK, c->items->len);
+  for (guint i = c->pos; i < end; i++) {
     ProfileApplyCtx *it = (ProfileApplyCtx*)g_ptr_array_index(c->items, i);
     if (!it || !it->pubkey_hex || !it->content_json) continue;
     update_meta_from_profile_json(self, it->pubkey_hex, it->content_json);
     applied++;
   }
-  /* nostrc-sk8o: Refresh thread view ONCE after all profiles applied (not per-profile) */
+  c->pos = end;
+
+  /* nostrc-sk8o: Refresh thread view ONCE per batch (not per-profile) */
   if (applied > 0) {
     refresh_thread_view_profiles_if_visible(self);
   }
+
+  if (c->pos < c->items->len) {
+    return G_SOURCE_CONTINUE;  /* More profiles to process next tick */
+  }
+
   idle_apply_profiles_ctx_free(c);
   return G_SOURCE_REMOVE;
 }
@@ -6971,11 +6986,14 @@ static void initial_refresh_timeout_cb(gpointer data) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   g_debug("STARTUP_DEBUG: initial_refresh_timeout_cb ENTER");
 
-  if (self->event_model) {
-    gn_nostr_event_model_refresh(self->event_model);
-  }
-
+  /* Show session page immediately so UI is responsive while NDB query runs */
   gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_SESSION);
+
+  if (self->event_model) {
+    /* Async: NDB query + JSON deserialization run in a worker thread.
+     * Results are applied on the main thread without blocking the UI. */
+    gn_nostr_event_model_refresh_async(self->event_model);
+  }
 
   g_debug("STARTUP_DEBUG: initial_refresh_timeout_cb EXIT");
 }
