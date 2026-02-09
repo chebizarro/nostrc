@@ -149,20 +149,27 @@ static gboolean dispatch_subid_on_main(gpointer data) {
   int total_polled = 0;
 
   while (total_polled < GN_NDB_DISPATCH_MAX_PER_TICK) {
+    /* nostrc-x3on: Check handler BEFORE polling. If the subscription was
+     * unsubscribed (e.g., thread view navigated away), stop immediately.
+     * Without this, the loop keeps polling stale nostrdb queue entries
+     * every main-loop tick, starving GTK of CPU until the queue drains. */
+    GnNdbHandler *h = NULL;
+    g_mutex_lock(&disp->lock);
+    h = lookup_handler_locked(disp, subid);
+    g_mutex_unlock(&disp->lock);
+
+    if (!h || !h->cb) {
+      g_debug("dispatch: handler gone for subid=%" G_GUINT64_FORMAT ", stopping", (guint64)subid);
+      break;
+    }
+
     int cap = MIN(GN_NDB_DISPATCH_BATCH_CAP,
                   GN_NDB_DISPATCH_MAX_PER_TICK - total_polled);
     int n = storage_ndb_poll_notes(subid, keys, cap);
     if (n <= 0) break;
     total_polled += n;
 
-    GnNdbHandler *h = NULL;
-    g_mutex_lock(&disp->lock);
-    h = lookup_handler_locked(disp, subid);
-    g_mutex_unlock(&disp->lock);
-
-    if (h && h->cb) {
-      h->cb(subid, keys, (guint)n, h->user_data);
-    }
+    h->cb(subid, keys, (guint)n, h->user_data);
   }
 
   if (total_polled >= GN_NDB_DISPATCH_MAX_PER_TICK) {
@@ -173,7 +180,7 @@ static gboolean dispatch_subid_on_main(gpointer data) {
     return G_SOURCE_CONTINUE;
   }
 
-  /* Fully drained — allow future notifications to schedule again. */
+  /* Fully drained (or handler gone) — allow future notifications to schedule again. */
   clear_pending(disp, subid);
   return G_SOURCE_REMOVE;
 }
