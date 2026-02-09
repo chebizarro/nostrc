@@ -26,7 +26,7 @@ GtkWidget *gnostr_article_composer_new(void);
 const char *gnostr_article_composer_get_title(GnostrArticleComposer *self);
 const char *gnostr_article_composer_get_summary(GnostrArticleComposer *self);
 const char *gnostr_article_composer_get_image_url(GnostrArticleComposer *self);
-const char *gnostr_article_composer_get_content(GnostrArticleComposer *self);
+char *gnostr_article_composer_get_content(GnostrArticleComposer *self);
 const char *gnostr_article_composer_get_d_tag(GnostrArticleComposer *self);
 char **gnostr_article_composer_get_hashtags(GnostrArticleComposer *self);
 

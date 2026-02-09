@@ -209,7 +209,7 @@ const char *gnostr_article_composer_get_image_url(GnostrArticleComposer *self) {
   return gtk_editable_get_text(GTK_EDITABLE(self->entry_image));
 }
 
-const char *gnostr_article_composer_get_content(GnostrArticleComposer *self) {
+char *gnostr_article_composer_get_content(GnostrArticleComposer *self) {
   g_return_val_if_fail(GNOSTR_IS_ARTICLE_COMPOSER(self), NULL);
   GtkTextBuffer *buf = gtk_text_view_get_buffer(self->text_editor);
   GtkTextIter start, end;

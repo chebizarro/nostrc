@@ -6301,7 +6301,7 @@ static void on_article_compose_publish(GnostrArticleComposer *composer,
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
   const char *title = gnostr_article_composer_get_title(composer);
-  const char *content = gnostr_article_composer_get_content(composer);
+  g_autofree char *content = gnostr_article_composer_get_content(composer);
   const char *d_tag = gnostr_article_composer_get_d_tag(composer);
 
   if (!title || !*title) {
