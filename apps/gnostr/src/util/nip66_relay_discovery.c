@@ -1578,55 +1578,16 @@ typedef struct {
   GHashTable *seen_urls;  /* For deduplication */
   GNostrPool *pool;
   gulong events_handler_id;
-  guint timeout_source_id;
   NostrFilter *filter;  /* Single filter for query_single_streaming */
   char **urls;
   size_t url_count;
-  gint refcount;  /* Atomic refcount: timeout + query_complete each hold a ref */
-  gboolean completion_handled;  /* TRUE if on_complete callback already invoked */
 } Nip66StreamingCtx;
 
-/* Decrement refcount and free if zero. Returns TRUE if freed. */
-static gboolean nip66_streaming_ctx_unref(Nip66StreamingCtx *ctx)
-{
-  if (!ctx) return FALSE;
-  gint old = g_atomic_int_add(&ctx->refcount, -1);
-  if (old == 1) {
-    /* Last ref - safe to free */
-    if (ctx->events_handler_id && ctx->pool) {
-      g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
-      ctx->events_handler_id = 0;
-    }
-    if (ctx->timeout_source_id) {
-      g_source_remove(ctx->timeout_source_id);
-      ctx->timeout_source_id = 0;
-    }
-    if (ctx->cancellable) g_object_unref(ctx->cancellable);
-    if (ctx->relays_found) g_ptr_array_unref(ctx->relays_found);
-    if (ctx->monitors_found) g_ptr_array_unref(ctx->monitors_found);
-    if (ctx->seen_urls) g_hash_table_destroy(ctx->seen_urls);
-    if (ctx->filter) nostr_filter_free(ctx->filter);
-    if (ctx->urls) {
-      for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]);
-      g_free(ctx->urls);
-    }
-    g_free(ctx);
-    return TRUE;
-  }
-  return FALSE;
-}
-
-/* Legacy free - now just calls unref for backwards compat with signal handlers */
 static void nip66_streaming_ctx_free(Nip66StreamingCtx *ctx)
 {
-  /* Note: This is only called from places that don't use refcounting.
-   * The streaming callbacks use nip66_streaming_ctx_unref instead. */
   if (!ctx) return;
   if (ctx->events_handler_id && ctx->pool) {
     g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
-  }
-  if (ctx->timeout_source_id) {
-    g_source_remove(ctx->timeout_source_id);
   }
   if (ctx->cancellable) g_object_unref(ctx->cancellable);
   if (ctx->relays_found) g_ptr_array_unref(ctx->relays_found);
@@ -1717,56 +1678,17 @@ static void on_streaming_events(GNostrPool *pool, GPtrArray *events, gpointer us
   }
 }
 
-/* Timeout callback to finish streaming discovery */
-static gboolean on_streaming_timeout(gpointer user_data)
-{
-  Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
-  if (!ctx) return G_SOURCE_REMOVE;
-
-  ctx->timeout_source_id = 0;
-
-  g_debug("nip66 streaming: timeout fired");
-
-  /* Cancel the query to stop the background thread */
-  if (ctx->cancellable) {
-    g_cancellable_cancel(ctx->cancellable);
-  }
-
-  /* Atomically check and set completion_handled to ensure on_complete called once */
-  if (!g_atomic_int_compare_and_exchange(&ctx->completion_handled, FALSE, TRUE)) {
-    /* Query completion already handled it - just drop our ref */
-    g_debug("nip66 streaming: timeout - completion already handled by query");
-    nip66_streaming_ctx_unref(ctx);
-    return G_SOURCE_REMOVE;
-  }
-
-  g_debug("nip66 streaming: timeout completing with %u relays",
-            ctx->relays_found ? ctx->relays_found->len : 0);
-
-  /* Disconnect signal handler */
-  if (ctx->events_handler_id && ctx->pool) {
-    g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
-    ctx->events_handler_id = 0;
-  }
-
-  /* Invoke completion callback */
-  if (ctx->on_complete) {
-    ctx->on_complete(ctx->relays_found, ctx->monitors_found, NULL, ctx->user_data);
-    ctx->relays_found = NULL;
-    ctx->monitors_found = NULL;
-  }
-
-  /* Clean up any relay connections that might still be open */
-  if (ctx->pool) {
-    gnostr_pool_disconnect_all(ctx->pool);
-  }
-
-  /* Drop our ref - may free if query_complete already dropped its ref */
-  nip66_streaming_ctx_unref(ctx);
-  return G_SOURCE_REMOVE;
-}
-
-/* Query completion callback - streaming events already delivered via signal */
+/* nostrc-ns2k: Query completion callback - sole handler for streaming results.
+ *
+ * Previously, a separate 10s g_timeout_add_seconds raced with this callback:
+ * the timeout would fire first, call on_complete with 0 results, cancel the
+ * GCancellable, and then GTask would discard the thread's actual results
+ * (returning G_IO_ERROR_CANCELLED instead). This made NIP-66 discovery always
+ * return 0 relays.
+ *
+ * Fix: Removed the separate timeout. The pool's default_timeout (set to 10s
+ * for the NIP-66 pool) governs how long the query thread polls for events.
+ * This callback is the sole completion handler - no race possible. */
 static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
@@ -1811,20 +1733,6 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
   }
   if (results) g_ptr_array_unref(results);
 
-  /* Atomically check and set completion_handled to ensure on_complete called once */
-  if (!g_atomic_int_compare_and_exchange(&ctx->completion_handled, FALSE, TRUE)) {
-    /* Timeout already handled completion - just drop our ref */
-    g_debug("nip66 streaming: query complete - completion already handled by timeout");
-    nip66_streaming_ctx_unref(ctx);
-    return;
-  }
-
-  /* Query complete (EOSE received from all relays). Cancel timeout. */
-  if (ctx->timeout_source_id) {
-    g_source_remove(ctx->timeout_source_id);
-    ctx->timeout_source_id = 0;
-  }
-
   /* Disconnect signal handler */
   if (ctx->events_handler_id && ctx->pool) {
     g_signal_handler_disconnect(ctx->pool, ctx->events_handler_id);
@@ -1841,8 +1749,7 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     ctx->monitors_found = NULL;
   }
 
-  /* Drop our ref - may free if timeout already dropped its ref */
-  nip66_streaming_ctx_unref(ctx);
+  nip66_streaming_ctx_free(ctx);
 }
 
 void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback on_relay_found,
@@ -1859,6 +1766,13 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   GNostrPool *pool = get_nip66_pool();
   gnostr_pool_disconnect_all(pool);
 
+  /* nostrc-ns2k: Use pool's built-in timeout (10s) instead of a separate
+   * g_timeout_add that races with the query thread. The old design had a 10s
+   * main-thread timeout that would call on_complete with 0 results BEFORE the
+   * query thread returned, then GTask would discard the thread's results because
+   * the cancellable was already cancelled. */
+  gnostr_pool_set_default_timeout(pool, 10000);
+
   Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
   ctx->on_relay_found = on_relay_found;
   ctx->on_complete = on_complete;
@@ -1868,8 +1782,6 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   ctx->monitors_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_monitor_free);
   ctx->seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   ctx->pool = pool;
-  ctx->refcount = 2;  /* One ref for timeout, one for query_complete */
-  ctx->completion_handled = FALSE;
 
   /* Collect relay URLs */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
@@ -1906,12 +1818,8 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   nostr_filter_set_kinds(ctx->filter, kinds, 1);
   nostr_filter_set_limit(ctx->filter, 500);
 
-  /* hq-r248b: No streaming signal in GNostrPool - events processed in completion callback */
-
-  /* LEGITIMATE TIMEOUT - Fallback timeout for streaming discovery.
-   * Completes discovery after 10s if EOSE never arrives (relay issue).
-   * nostrc-b0h: Audited - timeout for error handling is appropriate. */
-  ctx->timeout_source_id = g_timeout_add_seconds(10, on_streaming_timeout, ctx);
+  /* hq-r248b: No streaming signal in GNostrPool - events processed in completion callback.
+   * nostrc-ns2k: Pool timeout (10s) governs query duration instead of a separate timer. */
 
   /* Query relays - results processed in on_streaming_query_complete (hq-r248b) */
   gnostr_pool_sync_relays(ctx->pool, (const gchar **)url_ptrs, ctx->url_count);
