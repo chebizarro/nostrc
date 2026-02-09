@@ -755,6 +755,8 @@ static void on_btn_new_notes_clicked(GtkButton *btn, gpointer user_data) {
     gtk_spinner_set_spinning(self->spinner_new_notes, TRUE);
     gtk_widget_set_visible(GTK_WIDGET(self->spinner_new_notes), TRUE);
   }
+  if (self->lbl_new_notes_count)
+    gtk_label_set_text(self->lbl_new_notes_count, _("Loading\u2026"));
 
   g_signal_emit(self, signals[SIGNAL_NEW_NOTES_CLICKED], 0);
 }

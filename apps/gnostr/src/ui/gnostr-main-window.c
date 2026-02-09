@@ -6220,6 +6220,12 @@ static gboolean scroll_to_top_idle(gpointer user_data) {
     }
   }
 
+  /* nostrc-3r8k: NOW hide the new notes indicator - after flush + scroll complete.
+   * This lets the spinner remain visible while notes are being processed. */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_set_new_notes_count(self->session_view, 0);
+  }
+
   /* Unref the window we ref'd when scheduling this idle */
   g_object_unref(self);
   return G_SOURCE_REMOVE;
@@ -6231,10 +6237,10 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  /* Hide new notes indicator immediately */
-  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-    gnostr_session_view_set_new_notes_count(self->session_view, 0);
-  }
+  /* nostrc-3r8k: Don't hide the indicator here - the session view's click
+   * handler already swapped the arrow for a spinner. We hide everything
+   * in scroll_to_top_idle after flush + scroll complete so the spinner
+   * remains visible while notes are being processed. */
 
   /* Mark user as at top BEFORE flushing so new items insert directly */
   if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model)) {
