@@ -8143,9 +8143,11 @@ on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
 
     GError *sub_error = NULL;
     GNostrSubscription *sub = gnostr_pool_subscribe(self->pool, filters, &sub_error);
-    nostr_filters_free(filters);
+    /* Note: do NOT free filters here — GNostrSubscription takes ownership (nostrc-aaf0).
+     * The core subscription borrows the pointer and needs it alive for reconnect refire. */
 
     if (!sub) {
+        nostr_filters_free(filters); /* subscription failed, we still own them */
         g_warning("live: pool_subscribe failed: %s - retrying in 5 seconds",
                   sub_error ? sub_error->message : "(unknown)");
         g_clear_error(&sub_error);

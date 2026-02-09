@@ -33,6 +33,7 @@
 GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters);
 gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
 void gnostr_subscription_close(GNostrSubscription *self);
+void gnostr_subscription_detach_filters(GNostrSubscription *self); /* nostrc-aaf0 */
 
 
 #include <glib.h>
@@ -905,6 +906,8 @@ gnostr_pool_subscribe(GNostrPool   *self,
     }
 
     if (!gnostr_subscription_fire(sub, error)) {
+        /* Detach filters before unref so caller retains ownership on failure (nostrc-aaf0) */
+        gnostr_subscription_detach_filters(sub);
         g_object_unref(sub);
         return NULL;
     }

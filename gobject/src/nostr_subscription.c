@@ -51,6 +51,7 @@ struct _GNostrSubscription {
 
     NostrSubscription *subscription;      /* core subscription pointer */
     GNostrRelay *relay;                   /* owning relay (ref held) */
+    NostrFilters *owned_filters;          /* filters ownership (nostrc-aaf0) */
     GNostrSubscriptionState state;        /* lifecycle state */
     guint event_count;                    /* events received (atomic) */
 
@@ -268,6 +269,14 @@ gnostr_subscription_finalize(GObject *object)
         self->subscription = NULL;
     }
 
+    /* Free owned filters AFTER core subscription is freed (nostrc-aaf0).
+     * The core subscription borrows the filters pointer, so we must keep
+     * them alive until after nostr_subscription_free(). */
+    if (self->owned_filters) {
+        nostr_filters_free(self->owned_filters);
+        self->owned_filters = NULL;
+    }
+
     /* Release relay reference */
     g_clear_object(&self->relay);
 
@@ -414,6 +423,10 @@ gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters)
 
     self->relay = g_object_ref(relay);
 
+    /* Take ownership of filters — the core subscription borrows the pointer,
+     * so we must keep them alive for the subscription's lifetime (nostrc-aaf0). */
+    self->owned_filters = filters;
+
     /* Prepare the core subscription (allocates channels, generates ID) */
     GoContext *bg = go_context_background();
     self->subscription = nostr_relay_prepare_subscription(core_relay, bg, filters);
@@ -421,6 +434,7 @@ gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters)
     if (!self->subscription) {
         g_warning("Failed to prepare subscription on relay %s",
                   gnostr_relay_get_url(relay));
+        self->owned_filters = NULL; /* don't free caller's filters on failure */
         g_clear_object(&self->relay);
         g_object_unref(self);
         return NULL;
@@ -431,6 +445,19 @@ gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters)
             gnostr_relay_get_url(relay));
 
     return self;
+}
+
+/**
+ * gnostr_subscription_detach_filters:
+ *
+ * Detaches filter ownership so they won't be freed in finalize.
+ * Used when the subscription fails to fire and the caller retains
+ * filter ownership. (nostrc-aaf0, internal API)
+ */
+void
+gnostr_subscription_detach_filters(GNostrSubscription *self)
+{
+    if (self) self->owned_filters = NULL;
 }
 
 gboolean
