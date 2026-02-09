@@ -1782,15 +1782,8 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   GNostrPool *pool = get_nip66_pool();
   gnostr_pool_disconnect_all(pool);
 
-  /* nostrc-ns2k: Use pool's built-in timeout (10s) instead of a separate
-   * g_timeout_add that races with the query thread. The old design had a 10s
-   * main-thread timeout that would call on_complete with 0 results BEFORE the
-   * query thread returned, then GTask would discard the thread's results because
-   * the cancellable was already cancelled. */
-  /* nostrc-ns2k: 15s timeout to allow time for WS handshake + relay response.
-   * Each relay needs: DNS + TCP + TLS + WS upgrade (~1-3s), then REQ send + response.
-   * With 3 relays connecting sequentially, 10s was too tight. */
-  gnostr_pool_set_default_timeout(pool, 15000);
+  /* nostrc-blk1: No timeout — poll loop uses protocol signals (EOSE,
+   * subscription CLOSED, relay disconnect) to know when each relay is done. */
 
   Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
   ctx->on_relay_found = on_relay_found;
@@ -1829,8 +1822,8 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
     url_ptrs[i] = ctx->urls[i];
   }
 
-  fprintf(stderr, "[NIP66] streaming: querying %zu relays for kind 30166 (timeout=%ums)\n",
-          ctx->url_count, gnostr_pool_get_default_timeout(ctx->pool));
+  fprintf(stderr, "[NIP66] streaming: querying %zu relays for kind 30166 (protocol-driven, no timeout)\n",
+          ctx->url_count);
   for (guint i = 0; i < relay_urls->len; i++) {
     fprintf(stderr, "[NIP66] streaming: relay[%u] = %s\n", i, (const gchar *)g_ptr_array_index(relay_urls, i));
   }
@@ -1841,8 +1834,7 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   nostr_filter_set_kinds(ctx->filter, kinds, 1);
   nostr_filter_set_limit(ctx->filter, 500);
 
-  /* hq-r248b: No streaming signal in GNostrPool - events processed in completion callback.
-   * nostrc-ns2k: Pool timeout (10s) governs query duration instead of a separate timer. */
+  /* hq-r248b: No streaming signal in GNostrPool - events processed in completion callback. */
 
   /* Query relays - results processed in on_streaming_query_complete (hq-r248b) */
   gnostr_pool_sync_relays(ctx->pool, (const gchar **)url_ptrs, ctx->url_count);

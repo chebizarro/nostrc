@@ -634,8 +634,8 @@ query_thread_func(GTask         *task,
 
     /* nostrc-snap: Use snapshot captured on main thread, NOT self->relays */
     guint n_relays = data->relay_snapshots ? data->relay_snapshots->len : 0;
-    fprintf(stderr, "[POOL_QUERY] START: %u relays (snapshot), filters=%p (count=%zu), timeout=%ums\n",
-              n_relays, (void *)filters, filters ? filters->count : 0, data->timeout_ms);
+    fprintf(stderr, "[POOL_QUERY] START: %u relays (snapshot), filters=%p (count=%zu)\n",
+              n_relays, (void *)filters, filters ? filters->count : 0);
     if (n_relays == 0) {
         fprintf(stderr, "[POOL_QUERY] 0 relays - returning empty\n");
         g_task_return_pointer(task,
@@ -721,19 +721,13 @@ query_thread_func(GTask         *task,
         return;
     }
 
-    /* Drain events from all subscriptions until all EOSE or cancelled/timeout.
-     * nostrc-blk1: Also exit early if no activity for 3s after receiving results
-     * — avoids waiting the full timeout for relays that never respond. */
-    guint64 deadline_us = 0;
-    if (data->timeout_ms > 0) {
-        deadline_us = g_get_monotonic_time() + (guint64)data->timeout_ms * 1000;
-    }
+    /* nostrc-blk1: Drain events using protocol signals only — no arbitrary
+     * timeouts.  Relays signal completion via EOSE, or the subscription
+     * gets closed/disconnected.  This is WebSocket + Nostr, not REST. */
     gint64 poll_start = g_get_monotonic_time();
     gint64 first_event_time = 0;
-    gint64 last_activity_time = g_get_monotonic_time();
-    guint eose_count = 0;
     guint poll_iterations = 0;
-    g_debug("pool_query_thread: polling for events (timeout=%ums)", data->timeout_ms);
+    g_debug("pool_query_thread: polling for events (no timeout — protocol-driven)");
 
     for (;;) {
         poll_iterations++;
@@ -742,20 +736,27 @@ query_thread_func(GTask         *task,
                     (long long)((g_get_monotonic_time() - poll_start) / 1000), poll_iterations);
             break;
         }
-        if (deadline_us > 0 && (guint64)g_get_monotonic_time() > deadline_us) {
-            fprintf(stderr, "[POOL_QUERY] poll: TIMEOUT after %lldms (%u iters), %u results\n",
-                    (long long)((g_get_monotonic_time() - poll_start) / 1000), poll_iterations,
-                    data->results->len);
-            break;
-        }
 
         gboolean any_activity = FALSE;
-        gboolean all_eosed = TRUE;
+        gboolean all_done = TRUE;
 
         for (guint i = 0; i < items->len; i++) {
             RelaySubItem *item = g_ptr_array_index(items, i);
             if (!item || !item->sub || item->eosed) continue;
-            all_eosed = FALSE;
+
+            /* Check if subscription was closed or relay disconnected */
+            if (nostr_subscription_is_closed(item->sub) ||
+                !nostr_relay_is_connected(item->core_relay)) {
+                item->eosed = TRUE; /* treat as done */
+                fprintf(stderr, "[POOL_QUERY] poll: relay[%u] %s after %lldms, %u results so far\n",
+                        i,
+                        nostr_subscription_is_closed(item->sub) ? "CLOSED" : "DISCONNECTED",
+                        (long long)((g_get_monotonic_time() - poll_start) / 1000),
+                        data->results->len);
+                continue;
+            }
+
+            all_done = FALSE;
 
             /* Check for events */
             void *msg = NULL;
@@ -788,31 +789,16 @@ query_thread_func(GTask         *task,
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 item->eosed = TRUE;
                 any_activity = TRUE;
-                eose_count++;
                 fprintf(stderr, "[POOL_QUERY] poll: relay[%u] EOSE after %lldms, %u results so far\n",
                         i, (long long)((g_get_monotonic_time() - poll_start) / 1000),
                         data->results->len);
             }
         }
 
-        if (any_activity)
-            last_activity_time = g_get_monotonic_time();
-
-        if (all_eosed) {
-            fprintf(stderr, "[POOL_QUERY] all relays sent EOSE after %lldms, %u results collected\n",
+        if (all_done) {
+            fprintf(stderr, "[POOL_QUERY] all relays done after %lldms, %u results collected\n",
                     (long long)((g_get_monotonic_time() - poll_start) / 1000), data->results->len);
             break;
-        }
-
-        /* nostrc-blk1: Early exit on inactivity — if at least one relay sent
-         * EOSE and no activity for 3s, stop waiting for unresponsive relays. */
-        if (eose_count > 0 && data->results->len > 0) {
-            gint64 idle_ms = (g_get_monotonic_time() - last_activity_time) / 1000;
-            if (idle_ms >= 3000) {
-                fprintf(stderr, "[POOL_QUERY] inactivity exit after %lldms idle (%u/%u relays EOSE, %u results)\n",
-                        (long long)idle_ms, eose_count, items->len, data->results->len);
-                break;
-            }
         }
 
         if (!any_activity)
