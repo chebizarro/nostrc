@@ -1699,17 +1699,17 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
-    g_warning("nip66 streaming: query finished with error: %s (domain=%s code=%d)",
-              error->message, g_quark_to_string(error->domain), error->code);
+    g_debug("nip66 streaming: query finished with error: %s (domain=%s code=%d)",
+            error->message, g_quark_to_string(error->domain), error->code);
     g_error_free(error);
   }
 
-  g_warning("nip66 streaming: query returned %u raw results", results ? results->len : 0);
+  g_debug("nip66 streaming: query returned %u raw results", results ? results->len : 0);
 
   /* hq-r248b: Process results here (previously handled via streaming signal).
    * Results are JSON strings - parse each as relay metadata. */
   if (results && results->len > 0) {
-    g_warning("nip66 streaming: processing %u results from query", results->len);
+    g_debug("nip66 streaming: processing %u results from query", results->len);
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
       if (!json) continue;
@@ -1815,10 +1815,9 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
     url_ptrs[i] = ctx->urls[i];
   }
 
-  /* nostrc-ns2k: Log relay list at warning level for diagnostics */
-  g_warning("nip66 streaming: querying %zu relays for kind 30166", ctx->url_count);
+  g_debug("nip66 streaming: querying %zu relays for kind 30166", ctx->url_count);
   for (guint i = 0; i < relay_urls->len; i++) {
-    g_warning("nip66 streaming: relay[%u] = %s", i, (const gchar *)g_ptr_array_index(relay_urls, i));
+    g_debug("nip66 streaming: relay[%u] = %s", i, (const gchar *)g_ptr_array_index(relay_urls, i));
   }
 
   /* Build filter - single filter for query_single_streaming */
