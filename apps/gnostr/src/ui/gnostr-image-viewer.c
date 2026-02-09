@@ -698,6 +698,15 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
   gtk_widget_set_visible(self->spinner, TRUE);
   gtk_spinner_start(GTK_SPINNER(self->spinner));
 
+  /* hq-snq39: Check shared soup session before starting fetch */
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) {
+    g_warning("ImageViewer: shared soup session unavailable, cannot load: %s", url);
+    gtk_widget_set_visible(self->spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+    return;
+  }
+
   /* Start async fetch */
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
@@ -713,8 +722,9 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
   ctx->url = g_strdup(url);
   g_object_weak_ref(G_OBJECT(self), on_image_viewer_destroyed, ctx);
 
+  g_debug("ImageViewer: fetching image: %s", url);
   soup_session_send_and_read_async(
-    gnostr_get_shared_soup_session(),
+    session,
     msg,
     G_PRIORITY_DEFAULT,
     self->cancellable,
@@ -732,6 +742,14 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
   g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
   g_return_if_fail(GDK_IS_TEXTURE(texture));
 
+#ifdef HAVE_SOUP3
+  /* Cancel any pending HTTP request since we already have the texture */
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+  }
+#endif
+
   g_clear_object(&self->texture);
   self->texture = g_object_ref(texture);
 
@@ -739,8 +757,20 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
     gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(texture));
   }
 
+  /* Hide spinner in case it was shown by a prior set_image_url */
+  if (GTK_IS_WIDGET(self->spinner)) {
+    gtk_widget_set_visible(self->spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  }
+
   /* Apply initial fit zoom */
   zoom_to_fit(self);
+}
+
+void gnostr_image_viewer_set_url_hint(GnostrImageViewer *self, const char *url) {
+  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
+  g_clear_pointer(&self->image_url, g_free);
+  self->image_url = url ? g_strdup(url) : NULL;
 }
 
 static void update_nav_display(GnostrImageViewer *self) {

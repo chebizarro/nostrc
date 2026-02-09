@@ -59,6 +59,16 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
 void gnostr_image_viewer_present(GnostrImageViewer *self);
 
 /**
+ * gnostr_image_viewer_set_url_hint:
+ * @self: the image viewer
+ * @url: (nullable): the URL to store for save/copy-link features
+ *
+ * Store a URL hint without starting a download. Use after set_texture()
+ * to enable save-image and copy-link features.
+ */
+void gnostr_image_viewer_set_url_hint(GnostrImageViewer *self, const char *url);
+
+/**
  * gnostr_image_viewer_set_gallery:
  * @self: the image viewer
  * @urls: (array zero-terminated=1): NULL-terminated array of image URLs

@@ -2579,7 +2579,14 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
     GtkRoot *root = gtk_widget_get_root(pic);
     GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
     GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
-    gnostr_image_viewer_set_image_url(viewer, clicked_url);
+    /* hq-snq39: Use already-loaded texture if available to avoid re-download */
+    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(pic));
+    if (paintable && GDK_IS_TEXTURE(paintable)) {
+      gnostr_image_viewer_set_texture(viewer, GDK_TEXTURE(paintable));
+      gnostr_image_viewer_set_url_hint(viewer, clicked_url);
+    } else {
+      gnostr_image_viewer_set_image_url(viewer, clicked_url);
+    }
     gnostr_image_viewer_present(viewer);
     return;
   }
@@ -2622,7 +2629,14 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
   if (urls->len > 2) {  /* More than just clicked + NULL terminator */
     gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata, clicked_index);
   } else {
-    gnostr_image_viewer_set_image_url(viewer, clicked_url);
+    /* hq-snq39: Use already-loaded texture if available to avoid re-download */
+    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(pic));
+    if (paintable && GDK_IS_TEXTURE(paintable)) {
+      gnostr_image_viewer_set_texture(viewer, GDK_TEXTURE(paintable));
+      gnostr_image_viewer_set_url_hint(viewer, clicked_url);
+    } else {
+      gnostr_image_viewer_set_image_url(viewer, clicked_url);
+    }
   }
   gnostr_image_viewer_present(viewer);
 
