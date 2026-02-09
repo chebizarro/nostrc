@@ -644,12 +644,10 @@ query_thread_func(GTask         *task,
         NostrRelay *core_relay;
         struct NostrSubscription *sub;
         gboolean eosed;
-        gboolean owns_relay; /* whether we created this relay for the query */
     } RelaySubItem;
 
     GPtrArray *items = g_ptr_array_new();
     GoContext *bg = go_context_background();
-    gboolean have_temp_relay = FALSE;  /* limit to 1 temp relay to avoid serial blocking */
 
     for (guint i = 0; i < n_relays; i++) {
         if (cancellable && g_cancellable_is_cancelled(cancellable))
@@ -659,96 +657,44 @@ query_thread_func(GTask         *task,
         RelaySnapshotEntry *snap = g_ptr_array_index(data->relay_snapshots, i);
         NostrRelay *core_relay = snap->core_relay;
         const gchar *url = snap->url;
-        if (!url) continue;
+        if (!url || !core_relay) continue;
 
-        /* Always try the REAL relay first — the snapshot's `connected` flag
-         * is stale by the time this worker runs.  The relay may have finished
-         * connecting after the snapshot was captured.  If prepare+fire
-         * succeed, we know it's alive.  Only fall back to a temp relay when
-         * the real one is genuinely unavailable. */
-        gboolean used_real = FALSE;
-        if (core_relay) {
-            struct NostrSubscription *sub = nostr_relay_prepare_subscription(core_relay, bg, filters);
-            if (sub) {
-                Error *fire_err = NULL;
-                if (nostr_subscription_fire(sub, &fire_err)) {
-                    RelaySubItem *item = g_new0(RelaySubItem, 1);
-                    item->core_relay = core_relay;
-                    item->owns_relay = FALSE;
-                    item->sub = sub;
-                    g_ptr_array_add(items, item);
-                    used_real = TRUE;
-                    g_debug("pool_query_thread: relay[%u] %s real relay OK", i, url);
-                } else {
-                    g_debug("pool_query_thread: relay[%u] %s real relay fire failed: %s",
-                            i, url, fire_err ? fire_err->message : "not connected");
-                    if (fire_err) free_error(fire_err);
-                    nostr_subscription_free(sub);
-                }
-            }
+        /* Connect the relay if not already connected.
+         * nostr_relay_connect() returns immediately when relay->connection
+         * is already set (e.g. connected by connect_all_async in another
+         * thread, or shared via the relay registry).  Otherwise it blocks
+         * on DNS + TLS + WS handshake — fine for a worker thread.
+         * The connection persists on the real relay for future queries,
+         * unlike the old temp-relay approach which created throwaway
+         * connections every single query. */
+        Error *conn_err = NULL;
+        if (!nostr_relay_connect(core_relay, &conn_err)) {
+            g_debug("pool_query_thread: relay[%u] %s connect failed: %s",
+                    i, url, conn_err ? conn_err->message : "unknown");
+            if (conn_err) free_error(conn_err);
+            continue;
         }
 
-        if (!used_real) {
-            /* Limit temp relay creation to ONE successful connection.
-             * Each temp relay blocks on DNS + TLS + WS handshake (~1-5s).
-             * With N relays, sequential creation blocks for N * 1-5s,
-             * stalling ALL queries at startup.  One relay returning
-             * results is enough; the rest can be queried on next sync. */
-            if (have_temp_relay) {
-                g_debug("pool_query_thread: relay[%u] %s skipped (already have temp relay)", i, url);
-                continue;
-            }
-
-            /* Real relay unavailable — create a temporary one for this query. */
-            g_debug("pool_query_thread: relay[%u] %s creating temp relay", i, url);
-            Error *err = NULL;
-            NostrRelay *temp_relay = nostr_relay_new(bg, url, &err);
-            if (!temp_relay) {
-                if (err) {
-                    g_debug("pool_query_thread: relay[%u] %s create FAILED: %s", i, url,
-                            err->message ? err->message : "unknown");
-                    free_error(err);
-                }
-                continue;
-            }
-            temp_relay->assume_valid = true;
-            if (!nostr_relay_connect(temp_relay, &err)) {
-                if (err) {
-                    g_debug("pool_query_thread: relay[%u] %s connect FAILED: %s", i, url,
-                            err->message ? err->message : "unknown");
-                    free_error(err);
-                }
-                nostr_relay_free(temp_relay);
-                continue;
-            }
-
-            struct NostrSubscription *sub = nostr_relay_prepare_subscription(temp_relay, bg, filters);
-            if (!sub) {
-                g_debug("pool_query_thread: relay[%u] %s prepare_subscription FAILED", i, url);
-                nostr_relay_disconnect(temp_relay);
-                nostr_relay_free(temp_relay);
-                continue;
-            }
-
-            Error *fire_err = NULL;
-            if (!nostr_subscription_fire(sub, &fire_err)) {
-                g_debug("pool_query_thread: relay[%u] %s fire FAILED: %s", i, url,
-                          fire_err ? fire_err->message : "unknown");
-                if (fire_err) free_error(fire_err);
-                nostr_subscription_free(sub);
-                nostr_relay_disconnect(temp_relay);
-                nostr_relay_free(temp_relay);
-                continue;
-            }
-            g_debug("pool_query_thread: relay[%u] %s temp relay OK", i, url);
-
-            RelaySubItem *item = g_new0(RelaySubItem, 1);
-            item->core_relay = temp_relay;
-            item->owns_relay = TRUE;
-            item->sub = sub;
-            g_ptr_array_add(items, item);
-            have_temp_relay = TRUE;
+        struct NostrSubscription *sub = nostr_relay_prepare_subscription(core_relay, bg, filters);
+        if (!sub) {
+            g_debug("pool_query_thread: relay[%u] %s prepare_subscription failed", i, url);
+            continue;
         }
+
+        Error *fire_err = NULL;
+        if (!nostr_subscription_fire(sub, &fire_err)) {
+            g_debug("pool_query_thread: relay[%u] %s fire failed: %s",
+                    i, url, fire_err ? fire_err->message : "unknown");
+            if (fire_err) free_error(fire_err);
+            nostr_subscription_free(sub);
+            continue;
+        }
+
+        g_debug("pool_query_thread: relay[%u] %s OK", i, url);
+        RelaySubItem *item = g_new0(RelaySubItem, 1);
+        item->core_relay = core_relay;
+        item->sub = sub;
+        g_ptr_array_add(items, item);
     }
 
     g_debug("pool_query_thread: %u active subscriptions across relays", items->len);
@@ -827,10 +773,8 @@ query_thread_func(GTask         *task,
             nostr_subscription_close(item->sub, NULL);
             nostr_subscription_free(item->sub);
         }
-        if (item->owns_relay && item->core_relay) {
-            nostr_relay_disconnect(item->core_relay);
-            nostr_relay_free(item->core_relay);
-        }
+        /* Relay is owned by the pool snapshot (grelay_ref keeps it alive).
+         * Do NOT disconnect — connection persists for future queries. */
         g_free(item);
     }
     g_ptr_array_unref(items);
