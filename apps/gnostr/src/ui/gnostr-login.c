@@ -1149,23 +1149,7 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
     return;
   }
 
-  /* nostrc-kw9r: Use a shorter timeout for login RPCs.  The default 30 s is
-   * too long for interactive login — the user sees a frozen spinner.  15 s is
-   * enough for a remote signer to respond via relay while still failing fast
-   * enough that the user doesn't think the app is dead. */
-  nostr_nip46_client_set_timeout(session, 15000);
-
   g_message("[NIP46_LOGIN] Session configured, sending connect RPC...");
-
-  /* nostrc-kw9r: Check cancellation before each expensive RPC call so the
-   * Cancel button in the UI takes effect between steps. */
-  if (g_cancellable_is_cancelled(cancellable)) {
-    free(client_secret);
-    nostr_nip46_session_free(session);
-    nostr_nip46_uri_bunker_free(&parsed);
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled");
-    return;
-  }
 
   /* Step 4: Send "connect" RPC to remote signer */
   char *connect_result = NULL;
@@ -1188,15 +1172,6 @@ static void bunker_connect_thread(GTask *task, gpointer source, gpointer task_da
     /* Continue anyway - some signers may return different values */
   }
   free(connect_result);
-
-  /* Check cancellation before second RPC */
-  if (g_cancellable_is_cancelled(cancellable)) {
-    free(client_secret);
-    nostr_nip46_session_free(session);
-    nostr_nip46_uri_bunker_free(&parsed);
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled");
-    return;
-  }
 
   /* Step 5: Send "get_public_key" RPC to get actual user pubkey */
   g_message("[NIP46_LOGIN] Sending get_public_key RPC...");
