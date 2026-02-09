@@ -730,8 +730,18 @@ static void *message_loop(void *arg) {
 
     init_cached_env();
 
-    char buf[4096];
-    char priority_buf[4096];  // Buffer for priority messages
+    /* nostrc-of8l: Match WebSocket reassembly buffer (128KB). The old 4KB buffer
+     * silently dropped kind:0 profiles, kind:3 contacts, and kind:10002 relay
+     * lists that exceeded 4KB, triggering spurious reconnects and channel backpressure. */
+    char *buf = malloc(131072);
+    char *priority_buf = malloc(131072);
+    if (!buf || !priority_buf) {
+        free(buf); free(priority_buf);
+        if (ctx) go_context_unref(ctx);
+        go_wait_group_done(&r->priv->workers);
+        return NULL;
+    }
+    const size_t buf_size = 131072;
     Error *err = NULL;
     uint64_t msg_count = 0;
     int has_priority = 0;
@@ -771,7 +781,7 @@ static void *message_loop(void *arg) {
                     break;
                 }
                 // Read next message
-                nostr_connection_read_message(conn, ctx, buf, sizeof(buf), &err);
+                nostr_connection_read_message(conn, ctx, buf, buf_size, &err);
                 if (err) {
                     free_error(err);
                     err = NULL;
@@ -1122,6 +1132,8 @@ static void *message_loop(void *arg) {
     }  /* end outer reconnection loop */
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
+    free(buf);
+    free(priority_buf);
     go_context_unref(ctx);  // Release context reference (nostrc-0q4)
     go_wait_group_done(&r->priv->workers);  // Use local 'r', not freed 'arg'
     return NULL;
