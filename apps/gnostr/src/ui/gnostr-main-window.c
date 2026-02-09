@@ -69,6 +69,8 @@
 #include "../util/nip51_settings.h"
 /* Blossom server settings (kind 10063) */
 #include "../util/blossom_settings.h"
+/* NIP-42 relay authentication */
+#include "../util/nip42_auth.h"
 /* NIP-66 relay discovery */
 #include "../util/nip66_relay_discovery.h"
 /* Metrics dashboard */
@@ -5889,6 +5891,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->ndb_sweep_source_id = 0;
   self->ndb_sweep_debounce_ms = 1000; /* 1 second - prevents transaction contention */
   if (!self->pool) self->pool = gnostr_pool_new();
+
+  /* NIP-42: Install relay AUTH handler so challenges are signed automatically (nostrc-kn38) */
+  gnostr_nip42_setup_pool_auth(self->pool);
 
   /* nostrc-bkor: Init gift wrap state and DM service BEFORE starting the subscription.
    * Previously these were initialized AFTER start_gift_wrap_subscription(), which wiped

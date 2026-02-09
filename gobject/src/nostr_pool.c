@@ -67,6 +67,11 @@ struct _GNostrPool {
 
     /* Internal: track state-changed signal handlers per relay */
     GHashTable *relay_handler_ids; /* url -> GUINT_TO_POINTER(handler_id) */
+
+    /* NIP-42 AUTH: pool-wide auth handler applied to all relays (nostrc-kn38) */
+    GNostrRelayAuthSignFunc auth_sign_func;
+    gpointer auth_sign_data;
+    GDestroyNotify auth_sign_destroy;
 };
 
 G_DEFINE_TYPE(GNostrPool, gnostr_pool, G_TYPE_OBJECT)
@@ -191,6 +196,14 @@ gnostr_pool_finalize(GObject *object)
         g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
         unwatch_relay(self, relay);
     }
+
+    /* Clean up NIP-42 auth handler (nostrc-kn38) */
+    if (self->auth_sign_destroy && self->auth_sign_data) {
+        self->auth_sign_destroy(self->auth_sign_data);
+    }
+    self->auth_sign_func = NULL;
+    self->auth_sign_data = NULL;
+    self->auth_sign_destroy = NULL;
 
     g_clear_pointer(&self->relay_handler_ids, g_hash_table_destroy);
     g_clear_object(&self->relays);
@@ -321,6 +334,12 @@ gnostr_pool_add_relay(GNostrPool *self, const gchar *url)
     if (!relay)
         return NULL;
 
+    /* NIP-42: Apply pool-wide auth handler to new relay (nostrc-kn38) */
+    if (self->auth_sign_func) {
+        gnostr_relay_set_auth_handler(relay, self->auth_sign_func,
+                                      self->auth_sign_data, NULL);
+    }
+
     g_list_store_append(self->relays, relay);
     watch_relay(self, relay);
 
@@ -353,6 +372,12 @@ gnostr_pool_add_relay_object(GNostrPool *self, GNostrRelay *relay)
     /* Check if already present */
     if (find_relay_index(self, url) >= 0)
         return FALSE;
+
+    /* Apply pool-wide NIP-42 AUTH handler if set (nostrc-kn38) */
+    if (self->auth_sign_func) {
+        gnostr_relay_set_auth_handler(relay, self->auth_sign_func,
+                                      self->auth_sign_data, NULL);
+    }
 
     g_list_store_append(self->relays, relay);
     watch_relay(self, relay);
@@ -888,4 +913,34 @@ gnostr_pool_subscribe(GNostrPool   *self,
             gnostr_relay_get_url(connected_relay));
 
     return sub;
+}
+
+/* --- NIP-42 AUTH handler API (nostrc-kn38) --- */
+
+void
+gnostr_pool_set_auth_handler(GNostrPool              *self,
+                              GNostrRelayAuthSignFunc   sign_func,
+                              gpointer                 user_data,
+                              GDestroyNotify            destroy)
+{
+    g_return_if_fail(GNOSTR_IS_POOL(self));
+
+    /* Clean up old handler */
+    if (self->auth_sign_destroy && self->auth_sign_data) {
+        self->auth_sign_destroy(self->auth_sign_data);
+    }
+
+    self->auth_sign_func = sign_func;
+    self->auth_sign_data = user_data;
+    self->auth_sign_destroy = destroy;
+
+    /* Apply to all existing relays */
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
+    for (guint i = 0; i < n; i++) {
+        g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
+        gnostr_relay_set_auth_handler(relay, sign_func, user_data, NULL);
+    }
+
+    g_debug("NIP-42: auth handler %s for pool (%u relays)",
+            sign_func ? "set" : "cleared", n);
 }

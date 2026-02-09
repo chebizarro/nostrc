@@ -243,6 +243,29 @@ GNostrSubscription *gnostr_pool_subscribe(GNostrPool *self,
                                            NostrFilters *filters,
                                            GError **error);
 
+/* --- NIP-42 AUTH handler API (nostrc-kn38) --- */
+
+/**
+ * gnostr_pool_set_auth_handler:
+ * @self: a #GNostrPool
+ * @sign_func: (nullable): signing function for NIP-42 AUTH events
+ * @user_data: (closure): user data passed to @sign_func
+ * @destroy: (nullable): destroy function for @user_data
+ *
+ * Sets a pool-wide NIP-42 AUTH handler. When any relay in the pool
+ * receives an AUTH challenge, this handler will sign the response.
+ * The handler is automatically applied to all existing relays and
+ * any relays added in the future.
+ *
+ * Pass %NULL for @sign_func to disable automatic authentication.
+ *
+ * Since: 1.0
+ */
+void gnostr_pool_set_auth_handler(GNostrPool              *self,
+                                   GNostrRelayAuthSignFunc   sign_func,
+                                   gpointer                 user_data,
+                                   GDestroyNotify            destroy);
+
 G_END_DECLS
 
 #endif /* NOSTR_POOL_H */
