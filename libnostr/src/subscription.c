@@ -150,6 +150,8 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     atomic_store(&m->created_time_us, now_us);
 
     nsync_mu_init(&sub->priv->sub_mutex);
+    // Initialize refcount to 1 (nostrc-nr96)
+    atomic_store(&sub->priv->refcount, 1);
     // Initialize wait group for lifecycle thread
     go_wait_group_init(&sub->priv->wg);
     go_wait_group_add(&sub->priv->wg, 1);
@@ -183,26 +185,8 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     return sub;
 }
 
-void nostr_subscription_free(NostrSubscription *sub) {
-    if (!sub)
-        return;
-
-    // LIFECYCLE: Log subscription free
-    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
-        bool eosed = sub->priv ? atomic_load(&sub->priv->eosed) : false;
-        bool unsubbed = sub->priv ? atomic_load(&sub->priv->unsubbed) : false;
-        fprintf(stderr, "[SUB_LIFECYCLE] FREE sid=%s eosed=%d unsubbed=%d\n",
-                sub->priv && sub->priv->id ? sub->priv->id : "null",
-                eosed ? 1 : 0, unsubbed ? 1 : 0);
-    }
-
-    // IMPORTANT: Remove from relay map FIRST to prevent message_loop from
-    // dispatching events to this subscription while we're freeing it.
-    // This must happen before waiting for the lifecycle worker.
-    if (sub->relay && sub->relay->subscriptions) {
-        go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
-    }
-
+/* Internal: actual deallocation when refcount drops to 0 (nostrc-nr96) */
+static void subscription_destroy(NostrSubscription *sub) {
     // Ensure lifecycle worker has exited (caller should have unsubscribed)
     go_wait_group_wait(&sub->priv->wg);
 
@@ -236,6 +220,44 @@ void nostr_subscription_free(NostrSubscription *sub) {
 
     free(sub);
     nostr_metric_counter_add("sub_freed", 1);
+}
+
+NostrSubscription *nostr_subscription_ref(NostrSubscription *sub) {
+    if (!sub || !sub->priv) return sub;
+    atomic_fetch_add(&sub->priv->refcount, 1);
+    return sub;
+}
+
+void nostr_subscription_unref(NostrSubscription *sub) {
+    if (!sub || !sub->priv) return;
+    int prev = atomic_fetch_sub(&sub->priv->refcount, 1);
+    if (prev <= 1) {
+        subscription_destroy(sub);
+    }
+}
+
+void nostr_subscription_free(NostrSubscription *sub) {
+    if (!sub)
+        return;
+
+    // LIFECYCLE: Log subscription free
+    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+        bool eosed = sub->priv ? atomic_load(&sub->priv->eosed) : false;
+        bool unsubbed = sub->priv ? atomic_load(&sub->priv->unsubbed) : false;
+        fprintf(stderr, "[SUB_LIFECYCLE] FREE sid=%s eosed=%d unsubbed=%d\n",
+                sub->priv && sub->priv->id ? sub->priv->id : "null",
+                eosed ? 1 : 0, unsubbed ? 1 : 0);
+    }
+
+    // IMPORTANT: Remove from relay map FIRST to prevent message_loop from
+    // dispatching events to this subscription while we're freeing it.
+    // This must happen before waiting for the lifecycle worker.
+    if (sub->relay && sub->relay->subscriptions) {
+        go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
+    }
+
+    // Decrement refcount — actual deallocation happens when it hits 0 (nostrc-nr96)
+    nostr_subscription_unref(sub);
 }
 
 char *nostr_subscription_get_id(NostrSubscription *sub) {
@@ -911,30 +933,10 @@ static void *async_cleanup_worker(void *arg) {
         }
     }
     
-    /* If we got here without timeout, do the actual cleanup */
+    /* If we got here without timeout, do the actual cleanup via unref (nostrc-nr96) */
     if (success) {
-        go_wait_group_wait(&sub->priv->wg);
-        
-        /* Drain any remaining events from the channel to prevent memory leaks */
-        if (sub->events) {
-            void *ev = NULL;
-            while (go_channel_try_receive(sub->events, &ev) == 0) {
-                if (ev) {
-                    nostr_event_free((NostrEvent *)ev);
-                    ev = NULL;
-                }
-            }
-        }
-        
-        /* Free resources */
-        go_channel_free(sub->events);
-        go_channel_free(sub->end_of_stored_events);
-        go_channel_free(sub->closed_reason);
-        free(sub->priv->id);
-        go_wait_group_destroy(&sub->priv->wg);
-        free(sub->priv);
-        free(sub);
-        
+        nostr_subscription_unref(sub);
+
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub] async_cleanup: SUCCESS\n");
         }

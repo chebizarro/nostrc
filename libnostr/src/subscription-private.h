@@ -66,6 +66,11 @@ typedef struct _SubscriptionPrivate {
     _Atomic bool unsubbed;
     CancelFunc cancel;
 
+    /* Refcount for safe concurrent access (nostrc-nr96).
+     * Starts at 1, incremented by ref(), decremented by unref().
+     * Actual free happens when refcount drops to 0. */
+    _Atomic int refcount;
+
     LongAdder *stored_event_counter;
 
     nsync_mu sub_mutex;

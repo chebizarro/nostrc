@@ -30,6 +30,29 @@ typedef struct NostrSubscription {
 /* GI-facing API (stable symbol names) */
 NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
 void               nostr_subscription_free(NostrSubscription *sub);
+
+/**
+ * nostr_subscription_ref:
+ * @sub: subscription to reference
+ *
+ * Increments the subscription's reference count. Use this when holding a
+ * pointer to a subscription that may be freed concurrently (e.g. during
+ * relay reconnect refire). Caller must call nostr_subscription_unref()
+ * when done.
+ *
+ * Returns: @sub (for convenience chaining)
+ */
+NostrSubscription *nostr_subscription_ref(NostrSubscription *sub);
+
+/**
+ * nostr_subscription_unref:
+ * @sub: subscription to unreference
+ *
+ * Decrements the subscription's reference count. When the count reaches
+ * zero, the subscription is freed. This is the counterpart to
+ * nostr_subscription_ref().
+ */
+void               nostr_subscription_unref(NostrSubscription *sub);
 /* Returns newly allocated copy of ID (caller frees). */
 char              *nostr_subscription_get_id(NostrSubscription *sub);
 void               nostr_subscription_unsubscribe(NostrSubscription *sub);

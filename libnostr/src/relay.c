@@ -557,6 +557,8 @@ static bool collect_subscription_cb(HashKey *key, void *value, void *user_data) 
         collector->entries = new_entries;
         collector->capacity = new_cap;
     }
+    /* Take a reference to keep the subscription alive during Phase 2 (nostrc-nr96) */
+    nostr_subscription_ref(sub);
     collector->entries[collector->count].sub = sub;
     collector->entries[collector->count].counter = sub->priv->counter;
     collector->count++;
@@ -588,21 +590,26 @@ static void relay_refire_subscriptions(NostrRelay *r) {
     go_hash_map_for_each_with_data(r->subscriptions, collect_subscription_cb, &collector);
 
     /* Phase 2: Fire - iterate snapshot WITHOUT holding any hash map locks.
-     * For each entry, verify the subscription is still in the hash map before
-     * calling fire. The brief TOCTOU window (nanoseconds) between the check and
-     * the fire call is acceptable - the previous code held bucket locks for up
-     * to 3 seconds per subscription during fire. */
+     * Each entry holds a ref (taken in Phase 1) that keeps the subscription
+     * alive even if another thread calls nostr_subscription_free(). (nostrc-nr96) */
     int refire_count = 0;
     for (size_t i = 0; i < collector.count; i++) {
         NostrSubscription *sub = collector.entries[i].sub;
         int counter = collector.entries[i].counter;
 
-        /* Verify subscription is still live in the hash map */
+        /* Verify subscription is still in the hash map (it may have been
+         * logically freed — removed from map — but our ref keeps memory alive) */
         NostrSubscription *current = go_hash_map_get_int(r->subscriptions, counter);
-        if (current != sub) continue;  /* removed/replaced since snapshot */
+        if (current != sub) {
+            nostr_subscription_unref(sub);
+            continue;
+        }
 
-        /* Re-verify filters (could have been freed between snapshot and now) */
-        if (!sub->filters) continue;
+        /* Re-verify filters */
+        if (!sub->filters) {
+            nostr_subscription_unref(sub);
+            continue;
+        }
 
         Error *err = NULL;
         if (nostr_subscription_fire(sub, &err)) {
@@ -619,6 +626,7 @@ static void relay_refire_subscriptions(NostrRelay *r) {
             }
             if (err) free_error(err);
         }
+        nostr_subscription_unref(sub);
     }
 
     free(collector.entries);
