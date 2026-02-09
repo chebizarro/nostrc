@@ -1183,7 +1183,7 @@ static void on_follows_model_loading_changed(GObject *object, GParamSpec *pspec,
   GnFollowListModel *model = GN_FOLLOW_LIST_MODEL(object);
   gboolean is_loading = gn_follow_list_model_is_loading(model);
 
-  g_warning("profile_pane: follows model loading_changed is_loading=%d", (int)is_loading);
+  g_debug("profile_pane: follows model loading_changed is_loading=%d", (int)is_loading);
 
   if (!is_loading) {
     /* Loading complete - update UI */
@@ -1209,7 +1209,7 @@ static void on_follows_model_loading_changed(GObject *object, GParamSpec *pspec,
       if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, TRUE);
     }
 
-    g_warning("profile_pane: follows load COMPLETE, %u items", n_items);
+    g_debug("profile_pane: follows load COMPLETE, %u items", n_items);
   }
 }
 
@@ -1267,7 +1267,7 @@ static void load_follows(GnostrProfilePane *self) {
   if (!self->current_pubkey) return;
   if (self->follows_loaded) return;
 
-  g_warning("profile_pane: load_follows START for %.8s model=%p",
+  g_debug("profile_pane: load_follows START for %.8s model=%p",
             self->current_pubkey,
             (void*)self->follows_model);
 
@@ -1605,7 +1605,7 @@ GnostrProfilePane *gnostr_profile_pane_new(void) {
 
 void gnostr_profile_pane_clear(GnostrProfilePane *self) {
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
-  g_warning("profile_pane: clear() ENTRY");
+  g_debug("profile_pane: clear() ENTRY");
 
   /* nostrc-myp3: Reset content stack to About tab */
   if (self->content_stack) {
@@ -2408,7 +2408,7 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
   if (ctx->msg) {
     guint status = soup_message_get_status(ctx->msg);
     if (status < 200 || status >= 300) {
-      g_warning("profile_pane: banner HTTP %u for url=%s", status, ctx->url);
+      g_debug("profile_pane: banner HTTP %u for url=%s", status, ctx->url);
       if (bytes) g_bytes_unref(bytes);
       if (GNOSTR_IS_PROFILE_PANE(ctx->self))
         g_clear_pointer(&ctx->self->loading_banner_url, g_free);
@@ -2418,7 +2418,7 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
   }
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
-    g_warning("profile_pane: empty banner response for url=%s", ctx->url);
+    g_debug("profile_pane: empty banner response for url=%s", ctx->url);
     if (bytes) g_bytes_unref(bytes);
     if (GNOSTR_IS_PROFILE_PANE(ctx->self))
       g_clear_pointer(&ctx->self->loading_banner_url, g_free);
@@ -2562,7 +2562,7 @@ static bool profile_extra_fields_cb(const char *key, const char *value_json, voi
 }
 
 static void update_profile_ui(GnostrProfilePane *self, const char *profile_json) {
-  g_warning("profile_pane: update_profile_ui ENTRY json_len=%zu is_object=%d",
+  g_debug("profile_pane: update_profile_ui ENTRY json_len=%zu is_object=%d",
             profile_json ? strlen(profile_json) : 0,
             profile_json ? (int)gnostr_json_is_object_str(profile_json) : -1);
 
@@ -2639,7 +2639,7 @@ static void update_profile_ui(GnostrProfilePane *self, const char *profile_json)
     final_display = "Unknown";
   }
   gtk_label_set_text(GTK_LABEL(self->lbl_display_name), final_display);
-  g_warning("profile_pane: UI SET display_name='%s' name='%s' nip05='%s' picture=%s banner=%s about=%s",
+  g_debug("profile_pane: UI SET display_name='%s' name='%s' nip05='%s' picture=%s banner=%s about=%s",
             final_display ? final_display : "(null)",
             name ? name : "(null)",
             nip05 ? nip05 : "(null)",
@@ -2730,11 +2730,11 @@ static void update_profile_ui(GnostrProfilePane *self, const char *profile_json)
             self->current_pubkey ? self->current_pubkey : "(null)", banner);
     load_banner_async(self, banner);
   } else {
-    g_warning("profile_pane: NO banner URL in profile JSON for %.8s",
+    g_debug("profile_pane: NO banner URL in profile JSON for %.8s",
               self->current_pubkey ? self->current_pubkey : "(null)");
   }
 #else
-  g_warning("profile_pane: HAVE_SOUP3 not defined — banner loading disabled");
+  g_debug("profile_pane: HAVE_SOUP3 not defined — banner loading disabled");
 #endif
   
   /* Add metadata rows */
@@ -3856,13 +3856,13 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
   if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   if (!results || results->len == 0) {
-    g_warning("profile_pane: NETWORK MISS - no profile found for %.8s",
+    g_debug("profile_pane: NETWORK MISS - no profile found for %.8s",
               self->current_pubkey ? self->current_pubkey : "(null)");
     if (results) g_ptr_array_unref(results);
     return;
   }
 
-  g_warning("profile_pane: NETWORK HIT - %u events for %.8s",
+  g_debug("profile_pane: NETWORK HIT - %u events for %.8s",
             results->len, self->current_pubkey ? self->current_pubkey : "(null)");
 
   /* Route results by kind: kind:0 → profile, kind:30315 → user status */
@@ -3908,7 +3908,7 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
 
   /* Update profile from best kind:0 */
   if (best_content && *best_content) {
-    g_warning("profile_pane: NETWORK HIT updating UI for %.8s (created_at=%" G_GINT64_FORMAT " content_len=%zu)",
+    g_debug("profile_pane: NETWORK HIT updating UI for %.8s (created_at=%" G_GINT64_FORMAT " content_len=%zu)",
               self->current_pubkey ? self->current_pubkey : "(null)", best_created_at,
               strlen(best_content));
 
@@ -3921,7 +3921,7 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
       GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
       g_ptr_array_add(batch, g_strdup(self->current_event_json));
       storage_ndb_ingest_events_async(batch);
-      g_warning("profile_pane: NDB ingest queued for %.8s (json_len=%zu)",
+      g_debug("profile_pane: NDB ingest queued for %.8s (json_len=%zu)",
                 self->current_pubkey ? self->current_pubkey : "(null)",
                 strlen(self->current_event_json));
     }
@@ -3985,7 +3985,7 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
     return;
   }
 
-  g_warning("profile_pane: fetch START for %.8s", self->current_pubkey);
+  g_debug("profile_pane: fetch START for %.8s", self->current_pubkey);
 
   /* Cancel any previous profile fetch */
   if (self->profile_cancellable) {
@@ -3998,19 +3998,19 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   /* Step 1: Try nostrdb cache first */
   void *txn = NULL;
   int ndb_rc = storage_ndb_begin_query(&txn);
-  g_warning("profile_pane: NDB begin_query rc=%d txn=%p", ndb_rc, txn);
+  g_debug("profile_pane: NDB begin_query rc=%d txn=%p", ndb_rc, txn);
 
   if (ndb_rc == 0 && txn) {
     uint8_t pk32[32];
     gboolean hex_ok = hex_to_bytes32(self->current_pubkey, pk32);
-    g_warning("profile_pane: hex_to_bytes32 ok=%d", (int)hex_ok);
+    g_debug("profile_pane: hex_to_bytes32 ok=%d", (int)hex_ok);
 
     if (hex_ok) {
       char *event_json = NULL;
       int event_len = 0;
 
       int prof_rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len);
-      g_warning("profile_pane: NDB get_profile rc=%d json=%p len=%d",
+      g_debug("profile_pane: NDB get_profile rc=%d json=%p len=%d",
                 prof_rc, (void*)event_json, event_len);
 
       if (prof_rc == 0 && event_json) {
@@ -4018,7 +4018,7 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
         NostrEvent *evt = nostr_event_new();
         if (evt && nostr_event_deserialize(evt, event_json) == 0) {
           const char *content = nostr_event_get_content(evt);
-          g_warning("profile_pane: NDB CACHE HIT for %.8s content=%s len=%zu",
+          g_debug("profile_pane: NDB CACHE HIT for %.8s content=%s len=%zu",
                     self->current_pubkey,
                     (content && *content) ? "non-empty" : "EMPTY",
                     content ? strlen(content) : 0);
@@ -4040,7 +4040,7 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
         if (evt) nostr_event_free(evt);
         free(event_json);  /* Caller-owned buffer from ln_ndb_get_profile_by_pubkey */
       } else {
-        g_warning("profile_pane: NDB CACHE MISS for %.8s (rc=%d)", self->current_pubkey, prof_rc);
+        g_debug("profile_pane: NDB CACHE MISS for %.8s (rc=%d)", self->current_pubkey, prof_rc);
       }
     }
     storage_ndb_end_query(txn);
@@ -4054,7 +4054,7 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   if (!self->profile_loaded_from_cache) {
     GnostrProfileMeta *meta = gnostr_profile_provider_get(self->current_pubkey);
     if (meta) {
-      g_warning("profile_pane: PROVIDER CACHE HIT for %.8s", self->current_pubkey);
+      g_debug("profile_pane: PROVIDER CACHE HIT for %.8s", self->current_pubkey);
 
       /* Build a JSON object from the available fields so we can reuse
        * the standard update_profile_ui path. GNostrJsonBuilder handles
@@ -4106,7 +4106,7 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   /* Use read relays from GSettings */
   gnostr_get_read_relay_urls_into(relay_urls);
 
-  g_warning("profile_pane: %u relays configured for network fetch", relay_urls->len);
+  g_debug("profile_pane: %u relays configured for network fetch", relay_urls->len);
   if (relay_urls->len == 0) {
     g_warning("profile_pane: NO RELAYS configured - network fetch skipped!");
     g_ptr_array_unref(relay_urls);
@@ -4256,7 +4256,7 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
   }
 
   if (!results || results->len == 0) {
-    g_warning("profile_pane: highlights EMPTY for %.8s",
+    g_debug("profile_pane: highlights EMPTY for %.8s",
               self->current_pubkey ? self->current_pubkey : "(null)");
     if (GTK_IS_WIDGET(self->highlights_empty_box)) {
       gtk_widget_set_visible(self->highlights_empty_box, TRUE);
@@ -4265,7 +4265,7 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
     return;
   }
 
-  g_warning("profile_pane: received %u NIP-84 highlight events", results->len);
+  g_debug("profile_pane: received %u NIP-84 highlight events", results->len);
 
   /* Clear existing highlights */
   if (GTK_IS_BOX(self->highlights_list)) {
@@ -4344,7 +4344,7 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
 static void load_highlights(GnostrProfilePane *self) {
   if (!self || !self->current_pubkey || self->highlights_loaded) return;
 
-  g_warning("profile_pane: load_highlights START for %.8s", self->current_pubkey);
+  g_debug("profile_pane: load_highlights START for %.8s", self->current_pubkey);
   self->highlights_loaded = TRUE;
 
   /* Cancel previous request */
@@ -4449,7 +4449,7 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
   g_return_if_fail(pubkey_hex != NULL);
 
-  g_warning("profile_pane: set_pubkey ENTRY pubkey_hex=%.16s...", pubkey_hex);
+  g_debug("profile_pane: set_pubkey ENTRY pubkey_hex=%.16s...", pubkey_hex);
 
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
@@ -4458,11 +4458,11 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
     return;
   }
 
-  g_warning("profile_pane: set_pubkey hex=%.16s...", hex);
+  g_debug("profile_pane: set_pubkey hex=%.16s...", hex);
 
   /* Check if already showing this profile */
   if (self->current_pubkey && strcmp(self->current_pubkey, hex) == 0) {
-    g_warning("profile_pane: set_pubkey SKIP - already showing %.8s", hex);
+    g_debug("profile_pane: set_pubkey SKIP - already showing %.8s", hex);
     return;
   }
 
@@ -4473,7 +4473,7 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   self->current_pubkey = g_strdup(hex);
 
   /* nostrc-myp3: Verify template children are bound */
-  g_warning("profile_pane: template children: root=%p lbl_display_name=%p lbl_handle=%p "
+  g_debug("profile_pane: template children: root=%p lbl_display_name=%p lbl_handle=%p "
             "lbl_bio=%p banner_image=%p avatar_image=%p content_stack=%p tab_switcher=%p",
             (void*)self->root, (void*)self->lbl_display_name, (void*)self->lbl_handle,
             (void*)self->lbl_bio, (void*)self->banner_image, (void*)self->avatar_image,
@@ -4502,7 +4502,7 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
     gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "about");
   }
 
-  g_warning("profile_pane: set_pubkey DONE for %.8s, fetching profile...", hex);
+  g_debug("profile_pane: set_pubkey DONE for %.8s, fetching profile...", hex);
 
   /* Fetch profile from cache first, then network for updates */
   fetch_profile_from_cache_or_network(self);

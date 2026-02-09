@@ -215,7 +215,6 @@ headerbar button:hover image {
 	background: @theme_bg_color;
 	border: 1px solid alpha(@theme_fg_color, 0.08);
 	box-shadow: 0 1px 3px alpha(black, 0.04), 0 2px 8px alpha(black, 0.02);
-	animation: note-fade-in 300ms ease-out;
 	/* nostrc-69hx: Prevent negative allocations during fast scroll by ensuring
 	 * minimum size exceeds inner margins (32px horizontal, 24px vertical) */
 	min-width: 80px;
@@ -226,38 +225,7 @@ headerbar button:hover image {
 	box-shadow: 0 2px 6px alpha(black, 0.06), 0 4px 12px alpha(black, 0.04);
 }
 
-/* nostrc-7o7: Skip animation for notes added outside visible viewport */
-.note-card.no-animation {
-	animation: none;
-}
-
-/* nostrc-0hp Phase 3: Smooth reveal animation for "New Notes" button */
-.note-card.note-revealing {
-	animation: note-reveal 200ms ease-out forwards;
-}
-
-@keyframes note-reveal {
-	from {
-		opacity: 0;
-		transform: translateY(-8px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-/* Standard fade-in for normal note insertion */
-@keyframes note-fade-in {
-	from {
-		opacity: 0;
-		transform: translateY(4px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
+/* Note: @keyframes / animation not supported in GTK4 CSS — removed */
 
 /* Note author name - bold and prominent */
 .note-author {
@@ -306,7 +274,7 @@ headerbar button:hover image {
 
 /* Note content text */
 .note-content {
-	line-height: 1.55;
+	/* line-height not supported in GTK4 CSS */
 	font-size: 15px;
 	color: @theme_fg_color;
 	min-width: 0;
@@ -514,7 +482,6 @@ label a:visited {
 }
 
 .profile-bio {
-	line-height: 1.4;
 	font-size: 14px;
 }
 
@@ -576,7 +543,6 @@ label a:visited {
 .og-preview-description {
 	font-size: 13px;
 	color: alpha(@theme_fg_color, 0.7);
-	line-height: 1.4;
 }
 
 .og-preview-site {
@@ -1310,19 +1276,7 @@ button.pill:hover {
 	padding: 48px;
 }
 
-/* Smooth reveal animation */
-.thread-view-entering {
-	animation: thread-slide-in 250ms ease-out;
-}
-
-@keyframes thread-slide-in {
-	from {
-		opacity: 0;
-	}
-	to {
-		opacity: 1;
-	}
-}
+/* Note: animation not supported in GTK4 CSS — removed thread-slide-in */
 
 /* Parent chain (notes above focus) styling */
 .thread-ancestor {
@@ -1492,14 +1446,12 @@ button.pill:hover {
 /* Embed content preview */
 .embed-content {
 	font-size: 13px;
-	line-height: 1.35;
 	color: alpha(@theme_fg_color, 0.85);
 }
 
 /* Embed profile about (for profile embeds) */
 .embed-about {
 	font-size: 13px;
-	line-height: 1.35;
 	font-style: italic;
 }
 
@@ -1791,7 +1743,6 @@ button.zapped image {
 /* Profile row bio preview */
 .profile-row-bio {
 	font-size: 13px;
-	line-height: 1.3;
 }
 
 /* Profile row avatar - constrained to 48x48 */
@@ -1868,7 +1819,8 @@ profile-row.muted .profile-row-bio {
 }
 
 profile-row.muted .profile-row-avatar {
-	filter: grayscale(50%);
+	/* filter not supported in GTK4 CSS — set grayscale via widget property */
+	opacity: 0.5;
 }
 
 /* Actions button */
@@ -1996,10 +1948,9 @@ profile-row.muted .profile-row-avatar {
 }
 
 /* Blur effect for content under the overlay */
-/* Note: user-select and pointer-events are not supported in GTK4 CSS */
+/* Note: filter/blur not supported in GTK4 CSS — use opacity as fallback */
 .content-blurred {
-	filter: blur(8px);
-	opacity: 0.6;
+	opacity: 0.3;
 }
 
 /* Warning style for composer sensitive toggle when active */
@@ -2022,18 +1973,6 @@ profile-row.muted .profile-row-avatar {
 	padding: 0;
 	background: alpha(@theme_bg_color, 0.7);
 	border: 1px solid alpha(@theme_fg_color, 0.08);
-	animation: article-fade-in 600ms ease-out;
-}
-
-@keyframes article-fade-in {
-	from {
-		opacity: 0;
-		transform: translateY(12px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
 }
 
 .article-card:hover {
@@ -2099,7 +2038,6 @@ profile-row.muted .profile-row-avatar {
 .article-title {
 	font-weight: 700;
 	font-size: 20px;
-	line-height: 1.3;
 	color: @theme_fg_color;
 }
 
@@ -2112,7 +2050,6 @@ profile-row.muted .profile-row-avatar {
 /* Article summary/description */
 .article-summary {
 	font-size: 15px;
-	line-height: 1.5;
 	color: alpha(@theme_fg_color, 0.85);
 }
 
@@ -2173,7 +2110,6 @@ profile-row.muted .profile-row-avatar {
 
 .article-full-view .article-content {
 	font-size: 17px;
-	line-height: 1.7;
 }
 
 /* Markdown content styles in full article view */
@@ -2218,7 +2154,6 @@ profile-row.muted .profile-row-avatar {
 .article-embed-summary {
 	font-size: 13px;
 	color: alpha(@theme_fg_color, 0.7);
-	line-height: 1.4;
 }
 
 .article-embed-author {
@@ -2376,7 +2311,6 @@ profile-row.muted .profile-row-avatar {
 
 .profile-badge-icon:hover {
 	background: alpha(@accent_bg_color, 0.15);
-	transform: scale(1.05);
 }
 
 .profile-badge-icon picture {
@@ -2411,7 +2345,6 @@ profile-row.muted .profile-row-avatar {
 
 .badge-popover-description {
 	font-size: 13px;
-	line-height: 1.4;
 	color: alpha(@theme_fg_color, 0.8);
 	margin-top: 4px;
 }
@@ -2648,18 +2581,6 @@ profile-row.muted .profile-row-avatar {
 	padding: 0;
 	background: alpha(@theme_bg_color, 0.7);
 	border: 1px solid alpha(@theme_fg_color, 0.08);
-	animation: video-fade-in 600ms ease-out;
-}
-
-@keyframes video-fade-in {
-	from {
-		opacity: 0;
-		transform: translateY(12px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
 }
 
 .video-card:hover {
@@ -2677,7 +2598,6 @@ profile-row.muted .profile-row-avatar {
 .video-title {
 	font-weight: 700;
 	font-size: 18px;
-	line-height: 1.3;
 	color: @theme_fg_color;
 	padding: 8px 12px 4px 12px;
 }
@@ -2685,7 +2605,6 @@ profile-row.muted .profile-row-avatar {
 /* Video summary/description */
 .video-summary {
 	font-size: 14px;
-	line-height: 1.4;
 	color: alpha(@theme_fg_color, 0.75);
 	padding: 0 12px 8px 12px;
 }
@@ -2730,12 +2649,7 @@ profile-row.muted .profile-row-avatar {
 .video-play-btn:hover {
 	background: alpha(@accent_bg_color, 0.9);
 	border-color: @accent_bg_color;
-	transform: scale(1.1);
 	box-shadow: 0 6px 20px alpha(@accent_bg_color, 0.4);
-}
-
-.video-play-btn:active {
-	transform: scale(0.95);
 }
 
 .video-play-btn image {
@@ -2918,7 +2832,6 @@ profile-row.muted .profile-row-avatar {
 /* Description text */
 .zap-goal-description {
 	font-size: 14px;
-	line-height: 1.4;
 	color: alpha(@theme_fg_color, 0.85);
 }
 
@@ -3050,14 +2963,12 @@ profile-row.muted .profile-row-avatar {
 /* Highlighted text (main content) */
 .highlight-text {
 	font-size: 1.05em;
-	line-height: 1.4;
 	color: @theme_fg_color;
 }
 
 /* Context text (collapsed/dimmed) */
 .highlight-context {
 	font-size: 0.9em;
-	line-height: 1.3;
 	opacity: 0.6;
 	margin-top: 4px;
 }
@@ -3065,7 +2976,6 @@ profile-row.muted .profile-row-avatar {
 /* User comment/annotation */
 .highlight-comment {
 	font-size: 0.95em;
-	line-height: 1.3;
 	color: @accent_fg_color;
 	background: alpha(@accent_bg_color, 0.1);
 	padding: 6px 10px;
@@ -3370,7 +3280,6 @@ profile-row.muted .profile-row-avatar {
 /* Plugin Description */
 .plugin-description {
 	font-size: 12px;
-	line-height: 1.3;
 }
 
 .plugin-row.disabled .plugin-description {
@@ -3516,19 +3425,18 @@ profile-row.muted .profile-row-avatar {
 	color: transparent;
 }
 
-/* Dark theme adjustments */
-@media (prefers-color-scheme: dark) {
-	.chess-move-white {
-		background: linear-gradient(135deg, #d9d0c4 0%, #c4b8aa 100%);
-		color: #3d3630;
-		border: 1px solid #b8ac9e;
-	}
+/* Dark theme adjustments — @media not supported in GTK4 CSS.
+ * Apply via .dark-theme class or handle in code with GtkCssProvider. */
+.dark-theme .chess-move-white {
+	background: linear-gradient(135deg, #d9d0c4 0%, #c4b8aa 100%);
+	color: #3d3630;
+	border: 1px solid #b8ac9e;
+}
 
-	.chess-move-black {
-		background: linear-gradient(135deg, #4a4139 0%, #2d2824 100%);
-		color: #e8e0d8;
-		border: 1px solid #5c524a;
-	}
+.dark-theme .chess-move-black {
+	background: linear-gradient(135deg, #4a4139 0%, #2d2824 100%);
+	color: #e8e0d8;
+	border: 1px solid #5c524a;
 }
 
 /* ===== YouTube Embed (nostrc-1du) ===== */
@@ -3547,6 +3455,6 @@ profile-row.muted .profile-row-avatar {
 
 youtube-embed {
 	border-radius: 12px;
-	overflow: hidden;
+	/* overflow not supported in GTK4 CSS — set via gtk_widget_set_overflow() */
 	margin: 8px 0;
 }
