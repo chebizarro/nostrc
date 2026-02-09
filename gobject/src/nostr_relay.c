@@ -297,7 +297,7 @@ gnostr_relay_finalize(GObject *object)
 {
     GNostrRelay *self = GNOSTR_RELAY(object);
 
-    /* nostrc-kw9r: Remove from shared relay registry before cleanup */
+    /* Remove from shared relay registry before cleanup */
     if (self->url) {
         G_LOCK(relay_registry);
         if (g_relay_registry) {
@@ -583,17 +583,13 @@ gnostr_relay_new(const gchar *url)
 {
     g_return_val_if_fail(url != NULL, NULL);
 
-    /* nostrc-kw9r: Check shared registry for existing relay to this URL.
-     * This prevents 27+ pools from opening independent WebSocket connections
-     * to the same relays.  Pools share a single GNostrRelay per URL. */
+    /* Check shared registry for existing relay to this URL */
     G_LOCK(relay_registry);
     if (g_relay_registry) {
         GNostrRelay *existing = g_hash_table_lookup(g_relay_registry, url);
         if (existing) {
             g_object_ref(existing);
             G_UNLOCK(relay_registry);
-            g_debug("relay_registry: reusing relay for %s (refs=%u)",
-                    url, G_OBJECT(existing)->ref_count);
             return existing;
         }
     }

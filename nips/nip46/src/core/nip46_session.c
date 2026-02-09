@@ -1015,30 +1015,19 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         return NULL;
     }
 
-    /* nostrc-3l6f: Wait for response on channel with per-request timeout.
-     * The persistent callback (nip46_persistent_client_cb) will dispatch
-     * the response to pr->response_chan when it arrives. */
-    fprintf(stderr, "[nip46] %s: waiting for response (timeout=%ums)\n",
-            method, pr->timeout_ms);
+    /* Wait for response on channel — no timeout.  NIP-46 is relay-based:
+     * the signer publishes a response event when ready, and the persistent
+     * subscription delivers it to pr->response_chan.  Timeouts are wrong
+     * here because they turn a relay subscription into a REST-style call
+     * that fails even when the signer does respond (just slowly). */
+    fprintf(stderr, "[nip46] %s: waiting for response on relay subscription\n", method);
 
-    GoSelectCase cases[1];
-    cases[0].op = GO_SELECT_RECEIVE;
-    cases[0].chan = pr->response_chan;
     void *recv_buf = NULL;
-    cases[0].recv_buf = &recv_buf;
-
-    GoSelectResult sel = go_select_timeout(cases, 1, pr->timeout_ms);
+    int recv_ok = go_channel_receive(pr->response_chan, &recv_buf);
 
     char *result = NULL;
-    if (sel.selected_case == -1) {
-        /* Timeout */
-        fprintf(stderr, "[nip46] %s: timeout waiting for response\n", method);
-        pending_request_cancel(s, req_id);
-        return NULL;
-    }
-
-    if (!sel.ok) {
-        /* Channel closed without response */
+    if (recv_ok != 0 || !recv_buf) {
+        /* Channel closed without response (session shutdown or relay disconnect) */
         fprintf(stderr, "[nip46] %s: channel closed without response\n", method);
         pending_request_cancel(s, req_id);
         return NULL;

@@ -402,9 +402,7 @@ gnostr_pool_remove_relay(GNostrPool *self, const gchar *url)
 
     g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), idx);
 
-    /* nostrc-kw9r: Unwatch but do NOT disconnect — relay may be shared with
-     * other pools via the relay registry.  If this pool held the last ref,
-     * the relay will finalize and disconnect automatically. */
+    /* Unwatch before removal; relay stays alive if other pools hold refs */
     unwatch_relay(self, relay);
 
     /* Remove from store (this unrefs the relay) */
@@ -902,10 +900,8 @@ gnostr_pool_disconnect_all(GNostrPool *self)
 {
     g_return_if_fail(GNOSTR_IS_POOL(self));
 
-    /* nostrc-kw9r: Release relays instead of disconnecting them.  Shared
-     * relays (held by other pools) stay alive and connected.  Unshared
-     * relays finalize immediately → disconnect.  Iterate in reverse for
-     * safe removal from the GListStore. */
+    /* Release relays — shared relays survive if other pools hold refs,
+     * unshared relays finalize and disconnect immediately. */
     guint n = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
     for (gint i = (gint)n - 1; i >= 0; i--) {
         g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
