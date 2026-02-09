@@ -620,19 +620,24 @@ query_thread_func(GTask         *task,
     if (data->cache_query_func && filters) {
         GPtrArray *cached = data->cache_query_func(filters, data->cache_query_data);
         if (cached && cached->len > 0) {
-            g_debug("pool_query_thread: cache HIT — %u results, skipping network", cached->len);
+            fprintf(stderr, "[POOL_QUERY] cache HIT — %u results, skipping network\n", cached->len);
             g_task_return_pointer(task, cached, (GDestroyNotify)g_ptr_array_unref);
             return;
         }
+        fprintf(stderr, "[POOL_QUERY] cache MISS (cached=%p len=%u)\n",
+                (void *)cached, cached ? cached->len : 0);
         if (cached) g_ptr_array_unref(cached);
+    } else {
+        fprintf(stderr, "[POOL_QUERY] no cache func or no filters (cache=%p filters=%p)\n",
+                (void *)data->cache_query_func, (void *)filters);
     }
 
     /* nostrc-snap: Use snapshot captured on main thread, NOT self->relays */
     guint n_relays = data->relay_snapshots ? data->relay_snapshots->len : 0;
-    g_debug("pool_query_thread: %u relays (snapshot), filters=%p (count=%zu)",
-              n_relays, (void *)filters, filters ? filters->count : 0);
+    fprintf(stderr, "[POOL_QUERY] START: %u relays (snapshot), filters=%p (count=%zu), timeout=%ums\n",
+              n_relays, (void *)filters, filters ? filters->count : 0, data->timeout_ms);
     if (n_relays == 0) {
-        g_debug("pool_query_thread: 0 relays - returning empty");
+        fprintf(stderr, "[POOL_QUERY] 0 relays - returning empty\n");
         g_task_return_pointer(task,
                               g_ptr_array_new_with_free_func(g_free),
                               (GDestroyNotify)g_ptr_array_unref);
@@ -668,38 +673,47 @@ query_thread_func(GTask         *task,
          * unlike the old temp-relay approach which created throwaway
          * connections every single query. */
         Error *conn_err = NULL;
+        gint64 t0 = g_get_monotonic_time();
+        fprintf(stderr, "[POOL_QUERY] relay[%u] %s: connecting (connection=%p)...\n",
+                i, url, (void *)core_relay->connection);
         if (!nostr_relay_connect(core_relay, &conn_err)) {
-            g_debug("pool_query_thread: relay[%u] %s connect failed: %s",
-                    i, url, conn_err ? conn_err->message : "unknown");
+            gint64 dt = g_get_monotonic_time() - t0;
+            fprintf(stderr, "[POOL_QUERY] relay[%u] %s: CONNECT FAILED after %lldms: %s\n",
+                    i, url, (long long)(dt / 1000),
+                    conn_err ? conn_err->message : "unknown");
             if (conn_err) free_error(conn_err);
             continue;
         }
+        gint64 dt = g_get_monotonic_time() - t0;
+        fprintf(stderr, "[POOL_QUERY] relay[%u] %s: connected OK in %lldms\n",
+                i, url, (long long)(dt / 1000));
 
         struct NostrSubscription *sub = nostr_relay_prepare_subscription(core_relay, bg, filters);
         if (!sub) {
-            g_debug("pool_query_thread: relay[%u] %s prepare_subscription failed", i, url);
+            fprintf(stderr, "[POOL_QUERY] relay[%u] %s: prepare_subscription FAILED (filters=%p count=%zu)\n",
+                    i, url, (void *)filters, filters ? filters->count : 0);
             continue;
         }
 
         Error *fire_err = NULL;
         if (!nostr_subscription_fire(sub, &fire_err)) {
-            g_debug("pool_query_thread: relay[%u] %s fire failed: %s",
+            fprintf(stderr, "[POOL_QUERY] relay[%u] %s: FIRE FAILED: %s\n",
                     i, url, fire_err ? fire_err->message : "unknown");
             if (fire_err) free_error(fire_err);
             nostr_subscription_free(sub);
             continue;
         }
 
-        g_debug("pool_query_thread: relay[%u] %s OK", i, url);
+        fprintf(stderr, "[POOL_QUERY] relay[%u] %s: subscription FIRED OK\n", i, url);
         RelaySubItem *item = g_new0(RelaySubItem, 1);
         item->core_relay = core_relay;
         item->sub = sub;
         g_ptr_array_add(items, item);
     }
 
-    g_debug("pool_query_thread: %u active subscriptions across relays", items->len);
+    fprintf(stderr, "[POOL_QUERY] %u active subscriptions across relays\n", items->len);
     if (items->len == 0) {
-        g_debug("pool_query_thread: 0 subscriptions - returning %u results", data->results->len);
+        fprintf(stderr, "[POOL_QUERY] 0 subscriptions - returning %u results\n", data->results->len);
         g_ptr_array_unref(items);
         g_task_return_pointer(task,
                               data->results,
@@ -712,13 +726,24 @@ query_thread_func(GTask         *task,
     if (data->timeout_ms > 0) {
         deadline_us = g_get_monotonic_time() + (guint64)data->timeout_ms * 1000;
     }
+    gint64 poll_start = g_get_monotonic_time();
+    gint64 first_event_time = 0;
+    guint poll_iterations = 0;
     g_debug("pool_query_thread: polling for events (timeout=%ums)", data->timeout_ms);
 
     for (;;) {
-        if (cancellable && g_cancellable_is_cancelled(cancellable))
+        poll_iterations++;
+        if (cancellable && g_cancellable_is_cancelled(cancellable)) {
+            fprintf(stderr, "[POOL_QUERY] poll: CANCELLED after %lldms (%u iters)\n",
+                    (long long)((g_get_monotonic_time() - poll_start) / 1000), poll_iterations);
             break;
-        if (deadline_us > 0 && (guint64)g_get_monotonic_time() > deadline_us)
+        }
+        if (deadline_us > 0 && (guint64)g_get_monotonic_time() > deadline_us) {
+            fprintf(stderr, "[POOL_QUERY] poll: TIMEOUT after %lldms (%u iters), %u results\n",
+                    (long long)((g_get_monotonic_time() - poll_start) / 1000), poll_iterations,
+                    data->results->len);
             break;
+        }
 
         gboolean any_activity = FALSE;
         gboolean all_eosed = TRUE;
@@ -735,6 +760,12 @@ query_thread_func(GTask         *task,
                 any_activity = TRUE;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent *)msg;
+                    if (!first_event_time) {
+                        first_event_time = g_get_monotonic_time();
+                        fprintf(stderr, "[POOL_QUERY] poll: FIRST EVENT after %lldms (kind=%d)\n",
+                                (long long)((first_event_time - poll_start) / 1000),
+                                ev->kind);
+                    }
                     char *eid = nostr_event_get_id(ev);
                     if (eid && *eid && !g_hash_table_contains(data->seen_ids, eid)) {
                         g_hash_table_add(data->seen_ids, g_strdup(eid));
@@ -753,17 +784,21 @@ query_thread_func(GTask         *task,
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 item->eosed = TRUE;
                 any_activity = TRUE;
+                fprintf(stderr, "[POOL_QUERY] poll: relay[%u] EOSE after %lldms, %u results so far\n",
+                        i, (long long)((g_get_monotonic_time() - poll_start) / 1000),
+                        data->results->len);
             }
         }
 
         if (all_eosed) {
-            g_debug("pool_query_thread: all relays sent EOSE, %u results collected", data->results->len);
+            fprintf(stderr, "[POOL_QUERY] all relays sent EOSE after %lldms, %u results collected\n",
+                    (long long)((g_get_monotonic_time() - poll_start) / 1000), data->results->len);
             break;
         }
         if (!any_activity)
             g_usleep(1000); /* 1ms backoff */
     }
-    g_debug("pool_query_thread: poll loop done, %u results total", data->results->len);
+    fprintf(stderr, "[POOL_QUERY] poll loop done, %u results total\n", data->results->len);
 
     /* Cleanup subscriptions and temp relays */
     for (guint i = 0; i < items->len; i++) {

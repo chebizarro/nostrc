@@ -1707,12 +1707,12 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
-    g_debug("nip66 streaming: query finished with error: %s (domain=%s code=%d)",
+    fprintf(stderr, "[NIP66] streaming query ERROR: %s (domain=%s code=%d)\n",
             error->message, g_quark_to_string(error->domain), error->code);
     g_error_free(error);
   }
 
-  g_debug("nip66 streaming: query returned %u raw results", results ? results->len : 0);
+  fprintf(stderr, "[NIP66] streaming query returned %u raw results\n", results ? results->len : 0);
 
   /* hq-r248b: Process results here (previously handled via streaming signal).
    * Results are JSON strings - parse each as relay metadata. */
@@ -1745,7 +1745,7 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
       g_ptr_array_add(ctx->relays_found, meta);
     }
   }
-  g_debug("nip66 streaming: parse results: ok=%u fail=%u filtered=%u duped=%u",
+  fprintf(stderr, "[NIP66] parse results: ok=%u fail=%u filtered=%u duped=%u\n",
             parse_ok, parse_fail, filtered, duped);
   if (results) g_ptr_array_unref(results);
 
@@ -1755,7 +1755,7 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     ctx->events_handler_id = 0;
   }
 
-  g_debug("nip66 streaming: query complete with %u relays",
+  fprintf(stderr, "[NIP66] streaming complete: %u relays found\n",
             ctx->relays_found ? ctx->relays_found->len : 0);
 
   /* Invoke completion callback */
@@ -1829,9 +1829,10 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
     url_ptrs[i] = ctx->urls[i];
   }
 
-  g_debug("nip66 streaming: querying %zu relays for kind 30166", ctx->url_count);
+  fprintf(stderr, "[NIP66] streaming: querying %zu relays for kind 30166 (timeout=%ums)\n",
+          ctx->url_count, gnostr_pool_get_default_timeout(ctx->pool));
   for (guint i = 0; i < relay_urls->len; i++) {
-    g_debug("nip66 streaming: relay[%u] = %s", i, (const gchar *)g_ptr_array_index(relay_urls, i));
+    fprintf(stderr, "[NIP66] streaming: relay[%u] = %s\n", i, (const gchar *)g_ptr_array_index(relay_urls, i));
   }
 
   /* Build filter - single filter for query_single_streaming */
