@@ -8,6 +8,7 @@
 
 #include "mute_list.h"
 #include "relays.h"
+#include "utils.h"
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib.h>
@@ -782,8 +783,11 @@ void gnostr_mute_list_fetch_with_strategy_async(GnostrMuteList *self,
 gboolean gnostr_mute_list_is_pubkey_muted(GnostrMuteList *self,
                                            const char *pubkey_hex) {
     if (!self || !pubkey_hex) return FALSE;
+    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+    g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+    if (!hex) return FALSE;
     g_mutex_lock(&self->lock);
-    gboolean result = str_in_hashtable(self->muted_pubkeys, pubkey_hex);
+    gboolean result = str_in_hashtable(self->muted_pubkeys, hex);
     g_mutex_unlock(&self->lock);
     return result;
 }
@@ -896,6 +900,12 @@ done:
 void gnostr_mute_list_add_pubkey(GnostrMuteList *self,
                                   const char *pubkey_hex,
                                   gboolean is_private) {
+    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+    g_autofree gchar *hex = NULL;
+    if (pubkey_hex && strlen(pubkey_hex) != 64) {
+      hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+      pubkey_hex = hex;
+    }
     if (!self || !pubkey_hex || strlen(pubkey_hex) != 64) return;
 
     g_mutex_lock(&self->lock);
@@ -911,6 +921,10 @@ void gnostr_mute_list_add_pubkey(GnostrMuteList *self,
 void gnostr_mute_list_remove_pubkey(GnostrMuteList *self,
                                      const char *pubkey_hex) {
     if (!self || !pubkey_hex) return;
+    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+    g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+    if (!hex) return;
+    pubkey_hex = hex;
 
     g_mutex_lock(&self->lock);
     if (g_hash_table_remove(self->muted_pubkeys, pubkey_hex)) {

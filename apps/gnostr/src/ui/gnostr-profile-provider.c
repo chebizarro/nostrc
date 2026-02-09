@@ -1,5 +1,6 @@
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
+#include "../util/utils.h"
 #include <json.h>          /* nostr_json_is_object_str (no GObject wrapper yet) */
 #include "nostr_json.h"    /* GObject JSON utilities */
 #include <stdio.h>
@@ -238,6 +239,12 @@ static GnostrProfileMeta *meta_copy(const GnostrProfileMeta *src) {
 }
 
 GnostrProfileMeta *gnostr_profile_provider_get(const char *pk) {
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex_pk = NULL;
+  if (pk && strlen(pk) != 64) {
+    hex_pk = gnostr_ensure_hex_pubkey(pk);
+    pk = hex_pk;
+  }
   if (!pk || strlen(pk) != 64) return NULL;
 
   G_LOCK(profile_provider);
@@ -292,6 +299,13 @@ static gboolean watch_dispatch_idle(gpointer data) {
 
 int gnostr_profile_provider_update(const char *pk, const char *json) {
   if (!pk || !json) return -1;
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex_pk = NULL;
+  if (strlen(pk) != 64) {
+    hex_pk = gnostr_ensure_hex_pubkey(pk);
+    if (!hex_pk) return -1;
+    pk = hex_pk;
+  }
   /* Parse JSON without holding lock (can be slow) */
   GnostrProfileMeta *m = meta_from_json(pk, json);
   if (!m) return -1;
@@ -346,11 +360,14 @@ guint gnostr_profile_provider_watch(const char *pubkey_hex,
                                     GnostrProfileWatchCallback callback,
                                     gpointer user_data) {
   if (!pubkey_hex || !callback) return 0;
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+  if (!hex) return 0;
 
   G_LOCK(profile_provider);
   ProfileWatch *w = g_new0(ProfileWatch, 1);
   w->id = s_next_watch_id++;
-  w->pubkey_hex = g_strdup(pubkey_hex);
+  w->pubkey_hex = g_strdup(hex);
   w->callback = callback;
   w->user_data = user_data;
   s_watches = g_slist_prepend(s_watches, w);

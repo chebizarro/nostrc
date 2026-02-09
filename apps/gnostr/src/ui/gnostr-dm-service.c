@@ -8,6 +8,7 @@
 #include "gnostr-dm-service.h"
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-conversation-view.h"
+#include "../util/utils.h"
 #include "gnostr-profile-provider.h"
 #include "../ipc/signer_ipc.h"
 #include "../util/relays.h"
@@ -189,13 +190,17 @@ gnostr_dm_service_set_user_pubkey(GnostrDmService *self,
 {
     g_return_if_fail(GNOSTR_IS_DM_SERVICE(self));
 
+    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+    g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+    if (!hex) return;
+
     g_free(self->user_pubkey);
-    self->user_pubkey = g_strdup(pubkey_hex);
+    self->user_pubkey = g_strdup(hex);
 
     /* Update inbox if connected */
     GnostrDmInboxView *inbox = g_weak_ref_get(&self->inbox_ref);
     if (inbox) {
-        gnostr_dm_inbox_view_set_user_pubkey(inbox, pubkey_hex);
+        gnostr_dm_inbox_view_set_user_pubkey(inbox, hex);
         g_object_unref(inbox);
     }
 }

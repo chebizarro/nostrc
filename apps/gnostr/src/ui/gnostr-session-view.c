@@ -20,6 +20,7 @@
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include "nostr_nip19.h"
+#include "../util/utils.h"
 
 /* This must match the compiled resource path for the blueprint template */
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-session-view.ui"
@@ -1554,18 +1555,22 @@ void gnostr_session_view_set_user_profile(GnostrSessionView *self,
                                           const char *avatar_url) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
 
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+  if (!hex) return;
+
   /* Cache the pubkey for future profile updates */
   g_free(self->current_pubkey_hex);
-  self->current_pubkey_hex = g_strdup(pubkey_hex);
+  self->current_pubkey_hex = g_strdup(hex);
 
   /* Update popover avatar and name if popover exists */
   if (self->lbl_profile_name) {
     if (display_name && *display_name) {
       gtk_label_set_text(self->lbl_profile_name, display_name);
       gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), TRUE);
-    } else if (pubkey_hex && *pubkey_hex) {
+    } else if (hex && *hex) {
       /* Show truncated pubkey if no display name */
-      char *truncated = g_strdup_printf("%.8s...%.4s", pubkey_hex, pubkey_hex + 60);
+      char *truncated = g_strdup_printf("%.8s...%.4s", hex, hex + 60);
       gtk_label_set_text(self->lbl_profile_name, truncated);
       gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), TRUE);
       g_free(truncated);
@@ -1576,7 +1581,7 @@ void gnostr_session_view_set_user_profile(GnostrSessionView *self,
 
   /* Update popover avatar initials */
   if (self->popover_avatar_initials) {
-    set_initials_label(self->popover_avatar_initials, display_name, pubkey_hex);
+    set_initials_label(self->popover_avatar_initials, display_name, hex);
   }
 
   /* Load popover avatar image */
@@ -1602,7 +1607,7 @@ void gnostr_session_view_set_user_profile(GnostrSessionView *self,
 
   /* Update header bar avatar button */
   if (self->header_avatar_initials) {
-    set_initials_label(self->header_avatar_initials, display_name, pubkey_hex);
+    set_initials_label(self->header_avatar_initials, display_name, hex);
   }
 
   if (self->header_avatar_image && avatar_url && *avatar_url) {

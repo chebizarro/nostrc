@@ -579,8 +579,10 @@ void gnostr_note_embed_set_pubkey(GnostrNoteEmbed *self,
                                    const char * const *relay_hints) {
   g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
 
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
   g_clear_pointer(&self->target_id, g_free);
-  self->target_id = g_strdup(pubkey_hex);
+  self->target_id = hex ? g_strdup(hex) : g_strdup(pubkey_hex);
   self->embed_type = EMBED_TYPE_PROFILE;
 
   /* Copy relay hints */

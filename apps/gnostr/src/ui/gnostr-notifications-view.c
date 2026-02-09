@@ -7,6 +7,7 @@
 
 #include "gnostr-notifications-view.h"
 #include "gnostr-notification-row.h"
+#include "../util/utils.h"
 
 /* Maximum notifications to keep in memory to prevent unbounded growth */
 #define NOTIFICATIONS_MAX 500
@@ -366,8 +367,10 @@ gnostr_notifications_view_set_user_pubkey(GnostrNotificationsView *self,
 {
     g_return_if_fail(GNOSTR_IS_NOTIFICATIONS_VIEW(self));
 
+    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+    g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
     g_free(self->user_pubkey);
-    self->user_pubkey = g_strdup(pubkey_hex);
+    self->user_pubkey = hex ? g_strdup(hex) : NULL;
 }
 
 void

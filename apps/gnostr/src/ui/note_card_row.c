@@ -3242,7 +3242,9 @@ void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, c
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   g_free(self->id_hex); self->id_hex = g_strdup(id_hex);
   g_free(self->root_id); self->root_id = g_strdup(root_id);
-  g_free(self->pubkey_hex); self->pubkey_hex = g_strdup(pubkey_hex);
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+  g_free(self->pubkey_hex); self->pubkey_hex = hex ? g_strdup(hex) : NULL;
 }
 
 void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,

@@ -3838,16 +3838,15 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
   g_return_if_fail(pubkey_hex != NULL);
 
-  /* nostrc-daj1: Warn if caller passes npub instead of hex */
-  if (g_str_has_prefix(pubkey_hex, "npub1")) {
-    g_warning("profile_pane: set_pubkey received npub instead of hex: %.16s...", pubkey_hex);
-  } else if (strlen(pubkey_hex) != 64) {
-    g_warning("profile_pane: set_pubkey received invalid pubkey (len=%zu): %.16s...",
-              strlen(pubkey_hex), pubkey_hex);
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+  if (!hex) {
+    g_warning("profile_pane: set_pubkey received invalid pubkey: %.16s...", pubkey_hex);
+    return;
   }
 
   /* Check if already showing this profile */
-  if (self->current_pubkey && strcmp(self->current_pubkey, pubkey_hex) == 0) {
+  if (self->current_pubkey && strcmp(self->current_pubkey, hex) == 0) {
     return;
   }
 
@@ -3855,12 +3854,12 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   gnostr_profile_pane_clear(self);
 
   /* Store new pubkey */
-  self->current_pubkey = g_strdup(pubkey_hex);
+  self->current_pubkey = g_strdup(hex);
 
-  g_debug("profile_pane: set_pubkey called for %.8s...", pubkey_hex);
+  g_debug("profile_pane: set_pubkey called for %.8s...", hex);
 
   /* Show temporary handle while loading */
-  char *temp_handle = g_strdup_printf("npub1%.8s...", pubkey_hex);
+  char *temp_handle = g_strdup_printf("npub1%.8s...", hex);
   gtk_label_set_text(GTK_LABEL(self->lbl_handle), temp_handle);
   g_free(temp_handle);
 
@@ -3895,8 +3894,10 @@ void gnostr_profile_pane_update_from_json(GnostrProfilePane *self, const char *p
 void gnostr_profile_pane_set_own_pubkey(GnostrProfilePane *self, const char *own_pubkey_hex) {
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
 
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = own_pubkey_hex ? gnostr_ensure_hex_pubkey(own_pubkey_hex) : NULL;
   g_free(self->own_pubkey);
-  self->own_pubkey = own_pubkey_hex ? g_strdup(own_pubkey_hex) : NULL;
+  self->own_pubkey = hex ? g_strdup(hex) : NULL;
 
   /* Update button visibility */
   update_action_buttons_visibility(self);

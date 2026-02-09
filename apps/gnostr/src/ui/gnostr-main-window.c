@@ -4731,7 +4731,10 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
 void gnostr_main_window_open_profile(GtkWidget *window, const char *pubkey_hex) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
-  on_note_card_open_profile(NULL, pubkey_hex, self);
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+  if (!hex) return;
+  on_note_card_open_profile(NULL, hex, self);
 }
 
 /* Public wrapper for setting reply context (called from timeline view) */

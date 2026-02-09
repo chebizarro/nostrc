@@ -3379,6 +3379,10 @@ void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *p
   g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
   g_return_if_fail(pubkey_hex != NULL);
 
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+  if (!hex) return;
+
   if (!self->tabs) return;
 
   /* Show the tabs bar */
@@ -3389,13 +3393,13 @@ void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *p
   if (display_name && *display_name) {
     label = g_strdup(display_name);
   } else {
-    label = g_strndup(pubkey_hex, 8);
+    label = g_strndup(hex, 8);
   }
 
   guint index = gn_timeline_tabs_add_tab(GN_TIMELINE_TABS(self->tabs),
                                           GN_TIMELINE_TAB_AUTHOR,
                                           label,
-                                          pubkey_hex);
+                                          hex);
 
   g_debug("timeline_view: added author tab '%s' at index %u", label, index);
   g_free(label);

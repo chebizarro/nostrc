@@ -135,6 +135,12 @@ static GPtrArray *parse_p_tags_to_entries(const gchar *tags_json)
 /* Get follow list from local nostrdb cache */
 GPtrArray *gnostr_follow_list_get_cached(const gchar *pubkey_hex)
 {
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = NULL;
+  if (pubkey_hex && strlen(pubkey_hex) != 64) {
+    hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+    pubkey_hex = hex;
+  }
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return NULL;
 
   /* Query for kind 3 from this author, limit 1 (most recent) */
@@ -343,6 +349,12 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
                                      GnostrFollowListCallback callback,
                                      gpointer user_data)
 {
+  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  g_autofree gchar *hex = NULL;
+  if (pubkey_hex && strlen(pubkey_hex) != 64) {
+    hex = gnostr_ensure_hex_pubkey(pubkey_hex);
+    pubkey_hex = hex;
+  }
   if (!pubkey_hex || strlen(pubkey_hex) != 64) {
     if (callback) callback(NULL, user_data);
     return;
