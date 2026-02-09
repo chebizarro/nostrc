@@ -272,6 +272,9 @@ static void on_signer_state_changed(GnostrSignerService *signer, guint old_state
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
 static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data);
+static void on_profile_pane_follow_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data);
+static void on_profile_pane_message_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data);
+static void navigate_to_dm_conversation(GnostrMainWindow *self, const char *peer_pubkey);
 /* Forward declarations for discover page signal handlers */
 static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
 static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user_data);
@@ -4288,6 +4291,32 @@ static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const c
   show_toast(self, "User muted");
 }
 
+/* nostrc-qvba: Handle follow from profile pane */
+static void on_profile_pane_follow_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
+  (void)pane;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return;
+
+  /* TODO: Implement follow/unfollow via contact list (NIP-02) */
+  g_debug("[FOLLOW] Follow requested for pubkey=%.16s...", pubkey_hex);
+  show_toast(self, "Follow feature coming soon");
+}
+
+/* nostrc-qvba: Handle message from profile pane */
+static void on_profile_pane_message_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
+  (void)pane;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return;
+
+  /* Navigate to DM conversation with this user */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_show_page(self->session_view, "messages");
+    navigate_to_dm_conversation(self, pubkey_hex);
+  }
+}
+
 /* Discover page signal handlers (nostrc-dr3) */
 static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data) {
   (void)page;
@@ -5689,6 +5718,11 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       /* nostrc-ch2v: Handle mute from profile pane */
       g_signal_connect(profile_pane, "mute-user-requested",
                        G_CALLBACK(on_profile_pane_mute_user_requested), self);
+      /* nostrc-qvba: Handle follow and message from profile pane */
+      g_signal_connect(profile_pane, "follow-requested",
+                       G_CALLBACK(on_profile_pane_follow_requested), self);
+      g_signal_connect(profile_pane, "message-requested",
+                       G_CALLBACK(on_profile_pane_message_requested), self);
     }
     
     GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;

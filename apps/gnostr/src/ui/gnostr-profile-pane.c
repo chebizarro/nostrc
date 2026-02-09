@@ -404,6 +404,8 @@ enum {
   SIGNAL_CLOSE_REQUESTED,
   SIGNAL_NOTE_ACTIVATED,
   SIGNAL_MUTE_USER_REQUESTED,
+  SIGNAL_FOLLOW_REQUESTED,
+  SIGNAL_MESSAGE_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -538,6 +540,18 @@ static void gnostr_profile_pane_finalize(GObject *obj) {
   G_OBJECT_CLASS(gnostr_profile_pane_parent_class)->finalize(obj);
 }
 
+/* nostrc-qvba: Open URLs clicked in bio or metadata labels */
+static gboolean on_label_activate_link(GtkLabel *label, const char *uri, gpointer user_data) {
+  (void)user_data;
+  if (!uri || !*uri) return FALSE;
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(label));
+  GtkWindow *win = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+  GtkUriLauncher *launcher = gtk_uri_launcher_new(uri);
+  gtk_uri_launcher_launch(launcher, win, NULL, NULL, NULL);
+  g_object_unref(launcher);
+  return TRUE;
+}
+
 static void on_close_clicked(GtkButton *btn, gpointer user_data) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
   (void)btn;
@@ -552,6 +566,26 @@ static void on_mute_user_clicked(GtkButton *btn, gpointer user_data) {
   if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
 
   g_signal_emit(self, signals[SIGNAL_MUTE_USER_REQUESTED], 0, self->current_pubkey);
+}
+
+/* nostrc-qvba: Follow button handler */
+static void on_follow_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)btn;
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
+
+  g_signal_emit(self, signals[SIGNAL_FOLLOW_REQUESTED], 0, self->current_pubkey);
+}
+
+/* nostrc-qvba: Message button handler */
+static void on_message_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)btn;
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
+
+  g_signal_emit(self, signals[SIGNAL_MESSAGE_REQUESTED], 0, self->current_pubkey);
 }
 
 static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
@@ -1148,6 +1182,22 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
     G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  /* nostrc-qvba: Follow user from profile pane */
+  signals[SIGNAL_FOLLOW_REQUESTED] = g_signal_new(
+    "follow-requested",
+    G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST,
+    0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  /* nostrc-qvba: Message user from profile pane */
+  signals[SIGNAL_MESSAGE_REQUESTED] = g_signal_new(
+    "message-requested",
+    G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST,
+    0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void gnostr_profile_pane_init(GnostrProfilePane *self) {
@@ -1174,6 +1224,19 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   /* nostrc-ch2v: Connect mute user button */
   if (self->btn_mute_user) {
     g_signal_connect(self->btn_mute_user, "clicked", G_CALLBACK(on_mute_user_clicked), self);
+  }
+
+  /* nostrc-qvba: Connect follow and message buttons */
+  if (self->btn_follow) {
+    g_signal_connect(self->btn_follow, "clicked", G_CALLBACK(on_follow_clicked), self);
+  }
+  if (self->btn_message) {
+    g_signal_connect(self->btn_message, "clicked", G_CALLBACK(on_message_clicked), self);
+  }
+
+  /* nostrc-qvba: Connect bio label link activation */
+  if (self->lbl_bio) {
+    g_signal_connect(self->lbl_bio, "activate-link", G_CALLBACK(on_label_activate_link), self);
   }
 
   /* Connect load more button */
@@ -1228,10 +1291,17 @@ static void update_action_buttons_visibility(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->other_profile_actions, !is_own_profile);
   }
 
-  /* nostrc-ch2v: Enable mute button when logged in and viewing another profile */
+  /* nostrc-ch2v: Enable action buttons when logged in and viewing another profile */
+  gboolean can_interact = !is_own_profile && is_user_logged_in();
   if (self->btn_mute_user) {
-    gboolean can_mute = !is_own_profile && is_user_logged_in();
-    gtk_widget_set_sensitive(self->btn_mute_user, can_mute);
+    gtk_widget_set_sensitive(self->btn_mute_user, can_interact);
+  }
+  /* nostrc-qvba: Enable follow and message buttons */
+  if (self->btn_follow) {
+    gtk_widget_set_sensitive(self->btn_follow, can_interact);
+  }
+  if (self->btn_message) {
+    gtk_widget_set_sensitive(self->btn_message, can_interact);
   }
 }
 
@@ -1497,6 +1567,8 @@ static void add_metadata_row(GnostrProfilePane *self, const char *icon_name, con
     gtk_label_set_xalign(GTK_LABEL(link), 0.0);
     gtk_label_set_ellipsize(GTK_LABEL(link), PANGO_ELLIPSIZE_END);
     gtk_widget_set_hexpand(link, TRUE);
+    /* nostrc-qvba: Connect activate-link to open URLs */
+    g_signal_connect(link, "activate-link", G_CALLBACK(on_label_activate_link), self);
     gtk_box_append(GTK_BOX(row), link);
     g_free(markup);
   } else {
@@ -2316,9 +2388,25 @@ static void update_profile_ui(GnostrProfilePane *self, const char *profile_json)
   g_free(self->current_avatar_url);
   self->current_avatar_url = picture ? g_strdup(picture) : NULL;
   
-  /* Update bio */
+  /* Update bio — nostrc-qvba: convert URLs to clickable links */
   if (about && *about) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_bio), about);
+    /* Escape text for Pango markup, then linkify URLs */
+    gchar *escaped = g_markup_escape_text(about, -1);
+    GRegex *url_re = g_regex_new("(https?://[^\\s<>\"]+)", 0, 0, NULL);
+    if (url_re) {
+      gchar *linkified = g_regex_replace(url_re, escaped, -1, 0,
+                                         "<a href=\"\\1\">\\1</a>", 0, NULL);
+      g_regex_unref(url_re);
+      if (linkified) {
+        gtk_label_set_markup(GTK_LABEL(self->lbl_bio), linkified);
+        g_free(linkified);
+      } else {
+        gtk_label_set_text(GTK_LABEL(self->lbl_bio), about);
+      }
+    } else {
+      gtk_label_set_text(GTK_LABEL(self->lbl_bio), about);
+    }
+    g_free(escaped);
     gtk_widget_set_visible(self->lbl_bio, TRUE);
   } else {
     gtk_widget_set_visible(self->lbl_bio, FALSE);
@@ -2507,30 +2595,29 @@ static guint load_posts_from_cache(GnostrProfilePane *self) {
 
 /* Callback for posts query completion (network fetch) */
 static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
-
+  /* nostrc-qvba: Check result BEFORE accessing user_data (may be dangling if cancelled) */
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("Failed to load posts: %s", error->message);
+    }
+    g_error_free(error);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  /* Now safe to access user_data */
+  if (!user_data) return;
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   /* Hide loading indicator */
   if (self->posts_loading_box)
     gtk_widget_set_visible(self->posts_loading_box, FALSE);
   if (self->posts_scroll)
     gtk_widget_set_visible(self->posts_scroll, TRUE);
-
-  if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_warning("Failed to load posts: %s", error->message);
-      if (self->posts_empty_label)
-        gtk_label_set_text(GTK_LABEL(self->posts_empty_label), "Failed to load posts");
-      if (self->posts_empty_box)
-        gtk_widget_set_visible(self->posts_empty_box, TRUE);
-    }
-    g_error_free(error);
-    return;
-  }
 
   if (!results || results->len == 0) {
     /* No posts found */
@@ -3068,10 +3155,7 @@ static void on_media_item_activated(GtkGridView *grid_view, guint position, gpoi
 
 /* Callback for media query completion */
 static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
-
+  /* nostrc-qvba: Check result BEFORE accessing user_data (may be dangling if cancelled) */
   GError *err = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
@@ -3080,14 +3164,14 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
       g_warning("profile_pane: media query error: %s", err->message);
     }
     g_error_free(err);
-
-    /* Show empty state */
-    if (self->media_loading_box)
-      gtk_widget_set_visible(self->media_loading_box, FALSE);
-    if (self->media_empty_box)
-      gtk_widget_set_visible(self->media_empty_box, TRUE);
+    if (results) g_ptr_array_unref(results);
     return;
   }
+
+  /* Now safe to access user_data */
+  if (!user_data) return;
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   self->media_loaded = TRUE;
 
@@ -3177,6 +3261,9 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
     if (self->media_empty_box)
       gtk_widget_set_visible(self->media_empty_box, TRUE);
   } else {
+    /* nostrc-qvba: Hide empty state when we have media */
+    if (self->media_empty_box)
+      gtk_widget_set_visible(self->media_empty_box, FALSE);
     /* Show load more if we got a full page */
     if (self->btn_media_load_more)
       gtk_widget_set_visible(self->btn_media_load_more, results->len >= MEDIA_PAGE_SIZE);
