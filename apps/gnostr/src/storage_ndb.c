@@ -1657,11 +1657,12 @@ storage_ndb_blocks *storage_ndb_parse_content_blocks(const char *content, int co
   if (!content || content_len <= 0) return NULL;
 
   /* Match ndb_note_to_blocks: use malloc (ndb_blocks_free calls free()) */
-  unsigned char *buf = malloc(2 << 18);  /* 512KB, same as nostrdb internal */
+  const int buf_size = 2 << 18;  /* 512KB, same as nostrdb internal */
+  unsigned char *buf = malloc(buf_size);
   if (!buf) return NULL;
   struct ndb_blocks *blocks = NULL;
 
-  if (ndb_parse_content(buf, content_len, content, content_len, &blocks) != 1) {
+  if (ndb_parse_content(buf, buf_size, content, content_len, &blocks) != 1) {
     free(buf);
     return NULL;
   }
