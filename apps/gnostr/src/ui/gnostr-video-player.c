@@ -872,7 +872,13 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
 
   /* Create overlay container */
   self->overlay = gtk_overlay_new();
+  gtk_widget_set_hexpand(self->overlay, FALSE);
+  gtk_widget_set_vexpand(self->overlay, FALSE);
   gtk_widget_set_parent(self->overlay, GTK_WIDGET(self));
+
+  /* Clip rendering to allocated bounds — prevents HD video frames from
+   * painting beyond the constrained card width */
+  gtk_widget_set_overflow(GTK_WIDGET(self), GTK_OVERFLOW_HIDDEN);
 
   /* nostrc-sykf: Probe media backend once to avoid repeated GTK warnings */
   if (s_media_backend_status == -1) {
@@ -903,6 +909,10 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
     : gtk_picture_new();
   gtk_widget_add_css_class(self->picture, "video-content");
   gtk_picture_set_content_fit(GTK_PICTURE(self->picture), GTK_CONTENT_FIT_CONTAIN);
+  /* Prevent the picture from expanding the timeline to full screen width
+   * when the video's natural size exceeds the card width */
+  gtk_widget_set_hexpand(self->picture, FALSE);
+  gtk_widget_set_vexpand(self->picture, FALSE);
   gtk_overlay_set_child(GTK_OVERLAY(self->overlay), self->picture);
 
   /* Create controls overlay */

@@ -4926,6 +4926,8 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
     int player_height = is_vertical ? 400 : 300;
     /* Constrain width to 608 (card - margins) to prevent window expansion */
     gtk_widget_set_size_request(self->video_player, 608, player_height);
+    gtk_widget_set_hexpand(self->video_player, FALSE);
+    gtk_widget_set_vexpand(self->video_player, FALSE);
     gtk_widget_add_css_class(self->video_player, "note-media-video");
     gtk_widget_set_visible(self->video_player, FALSE);
 
