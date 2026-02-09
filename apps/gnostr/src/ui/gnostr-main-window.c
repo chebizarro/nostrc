@@ -4107,45 +4107,20 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 /* nostrc-myp3: Navigate to the current user's own profile.
- * Self-healing: if user_pubkey_hex is not set (init race, signer timing),
- * fall back to reading from GSettings directly — the same source of truth
- * that every other profile-opening code path uses successfully. */
+ * Read pubkey directly from GSettings every time — don't trust the member
+ * variable which has been unreliable due to init races and signer timing. */
 static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data) {
   (void)sv;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  /* If user_pubkey_hex isn't set, try to recover it from GSettings */
-  if (!self->user_pubkey_hex || !*self->user_pubkey_hex) {
-    g_debug("[PROFILE] user_pubkey_hex is NULL, recovering from GSettings");
-    char *recovered = get_current_user_pubkey_hex();
-    if (recovered) {
-      g_free(self->user_pubkey_hex);
-      self->user_pubkey_hex = recovered;
-      g_debug("[PROFILE] Recovered user_pubkey_hex from GSettings: %.16s...", recovered);
-    } else {
-      g_warning("[PROFILE] View Profile requested but no user pubkey available (not signed in?)");
-      show_toast(self, "Not signed in");
-      return;
-    }
-  }
-
-  /* Normalize to hex if it's still an npub/nprofile */
-  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(self->user_pubkey_hex);
-  if (!hex || strlen(hex) != 64) {
-    g_warning("[PROFILE] user_pubkey_hex invalid after normalization: %s",
-              self->user_pubkey_hex ? self->user_pubkey_hex : "(null)");
-    show_toast(self, "Could not load profile");
+  g_autofree char *hex = get_current_user_pubkey_hex();
+  if (!hex) {
+    show_toast(self, "Not signed in");
     return;
   }
 
-  /* Update cached value if normalization changed it */
-  if (g_strcmp0(self->user_pubkey_hex, hex) != 0) {
-    g_free(self->user_pubkey_hex);
-    self->user_pubkey_hex = g_strdup(hex);
-  }
-
-  gnostr_main_window_open_profile(GTK_WIDGET(self), self->user_pubkey_hex);
+  gnostr_main_window_open_profile(GTK_WIDGET(self), hex);
 }
 
 /* Handler for account switch request from session view */
