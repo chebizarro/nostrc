@@ -32,6 +32,8 @@ void *go_hash_map_get(GoHashMap *map, HashKey *key);
 
 void go_hash_map_for_each(GoHashMap *map, bool (*foreach)(HashKey *, void *));
 
+void go_hash_map_for_each_with_data(GoHashMap *map, bool (*foreach)(HashKey *, void *, void *), void *user_data);
+
 void go_hash_map_remove_str(GoHashMap *map, const char *key_str);
 
 void go_hash_map_remove_int(GoHashMap *map, int64_t key);

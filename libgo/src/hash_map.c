@@ -196,6 +196,26 @@ void go_hash_map_for_each(GoHashMap *map, bool (*foreach)(HashKey *, void *)) {
     }
 }
 
+void go_hash_map_for_each_with_data(GoHashMap *map, bool (*foreach)(HashKey *, void *, void *), void *user_data) {
+    for (size_t i = 0; i < map->num_buckets; i++) {
+        nsync_mu_lock(&map->bucket_locks[i]);
+
+        HashNode *node = map->buckets[i];
+        while (node) {
+            HashNode *next = node->next;
+
+            bool cont = foreach(&node->key, node->value, user_data);
+            if (!cont) {
+                nsync_mu_unlock(&map->bucket_locks[i]);
+                return;
+            }
+
+            node = next;
+        }
+        nsync_mu_unlock(&map->bucket_locks[i]);
+    }
+}
+
 void go_hash_map_remove_str(GoHashMap *map, const char *key_str) {
     if (!key_str)
         return;

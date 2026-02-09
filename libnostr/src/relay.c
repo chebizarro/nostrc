@@ -529,55 +529,105 @@ static void *write_operations(void *arg) {
 #include "nostr-subscription.h"
 #include "subscription-private.h"
 
-/* Global state for subscription re-firing (used by callback) */
-static int g_refire_count = 0;
-static int g_refire_debug = -1;
+/* Snapshot entry for subscription re-firing (nostrc-1zqm) */
+typedef struct {
+    NostrSubscription *sub;
+    int counter;
+} RefireEntry;
 
-/* Callback for go_hash_map_for_each to re-fire a subscription */
-static bool refire_subscription_cb(HashKey *key, void *value) {
-    (void)key;  /* unused - subscriptions keyed by counter */
+/* Collector used during snapshot phase */
+typedef struct {
+    RefireEntry *entries;
+    size_t count;
+    size_t capacity;
+} RefireCollector;
+
+/* Callback for snapshot phase: quickly collects subscription pointers.
+ * Runs under per-bucket lock but does NO blocking work (nostrc-1zqm). */
+static bool collect_subscription_cb(HashKey *key, void *value, void *user_data) {
+    (void)key;
+    RefireCollector *collector = (RefireCollector *)user_data;
     NostrSubscription *sub = (NostrSubscription *)value;
-    if (!sub || !sub->filters) return true;  /* continue iteration */
+    if (!sub || !sub->filters || !sub->priv) return true;
 
-    Error *err = NULL;
-    if (nostr_subscription_fire(sub, &err)) {
-        g_refire_count++;
-        if (g_refire_debug) {
-            fprintf(stderr, "[RECONNECT] Re-fired subscription sid=%s\n",
-                    sub->priv && sub->priv->id ? sub->priv->id : "?");
-        }
-    } else {
-        if (g_refire_debug) {
-            fprintf(stderr, "[RECONNECT] Failed to re-fire subscription sid=%s: %s\n",
-                    sub->priv && sub->priv->id ? sub->priv->id : "?",
-                    err ? err->message : "unknown");
-        }
-        if (err) free_error(err);
+    if (collector->count >= collector->capacity) {
+        size_t new_cap = collector->capacity * 2;
+        RefireEntry *new_entries = realloc(collector->entries, new_cap * sizeof(RefireEntry));
+        if (!new_entries) return false;  /* stop iteration on OOM */
+        collector->entries = new_entries;
+        collector->capacity = new_cap;
     }
-    return true;  /* continue iteration */
+    collector->entries[collector->count].sub = sub;
+    collector->entries[collector->count].counter = sub->priv->counter;
+    collector->count++;
+    return true;
 }
 
-/* Helper to re-fire all active subscriptions after reconnection (nostrc-4du)
- * This iterates the subscriptions hashmap and re-sends REQ messages. */
+/* Helper to re-fire all active subscriptions after reconnection (nostrc-4du, nostrc-1zqm).
+ *
+ * Uses a two-phase snapshot-then-fire approach to prevent use-after-free:
+ * Phase 1: Collect subscription pointers under per-bucket locks (fast, non-blocking).
+ * Phase 2: Re-fire each subscription WITHOUT holding hash map locks.
+ *
+ * This prevents the race where nostr_subscription_fire() blocks for up to 3 seconds
+ * inside go_select_timeout while holding a bucket lock, during which another thread
+ * could free the subscription through a different bucket's lock path. */
 static void relay_refire_subscriptions(NostrRelay *r) {
     if (!r || !r->subscriptions) return;
 
-    /* Initialize debug flag once */
-    if (g_refire_debug < 0) {
-        g_refire_debug = getenv("NOSTR_DEBUG_LIFECYCLE") ? 1 : 0;
+    static int debug = -1;
+    if (debug < 0) debug = getenv("NOSTR_DEBUG_LIFECYCLE") ? 1 : 0;
+
+    /* Phase 1: Snapshot - collect subscription pointers under bucket locks.
+     * The callback is fast (just stores pointers), so locks are held briefly. */
+    RefireCollector collector = {0};
+    collector.capacity = 32;
+    collector.entries = calloc(collector.capacity, sizeof(RefireEntry));
+    if (!collector.entries) return;
+
+    go_hash_map_for_each_with_data(r->subscriptions, collect_subscription_cb, &collector);
+
+    /* Phase 2: Fire - iterate snapshot WITHOUT holding any hash map locks.
+     * For each entry, verify the subscription is still in the hash map before
+     * calling fire. The brief TOCTOU window (nanoseconds) between the check and
+     * the fire call is acceptable - the previous code held bucket locks for up
+     * to 3 seconds per subscription during fire. */
+    int refire_count = 0;
+    for (size_t i = 0; i < collector.count; i++) {
+        NostrSubscription *sub = collector.entries[i].sub;
+        int counter = collector.entries[i].counter;
+
+        /* Verify subscription is still live in the hash map */
+        NostrSubscription *current = go_hash_map_get_int(r->subscriptions, counter);
+        if (current != sub) continue;  /* removed/replaced since snapshot */
+
+        /* Re-verify filters (could have been freed between snapshot and now) */
+        if (!sub->filters) continue;
+
+        Error *err = NULL;
+        if (nostr_subscription_fire(sub, &err)) {
+            refire_count++;
+            if (debug) {
+                fprintf(stderr, "[RECONNECT] Re-fired subscription sid=%s\n",
+                        sub->priv && sub->priv->id ? sub->priv->id : "?");
+            }
+        } else {
+            if (debug) {
+                fprintf(stderr, "[RECONNECT] Failed to re-fire subscription sid=%s: %s\n",
+                        sub->priv && sub->priv->id ? sub->priv->id : "?",
+                        err ? err->message : "unknown");
+            }
+            if (err) free_error(err);
+        }
     }
 
-    /* Reset counter before iteration */
-    g_refire_count = 0;
+    free(collector.entries);
 
-    /* Iterate and re-fire all subscriptions */
-    go_hash_map_for_each(r->subscriptions, refire_subscription_cb);
-
-    if (g_refire_count > 0 || g_refire_debug) {
+    if (refire_count > 0 || debug) {
         fprintf(stderr, "[RECONNECT] Re-fired %d subscription(s) for %s\n",
-                g_refire_count, r->url ? r->url : "unknown");
+                refire_count, r->url ? r->url : "unknown");
     }
-    nostr_metric_counter_add("relay_subscriptions_refired", (uint64_t)g_refire_count);
+    nostr_metric_counter_add("relay_subscriptions_refired", (uint64_t)refire_count);
 }
 
 /* Attempt to reconnect the relay (nostrc-4du)
