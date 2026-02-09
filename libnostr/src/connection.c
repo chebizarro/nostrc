@@ -483,14 +483,28 @@ static void *lws_service_loop(void *arg) {
             break;
         }
 
-        /* hq-5ejm4: Drain pending connection requests (non-blocking).
-         * Each request does lws_client_connect_via_info() which may do
-         * synchronous DNS — but that's fine, we're on the service thread. */
+        /* nostrc-snap: Process AT MOST ONE connection request per iteration.
+         *
+         * lws_client_connect_via_info() does SYNCHRONOUS DNS resolution.
+         * The old code drained ALL pending requests in a tight while loop,
+         * blocking for seconds per request.  With query_thread_func creating
+         * temp relays for disconnected relays, 5-10 connection requests
+         * easily queue up, blocking the service loop for 10-50 seconds.
+         *
+         * During that time, lws_service() is NEVER called:
+         *   - No LWS_CALLBACK_CLIENT_RECEIVE → no incoming events
+         *   - No LWS_CALLBACK_CLIENT_WRITEABLE → send_channel fills up →
+         *     write_operations blocks → write_queue fills up →
+         *     nostr_relay_write() blocks anything writing from main thread
+         *     → UI freezes
+         *
+         * Fix: process one request, then call lws_service() to keep
+         * existing connections alive.  Pending requests are processed
+         * in subsequent iterations (~50ms apart). */
         if (queue) {
             ConnectionRequest *req = NULL;
-            while (go_channel_try_receive(queue, (void **)&req) == 0 && req) {
+            if (go_channel_try_receive(queue, (void **)&req) == 0 && req) {
                 service_loop_process_connect_request(req, ctx);
-                req = NULL;
             }
         }
 
