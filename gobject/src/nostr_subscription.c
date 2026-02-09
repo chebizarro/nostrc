@@ -49,7 +49,7 @@ static guint sub_signals[GNOSTR_SUBSCRIPTION_SIGNALS_COUNT] = { 0 };
 /* nostrc-mzab: Max events to emit per main loop iteration.
  * Prevents startup floods from blocking the UI — between batches the
  * main loop processes GTK redraws and input events. */
-#define MAX_EVENTS_PER_TICK 50
+#define MAX_EVENTS_PER_TICK 5
 
 struct _GNostrSubscription {
     GObject parent_instance;
