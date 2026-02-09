@@ -3399,6 +3399,9 @@ static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list
   GtkWidget *picture = gtk_frame_get_child(GTK_FRAME(frame));
   if (!GTK_IS_PICTURE(picture)) return;
 
+  /* Clear previous paintable — critical when GridView recycles items */
+  gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
+
   const char *url = media->thumb_url ? media->thumb_url : media->url;
   if (url && *url) {
     /* Try to load from cache or download */
@@ -3411,6 +3414,20 @@ static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list
       gnostr_avatar_download_async(url, picture, NULL);
     }
   }
+}
+
+static void unbind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+  (void)factory;
+  (void)user_data;
+
+  GtkWidget *frame = gtk_list_item_get_child(list_item);
+  if (!GTK_IS_FRAME(frame)) return;
+
+  GtkWidget *picture = gtk_frame_get_child(GTK_FRAME(frame));
+  if (!GTK_IS_PICTURE(picture)) return;
+
+  /* Clear paintable on unbind so recycled items don't flash stale images */
+  gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
 }
 
 /* nostrc-7x61: Handle media grid item activation (click) to open image viewer */
@@ -3732,6 +3749,7 @@ static void load_media(GnostrProfilePane *self) {
       GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
       g_signal_connect(factory, "setup", G_CALLBACK(setup_media_item), self);
       g_signal_connect(factory, "bind", G_CALLBACK(bind_media_item), self);
+      g_signal_connect(factory, "unbind", G_CALLBACK(unbind_media_item), self);
 
       gtk_grid_view_set_model(GTK_GRID_VIEW(self->media_grid), self->media_selection);
       gtk_grid_view_set_factory(GTK_GRID_VIEW(self->media_grid), factory);
