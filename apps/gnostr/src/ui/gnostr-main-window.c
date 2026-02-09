@@ -5462,49 +5462,35 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     g_hash_table_unref(unique_pks);
     g_debug("[PROFILE] Batch received %u events (%u unique authors)", jsons->len, unique_count);
     
-    /* Ingest events ONE AT A TIME - batch ingestion fails if ANY event is invalid */
-    guint ingested = 0, failed = 0;
+    /* nostrc-mzab: Queue events for background ingestion instead of blocking
+     * the main thread. Uses the same ingest_queue as the live subscription. */
+    guint queued = 0;
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (!evt_json) continue;
-      
+
       /* CRITICAL FIX: nostrdb requires "tags" field even if empty.
        * Many relays omit it. Add it if missing. */
-      GString *fixed_json = g_string_new("");
       if (!strstr(evt_json, "\"tags\"")) {
-        // Find insertion point after "kind" field
         const char *kind_pos = strstr(evt_json, "\"kind\"");
         if (kind_pos) {
           const char *comma_after_kind = strchr(kind_pos, ',');
           if (comma_after_kind) {
-            // Copy prefix, insert tags, copy suffix
-            g_string_append_len(fixed_json, evt_json, comma_after_kind - evt_json + 1);
-            g_string_append(fixed_json, "\"tags\":[],");
-            g_string_append(fixed_json, comma_after_kind + 1);
-          } else {
-            g_string_append(fixed_json, evt_json);
+            GString *fixed = g_string_new("");
+            g_string_append_len(fixed, evt_json, comma_after_kind - evt_json + 1);
+            g_string_append(fixed, "\"tags\":[],");
+            g_string_append(fixed, comma_after_kind + 1);
+            g_async_queue_push(ctx->self->ingest_queue, g_string_free(fixed, FALSE));
+            queued++;
+            continue;
           }
-        } else {
-          g_string_append(fixed_json, evt_json);
         }
-      } else {
-        g_string_append(fixed_json, evt_json);
       }
-      
-      /* Use storage_ndb_ingest_event_json (same as live notes) instead of LDJSON */
-      int ingest_rc = storage_ndb_ingest_event_json(fixed_json->str, NULL);
-      if (ingest_rc != 0) {
-        failed++;
-        if (failed <= 3) {
-          g_warning("profile_fetch: ingest FAILED rc=%d for event[%u]: %.100s", ingest_rc, i, evt_json);
-        }
-      } else {
-        ingested++;
-      }
-      g_string_free(fixed_json, TRUE);
+      g_async_queue_push(ctx->self->ingest_queue, g_strdup(evt_json));
+      queued++;
     }
-    if (failed > 0) {
-      g_warning("[PROFILE] Ingested %u/%u events (%u failed validation)", ingested, jsons->len, failed);
+    if (queued > 0) {
+      g_debug("[PROFILE] Queued %u events for background ingestion", queued);
     }
     /* No LDJSON buffer to free: removed to avoid memory spikes */
     /* Now parse events for UI application */
