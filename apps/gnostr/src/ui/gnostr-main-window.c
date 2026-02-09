@@ -4106,20 +4106,22 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
   show_toast(self, "Signed out");
 }
 
-/* nostrc-myp3: Navigate to the current user's own profile.
- * Read pubkey directly from GSettings every time — don't trust the member
- * variable which has been unreliable due to init races and signer timing. */
+/* nostrc-myp3: Navigate to the current user's own profile. */
 static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data) {
   (void)sv;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
+  g_warning("[VIEW_PROFILE] handler fired");
+
   g_autofree char *hex = get_current_user_pubkey_hex();
   if (!hex) {
+    g_warning("[VIEW_PROFILE] get_current_user_pubkey_hex returned NULL");
     show_toast(self, "Not signed in");
     return;
   }
 
+  g_warning("[VIEW_PROFILE] got hex=%.16s..., calling open_profile", hex);
   gnostr_main_window_open_profile(GTK_WIDGET(self), hex);
 }
 
@@ -4199,6 +4201,7 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
 
   /* Get profile pane from session view */
   GtkWidget *profile_pane = self->session_view ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
+  g_warning("[VIEW_PROFILE] on_note_card_open_profile: pane=%p, pubkey=%.16s...", (void*)profile_pane, pubkey_hex);
 
   /* Check if profile pane is currently visible */
   gboolean sidebar_visible = is_panel_visible(self) && gnostr_session_view_is_showing_profile(self->session_view);
@@ -4208,21 +4211,21 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
     const char *current = gnostr_profile_pane_get_current_pubkey(GNOSTR_PROFILE_PANE(profile_pane));
     if (sidebar_visible && current && strcmp(current, pubkey_hex) == 0) {
-      /* Same profile clicked while sidebar is visible - toggle OFF */
+      g_warning("[VIEW_PROFILE] toggle OFF — same profile already visible");
       hide_panel(self);
       return;
     }
   }
 
-  /* Different profile or sidebar was closed - show the profile pane */
+  /* Show the profile pane */
+  g_warning("[VIEW_PROFILE] showing profile panel");
   show_profile_panel(self);
-  
-  /* Set the pubkey on the profile pane — this triggers NDB cache lookup
-   * and async network fetch internally via fetch_profile_from_cache_or_network().
-   * nostrc-4aen: Previously we duplicated the NDB query here which caused
-   * banner image loads to be cancelled by the redundant update_from_json call. */
+
   if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
+    g_warning("[VIEW_PROFILE] calling set_pubkey on profile pane");
     gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(profile_pane), pubkey_hex);
+  } else {
+    g_warning("[VIEW_PROFILE] BUG: profile_pane is NULL or not a GnostrProfilePane!");
   }
 }
 
@@ -4720,9 +4723,9 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
 void gnostr_main_window_open_profile(GtkWidget *window, const char *pubkey_hex) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
-  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
-  if (!hex) return;
+  if (!hex) { g_warning("[VIEW_PROFILE] ensure_hex_pubkey returned NULL for: %s", pubkey_hex ? pubkey_hex : "(null)"); return; }
+  g_warning("[VIEW_PROFILE] open_profile: hex=%.16s..., calling on_note_card_open_profile", hex);
   on_note_card_open_profile(NULL, hex, self);
 }
 
