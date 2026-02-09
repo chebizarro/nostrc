@@ -259,6 +259,9 @@ send_ok:
             conn->priv->wsi = NULL;
             conn->priv->writable_pending = 0;
             conn->priv->established = 0;  /* Mark handshake as incomplete */
+            /* Reset reassembly state to prevent stale partial data from
+             * being prepended to the first message on reconnect. */
+            conn->priv->rx_reassembly_len = 0;
             nsync_mu_unlock(&conn->priv->mutex);
         }
         break;
