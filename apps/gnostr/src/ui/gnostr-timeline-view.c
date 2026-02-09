@@ -1816,13 +1816,8 @@ static void on_reaction_query_done(GObject *source, GAsyncResult *res, gpointer 
 
   g_debug("timeline_view: received %u reaction events from author NIP-65 relays", results->len);
 
-  /* Store reactions in nostrdb - they will be picked up by local query next time */
-  for (guint i = 0; i < results->len; i++) {
-    const char *event_json = g_ptr_array_index(results, i);
-    if (event_json && *event_json) {
-      storage_ndb_ingest_event_json(event_json, NULL);
-    }
-  }
+  /* nostrc-mzab: Ingest reactions in background thread instead of blocking main */
+  storage_ndb_ingest_events_async(results);
 
   /* Update reaction count in model - find the event item and update it */
   guint new_count = storage_ndb_count_reactions(ctx->event_id_hex);

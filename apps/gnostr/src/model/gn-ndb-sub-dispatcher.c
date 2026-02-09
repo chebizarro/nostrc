@@ -8,6 +8,10 @@
 #include <stdio.h>
 
 #define GN_NDB_DISPATCH_BATCH_CAP 256
+/* nostrc-mzab: Max note keys to process per main-loop iteration.
+ * Prevents unbounded main-thread blocking when many events arrive at once.
+ * After processing this many, we reschedule to let GTK render a frame. */
+#define GN_NDB_DISPATCH_MAX_PER_TICK 64
 
 typedef struct {
   GnNdbSubBatchFn cb;
@@ -130,7 +134,6 @@ static GnNdbHandler *lookup_handler_locked(GnNdbDispatcher *disp, uint64_t subid
 static gboolean dispatch_subid_on_main(gpointer data) {
   DispatchCtx *dctx = (DispatchCtx *)data;
   uint64_t subid = dctx ? dctx->subid : 0;
-  /* Note: dctx is freed by g_source_set_callback's destroy notify */
 
   /* Invalidate cached transaction to ensure we see newly committed notes */
   storage_ndb_invalidate_txn_cache();
@@ -138,14 +141,17 @@ static gboolean dispatch_subid_on_main(gpointer data) {
   GnNdbDispatcher *disp = gn_ndb_dispatcher_get();
   if (!disp || subid == 0) return G_SOURCE_REMOVE;
 
-  /* Allow future notifications to schedule again while we drain. */
-  clear_pending(disp, subid);
-
+  /* nostrc-mzab: Process a bounded number of events per main-loop tick.
+   * Instead of draining everything in an unbounded while loop (which blocks
+   * GTK rendering), process at most GN_NDB_DISPATCH_MAX_PER_TICK keys then
+   * yield back to the main loop. Return G_SOURCE_CONTINUE if more remain. */
   uint64_t keys[GN_NDB_DISPATCH_BATCH_CAP];
   int total_polled = 0;
 
-  while (TRUE) {
-    int n = storage_ndb_poll_notes(subid, keys, GN_NDB_DISPATCH_BATCH_CAP);
+  while (total_polled < GN_NDB_DISPATCH_MAX_PER_TICK) {
+    int cap = MIN(GN_NDB_DISPATCH_BATCH_CAP,
+                  GN_NDB_DISPATCH_MAX_PER_TICK - total_polled);
+    int n = storage_ndb_poll_notes(subid, keys, cap);
     if (n <= 0) break;
     total_polled += n;
 
@@ -159,6 +165,16 @@ static gboolean dispatch_subid_on_main(gpointer data) {
     }
   }
 
+  if (total_polled >= GN_NDB_DISPATCH_MAX_PER_TICK) {
+    /* More events likely remain — keep the idle source alive so we
+     * continue draining in the next main-loop iteration.  Also keep
+     * the pending flag clear so new writer notifications don't stack
+     * duplicate sources while we're already draining. */
+    return G_SOURCE_CONTINUE;
+  }
+
+  /* Fully drained — allow future notifications to schedule again. */
+  clear_pending(disp, subid);
   return G_SOURCE_REMOVE;
 }
 
