@@ -34,25 +34,26 @@ static gboolean g_nip66_initialized = FALSE;
 
 /* Well-known NIP-66 relay monitor pubkeys.
  * These are pubkeys of services that publish kind 30166 relay metadata events.
- * nostrc-q42: Updated with verified active NIP-66 monitor pubkeys. */
+ * nostrc-ns2k: Verified active with `nak req -k 30166 -a <pk> wss://relay.damus.io` */
 static const gchar *s_known_monitors[] = {
-  /* nostr.watch relay monitor - primary NIP-66 data source */
-  "472a3c602c881f871ff5034e53c8353a4a52a64dd1b7d8b7d4d8d76e0be8a244",
+  /* nostr.watch Amsterdam monitor - most prolific NIP-66 data source */
+  "9bbbb845e5b6c831c29789900769843ab43bb5047abe697870cb50b6fc9bf923",
+  /* Active monitor (publishes to relay.damus.io, verified 2026-02-08) */
+  "0b01aa38c2cc9abfbe4a10d54b182793479fb80da14a91d13be38ea555b22bfd",
+  /* Active monitor (publishes to relay.nostr.watch, verified 2026-02-08) */
+  "9ba1d7892cd057f5aca5d629a5a601f64bc3e0f1fc6ed9c939845e25d5e1e254",
   /* relay.tools monitor */
   "d35e8b4ac79a66a4c47ef2f35a8b5057c5d72f1094c83c0ebf9c5d1eb1f9b9ff",
-  /* Additional verified monitors (discovered via kind 10166 queries) */
-  "9bac3d58ef5a34c7c4a9b05b07c98e4afc56655542387b4d36c9d270f898592e",
-  "45df0580711f37c547270480d7aed2c7fc03ba5a4f8fef5a8787db0b19343de0",
-  "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
   NULL
 };
 
-/* Relays known to host NIP-66 monitor data */
+/* Relays known to host NIP-66 monitor data.
+ * nostrc-ns2k: Verified with `nak req -k 30166 --limit 5 <url>` on 2026-02-08.
+ * relay.nostr.band was returning 502; purplepag.es had 0 kind 30166 events. */
 static const gchar *s_known_monitor_relays[] = {
-  "wss://relay.damus.io",
-  "wss://nos.lol",
-  "wss://relay.nostr.band",
-  "wss://purplepag.es",
+  "wss://relay.damus.io",       /* Confirmed: has kind 30166 from multiple monitors */
+  "wss://relay.nostr.watch",    /* Dedicated NIP-66 relay, confirmed working */
+  "wss://nos.lol",              /* Large general relay, has some kind 30166 */
   NULL
 };
 
@@ -1698,16 +1699,17 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_warning("nip66 streaming: query failed: %s", error->message);
-    }
+    g_warning("nip66 streaming: query finished with error: %s (domain=%s code=%d)",
+              error->message, g_quark_to_string(error->domain), error->code);
     g_error_free(error);
   }
+
+  g_warning("nip66 streaming: query returned %u raw results", results ? results->len : 0);
 
   /* hq-r248b: Process results here (previously handled via streaming signal).
    * Results are JSON strings - parse each as relay metadata. */
   if (results && results->len > 0) {
-    g_message("nip66 streaming: processing %u results from query", results->len);
+    g_warning("nip66 streaming: processing %u results from query", results->len);
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
       if (!json) continue;
@@ -1771,7 +1773,10 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
    * main-thread timeout that would call on_complete with 0 results BEFORE the
    * query thread returned, then GTask would discard the thread's results because
    * the cancellable was already cancelled. */
-  gnostr_pool_set_default_timeout(pool, 10000);
+  /* nostrc-ns2k: 15s timeout to allow time for WS handshake + relay response.
+   * Each relay needs: DNS + TCP + TLS + WS upgrade (~1-3s), then REQ send + response.
+   * With 3 relays connecting sequentially, 10s was too tight. */
+  gnostr_pool_set_default_timeout(pool, 15000);
 
   Nip66StreamingCtx *ctx = g_new0(Nip66StreamingCtx, 1);
   ctx->on_relay_found = on_relay_found;
@@ -1810,7 +1815,11 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
     url_ptrs[i] = ctx->urls[i];
   }
 
-  g_debug("nip66 streaming: querying %zu relays for kind 30166", ctx->url_count);
+  /* nostrc-ns2k: Log relay list at warning level for diagnostics */
+  g_warning("nip66 streaming: querying %zu relays for kind 30166", ctx->url_count);
+  for (guint i = 0; i < relay_urls->len; i++) {
+    g_warning("nip66 streaming: relay[%u] = %s", i, (const gchar *)g_ptr_array_index(relay_urls, i));
+  }
 
   /* Build filter - single filter for query_single_streaming */
   ctx->filter = nostr_filter_new();

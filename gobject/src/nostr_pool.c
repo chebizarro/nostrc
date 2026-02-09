@@ -558,7 +558,10 @@ query_thread_func(GTask         *task,
     NostrFilters *filters = g_object_get_data(G_OBJECT(task), "filters");
 
     guint n_relays = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
+    g_warning("pool_query_thread: %u relays in pool, filters=%p (count=%zu)",
+              n_relays, (void *)filters, filters ? filters->count : 0);
     if (n_relays == 0) {
+        g_warning("pool_query_thread: 0 relays - returning empty");
         g_task_return_pointer(task,
                               g_ptr_array_new_with_free_func(g_free),
                               (GDestroyNotify)g_ptr_array_unref);
@@ -592,11 +595,12 @@ query_thread_func(GTask         *task,
             const gchar *url = gnostr_relay_get_url(grelay);
             if (!url) continue;
 
+            g_warning("pool_query_thread: relay[%u] %s not connected, creating temp", i, url);
             Error *err = NULL;
             NostrRelay *temp_relay = nostr_relay_new(bg, url, &err);
             if (!temp_relay) {
                 if (err) {
-                    g_debug("Failed to create relay for %s: %s", url,
+                    g_warning("pool_query_thread: relay[%u] %s create FAILED: %s", i, url,
                             err->message ? err->message : "unknown");
                     free_error(err);
                 }
@@ -605,13 +609,14 @@ query_thread_func(GTask         *task,
             temp_relay->assume_valid = true;
             if (!nostr_relay_connect(temp_relay, &err)) {
                 if (err) {
-                    g_debug("Failed to connect to %s: %s", url,
+                    g_warning("pool_query_thread: relay[%u] %s connect FAILED: %s", i, url,
                             err->message ? err->message : "unknown");
                     free_error(err);
                 }
                 nostr_relay_free(temp_relay);
                 continue;
             }
+            g_warning("pool_query_thread: relay[%u] %s connected OK", i, url);
 
             RelaySubItem *item = g_new0(RelaySubItem, 1);
             item->core_relay = temp_relay;
@@ -619,6 +624,7 @@ query_thread_func(GTask         *task,
 
             struct NostrSubscription *sub = nostr_relay_prepare_subscription(temp_relay, bg, filters);
             if (!sub) {
+                g_warning("pool_query_thread: relay[%u] %s prepare_subscription FAILED", i, url);
                 nostr_relay_disconnect(temp_relay);
                 nostr_relay_free(temp_relay);
                 g_free(item);
@@ -627,6 +633,8 @@ query_thread_func(GTask         *task,
 
             Error *fire_err = NULL;
             if (!nostr_subscription_fire(sub, &fire_err)) {
+                g_warning("pool_query_thread: relay[%u] %s fire FAILED: %s", i, url,
+                          fire_err ? fire_err->message : "unknown");
                 if (fire_err) free_error(fire_err);
                 nostr_subscription_free(sub);
                 nostr_relay_disconnect(temp_relay);
@@ -634,6 +642,7 @@ query_thread_func(GTask         *task,
                 g_free(item);
                 continue;
             }
+            g_warning("pool_query_thread: relay[%u] %s subscribed OK", i, url);
 
             item->sub = sub;
             g_ptr_array_add(items, item);
@@ -663,7 +672,9 @@ query_thread_func(GTask         *task,
         g_ptr_array_add(items, item);
     }
 
+    g_warning("pool_query_thread: %u active subscriptions across relays", items->len);
     if (items->len == 0) {
+        g_warning("pool_query_thread: 0 subscriptions - returning %u results", data->results->len);
         g_ptr_array_unref(items);
         g_task_return_pointer(task,
                               data->results,
@@ -676,6 +687,7 @@ query_thread_func(GTask         *task,
     if (self->default_timeout > 0) {
         deadline_us = g_get_monotonic_time() + (guint64)self->default_timeout * 1000;
     }
+    g_warning("pool_query_thread: polling for events (timeout=%ums)", self->default_timeout);
 
     for (;;) {
         if (cancellable && g_cancellable_is_cancelled(cancellable))
@@ -719,11 +731,14 @@ query_thread_func(GTask         *task,
             }
         }
 
-        if (all_eosed)
+        if (all_eosed) {
+            g_warning("pool_query_thread: all relays sent EOSE, %u results collected", data->results->len);
             break;
+        }
         if (!any_activity)
             g_usleep(1000); /* 1ms backoff */
     }
+    g_warning("pool_query_thread: poll loop done, %u results total", data->results->len);
 
     /* Cleanup subscriptions and temp relays */
     for (guint i = 0; i < items->len; i++) {
@@ -758,6 +773,11 @@ gnostr_pool_query_async(GNostrPool          *self,
 
     GTask *task = g_task_new(self, cancellable, callback, user_data);
     g_task_set_source_tag(task, gnostr_pool_query_async);
+    /* nostrc-ns2k: Never discard results due to cancellation. The thread
+     * checks cancellation itself and returns partial results. Without this,
+     * g_task_propagate_pointer returns NULL + G_IO_ERROR_CANCELLED if the
+     * GCancellable is cancelled, silently eating all collected events. */
+    g_task_set_check_cancellable(task, FALSE);
 
     QueryAsyncData *data = g_new0(QueryAsyncData, 1);
     data->pool = self;
