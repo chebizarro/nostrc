@@ -478,8 +478,10 @@ static void on_payment_finish(GObject *source, GAsyncResult *result, gpointer us
     show_toast(self, "Zap sent!");
 
     /* LEGITIMATE TIMEOUT - Auto-close after success feedback.
-     * nostrc-b0h: Audited - brief delay for user to see success is appropriate. */
-    g_timeout_add(1500, (GSourceFunc)gtk_window_close, GTK_WINDOW(self));
+     * nostrc-b0h: Audited - brief delay for user to see success is appropriate.
+     * nostrc-gdhp: Hold ref to prevent use-after-free if window is destroyed first. */
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, (GSourceFunc)gtk_window_close,
+                       g_object_ref(GTK_WINDOW(self)), g_object_unref);
   } else {
     const gchar *msg = error ? error->message : "Payment failed";
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);

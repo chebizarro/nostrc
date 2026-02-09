@@ -1047,6 +1047,7 @@ static gboolean on_clear_revealing_key(gpointer user_data) {
     g_debug("[REVEAL] Cleared revealing state for key %lu", (unsigned long)data->note_key);
   }
 
+  g_object_unref(data->model);
   g_free(data);
   return G_SOURCE_REMOVE;
 }
@@ -1068,8 +1069,9 @@ static void mark_key_revealing(GnTimelineModel *self, uint64_t key) {
 
   /* LEGITIMATE TIMEOUT - Clear revealing flag after CSS animation completes.
    * nostrc-b0h: Audited - animation timing is appropriate. */
+  /* nostrc-gdhp: ref model to prevent use-after-free in timer callback. */
   RevealingKeyData *data = g_new(RevealingKeyData, 1);
-  data->model = self;
+  data->model = g_object_ref(self);
   data->note_key = key;
   g_timeout_add(REVEAL_ANIMATION_MS, on_clear_revealing_key, data);
 }

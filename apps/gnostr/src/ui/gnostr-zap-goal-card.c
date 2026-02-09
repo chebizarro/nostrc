@@ -98,7 +98,7 @@ static void update_deadline_display(GnostrZapGoalCard *self);
 static void update_zap_button_state(GnostrZapGoalCard *self);
 static void set_avatar_initials(GnostrZapGoalCard *self, const gchar *name);
 static gboolean on_deadline_timer(gpointer user_data);
-static void on_celebration_finished(gpointer user_data);
+static gboolean on_celebration_finished(gpointer user_data);
 
 /* ============== GObject Lifecycle ============== */
 
@@ -595,8 +595,11 @@ void gnostr_zap_goal_card_trigger_celebration(GnostrZapGoalCard *self) {
     gtk_widget_add_css_class(GTK_WIDGET(self), "celebrating");
 
     /* LEGITIMATE TIMEOUT - Hide celebration overlay after animation.
-     * nostrc-b0h: Audited - animation timing is appropriate. */
-    g_timeout_add(CELEBRATION_DURATION_MS, (GSourceFunc)on_celebration_finished, self);
+     * nostrc-b0h: Audited - animation timing is appropriate.
+     * nostrc-gdhp: ref-holding timer prevents use-after-free. */
+    g_timeout_add_full(G_PRIORITY_DEFAULT, CELEBRATION_DURATION_MS,
+                       on_celebration_finished,
+                       g_object_ref(self), g_object_unref);
   }
 }
 
@@ -607,10 +610,13 @@ void gnostr_zap_goal_card_start_deadline_timer(GnostrZapGoalCard *self) {
   if (self->end_time <= 0) return;
 
   /* LEGITIMATE TIMEOUT - Periodic deadline countdown update.
-   * nostrc-b0h: Audited - UI countdown timer is appropriate. */
-  self->deadline_timer_id = g_timeout_add(DEADLINE_TIMER_INTERVAL_MS,
-                                           on_deadline_timer,
-                                           self);
+   * nostrc-b0h: Audited - UI countdown timer is appropriate.
+   * nostrc-gdhp: ref-holding timer prevents use-after-free. */
+  self->deadline_timer_id = g_timeout_add_full(G_PRIORITY_DEFAULT,
+                                               DEADLINE_TIMER_INTERVAL_MS,
+                                               on_deadline_timer,
+                                               g_object_ref(self),
+                                               g_object_unref);
 }
 
 void gnostr_zap_goal_card_stop_deadline_timer(GnostrZapGoalCard *self) {
@@ -793,14 +799,15 @@ static gboolean on_deadline_timer(gpointer user_data) {
   return G_SOURCE_CONTINUE;
 }
 
-static void on_celebration_finished(gpointer user_data) {
+static gboolean on_celebration_finished(gpointer user_data) {
   GnostrZapGoalCard *self = GNOSTR_ZAP_GOAL_CARD(user_data);
 
-  if (!GNOSTR_IS_ZAP_GOAL_CARD(self)) return;
+  if (!GNOSTR_IS_ZAP_GOAL_CARD(self)) return G_SOURCE_REMOVE;
 
   /* Hide celebration overlay */
   if (GTK_IS_WIDGET(self->celebration_overlay)) {
     gtk_widget_set_visible(self->celebration_overlay, FALSE);
   }
   gtk_widget_remove_css_class(GTK_WIDGET(self), "celebrating");
+  return G_SOURCE_REMOVE;
 }

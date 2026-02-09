@@ -370,8 +370,10 @@ static void on_profile_sign_complete(GObject *source, GAsyncResult *res, gpointe
   /* Emit signal with the new profile content */
   g_signal_emit(self, signals[SIGNAL_PROFILE_SAVED], 0, ctx->profile_content);
 
-  /* Close dialog after short delay */
-  g_timeout_add(1500, (GSourceFunc)gtk_window_close, self);
+  /* Close dialog after short delay.
+   * nostrc-gdhp: Hold ref to prevent use-after-free if window is destroyed first. */
+  g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, (GSourceFunc)gtk_window_close,
+                     g_object_ref(self), g_object_unref);
 
   /* Cleanup */
   g_free(signed_event_json);

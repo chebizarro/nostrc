@@ -993,9 +993,11 @@ on_ai_move_complete(GObject *source_object,
 
         /* If the other player is also AI (AI vs AI), trigger next move */
         if (!gnostr_chess_session_is_human_turn(self)) {
-            /* Add a small delay to prevent blocking the main loop */
-            g_timeout_add(100, (GSourceFunc)gnostr_chess_session_request_ai_move,
-                          self);
+            /* Add a small delay to prevent blocking the main loop.
+             * nostrc-gdhp: ref-holding timer prevents use-after-free. */
+            g_timeout_add_full(G_PRIORITY_DEFAULT, 100,
+                               (GSourceFunc)gnostr_chess_session_request_ai_move,
+                               g_object_ref(self), g_object_unref);
         }
     }
 }

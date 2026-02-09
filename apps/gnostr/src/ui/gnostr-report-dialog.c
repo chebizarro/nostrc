@@ -363,8 +363,10 @@ static void on_sign_report_complete(GObject *source, GAsyncResult *res, gpointer
   g_signal_emit(self, signals[SIGNAL_REPORT_SENT], 0, ctx->event_id_hex, ctx->report_type);
   set_processing(self, FALSE, NULL);
 
-  /* Close dialog after short delay */
-  g_timeout_add(1500, (GSourceFunc)gtk_window_close, GTK_WINDOW(self));
+  /* Close dialog after short delay.
+   * nostrc-gdhp: Hold ref to prevent use-after-free if window is destroyed first. */
+  g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, (GSourceFunc)gtk_window_close,
+                     g_object_ref(GTK_WINDOW(self)), g_object_unref);
 
   report_context_free(ctx);
 }
