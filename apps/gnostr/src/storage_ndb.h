@@ -25,6 +25,12 @@ void storage_ndb_shutdown(void);
 int storage_ndb_ingest_ldjson(const char *buf, size_t len);
 int storage_ndb_ingest_event_json(const char *json, const char *relay_opt);
 
+/* nostrc-mzab: Async batch ingestion — runs storage_ndb_ingest_event_json for
+ * each JSON string in a GLib worker thread. Takes ownership of the GPtrArray
+ * (must have g_free as element free func). Use this instead of calling
+ * storage_ndb_ingest_event_json in a loop on the main thread. */
+void storage_ndb_ingest_events_async(GPtrArray *jsons);
+
 /* Query transaction helpers */
 int storage_ndb_begin_query(void **txn_out);
 int storage_ndb_end_query(void *txn);

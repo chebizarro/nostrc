@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <glib.h>
+#include <gio/gio.h>
 #include "nostr_json.h"
 #include "json.h"
 #include "libnostr_store.h"
@@ -188,6 +189,32 @@ int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
 
   free(fixed_json);
   return rc;
+}
+
+/* nostrc-mzab: Background batch ingestion via GTask thread pool */
+static void
+ingest_batch_task_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
+                       gpointer task_data, GCancellable *cancellable G_GNUC_UNUSED)
+{
+  GPtrArray *jsons = (GPtrArray *)task_data;
+  for (guint i = 0; i < jsons->len; i++) {
+    const char *json = g_ptr_array_index(jsons, i);
+    if (json)
+      storage_ndb_ingest_event_json(json, NULL);
+  }
+  g_task_return_boolean(task, TRUE);
+}
+
+void storage_ndb_ingest_events_async(GPtrArray *jsons)
+{
+  if (!jsons || jsons->len == 0) {
+    if (jsons) g_ptr_array_unref(jsons);
+    return;
+  }
+  GTask *task = g_task_new(NULL, NULL, NULL, NULL);
+  g_task_set_task_data(task, jsons, (GDestroyNotify)g_ptr_array_unref);
+  g_task_run_in_thread(task, ingest_batch_task_func);
+  g_object_unref(task);
 }
 
 int storage_ndb_begin_query(void **txn_out)

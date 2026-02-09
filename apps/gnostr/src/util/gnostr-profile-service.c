@@ -159,26 +159,6 @@ static void fire_callbacks(GnostrProfileService *svc, const char *pubkey_hex, co
 static void dispatch_next_batch(GnostrProfileService *svc);
 static gboolean debounce_timeout_cb(gpointer user_data);
 
-/* ============== Background NDB Ingestion ============== */
-
-/* nostrc-mzab: Move storage_ndb_ingest_event_json off the main thread.
- * Profile fetches can return hundreds of events at startup; ingesting them
- * synchronously on the main thread causes multi-second UI stalls. */
-
-static void
-ingest_batch_in_thread(GTask *task, gpointer source_object G_GNUC_UNUSED,
-                       gpointer task_data, GCancellable *cancellable G_GNUC_UNUSED)
-{
-  GPtrArray *jsons = (GPtrArray *)task_data;
-  for (guint i = 0; i < jsons->len; i++) {
-    const char *json = g_ptr_array_index(jsons, i);
-    if (json) {
-      storage_ndb_ingest_event_json(json, NULL);
-    }
-  }
-  g_task_return_boolean(task, TRUE);
-}
-
 /* ============== Batch Fetch Implementation ============== */
 
 typedef struct {
@@ -239,15 +219,7 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
     g_ptr_array_unref(jsons);
 
     /* Spawn background thread for NDB ingestion */
-    if (to_ingest->len > 0) {
-      GTask *task = g_task_new(NULL, NULL, NULL, NULL);
-      g_task_set_task_data(task, to_ingest,
-                           (GDestroyNotify)g_ptr_array_unref);
-      g_task_run_in_thread(task, ingest_batch_in_thread);
-      g_object_unref(task);
-    } else {
-      g_ptr_array_unref(to_ingest);
-    }
+    storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
   }
 
   /* For any pubkeys in the batch that didn't get a profile, fire callbacks with NULL */

@@ -1956,17 +1956,18 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
 
   g_debug("[THREAD_VIEW] Received %u events from relays", results->len);
 
-  /* Add events to our collection */
+  /* Add events to our collection; defer NDB ingestion to background (nostrc-mzab) */
+  GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
   for (guint i = 0; i < results->len; i++) {
     const char *json = g_ptr_array_index(results, i);
     if (json) {
-      /* Ingest into nostrdb for future use */
-      storage_ndb_ingest_event_json(json, NULL);
+      g_ptr_array_add(to_ingest, g_strdup(json));
       add_event_from_json(self, json);
     }
   }
 
   g_ptr_array_unref(results);
+  storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
 
   /* Rebuild UI */
   rebuild_thread_ui(self);
@@ -2010,15 +2011,16 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
   if (results && results->len > 0) {
     g_message("[THREAD_VIEW] Received %u root/ancestor events from relays", results->len);
 
-    /* Add events to our collection */
+    /* Add events to our collection; defer NDB ingestion to background (nostrc-mzab) */
+    GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
       if (json) {
-        /* Ingest into nostrdb for future use */
-        storage_ndb_ingest_event_json(json, NULL);
+        g_ptr_array_add(to_ingest, g_strdup(json));
         add_event_from_json(self, json);
       }
     }
+    storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
 
     /* Rebuild UI with new events */
     rebuild_thread_ui(self);
@@ -2063,10 +2065,12 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
   if (results && results->len > 0) {
     g_message("[THREAD_VIEW] Received %u ancestor events from relays", results->len);
 
+    /* Defer NDB ingestion to background (nostrc-mzab) */
+    GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
       if (json) {
-        storage_ndb_ingest_event_json(json, NULL);
+        g_ptr_array_add(to_ingest, g_strdup(json));
         ThreadEventItem *item = add_event_from_json(self, json);
         if (item) {
           g_message("[THREAD_VIEW]   Added ancestor: %.16s...", item->id_hex);
@@ -2074,6 +2078,7 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
         }
       }
     }
+    storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
 
     /* Rebuild UI with new events */
     rebuild_thread_ui(self);
@@ -2519,16 +2524,19 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
   if (results && results->len > 0) {
     g_debug("[THREAD_VIEW] Received %u child events from relays", results->len);
 
+    /* Defer NDB ingestion to background (nostrc-mzab) */
+    GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
       if (json) {
-        storage_ndb_ingest_event_json(json, NULL);
+        g_ptr_array_add(to_ingest, g_strdup(json));
         ThreadEventItem *item = add_event_from_json(self, json);
         if (item) {
           found_new = TRUE;
         }
       }
     }
+    storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
   }
 
   if (results) g_ptr_array_unref(results);
