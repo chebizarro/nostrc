@@ -125,8 +125,8 @@ static void add_hashtag(GnostrArticleReader *self, const char *tag) {
    * Hashtag strings come from untrusted NIP-23 event "t" tags. */
   char *escaped = g_markup_escape_text(tag, -1);
   char *markup = g_strdup_printf("<small>#%s</small>", escaped);
-  gtk_label_set_markup(GTK_LABEL(label), markup);
   g_free(escaped);
+  gtk_label_set_markup(GTK_LABEL(label), markup);
   g_free(markup);
   gtk_widget_add_css_class(label, "dim-label");
   gtk_flow_box_append(GTK_FLOW_BOX(self->hashtags_flow), label);

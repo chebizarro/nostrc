@@ -63,6 +63,9 @@ struct _GnostrPinList {
     gint64 last_event_time;      /* created_at of last loaded event */
     char *user_pubkey;           /* Current user's pubkey (for fetching) */
 
+    /* Async fetch */
+    GCancellable *fetch_cancellable; /* cancels previous in-flight fetch (nostrc-m8l8) */
+
     /* Thread safety */
     GMutex lock;
 };
@@ -385,6 +388,13 @@ void gnostr_pin_list_fetch_with_strategy_async(GnostrPinList *self,
     g_mutex_lock(&self->lock);
     g_free(self->user_pubkey);
     self->user_pubkey = g_strdup(pubkey_hex);
+
+    /* Cancel any in-flight fetch to prevent concurrent overlap (nostrc-m8l8) */
+    if (self->fetch_cancellable) {
+        g_cancellable_cancel(self->fetch_cancellable);
+        g_clear_object(&self->fetch_cancellable);
+    }
+    self->fetch_cancellable = g_cancellable_new();
     g_mutex_unlock(&self->lock);
 
     FetchContext *ctx = g_new0(FetchContext, 1);
@@ -443,7 +453,7 @@ void gnostr_pin_list_fetch_with_strategy_async(GnostrPinList *self,
         nostr_filters_add(_qf, filter);
         g_object_set_data_full(G_OBJECT(s_pin_list_pool), _qfk, _qf,
                                (GDestroyNotify)nostr_filters_free);
-        gnostr_pool_query_async(s_pin_list_pool, _qf, NULL,
+        gnostr_pool_query_async(s_pin_list_pool, _qf, self->fetch_cancellable,
                                 on_pin_list_query_done, ctx);
     }
 
