@@ -415,15 +415,13 @@ static void on_network_search_done(GObject *source, GAsyncResult *res, gpointer 
     g_error_free(err);
   } else if (events) {
     g_debug("search: network returned %u events", events->len);
+    /* Defer NDB ingestion to background (nostrc-mzab) */
+    GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < events->len; i++) {
       const char *json = g_ptr_array_index(events, i);
 
-      /* Save event to nostrdb for local caching (nostrc-yf3v) */
       if (json && *json) {
-        int ingest_rc = storage_ndb_ingest_event_json(json, NULL);
-        if (ingest_rc != 0) {
-          g_debug("search: failed to ingest profile event to nostrdb (rc=%d)", ingest_rc);
-        }
+        g_ptr_array_add(to_ingest, g_strdup(json));
       }
 
       GnostrSearchResult *result = parse_profile_event(json, TRUE);
@@ -431,6 +429,7 @@ static void on_network_search_done(GObject *source, GAsyncResult *res, gpointer 
         search_add_result(ctx, result);
       }
     }
+    storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
     g_ptr_array_unref(events);
   }
 

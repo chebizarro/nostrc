@@ -620,19 +620,20 @@ on_relay_search_done(GObject *source, GAsyncResult *result, gpointer user_data)
         return;
     }
 
-    /* Populate results and ingest into local DB */
+    /* Populate results and defer NDB ingestion to background (nostrc-mzab) */
+    GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < events->len; i++) {
         const char *event_json = g_ptr_array_index(events, i);
         if (!event_json) continue;
 
-        /* Ingest into local nostrdb for future searches */
-        storage_ndb_ingest_event_json(event_json, NULL);
+        g_ptr_array_add(to_ingest, g_strdup(event_json));
 
         SearchResultItem *item = search_result_item_new();
         populate_result_item(item, event_json);
         g_list_store_append(self->results_model, item);
         g_object_unref(item);
     }
+    storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
 
     /* Update UI */
     char count_text[64];

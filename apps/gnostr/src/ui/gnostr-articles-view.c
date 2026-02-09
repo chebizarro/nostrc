@@ -462,12 +462,13 @@ static void on_relay_fetch_complete(GObject *source, GAsyncResult *res, gpointer
         if (item) g_object_unref(item);
       }
 
+      /* Defer NDB ingestion to background (nostrc-mzab) */
+      GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
       for (guint i = 0; i < results->len; i++) {
         const char *event_json = g_ptr_array_index(results, i);
         if (!event_json) continue;
 
-        /* Ingest into nostrdb */
-        storage_ndb_ingest_event_json(event_json, NULL);
+        g_ptr_array_add(to_ingest, g_strdup(event_json));
 
         /* Create item and add to model if not duplicate */
         GnostrArticleItem *item = create_article_item_from_json(event_json, txn);
@@ -482,6 +483,7 @@ static void on_relay_fetch_complete(GObject *source, GAsyncResult *res, gpointer
         }
       }
 
+      storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
       g_hash_table_destroy(existing_ids);
       storage_ndb_end_query(txn);
     }
