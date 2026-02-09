@@ -390,6 +390,21 @@ typedef struct DeferredPriv {
 } DeferredPriv;
 static DeferredPriv *g_deferred_cleanup_head = NULL;
 
+/* hq-5ejm4: Connection request queue — moves lws_client_connect_via_info()
+ * off caller threads and onto the LWS service thread.  Callers enqueue a
+ * request and block on a per-request result channel.  The service loop drains
+ * the queue between lws_service() iterations. */
+typedef struct {
+    char host[256];
+    char path[512];
+    int port;
+    int use_ssl;
+    NostrConnection *conn;   /* pre-allocated by caller */
+    GoChannel *result;        /* capacity-1 channel: carries (intptr_t)1 ok, 0 fail */
+} ConnectionRequest;
+
+static GoChannel *g_conn_request_queue = NULL; /* capacity 32, created under g_lws_mutex */
+
 /* Must hold g_lws_mutex when calling */
 static void deferred_cleanup_add(NostrConnectionPrivate *priv) {
     DeferredPriv *node = malloc(sizeof(DeferredPriv));
@@ -414,6 +429,42 @@ static void deferred_cleanup_process(void) {
     g_deferred_cleanup_head = NULL;
 }
 
+/* hq-5ejm4: Process a connection request on the LWS service thread.
+ * Called WITHOUT g_lws_mutex held — safe to do synchronous DNS inside
+ * lws_client_connect_via_info() without blocking other mutex users. */
+static void service_loop_process_connect_request(ConnectionRequest *req,
+                                                  struct lws_context *ctx) {
+    struct lws_client_connect_info ci;
+    memset(&ci, 0, sizeof(ci));
+    ci.context = ctx;
+    ci.address = req->host;
+    ci.port = req->port;
+    ci.path = req->path;
+    ci.host = req->host;
+    ci.origin = req->host;
+    ci.ssl_connection = req->use_ssl ? LCCSCF_USE_SSL : 0;
+    ci.protocol = "wss";
+    ci.pwsi = &req->conn->priv->wsi;
+    ci.userdata = req->conn;
+
+    struct lws *wsi = lws_client_connect_via_info(&ci);
+
+    intptr_t ok = (wsi != NULL) ? 1 : 0;
+    if (wsi) {
+        lws_set_opaque_user_data(wsi, req->conn);
+        tb_init(&req->conn->priv->tb_bytes,
+                (double)nostr_limit_max_bytes_per_sec(),
+                (double)nostr_limit_max_bytes_per_sec());
+        tb_init(&req->conn->priv->tb_frames,
+                (double)nostr_limit_max_frames_per_sec(),
+                (double)nostr_limit_max_frames_per_sec());
+    }
+
+    /* Signal the blocked caller */
+    go_channel_send(req->result, (void *)ok);
+    /* Caller owns req and will free it + the result channel */
+}
+
 static void *lws_service_loop(void *arg) {
     (void)arg;
     for (;;) {
@@ -422,10 +473,22 @@ static void *lws_service_loop(void *arg) {
         pthread_mutex_lock(&g_lws_mutex);
         int running = g_lws_running;
         struct lws_context *ctx = g_lws_context;
+        GoChannel *queue = g_conn_request_queue;
         pthread_mutex_unlock(&g_lws_mutex);
 
         if (!running || !ctx) {
             break;
+        }
+
+        /* hq-5ejm4: Drain pending connection requests (non-blocking).
+         * Each request does lws_client_connect_via_info() which may do
+         * synchronous DNS — but that's fine, we're on the service thread. */
+        if (queue) {
+            ConnectionRequest *req = NULL;
+            while (go_channel_try_receive(queue, (void **)&req) == 0 && req) {
+                service_loop_process_connect_request(req, ctx);
+                req = NULL;
+            }
         }
 
         // Service events without holding our mutex to avoid deadlocks with
@@ -486,24 +549,17 @@ static void parse_ws_url(const char *url, int *use_ssl, char *host, size_t host_
 NostrConnection *nostr_connection_new(const char *url) {
     // Ensure global initialization runs (pulls in init.o and enables metrics auto-init)
     nostr_global_init();
-    struct lws_context_creation_info context_info;
-    struct lws_client_connect_info connect_info;
 
     lws_set_log_level(LLL_USER | LLL_ERR | LLL_HEADER | LLL_CLIENT , NULL);
 
-    lws_retry_bo_t retry_bo = {
-        .retry_ms_table = retry_table,
-        .retry_ms_table_count = LWS_ARRAY_SIZE(retry_table),
-        .conceal_count = 3,            // Number of retries before giving up
-        .secs_since_valid_ping = 29,   // Issue a PING after 30 seconds of idle time
-        .secs_since_valid_hangup = 60, // Hang up the connection if no response after 60 seconds
-        .jitter_percent = 5            // Add 5% random jitter to avoid synchronized retries
-    };
-
+    /* Phase 1: Alloc + parse (no lock) */
     NostrConnection *conn = calloc(1, sizeof(NostrConnection));
     NostrConnectionPrivate *priv = calloc(1, sizeof(NostrConnectionPrivate));
-    if (!conn || !priv)
+    if (!conn || !priv) {
+        free(conn);
+        free(priv);
         return NULL;
+    }
     conn->priv = priv;
     conn->priv->enable_compression = 0;
     nsync_mu_init(&conn->priv->mutex);
@@ -521,7 +577,23 @@ NostrConnection *nostr_connection_new(const char *url) {
         return conn;
     }
 
-    // Initialize context creation info
+    /* Create channels BEFORE enqueue — websocket_callback may fire
+     * immediately after lws_client_connect_via_info returns on the
+     * service thread, so recv_channel must exist. */
+    conn->recv_channel = go_channel_create(256);
+    conn->send_channel = go_channel_create(16);
+
+    /* Phase 2: Ensure shared context (fast mutex — microseconds, not seconds) */
+    lws_retry_bo_t retry_bo = {
+        .retry_ms_table = retry_table,
+        .retry_ms_table_count = LWS_ARRAY_SIZE(retry_table),
+        .conceal_count = 3,
+        .secs_since_valid_ping = 29,
+        .secs_since_valid_hangup = 60,
+        .jitter_percent = 5
+    };
+
+    struct lws_context_creation_info context_info;
     memset(&context_info, 0, sizeof(context_info));
     context_info.retry_and_idle_policy = &retry_bo;
     context_info.port = CONTEXT_PORT_NO_LISTEN;
@@ -530,80 +602,93 @@ NostrConnection *nostr_connection_new(const char *url) {
     context_info.uid = -1;
     context_info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT |
                            LWS_SERVER_OPTION_VALIDATE_UTF8;
-    // Generous fd limit per thread since we share one context across connections
     context_info.fd_limit_per_thread = 4096;
     context_info.pt_serv_buf_size = 32 * 1024;
 
-    /* Acquire or create shared context */
     pthread_mutex_lock(&g_lws_mutex);
     if (!g_lws_context) {
         g_lws_context = lws_create_context(&context_info);
         if (!g_lws_context) {
             pthread_mutex_unlock(&g_lws_mutex);
-            free(conn);
+            go_channel_close(conn->recv_channel);
+            go_channel_free(conn->recv_channel);
+            go_channel_close(conn->send_channel);
+            go_channel_free(conn->send_channel);
             free(priv);
+            free(conn);
             return NULL;
         }
         g_lws_running = 1;
         g_lws_refcount = 0; /* will increment below */
         pthread_create(&g_lws_service_thread, NULL, lws_service_loop, NULL);
     }
+    if (!g_conn_request_queue) {
+        g_conn_request_queue = go_channel_create(32);
+    }
     g_lws_refcount++;
-    struct lws_context *ctx_local = g_lws_context;
-    // Keep mutex locked during connect to prevent context destruction and ensure thread-safety
-    // libwebsockets contexts are not thread-safe for concurrent operations
+    pthread_mutex_unlock(&g_lws_mutex);
 
-    // Initialize client connect info
-    memset(&connect_info, 0, sizeof(connect_info));
-    connect_info.context = ctx_local;
-    char host[256];
-    char path[512];
-    int port = 0;
-    int use_ssl = 0;
-    parse_ws_url(url, &use_ssl, host, sizeof host, &port, path, sizeof path);
-    connect_info.address = host;
-    connect_info.port = port;
-    connect_info.path = path;
-    connect_info.host = host;
-    connect_info.origin = host;
-    connect_info.ssl_connection = use_ssl ? LCCSCF_USE_SSL : 0;
-    // Protocol must match our protocols[] entry name. The nostr subprotocol is
-    // negotiated at the WS layer; here we select our callback protocol.
-    connect_info.protocol = "wss";
-    connect_info.pwsi = &conn->priv->wsi;
-    connect_info.userdata = conn;
+    /* Phase 3: Enqueue connection request + block on result.
+     * The service thread calls lws_client_connect_via_info() — which may do
+     * synchronous DNS — without holding g_lws_mutex, so other connections
+     * and the service loop remain unblocked. */
+    ConnectionRequest *req = calloc(1, sizeof(ConnectionRequest));
+    if (!req) goto fail_decref;
+    parse_ws_url(url, &req->use_ssl, req->host, sizeof req->host,
+                 &req->port, req->path, sizeof req->path);
+    req->conn = conn;
+    req->result = go_channel_create(1);
+    if (!req->result) { free(req); goto fail_decref; }
 
-    conn->priv->wsi = ctx_local ? lws_client_connect_via_info(&connect_info) : NULL;
+    if (go_channel_send(g_conn_request_queue, req) != 0) {
+        /* Queue closed (shutting down) */
+        go_channel_close(req->result);
+        go_channel_free(req->result);
+        free(req);
+        goto fail_decref;
+    }
 
-    struct lws_context *ctx_to_destroy = NULL;
-    if (!conn->priv->wsi) {
+    /* Wake the service thread so it drains the queue promptly */
+    pthread_mutex_lock(&g_lws_mutex);
+    if (g_lws_context) lws_cancel_service(g_lws_context);
+    pthread_mutex_unlock(&g_lws_mutex);
+
+    /* Block until service thread signals success/failure */
+    void *result_val = NULL;
+    go_channel_receive(req->result, &result_val);
+    intptr_t ok = (intptr_t)result_val;
+
+    go_channel_close(req->result);
+    go_channel_free(req->result);
+    free(req);
+
+    if (!ok) goto fail_decref;
+
+    return conn;
+
+fail_decref:
+    /* Decrement refcount; destroy context if last */
+    {
+        struct lws_context *ctx_to_destroy = NULL;
+        pthread_mutex_lock(&g_lws_mutex);
         if (g_lws_refcount > 0) g_lws_refcount--;
         if (g_lws_refcount == 0 && g_lws_context) {
             ctx_to_destroy = g_lws_context;
             g_lws_context = NULL;
             g_lws_running = 0;
         }
-    }
-    pthread_mutex_unlock(&g_lws_mutex);
-
-    if (!conn->priv->wsi) {
+        pthread_mutex_unlock(&g_lws_mutex);
         if (ctx_to_destroy) {
             lws_cancel_service(ctx_to_destroy);
             pthread_join(g_lws_service_thread, NULL);
             lws_context_destroy(ctx_to_destroy);
         }
-        free(priv);
-        free(conn);
-        return NULL;
     }
-    // Attach our Connection* so callbacks can retrieve it safely
-    lws_set_opaque_user_data(conn->priv->wsi, conn);
-    conn->recv_channel = go_channel_create(256);
-    conn->send_channel = go_channel_create(16);
-    // Initialize token buckets for ingress limits (runtime configurable)
-    tb_init(&conn->priv->tb_bytes, (double)nostr_limit_max_bytes_per_sec(), (double)nostr_limit_max_bytes_per_sec());
-    tb_init(&conn->priv->tb_frames, (double)nostr_limit_max_frames_per_sec(), (double)nostr_limit_max_frames_per_sec());
-    return conn;
+    if (conn->recv_channel) { go_channel_close(conn->recv_channel); go_channel_free(conn->recv_channel); }
+    if (conn->send_channel) { go_channel_close(conn->send_channel); go_channel_free(conn->send_channel); }
+    free(priv);
+    free(conn);
+    return NULL;
 }
 
 // Coroutine for processing incoming WebSocket messages
@@ -672,6 +757,21 @@ void nostr_connection_close(NostrConnection *conn) {
         }
         pthread_mutex_unlock(&g_lws_mutex);
         if (ctx_to_destroy) {
+            /* hq-5ejm4: Drain and reject any pending connection requests
+             * before stopping the service thread. */
+            pthread_mutex_lock(&g_lws_mutex);
+            if (g_conn_request_queue) {
+                ConnectionRequest *pend = NULL;
+                while (go_channel_try_receive(g_conn_request_queue, (void **)&pend) == 0 && pend) {
+                    go_channel_send(pend->result, (void *)(intptr_t)0);
+                    pend = NULL;
+                }
+                go_channel_close(g_conn_request_queue);
+                go_channel_free(g_conn_request_queue);
+                g_conn_request_queue = NULL;
+            }
+            pthread_mutex_unlock(&g_lws_mutex);
+
             lws_cancel_service(ctx_to_destroy);
             pthread_join(g_lws_service_thread, NULL);
             lws_context_destroy(ctx_to_destroy);
