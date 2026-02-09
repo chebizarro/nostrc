@@ -661,10 +661,24 @@ NostrConnection *nostr_connection_new(const char *url) {
     if (g_lws_context) lws_cancel_service(g_lws_context);
     pthread_mutex_unlock(&g_lws_mutex);
 
-    /* Block until service thread signals success/failure */
+    /* nostrc-kw9r: Wait for handshake with 10 s timeout.
+     * Previously this was an unbounded go_channel_receive() — if the LWS
+     * service thread was blocked (e.g. recv_channel overflow on another
+     * connection) this hung forever, starving NIP-46 login and any other
+     * code path that creates new relay connections at runtime. */
+    GoSelectCase hs_cases[1];
+    hs_cases[0].op = GO_SELECT_RECEIVE;
+    hs_cases[0].chan = req->result;
     void *result_val = NULL;
-    go_channel_receive(req->result, &result_val);
-    intptr_t ok = (intptr_t)result_val;
+    hs_cases[0].recv_buf = &result_val;
+
+    GoSelectResult hs_sel = go_select_timeout(hs_cases, 1, 10000);
+    intptr_t ok = 0;
+    if (hs_sel.selected_case == 0 && hs_sel.ok) {
+        ok = (intptr_t)result_val;
+    } else {
+        fprintf(stderr, "[ws] connection handshake timeout (10 s) for %s\n", url);
+    }
 
     go_channel_close(req->result);
     go_channel_free(req->result);
