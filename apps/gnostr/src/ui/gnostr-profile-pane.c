@@ -21,9 +21,14 @@
 #include "../storage_ndb.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
+#include "nostr-tag.h"
 #include "nostr-json.h"
 #include "nostr_json.h"
 #include "json.h"
+#include "../util/bookmarks.h"
+#include "../util/pin_list.h"
+#include "gnostr-main-window.h"
+#include "nostr_nip19.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -76,6 +81,7 @@ typedef struct _ProfilePostItem {
   char *display_name;
   char *handle;
   char *avatar_url;
+  char *tags_json;   /* nostrc-mizr: serialized tags for imeta/hashtag/CW rendering */
 } ProfilePostItem;
 
 typedef struct _ProfilePostItemClass {
@@ -93,6 +99,7 @@ enum {
   POST_PROP_DISPLAY_NAME,
   POST_PROP_HANDLE,
   POST_PROP_AVATAR_URL,
+  POST_PROP_TAGS_JSON,
   POST_N_PROPS
 };
 
@@ -108,6 +115,7 @@ static void profile_post_item_set_property(GObject *obj, guint prop_id, const GV
     case POST_PROP_DISPLAY_NAME: g_free(self->display_name); self->display_name = g_value_dup_string(value); break;
     case POST_PROP_HANDLE:       g_free(self->handle);       self->handle       = g_value_dup_string(value); break;
     case POST_PROP_AVATAR_URL:   g_free(self->avatar_url);   self->avatar_url   = g_value_dup_string(value); break;
+    case POST_PROP_TAGS_JSON:    g_free(self->tags_json);    self->tags_json    = g_value_dup_string(value); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 }
@@ -122,6 +130,7 @@ static void profile_post_item_get_property(GObject *obj, guint prop_id, GValue *
     case POST_PROP_DISPLAY_NAME: g_value_set_string(value, self->display_name); break;
     case POST_PROP_HANDLE:       g_value_set_string(value, self->handle); break;
     case POST_PROP_AVATAR_URL:   g_value_set_string(value, self->avatar_url); break;
+    case POST_PROP_TAGS_JSON:    g_value_set_string(value, self->tags_json); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 }
@@ -134,6 +143,7 @@ static void profile_post_item_dispose(GObject *obj) {
   g_clear_pointer(&self->display_name, g_free);
   g_clear_pointer(&self->handle, g_free);
   g_clear_pointer(&self->avatar_url, g_free);
+  g_clear_pointer(&self->tags_json, g_free);
   G_OBJECT_CLASS(profile_post_item_parent_class)->dispose(obj);
 }
 
@@ -150,6 +160,7 @@ static void profile_post_item_class_init(ProfilePostItemClass *klass) {
   post_props[POST_PROP_DISPLAY_NAME] = g_param_spec_string("display-name", "display-name", "Display Name",  NULL, G_PARAM_READWRITE);
   post_props[POST_PROP_HANDLE]       = g_param_spec_string("handle",       "handle",       "Handle",        NULL, G_PARAM_READWRITE);
   post_props[POST_PROP_AVATAR_URL]   = g_param_spec_string("avatar-url",   "avatar-url",   "Avatar URL",    NULL, G_PARAM_READWRITE);
+  post_props[POST_PROP_TAGS_JSON]    = g_param_spec_string("tags-json",    "tags-json",    "Tags JSON",     NULL, G_PARAM_READWRITE);
   g_object_class_install_properties(oc, POST_N_PROPS, post_props);
 }
 
@@ -691,6 +702,192 @@ static void on_load_more_clicked(GtkButton *btn, gpointer user_data) {
   load_posts(self);
 }
 
+/* ============================================================================
+ * nostrc-mizr: Tag parsing helpers (duplicated from timeline-view since static)
+ * ============================================================================ */
+
+typedef struct { GPtrArray *hashtags; } PPHashtagCtx;
+
+static gboolean pp_extract_hashtag_cb(gsize index, const gchar *tag_json, gpointer user_data) {
+  (void)index;
+  PPHashtagCtx *ctx = (PPHashtagCtx *)user_data;
+  if (!tag_json || !ctx) return true;
+  if (!gnostr_json_is_array_str(tag_json)) return true;
+  char *tag_name = gnostr_json_get_array_string(tag_json, NULL, 0, NULL);
+  if (!tag_name) return true;
+  if (g_strcmp0(tag_name, "t") != 0) { free(tag_name); return true; }
+  free(tag_name);
+  char *hashtag = gnostr_json_get_array_string(tag_json, NULL, 1, NULL);
+  if (hashtag && *hashtag)
+    g_ptr_array_add(ctx->hashtags, g_strdup(hashtag));
+  free(hashtag);
+  return true;
+}
+
+static gchar **pp_parse_hashtags(const char *tags_json) {
+  if (!tags_json || !*tags_json || !gnostr_json_is_array_str(tags_json)) return NULL;
+  PPHashtagCtx ctx = { .hashtags = g_ptr_array_new() };
+  gnostr_json_array_foreach_root(tags_json, pp_extract_hashtag_cb, &ctx);
+  if (ctx.hashtags->len == 0) { g_ptr_array_free(ctx.hashtags, TRUE); return NULL; }
+  g_ptr_array_add(ctx.hashtags, NULL);
+  return (gchar **)g_ptr_array_free(ctx.hashtags, FALSE);
+}
+
+typedef struct { gchar *reason; } PPContentWarningCtx;
+
+static gboolean pp_extract_cw_cb(gsize index, const gchar *tag_json, gpointer user_data) {
+  (void)index;
+  PPContentWarningCtx *ctx = (PPContentWarningCtx *)user_data;
+  if (!tag_json || !ctx || ctx->reason) return true;
+  if (!gnostr_json_is_array_str(tag_json)) return true;
+  char *tag_name = gnostr_json_get_array_string(tag_json, NULL, 0, NULL);
+  if (!tag_name) return true;
+  if (g_strcmp0(tag_name, "content-warning") != 0) { free(tag_name); return true; }
+  free(tag_name);
+  char *reason = gnostr_json_get_array_string(tag_json, NULL, 1, NULL);
+  ctx->reason = reason ? g_strdup(reason) : g_strdup("");
+  free(reason);
+  return false;
+}
+
+static gchar *pp_parse_content_warning(const char *tags_json) {
+  if (!tags_json || !*tags_json || !gnostr_json_is_array_str(tags_json)) return NULL;
+  PPContentWarningCtx ctx = { .reason = NULL };
+  gnostr_json_array_foreach_root(tags_json, pp_extract_cw_cb, &ctx);
+  return ctx.reason;
+}
+
+/* Get current user's pubkey hex (same pattern as timeline view) */
+static char *pp_get_current_user_pubkey_hex(void) {
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return NULL;
+  char *npub = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+  if (!npub || !*npub) { g_free(npub); return NULL; }
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
+  g_free(npub);
+  if (!n19) return NULL;
+  const char *hex = gnostr_nip19_get_pubkey(n19);
+  return hex ? g_strdup(hex) : NULL;
+}
+
+/* ============================================================================
+ * nostrc-mizr: NoteCardFactory signal relay callbacks.
+ * Walk up from the profile pane widget to the main window, same pattern as
+ * the timeline view's relay callbacks.
+ * ============================================================================ */
+
+static GtkWidget *pp_find_main_window(GtkWidget *widget) {
+  while (widget) {
+    if (G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type()))
+      return widget;
+    widget = gtk_widget_get_parent(widget);
+  }
+  return NULL;
+}
+
+static void pp_on_open_profile(const char *pubkey, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (win) gnostr_main_window_open_profile(win, pubkey);
+}
+
+static void pp_on_view_thread(const char *root_id, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  char *event_json = NULL; int json_len = 0;
+  storage_ndb_get_note_by_id_nontxn(root_id, &event_json, &json_len);
+  extern void gnostr_main_window_view_thread_with_json(GtkWidget *w, const char *id, const char *json);
+  gnostr_main_window_view_thread_with_json(win, root_id, event_json);
+  if (event_json) free(event_json);
+}
+
+static void pp_on_reply(const char *id, const char *root, const char *pubkey, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  extern void gnostr_main_window_request_reply(GtkWidget *w, const char *id, const char *root, const char *pk);
+  gnostr_main_window_request_reply(win, id, root, pubkey);
+}
+
+static void pp_on_repost(const char *id, const char *pubkey, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  extern void gnostr_main_window_request_repost(GtkWidget *w, const char *id, const char *pk);
+  gnostr_main_window_request_repost(win, id, pubkey);
+}
+
+static void pp_on_quote(const char *id, const char *content, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  extern void gnostr_main_window_request_quote(GtkWidget *w, const char *id, const char *pk);
+  gnostr_main_window_request_quote(win, id, content);
+}
+
+static void pp_on_like(const char *id, const char *pubkey, gint kind, const char *reaction, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  /* Pass NULL for row - like will still be sent, UI updates on next rebind */
+  gnostr_main_window_request_like(win, id, pubkey, kind, reaction, NULL);
+}
+
+static void pp_on_zap(const char *id, const char *pubkey, const char *lud16, gpointer user_data) {
+  (void)id; (void)pubkey; (void)lud16; (void)user_data;
+  /* Zap requires dialog creation - walk hierarchy to find window */
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  extern void gnostr_main_window_show_toast(GtkWidget *w, const char *msg);
+  gnostr_main_window_show_toast(win, "Zap from profile view not yet supported");
+}
+
+static void pp_on_mute_user(const char *pubkey, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  extern void gnostr_main_window_mute_user(GtkWidget *w, const char *pk);
+  gnostr_main_window_mute_user(win, pubkey);
+}
+
+static void pp_on_mute_thread(const char *root_id, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  extern void gnostr_main_window_mute_thread(GtkWidget *w, const char *id);
+  gnostr_main_window_mute_thread(win, root_id);
+}
+
+static void pp_on_bookmark(const char *id, gboolean bookmarked, gpointer user_data) {
+  (void)user_data;
+  if (!id || strlen(id) != 64) return;
+  GnostrBookmarks *bm = gnostr_bookmarks_get_default();
+  if (!bm) return;
+  if (bookmarked) gnostr_bookmarks_add(bm, id, NULL, FALSE);
+  else            gnostr_bookmarks_remove(bm, id);
+  gnostr_bookmarks_save_async(bm, NULL, NULL);
+}
+
+static void pp_on_pin(const char *id, gboolean pinned, gpointer user_data) {
+  (void)user_data;
+  if (!id || strlen(id) != 64) return;
+  GnostrPinList *pl = gnostr_pin_list_get_default();
+  if (!pl) return;
+  if (pinned) gnostr_pin_list_add(pl, id, NULL);
+  else        gnostr_pin_list_remove(pl, id);
+  gnostr_pin_list_save_async(pl, NULL, NULL);
+}
+
+static void pp_on_delete(const char *id, const char *pubkey, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  gnostr_main_window_request_delete_note(win, id, pubkey);
+}
+
+static void pp_on_navigate(const char *note_id, gpointer user_data) {
+  GtkWidget *win = pp_find_main_window(GTK_WIDGET(user_data));
+  if (!win) return;
+  char *event_json = NULL; int json_len = 0;
+  storage_ndb_get_note_by_id_nontxn(note_id, &event_json, &json_len);
+  extern void gnostr_main_window_view_thread_with_json(GtkWidget *w, const char *id, const char *json);
+  gnostr_main_window_view_thread_with_json(win, note_id, event_json);
+  if (event_json) free(event_json);
+}
+
 /* nostrc-o7pp: Custom bind callback for profile posts using NoteCardFactory.
  * This callback is called by NoteCardFactory after prepare_for_bind. */
 static void posts_bind_callback(GnostrNoteCardRow *row, GObject *obj, gpointer user_data) {
@@ -707,8 +904,27 @@ static void posts_bind_callback(GnostrNoteCardRow *row, GObject *obj, gpointer u
   /* Set timestamp */
   gnostr_note_card_row_set_timestamp(row, post->created_at, NULL);
 
-  /* Set content */
-  gnostr_note_card_row_set_content(row, post->content);
+  /* nostrc-mizr: Use imeta-aware content setter when tags are available.
+   * This enables inline images (NIP-92) in profile posts. */
+  if (post->tags_json) {
+    gnostr_note_card_row_set_content_with_imeta(row, post->content, post->tags_json);
+
+    /* NIP-36: Content warning */
+    gchar *cw = pp_parse_content_warning(post->tags_json);
+    if (cw) {
+      gnostr_note_card_row_set_content_warning(row, cw);
+      g_free(cw);
+    }
+
+    /* Hashtags from "t" tags */
+    gchar **hashtags = pp_parse_hashtags(post->tags_json);
+    if (hashtags) {
+      gnostr_note_card_row_set_hashtags(row, (const char * const *)hashtags);
+      g_strfreev(hashtags);
+    }
+  } else {
+    gnostr_note_card_row_set_content(row, post->content);
+  }
 
   /* Set IDs */
   gnostr_note_card_row_set_ids(row, post->id_hex, NULL, post->pubkey_hex);
@@ -717,7 +933,27 @@ static void posts_bind_callback(GnostrNoteCardRow *row, GObject *obj, gpointer u
   gnostr_note_card_row_set_depth(row, 0);
 
   /* Set login state for authentication-required buttons */
-  gnostr_note_card_row_set_logged_in(row, is_user_logged_in());
+  gboolean logged_in = is_user_logged_in();
+  gnostr_note_card_row_set_logged_in(row, logged_in);
+
+  /* NIP-51: Set bookmark and pin state from local cache */
+  if (post->id_hex && strlen(post->id_hex) == 64) {
+    GnostrBookmarks *bm = gnostr_bookmarks_get_default();
+    if (bm)
+      gnostr_note_card_row_set_bookmarked(row, gnostr_bookmarks_is_bookmarked(bm, post->id_hex));
+    GnostrPinList *pl = gnostr_pin_list_get_default();
+    if (pl)
+      gnostr_note_card_row_set_pinned(row, gnostr_pin_list_is_pinned(pl, post->id_hex));
+  }
+
+  /* NIP-09: Set own-note state so delete button shows for user's own posts */
+  if (logged_in && post->pubkey_hex && strlen(post->pubkey_hex) == 64) {
+    gchar *user_pk = pp_get_current_user_pubkey_hex();
+    if (user_pk) {
+      gnostr_note_card_row_set_is_own_note(row, g_ascii_strcasecmp(post->pubkey_hex, user_pk) == 0);
+      g_free(user_pk);
+    }
+  }
 }
 
 /* Handle post activation (click) */
@@ -1065,10 +1301,41 @@ static void setup_posts_list(GnostrProfilePane *self) {
 
   /* nostrc-o7pp: Use unified NoteCardFactory for proper lifecycle management.
    * This ensures prepare_for_bind and prepare_for_unbind are called correctly.
-   * nostrc-brc4: Store reference for cleanup in dispose. */
+   * nostrc-brc4: Store reference for cleanup in dispose.
+   * nostrc-mizr: Enable ALL signals so action buttons work identically to timeline. */
   if (!self->posts_note_factory) {
-    self->posts_note_factory = note_card_factory_new(NOTE_CARD_BIND_BASIC, NOTE_CARD_SIGNAL_NONE);
+    self->posts_note_factory = note_card_factory_new(NOTE_CARD_BIND_BASIC, NOTE_CARD_SIGNAL_ALL);
     note_card_factory_set_bind_callback(self->posts_note_factory, posts_bind_callback, NULL);
+
+    /* nostrc-mizr: Register relay callbacks so action buttons reach the main window.
+     * Pass `self` as user_data — callbacks walk up from the profile pane widget
+     * to find the GtkApplicationWindow, same pattern as timeline view. */
+    note_card_factory_connect_open_profile(self->posts_note_factory,
+      G_CALLBACK(pp_on_open_profile), self);
+    note_card_factory_connect_view_thread(self->posts_note_factory,
+      G_CALLBACK(pp_on_view_thread), self);
+    note_card_factory_connect_reply(self->posts_note_factory,
+      G_CALLBACK(pp_on_reply), self);
+    note_card_factory_connect_repost(self->posts_note_factory,
+      G_CALLBACK(pp_on_repost), self);
+    note_card_factory_connect_quote(self->posts_note_factory,
+      G_CALLBACK(pp_on_quote), self);
+    note_card_factory_connect_like(self->posts_note_factory,
+      G_CALLBACK(pp_on_like), self);
+    note_card_factory_connect_zap(self->posts_note_factory,
+      G_CALLBACK(pp_on_zap), self);
+    note_card_factory_connect_mute_user(self->posts_note_factory,
+      G_CALLBACK(pp_on_mute_user), self);
+    note_card_factory_connect_mute_thread(self->posts_note_factory,
+      G_CALLBACK(pp_on_mute_thread), self);
+    note_card_factory_connect_bookmark(self->posts_note_factory,
+      G_CALLBACK(pp_on_bookmark), self);
+    note_card_factory_connect_pin(self->posts_note_factory,
+      G_CALLBACK(pp_on_pin), self);
+    note_card_factory_connect_delete(self->posts_note_factory,
+      G_CALLBACK(pp_on_delete), self);
+    note_card_factory_connect_navigate(self->posts_note_factory,
+      G_CALLBACK(pp_on_navigate), self);
   }
   GtkListItemFactory *factory = note_card_factory_get_gtk_factory(self->posts_note_factory);
 
@@ -2564,6 +2831,12 @@ static guint load_posts_from_cache(GnostrProfilePane *self) {
       oldest_timestamp = created_at;
     }
 
+    /* nostrc-mizr: Extract tags JSON for imeta/hashtag/CW rendering */
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(evt);
+    char *raw_tags = tags ? nostr_tags_to_json(tags) : NULL;
+    char *tags_json_g = raw_tags ? g_strdup(raw_tags) : NULL;
+    free(raw_tags);
+
     /* Create post item */
     ProfilePostItem *item = profile_post_item_new(id_hex, pubkey_hex, content, created_at);
 
@@ -2571,6 +2844,7 @@ static guint load_posts_from_cache(GnostrProfilePane *self) {
     item->display_name = g_strdup(self->current_display_name);
     item->handle = g_strdup(self->current_handle);
     item->avatar_url = g_strdup(self->current_avatar_url);
+    item->tags_json = tags_json_g;  /* GLib-owned copy */
 
     /* Add to model */
     g_list_store_append(self->posts_model, item);
@@ -2663,6 +2937,12 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
       oldest_timestamp = created_at;
     }
 
+    /* nostrc-mizr: Extract tags JSON for imeta/hashtag/CW rendering */
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(evt);
+    char *raw_tags = tags ? nostr_tags_to_json(tags) : NULL;
+    char *tags_json_g = raw_tags ? g_strdup(raw_tags) : NULL;
+    free(raw_tags);
+
     /* Create post item */
     ProfilePostItem *item = profile_post_item_new(id_hex, pubkey_hex, content, created_at);
 
@@ -2670,6 +2950,7 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
     item->display_name = g_strdup(self->current_display_name);
     item->handle = g_strdup(self->current_handle);
     item->avatar_url = g_strdup(self->current_avatar_url);
+    item->tags_json = tags_json_g;  /* GLib-owned copy */
 
     /* Add to model */
     g_list_store_append(self->posts_model, item);
