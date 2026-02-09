@@ -416,13 +416,15 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
   if (!event_json || !*event_json) return NULL;
 
   if (!gnostr_json_is_valid(event_json)) {
-    g_debug("nip66: failed to parse relay meta JSON");
+    g_warning("nip66: parse_relay_meta: invalid JSON (first 120 chars): %.120s", event_json);
     return NULL;
   }
 
   /* Validate kind */
   int64_t kind_val = gnostr_json_get_int64(event_json, "kind", NULL);
   if (kind_val != GNOSTR_NIP66_KIND_RELAY_META) {
+    g_warning("nip66: parse_relay_meta: kind mismatch: got %" G_GINT64_FORMAT " expected %d",
+              kind_val, GNOSTR_NIP66_KIND_RELAY_META);
     return NULL;
   }
 
@@ -1704,28 +1706,32 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     g_error_free(error);
   }
 
-  g_debug("nip66 streaming: query returned %u raw results", results ? results->len : 0);
+  g_warning("nip66 streaming: query returned %u raw results", results ? results->len : 0);
 
   /* hq-r248b: Process results here (previously handled via streaming signal).
    * Results are JSON strings - parse each as relay metadata. */
+  guint parse_ok = 0, parse_fail = 0, filtered = 0, duped = 0;
   if (results && results->len > 0) {
-    g_debug("nip66 streaming: processing %u results from query", results->len);
+    g_warning("nip66 streaming: processing %u results from query", results->len);
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
       if (!json) continue;
       GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(json);
-      if (!meta) continue;
+      if (!meta) { parse_fail++; continue; }
       if (nip66_should_filter_url(meta->relay_url)) {
+        filtered++;
         gnostr_nip66_relay_meta_free(meta);
         continue;
       }
       gchar *url_lower = g_ascii_strdown(meta->relay_url, -1);
       if (g_hash_table_contains(ctx->seen_urls, url_lower)) {
+        duped++;
         g_free(url_lower);
         gnostr_nip66_relay_meta_free(meta);
         continue;
       }
       g_hash_table_add(ctx->seen_urls, url_lower);
+      parse_ok++;
       /* Cache it */
       GnostrNip66RelayMeta *meta_copy = gnostr_nip66_parse_relay_meta(json);
       if (meta_copy) gnostr_nip66_cache_add_relay(meta_copy);
@@ -1733,6 +1739,8 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
       g_ptr_array_add(ctx->relays_found, meta);
     }
   }
+  g_warning("nip66 streaming: parse results: ok=%u fail=%u filtered=%u duped=%u",
+            parse_ok, parse_fail, filtered, duped);
   if (results) g_ptr_array_unref(results);
 
   /* Disconnect signal handler */
@@ -1741,7 +1749,7 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     ctx->events_handler_id = 0;
   }
 
-  g_debug("nip66 streaming: query complete with %u relays",
+  g_warning("nip66 streaming: query complete with %u relays",
             ctx->relays_found ? ctx->relays_found->len : 0);
 
   /* Invoke completion callback */

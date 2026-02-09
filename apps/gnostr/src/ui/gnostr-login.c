@@ -401,6 +401,10 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *result, gpointer u
 
   char *user_pubkey_hex = g_task_propagate_pointer(G_TASK(result), &error);
 
+  g_warning("[NIP46_LOGIN] on_get_pubkey_done: result=%s error=%s",
+            user_pubkey_hex ? user_pubkey_hex : "(null)",
+            error ? error->message : "(none)");
+
   if (error) {
     g_warning("[NIP46_LOGIN] get_public_key async failed: %s", error->message);
     if (ctx->self && GNOSTR_IS_LOGIN(ctx->self)) {
@@ -442,11 +446,13 @@ static gboolean on_nip46_connect_success(gpointer data) {
   GnostrLogin *self = ctx->self;
 
   /* Stop the listener (we're not in the callback anymore) */
+  g_warning("[NIP46_LOGIN] About to stop listener...");
   stop_nip46_listener(self);
+  g_warning("[NIP46_LOGIN] Listener stopped OK");
 
-  g_message("[NIP46_LOGIN] Connect success!");
-  g_message("[NIP46_LOGIN] Signer pubkey (communication): %s", ctx->signer_pubkey_hex);
-  g_message("[NIP46_LOGIN] Spawning get_public_key RPC to get user's ACTUAL pubkey...");
+  g_warning("[NIP46_LOGIN] Connect success!");
+  g_warning("[NIP46_LOGIN] Signer pubkey (communication): %s", ctx->signer_pubkey_hex);
+  g_warning("[NIP46_LOGIN] Spawning get_public_key RPC to get user's ACTUAL pubkey...");
 
   /* Update status to show we're getting the pubkey */
   set_bunker_status(self, BUNKER_STATUS_CONNECTING,
