@@ -794,6 +794,7 @@ typedef struct {
     guint total;
     guint completed;
     guint succeeded;
+    gboolean returned;  /* TRUE after g_task_return called (exactly once) */
 } ConnectAllData;
 
 static void
@@ -814,8 +815,24 @@ connect_one_relay_cb(GObject      *source,
     }
 
     data->completed++;
+
+    /* Return as soon as we have an answer:
+     * - First successful connection → return TRUE immediately (fast startup).
+     *   Remaining relays keep connecting in the background.
+     * - All relays failed → return FALSE. */
+    if (!data->returned) {
+        if (data->succeeded > 0) {
+            data->returned = TRUE;
+            g_task_return_boolean(task, TRUE);
+        } else if (data->completed >= data->total) {
+            data->returned = TRUE;
+            g_task_return_boolean(task, FALSE);
+        }
+    }
+
+    /* Only unref when ALL callbacks have fired, regardless of when
+     * we returned the result.  This keeps data alive for late arrivals. */
     if (data->completed >= data->total) {
-        g_task_return_boolean(task, data->succeeded > 0);
         g_object_unref(task);
     }
 }
