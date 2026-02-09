@@ -2037,9 +2037,65 @@ static void show_loaded_image(GtkWidget *container) {
   }
 }
 
-/* Callback for media image loading.
- * CRITICAL: Uses GWeakRef to prevent use-after-free crash when
- * GtkListView recycles rows during scrolling. */
+/* Worker thread: decode image bytes → GdkTexture off the main thread.
+ * GdkTexture is immutable and thread-safe to create from any thread;
+ * the actual GPU upload is deferred until first render on the main thread. */
+static void media_decode_thread(GTask *task, gpointer source_object,
+                                 gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes*)task_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture) {
+    g_task_return_pointer(task, texture, g_object_unref);
+  } else {
+    g_task_return_error(task, error);
+  }
+}
+
+/* Main-thread callback: apply decoded texture to widget */
+static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  MediaLoadCtx *ctx = (MediaLoadCtx*)user_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  if (!texture) {
+    if (error) {
+      g_debug("Media: Failed to decode texture: %s", error->message);
+      g_error_free(error);
+    }
+    media_load_ctx_free(ctx);
+    return;
+  }
+
+  /* CRITICAL: Use g_weak_ref_get to safely check if widget still exists.
+   * If widget was recycled/disposed during decode, weak ref returns NULL
+   * and we skip the update, preventing use-after-free crash. */
+  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+  if (picture) {
+    if (GTK_IS_PICTURE(picture)) {
+      const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
+      if (url) {
+        media_image_cache_put(url, texture);
+      }
+      gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+      GtkWidget *container = gtk_widget_get_parent(picture);
+      if (container) show_loaded_image(container);
+    }
+    g_object_unref(picture); /* g_weak_ref_get returns a ref */
+  } else {
+    g_debug("Media: picture widget was recycled, skipping UI update");
+  }
+
+  g_object_unref(texture);
+  media_load_ctx_free(ctx);
+}
+
+/* Callback for media image HTTP completion.
+ * Dispatches image decode to worker thread to avoid blocking main loop
+ * with potentially large JPEG/PNG decompression. */
 static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   MediaLoadCtx *ctx = (MediaLoadCtx*)user_data;
   GError *error = NULL;
@@ -2060,40 +2116,12 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
     return;
   }
 
-  /* Create texture from bytes */
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-
-  if (error) {
-    g_debug("Media: Failed to create texture: %s", error->message);
-    g_error_free(error);
-    media_load_ctx_free(ctx);
-    return;
-  }
-
-  /* CRITICAL: Use g_weak_ref_get to safely check if widget still exists.
-   * If widget was recycled/disposed during HTTP fetch, weak ref returns NULL
-   * and we skip the update, preventing use-after-free crash. */
-  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
-  if (picture) {
-    if (GTK_IS_PICTURE(picture)) {
-      /* Get URL for caching from widget data */
-      const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
-      if (url) {
-        media_image_cache_put(url, texture);
-      }
-      gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
-      /* Show the loaded image and hide spinner */
-      GtkWidget *container = gtk_widget_get_parent(picture);
-      if (container) show_loaded_image(container);
-    }
-    g_object_unref(picture); /* g_weak_ref_get returns a ref */
-  } else {
-    g_debug("Media: picture widget was recycled, skipping UI update");
-  }
-
-  g_object_unref(texture);
-  media_load_ctx_free(ctx);
+  /* Decode image in worker thread — large images (2-10MB JPEGs) can take
+   * 50-200ms to decompress, which would drop 3-12 frames on the main thread. */
+  GTask *task = g_task_new(NULL, NULL, on_media_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, media_decode_thread);
+  g_object_unref(task);
 }
 
 /* Load media image asynchronously - internal function that starts the actual fetch.

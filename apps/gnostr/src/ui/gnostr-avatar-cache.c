@@ -633,6 +633,121 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
 }
 
 #ifdef HAVE_SOUP3
+
+/* Context passed from HTTP callback → worker thread → main-thread finish */
+typedef struct {
+  AvatarCtx *avatar_ctx;  /* original context with widget weak refs + url */
+  GBytes *raw_bytes;      /* raw HTTP response bytes for disk cache write */
+} AvatarDecodeCtx;
+
+/* Worker thread: decode image + write disk cache off main thread.
+ * Both gdk_pixbuf_new_from_stream_at_scale() and g_file_set_contents()
+ * can block — the former for CPU-bound decompression, the latter for I/O.
+ * GdkTexture is immutable and thread-safe to create from any thread. */
+static void avatar_decode_thread(GTask *task, gpointer source_object,
+                                  gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  AvatarDecodeCtx *dctx = (AvatarDecodeCtx*)task_data;
+  GError *error = NULL;
+
+  /* Decode and scale */
+  GdkTexture *tex = avatar_texture_from_bytes_scaled(dctx->raw_bytes, &error);
+  if (!tex) {
+    g_task_return_error(task, error);
+    return;
+  }
+
+  /* Write disk cache while still on worker thread */
+  g_autofree char *path = avatar_path_for_url(dctx->avatar_ctx->url);
+  if (path) {
+    gsize len = 0;
+    const guint8 *data = g_bytes_get_data(dctx->raw_bytes, &len);
+    GError *werr = NULL;
+    if (g_file_set_contents(path, (const char*)data, (gssize)len, &werr)) {
+      g_debug("avatar worker: wrote cache file %s len=%zu", path, (size_t)len);
+    } else {
+      g_warning("avatar worker: failed to write cache %s: %s", path,
+                werr ? werr->message : "unknown");
+      g_clear_error(&werr);
+    }
+  }
+
+  g_task_return_pointer(task, tex, g_object_unref);
+}
+
+static void avatar_decode_ctx_free(AvatarDecodeCtx *dctx) {
+  if (!dctx) return;
+  g_clear_pointer(&dctx->raw_bytes, g_bytes_unref);
+  /* avatar_ctx is freed separately in the completion callback */
+  g_free(dctx);
+}
+
+/* Main-thread callback: apply decoded texture to widget + update caches */
+static void on_avatar_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  AvatarDecodeCtx *dctx = (AvatarDecodeCtx*)user_data;
+  AvatarCtx *ctx = dctx->avatar_ctx;
+  GError *error = NULL;
+
+  GdkTexture *tex = g_task_propagate_pointer(G_TASK(res), &error);
+  if (!tex) {
+    g_debug("avatar decode: failed for url=%s: %s",
+            ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    if (ctx && ctx->url) {
+      if (!s_avatar_bad_urls)
+        s_avatar_bad_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      g_hash_table_add(s_avatar_bad_urls, g_strdup(ctx->url));
+    }
+    g_clear_error(&error);
+    avatar_ctx_free(ctx);
+    avatar_decode_ctx_free(dctx);
+    g_mutex_lock(&s_fetch_mutex);
+    if (s_active_fetches > 0) s_active_fetches--;
+    g_mutex_unlock(&s_fetch_mutex);
+    process_pending_fetch_queue();
+    return;
+  }
+
+  g_debug("avatar decode: done for url=%s (%upx)", ctx->url, s_avatar_size);
+
+  ensure_avatar_cache();
+  g_hash_table_replace(avatar_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
+  avatar_lru_insert(ctx->url);
+  avatar_lru_evict_if_needed();
+
+  /* CRITICAL: Use g_weak_ref_get to safely check if widgets still exist.
+   * If widget was recycled/disposed during decode, weak ref returns NULL. */
+  GtkWidget *image = g_weak_ref_get(&ctx->image_ref);
+  GtkWidget *initials = g_weak_ref_get(&ctx->initials_ref);
+
+  if (image) {
+    if (GTK_IS_PICTURE(image)) {
+      gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(tex));
+      gtk_widget_set_visible(image, TRUE);
+    }
+    g_object_unref(image);
+  } else {
+    g_debug("avatar decode: image widget was recycled (url=%s)", ctx->url);
+  }
+
+  if (initials) {
+    if (GTK_IS_WIDGET(initials)) {
+      gtk_widget_set_visible(initials, FALSE);
+    }
+    g_object_unref(initials);
+  }
+
+  g_object_unref(tex);
+  avatar_ctx_free(ctx);
+  avatar_decode_ctx_free(dctx);
+
+  g_mutex_lock(&s_fetch_mutex);
+  if (s_active_fetches > 0) s_active_fetches--;
+  g_mutex_unlock(&s_fetch_mutex);
+  process_pending_fetch_queue();
+}
+
+/* HTTP completion callback — validates response then dispatches decode to worker */
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)source;
   AvatarCtx *ctx = (AvatarCtx*)user_data;
@@ -643,7 +758,6 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
     g_debug("avatar http: fetch failed url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     g_clear_error(&error);
     avatar_ctx_free(ctx);
-    /* Decrement active count and process queue */
     g_mutex_lock(&s_fetch_mutex);
     if (s_active_fetches > 0) s_active_fetches--;
     g_mutex_unlock(&s_fetch_mutex);
@@ -672,83 +786,17 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
     return;
   }
 
-  /* CRITICAL: Validate it's actually an image BEFORE caching, and decode at bounded size */
-  GdkTexture *tex = avatar_texture_from_bytes_scaled(bytes, &error);
-  if (!tex) {
-    g_debug("avatar http: invalid image data for url=%s: %s",
-            ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    /* Add to negative cache to avoid repeated failing fetches */
-    if (ctx && ctx->url) {
-      if (!s_avatar_bad_urls)
-        s_avatar_bad_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-      g_hash_table_add(s_avatar_bad_urls, g_strdup(ctx->url));
-    }
-    g_clear_error(&error);
-    g_bytes_unref(bytes);
-    avatar_ctx_free(ctx);
-    /* Decrement active count and process queue */
-    g_mutex_lock(&s_fetch_mutex);
-    if (s_active_fetches > 0) s_active_fetches--;
-    g_mutex_unlock(&s_fetch_mutex);
-    process_pending_fetch_queue();
-    return;
-  }
-  g_debug("avatar http: decoded and scaled to %upx for url=%s", s_avatar_size, ctx->url);
+  /* Dispatch decode + disk write to worker thread to avoid blocking
+   * the main loop with image decompression + synchronous file I/O.
+   * Up to 12 avatar fetches can complete near-simultaneously. */
+  AvatarDecodeCtx *dctx = g_new0(AvatarDecodeCtx, 1);
+  dctx->avatar_ctx = ctx;
+  dctx->raw_bytes = bytes; /* transfer ownership */
 
-  /* Only persist to disk cache if it's a valid image */
-  g_autofree char *path = avatar_path_for_url(ctx->url);
-  if (path) {
-    gsize len = 0; const guint8 *data = g_bytes_get_data(bytes, &len);
-    GError *werr = NULL;
-    if (g_file_set_contents(path, (const char*)data, (gssize)len, &werr)) {
-      g_debug("avatar http: wrote cache file %s len=%zu", path, (size_t)len);
-    } else {
-      s_avatar_metrics.cache_write_error++;
-      g_warning("avatar http: failed to write cache file %s: %s", path, werr ? werr->message : "unknown");
-      g_clear_error(&werr);
-    }
-  }
-
-  g_bytes_unref(bytes);
-  ensure_avatar_cache();
-  g_hash_table_replace(avatar_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
-  /* LRU update */
-  avatar_lru_insert(ctx->url);
-  avatar_lru_evict_if_needed();
-  g_debug("avatar http: cached texture for url=%s", ctx && ctx->url ? ctx->url : "(null)");
-
-  /* CRITICAL: Use g_weak_ref_get to safely check if widgets still exist.
-   * If widget was recycled/disposed during HTTP fetch, weak ref returns NULL
-   * and we skip the update, preventing use-after-free crash in GTK's
-   * GtkImageDefinition that causes "code should not be reached" error. */
-  GtkWidget *image = g_weak_ref_get(&ctx->image_ref);
-  GtkWidget *initials = g_weak_ref_get(&ctx->initials_ref);
-
-  if (image) {
-    if (GTK_IS_PICTURE(image)) {
-      gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(tex));
-      gtk_widget_set_visible(image, TRUE);
-    }
-    g_object_unref(image); /* g_weak_ref_get returns a ref */
-  } else {
-    g_debug("avatar http: image widget was recycled, skipping UI update (url=%s)", ctx->url);
-  }
-
-  if (initials) {
-    if (GTK_IS_WIDGET(initials)) {
-      gtk_widget_set_visible(initials, FALSE);
-    }
-    g_object_unref(initials); /* g_weak_ref_get returns a ref */
-  }
-
-  g_object_unref(tex);
-  avatar_ctx_free(ctx);
-
-  /* Decrement active count and process queue */
-  g_mutex_lock(&s_fetch_mutex);
-  if (s_active_fetches > 0) s_active_fetches--;
-  g_mutex_unlock(&s_fetch_mutex);
-  process_pending_fetch_queue();
+  GTask *task = g_task_new(NULL, NULL, on_avatar_decode_done, dctx);
+  g_task_set_task_data(task, dctx, NULL); /* freed in completion callback */
+  g_task_run_in_thread(task, avatar_decode_thread);
+  g_object_unref(task);
 }
 #endif
 
