@@ -6,6 +6,7 @@
 
 #include "user_status.h"
 #include "relays.h"
+#include "utils.h"
 #include "../storage_ndb.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "nostr-filter.h"
@@ -409,7 +410,7 @@ void gnostr_user_status_fetch_async(const gchar *pubkey_hex,
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
   ctx->callback = callback;
   ctx->user_data = user_data;
-  ctx->pool = gnostr_pool_new();
+  ctx->pool = g_object_ref(gnostr_get_shared_query_pool());
 
   /* Get relay URLs */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);

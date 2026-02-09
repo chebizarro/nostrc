@@ -3470,10 +3470,12 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
   g_warning("profile_pane: NETWORK HIT - %u events for %.8s",
             results->len, self->current_pubkey ? self->current_pubkey : "(null)");
 
-  /* Find the most recent kind:0 event */
+  /* Route results by kind: kind:0 → profile, kind:30315 → user status */
   char *best_content = NULL;
   char *best_event_json = NULL;
   gint64 best_created_at = 0;
+
+  GPtrArray *status_events = g_ptr_array_new();
 
   for (guint i = 0; i < results->len; i++) {
     const char *event_json = g_ptr_array_index(results, i);
@@ -3486,42 +3488,78 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
       const char *event_pubkey = nostr_event_get_pubkey(evt);
       if (!event_pubkey || !self->current_pubkey ||
           strcmp(event_pubkey, self->current_pubkey) != 0) {
-        g_debug("profile_pane: skipping profile event with mismatched pubkey %.8s (wanted %.8s)",
-                event_pubkey ? event_pubkey : "(null)",
-                self->current_pubkey ? self->current_pubkey : "(null)");
         nostr_event_free(evt);
         continue;
       }
 
-      gint64 created_at = (gint64)nostr_event_get_created_at(evt);
-      if (created_at > best_created_at) {
-        best_created_at = created_at;
-        /* Store content - make a copy since we need it after freeing the event */
-        g_free(best_content);
-        const char *content = nostr_event_get_content(evt);
-        best_content = content ? g_strdup(content) : NULL;
-        /* Store full event JSON for NIP-39 identity parsing */
-        g_free(best_event_json);
-        best_event_json = g_strdup(event_json);
+      int kind = nostr_event_get_kind(evt);
+      if (kind == 30315) {
+        /* NIP-38 user status — collect for batch processing */
+        g_ptr_array_add(status_events, (gpointer)event_json);
+      } else if (kind == 0) {
+        gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+        if (created_at > best_created_at) {
+          best_created_at = created_at;
+          g_free(best_content);
+          const char *content = nostr_event_get_content(evt);
+          best_content = content ? g_strdup(content) : NULL;
+          g_free(best_event_json);
+          best_event_json = g_strdup(event_json);
+        }
       }
     }
     if (evt) nostr_event_free(evt);
   }
 
+  /* Update profile from best kind:0 */
   if (best_content && *best_content) {
     g_debug("profile_pane: updating UI with network profile for %.8s (created_at=%" G_GINT64_FORMAT ")",
             self->current_pubkey ? self->current_pubkey : "(null)", best_created_at);
 
-    /* Store full event JSON for NIP-39 identity parsing */
     g_free(self->current_event_json);
     self->current_event_json = best_event_json;
-    best_event_json = NULL;  /* Ownership transferred */
+    best_event_json = NULL;
+
+    /* Ingest into nostrdb so future lookups hit the cache */
+    if (self->current_event_json) {
+      storage_ndb_ingest_event_json(self->current_event_json, NULL);
+    }
 
     gnostr_profile_pane_update_from_json(self, best_content);
-
-    /* Parse NIP-39 external identities from the event tags */
     parse_external_identities(self);
   }
+
+  /* Process kind:30315 user status events */
+  for (guint i = 0; i < status_events->len; i++) {
+    const char *status_json = g_ptr_array_index(status_events, i);
+    GnostrUserStatus *status = gnostr_user_status_parse_event(status_json);
+    if (!status) continue;
+
+    if (!gnostr_user_status_is_expired(status)) {
+      if (status->type == GNOSTR_STATUS_GENERAL) {
+        if (!self->current_general_status ||
+            status->created_at > self->current_general_status->created_at) {
+          g_clear_pointer(&self->current_general_status, gnostr_user_status_free);
+          self->current_general_status = status;
+          status = NULL;
+        }
+      } else if (status->type == GNOSTR_STATUS_MUSIC) {
+        if (!self->current_music_status ||
+            status->created_at > self->current_music_status->created_at) {
+          g_clear_pointer(&self->current_music_status, gnostr_user_status_free);
+          self->current_music_status = status;
+          status = NULL;
+        }
+      }
+    }
+    if (status) gnostr_user_status_free(status);
+  }
+  if (status_events->len > 0) {
+    self->status_loaded = TRUE;
+    update_status_display(self);
+  }
+
+  g_ptr_array_unref(status_events);
   g_free(best_content);
   g_free(best_event_json);
 
@@ -3623,13 +3661,12 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   g_debug("profile_pane: fetching profile from %u relays for %.8s",
           relay_urls->len, self->current_pubkey);
 
-  /* Fetch profile from network - build kind:0 filter for the author */
+  /* Fetch profile + user status in a single request: kind:0 + kind:30315 */
   {
     NostrFilter *pf = nostr_filter_new();
-    int pf_kinds[1] = { 0 };
-    nostr_filter_set_kinds(pf, pf_kinds, 1);
+    int pf_kinds[2] = { 0, 30315 };
+    nostr_filter_set_kinds(pf, pf_kinds, 2);
     nostr_filter_set_authors(pf, authors, 1);
-    nostr_filter_set_limit(pf, 1);
 
     GNostrPool *pool = gnostr_get_shared_query_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
@@ -3645,9 +3682,6 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
-
-  /* Step 3: Also fetch NIP-38 user status in parallel */
-  fetch_user_status(self);
 }
 
 /* NIP-84 Highlights: Maximum highlights to fetch */
