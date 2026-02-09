@@ -133,6 +133,7 @@ static void save_nip46_credentials_to_settings(const char *client_secret_hex,
 static void show_success(GnostrLogin *self, const char *npub);
 static void start_nip46_listener(GnostrLogin *self, const char *relay_url);
 static void stop_nip46_listener(GnostrLogin *self);
+static void on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_data);
 static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
 
 /* Status state enum for bunker connection */
@@ -1572,6 +1573,62 @@ static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json,
   g_idle_add_full(G_PRIORITY_HIGH, on_nip46_connect_success, ctx, NULL);
 }
 
+static void
+on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_data) {
+  GNostrPool *pool = GNOSTR_POOL(source);
+  GnostrLogin *self = GNOSTR_LOGIN(user_data);
+
+  GError *conn_error = NULL;
+  gboolean ok = gnostr_pool_connect_all_finish(pool, result, &conn_error);
+
+  if (!ok) {
+    g_warning("[NIP46_LOGIN] Relay connection failed: %s",
+              conn_error ? conn_error->message : "unknown");
+    set_bunker_status(self, BUNKER_STATUS_ERROR,
+                      "Failed to connect to relay",
+                      "Check your internet connection and try again");
+    g_clear_error(&conn_error);
+    return;
+  }
+
+  if (!self->client_pubkey_hex) {
+    g_warning("[NIP46_LOGIN] client pubkey gone after connect");
+    return;
+  }
+
+  /* Build filter for NIP-46 responses addressed to our client pubkey */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[] = { NIP46_RESPONSE_KIND };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_tags_append(filter, "p", self->client_pubkey_hex, NULL);
+
+  NostrFilters *filters = nostr_filters_new();
+  nostr_filters_add(filters, filter);
+
+  GError *sub_error = NULL;
+  GNostrSubscription *sub = gnostr_pool_subscribe(self->nip46_pool, filters, &sub_error);
+  nostr_filters_free(filters);
+  nostr_filter_free(filter);
+
+  if (!sub) {
+    g_warning("[NIP46_LOGIN] Subscription failed: %s",
+              sub_error ? sub_error->message : "(unknown)");
+    set_bunker_status(self, BUNKER_STATUS_ERROR,
+                      "Failed to connect to relay",
+                      "Check your internet connection and try again");
+    g_clear_error(&sub_error);
+    return;
+  }
+
+  self->nip46_sub = sub;
+  self->nip46_events_handler = g_signal_connect(
+    sub, "event",
+    G_CALLBACK(on_nip46_sub_event), self);
+
+  g_message("[NIP46_LOGIN] Listening for signer response...");
+  self->listening_for_response = TRUE;
+}
+
 static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
   if (!self || !relay_url) return;
 
@@ -1595,43 +1652,11 @@ static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
     return;
   }
 
-  /* Build filter for NIP-46 responses addressed to our client pubkey */
-  NostrFilter *filter = nostr_filter_new();
-  int kinds[] = { NIP46_RESPONSE_KIND };
-  nostr_filter_set_kinds(filter, kinds, 1);
-
-  /* Filter by p-tag for our client pubkey */
-  nostr_filter_tags_append(filter, "p", self->client_pubkey_hex, NULL);
-
-  NostrFilters *filters = nostr_filters_new();
-  nostr_filters_add(filters, filter);
-
-  /* Add relay and subscribe */
+  /* Add relay and connect asynchronously — subscribe in callback */
   const char *relays[] = { relay_url };
   gnostr_pool_sync_relays(self->nip46_pool, (const gchar **)relays, 1);
-
-  GError *sub_error = NULL;
-  GNostrSubscription *sub = gnostr_pool_subscribe(self->nip46_pool, filters, &sub_error);
-  nostr_filters_free(filters);
-  nostr_filter_free(filter);
-
-  if (!sub) {
-    g_warning("[NIP46_LOGIN] Subscription failed: %s",
-              sub_error ? sub_error->message : "(unknown)");
-    set_bunker_status(self, BUNKER_STATUS_ERROR,
-                      "Failed to connect to relay",
-                      "Check your internet connection and try again");
-    g_clear_error(&sub_error);
-    return;
-  }
-
-  self->nip46_sub = sub; /* takes ownership */
-  self->nip46_events_handler = g_signal_connect(
-    sub, "event",
-    G_CALLBACK(on_nip46_sub_event), self);
-
-  g_message("[NIP46_LOGIN] Listening for signer response...");
-  self->listening_for_response = TRUE;
+  gnostr_pool_connect_all_async(self->nip46_pool, NULL,
+                                on_nip46_pool_connected, self);
 }
 
 static void stop_nip46_listener(GnostrLogin *self) {
