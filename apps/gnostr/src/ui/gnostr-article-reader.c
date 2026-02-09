@@ -207,6 +207,14 @@ static void on_header_image_ready(GObject *source, GAsyncResult *result, gpointe
     return;
   }
 
+  /* nostrc-qt9q: Check for use-after-dispose. If dispose() already ran,
+   * root_box is NULL and template children (header_image etc.) are destroyed. */
+  if (self->root_box == NULL) {
+    g_object_unref(stream);
+    g_object_unref(self);
+    return;
+  }
+
   /* nostrc-8bxd: Store GBytes in a variable to avoid leak and NULL crash.
    * g_input_stream_read_bytes() can return NULL on error, and the returned
    * GBytes must be unreffed after use. */
@@ -395,6 +403,7 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
     g_warning("Failed to parse article JSON: %s", error->message);
     g_error_free(error);
     g_object_unref(parser);
+    free(json);
     show_error(self, "Failed to parse article data");
     return;
   }
@@ -403,6 +412,7 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
   JsonObject *obj = json_node_get_object(root);
   if (!obj) {
     g_object_unref(parser);
+    free(json);
     show_error(self, "Invalid article data");
     return;
   }
@@ -515,6 +525,7 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
   if (meta)
     gnostr_article_meta_free(meta);
   g_object_unref(parser);
+  free(json);
 
   show_content(self);
   g_debug("[ARTICLE-READER] Loaded article: %s", event_id_hex);
