@@ -63,6 +63,8 @@
 #include "../util/relay_info.h"
 /* NIP-51 mute list */
 #include "../util/mute_list.h"
+/* NIP-02 contact list */
+#include "../util/nip02_contacts.h"
 /* NIP-32 labeling */
 #include "../util/nip32_labels.h"
 /* NIP-51 settings sync */
@@ -4435,16 +4437,77 @@ static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const c
   show_toast(self, "User muted");
 }
 
-/* nostrc-qvba: Handle follow from profile pane */
+/* nostrc-s0e0: Follow/unfollow context for async save */
+typedef struct {
+  GnostrMainWindow *self;
+  GnostrProfilePane *pane;
+  char *pubkey_hex;
+  gboolean was_following;
+} FollowContext;
+
+static void on_follow_save_complete(GnostrContactList *cl, gboolean success,
+                                     const char *error_msg, gpointer user_data) {
+  FollowContext *ctx = (FollowContext *)user_data;
+  if (!ctx) return;
+
+  if (success) {
+    show_toast(ctx->self, ctx->was_following ? "Unfollowed" : "Followed");
+  } else {
+    /* Revert optimistic update */
+    if (ctx->was_following)
+      gnostr_contact_list_add(cl, ctx->pubkey_hex, NULL);
+    else
+      gnostr_contact_list_remove(cl, ctx->pubkey_hex);
+
+    if (GNOSTR_IS_PROFILE_PANE(ctx->pane))
+      gnostr_profile_pane_set_following(ctx->pane, ctx->was_following);
+
+    show_toast(ctx->self, error_msg ? error_msg : "Follow action failed");
+  }
+
+  g_free(ctx->pubkey_hex);
+  g_free(ctx);
+}
+
+/* nostrc-s0e0: Handle follow/unfollow from profile pane */
 static void on_profile_pane_follow_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
-  (void)pane;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return;
 
-  /* TODO: Implement follow/unfollow via contact list (NIP-02) */
-  g_debug("[FOLLOW] Follow requested for pubkey=%.16s...", pubkey_hex);
-  show_toast(self, "Follow feature coming soon");
+  /* Ensure signer is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    show_toast(self, "Please log in to follow users");
+    return;
+  }
+
+  /* Load contact list if needed */
+  GnostrContactList *cl = gnostr_contact_list_get_default();
+  if (!gnostr_contact_list_get_user_pubkey(cl)) {
+    const char *my_pk = gnostr_signer_service_get_pubkey(signer);
+    if (my_pk)
+      gnostr_contact_list_load_from_ndb(cl, my_pk);
+  }
+
+  /* Toggle follow state */
+  gboolean was_following = gnostr_contact_list_is_following(cl, pubkey_hex);
+  if (was_following)
+    gnostr_contact_list_remove(cl, pubkey_hex);
+  else
+    gnostr_contact_list_add(cl, pubkey_hex, NULL);
+
+  /* Optimistic UI update */
+  gnostr_profile_pane_set_following(pane, !was_following);
+
+  /* Save to relays */
+  FollowContext *ctx = g_new0(FollowContext, 1);
+  ctx->self = self;
+  ctx->pane = pane;
+  ctx->pubkey_hex = g_strdup(pubkey_hex);
+  ctx->was_following = was_following;
+
+  gnostr_contact_list_save_async(cl, on_follow_save_complete, ctx);
 }
 
 /* nostrc-qvba: Handle message from profile pane */

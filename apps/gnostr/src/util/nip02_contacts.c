@@ -17,6 +17,7 @@
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr_pool.h"
+#include "../ipc/gnostr-signer-service.h"
 #endif
 
 /* Kind 3 = Contact List per NIP-02 */
@@ -562,3 +563,241 @@ GPtrArray *gnostr_contact_list_get_pubkeys_with_relay_hints(GnostrContactList *s
     if (relay_hints) *relay_hints = hints;
     return pubkeys;
 }
+
+/* ---- Mutation Functions (nostrc-s0e0) ---- */
+
+static gboolean is_valid_hex_pubkey(const char *s) {
+    if (!s || strlen(s) != 64) return FALSE;
+    for (int i = 0; i < 64; i++) {
+        if (!g_ascii_isxdigit(s[i])) return FALSE;
+    }
+    return TRUE;
+}
+
+gboolean gnostr_contact_list_add(GnostrContactList *self,
+                                  const char *pubkey_hex,
+                                  const char *relay_hint) {
+    if (!self || !is_valid_hex_pubkey(pubkey_hex)) return FALSE;
+
+    g_mutex_lock(&self->lock);
+    if (g_hash_table_contains(self->contacts, pubkey_hex)) {
+        g_mutex_unlock(&self->lock);
+        return FALSE;
+    }
+    GnostrContactEntry *entry = contact_entry_new(pubkey_hex, relay_hint, NULL);
+    g_hash_table_insert(self->contacts, entry->pubkey_hex, entry);
+    g_mutex_unlock(&self->lock);
+
+    g_debug("nip02_contacts: added contact %.8s", pubkey_hex);
+    return TRUE;
+}
+
+gboolean gnostr_contact_list_remove(GnostrContactList *self,
+                                     const char *pubkey_hex) {
+    if (!self || !pubkey_hex) return FALSE;
+
+    g_mutex_lock(&self->lock);
+    gboolean removed = g_hash_table_remove(self->contacts, pubkey_hex);
+    g_mutex_unlock(&self->lock);
+
+    if (removed) {
+        g_debug("nip02_contacts: removed contact %.8s", pubkey_hex);
+    }
+    return removed;
+}
+
+#ifndef GNOSTR_NIP02_CONTACTS_TEST_ONLY
+
+/* ---- Save (sign + publish) Implementation (nostrc-s0e0) ---- */
+
+typedef struct {
+    GnostrContactList *contact_list;
+    GnostrContactListSaveCallback callback;
+    gpointer user_data;
+} ContactListSaveContext;
+
+static void contact_list_save_context_free(ContactListSaveContext *ctx) {
+    g_free(ctx);
+}
+
+/* nostrc-s0e0: Publish signed contact list to relays */
+static void publish_contact_list_to_relays(ContactListSaveContext *ctx,
+                                            const char *signed_event_json) {
+    NostrEvent *event = nostr_event_new();
+    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, NULL);
+    if (parse_rc != 1) {
+        g_warning("nip02_contacts: failed to parse signed event");
+        if (ctx->callback)
+            ctx->callback(ctx->contact_list, FALSE, "Failed to parse signed event", ctx->user_data);
+        nostr_event_free(event);
+        contact_list_save_context_free(ctx);
+        return;
+    }
+
+    /* Ingest into local NDB cache */
+    storage_ndb_ingest_event_json(signed_event_json, NULL);
+
+    /* Get relay URLs and publish */
+    GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+    gnostr_load_relays_into(relay_urls);
+
+    guint success_count = 0;
+    guint fail_count = 0;
+
+    for (guint i = 0; i < relay_urls->len; i++) {
+        const gchar *url = (const gchar *)g_ptr_array_index(relay_urls, i);
+        GNostrRelay *relay = gnostr_relay_new(url);
+        if (!relay) { fail_count++; continue; }
+
+        GError *conn_err = NULL;
+        if (!gnostr_relay_connect(relay, &conn_err)) {
+            g_debug("nip02_contacts: failed to connect to %s: %s",
+                    url, conn_err ? conn_err->message : "unknown");
+            g_clear_error(&conn_err);
+            g_object_unref(relay);
+            fail_count++;
+            continue;
+        }
+
+        GError *pub_err = NULL;
+        if (gnostr_relay_publish(relay, event, &pub_err)) {
+            g_message("nip02_contacts: published kind 3 to %s", url);
+            success_count++;
+        } else {
+            g_debug("nip02_contacts: publish failed to %s: %s",
+                    url, pub_err ? pub_err->message : "unknown");
+            g_clear_error(&pub_err);
+            fail_count++;
+        }
+        g_object_unref(relay);
+    }
+
+    nostr_event_free(event);
+    g_ptr_array_free(relay_urls, TRUE);
+
+    if (success_count > 0) {
+        g_mutex_lock(&ctx->contact_list->lock);
+        ctx->contact_list->last_event_time = (gint64)time(NULL);
+        g_mutex_unlock(&ctx->contact_list->lock);
+    }
+
+    if (ctx->callback) {
+        if (success_count > 0) {
+            ctx->callback(ctx->contact_list, TRUE, NULL, ctx->user_data);
+        } else {
+            ctx->callback(ctx->contact_list, FALSE,
+                         "Failed to publish to any relay", ctx->user_data);
+        }
+    }
+
+    g_message("nip02_contacts: published to %u relays, failed %u",
+              success_count, fail_count);
+    contact_list_save_context_free(ctx);
+}
+
+/* nostrc-s0e0: Sign callback */
+static void on_contact_list_sign_complete(GObject *source, GAsyncResult *res,
+                                           gpointer user_data) {
+    ContactListSaveContext *ctx = (ContactListSaveContext *)user_data;
+    (void)source;
+    if (!ctx) return;
+
+    GError *error = NULL;
+    char *signed_event_json = NULL;
+
+    gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
+
+    if (!ok || !signed_event_json) {
+        g_warning("nip02_contacts: signing failed: %s",
+                  error ? error->message : "unknown error");
+        if (ctx->callback) {
+            ctx->callback(ctx->contact_list, FALSE,
+                         error ? error->message : "Signing failed",
+                         ctx->user_data);
+        }
+        g_clear_error(&error);
+        contact_list_save_context_free(ctx);
+        return;
+    }
+
+    g_message("nip02_contacts: signed contact list event");
+    publish_contact_list_to_relays(ctx, signed_event_json);
+    g_free(signed_event_json);
+}
+
+void gnostr_contact_list_save_async(GnostrContactList *self,
+                                     GnostrContactListSaveCallback callback,
+                                     gpointer user_data) {
+    if (!self) {
+        if (callback) callback(self, FALSE, "Invalid contact list", user_data);
+        return;
+    }
+
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    if (!gnostr_signer_service_is_available(signer)) {
+        if (callback) callback(self, FALSE, "Signer not available", user_data);
+        return;
+    }
+
+    g_mutex_lock(&self->lock);
+
+    /* Build tags from current contacts */
+    NostrTags *tags = nostr_tags_new(0);
+    GHashTableIter iter;
+    gpointer key, value;
+
+    g_hash_table_iter_init(&iter, self->contacts);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        GnostrContactEntry *entry = (GnostrContactEntry *)value;
+        NostrTag *tag;
+        if (entry->relay_hint && *entry->relay_hint) {
+            tag = nostr_tag_new("p", entry->pubkey_hex, entry->relay_hint, NULL);
+        } else {
+            tag = nostr_tag_new("p", entry->pubkey_hex, NULL);
+        }
+        nostr_tags_append(tags, tag);
+    }
+
+    g_mutex_unlock(&self->lock);
+
+    /* Build unsigned kind 3 event */
+    NostrEvent *event = nostr_event_new();
+    nostr_event_set_kind(event, CONTACT_LIST_KIND);
+    nostr_event_set_created_at(event, (int64_t)time(NULL));
+    nostr_event_set_content(event, "");
+    nostr_event_set_tags(event, tags);
+
+    char *event_json = nostr_event_serialize_compact(event);
+    nostr_event_free(event);
+
+    if (!event_json) {
+        if (callback) callback(self, FALSE, "Failed to build event JSON", user_data);
+        return;
+    }
+
+    ContactListSaveContext *ctx = g_new0(ContactListSaveContext, 1);
+    ctx->contact_list = self;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    g_message("nip02_contacts: requesting signature for kind 3 event (%u contacts)",
+              g_hash_table_size(self->contacts));
+
+    gnostr_sign_event_async(event_json, "", "gnostr", NULL,
+                             on_contact_list_sign_complete, ctx);
+    g_free(event_json);
+}
+
+#else /* GNOSTR_NIP02_CONTACTS_TEST_ONLY */
+
+void gnostr_contact_list_save_async(GnostrContactList *self,
+                                     GnostrContactListSaveCallback callback,
+                                     gpointer user_data) {
+    if (!self) {
+        if (callback) callback(self, FALSE, "Invalid contact list", user_data);
+        return;
+    }
+    if (callback) callback(self, TRUE, NULL, user_data);
+}
+
+#endif /* GNOSTR_NIP02_CONTACTS_TEST_ONLY */

@@ -27,6 +27,7 @@
 #include "json.h"
 #include "../util/bookmarks.h"
 #include "../util/pin_list.h"
+#include "../util/nip02_contacts.h"
 #include "gnostr-main-window.h"
 #include "gnostr-profile-provider.h"
 #include "nostr_nip19.h"
@@ -286,6 +287,7 @@ struct _GnostrProfilePane {
   GtkWidget *lbl_followers_count;
   GtkWidget *lbl_following_count;
   GtkWidget *btn_follow;
+  gboolean is_following;  /* nostrc-s0e0: current follow state */
   GtkWidget *btn_message;
   GtkWidget *btn_mute_user;
   GtkWidget *other_profile_actions;
@@ -588,6 +590,24 @@ static void on_follow_clicked(GtkButton *btn, gpointer user_data) {
   if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
 
   g_signal_emit(self, signals[SIGNAL_FOLLOW_REQUESTED], 0, self->current_pubkey);
+}
+
+/* nostrc-s0e0: Update follow button state */
+void gnostr_profile_pane_set_following(GnostrProfilePane *self, gboolean is_following) {
+  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+  self->is_following = is_following;
+  if (!self->btn_follow) return;
+
+  gtk_button_set_label(GTK_BUTTON(self->btn_follow),
+                       is_following ? "Following" : "Follow");
+
+  if (is_following) {
+    gtk_widget_remove_css_class(self->btn_follow, "suggested-action");
+    gtk_widget_add_css_class(self->btn_follow, "flat");
+  } else {
+    gtk_widget_remove_css_class(self->btn_follow, "flat");
+    gtk_widget_add_css_class(self->btn_follow, "suggested-action");
+  }
 }
 
 /* nostrc-qvba: Message button handler */
@@ -1567,6 +1587,12 @@ static void update_action_buttons_visibility(GnostrProfilePane *self) {
   /* nostrc-qvba: Enable follow and message buttons */
   if (self->btn_follow) {
     gtk_widget_set_sensitive(self->btn_follow, can_interact);
+    /* nostrc-s0e0: Set initial follow state from contact list */
+    if (can_interact && self->current_pubkey) {
+      GnostrContactList *cl = gnostr_contact_list_get_default();
+      gboolean following = gnostr_contact_list_is_following(cl, self->current_pubkey);
+      gnostr_profile_pane_set_following(self, following);
+    }
   }
   if (self->btn_message) {
     gtk_widget_set_sensitive(self->btn_message, can_interact);

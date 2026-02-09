@@ -235,6 +235,61 @@ gboolean gnostr_contact_list_load_from_ndb(GnostrContactList *self,
 GPtrArray *gnostr_contact_list_get_pubkeys_with_relay_hints(GnostrContactList *self,
                                                              GPtrArray **relay_hints);
 
+/* ---- Mutation Functions (nostrc-s0e0) ---- */
+
+/**
+ * gnostr_contact_list_add:
+ * @self: contact list instance
+ * @pubkey_hex: public key to add (64 hex chars)
+ * @relay_hint: (nullable): relay URL hint for this contact
+ *
+ * Adds a contact to the in-memory list. Call save_async to publish.
+ *
+ * Returns: TRUE if added, FALSE if already following or invalid
+ */
+gboolean gnostr_contact_list_add(GnostrContactList *self,
+                                  const char *pubkey_hex,
+                                  const char *relay_hint);
+
+/**
+ * gnostr_contact_list_remove:
+ * @self: contact list instance
+ * @pubkey_hex: public key to remove (64 hex chars)
+ *
+ * Removes a contact from the in-memory list. Call save_async to publish.
+ *
+ * Returns: TRUE if removed, FALSE if not found
+ */
+gboolean gnostr_contact_list_remove(GnostrContactList *self,
+                                     const char *pubkey_hex);
+
+/**
+ * GnostrContactListSaveCallback:
+ * @self: the contact list
+ * @success: TRUE if published to at least one relay
+ * @error_msg: (nullable): error message on failure
+ * @user_data: user data
+ *
+ * Callback for gnostr_contact_list_save_async().
+ */
+typedef void (*GnostrContactListSaveCallback)(GnostrContactList *self,
+                                               gboolean success,
+                                               const char *error_msg,
+                                               gpointer user_data);
+
+/**
+ * gnostr_contact_list_save_async:
+ * @self: contact list instance
+ * @callback: (nullable): callback when save completes
+ * @user_data: user data for callback
+ *
+ * Builds a kind 3 event from the current contact list state,
+ * signs it via the signer service, and publishes to relays.
+ */
+void gnostr_contact_list_save_async(GnostrContactList *self,
+                                     GnostrContactListSaveCallback callback,
+                                     gpointer user_data);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NIP02_CONTACTS_H */

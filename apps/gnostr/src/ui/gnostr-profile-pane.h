@@ -64,6 +64,15 @@ void gnostr_profile_pane_refresh(GnostrProfilePane *self);
 gboolean gnostr_profile_pane_is_profile_cached(GnostrProfilePane *self);
 
 /**
+ * gnostr_profile_pane_set_following:
+ * @self: the profile pane
+ * @is_following: TRUE if the user is following this profile
+ *
+ * Updates the Follow button label and style to reflect follow state.
+ */
+void gnostr_profile_pane_set_following(GnostrProfilePane *self, gboolean is_following);
+
+/**
  * Signals:
  * - "close-requested": Emitted when the close button is clicked
  * - "note-activated": Emitted when a post is clicked (param: note_id string)
