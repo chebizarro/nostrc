@@ -2315,10 +2315,17 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
 #endif
 }
 
-/* Timer callback to update timestamp display */
+/* nostrc-p396s: Destroy notify for timestamp timer — releases the ref held
+ * by the timer source to prevent use-after-free on the NoteCardRow. */
+static void timestamp_timer_destroy(gpointer user_data) {
+  if (user_data) g_object_unref(user_data);
+}
+
+/* Timer callback to update timestamp display.
+ * nostrc-p396s: The timer source holds a ref on self (via g_object_ref at
+ * creation + timestamp_timer_destroy at removal) so self cannot be finalized
+ * while the timer is active. */
 static gboolean update_timestamp_tick(gpointer user_data) {
-  /* CRITICAL: Don't use type-check macros on user_data - they dereference
-   * the pointer and can crash if it's stale/freed. Check NULL first. */
   if (user_data == NULL) {
     return G_SOURCE_REMOVE;
   }
@@ -2331,19 +2338,25 @@ static gboolean update_timestamp_tick(gpointer user_data) {
    * "Source ID was not found" errors when dispose/prepare_for_unbind tries
    * to remove an already-auto-removed source. */
   if (self->disposed || self->timestamp_timer_id == 0) {
-    self->timestamp_timer_id = 0;  /* Clear so later cleanup doesn't try to remove */
+    self->timestamp_timer_id = 0;
     return G_SOURCE_REMOVE;
   }
 
-  /* Now safe to use type-check since disposed==FALSE means widget is valid */
+  /* nostrc-p396s: Check widget is still rooted in a window. When GtkListView
+   * tears down the widget tree, the widget can be unrooted (internal Pango
+   * state cleared) before our dispose runs to remove this timer. */
+  if (gtk_widget_get_root(GTK_WIDGET(self)) == NULL) {
+    self->timestamp_timer_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
   if (!GTK_IS_LABEL(self->lbl_timestamp)) {
-    self->timestamp_timer_id = 0;  /* Clear so later cleanup doesn't try to remove */
+    self->timestamp_timer_id = 0;
     return G_SOURCE_REMOVE;
   }
 
-  /* Additional safety: check widget is still in widget tree (has parent) */
   if (gtk_widget_get_parent(GTK_WIDGET(self)) == NULL) {
-    self->timestamp_timer_id = 0;  /* Clear so we don't try to remove again */
+    self->timestamp_timer_id = 0;
     return G_SOURCE_REMOVE;
   }
 
@@ -2356,7 +2369,6 @@ static gboolean update_timestamp_tick(gpointer user_data) {
     else if (diff < 3600) g_snprintf(buf, sizeof(buf), "%ldm", diff/60);
     else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
-    /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
     if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
       gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
     }
@@ -2399,14 +2411,19 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
       g_date_time_unref(dt);
     }
 
-    /* Remove old timer if exists */
+    /* Remove old timer if exists (destroy notify releases old ref) */
     if (self->timestamp_timer_id > 0) {
       g_source_remove(self->timestamp_timer_id);
+      self->timestamp_timer_id = 0;
     }
 
-    /* LEGITIMATE TIMEOUT - Periodic timestamp update (60s intervals).
-     * nostrc-b0h: Audited - updating relative timestamps is appropriate. */
-    self->timestamp_timer_id = g_timeout_add_seconds(60, update_timestamp_tick, self);
+    /* nostrc-p396s: Timer holds a ref on self to prevent use-after-free if
+     * the widget is finalized before the timer is removed. The destroy notify
+     * (timestamp_timer_destroy) releases the ref when the source is removed. */
+    g_object_ref(self);
+    self->timestamp_timer_id = g_timeout_add_seconds_full(
+        G_PRIORITY_DEFAULT, 60, update_timestamp_tick, self,
+        timestamp_timer_destroy);
   } else {
     /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
     if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
