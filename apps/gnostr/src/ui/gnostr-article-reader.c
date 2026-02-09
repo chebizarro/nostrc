@@ -195,20 +195,38 @@ static void on_header_image_ready(GObject *source, GAsyncResult *result, gpointe
   GError *error = NULL;
   GInputStream *stream = soup_session_send_finish(SOUP_SESSION(source), result, &error);
   if (error || !stream) {
+    if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      g_warning("article_reader: header image fetch failed: %s", error->message);
+    g_clear_error(&error);
+    if (stream) g_object_unref(stream);
+    g_object_unref(self);
+    return;
+  }
+
+  /* nostrc-8bxd: Store GBytes in a variable to avoid leak and NULL crash.
+   * g_input_stream_read_bytes() can return NULL on error, and the returned
+   * GBytes must be unreffed after use. */
+  GBytes *bytes = g_input_stream_read_bytes(stream, 10 * 1024 * 1024, NULL, &error);
+  g_object_unref(stream);
+
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    g_warning("article_reader: empty or failed header image read");
+    if (bytes) g_bytes_unref(bytes);
     g_clear_error(&error);
     g_object_unref(self);
     return;
   }
 
-  GdkTexture *texture = gdk_texture_new_from_bytes(
-      g_input_stream_read_bytes(stream, 10 * 1024 * 1024, NULL, NULL), &error);
-  g_object_unref(stream);
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
 
   if (texture) {
     gtk_picture_set_paintable(GTK_PICTURE(self->header_image), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->header_image, TRUE);
     g_object_unref(texture);
   } else {
+    if (error)
+      g_warning("article_reader: failed to create header texture: %s", error->message);
     g_clear_error(&error);
   }
   g_object_unref(self);
