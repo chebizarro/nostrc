@@ -143,6 +143,21 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
     /* NIP-40: Cache expiration timestamp */
     self->expiration = storage_ndb_note_get_expiration(note);
     self->expiration_loaded = TRUE;
+
+    /* nostrc-thr1: Extract NIP-10 thread info during lazy load */
+    if (!self->thread_root_id && !self->parent_id) {
+      char *root_id = NULL;
+      char *reply_id = NULL;
+      storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
+      if (root_id || reply_id) {
+        self->thread_root_id = root_id;
+        self->parent_id = reply_id;
+        self->is_reply = (reply_id != NULL);
+        self->is_root = (root_id == NULL ||
+                         (self->cached_event_id &&
+                          g_strcmp0(self->cached_event_id, root_id) == 0));
+      }
+    }
   }
 
   storage_ndb_end_query(txn);
@@ -212,6 +227,24 @@ void gn_nostr_event_item_populate_from_note(GnNostrEventItem *self, struct ndb_n
   /* NIP-40: Cache expiration timestamp */
   self->expiration = storage_ndb_note_get_expiration((storage_ndb_note *)note);
   self->expiration_loaded = TRUE;
+
+  /* nostrc-thr1: Extract NIP-10 thread info so ALL items get threading data
+   * regardless of which model creates them. Previously only GnNostrEventModel
+   * stored thread info in a separate hash table; GnTimelineModel never did,
+   * causing startup-loaded events to lack parent/root IDs. */
+  if (!self->thread_root_id && !self->parent_id) {
+    char *root_id = NULL;
+    char *reply_id = NULL;
+    storage_ndb_note_get_nip10_thread((storage_ndb_note *)note, &root_id, &reply_id);
+    if (root_id || reply_id) {
+      self->thread_root_id = root_id;
+      self->parent_id = reply_id;
+      self->is_reply = (reply_id != NULL);
+      self->is_root = (root_id == NULL ||
+                       (self->cached_event_id &&
+                        g_strcmp0(self->cached_event_id, root_id) == 0));
+    }
+  }
 }
 
 static void gn_nostr_event_item_finalize(GObject *object) {
