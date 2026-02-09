@@ -1347,6 +1347,18 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     gint64 created_at = storage_ndb_note_created_at(note);
 
+    /* Pre-create and cache item while txn is open to avoid re-opening
+     * an NDB transaction later in get_item → ensure_note_loaded.  This
+     * eliminates the main-thread NDB reader slot pressure during scroll. */
+    if (!cache_get(self, note_key)) {
+      GnNostrEventItem *item = gn_nostr_event_item_new_from_key(note_key, created_at);
+      if (item) {
+        gn_nostr_event_item_populate_from_note(item, note);
+        cache_add(self, note_key, item);
+        g_object_unref(item);  /* cache_add took a ref */
+      }
+    }
+
     if (use_throttled_pipeline) {
       /*
        * Phase 2 throttled path: Add to incoming queue (Stage 1).
@@ -1586,7 +1598,8 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
 
     /* Open txn for mute list checking (need note pubkey) */
     void *txn = NULL;
-    storage_ndb_begin_query_retry(&txn, 3, 10);
+    /* Non-blocking: no retry+sleep on main thread */
+    storage_ndb_begin_query(&txn);
 
     for (guint i = 0; i < n_entries; i++) {
       uint64_t note_key = entries[i].note_key;

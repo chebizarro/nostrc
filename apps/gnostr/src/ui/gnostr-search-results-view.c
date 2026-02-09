@@ -516,7 +516,7 @@ static void
 execute_local_search(GnostrSearchResultsView *self, const char *query)
 {
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 50);
+    int rc = storage_ndb_begin_query(&txn);
     if (rc != 0 || !txn) {
         g_warning("[SEARCH] Failed to begin nostrdb query transaction");
         gnostr_search_results_view_set_loading(self, FALSE);

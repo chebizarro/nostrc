@@ -207,7 +207,7 @@ GnostrEventLabels *gnostr_nip32_get_labels_for_event(const char *event_id_hex) {
     NOSTR_KIND_LABEL, event_id_hex);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0) {
+  if (storage_ndb_begin_query(&txn) != 0) {
     g_free(filter_json);
     return NULL;
   }
@@ -261,7 +261,7 @@ GPtrArray *gnostr_nip32_get_labels_by_user(const char *pubkey_hex) {
     NOSTR_KIND_LABEL, pubkey_hex);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0) {
+  if (storage_ndb_begin_query(&txn) != 0) {
     g_free(filter_json);
     return NULL;
   }

@@ -506,7 +506,7 @@ gboolean gnostr_contact_list_load_from_ndb(GnostrContactList *self,
         pubkey_hex);
 
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query(&txn);
     if (rc != 0 || !txn) {
         return FALSE;
     }

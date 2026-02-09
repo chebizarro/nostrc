@@ -1482,7 +1482,7 @@ gnostr_dm_service_load_history_async(GnostrDmService *self,
             self->user_pubkey);
 
         void *txn = NULL;
-        if (storage_ndb_begin_query_retry(&txn, 3, 50) == 0 && txn) {
+        if (storage_ndb_begin_query(&txn) == 0 && txn) {
             char **results = NULL;
             int count = 0;
 

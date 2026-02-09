@@ -149,7 +149,7 @@ GPtrArray *gnostr_follow_list_get_cached(const gchar *pubkey_hex)
     pubkey_hex);
 
   void *txn = NULL;
-  int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+  int rc = storage_ndb_begin_query(&txn);
   if (rc != 0 || !txn) {
     return NULL;
   }

@@ -1471,7 +1471,7 @@ on_live_activities_received(uint64_t subid,
 
     /* Get transaction to access notes */
     void *txn = NULL;
-    if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+    if (storage_ndb_begin_query(&txn) != 0 || !txn) {
         g_warning("discover: failed to begin query for live activities");
         return;
     }
@@ -1595,7 +1595,7 @@ gnostr_page_discover_load_live_activities(GnostrPageDiscover *self)
      * This handles the case where events are already cached.
      */
     void *txn = NULL;
-    if (storage_ndb_begin_query_retry(&txn, 3, 10) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn) == 0 && txn) {
         char **results = NULL;
         int count = 0;
 

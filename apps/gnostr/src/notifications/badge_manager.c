@@ -534,7 +534,7 @@ on_dm_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("Failed to begin query for DM notifications");
     return;
   }
@@ -656,7 +656,7 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("Failed to begin query for mention notifications");
     return;
   }
@@ -747,7 +747,7 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("Failed to begin query for zap notifications");
     return;
   }
@@ -836,7 +836,7 @@ on_repost_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("Failed to begin query for repost notifications");
     return;
   }
@@ -888,7 +888,7 @@ on_reaction_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("Failed to begin query for reaction notifications");
     return;
   }
@@ -942,7 +942,7 @@ on_list_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("Failed to begin query for list notifications");
     return;
   }
@@ -1012,7 +1012,7 @@ on_follower_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("Failed to begin query for follower notifications");
     return;
   }
@@ -1486,7 +1486,7 @@ history_load_thread_func(GTask *task, gpointer source_object,
       (GDestroyNotify)gnostr_notification_free);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 50) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_debug("[HISTORY] Failed to begin NDB query for history loading");
     g_task_return_pointer(task, data, NULL);
     return;

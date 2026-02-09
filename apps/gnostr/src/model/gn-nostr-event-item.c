@@ -93,9 +93,12 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
   if (self->note_key == 0) return FALSE;
   if (self->cached_event_id != NULL) return TRUE;  /* Already loaded */
 
+  /* Non-blocking: try once, no retries with sleep.  This runs on the GTK
+   * main thread during property access (GtkListView bind).  Blocking here
+   * with retry+sleep stalls the entire UI.  If NDB is busy the data will
+   * be populated later when the item is re-bound or metadata batch runs. */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 10, 5) != 0 || !txn) {
-    g_warning("[ITEM] ensure_note_loaded: begin_query failed for key %lu after retries", (unsigned long)self->note_key);
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     return FALSE;
   }
 
