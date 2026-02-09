@@ -390,6 +390,12 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
         return false;
     }
 
+    /* nostrc-kw9r: Shared relay registry may cause multiple pools to try
+     * connecting the same NostrRelay — if already connected, skip. */
+    if (relay->connection != NULL) {
+        return true;
+    }
+
     /* Set state to connecting (nostrc-4du) */
     relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTING);
 

@@ -50,11 +50,12 @@ static guint sub_signals[GNOSTR_SUBSCRIPTION_SIGNALS_COUNT] = { 0 };
  * Prevents startup floods from blocking the UI — between batches the
  * main loop processes GTK redraws and input events.
  *
- * Raised from 5 → 50: at 5/tick the subscription events channel fills
- * during the startup burst, triggering throttle sleeps (up to 50ms) in
- * message_loop which backs up the recv_channel and causes drops.
- * 50/tick still leaves >80% of each frame for GTK rendering. */
-#define MAX_EVENTS_PER_TICK 50
+ * History: 5 (original, too slow → throttle cascade → recv_channel overflow)
+ *        → 50 (too aggressive — starves GTK rendering + nostrdb dispatch,
+ *              threads broke because main loop had no time between batches)
+ *        → 20 (balanced: 4× original, drains fast enough to avoid overflow
+ *              while leaving ~70% of each frame for rendering and dispatch) */
+#define MAX_EVENTS_PER_TICK 20
 
 struct _GNostrSubscription {
     GObject parent_instance;

@@ -42,6 +42,13 @@ static guint gnostr_relay_signals[GNOSTR_RELAY_SIGNALS_COUNT] = { 0 };
 /* Legacy signal array for backward compatibility */
 static guint nostr_relay_signals[NOSTR_RELAY_SIGNALS_COUNT] = { 0 };
 
+/* nostrc-kw9r: Shared relay registry — deduplicates WebSocket connections.
+ * Multiple GNostrPool instances that connect to the same relay URL share a
+ * single GNostrRelay (and thus a single NostrRelay / NostrConnection).
+ * The registry stores weak references — relays remove themselves on finalize. */
+G_LOCK_DEFINE_STATIC(relay_registry);
+static GHashTable *g_relay_registry = NULL; /* URL → GNostrRelay* (NOT ref'd) */
+
 struct _GNostrRelay {
     GObject parent_instance;
     NostrRelay *relay;           /* Core libnostr relay */
@@ -289,6 +296,18 @@ static void
 gnostr_relay_finalize(GObject *object)
 {
     GNostrRelay *self = GNOSTR_RELAY(object);
+
+    /* nostrc-kw9r: Remove from shared relay registry before cleanup */
+    if (self->url) {
+        G_LOCK(relay_registry);
+        if (g_relay_registry) {
+            GNostrRelay *registered = g_hash_table_lookup(g_relay_registry, self->url);
+            if (registered == self) {
+                g_hash_table_remove(g_relay_registry, self->url);
+            }
+        }
+        G_UNLOCK(relay_registry);
+    }
 
 #ifdef ENABLE_NIP11
     /* Cancel any in-flight NIP-11 fetch */
@@ -562,9 +581,36 @@ gnostr_relay_init(GNostrRelay *self)
 GNostrRelay *
 gnostr_relay_new(const gchar *url)
 {
-    return g_object_new(GNOSTR_TYPE_RELAY,
-                        "url", url,
-                        NULL);
+    g_return_val_if_fail(url != NULL, NULL);
+
+    /* nostrc-kw9r: Check shared registry for existing relay to this URL.
+     * This prevents 27+ pools from opening independent WebSocket connections
+     * to the same relays.  Pools share a single GNostrRelay per URL. */
+    G_LOCK(relay_registry);
+    if (g_relay_registry) {
+        GNostrRelay *existing = g_hash_table_lookup(g_relay_registry, url);
+        if (existing) {
+            g_object_ref(existing);
+            G_UNLOCK(relay_registry);
+            g_debug("relay_registry: reusing relay for %s (refs=%u)",
+                    url, G_OBJECT(existing)->ref_count);
+            return existing;
+        }
+    }
+    G_UNLOCK(relay_registry);
+
+    GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url", url, NULL);
+
+    /* Register for future reuse */
+    G_LOCK(relay_registry);
+    if (!g_relay_registry) {
+        g_relay_registry = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                  g_free, NULL);
+    }
+    g_hash_table_insert(g_relay_registry, g_strdup(url), relay);
+    G_UNLOCK(relay_registry);
+
+    return relay;
 }
 
 gboolean
@@ -572,6 +618,11 @@ gnostr_relay_connect(GNostrRelay *self, GError **error)
 {
     g_return_val_if_fail(GNOSTR_IS_RELAY(self), FALSE);
     g_return_val_if_fail(self->relay != NULL, FALSE);
+
+    /* nostrc-kw9r: Shared relay may already be connected by another pool */
+    if (self->state == GNOSTR_RELAY_STATE_CONNECTED) {
+        return TRUE;
+    }
 
     /* Update state to connecting */
     gnostr_relay_set_state_internal(self, GNOSTR_RELAY_STATE_CONNECTING);
@@ -661,6 +712,14 @@ gnostr_relay_connect_async(GNostrRelay         *self,
 
     GTask *task = g_task_new(self, cancellable, callback, user_data);
     g_task_set_source_tag(task, gnostr_relay_connect_async);
+
+    /* nostrc-kw9r: Shared relay may already be connected — complete immediately
+     * instead of spawning a redundant worker thread. */
+    if (self->state == GNOSTR_RELAY_STATE_CONNECTED) {
+        g_task_return_boolean(task, TRUE);
+        g_object_unref(task);
+        return;
+    }
 
     ConnectAsyncData *data = g_new0(ConnectAsyncData, 1);
     data->self = g_object_ref(self);
