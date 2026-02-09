@@ -8254,7 +8254,7 @@ static gboolean profile_dispatch_next(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURCE_CONTINUE; }
+static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURCE_REMOVE; }
 
 /* Live relay switching callback (nostrc-36y.4) */
 static void on_relay_config_changed(gpointer user_data) {
