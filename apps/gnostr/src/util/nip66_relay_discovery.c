@@ -1712,6 +1712,16 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     g_error_free(error);
   }
 
+  /* nostrc-uaf2: If cancelled, the caller (discovery dialog) has already been
+   * destroyed — ctx->user_data points to freed memory.  Skip all user
+   * callbacks (on_relay_found, on_complete) and just clean up. */
+  if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+    fprintf(stderr, "[NIP66] streaming query CANCELLED — skipping callbacks (dialog closed)\n");
+    if (results) g_ptr_array_unref(results);
+    nip66_streaming_ctx_free(ctx);
+    return;
+  }
+
   fprintf(stderr, "[NIP66] streaming query returned %u raw results\n", results ? results->len : 0);
 
   /* hq-r248b: Process results here (previously handled via streaming signal).

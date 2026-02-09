@@ -615,29 +615,31 @@ gnostr_relay_connect(GNostrRelay *self, GError **error)
     g_return_val_if_fail(GNOSTR_IS_RELAY(self), FALSE);
     g_return_val_if_fail(self->relay != NULL, FALSE);
 
-    /* nostrc-kw9r: Shared relay may already be connected by another pool */
-    if (self->state == GNOSTR_RELAY_STATE_CONNECTED) {
+    /* nostrc-kw9r: Shared relay may already be connected by another pool.
+     * Use atomic load since this may be called from worker threads. */
+    if (__atomic_load_n(&self->state, __ATOMIC_SEQ_CST) == GNOSTR_RELAY_STATE_CONNECTED) {
         return TRUE;
     }
 
-    /* Update state to connecting */
-    gnostr_relay_set_state_internal(self, GNOSTR_RELAY_STATE_CONNECTING);
+    /* nostrc-blk2: Do NOT call gnostr_relay_set_state_internal() here.
+     * This function is called from worker threads (via connect_async_thread).
+     * gnostr_relay_set_state_internal() emits GObject signals (g_signal_emit,
+     * g_object_notify_by_pspec) which are NOT thread-safe — they freeze the
+     * app when signal handlers try to update GTK widgets from a worker thread.
+     *
+     * The core relay's state callback (on_core_state_changed, line 153)
+     * already dispatches state changes to the main thread via g_idle_add
+     * AND stores state atomically for immediate thread-safe reads. */
 
     Error *err = NULL;
     if (nostr_relay_connect(self->relay, &err)) {
-        gnostr_relay_set_state_internal(self, GNOSTR_RELAY_STATE_CONNECTED);
         return TRUE;
     } else {
-        gnostr_relay_set_state_internal(self, GNOSTR_RELAY_STATE_ERROR);
-
         GError *g_err = g_error_new(NOSTR_ERROR,
                                     NOSTR_ERROR_CONNECTION_FAILED,
                                     "%s",
                                     err && err->message ? err->message : "connect failed");
         if (err) free_error(err);
-
-        /* Emit error signal */
-        g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_ERROR], 0, g_err);
 
         if (error) {
             *error = g_err;
@@ -686,7 +688,9 @@ connect_async_thread(GTask        *task,
 
     /* Check for cancellation */
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        gnostr_relay_set_state_internal(self, GNOSTR_RELAY_STATE_DISCONNECTED);
+        /* nostrc-blk2: Do NOT call gnostr_relay_set_state_internal from worker
+         * thread — it emits GObject signals that freeze GTK. State hasn't
+         * changed since we haven't called connect yet. */
         g_task_return_error(task, error);
         return;
     }
