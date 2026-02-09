@@ -563,6 +563,77 @@ GdkTexture *gnostr_emoji_try_load_cached(const char *url) {
 }
 
 #ifdef HAVE_SOUP3
+
+/* hq-869ko: Data for emoji decode worker thread */
+typedef struct {
+  GBytes *bytes;  /* owned — raw image data */
+  char *url;      /* owned — for disk cache path */
+} EmojiDecodeTaskData;
+
+static void emoji_decode_task_data_free(gpointer p) {
+  EmojiDecodeTaskData *d = (EmojiDecodeTaskData *)p;
+  if (d->bytes) g_bytes_unref(d->bytes);
+  g_free(d->url);
+  g_free(d);
+}
+
+/* hq-869ko: Worker thread: decode emoji + write disk cache off main thread.
+ * Both image decode (pixbuf) and disk I/O are blocking operations. */
+static void emoji_decode_thread(GTask *task, gpointer source_object,
+                                 gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  EmojiDecodeTaskData *d = (EmojiDecodeTaskData *)task_data;
+  GError *error = NULL;
+
+  GdkTexture *tex = emoji_texture_from_bytes_scaled(d->bytes, &error);
+  if (!tex) {
+    g_task_return_error(task, error);
+    return;
+  }
+
+  /* Write to disk cache (blocking I/O — fine on worker thread) */
+  g_autofree char *path = emoji_path_for_url(d->url);
+  if (path) {
+    gsize len = 0;
+    const guint8 *data = g_bytes_get_data(d->bytes, &len);
+    GError *werr = NULL;
+    if (g_file_set_contents(path, (const char*)data, (gssize)len, &werr)) {
+      g_debug("emoji http: wrote cache file %s", path);
+    } else {
+      g_warning("emoji http: failed to write cache %s: %s", path, werr ? werr->message : "unknown");
+      g_clear_error(&werr);
+    }
+  }
+
+  g_task_return_pointer(task, tex, g_object_unref);
+}
+
+/* hq-869ko: Main-thread completion: insert decoded emoji into memory cache */
+static void on_emoji_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  EmojiCacheCtx *ctx = (EmojiCacheCtx *)user_data;
+  GError *error = NULL;
+
+  GdkTexture *tex = g_task_propagate_pointer(G_TASK(res), &error);
+  if (!tex) {
+    if (error) {
+      g_warning("emoji http: INVALID IMAGE for url=%s: %s", ctx->url, error->message);
+      g_error_free(error);
+    }
+    emoji_ctx_free(ctx);
+    return;
+  }
+
+  ensure_emoji_cache();
+  g_hash_table_replace(s_emoji_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
+  emoji_lru_insert(ctx->url);
+  emoji_lru_evict_if_needed();
+  g_debug("emoji http: cached texture for url=%s", ctx->url);
+
+  g_object_unref(tex);
+  emoji_ctx_free(ctx);
+}
+
 static void on_emoji_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)source;
   EmojiCacheCtx *ctx = (EmojiCacheCtx*)user_data;
@@ -582,40 +653,17 @@ static void on_emoji_http_done(GObject *source, GAsyncResult *res, gpointer user
   s_emoji_metrics.http_ok++;
   g_debug("emoji http: fetched url=%s bytes=%zu", ctx->url, (size_t)blen);
 
-  /* Validate and decode the image */
-  GdkTexture *tex = emoji_texture_from_bytes_scaled(bytes, &error);
-  if (!tex) {
-    g_warning("emoji http: INVALID IMAGE for url=%s: %s", ctx->url, error ? error->message : "unknown");
-    g_clear_error(&error);
-    g_bytes_unref(bytes);
-    emoji_ctx_free(ctx);
-    return;
-  }
+  /* hq-869ko: Decode image + write disk cache in worker thread to avoid
+   * blocking main loop with pixbuf decompression and file I/O. */
+  EmojiDecodeTaskData *td = g_new0(EmojiDecodeTaskData, 1);
+  td->bytes = bytes;  /* takes ownership */
+  td->url = g_strdup(ctx->url);
 
-  /* Write to disk cache */
-  g_autofree char *path = emoji_path_for_url(ctx->url);
-  if (path) {
-    gsize len = 0;
-    const guint8 *data = g_bytes_get_data(bytes, &len);
-    GError *werr = NULL;
-    if (g_file_set_contents(path, (const char*)data, (gssize)len, &werr)) {
-      g_debug("emoji http: wrote cache file %s", path);
-    } else {
-      s_emoji_metrics.cache_write_error++;
-      g_warning("emoji http: failed to write cache %s: %s", path, werr ? werr->message : "unknown");
-      g_clear_error(&werr);
-    }
-  }
-
-  g_bytes_unref(bytes);
-  ensure_emoji_cache();
-  g_hash_table_replace(s_emoji_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
-  emoji_lru_insert(ctx->url);
-  emoji_lru_evict_if_needed();
-  g_debug("emoji http: cached texture for url=%s", ctx->url);
-
-  g_object_unref(tex);
-  emoji_ctx_free(ctx);
+  GTask *task = g_task_new(NULL, NULL, on_emoji_decode_done, ctx);
+  g_task_set_task_data(task, td, emoji_decode_task_data_free);
+  g_task_run_in_thread(task, emoji_decode_thread);
+  g_object_unref(task);
+  /* ctx ownership passed to completion callback */
 }
 #endif
 

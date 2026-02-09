@@ -194,6 +194,40 @@ static void on_open_external_clicked(GtkButton *btn, gpointer user_data) {
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 
+/* hq-869ko: Worker thread: decode article header image off main thread.
+ * GdkTexture is immutable and thread-safe to create from any thread. */
+static void article_image_decode_thread(GTask *task, gpointer source_object,
+                                         gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes *)task_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture)
+    g_task_return_pointer(task, texture, g_object_unref);
+  else
+    g_task_return_error(task, error);
+}
+
+/* hq-869ko: Main-thread completion: apply decoded header texture to widget */
+static void on_article_image_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  GnostrArticleReader *self = GNOSTR_ARTICLE_READER(user_data);
+  GError *error = NULL;
+
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  if (texture && self->root_box != NULL) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->header_image), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(self->header_image, TRUE);
+  }
+  if (texture) g_object_unref(texture);
+  if (error) {
+    g_warning("article_reader: failed to create header texture: %s", error->message);
+    g_error_free(error);
+  }
+  g_object_unref(self);
+}
+
 static void on_header_image_ready(GObject *source, GAsyncResult *result, gpointer user_data) {
   GnostrArticleReader *self = GNOSTR_ARTICLE_READER(user_data);
   GError *error = NULL;
@@ -229,19 +263,13 @@ static void on_header_image_ready(GObject *source, GAsyncResult *result, gpointe
     return;
   }
 
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-
-  if (texture) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->header_image), GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(self->header_image, TRUE);
-    g_object_unref(texture);
-  } else {
-    if (error)
-      g_warning("article_reader: failed to create header texture: %s", error->message);
-    g_clear_error(&error);
-  }
-  g_object_unref(self);
+  /* hq-869ko: Decode image in worker thread — large header images can take
+   * 50-200ms to decompress, which would drop frames on the main thread.
+   * self ref ownership passes to completion callback. */
+  GTask *task = g_task_new(NULL, NULL, on_article_image_decode_done, self);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, article_image_decode_thread);
+  g_object_unref(task);
 }
 
 static void load_header_image(GnostrArticleReader *self, const char *url) {

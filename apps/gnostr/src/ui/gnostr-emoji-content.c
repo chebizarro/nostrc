@@ -184,6 +184,57 @@ static void add_emoji_image(GnostrEmojiContent *self, GnostrCustomEmoji *emoji) 
 }
 
 #ifdef HAVE_SOUP3
+/* hq-869ko: Worker thread: decode emoji pixbuf → texture off main thread.
+ * GdkPixbuf and GdkTexture are thread-safe to create from any thread. */
+static void emoji_content_decode_thread(GTask *task, gpointer source_object,
+                                         gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes *)task_data;
+
+  GInputStream *stream = g_memory_input_stream_new_from_bytes(bytes);
+  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream_at_scale(stream, 24, 24, TRUE, NULL, NULL);
+  g_object_unref(stream);
+
+  if (!pixbuf) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to decode emoji pixbuf");
+    return;
+  }
+
+  int width = gdk_pixbuf_get_width(pixbuf);
+  int height = gdk_pixbuf_get_height(pixbuf);
+  int rowstride = gdk_pixbuf_get_rowstride(pixbuf);
+  gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
+  GBytes *pix_bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
+
+  GdkMemoryFormat format = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
+  GdkTexture *texture = gdk_memory_texture_new(width, height, format, pix_bytes, rowstride);
+
+  g_bytes_unref(pix_bytes);
+  g_object_unref(pixbuf);
+
+  g_task_return_pointer(task, texture, g_object_unref);
+}
+
+/* hq-869ko: Main-thread completion: apply decoded emoji texture to widget */
+static void on_emoji_content_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  EmojiLoadCtx *ctx = (EmojiLoadCtx *)user_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  if (texture && ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
+    gtk_picture_set_paintable(ctx->picture, GDK_PAINTABLE(texture));
+  }
+
+  if (texture) g_object_unref(texture);
+  if (error) {
+    g_debug("Emoji: failed to decode: %s", error->message);
+    g_error_free(error);
+  }
+  if (ctx->picture) g_object_unref(ctx->picture);
+  emoji_load_ctx_free(ctx);
+}
+
 static void on_emoji_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   EmojiLoadCtx *ctx = (EmojiLoadCtx *)user_data;
   if (!ctx) return;
@@ -202,33 +253,19 @@ static void on_emoji_loaded(GObject *source, GAsyncResult *res, gpointer user_da
     return;
   }
 
-  if (bytes && ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
-    GInputStream *stream = g_memory_input_stream_new_from_bytes(bytes);
-    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream_at_scale(stream, 24, 24, TRUE, NULL, NULL);
-    g_object_unref(stream);
-
-    if (pixbuf) {
-      /* Create texture from pixbuf */
-      int width = gdk_pixbuf_get_width(pixbuf);
-      int height = gdk_pixbuf_get_height(pixbuf);
-      int rowstride = gdk_pixbuf_get_rowstride(pixbuf);
-      gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
-      GBytes *pix_bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
-
-      GdkMemoryFormat format = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
-      GdkTexture *texture = gdk_memory_texture_new(width, height, format, pix_bytes, rowstride);
-
-      gtk_picture_set_paintable(ctx->picture, GDK_PAINTABLE(texture));
-
-      g_bytes_unref(pix_bytes);
-      g_object_unref(texture);
-      g_object_unref(pixbuf);
-    }
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    if (bytes) g_bytes_unref(bytes);
+    if (ctx->picture) g_object_unref(ctx->picture);
+    emoji_load_ctx_free(ctx);
+    return;
   }
 
-  if (bytes) g_bytes_unref(bytes);
-  if (ctx->picture) g_object_unref(ctx->picture);
-  emoji_load_ctx_free(ctx);
+  /* hq-869ko: Decode emoji in worker thread to avoid blocking main loop */
+  GTask *task = g_task_new(NULL, NULL, on_emoji_content_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, emoji_content_decode_thread);
+  g_object_unref(task);
+  /* ctx + picture ref ownership passed to completion callback */
 }
 #endif
 

@@ -284,6 +284,41 @@ static OgMetadata *parse_og_metadata(const char *html, const char *url) {
   return meta;
 }
 
+/* hq-869ko: Worker thread: decode OG preview image off main thread.
+ * GdkTexture is immutable and thread-safe to create from any thread. */
+static void og_image_decode_thread(GTask *task, gpointer source_object,
+                                    gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes *)task_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture)
+    g_task_return_pointer(task, texture, g_object_unref);
+  else
+    g_task_return_error(task, error);
+}
+
+/* hq-869ko: Main-thread completion: apply decoded OG texture to widget */
+static void on_og_image_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  OgPreviewWidget *self = OG_PREVIEW_WIDGET(user_data);
+  GError *error = NULL;
+
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  if (texture && !self->disposed && self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(self->image_widget, TRUE);
+  }
+
+  if (texture) g_object_unref(texture);
+  if (error) {
+    g_debug("OG: Failed to create texture: %s", error->message);
+    g_error_free(error);
+  }
+  g_object_unref(self);
+}
+
 /* Async image loading callback.
  * user_data is a weak ref pointer that will be NULL if widget was destroyed. */
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -291,22 +326,22 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   GObject **weak_ref = (GObject **)user_data;
   OgPreviewWidget *self = NULL;
   GError *error = NULL;
-  
+
   /* Check weak reference - if NULL, widget was destroyed */
   if (weak_ref && *weak_ref) {
     self = OG_PREVIEW_WIDGET(*weak_ref);
     /* Remove weak pointer before freeing container - widget is still alive */
     g_object_remove_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
   }
-  
+
   /* Clean up weak ref container */
   g_free(weak_ref);
-  
+
   /* Exit early if widget was destroyed or is being disposed */
   if (!self || self->disposed) {
     return;
   }
-  
+
   GBytes *bytes = soup_session_send_and_read_finish(session, res, &error);
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -315,35 +350,24 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
     g_error_free(error);
     return;
   }
-  
+
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
     return;
   }
-  
-  /* Re-check disposed flag before creating texture */
+
+  /* Re-check disposed flag before decoding */
   if (self->disposed) {
     g_bytes_unref(bytes);
     return;
   }
-  
-  /* Create texture from bytes */
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-  
-  if (error) {
-    g_debug("OG: Failed to create texture: %s", error->message);
-    g_error_free(error);
-    return;
-  }
-  
-  /* Update UI - verify widget is still valid and not disposed */
-  if (!self->disposed && self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(self->image_widget, TRUE);
-  }
-  
-  g_object_unref(texture);
+
+  /* hq-869ko: Decode image in worker thread — large OG images can take
+   * 50-200ms to decompress, which would drop frames on the main thread. */
+  GTask *task = g_task_new(NULL, NULL, on_og_image_decode_done, g_object_ref(self));
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, og_image_decode_thread);
+  g_object_unref(task);
 }
 
 /* Load image asynchronously */
