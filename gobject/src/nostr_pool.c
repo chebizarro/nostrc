@@ -721,13 +721,17 @@ query_thread_func(GTask         *task,
         return;
     }
 
-    /* Drain events from all subscriptions until all EOSE or cancelled/timeout */
+    /* Drain events from all subscriptions until all EOSE or cancelled/timeout.
+     * nostrc-blk1: Also exit early if no activity for 3s after receiving results
+     * — avoids waiting the full timeout for relays that never respond. */
     guint64 deadline_us = 0;
     if (data->timeout_ms > 0) {
         deadline_us = g_get_monotonic_time() + (guint64)data->timeout_ms * 1000;
     }
     gint64 poll_start = g_get_monotonic_time();
     gint64 first_event_time = 0;
+    gint64 last_activity_time = g_get_monotonic_time();
+    guint eose_count = 0;
     guint poll_iterations = 0;
     g_debug("pool_query_thread: polling for events (timeout=%ums)", data->timeout_ms);
 
@@ -784,23 +788,65 @@ query_thread_func(GTask         *task,
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 item->eosed = TRUE;
                 any_activity = TRUE;
+                eose_count++;
                 fprintf(stderr, "[POOL_QUERY] poll: relay[%u] EOSE after %lldms, %u results so far\n",
                         i, (long long)((g_get_monotonic_time() - poll_start) / 1000),
                         data->results->len);
             }
         }
 
+        if (any_activity)
+            last_activity_time = g_get_monotonic_time();
+
         if (all_eosed) {
             fprintf(stderr, "[POOL_QUERY] all relays sent EOSE after %lldms, %u results collected\n",
                     (long long)((g_get_monotonic_time() - poll_start) / 1000), data->results->len);
             break;
         }
+
+        /* nostrc-blk1: Early exit on inactivity — if at least one relay sent
+         * EOSE and no activity for 3s, stop waiting for unresponsive relays. */
+        if (eose_count > 0 && data->results->len > 0) {
+            gint64 idle_ms = (g_get_monotonic_time() - last_activity_time) / 1000;
+            if (idle_ms >= 3000) {
+                fprintf(stderr, "[POOL_QUERY] inactivity exit after %lldms idle (%u/%u relays EOSE, %u results)\n",
+                        (long long)idle_ms, eose_count, items->len, data->results->len);
+                break;
+            }
+        }
+
         if (!any_activity)
             g_usleep(1000); /* 1ms backoff */
     }
     fprintf(stderr, "[POOL_QUERY] poll loop done, %u results total\n", data->results->len);
 
-    /* Cleanup subscriptions and temp relays */
+    /* nostrc-blk1: Deliver results BEFORE subscription cleanup.
+     * nostr_subscription_close/free can block waiting on lifecycle worker
+     * wait groups, which would prevent g_task_return_pointer from ever
+     * being called — causing 0 results delivered to the UI despite
+     * events being received from relays. */
+
+    /* 1. Persist fetched events via the event sink (e.g. nostrdb).
+     * Build a copy of the JSON strings since the sink takes ownership. */
+    if (data->event_sink_func && data->results->len > 0) {
+        GPtrArray *copy = g_ptr_array_new_with_free_func(g_free);
+        for (guint i = 0; i < data->results->len; i++) {
+            const char *json = g_ptr_array_index(data->results, i);
+            if (json)
+                g_ptr_array_add(copy, g_strdup(json));
+        }
+        data->event_sink_func(copy, data->event_sink_data);
+    }
+
+    /* 2. Return results to the caller immediately */
+    g_debug("Query completed with %u results — returning before cleanup",
+            data->results->len);
+    fprintf(stderr, "[POOL_QUERY] returning %u results to caller\n", data->results->len);
+    g_task_return_pointer(task, data->results,
+                          (GDestroyNotify)g_ptr_array_unref);
+    data->results = NULL; /* ownership transferred to GTask */
+
+    /* 3. Now do subscription cleanup — may block, but results already delivered */
     for (guint i = 0; i < items->len; i++) {
         RelaySubItem *item = g_ptr_array_index(items, i);
         if (!item) continue;
@@ -813,23 +859,7 @@ query_thread_func(GTask         *task,
         g_free(item);
     }
     g_ptr_array_unref(items);
-
-    g_debug("Query completed with %u results", data->results->len);
-
-    /* Persist fetched events via the event sink (e.g. nostrdb).
-     * Build a copy of the JSON strings since the sink takes ownership. */
-    if (data->event_sink_func && data->results->len > 0) {
-        GPtrArray *copy = g_ptr_array_new_with_free_func(g_free);
-        for (guint i = 0; i < data->results->len; i++) {
-            const char *json = g_ptr_array_index(data->results, i);
-            if (json)
-                g_ptr_array_add(copy, g_strdup(json));
-        }
-        data->event_sink_func(copy, data->event_sink_data);
-    }
-
-    g_task_return_pointer(task, data->results,
-                          (GDestroyNotify)g_ptr_array_unref);
+    fprintf(stderr, "[POOL_QUERY] subscription cleanup done\n");
 }
 
 void
