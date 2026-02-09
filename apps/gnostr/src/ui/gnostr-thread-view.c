@@ -1933,23 +1933,23 @@ static void fetch_nip65_for_missing_authors(GnostrThreadView *self) {
 
 /* Callback for relay query completion */
 static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-
-  if (!GNOSTR_IS_THREAD_VIEW(self)) return;
-  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
-  if (self->disposed) return;
-
+  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_warning("[THREAD_VIEW] Query failed: %s", error->message);
-      show_empty_state(self, "Failed to load thread");
     }
     g_error_free(error);
+    if (results) g_ptr_array_unref(results);
     return;
   }
+
+  /* Now safe to access user_data */
+  if (!user_data) return;
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
 
   if (!results || results->len == 0) {
     g_debug("[THREAD_VIEW] No events found from relays");
@@ -1989,32 +1989,25 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
 
 /* Callback for root event fetch completion */
 static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-
-  g_message("[THREAD_VIEW] on_root_fetch_done: callback fired");
-
-  if (!GNOSTR_IS_THREAD_VIEW(self)) {
-    g_message("[THREAD_VIEW] on_root_fetch_done: self is not valid, aborting");
-    return;
-  }
-  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
-  if (self->disposed) {
-    g_message("[THREAD_VIEW] on_root_fetch_done: widget disposed, aborting");
-    return;
-  }
-
+  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_message("[THREAD_VIEW] Root fetch failed: %s", error->message);
-    } else {
-      g_message("[THREAD_VIEW] Root fetch cancelled");
     }
     g_error_free(error);
+    if (results) g_ptr_array_unref(results);
     return;
   }
+
+  /* Now safe to access user_data */
+  if (!user_data) return;
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
+
+  g_message("[THREAD_VIEW] on_root_fetch_done: callback fired");
 
   if (results && results->len > 0) {
     g_message("[THREAD_VIEW] Received %u root/ancestor events from relays", results->len);
@@ -2049,12 +2042,7 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
 /* Callback for missing ancestor fetch completion.
  * nostrc-46g: Improved to continue chain traversal until root is reached. */
 static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-
-  if (!GNOSTR_IS_THREAD_VIEW(self)) return;
-  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
-  if (self->disposed) return;
-
+  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
@@ -2063,10 +2051,14 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
       g_debug("[THREAD_VIEW] Missing ancestors fetch failed: %s", error->message);
     }
     g_error_free(error);
-    /* nostrc-46g: Even on error, try to continue chain traversal with what we have */
-    fetch_missing_ancestors(self);
+    if (results) g_ptr_array_unref(results);
     return;
   }
+
+  /* Now safe to access user_data */
+  if (!user_data) return;
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
 
   gboolean found_new_events = FALSE;
 
@@ -2510,12 +2502,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
 
 /* Callback for child discovery query completion */
 static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-
-  if (!GNOSTR_IS_THREAD_VIEW(self)) return;
-  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
-  if (self->disposed) return;
-
+  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
@@ -2524,8 +2511,14 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
       g_debug("[THREAD_VIEW] Children query failed: %s", error->message);
     }
     g_error_free(error);
+    if (results) g_ptr_array_unref(results);
     return;
   }
+
+  /* Now safe to access user_data */
+  if (!user_data) return;
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
 
   gboolean found_new = FALSE;
 
