@@ -1997,7 +1997,7 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("Failed to load banner: %s", error->message);
+      g_warning("profile_pane: banner fetch FAILED for url=%s: %s", ctx->url, error->message);
     }
     g_clear_error(&error);
     banner_load_ctx_free(ctx);
@@ -2005,18 +2005,22 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
   }
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
-    g_debug("Empty banner response");
+    g_warning("profile_pane: empty banner response for url=%s", ctx->url);
     if (bytes) g_bytes_unref(bytes);
     banner_load_ctx_free(ctx);
     return;
   }
+
+  g_debug("profile_pane: banner response %zu bytes for url=%s",
+          g_bytes_get_size(bytes), ctx->url);
 
   /* Create texture from bytes at FULL RESOLUTION for banner quality */
   GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
 
   if (error) {
-    g_debug("Failed to create banner texture: %s", error->message);
+    g_warning("profile_pane: failed to create banner texture for url=%s: %s",
+              ctx->url, error->message);
     g_clear_error(&error);
     banner_load_ctx_free(ctx);
     return;
@@ -2066,15 +2070,22 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
   ctx->url = g_strdup(url);
 
   /* Fetch banner at full resolution */
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) {
+    g_warning("profile_pane: shared soup session unavailable for banner load");
+    banner_load_ctx_free(ctx);
+    return;
+  }
+
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
-    g_debug("profile_pane: invalid banner URL: %s", url);
+    g_warning("profile_pane: invalid banner URL: %s", url);
     banner_load_ctx_free(ctx);
     return;
   }
 
   g_debug("profile_pane: loading banner at full resolution url=%s", url);
-  soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT,
+  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
                                     self->banner_cancellable, on_banner_loaded, ctx);
   g_object_unref(msg);
 }
@@ -2258,8 +2269,15 @@ static void update_profile_ui(GnostrProfilePane *self, const char *profile_json)
   }
   if (banner && *banner) {
     /* Use dedicated banner loader for full resolution (avatar cache downscales to 96px) */
+    g_debug("profile_pane: banner URL found for %.8s: %s",
+            self->current_pubkey ? self->current_pubkey : "(null)", banner);
     load_banner_async(self, banner);
+  } else {
+    g_warning("profile_pane: NO banner URL in profile JSON for %.8s",
+              self->current_pubkey ? self->current_pubkey : "(null)");
   }
+#else
+  g_warning("profile_pane: HAVE_SOUP3 not defined — banner loading disabled");
 #endif
   
   /* Add metadata rows */
@@ -3465,7 +3483,8 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
         if (evt && nostr_event_deserialize(evt, event_json) == 0) {
           const char *content = nostr_event_get_content(evt);
           if (content && *content) {
-            g_debug("profile_pane: loaded profile from nostrdb cache for %.8s", self->current_pubkey);
+            g_debug("profile_pane: loaded profile from nostrdb cache for %.8s (content_len=%zu)",
+                    self->current_pubkey, strlen(content));
 
             /* Store full event JSON for NIP-39 identity parsing */
             g_free(self->current_event_json);
