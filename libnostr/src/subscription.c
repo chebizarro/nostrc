@@ -532,27 +532,26 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
         GoChannel *write_channel = nostr_relay_write(sub->relay, close_msg_str);
         free(close_msg_str);
 
-        // Wait for the result of the write, but don't block indefinitely
-        Error *write_err = NULL;
-        struct timespec now;
-        clock_gettime(CLOCK_REALTIME, &now);
-        struct timespec deadline = now;
-        deadline.tv_sec += 0;
-        long nsec_add = 200 * 1000000L; // 200ms timeout
-        deadline.tv_nsec += nsec_add;
-        if (deadline.tv_nsec >= 1000000000L) {
-            deadline.tv_sec += 1;
-            deadline.tv_nsec -= 1000000000L;
-        }
-        GoContext *wctx = go_with_deadline(go_context_background(), deadline);
-        (void)go_channel_receive_with_context(write_channel, (void **)&write_err, wctx);
-        go_context_free(wctx);
-        // Writer owns lifecycle of the answer channel; do not close/free here
-        if (write_err) {
-            if (err) *err = write_err;
-        }
-        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
-            fprintf(stderr, "[sub %s] close: write done (err=%p)\n", sub->priv->id, (void *)write_err);
+        /* Non-blocking check for immediate write failure only.
+         * DO NOT block — close is called from GObject dispose on the GTK
+         * main thread.  The CLOSE message is fire-and-forget; the relay
+         * will stop sending events regardless of write confirmation. */
+        {
+            Error *write_err = NULL;
+            GoSelectCase cases[1];
+            cases[0].op = GO_SELECT_RECEIVE;
+            cases[0].chan = write_channel;
+            cases[0].recv_buf = (void **)&write_err;
+
+            GoSelectResult result = go_select_timeout(cases, 1, 0);
+
+            if (result.selected_case >= 0 && write_err) {
+                if (err) *err = write_err;
+            }
+            if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+                fprintf(stderr, "[sub %s] close: write queued (err=%p)\n",
+                        sub->priv->id, (void *)write_err);
+            }
         }
     }
 }
