@@ -318,6 +318,9 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 /* Forward declarations for like context and callback (NIP-25) */
 typedef struct _LikeContext LikeContext;
 static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+/* Forward declarations for async relay publish (connect+publish off main thread) */
+static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void on_like_publish_done(GObject *source, GAsyncResult *res, gpointer user_data);
 /* Forward declarations for public repost/quote/like functions (defined after PublishContext) */
 void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
@@ -6955,6 +6958,108 @@ static void publish_context_free(PublishContext *ctx) {
   g_free(ctx);
 }
 
+/* --- Async relay publish worker (runs connect+publish loop off main thread) --- */
+
+typedef struct {
+  NostrEvent *event;            /* owned; event to publish */
+  GPtrArray *relay_urls;        /* owned; URLs to publish to */
+  char *signed_event_json;      /* owned; for validation + NDB ingest */
+  guint success_count;
+  guint fail_count;
+  guint limit_skip_count;
+  char *limit_warnings;         /* owned; accumulated warnings */
+} RelayPublishResult;
+
+static void relay_publish_result_free(RelayPublishResult *r) {
+  if (!r) return;
+  if (r->event) nostr_event_free(r->event);
+  if (r->relay_urls) g_ptr_array_free(r->relay_urls, TRUE);
+  g_free(r->signed_event_json);
+  g_free(r->limit_warnings);
+  g_free(r);
+}
+
+/* Worker thread: connect + publish to each relay without blocking main thread.
+ * The nostr C relay layer is thread-safe (uses nsync mutexes and channels). */
+static void relay_publish_thread(GTask *task, gpointer source_object,
+                                  gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  RelayPublishResult *r = (RelayPublishResult*)task_data;
+
+  const char *content = nostr_event_get_content(r->event);
+  gint content_len = content ? (gint)strlen(content) : 0;
+  NostrTags *tags = nostr_event_get_tags(r->event);
+  gint tag_count = tags ? (gint)nostr_tags_size(tags) : 0;
+  gint64 created_at = nostr_event_get_created_at(r->event);
+  gssize serialized_len = r->signed_event_json ? (gssize)strlen(r->signed_event_json) : -1;
+
+  GString *warnings = g_string_new(NULL);
+
+  for (guint i = 0; i < r->relay_urls->len; i++) {
+    const char *url = (const char*)g_ptr_array_index(r->relay_urls, i);
+
+    /* NIP-11: Check relay limitations before publishing */
+    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
+    if (relay_info) {
+      GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
+        relay_info, content, content_len, tag_count, created_at, serialized_len);
+      if (!gnostr_relay_validation_result_is_valid(validation)) {
+        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
+        if (errors) {
+          if (warnings->len > 0) g_string_append(warnings, "\n");
+          g_string_append(warnings, errors);
+          g_free(errors);
+        }
+        gnostr_relay_validation_result_free(validation);
+        gnostr_relay_info_free(relay_info);
+        r->limit_skip_count++;
+        continue;
+      }
+      gnostr_relay_validation_result_free(validation);
+
+      GnostrRelayValidationResult *pub_validation =
+          gnostr_relay_info_validate_for_publishing(relay_info);
+      if (!gnostr_relay_validation_result_is_valid(pub_validation)) {
+        gchar *errors = gnostr_relay_validation_result_format_errors(pub_validation);
+        if (errors) {
+          if (warnings->len > 0) g_string_append(warnings, "\n");
+          g_string_append(warnings, errors);
+          g_free(errors);
+        }
+        gnostr_relay_validation_result_free(pub_validation);
+        gnostr_relay_info_free(relay_info);
+        r->limit_skip_count++;
+        continue;
+      }
+      gnostr_relay_validation_result_free(pub_validation);
+      gnostr_relay_info_free(relay_info);
+    }
+
+    GNostrRelay *relay = gnostr_relay_new(url);
+    if (!relay) { r->fail_count++; continue; }
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_clear_error(&conn_err);
+      g_object_unref(relay);
+      r->fail_count++;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, r->event, &pub_err)) {
+      r->success_count++;
+    } else {
+      g_clear_error(&pub_err);
+      r->fail_count++;
+    }
+    g_object_unref(relay);
+  }
+
+  r->limit_warnings = g_string_free(warnings, FALSE);
+  g_task_return_pointer(task, r, NULL); /* caller frees */
+}
+
 /* Callback when unified signer service completes signing */
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   PublishContext *ctx = (PublishContext*)user_data;
@@ -6992,120 +7097,59 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  /* Get write-capable relay URLs from config (NIP-65: write-only or read+write) */
-  GPtrArray *relay_urls = gnostr_get_write_relay_urls();
+  /* Dispatch connect+publish to worker thread to avoid blocking the
+   * main loop with synchronous relay connections (DNS + TLS handshake
+   * under g_lws_mutex starves the LWS service thread). */
+  RelayPublishResult *r = g_new0(RelayPublishResult, 1);
+  r->event = event;           /* transfer ownership */
+  r->relay_urls = gnostr_get_write_relay_urls();
+  r->signed_event_json = signed_event_json; /* transfer ownership */
 
-  /* Extract event properties for validation */
-  const char *content = nostr_event_get_content(event);
-  gint content_len = content ? (gint)strlen(content) : 0;
-  NostrTags *tags = nostr_event_get_tags(event);
-  gint tag_count = tags ? (gint)nostr_tags_size(tags) : 0;
-  gint64 created_at = nostr_event_get_created_at(event);
-  gssize serialized_len = signed_event_json ? (gssize)strlen(signed_event_json) : -1;
+  GTask *task = g_task_new(NULL, NULL, on_publish_relay_loop_done, ctx);
+  g_task_set_task_data(task, r, NULL);
+  g_task_run_in_thread(task, relay_publish_thread);
+  g_object_unref(task);
+}
 
-  /* Publish to each write relay */
-  guint success_count = 0;
-  guint fail_count = 0;
-  guint limit_skip_count = 0;
-  GString *limit_warnings = g_string_new(NULL);
+/* Main-thread callback after publish worker completes */
+static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  PublishContext *ctx = (PublishContext*)user_data;
+  RelayPublishResult *r = g_task_propagate_pointer(G_TASK(res), NULL);
+  if (!r) { publish_context_free(ctx); return; }
 
-  for (guint i = 0; i < relay_urls->len; i++) {
-    const char *url = (const char*)g_ptr_array_index(relay_urls, i);
-
-    /* NIP-11: Check relay limitations before publishing */
-    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
-    if (relay_info) {
-      GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
-        relay_info, content, content_len, tag_count, created_at, serialized_len);
-
-      if (!gnostr_relay_validation_result_is_valid(validation)) {
-        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
-        if (errors) {
-          if (limit_warnings->len > 0) g_string_append(limit_warnings, "\n");
-          g_string_append(limit_warnings, errors);
-          g_free(errors);
-        }
-        gnostr_relay_validation_result_free(validation);
-        gnostr_relay_info_free(relay_info);
-        limit_skip_count++;
-        continue;
-      }
-      gnostr_relay_validation_result_free(validation);
-
-      /* nostrc-23: Check auth_required / payment_required before publishing */
-      GnostrRelayValidationResult *pub_validation =
-          gnostr_relay_info_validate_for_publishing(relay_info);
-      if (!gnostr_relay_validation_result_is_valid(pub_validation)) {
-        gchar *errors = gnostr_relay_validation_result_format_errors(pub_validation);
-        if (errors) {
-          if (limit_warnings->len > 0) g_string_append(limit_warnings, "\n");
-          g_string_append(limit_warnings, errors);
-          g_free(errors);
-        }
-        gnostr_relay_validation_result_free(pub_validation);
-        gnostr_relay_info_free(relay_info);
-        limit_skip_count++;
-        continue;
-      }
-      gnostr_relay_validation_result_free(pub_validation);
-      gnostr_relay_info_free(relay_info);
-    }
-
-    GNostrRelay *relay = gnostr_relay_new(url);
-    if (!relay) {
-      fail_count++;
-      continue;
-    }
-
-    GError *conn_err = NULL;
-    if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_clear_error(&conn_err);
-      g_object_unref(relay);
-      fail_count++;
-      continue;
-    }
-
-    GError *pub_err = NULL;
-    if (gnostr_relay_publish(relay, event, &pub_err)) {
-      success_count++;
-    } else {
-      g_clear_error(&pub_err);
-      fail_count++;
-    }
-    g_object_unref(relay);
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
+    relay_publish_result_free(r);
+    publish_context_free(ctx);
+    return;
   }
+  GnostrMainWindow *self = ctx->self;
 
-  /* Show result toast */
-  if (success_count > 0) {
+  if (r->success_count > 0) {
     char *msg;
-    if (limit_skip_count > 0) {
+    if (r->limit_skip_count > 0) {
       msg = g_strdup_printf("Published to %u relay%s (%u skipped due to limits)",
-                            success_count, success_count == 1 ? "" : "s", limit_skip_count);
+                            r->success_count, r->success_count == 1 ? "" : "s", r->limit_skip_count);
     } else {
-      msg = g_strdup_printf("Published to %u relay%s", success_count, success_count == 1 ? "" : "s");
+      msg = g_strdup_printf("Published to %u relay%s", r->success_count, r->success_count == 1 ? "" : "s");
     }
     show_toast(self, msg);
     g_free(msg);
 
-    /* nostrc-c0mp: Close compose dialog and clear composer on successful publish */
     if (ctx->composer && GNOSTR_IS_COMPOSER(ctx->composer)) {
-      /* Get the dialog reference stored on the composer */
       AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(ctx->composer), "compose-dialog"));
       if (dialog && ADW_IS_DIALOG(dialog)) {
         adw_dialog_force_close(dialog);
       }
-      /* Clear the composer for next use */
       gnostr_composer_clear(ctx->composer);
     }
 
-    /* Switch to timeline tab via session view */
     if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
       gnostr_session_view_show_page(self->session_view, "timeline");
     }
   } else {
-    if (limit_skip_count > 0 && limit_warnings->len > 0) {
-      /* All relays skipped due to limits - show detailed warning */
-      char *msg = g_strdup_printf("Event exceeds relay limits:\n%s", limit_warnings->str);
+    if (r->limit_skip_count > 0 && r->limit_warnings && *r->limit_warnings) {
+      char *msg = g_strdup_printf("Event exceeds relay limits:\n%s", r->limit_warnings);
       show_toast(self, msg);
       g_free(msg);
     } else {
@@ -7113,16 +7157,11 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     }
   }
 
-  /* Log limit warnings for debugging */
-  if (limit_warnings->len > 0) {
-    g_warning("[PUBLISH] Relay limit violations:\n%s", limit_warnings->str);
+  if (r->limit_warnings && *r->limit_warnings) {
+    g_warning("[PUBLISH] Relay limit violations:\n%s", r->limit_warnings);
   }
 
-  /* Cleanup */
-  g_string_free(limit_warnings, TRUE);
-  nostr_event_free(event);
-  g_free(signed_event_json);
-  g_ptr_array_free(relay_urls, TRUE);
+  relay_publish_result_free(r);
   publish_context_free(ctx);
 }
 
@@ -7510,69 +7549,36 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
     return;
   }
 
-  /* Get write-capable relay URLs from config (NIP-65: write-only or read+write) */
-  GPtrArray *relay_urls = gnostr_get_write_relay_urls();
+  /* Dispatch connect+publish to worker thread to avoid blocking the
+   * main loop with synchronous relay connections. */
+  RelayPublishResult *r = g_new0(RelayPublishResult, 1);
+  r->event = event;                          /* transfer ownership */
+  r->relay_urls = gnostr_get_write_relay_urls();
+  r->signed_event_json = signed_event_json;  /* transfer ownership */
 
-  /* Extract event properties for NIP-11 validation */
-  const char *like_content = nostr_event_get_content(event);
-  gint like_content_len = like_content ? (gint)strlen(like_content) : 0;
-  NostrTags *like_tags = nostr_event_get_tags(event);
-  gint like_tag_count = like_tags ? (gint)nostr_tags_size(like_tags) : 0;
-  gint64 like_created_at = nostr_event_get_created_at(event);
-  gssize like_serialized_len = signed_event_json ? (gssize)strlen(signed_event_json) : -1;
+  GTask *task = g_task_new(NULL, NULL, on_like_publish_done, ctx);
+  g_task_set_task_data(task, r, NULL);
+  g_task_run_in_thread(task, relay_publish_thread);
+  g_object_unref(task);
+}
 
-  /* Publish to each write relay */
-  guint success_count = 0;
-  guint fail_count = 0;
-  guint limit_skip_count = 0;
+/* Main-thread callback after like publish worker completes */
+static void on_like_publish_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  LikeContext *ctx = (LikeContext*)user_data;
+  RelayPublishResult *r = g_task_propagate_pointer(G_TASK(res), NULL);
+  if (!r) { like_context_free(ctx); return; }
 
-  for (guint i = 0; i < relay_urls->len; i++) {
-    const char *url = (const char*)g_ptr_array_index(relay_urls, i);
-
-    /* NIP-11: Check relay limitations before publishing */
-    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
-    if (relay_info) {
-      GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
-        relay_info, like_content, like_content_len, like_tag_count, like_created_at, like_serialized_len);
-
-      if (!gnostr_relay_validation_result_is_valid(validation)) {
-        gnostr_relay_validation_result_free(validation);
-        gnostr_relay_info_free(relay_info);
-        limit_skip_count++;
-        continue;
-      }
-      gnostr_relay_validation_result_free(validation);
-      gnostr_relay_info_free(relay_info);
-    }
-
-    GNostrRelay *relay = gnostr_relay_new(url);
-    if (!relay) {
-      fail_count++;
-      continue;
-    }
-
-    GError *conn_err = NULL;
-    if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_clear_error(&conn_err);
-      g_object_unref(relay);
-      fail_count++;
-      continue;
-    }
-
-    GError *pub_err = NULL;
-    if (gnostr_relay_publish(relay, event, &pub_err)) {
-      success_count++;
-    } else {
-      g_clear_error(&pub_err);
-      fail_count++;
-    }
-    g_object_unref(relay);
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
+    relay_publish_result_free(r);
+    like_context_free(ctx);
+    return;
   }
+  GnostrMainWindow *self = ctx->self;
 
-  /* Show result toast and update UI */
-  if (success_count > 0) {
-    if (limit_skip_count > 0) {
-      char *msg = g_strdup_printf("Liked! (%u relays skipped)", limit_skip_count);
+  if (r->success_count > 0) {
+    if (r->limit_skip_count > 0) {
+      char *msg = g_strdup_printf("Liked! (%u relays skipped)", r->limit_skip_count);
       show_toast(self, msg);
       g_free(msg);
     } else {
@@ -7590,19 +7596,16 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
     }
 
     /* Store reaction in local NostrdB cache (background) */
-    if (signed_event_json) {
+    if (r->signed_event_json) {
       GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
-      g_ptr_array_add(b, g_strdup(signed_event_json));
+      g_ptr_array_add(b, g_strdup(r->signed_event_json));
       storage_ndb_ingest_events_async(b);
     }
   } else {
     show_toast(self, "Failed to publish reaction");
   }
 
-  /* Cleanup */
-  nostr_event_free(event);
-  g_free(signed_event_json);
-  g_ptr_array_free(relay_urls, TRUE);
+  relay_publish_result_free(r);
   like_context_free(ctx);
 }
 
