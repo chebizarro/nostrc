@@ -670,20 +670,35 @@ NostrConnection *nostr_connection_new(const char *url) {
     return conn;
 
 fail_decref:
-    /* Decrement refcount; destroy context if last */
+    /* Decrement refcount; destroy context if last.
+     * Same combined critical section as nostr_connection_close(). */
     {
         struct lws_context *ctx_to_destroy = NULL;
+        GoChannel *queue_to_drain = NULL;
         pthread_mutex_lock(&g_lws_mutex);
         if (g_lws_refcount > 0) g_lws_refcount--;
         if (g_lws_refcount == 0 && g_lws_context) {
             ctx_to_destroy = g_lws_context;
             g_lws_context = NULL;
             g_lws_running = 0;
+            if (g_conn_request_queue) {
+                go_channel_close(g_conn_request_queue);
+                queue_to_drain = g_conn_request_queue;
+                g_conn_request_queue = NULL;
+            }
         }
         pthread_mutex_unlock(&g_lws_mutex);
         if (ctx_to_destroy) {
             lws_cancel_service(ctx_to_destroy);
             pthread_join(g_lws_service_thread, NULL);
+            if (queue_to_drain) {
+                ConnectionRequest *pend = NULL;
+                while (go_channel_try_receive(queue_to_drain, (void **)&pend) == 0 && pend) {
+                    go_channel_send(pend->result, (void *)(intptr_t)0);
+                    pend = NULL;
+                }
+                go_channel_free(queue_to_drain);
+            }
             lws_context_destroy(ctx_to_destroy);
         }
     }
@@ -747,36 +762,44 @@ void nostr_connection_close(NostrConnection *conn) {
         }
         pthread_mutex_unlock(&g_lws_mutex);
         
-        /* Drop our ref to the shared context; stop/destroy if last */
+        /* Drop our ref to the shared context; stop/destroy if last.
+         * hq-5ejm4 fix (boris review): Queue close/drain and context
+         * teardown MUST happen in the SAME critical section to prevent:
+         *  - TOCTOU: another thread recreating context+queue between unlock/relock
+         *  - UAF: service loop using stale queue pointer after free */
         struct lws_context *ctx_to_destroy = NULL;
+        GoChannel *queue_to_drain = NULL;
         int should_free_priv = 0;
         pthread_mutex_lock(&g_lws_mutex);
         if (g_lws_refcount > 0) g_lws_refcount--;
         if (g_lws_refcount == 0 && g_lws_context) {
             ctx_to_destroy = g_lws_context;
             g_lws_context = NULL;
-            g_lws_running = 0;
-            should_free_priv = 1; /* Safe to free after service thread exits */
+            g_lws_running = 0;  /* Service loop will exit on next iteration */
+            should_free_priv = 1;
+            /* Close the queue to unblock any callers stuck in go_channel_send,
+             * then take ownership for post-join drain+free. */
+            if (g_conn_request_queue) {
+                go_channel_close(g_conn_request_queue);
+                queue_to_drain = g_conn_request_queue;
+                g_conn_request_queue = NULL;
+            }
         }
         pthread_mutex_unlock(&g_lws_mutex);
         if (ctx_to_destroy) {
-            /* hq-5ejm4: Drain and reject any pending connection requests
-             * before stopping the service thread. */
-            pthread_mutex_lock(&g_lws_mutex);
-            if (g_conn_request_queue) {
+            lws_cancel_service(ctx_to_destroy);
+            pthread_join(g_lws_service_thread, NULL);
+            /* Service thread is stopped — safe to drain + free the queue.
+             * No other thread can access queue_to_drain since we NULLed
+             * g_conn_request_queue under the mutex. */
+            if (queue_to_drain) {
                 ConnectionRequest *pend = NULL;
-                while (go_channel_try_receive(g_conn_request_queue, (void **)&pend) == 0 && pend) {
+                while (go_channel_try_receive(queue_to_drain, (void **)&pend) == 0 && pend) {
                     go_channel_send(pend->result, (void *)(intptr_t)0);
                     pend = NULL;
                 }
-                go_channel_close(g_conn_request_queue);
-                go_channel_free(g_conn_request_queue);
-                g_conn_request_queue = NULL;
+                go_channel_free(queue_to_drain);
             }
-            pthread_mutex_unlock(&g_lws_mutex);
-
-            lws_cancel_service(ctx_to_destroy);
-            pthread_join(g_lws_service_thread, NULL);
             lws_context_destroy(ctx_to_destroy);
             /* Process deferred cleanup queue now that service thread is stopped */
             pthread_mutex_lock(&g_lws_mutex);
