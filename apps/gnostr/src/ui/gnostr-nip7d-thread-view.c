@@ -902,12 +902,13 @@ on_replies_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data)
     if (results && results->len > 0) {
         g_debug("[NIP7D] Received %u reply events", results->len);
 
+        /* Defer NDB ingestion to background (nostrc-mzab) */
+        GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
         for (guint i = 0; i < results->len; i++) {
             const char *json = g_ptr_array_index(results, i);
             if (!json) continue;
 
-            /* Ingest into nostrdb */
-            storage_ndb_ingest_event_json(json, NULL);
+            g_ptr_array_add(to_ingest, g_strdup(json));
 
             /* Parse reply */
             GnostrThreadReply *reply = gnostr_thread_reply_parse_from_json(json);
@@ -930,6 +931,7 @@ on_replies_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data)
             }
         }
 
+        storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
         rebuild_replies_ui(self);
     }
 
@@ -1078,12 +1080,13 @@ on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpointer user_data
     if (results && results->len > 0) {
         g_debug("[NIP7D] Fetched %u missing ancestor events", results->len);
 
+        /* Defer NDB ingestion to background (nostrc-mzab) */
+        GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
         for (guint i = 0; i < results->len; i++) {
             const char *json = g_ptr_array_index(results, i);
             if (!json) continue;
 
-            /* Ingest into nostrdb */
-            storage_ndb_ingest_event_json(json, NULL);
+            g_ptr_array_add(to_ingest, g_strdup(json));
 
             /* Parse reply and add to collection */
             GnostrThreadReply *reply = gnostr_thread_reply_parse_from_json(json);
@@ -1105,6 +1108,8 @@ on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpointer user_data
                 }
             }
         }
+
+        storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
 
         /* Rebuild UI with new events */
         rebuild_replies_ui(self);
@@ -1742,6 +1747,18 @@ gnostr_nip7d_thread_view_load_more_replies(GnostrNip7dThreadView *self,
     g_ptr_array_unref(relay_arr);
 }
 
+/* nostrc-8w2p: Safe timeout callback to remove highlight CSS class.
+ * Takes a g_object_ref'd widget; unrefs after removing class. */
+static gboolean
+remove_highlight_cb(gpointer data)
+{
+    GtkWidget *row = GTK_WIDGET(data);
+    if (GTK_IS_WIDGET(row))
+        gtk_widget_remove_css_class(row, "highlighted");
+    g_object_unref(row);
+    return G_SOURCE_REMOVE;
+}
+
 void
 gnostr_nip7d_thread_view_scroll_to_reply(GnostrNip7dThreadView *self,
                                           const char *reply_id)
@@ -1759,5 +1776,5 @@ gnostr_nip7d_thread_view_scroll_to_reply(GnostrNip7dThreadView *self,
     /* LEGITIMATE TIMEOUT - Remove highlight CSS class after animation.
      * nostrc-b0h: Audited - animation timing is appropriate. */
     gtk_widget_add_css_class(row, "highlighted");
-    g_timeout_add(2000, (GSourceFunc)gtk_widget_remove_css_class, row);
+    g_timeout_add(2000, remove_highlight_cb, g_object_ref(row));
 }
