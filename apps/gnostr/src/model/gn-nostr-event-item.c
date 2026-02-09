@@ -94,7 +94,7 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
   if (self->cached_event_id != NULL) return TRUE;  /* Already loaded */
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+  if (storage_ndb_begin_query_retry(&txn, 10, 5) != 0 || !txn) {
     g_warning("[ITEM] ensure_note_loaded: begin_query failed for key %lu after retries", (unsigned long)self->note_key);
     return FALSE;
   }
