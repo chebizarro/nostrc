@@ -52,6 +52,10 @@
 #define REVEAL_STAGGER_MS 50        /* Delay between reveal batches */
 #define REVEAL_ANIMATION_MS 200     /* CSS fade-in duration per item */
 
+/* Signal throttling: avoid per-frame toast/label updates */
+#define PENDING_SIGNAL_INTERVAL_US 250000  /* 250ms between new-items-pending emissions */
+#define EVICT_DEFER_FRAMES 30              /* Only enforce window size every 30 frames (~500ms) */
+
 /* Note entry for internal tracking */
 typedef struct {
   uint64_t note_key;
@@ -90,6 +94,8 @@ struct _GnTimelineModel {
   /* New items tracking (for "N new notes" indicator) */
   guint unseen_count;        /* Items at top not yet seen by user */
   gboolean user_at_top;
+  gint64 last_pending_signal_us; /* Throttle SIGNAL_NEW_ITEMS_PENDING emission */
+  guint evict_defer_counter;     /* Defer window eviction to avoid replace-all every frame */
 
   /* Batch insertion tracking for debounce */
   GArray *batch_buffer;      /* Temp buffer for sorting incoming items */
@@ -613,9 +619,21 @@ static gboolean on_tick_callback(GtkWidget     *widget,
   guint gtk_old_count = self->notes->len;
   process_staged_items(self, to_process);
 
-  /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
-   * Two sequential items_changed signals break GTK's widget cache. */
-  guint evicted = enforce_window_size(self, FALSE);
+  /* Defer window eviction to avoid the expensive replace-all signal on every
+   * frame.  When the model is at capacity, every prepend evicts from the tail,
+   * which forces g_list_model_items_changed(0, old_count, new_count) — a full
+   * model replacement that makes GTK rebind every visible widget.  By deferring
+   * eviction to every EVICT_DEFER_FRAMES frames, we emit the cheap prepend
+   * signal (0, 0, N) most of the time.  The model temporarily exceeds
+   * MODEL_MAX_WINDOW by at most EVICT_DEFER_FRAMES * items_per_frame items. */
+  self->evict_defer_counter++;
+  gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
+                       (self->staging_buffer->len == 0); /* last batch: clean up */
+  guint evicted = 0;
+  if (do_evict) {
+    evicted = enforce_window_size(self, FALSE);
+    self->evict_defer_counter = 0;
+  }
 
   /* Emit single atomic signal */
   if (evicted > 0) {
@@ -626,10 +644,18 @@ static gboolean on_tick_callback(GtkWidget     *widget,
     g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, to_process);
   }
 
-  /* Track unseen items if user is scrolled down */
+  /* Track unseen items if user is scrolled down.
+   * Throttle the signal emission to avoid triggering the toast label/revealer
+   * update (g_strdup_printf + gtk_label_set_text + gtk_revealer_set_reveal_child)
+   * on every 16ms frame — the user can't perceive count changes at 60fps. */
   if (!self->user_at_top) {
     self->unseen_count += to_process;
-    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+    gboolean is_last_batch = (self->staging_buffer->len == 0);
+    if (is_last_batch ||
+        (start_us - self->last_pending_signal_us >= PENDING_SIGNAL_INTERVAL_US)) {
+      self->last_pending_signal_us = start_us;
+      g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+    }
   }
 
   /* Check frame budget */
@@ -1108,19 +1134,11 @@ static void process_reveal_batch(GnTimelineModel *self) {
     }
   }
 
-  /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
-   * Two sequential items_changed signals break GTK's widget cache. */
-  guint gtk_old_count = self->notes->len - batch_size;
-  guint evicted = enforce_window_size(self, FALSE);
-
-  /* Emit single atomic signal */
-  if (evicted > 0) {
-    /* Prepend + tail eviction: replace-all signal (nostrc-2n7) */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old_count, self->notes->len);
-    g_debug("[REVEAL] Batch %u items, evicted %u (replace-all)", batch_size, evicted);
-  } else {
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, batch_size);
-  }
+  /* Skip window eviction during reveal — evict once at reveal completion.
+   * Calling enforce_window_size here triggers the expensive replace-all
+   * signal (0, old_count, new_count) on every 50ms batch, when a cheap
+   * prepend signal (0, 0, batch_size) suffices during the animation. */
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, batch_size);
 
   /* Emit reveal progress signal (position, total) */
   guint revealed = batch_end;
@@ -1161,6 +1179,14 @@ static gboolean on_reveal_timer_tick(gpointer user_data) {
     g_array_set_size(self->reveal_queue, 0);
     self->reveal_in_progress = FALSE;
     self->reveal_position = 0;
+
+    /* Deferred eviction: trim window once after all items revealed.
+     * We skipped enforce_window_size in process_reveal_batch to avoid
+     * the replace-all signal on every 50ms batch. */
+    guint evicted = enforce_window_size(self, TRUE);
+    if (evicted > 0) {
+      g_debug("[REVEAL] Post-reveal eviction: %u items", evicted);
+    }
 
     /* Clear unseen count since all items are now revealed */
     self->unseen_count = 0;

@@ -43,6 +43,9 @@ struct _GnTimelineView {
   guint scroll_check_id;
   gdouble last_scroll_position;
 
+  /* Toast indicator dedup */
+  guint last_shown_notes_count;
+
   /* Signals */
   gulong model_items_changed_id;
   gulong model_pending_id;
@@ -506,6 +509,10 @@ void gn_timeline_view_show_new_notes_indicator(GnTimelineView *self, guint count
     return;
   }
 
+  /* Skip redundant label updates — avoids g_strdup_printf + label layout work */
+  if (self->last_shown_notes_count == count) return;
+  self->last_shown_notes_count = count;
+
   char *text = g_strdup_printf("%u new note%s", count, count == 1 ? "" : "s");
   gtk_label_set_text(GTK_LABEL(self->new_notes_label), text);
   g_free(text);
@@ -515,6 +522,7 @@ void gn_timeline_view_show_new_notes_indicator(GnTimelineView *self, guint count
 
 void gn_timeline_view_hide_new_notes_indicator(GnTimelineView *self) {
   g_return_if_fail(GN_IS_TIMELINE_VIEW(self));
+  self->last_shown_notes_count = 0;
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), FALSE);
 }
 

@@ -1435,6 +1435,10 @@ gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self) {
 void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint count) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
 
+  /* Skip redundant updates — avoids g_strdup_printf + label + revealer work
+   * when the throttled signal still carries the same count value */
+  if (self->pending_new_notes_count == count) return;
+
   /* Store the count for re-showing when switching back to timeline */
   self->pending_new_notes_count = count;
 
