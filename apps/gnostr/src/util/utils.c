@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "nostr_nip19.h"
+#include "../storage_ndb.h"
 #include <string.h>
 
 #ifdef HAVE_SOUP3
@@ -55,6 +56,13 @@ void gnostr_cleanup_shared_soup_session(void) {
 
 #endif /* HAVE_SOUP3 */
 
+/* Event sink adapter: persists relay query results to nostrdb automatically */
+static void
+ndb_event_sink(GPtrArray *jsons, gpointer user_data G_GNUC_UNUSED)
+{
+    storage_ndb_ingest_events_async(jsons); /* takes ownership */
+}
+
 /* Shared GNostrPool singleton for one-shot queries (hq-r248b) */
 static GNostrPool *s_shared_query_pool = NULL;
 static GMutex s_query_pool_mutex;
@@ -72,7 +80,9 @@ GNostrPool *gnostr_get_shared_query_pool(void) {
 
   if (!s_shared_query_pool) {
     s_shared_query_pool = gnostr_pool_new();
-    g_debug("gnostr: Created shared GNostrPool for relay queries");
+    /* Auto-persist all fetched events to nostrdb */
+    gnostr_pool_set_event_sink(s_shared_query_pool, ndb_event_sink, NULL, NULL);
+    g_debug("gnostr: Created shared GNostrPool with nostrdb event sink");
   }
 
   g_mutex_unlock(&s_query_pool_mutex);

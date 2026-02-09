@@ -243,6 +243,42 @@ GNostrSubscription *gnostr_pool_subscribe(GNostrPool *self,
                                            NostrFilters *filters,
                                            GError **error);
 
+/* --- Event Sink API --- */
+
+/**
+ * GNostrPoolEventSinkFunc:
+ * @jsons: (element-type utf8) (transfer full): a #GPtrArray of event JSON strings.
+ *   The sink takes ownership and must free with g_ptr_array_unref().
+ * @user_data: (closure): user data
+ *
+ * Callback invoked with every batch of events fetched by query_async.
+ * Intended for persisting events to a local store (e.g. nostrdb).
+ * Called from a GTask worker thread — implementation must be thread-safe.
+ *
+ * Since: 1.0
+ */
+typedef void (*GNostrPoolEventSinkFunc)(GPtrArray *jsons, gpointer user_data);
+
+/**
+ * gnostr_pool_set_event_sink:
+ * @self: a #GNostrPool
+ * @sink_func: (nullable): function to receive fetched events
+ * @user_data: (closure): user data passed to @sink_func
+ * @destroy: (nullable): destroy function for @user_data
+ *
+ * Sets a callback that receives every batch of events fetched from relays
+ * via gnostr_pool_query_async(). Use this to automatically persist relay
+ * results to a local database. The sink is called from a worker thread.
+ *
+ * Pass %NULL for @sink_func to disable.
+ *
+ * Since: 1.0
+ */
+void gnostr_pool_set_event_sink(GNostrPool              *self,
+                                 GNostrPoolEventSinkFunc  sink_func,
+                                 gpointer                 user_data,
+                                 GDestroyNotify           destroy);
+
 /* --- NIP-42 AUTH handler API (nostrc-kn38) --- */
 
 /**

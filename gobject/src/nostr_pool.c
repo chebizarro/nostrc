@@ -73,6 +73,11 @@ struct _GNostrPool {
     GNostrRelayAuthSignFunc auth_sign_func;
     gpointer auth_sign_data;
     GDestroyNotify auth_sign_destroy;
+
+    /* Event sink: callback for persisting fetched events (e.g. nostrdb) */
+    GNostrPoolEventSinkFunc event_sink_func;
+    gpointer event_sink_data;
+    GDestroyNotify event_sink_destroy;
 };
 
 G_DEFINE_TYPE(GNostrPool, gnostr_pool, G_TYPE_OBJECT)
@@ -205,6 +210,14 @@ gnostr_pool_finalize(GObject *object)
     self->auth_sign_func = NULL;
     self->auth_sign_data = NULL;
     self->auth_sign_destroy = NULL;
+
+    /* Clean up event sink */
+    if (self->event_sink_destroy && self->event_sink_data) {
+        self->event_sink_destroy(self->event_sink_data);
+    }
+    self->event_sink_func = NULL;
+    self->event_sink_data = NULL;
+    self->event_sink_destroy = NULL;
 
     g_clear_pointer(&self->relay_handler_ids, g_hash_table_destroy);
     g_clear_object(&self->relays);
@@ -526,6 +539,9 @@ typedef struct {
     /* nostrc-snap: Immutable relay list snapshot for worker thread */
     GPtrArray *relay_snapshots; /* RelaySnapshotEntry* (owned) */
     guint timeout_ms;           /* default_timeout snapshot */
+    /* Event sink: snapshot of pool's sink callback for worker thread */
+    GNostrPoolEventSinkFunc event_sink_func;
+    gpointer event_sink_data;
 } QueryAsyncData;
 
 static void
@@ -781,6 +797,19 @@ query_thread_func(GTask         *task,
     g_ptr_array_unref(items);
 
     g_debug("Query completed with %u results", data->results->len);
+
+    /* Persist fetched events via the event sink (e.g. nostrdb).
+     * Build a copy of the JSON strings since the sink takes ownership. */
+    if (data->event_sink_func && data->results->len > 0) {
+        GPtrArray *copy = g_ptr_array_new_with_free_func(g_free);
+        for (guint i = 0; i < data->results->len; i++) {
+            const char *json = g_ptr_array_index(data->results, i);
+            if (json)
+                g_ptr_array_add(copy, g_strdup(json));
+        }
+        data->event_sink_func(copy, data->event_sink_data);
+    }
+
     g_task_return_pointer(task, data->results,
                           (GDestroyNotify)g_ptr_array_unref);
 }
@@ -840,6 +869,10 @@ gnostr_pool_query_async(GNostrPool          *self,
         }
         g_debug("pool_query_async: snapshot %u relays for worker thread", n);
     }
+
+    /* Snapshot event sink so worker thread can persist results */
+    data->event_sink_func = self->event_sink_func;
+    data->event_sink_data = self->event_sink_data;
 
     g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
 
@@ -1042,4 +1075,23 @@ gnostr_pool_set_auth_handler(GNostrPool              *self,
 
     g_debug("NIP-42: auth handler %s for pool (%u relays)",
             sign_func ? "set" : "cleared", n);
+}
+
+/* --- Event Sink API --- */
+
+void
+gnostr_pool_set_event_sink(GNostrPool              *self,
+                            GNostrPoolEventSinkFunc  sink_func,
+                            gpointer                 user_data,
+                            GDestroyNotify           destroy)
+{
+    g_return_if_fail(GNOSTR_IS_POOL(self));
+
+    if (self->event_sink_destroy && self->event_sink_data) {
+        self->event_sink_destroy(self->event_sink_data);
+    }
+
+    self->event_sink_func = sink_func;
+    self->event_sink_data = user_data;
+    self->event_sink_destroy = destroy;
 }
