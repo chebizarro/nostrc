@@ -103,6 +103,17 @@ static gboolean hex_to_bytes32(const char *hex, unsigned char *out) {
   return TRUE;
 }
 
+/* Hex string to 32-byte binary */
+static gboolean hex_to_pk32(const char *hex, unsigned char out[32]) {
+  if (!hex || strlen(hex) != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + 2 * i, "%02x", &byte) != 1) return FALSE;
+    out[i] = (unsigned char)byte;
+  }
+  return TRUE;
+}
+
 /* Check nostrdb cache for a profile */
 static GnostrProfileMeta *check_ndb_cache(const char *pubkey_hex) {
   /* First try the in-memory LRU cache via profile provider */
@@ -110,7 +121,28 @@ static GnostrProfileMeta *check_ndb_cache(const char *pubkey_hex) {
   if (meta) {
     return meta;
   }
-  return NULL;
+
+  /* Fall back to nostrdb — profiles may be persisted there from prior
+   * sessions or negentropy sync but not yet loaded into the LRU cache. */
+  unsigned char pk32[32];
+  if (!hex_to_pk32(pubkey_hex, pk32)) return NULL;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return NULL;
+
+  char *json = NULL;
+  int json_len = 0;
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len);
+  storage_ndb_end_query(txn);
+
+  if (rc != 0 || !json || json_len <= 0) return NULL;
+
+  /* Populate the in-memory provider cache so subsequent lookups are fast */
+  gnostr_profile_provider_update(pubkey_hex, json);
+  meta = gnostr_profile_provider_get(pubkey_hex);
+
+  g_debug("[PROFILE_SERVICE] NDB cache hit for %.8s (json_len=%d)", pubkey_hex, json_len);
+  return meta;
 }
 
 /* Fire callbacks for a pubkey with the given profile (may be NULL) */
