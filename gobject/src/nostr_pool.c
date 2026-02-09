@@ -496,6 +496,26 @@ gnostr_pool_set_default_timeout(GNostrPool *self, guint timeout_ms)
 
 /* --- Async query implementation --- */
 
+/* nostrc-snap: Relay snapshot entry — captured on main thread, read-only on
+ * worker thread.  Prevents races with sync_relays() / add_relay() mutating
+ * the GListStore concurrently (GListStore is NOT thread-safe). */
+typedef struct {
+    gchar *url;
+    NostrRelay *core_relay;     /* borrowed from GNostrRelay (ref held below) */
+    GNostrRelay *grelay_ref;    /* ref held to keep core_relay alive */
+    gboolean connected;
+} RelaySnapshotEntry;
+
+static void
+relay_snapshot_entry_free(gpointer p)
+{
+    RelaySnapshotEntry *e = p;
+    if (!e) return;
+    g_free(e->url);
+    g_clear_object(&e->grelay_ref);
+    g_free(e);
+}
+
 typedef struct {
     GNostrPool *pool;           /* weak ref */
     GPtrArray *results;         /* collected event JSON strings */
@@ -503,6 +523,9 @@ typedef struct {
     guint pending_relays;       /* count of relays not yet EOSE */
     guint timeout_source_id;    /* GSource ID for timeout */
     gboolean completed;         /* whether we've already returned results */
+    /* nostrc-snap: Immutable relay list snapshot for worker thread */
+    GPtrArray *relay_snapshots; /* RelaySnapshotEntry* (owned) */
+    guint timeout_ms;           /* default_timeout snapshot */
 } QueryAsyncData;
 
 static void
@@ -512,6 +535,7 @@ query_async_data_free(QueryAsyncData *data)
     if (data->timeout_source_id > 0)
         g_source_remove(data->timeout_source_id);
     g_clear_pointer(&data->seen_ids, g_hash_table_destroy);
+    g_clear_pointer(&data->relay_snapshots, g_ptr_array_unref);
     /* Don't free results - ownership transferred to GTask */
     g_free(data);
 }
@@ -545,19 +569,24 @@ query_timeout_cb(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
-/* Worker thread for async query */
+/* nostrc-snap: Worker thread for async query.
+ * Uses relay_snapshots (captured on main thread) instead of self->relays
+ * to avoid racing with sync_relays() / add_relay() / disconnect_all()
+ * that other features call on the shared pool from the main thread.
+ * GListStore is NOT thread-safe — direct access caused 100+ commits of
+ * broken NIP-66, follows, threads, and profile loading. */
 static void
 query_thread_func(GTask         *task,
                   gpointer       source_object,
                   gpointer       task_data,
                   GCancellable  *cancellable)
 {
-    GNostrPool *self = GNOSTR_POOL(source_object);
     QueryAsyncData *data = (QueryAsyncData *)task_data;
     NostrFilters *filters = g_object_get_data(G_OBJECT(task), "filters");
 
-    guint n_relays = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
-    g_debug("pool_query_thread: %u relays in pool, filters=%p (count=%zu)",
+    /* nostrc-snap: Use snapshot captured on main thread, NOT self->relays */
+    guint n_relays = data->relay_snapshots ? data->relay_snapshots->len : 0;
+    g_debug("pool_query_thread: %u relays (snapshot), filters=%p (count=%zu)",
               n_relays, (void *)filters, filters ? filters->count : 0);
     if (n_relays == 0) {
         g_debug("pool_query_thread: 0 relays - returning empty");
@@ -582,16 +611,14 @@ query_thread_func(GTask         *task,
         if (cancellable && g_cancellable_is_cancelled(cancellable))
             break;
 
-        g_autoptr(GNostrRelay) grelay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
-        NostrRelay *core_relay = gnostr_relay_get_core_relay(grelay);
-        gboolean relay_connected = gnostr_relay_get_connected(grelay);
+        /* nostrc-snap: Read from immutable snapshot, not GListStore */
+        RelaySnapshotEntry *snap = g_ptr_array_index(data->relay_snapshots, i);
+        NostrRelay *core_relay = snap->core_relay;
+        gboolean relay_connected = snap->connected;
+        const gchar *url = snap->url;
 
         if (!core_relay || !relay_connected) {
-            /* Relay not connected - create a temporary one for this query.
-             * GNostrRelay always creates a core relay in its constructor,
-             * but it may not be connected. We need a connected relay to
-             * subscribe, so create a fresh temporary one. */
-            const gchar *url = gnostr_relay_get_url(grelay);
+            /* Relay not connected - create a temporary one for this query. */
             if (!url) continue;
 
             g_debug("pool_query_thread: relay[%u] %s not connected, creating temp", i, url);
@@ -683,10 +710,10 @@ query_thread_func(GTask         *task,
 
     /* Drain events from all subscriptions until all EOSE or cancelled/timeout */
     guint64 deadline_us = 0;
-    if (self->default_timeout > 0) {
-        deadline_us = g_get_monotonic_time() + (guint64)self->default_timeout * 1000;
+    if (data->timeout_ms > 0) {
+        deadline_us = g_get_monotonic_time() + (guint64)data->timeout_ms * 1000;
     }
-    g_debug("pool_query_thread: polling for events (timeout=%ums)", self->default_timeout);
+    g_debug("pool_query_thread: polling for events (timeout=%ums)", data->timeout_ms);
 
     for (;;) {
         if (cancellable && g_cancellable_is_cancelled(cancellable))
@@ -783,6 +810,38 @@ gnostr_pool_query_async(GNostrPool          *self,
     data->results = g_ptr_array_new_with_free_func(g_free);
     data->seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     data->completed = FALSE;
+
+    /* nostrc-snap: Snapshot relay list on main thread.
+     *
+     * CRITICAL FIX: The shared query pool's relay list is mutated by
+     * sync_relays() from 29+ call sites across the codebase (NIP-66,
+     * follows, threads, profiles, etc.).  Each feature overwrites the
+     * list with its own relays before calling query_async().  Without
+     * this snapshot, the worker thread reads self->relays (GListStore)
+     * AFTER another feature has already replaced the relay list, causing
+     * queries to run against the WRONG relays and return empty results.
+     *
+     * GListStore is also NOT thread-safe — concurrent access from the
+     * worker thread and main thread is undefined behavior.
+     *
+     * By snapshotting here, each query gets its own immutable relay list
+     * that cannot be trampled by subsequent sync_relays() calls. */
+    data->relay_snapshots = g_ptr_array_new_with_free_func(relay_snapshot_entry_free);
+    data->timeout_ms = self->default_timeout;
+    {
+        guint n = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
+        for (guint i = 0; i < n; i++) {
+            g_autoptr(GNostrRelay) grelay =
+                g_list_model_get_item(G_LIST_MODEL(self->relays), i);
+            RelaySnapshotEntry *entry = g_new0(RelaySnapshotEntry, 1);
+            entry->url = g_strdup(gnostr_relay_get_url(grelay));
+            entry->core_relay = gnostr_relay_get_core_relay(grelay);
+            entry->grelay_ref = g_object_ref(grelay);
+            entry->connected = gnostr_relay_get_connected(grelay);
+            g_ptr_array_add(data->relay_snapshots, entry);
+        }
+        g_debug("pool_query_async: snapshot %u relays for worker thread", n);
+    }
 
     g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
 
