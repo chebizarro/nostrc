@@ -1291,7 +1291,14 @@ void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_nam
 
 void gnostr_session_view_show_profile_panel(GnostrSessionView *self) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
-  if (!self->panel_split) return;
+  if (!self->panel_split) {
+    g_warning("session_view: show_profile_panel ABORT - panel_split is NULL");
+    return;
+  }
+
+  g_warning("session_view: show_profile_panel profile_pane=%p visible=%d",
+            (void*)self->profile_pane,
+            self->profile_pane ? gtk_widget_get_visible(self->profile_pane) : -1);
 
   if (self->thread_view) gtk_widget_set_visible(self->thread_view, FALSE);
   if (self->article_reader) gtk_widget_set_visible(self->article_reader, FALSE);
@@ -1299,6 +1306,8 @@ void gnostr_session_view_show_profile_panel(GnostrSessionView *self) {
 
   self->showing_profile = TRUE;
   adw_overlay_split_view_set_show_sidebar(self->panel_split, TRUE);
+
+  g_warning("session_view: show_profile_panel DONE sidebar_shown=TRUE");
 }
 
 void gnostr_session_view_show_thread_panel(GnostrSessionView *self) {

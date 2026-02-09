@@ -1225,7 +1225,13 @@ GnostrProfilePane *gnostr_profile_pane_new(void) {
 
 void gnostr_profile_pane_clear(GnostrProfilePane *self) {
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
-  
+  g_warning("profile_pane: clear() ENTRY");
+
+  /* nostrc-myp3: Reset content stack to About tab */
+  if (self->content_stack) {
+    gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "about");
+  }
+
   gtk_label_set_text(GTK_LABEL(self->lbl_display_name), "");
   gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
   gtk_widget_set_visible(self->lbl_bio, FALSE);
@@ -2174,7 +2180,12 @@ static bool profile_extra_fields_cb(const char *key, const char *value_json, voi
 }
 
 static void update_profile_ui(GnostrProfilePane *self, const char *profile_json) {
+  g_warning("profile_pane: update_profile_ui ENTRY json_len=%zu is_object=%d",
+            profile_json ? strlen(profile_json) : 0,
+            profile_json ? (int)gnostr_json_is_object_str(profile_json) : -1);
+
   if (!profile_json || !*profile_json || !gnostr_json_is_object_str(profile_json)) {
+    g_warning("profile_pane: update_profile_ui EARLY RETURN - invalid JSON");
     gtk_label_set_text(GTK_LABEL(self->lbl_display_name), "Unknown");
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), self->current_pubkey ? self->current_pubkey : "");
     return;
@@ -2246,6 +2257,13 @@ static void update_profile_ui(GnostrProfilePane *self, const char *profile_json)
     final_display = "Unknown";
   }
   gtk_label_set_text(GTK_LABEL(self->lbl_display_name), final_display);
+  g_warning("profile_pane: UI SET display_name='%s' name='%s' nip05='%s' picture=%s banner=%s about=%s",
+            final_display ? final_display : "(null)",
+            name ? name : "(null)",
+            nip05 ? nip05 : "(null)",
+            picture ? "yes" : "no",
+            banner ? "yes" : "no",
+            about ? "yes" : "no");
 
   /* NIP-24: Show/hide bot indicator badge */
   if (self->bot_badge) {
@@ -3415,7 +3433,7 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("profile_pane: network profile fetch failed: %s", error->message);
+      g_warning("profile_pane: NETWORK fetch FAILED: %s", error->message);
     }
     g_error_free(error);
     return;
@@ -3427,13 +3445,14 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
   if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   if (!results || results->len == 0) {
-    g_debug("profile_pane: no profile found on network for %.8s",
-            self->current_pubkey ? self->current_pubkey : "(null)");
+    g_warning("profile_pane: NETWORK MISS - no profile found for %.8s",
+              self->current_pubkey ? self->current_pubkey : "(null)");
     if (results) g_ptr_array_unref(results);
     return;
   }
 
-  g_debug("profile_pane: received %u profile events from network", results->len);
+  g_warning("profile_pane: NETWORK HIT - %u events for %.8s",
+            results->len, self->current_pubkey ? self->current_pubkey : "(null)");
 
   /* Find the most recent kind:0 event */
   char *best_content = NULL;
@@ -3496,11 +3515,11 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
 /* Fetch profile from nostrdb cache first, then from network */
 static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
-    g_debug("profile_pane: no pubkey set, cannot fetch profile");
+    g_warning("profile_pane: fetch ABORT - no pubkey set");
     return;
   }
 
-  g_debug("profile_pane: fetching profile for %.8s", self->current_pubkey);
+  g_warning("profile_pane: fetch START for %.8s", self->current_pubkey);
 
   /* Cancel any previous profile fetch */
   if (self->profile_cancellable) {
@@ -3512,21 +3531,33 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
 
   /* Step 1: Try nostrdb cache first */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) == 0 && txn) {
+  int ndb_rc = storage_ndb_begin_query(&txn);
+  g_warning("profile_pane: NDB begin_query rc=%d txn=%p", ndb_rc, txn);
+
+  if (ndb_rc == 0 && txn) {
     uint8_t pk32[32];
-    if (hex_to_bytes32(self->current_pubkey, pk32)) {
+    gboolean hex_ok = hex_to_bytes32(self->current_pubkey, pk32);
+    g_warning("profile_pane: hex_to_bytes32 ok=%d", (int)hex_ok);
+
+    if (hex_ok) {
       char *event_json = NULL;
       int event_len = 0;
 
-      if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len) == 0 && event_json) {
+      int prof_rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len);
+      g_warning("profile_pane: NDB get_profile rc=%d json=%p len=%d",
+                prof_rc, (void*)event_json, event_len);
+
+      if (prof_rc == 0 && event_json) {
         /* Parse the event to get the content field */
         NostrEvent *evt = nostr_event_new();
         if (evt && nostr_event_deserialize(evt, event_json) == 0) {
           const char *content = nostr_event_get_content(evt);
-          if (content && *content) {
-            g_debug("profile_pane: loaded profile from nostrdb cache for %.8s (content_len=%zu)",
-                    self->current_pubkey, strlen(content));
+          g_warning("profile_pane: NDB CACHE HIT for %.8s content=%s len=%zu",
+                    self->current_pubkey,
+                    (content && *content) ? "non-empty" : "EMPTY",
+                    content ? strlen(content) : 0);
 
+          if (content && *content) {
             /* Store full event JSON for NIP-39 identity parsing */
             g_free(self->current_event_json);
             self->current_event_json = g_strdup(event_json);
@@ -3537,12 +3568,18 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
             /* Parse NIP-39 external identities from the event tags */
             parse_external_identities(self);
           }
+        } else {
+          g_warning("profile_pane: NDB event deserialize FAILED for %.8s", self->current_pubkey);
         }
         if (evt) nostr_event_free(evt);
         free(event_json);  /* Caller-owned buffer from ln_ndb_get_profile_by_pubkey */
+      } else {
+        g_warning("profile_pane: NDB CACHE MISS for %.8s (rc=%d)", self->current_pubkey, prof_rc);
       }
     }
     storage_ndb_end_query(txn);
+  } else {
+    g_warning("profile_pane: NDB begin_query FAILED rc=%d", ndb_rc);
   }
 
   /* Step 2: Always fetch from network for fresh data (even if cached) */
@@ -3551,8 +3588,9 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   /* Use read relays from GSettings */
   gnostr_get_read_relay_urls_into(relay_urls);
 
+  g_warning("profile_pane: %u relays configured for network fetch", relay_urls->len);
   if (relay_urls->len == 0) {
-    g_debug("profile_pane: no relays configured for profile fetch");
+    g_warning("profile_pane: NO RELAYS configured - network fetch skipped!");
     g_ptr_array_unref(relay_urls);
     return;
   }
@@ -3898,6 +3936,8 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
   g_return_if_fail(pubkey_hex != NULL);
 
+  g_warning("profile_pane: set_pubkey ENTRY pubkey_hex=%.16s...", pubkey_hex);
+
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
   if (!hex) {
@@ -3905,8 +3945,11 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
     return;
   }
 
+  g_warning("profile_pane: set_pubkey hex=%.16s...", hex);
+
   /* Check if already showing this profile */
   if (self->current_pubkey && strcmp(self->current_pubkey, hex) == 0) {
+    g_warning("profile_pane: set_pubkey SKIP - already showing %.8s", hex);
     return;
   }
 
@@ -3916,12 +3959,37 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   /* Store new pubkey */
   self->current_pubkey = g_strdup(hex);
 
-  g_debug("profile_pane: set_pubkey called for %.8s...", hex);
+  /* nostrc-myp3: Verify template children are bound */
+  g_warning("profile_pane: template children: root=%p lbl_display_name=%p lbl_handle=%p "
+            "lbl_bio=%p banner_image=%p avatar_image=%p content_stack=%p tab_switcher=%p",
+            (void*)self->root, (void*)self->lbl_display_name, (void*)self->lbl_handle,
+            (void*)self->lbl_bio, (void*)self->banner_image, (void*)self->avatar_image,
+            (void*)self->content_stack, (void*)self->tab_switcher);
+
+  /* nostrc-myp3: Ensure root box and self are visible */
+  if (self->root) {
+    gtk_widget_set_visible(self->root, TRUE);
+  } else {
+    g_warning("profile_pane: ROOT IS NULL - template failed to load!");
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self), TRUE);
 
   /* Show temporary handle while loading */
-  char *temp_handle = g_strdup_printf("npub1%.8s...", hex);
-  gtk_label_set_text(GTK_LABEL(self->lbl_handle), temp_handle);
-  g_free(temp_handle);
+  if (self->lbl_handle) {
+    char *temp_handle = g_strdup_printf("npub1%.8s...", hex);
+    gtk_label_set_text(GTK_LABEL(self->lbl_handle), temp_handle);
+    g_free(temp_handle);
+  }
+  if (self->lbl_display_name) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_display_name), "Loading...");
+  }
+
+  /* nostrc-myp3: Ensure content stack shows About tab */
+  if (self->content_stack) {
+    gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "about");
+  }
+
+  g_warning("profile_pane: set_pubkey DONE for %.8s, fetching profile...", hex);
 
   /* Fetch profile from cache first, then network for updates */
   fetch_profile_from_cache_or_network(self);

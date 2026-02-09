@@ -3954,6 +3954,15 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     }
   }
 
+  /* nostrc-myp3: Tell profile pane the current user's pubkey so it can show
+   * "Edit Profile" button when viewing own profile */
+  if (self->user_pubkey_hex && self->session_view) {
+    GtkWidget *pp = gnostr_session_view_get_profile_pane(self->session_view);
+    if (pp && GNOSTR_IS_PROFILE_PANE(pp)) {
+      gnostr_profile_pane_set_own_pubkey(GNOSTR_PROFILE_PANE(pp), self->user_pubkey_hex);
+    }
+  }
+
   /* nostrc-51a.10: Start notification subscriptions */
   if (self->user_pubkey_hex) {
     GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
