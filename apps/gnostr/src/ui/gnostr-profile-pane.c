@@ -365,6 +365,7 @@ struct _GnostrProfilePane {
 #ifdef HAVE_SOUP3
   /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
   GCancellable *banner_cancellable;
+  char *loading_banner_url; /* URL currently being fetched (nostrc-q8u0) */
   GCancellable *avatar_cancellable;
   GHashTable *image_cache; /* URL -> GdkTexture */
   GQueue *image_cache_lru; /* LRU queue of URL keys (head=oldest) */
@@ -458,6 +459,7 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
     g_cancellable_cancel(self->banner_cancellable);
     g_clear_object(&self->banner_cancellable);
   }
+  g_clear_pointer(&self->loading_banner_url, g_free);
   if (self->avatar_cancellable) {
     g_cancellable_cancel(self->avatar_cancellable);
     g_clear_object(&self->avatar_cancellable);
@@ -2000,6 +2002,9 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
       g_warning("profile_pane: banner fetch FAILED for url=%s: %s", ctx->url, error->message);
     }
     g_clear_error(&error);
+    /* Clear in-flight URL so retries are allowed (nostrc-q8u0) */
+    if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+      g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     banner_load_ctx_free(ctx);
     return;
   }
@@ -2007,6 +2012,8 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     g_warning("profile_pane: empty banner response for url=%s", ctx->url);
     if (bytes) g_bytes_unref(bytes);
+    if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+      g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     banner_load_ctx_free(ctx);
     return;
   }
@@ -2022,6 +2029,8 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
     g_warning("profile_pane: failed to create banner texture for url=%s: %s",
               ctx->url, error->message);
     g_clear_error(&error);
+    if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+      g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     banner_load_ctx_free(ctx);
     return;
   }
@@ -2034,6 +2043,8 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
 
     /* Cache the banner texture locally with LRU eviction */
     image_cache_insert(ctx->self, ctx->url, texture);
+    /* Clear in-flight URL now that load succeeded (nostrc-q8u0) */
+    g_clear_pointer(&ctx->self->loading_banner_url, g_free);
   }
 
   g_object_unref(texture);
@@ -2055,11 +2066,20 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
     }
   }
 
+  /* Skip if we're already fetching this exact URL (nostrc-q8u0) */
+  if (self->banner_cancellable && self->loading_banner_url &&
+      g_strcmp0(self->loading_banner_url, url) == 0) {
+    g_debug("profile_pane: banner load already in-flight for url=%s, skipping", url);
+    return;
+  }
+
   /* Cancel previous banner load if any */
   if (self->banner_cancellable) {
     g_cancellable_cancel(self->banner_cancellable);
     g_clear_object(&self->banner_cancellable);
   }
+  g_free(self->loading_banner_url);
+  self->loading_banner_url = g_strdup(url);
   self->banner_cancellable = g_cancellable_new();
 
   /* Uses shared session from gnostr_get_shared_soup_session() */
