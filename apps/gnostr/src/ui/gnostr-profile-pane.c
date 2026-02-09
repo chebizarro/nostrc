@@ -892,6 +892,8 @@ static void on_follows_model_loading_changed(GObject *object, GParamSpec *pspec,
   GnFollowListModel *model = GN_FOLLOW_LIST_MODEL(object);
   gboolean is_loading = gn_follow_list_model_is_loading(model);
 
+  g_warning("profile_pane: follows model loading_changed is_loading=%d", (int)is_loading);
+
   if (!is_loading) {
     /* Loading complete - update UI */
     /* Hide loading indicator */
@@ -916,7 +918,7 @@ static void on_follows_model_loading_changed(GObject *object, GParamSpec *pspec,
       if (self->follows_empty_box) gtk_widget_set_visible(self->follows_empty_box, TRUE);
     }
 
-    g_debug("profile_pane: follows load complete, %u items", n_items);
+    g_warning("profile_pane: follows load COMPLETE, %u items", n_items);
   }
 }
 
@@ -974,7 +976,9 @@ static void load_follows(GnostrProfilePane *self) {
   if (!self->current_pubkey) return;
   if (self->follows_loaded) return;
 
-  g_debug("profile_pane: loading follows for %.8s...", self->current_pubkey);
+  g_warning("profile_pane: load_follows START for %.8s model=%p",
+            self->current_pubkey,
+            (void*)self->follows_model);
 
   /* Show loading state */
   if (self->follows_loading_box) {
@@ -995,6 +999,18 @@ static void load_follows(GnostrProfilePane *self) {
   if (self->follows_model && GN_IS_FOLLOW_LIST_MODEL(self->follows_model)) {
     gn_follow_list_model_load_for_pubkey(GN_FOLLOW_LIST_MODEL(self->follows_model),
                                           self->current_pubkey);
+  } else {
+    /* nostrc-qvba: Model not available - show empty state instead of infinite spinner */
+    g_warning("profile_pane: follows model is NULL - showing empty state");
+    if (self->follows_loading_box) {
+      gtk_widget_set_visible(self->follows_loading_box, FALSE);
+      if (self->follows_spinner) {
+        gtk_spinner_set_spinning(GTK_SPINNER(self->follows_spinner), FALSE);
+      }
+    }
+    if (self->follows_empty_box) {
+      gtk_widget_set_visible(self->follows_empty_box, TRUE);
+    }
   }
 
   self->follows_loaded = TRUE;
@@ -3715,12 +3731,23 @@ static GtkWidget *create_highlight_widget(const char *content, const char *conte
 
 /* Callback when NIP-84 highlights query completes */
 static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
-
+  /* nostrc-qvba: Check result BEFORE accessing user_data - if cancelled, the pane may be disposed */
   GError *err = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
+
+  if (err) {
+    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("profile_pane: highlights query error: %s", err->message);
+    }
+    g_error_free(err);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  /* Now safe to access user_data since operation wasn't cancelled */
+  if (!user_data) return;
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   /* Hide loading indicator */
   if (GTK_IS_SPINNER(self->highlights_spinner)) {
@@ -3730,22 +3757,9 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
     gtk_widget_set_visible(self->highlights_loading_box, FALSE);
   }
 
-  if (err) {
-    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_warning("profile_pane: highlights query error: %s", err->message);
-    }
-    g_error_free(err);
-
-    /* Show empty state on error */
-    if (GTK_IS_WIDGET(self->highlights_empty_box)) {
-      gtk_widget_set_visible(self->highlights_empty_box, TRUE);
-    }
-    return;
-  }
-
   if (!results || results->len == 0) {
-    g_debug("profile_pane: no highlights found for pubkey %.8s",
-            self->current_pubkey ? self->current_pubkey : "(null)");
+    g_warning("profile_pane: highlights EMPTY for %.8s",
+              self->current_pubkey ? self->current_pubkey : "(null)");
     if (GTK_IS_WIDGET(self->highlights_empty_box)) {
       gtk_widget_set_visible(self->highlights_empty_box, TRUE);
     }
@@ -3753,7 +3767,7 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
     return;
   }
 
-  g_debug("profile_pane: received %u NIP-84 highlight events", results->len);
+  g_warning("profile_pane: received %u NIP-84 highlight events", results->len);
 
   /* Clear existing highlights */
   if (GTK_IS_BOX(self->highlights_list)) {
@@ -3832,6 +3846,7 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
 static void load_highlights(GnostrProfilePane *self) {
   if (!self || !self->current_pubkey || self->highlights_loaded) return;
 
+  g_warning("profile_pane: load_highlights START for %.8s", self->current_pubkey);
   self->highlights_loaded = TRUE;
 
   /* Cancel previous request */
