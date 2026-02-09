@@ -5610,16 +5610,28 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
 }
 
 
-static void prepopulate_all_profiles_from_cache(GnostrMainWindow *self) {
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+/* Worker thread: query all kind-0 profiles from nostrdb.
+ * This avoids blocking the GTK main thread during startup. */
+static void
+prepopulate_profiles_thread(GTask        *task,
+                            gpointer      source_object,
+                            gpointer      task_data G_GNUC_UNUSED,
+                            GCancellable *cancellable G_GNUC_UNUSED)
+{
   void *txn = NULL; char **arr = NULL; int n = 0;
   int brc = storage_ndb_begin_query(&txn);
-  if (brc != 0) { g_warning("prepopulate_all_profiles_from_cache: begin_query failed rc=%d", brc); return; }
-  const char *filters = "[{\"kinds\":[0]}]"; /* all kind-0 profiles */
+  if (brc != 0) {
+    g_warning("prepopulate_profiles_thread: begin_query failed rc=%d", brc);
+    g_task_return_pointer(task, NULL, NULL);
+    return;
+  }
+  const char *filters = "[{\"kinds\":[0]}]";
   int rc = storage_ndb_query(txn, filters, &arr, &n);
-  g_debug("prepopulate_all_profiles_from_cache: query rc=%d count=%d", rc, n);
+  g_debug("prepopulate_profiles_thread: query rc=%d count=%d", rc, n);
+
+  GPtrArray *items = NULL;
   if (rc == 0 && arr && n > 0) {
-    GPtrArray *items = g_ptr_array_new_with_free_func(profile_apply_item_free);
+    items = g_ptr_array_new_with_free_func(profile_apply_item_free);
     for (int i = 0; i < n; i++) {
       const char *evt_json = arr[i];
       if (!evt_json) continue;
@@ -5638,16 +5650,37 @@ static void prepopulate_all_profiles_from_cache(GnostrMainWindow *self) {
         g_object_unref(evt);
       }
     }
-    if (items->len > 0) {
-      g_debug("prepopulate_all_profiles_from_cache: scheduling %u cached profiles", items->len);
-      schedule_apply_profiles(self, items); /* transfers ownership */
-      items = NULL;
-    } else {
+    if (items->len == 0) {
       g_ptr_array_free(items, TRUE);
+      items = NULL;
     }
   }
   storage_ndb_free_results(arr, n);
   storage_ndb_end_query(txn);
+
+  g_task_return_pointer(task, items, NULL);
+}
+
+/* Main-thread callback: apply profiles loaded in worker thread. */
+static void
+on_prepopulate_profiles_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)user_data;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(source);
+  GPtrArray *items = g_task_propagate_pointer(G_TASK(result), NULL);
+  if (items && items->len > 0 && GNOSTR_IS_MAIN_WINDOW(self)) {
+    g_debug("prepopulate_all_profiles_from_cache: scheduling %u cached profiles", items->len);
+    schedule_apply_profiles(self, items); /* transfers ownership */
+  } else if (items) {
+    g_ptr_array_free(items, TRUE);
+  }
+}
+
+static void prepopulate_all_profiles_from_cache(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  GTask *task = g_task_new(self, NULL, on_prepopulate_profiles_done, NULL);
+  g_task_run_in_thread(task, prepopulate_profiles_thread);
+  g_object_unref(task);
 }
 
 /* ---- Cached timeline prepopulation (kind-1 text notes) -------------------- */
