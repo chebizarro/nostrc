@@ -17,6 +17,8 @@
 #include "../ui/gnostr-profile-provider.h"
 #include "../util/follow_list.h"
 #include "../util/mute_list.h"
+#include "../util/pin_list.h"
+#include "../util/relays.h"
 #include <nostr_event_bus.h>
 
 /* Bridge state */
@@ -24,6 +26,8 @@ static gchar *bridge_user_pubkey = NULL;
 static NostrEventBusHandle *handle_kind0 = NULL;
 static NostrEventBusHandle *handle_kind3 = NULL;
 static NostrEventBusHandle *handle_kind10000 = NULL;
+static NostrEventBusHandle *handle_kind10001 = NULL;
+static NostrEventBusHandle *handle_kind10002 = NULL;
 static NostrEventBusHandle *handle_sync_complete = NULL;
 static gboolean bridge_initialized = FALSE;
 
@@ -104,6 +108,37 @@ on_kind10000_changed(const gchar *topic, gpointer event_data, gpointer user_data
 }
 
 static void
+on_kind10001_changed(const gchar *topic, gpointer event_data, gpointer user_data)
+{
+  (void)topic;
+  (void)event_data;
+  (void)user_data;
+
+  g_debug("[SYNC-BRIDGE] Pin list (kind:10001) sync detected changes");
+
+  GnostrPinList *pins = gnostr_pin_list_get_default();
+  if (pins && bridge_user_pubkey) {
+    gnostr_pin_list_fetch_async(pins, bridge_user_pubkey, NULL, NULL, NULL);
+    g_debug("[SYNC-BRIDGE] Triggered pin list reload for %.8s...", bridge_user_pubkey);
+  }
+}
+
+static void
+on_kind10002_changed(const gchar *topic, gpointer event_data, gpointer user_data)
+{
+  (void)topic;
+  (void)event_data;
+  (void)user_data;
+
+  g_debug("[SYNC-BRIDGE] Relay list (kind:10002) sync detected changes");
+
+  if (bridge_user_pubkey) {
+    gnostr_nip65_fetch_relays_async(bridge_user_pubkey, NULL, NULL, NULL);
+    g_debug("[SYNC-BRIDGE] Triggered NIP-65 relay list refresh for %.8s...", bridge_user_pubkey);
+  }
+}
+
+static void
 on_sync_complete(const gchar *topic, gpointer event_data, gpointer user_data)
 {
   (void)topic;
@@ -142,6 +177,12 @@ gnostr_sync_bridge_init(const char *user_pubkey_hex)
   handle_kind10000 = nostr_event_bus_subscribe(bus,
     "negentropy::kind::10000", on_kind10000_changed, NULL);
 
+  handle_kind10001 = nostr_event_bus_subscribe(bus,
+    "negentropy::kind::10001", on_kind10001_changed, NULL);
+
+  handle_kind10002 = nostr_event_bus_subscribe(bus,
+    "negentropy::kind::10002", on_kind10002_changed, NULL);
+
   /* Subscribe to overall sync completion for logging */
   handle_sync_complete = nostr_event_bus_subscribe(bus,
     GNOSTR_NEG_TOPIC_SYNC_COMPLETE, on_sync_complete, NULL);
@@ -177,6 +218,10 @@ gnostr_sync_bridge_shutdown(void)
       nostr_event_bus_unsubscribe(bus, handle_kind3);
     if (handle_kind10000)
       nostr_event_bus_unsubscribe(bus, handle_kind10000);
+    if (handle_kind10001)
+      nostr_event_bus_unsubscribe(bus, handle_kind10001);
+    if (handle_kind10002)
+      nostr_event_bus_unsubscribe(bus, handle_kind10002);
     if (handle_sync_complete)
       nostr_event_bus_unsubscribe(bus, handle_sync_complete);
   }
@@ -184,6 +229,8 @@ gnostr_sync_bridge_shutdown(void)
   handle_kind0 = NULL;
   handle_kind3 = NULL;
   handle_kind10000 = NULL;
+  handle_kind10001 = NULL;
+  handle_kind10002 = NULL;
   handle_sync_complete = NULL;
 
   g_clear_pointer(&bridge_user_pubkey, g_free);

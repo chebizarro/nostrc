@@ -1,6 +1,8 @@
 #include "utils.h"
 #include "nostr_nip19.h"
 #include "../storage_ndb.h"
+#include "nostr-filter.h"
+#include "json.h"
 #include <string.h>
 
 #ifdef HAVE_SOUP3
@@ -63,6 +65,57 @@ ndb_event_sink(GPtrArray *jsons, gpointer user_data G_GNUC_UNUSED)
     storage_ndb_ingest_events_async(jsons); /* takes ownership */
 }
 
+/* Cache query adapter: check nostrdb before hitting the network.
+ * Serializes NostrFilters to JSON and queries storage_ndb.
+ * Thread-safe — called from GTask worker thread. */
+static GPtrArray *
+ndb_cache_query(NostrFilters *filters, gpointer user_data G_GNUC_UNUSED)
+{
+    if (!filters || filters->count == 0)
+        return NULL;
+
+    /* Build JSON array of serialized filters: [filter1, filter2, ...] */
+    GString *json = g_string_new("[");
+    for (size_t i = 0; i < filters->count; i++) {
+        char *fj = nostr_filter_serialize(&filters->filters[i]);
+        if (!fj) continue;
+        if (i > 0) g_string_append_c(json, ',');
+        g_string_append(json, fj);
+        free(fj);
+    }
+    g_string_append_c(json, ']');
+
+    /* Query nostrdb */
+    void *txn = NULL;
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    if (rc != 0 || !txn) {
+        g_string_free(json, TRUE);
+        return NULL;
+    }
+
+    char **results = NULL;
+    int count = 0;
+    rc = storage_ndb_query(txn, json->str, &results, &count);
+    g_string_free(json, TRUE);
+    storage_ndb_end_query(txn);
+
+    if (rc != 0 || count <= 0) {
+        if (results)
+            storage_ndb_free_results(results, count);
+        return NULL;
+    }
+
+    /* Convert to GPtrArray of owned JSON strings */
+    GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
+    for (int i = 0; i < count; i++) {
+        if (results[i])
+            g_ptr_array_add(out, g_strdup(results[i]));
+    }
+    storage_ndb_free_results(results, count);
+
+    return out;
+}
+
 /* Shared GNostrPool singleton for one-shot queries (hq-r248b) */
 static GNostrPool *s_shared_query_pool = NULL;
 static GMutex s_query_pool_mutex;
@@ -80,9 +133,11 @@ GNostrPool *gnostr_get_shared_query_pool(void) {
 
   if (!s_shared_query_pool) {
     s_shared_query_pool = gnostr_pool_new();
+    /* Check nostrdb cache before hitting the network */
+    gnostr_pool_set_cache_query(s_shared_query_pool, ndb_cache_query, NULL, NULL);
     /* Auto-persist all fetched events to nostrdb */
     gnostr_pool_set_event_sink(s_shared_query_pool, ndb_event_sink, NULL, NULL);
-    g_debug("gnostr: Created shared GNostrPool with nostrdb event sink");
+    g_debug("gnostr: Created shared GNostrPool with nostrdb cache + event sink");
   }
 
   g_mutex_unlock(&s_query_pool_mutex);

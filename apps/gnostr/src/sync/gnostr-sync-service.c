@@ -22,9 +22,14 @@
 #define SYNC_INTERVAL_MAX_SEC    600
 #define SYNC_BACKOFF_FACTOR        2
 
-/* Kinds to sync */
-static const int SYNC_KINDS[] = { 3, 10000 };
-static const size_t SYNC_KIND_COUNT = 2;
+/* Replaceable event kinds to keep in sync via negentropy.
+ *   0     = profile metadata (NIP-01)
+ *   3     = contact/follow list (NIP-02)
+ *   10000 = mute list (NIP-51)
+ *   10001 = pin list (NIP-51)
+ *   10002 = relay list (NIP-65) */
+static const int SYNC_KINDS[] = { 0, 3, 10000, 10001, 10002 };
+static const size_t SYNC_KIND_COUNT = 5;
 
 struct _GnostrSyncService
 {

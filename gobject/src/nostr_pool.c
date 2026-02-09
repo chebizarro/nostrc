@@ -78,6 +78,11 @@ struct _GNostrPool {
     GNostrPoolEventSinkFunc event_sink_func;
     gpointer event_sink_data;
     GDestroyNotify event_sink_destroy;
+
+    /* Cache query: check local store before hitting the network */
+    GNostrPoolCacheQueryFunc cache_query_func;
+    gpointer cache_query_data;
+    GDestroyNotify cache_query_destroy;
 };
 
 G_DEFINE_TYPE(GNostrPool, gnostr_pool, G_TYPE_OBJECT)
@@ -218,6 +223,14 @@ gnostr_pool_finalize(GObject *object)
     self->event_sink_func = NULL;
     self->event_sink_data = NULL;
     self->event_sink_destroy = NULL;
+
+    /* Clean up cache query */
+    if (self->cache_query_destroy && self->cache_query_data) {
+        self->cache_query_destroy(self->cache_query_data);
+    }
+    self->cache_query_func = NULL;
+    self->cache_query_data = NULL;
+    self->cache_query_destroy = NULL;
 
     g_clear_pointer(&self->relay_handler_ids, g_hash_table_destroy);
     g_clear_object(&self->relays);
@@ -542,6 +555,9 @@ typedef struct {
     /* Event sink: snapshot of pool's sink callback for worker thread */
     GNostrPoolEventSinkFunc event_sink_func;
     gpointer event_sink_data;
+    /* Cache query: snapshot of pool's cache callback for worker thread */
+    GNostrPoolCacheQueryFunc cache_query_func;
+    gpointer cache_query_data;
 } QueryAsyncData;
 
 static void
@@ -599,6 +615,17 @@ query_thread_func(GTask         *task,
 {
     QueryAsyncData *data = (QueryAsyncData *)task_data;
     NostrFilters *filters = g_object_get_data(G_OBJECT(task), "filters");
+
+    /* Check local cache first — avoid network round-trip if data exists */
+    if (data->cache_query_func && filters) {
+        GPtrArray *cached = data->cache_query_func(filters, data->cache_query_data);
+        if (cached && cached->len > 0) {
+            g_debug("pool_query_thread: cache HIT — %u results, skipping network", cached->len);
+            g_task_return_pointer(task, cached, (GDestroyNotify)g_ptr_array_unref);
+            return;
+        }
+        if (cached) g_ptr_array_unref(cached);
+    }
 
     /* nostrc-snap: Use snapshot captured on main thread, NOT self->relays */
     guint n_relays = data->relay_snapshots ? data->relay_snapshots->len : 0;
@@ -870,9 +897,11 @@ gnostr_pool_query_async(GNostrPool          *self,
         g_debug("pool_query_async: snapshot %u relays for worker thread", n);
     }
 
-    /* Snapshot event sink so worker thread can persist results */
+    /* Snapshot event sink and cache query for worker thread */
     data->event_sink_func = self->event_sink_func;
     data->event_sink_data = self->event_sink_data;
+    data->cache_query_func = self->cache_query_func;
+    data->cache_query_data = self->cache_query_data;
 
     g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
 
@@ -1094,4 +1123,23 @@ gnostr_pool_set_event_sink(GNostrPool              *self,
     self->event_sink_func = sink_func;
     self->event_sink_data = user_data;
     self->event_sink_destroy = destroy;
+}
+
+/* --- Cache Query API --- */
+
+void
+gnostr_pool_set_cache_query(GNostrPool                *self,
+                             GNostrPoolCacheQueryFunc   query_func,
+                             gpointer                  user_data,
+                             GDestroyNotify             destroy)
+{
+    g_return_if_fail(GNOSTR_IS_POOL(self));
+
+    if (self->cache_query_destroy && self->cache_query_data) {
+        self->cache_query_destroy(self->cache_query_data);
+    }
+
+    self->cache_query_func = query_func;
+    self->cache_query_data = user_data;
+    self->cache_query_destroy = destroy;
 }

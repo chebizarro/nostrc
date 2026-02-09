@@ -243,6 +243,45 @@ GNostrSubscription *gnostr_pool_subscribe(GNostrPool *self,
                                            NostrFilters *filters,
                                            GError **error);
 
+/* --- Cache Query API --- */
+
+/**
+ * GNostrPoolCacheQueryFunc:
+ * @filters: (transfer none): the query filters
+ * @user_data: (closure): user data
+ *
+ * Callback to query a local cache (e.g. nostrdb) before hitting the network.
+ * Must be thread-safe.
+ *
+ * Returns: (element-type utf8) (transfer full) (nullable): a #GPtrArray of
+ *   event JSON strings from the cache, or %NULL for cache miss. The caller
+ *   takes ownership. An empty array (len==0) is treated as a miss.
+ *
+ * Since: 1.0
+ */
+typedef GPtrArray *(*GNostrPoolCacheQueryFunc)(NostrFilters *filters, gpointer user_data);
+
+/**
+ * gnostr_pool_set_cache_query:
+ * @self: a #GNostrPool
+ * @query_func: (nullable): function to query the local cache
+ * @user_data: (closure): user data passed to @query_func
+ * @destroy: (nullable): destroy function for @user_data
+ *
+ * Sets a cache-query callback. When set, gnostr_pool_query_async() checks
+ * the cache first. If the cache returns results, they are returned immediately
+ * without hitting the network. On cache miss, the network query proceeds
+ * normally and results are persisted via the event sink.
+ *
+ * Pass %NULL for @query_func to disable cache lookup.
+ *
+ * Since: 1.0
+ */
+void gnostr_pool_set_cache_query(GNostrPool                *self,
+                                  GNostrPoolCacheQueryFunc   query_func,
+                                  gpointer                  user_data,
+                                  GDestroyNotify             destroy);
+
 /* --- Event Sink API --- */
 
 /**
