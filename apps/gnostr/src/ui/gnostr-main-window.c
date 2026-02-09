@@ -4106,31 +4106,43 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
   show_toast(self, "Signed out");
 }
 
-/* nostrc-bkor: Navigate to the current user's own profile */
+/* nostrc-myp3: Navigate to the current user's own profile.
+ * Self-healing: if user_pubkey_hex is not set (init race, signer timing),
+ * fall back to reading from GSettings directly — the same source of truth
+ * that every other profile-opening code path uses successfully. */
 static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data) {
   (void)sv;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  if (!self->user_pubkey_hex || !*self->user_pubkey_hex) return;
 
-  /* nostrc-daj1: Validate user_pubkey_hex is actually hex, not npub */
-  if (g_str_has_prefix(self->user_pubkey_hex, "npub1")) {
-    g_warning("[PROFILE] user_pubkey_hex contains npub, not hex: %.16s... — converting",
-              self->user_pubkey_hex);
-    g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(self->user_pubkey_hex, NULL);
-    if (n19) {
-      const char *hex = gnostr_nip19_get_pubkey(n19);
-      if (hex) {
-        g_free(self->user_pubkey_hex);
-        self->user_pubkey_hex = g_strdup(hex);
-      }
+  /* If user_pubkey_hex isn't set, try to recover it from GSettings */
+  if (!self->user_pubkey_hex || !*self->user_pubkey_hex) {
+    g_debug("[PROFILE] user_pubkey_hex is NULL, recovering from GSettings");
+    char *recovered = get_current_user_pubkey_hex();
+    if (recovered) {
+      g_free(self->user_pubkey_hex);
+      self->user_pubkey_hex = recovered;
+      g_debug("[PROFILE] Recovered user_pubkey_hex from GSettings: %.16s...", recovered);
+    } else {
+      g_warning("[PROFILE] View Profile requested but no user pubkey available (not signed in?)");
+      show_toast(self, "Not signed in");
+      return;
     }
   }
 
-  if (strlen(self->user_pubkey_hex) != 64) {
-    g_warning("[PROFILE] user_pubkey_hex has invalid length %zu: %.16s...",
-              strlen(self->user_pubkey_hex), self->user_pubkey_hex);
+  /* Normalize to hex if it's still an npub/nprofile */
+  g_autofree gchar *hex = gnostr_ensure_hex_pubkey(self->user_pubkey_hex);
+  if (!hex || strlen(hex) != 64) {
+    g_warning("[PROFILE] user_pubkey_hex invalid after normalization: %s",
+              self->user_pubkey_hex ? self->user_pubkey_hex : "(null)");
+    show_toast(self, "Could not load profile");
     return;
+  }
+
+  /* Update cached value if normalization changed it */
+  if (g_strcmp0(self->user_pubkey_hex, hex) != 0) {
+    g_free(self->user_pubkey_hex);
+    self->user_pubkey_hex = g_strdup(hex);
   }
 
   gnostr_main_window_open_profile(GTK_WIDGET(self), self->user_pubkey_hex);
