@@ -28,6 +28,7 @@
 #include "../util/bookmarks.h"
 #include "../util/pin_list.h"
 #include "gnostr-main-window.h"
+#include "gnostr-profile-provider.h"
 #include "nostr_nip19.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -4004,6 +4005,58 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
     storage_ndb_end_query(txn);
   } else {
     g_warning("profile_pane: NDB begin_query FAILED rc=%d", ndb_rc);
+  }
+
+  /* Step 1b: If NDB missed, try the in-memory profile provider cache.
+   * The provider may have the profile from a prior network fetch even if
+   * the async NDB ingest hasn't completed yet. */
+  if (!self->profile_loaded_from_cache) {
+    GnostrProfileMeta *meta = gnostr_profile_provider_get(self->current_pubkey);
+    if (meta) {
+      g_warning("profile_pane: PROVIDER CACHE HIT for %.8s", self->current_pubkey);
+
+      /* Build a JSON object from the available fields so we can reuse
+       * the standard update_profile_ui path. GNostrJsonBuilder handles
+       * proper string escaping. */
+      GNostrJsonBuilder *jb = gnostr_json_builder_new();
+      gnostr_json_builder_begin_object(jb);
+      if (meta->display_name) {
+        gnostr_json_builder_set_key(jb, "display_name");
+        gnostr_json_builder_add_string(jb, meta->display_name);
+      }
+      if (meta->name) {
+        gnostr_json_builder_set_key(jb, "name");
+        gnostr_json_builder_add_string(jb, meta->name);
+      }
+      if (meta->picture) {
+        gnostr_json_builder_set_key(jb, "picture");
+        gnostr_json_builder_add_string(jb, meta->picture);
+      }
+      if (meta->banner) {
+        gnostr_json_builder_set_key(jb, "banner");
+        gnostr_json_builder_add_string(jb, meta->banner);
+      }
+      if (meta->nip05) {
+        gnostr_json_builder_set_key(jb, "nip05");
+        gnostr_json_builder_add_string(jb, meta->nip05);
+      }
+      if (meta->lud16) {
+        gnostr_json_builder_set_key(jb, "lud16");
+        gnostr_json_builder_add_string(jb, meta->lud16);
+      }
+      gnostr_json_builder_end_object(jb);
+      char *fallback_json = gnostr_json_builder_finish(jb);
+      g_object_unref(jb);
+
+      if (fallback_json && *fallback_json) {
+        gnostr_profile_pane_update_from_json(self, fallback_json);
+        /* Mark partial — network fetch will still proceed for full data
+         * (about/bio, website, lud06, etc.) */
+        self->profile_loaded_from_cache = TRUE;
+      }
+      g_free(fallback_json);
+      gnostr_profile_meta_free(meta);
+    }
   }
 
   /* Step 2: Always fetch from network for fresh data (even if cached) */
