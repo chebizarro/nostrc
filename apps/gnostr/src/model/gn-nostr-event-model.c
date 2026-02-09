@@ -1897,6 +1897,53 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
 
   g_debug("[MODEL] Query updated: kinds=%zu authors=%zu window=%u",
           self->n_kinds, self->n_authors, self->window_size);
+
+  /* nostrc-init: Load existing events from nostrdb cache immediately.
+   * nostrdb subscriptions (gn_ndb_subscribe) only deliver NEW events ingested
+   * after subscription creation. Without this initial load, the timeline sits
+   * empty until relay connections deliver events — making the app appear stalled.
+   *
+   * The cursor API paginates over cached events. We feed results through the
+   * same on_sub_timeline_batch handler that processes live events. */
+  if (self->n_kinds > 0 && self->notes->len == 0) {
+    GString *filter = g_string_new("{\"kinds\":[");
+    for (gsize i = 0; i < self->n_kinds; i++) {
+      if (i > 0) g_string_append_c(filter, ',');
+      g_string_append_printf(filter, "%d", self->kinds[i]);
+    }
+    g_string_append(filter, "]}");
+
+    StorageNdbCursor *cursor = storage_ndb_cursor_new(filter->str, 50);
+    g_string_free(filter, TRUE);
+
+    if (cursor) {
+      const StorageNdbCursorEntry *entries = NULL;
+      guint count = 0;
+      guint total = 0;
+
+      while (storage_ndb_cursor_next(cursor, &entries, &count) == 0 && count > 0) {
+        /* Convert cursor entries to note_key array for batch handler */
+        uint64_t *keys = g_new(uint64_t, count);
+        for (guint i = 0; i < count; i++)
+          keys[i] = entries[i].note_key;
+
+        on_sub_timeline_batch(0, keys, count, self);
+        g_free(keys);
+
+        total += count;
+        if (total >= self->window_size)
+          break;
+      }
+
+      storage_ndb_cursor_free(cursor);
+
+      if (total > 0) {
+        g_debug("[MODEL] Initial load: %u events from nostrdb cache", total);
+        /* Emit items_changed so the list view renders immediately */
+        g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+      }
+    }
+  }
 }
 
 void gn_nostr_event_model_set_thread_root(GnNostrEventModel *self, const char *root_event_id) {
