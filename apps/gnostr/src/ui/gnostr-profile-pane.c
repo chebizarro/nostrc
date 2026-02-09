@@ -3908,8 +3908,9 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
 
   /* Update profile from best kind:0 */
   if (best_content && *best_content) {
-    g_debug("profile_pane: updating UI with network profile for %.8s (created_at=%" G_GINT64_FORMAT ")",
-            self->current_pubkey ? self->current_pubkey : "(null)", best_created_at);
+    g_warning("profile_pane: NETWORK HIT updating UI for %.8s (created_at=%" G_GINT64_FORMAT " content_len=%zu)",
+              self->current_pubkey ? self->current_pubkey : "(null)", best_created_at,
+              strlen(best_content));
 
     g_free(self->current_event_json);
     self->current_event_json = best_event_json;
@@ -3920,10 +3921,24 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
       GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
       g_ptr_array_add(batch, g_strdup(self->current_event_json));
       storage_ndb_ingest_events_async(batch);
+      g_warning("profile_pane: NDB ingest queued for %.8s (json_len=%zu)",
+                self->current_pubkey ? self->current_pubkey : "(null)",
+                strlen(self->current_event_json));
+    }
+
+    /* Also update the in-memory profile provider cache so subsequent
+     * lookups (including the profile pane's own fallback) succeed
+     * even if the async NDB ingest is delayed or fails silently. */
+    if (self->current_pubkey) {
+      gnostr_profile_provider_update(self->current_pubkey, best_content);
     }
 
     gnostr_profile_pane_update_from_json(self, best_content);
     parse_external_identities(self);
+  } else {
+    g_warning("profile_pane: NETWORK FETCH returned %u events but no valid kind:0 content for %.8s",
+              results ? results->len : 0,
+              self->current_pubkey ? self->current_pubkey : "(null)");
   }
 
   /* Process kind:30315 user status events */

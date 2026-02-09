@@ -207,6 +207,7 @@ typedef struct {
   GnostrFollowListCallback callback;
   gpointer user_data;
   GPtrArray *nip65_relays;
+  gboolean tried_configured;  /* TRUE after configured-relay attempt */
 } FollowListFetchCtx;
 
 static void follow_list_fetch_ctx_free(FollowListFetchCtx *ctx)
@@ -218,54 +219,63 @@ static void follow_list_fetch_ctx_free(FollowListFetchCtx *ctx)
   g_free(ctx);
 }
 
-/* Callback when kind 3 query completes */
-static void on_follow_list_query_done(GObject *source, GAsyncResult *res, gpointer user_data)
+/* Forward declarations */
+static void on_nip65_relays_fetched(GPtrArray *nip65_relays, gpointer user_data);
+
+/* Helper: extract follow entries from a set of kind:3 events.
+ * Returns entries parsed from the most recent event, or NULL. */
+static GPtrArray *extract_follow_entries_from_events(GPtrArray *events)
+{
+  if (!events || events->len == 0) return NULL;
+
+  const gchar *best_event = NULL;
+  gint64 best_created_at = 0;
+
+  for (guint i = 0; i < events->len; i++) {
+    const gchar *ev = g_ptr_array_index(events, i);
+    gint64 created_at = 0;
+
+    g_autofree gchar *created_at_str = NULL;
+    if ((created_at_str = gnostr_json_get_raw(ev, "created_at", NULL)) != NULL) {
+      created_at = g_ascii_strtoll(created_at_str, NULL, 10);
+    }
+
+    if (created_at > best_created_at) {
+      best_created_at = created_at;
+      best_event = ev;
+    }
+  }
+
+  GPtrArray *entries = NULL;
+  if (best_event) {
+    g_autofree char *tags_json = NULL;
+    if ((tags_json = gnostr_json_get_raw(best_event, "tags", NULL)) != NULL) {
+      entries = parse_p_tags_to_entries(tags_json);
+    }
+
+    /* Cache in nostrdb via ingest */
+    storage_ndb_ingest_event_json(best_event, NULL);
+  }
+
+  return entries;
+}
+
+/* Final callback: kind:3 query from NIP-65 relays (fallback) */
+static void on_nip65_follow_list_query_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   FollowListFetchCtx *ctx = user_data;
   GNostrPool *pool = GNOSTR_POOL(source);
   GError *error = NULL;
 
   GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
-
-  GPtrArray *entries = NULL;
-
-  if (events && events->len > 0) {
-    /* Find the most recent event */
-    const gchar *best_event = NULL;
-    gint64 best_created_at = 0;
-
-    for (guint i = 0; i < events->len; i++) {
-      const gchar *ev = g_ptr_array_index(events, i);
-      gint64 created_at = 0;
-
-      /* Extract created_at */
-      g_autofree gchar *created_at_str = NULL;
-      if ((created_at_str = gnostr_json_get_raw(ev, "created_at", NULL)) != NULL) {
-        created_at = g_ascii_strtoll(created_at_str, NULL, 10);
-      }
-
-      if (created_at > best_created_at) {
-        best_created_at = created_at;
-        best_event = ev;
-      }
-    }
-
-    if (best_event) {
-      /* Parse p-tags */
-      g_autofree char *tags_json = NULL;
-      if ((tags_json = gnostr_json_get_raw(best_event, "tags", NULL)) != NULL) {
-        entries = parse_p_tags_to_entries(tags_json);
-      }
-
-      /* Cache in nostrdb via ingest */
-      storage_ndb_ingest_event_json(best_event, NULL);
-    }
-  }
+  GPtrArray *entries = extract_follow_entries_from_events(events);
 
   if (events) g_ptr_array_unref(events);
   if (error) g_error_free(error);
 
-  /* Invoke callback */
+  g_debug("[FOLLOW_LIST] NIP-65 fallback returned %u entries for %.8s",
+          entries ? entries->len : 0, ctx->pubkey_hex);
+
   if (ctx->callback) {
     ctx->callback(entries, ctx->user_data);
   } else if (entries) {
@@ -275,8 +285,10 @@ static void on_follow_list_query_done(GObject *source, GAsyncResult *res, gpoint
   follow_list_fetch_ctx_free(ctx);
 }
 
-/* Query relays for follow list */
-static void query_relays_for_follow_list(FollowListFetchCtx *ctx, GPtrArray *relay_urls)
+/* Query a specific set of relays for kind:3, using the given callback */
+static void query_relays_for_follow_list_cb(FollowListFetchCtx *ctx,
+                                             GPtrArray *relay_urls,
+                                             GAsyncReadyCallback cb)
 {
   if (!relay_urls || relay_urls->len == 0) {
     /* No relays to query, return cached or empty */
@@ -302,7 +314,7 @@ static void query_relays_for_follow_list(FollowListFetchCtx *ctx, GPtrArray *rel
   /* Use shared pool */
   GNostrPool *pool = gnostr_get_shared_query_pool();
 
-    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
+  gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
   {
     /* nostrc-9pj1: Use unique key per query to avoid freeing filters still in use
      * by a concurrent query thread (use-after-free on overlapping fetches). */
@@ -312,14 +324,14 @@ static void query_relays_for_follow_list(FollowListFetchCtx *ctx, GPtrArray *rel
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
     g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
-    gnostr_pool_query_async(pool, _qf, ctx->cancellable, on_follow_list_query_done, ctx);
+    gnostr_pool_query_async(pool, _qf, ctx->cancellable, cb, ctx);
   }
 
   g_free(urls);
   nostr_filter_free(filter);
 }
 
-/* Callback when NIP-65 relay list is fetched */
+/* Callback when NIP-65 relay list is fetched (for fallback after configured relays miss) */
 static void on_nip65_relays_fetched(GPtrArray *nip65_relays, gpointer user_data)
 {
   FollowListFetchCtx *ctx = user_data;
@@ -330,17 +342,59 @@ static void on_nip65_relays_fetched(GPtrArray *nip65_relays, gpointer user_data)
     write_relays = gnostr_nip65_get_write_relays(nip65_relays);
   }
 
-  /* If no NIP-65 relays, fall back to configured relays */
+  ctx->nip65_relays = nip65_relays; /* Keep ref for cleanup */
+
   if (!write_relays || write_relays->len == 0) {
+    /* No NIP-65 relays either — return empty */
+    g_debug("[FOLLOW_LIST] NIP-65 returned 0 relays for %.8s, giving up",
+            ctx->pubkey_hex);
     if (write_relays) g_ptr_array_unref(write_relays);
-    write_relays = g_ptr_array_new_with_free_func(g_free);
-    gnostr_load_relays_into(write_relays);
+    if (ctx->callback) ctx->callback(NULL, ctx->user_data);
+    follow_list_fetch_ctx_free(ctx);
+    return;
   }
 
-  ctx->nip65_relays = nip65_relays; /* Keep ref for cleanup */
-  query_relays_for_follow_list(ctx, write_relays);
+  g_debug("[FOLLOW_LIST] Falling back to %u NIP-65 relays for %.8s",
+          write_relays->len, ctx->pubkey_hex);
+  query_relays_for_follow_list_cb(ctx, write_relays, on_nip65_follow_list_query_done);
 
   g_ptr_array_unref(write_relays);
+}
+
+/* Callback when kind:3 query on configured relays completes (first attempt) */
+static void on_configured_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  FollowListFetchCtx *ctx = user_data;
+  GNostrPool *pool = GNOSTR_POOL(source);
+  GError *error = NULL;
+
+  GPtrArray *events = gnostr_pool_query_finish(pool, res, &error);
+  GPtrArray *entries = extract_follow_entries_from_events(events);
+
+  if (events) g_ptr_array_unref(events);
+  if (error) g_error_free(error);
+
+  if (entries && entries->len > 0) {
+    /* Got follow list from configured relays — done */
+    g_debug("[FOLLOW_LIST] Configured relays returned %u entries for %.8s",
+            entries->len, ctx->pubkey_hex);
+    if (ctx->callback) {
+      ctx->callback(entries, ctx->user_data);
+    } else {
+      g_ptr_array_unref(entries);
+    }
+    follow_list_fetch_ctx_free(ctx);
+    return;
+  }
+
+  if (entries) g_ptr_array_unref(entries);
+
+  /* Configured relays returned nothing — fall back to NIP-65 relay discovery */
+  g_debug("[FOLLOW_LIST] Configured relays returned 0 entries for %.8s, trying NIP-65",
+          ctx->pubkey_hex);
+  ctx->tried_configured = TRUE;
+  gnostr_nip65_fetch_relays_async(ctx->pubkey_hex, ctx->cancellable,
+                                   on_nip65_relays_fetched, ctx);
 }
 
 /* Public async fetch function */
@@ -366,17 +420,24 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
     /* Return cached immediately for fast UI */
     if (callback) callback(cached, user_data);
 
-    /* Background refresh: re-fetch from relays to keep cache fresh.
+    /* Background refresh: re-fetch from configured relays to keep cache fresh.
      * The callback is NULL so results are silently ingested into NDB
-     * via storage_ndb_ingest_event_json() in on_follow_list_query_done. */
+     * via storage_ndb_ingest_event_json() in extract_follow_entries_from_events. */
     FollowListFetchCtx *bg_ctx = g_new0(FollowListFetchCtx, 1);
     bg_ctx->pubkey_hex = g_strdup(pubkey_hex);
     bg_ctx->cancellable = NULL;
     bg_ctx->callback = NULL;  /* silent background refresh */
     bg_ctx->user_data = NULL;
 
-    gnostr_nip65_fetch_relays_async(pubkey_hex, NULL,
-                                     on_nip65_relays_fetched, bg_ctx);
+    GPtrArray *bg_relays = g_ptr_array_new_with_free_func(g_free);
+    gnostr_load_relays_into(bg_relays);
+    if (bg_relays->len > 0) {
+      query_relays_for_follow_list_cb(bg_ctx, bg_relays, on_configured_relay_query_done);
+    } else {
+      gnostr_nip65_fetch_relays_async(pubkey_hex, NULL,
+                                       on_nip65_relays_fetched, bg_ctx);
+    }
+    g_ptr_array_unref(bg_relays);
     return;
   }
   if (cached) g_ptr_array_unref(cached);
@@ -388,7 +449,20 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
   ctx->callback = callback;
   ctx->user_data = user_data;
 
-  /* Fetch user's NIP-65 relay list to find their write relays */
-  gnostr_nip65_fetch_relays_async(pubkey_hex, cancellable,
-                                   on_nip65_relays_fetched, ctx);
+  /* Try configured relays first — they're fast and usually have the follow list.
+   * Only fall back to NIP-65 relay discovery if configured relays return nothing. */
+  GPtrArray *configured = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(configured);
+
+  if (configured->len > 0) {
+    g_debug("[FOLLOW_LIST] Trying %u configured relays first for %.8s",
+            configured->len, pubkey_hex);
+    query_relays_for_follow_list_cb(ctx, configured, on_configured_relay_query_done);
+    g_ptr_array_unref(configured);
+  } else {
+    g_ptr_array_unref(configured);
+    /* No configured relays — go straight to NIP-65 */
+    gnostr_nip65_fetch_relays_async(pubkey_hex, cancellable,
+                                     on_nip65_relays_fetched, ctx);
+  }
 }

@@ -7116,6 +7116,11 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
       g_clear_error(&pub_err);
       r->fail_count++;
     }
+    /* Properly disconnect before unreffing to ensure background worker
+     * goroutines (write_operations) exit before the connection is freed.
+     * relay_free_impl frees the connection before waiting for workers,
+     * causing a UAF if we skip the explicit disconnect. */
+    gnostr_relay_disconnect(relay);
     g_object_unref(relay);
   }
 
