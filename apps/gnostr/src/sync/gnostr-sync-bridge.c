@@ -100,7 +100,7 @@ gnostr_sync_bridge_init(const char *user_pubkey_hex)
 
   NostrEventBus *bus = nostr_event_bus_get_default();
   if (!bus) {
-    g_warning("[SYNC-BRIDGE] EventBus not available, bridge disabled");
+    g_debug("[SYNC-BRIDGE] EventBus not available, bridge disabled");
     return;
   }
 

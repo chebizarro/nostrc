@@ -1337,7 +1337,7 @@ static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpoint
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_warning("nip66 phase2: query failed: %s", err->message);
+      g_debug("nip66 phase2: query failed: %s", err->message);
     }
     g_error_free(err);
   } else if (results && results->len > 0) {
@@ -1383,12 +1383,12 @@ static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpoint
         if (meta_copy) gnostr_nip66_cache_add_relay(meta_copy);
       } else if (i < 3) {
         /* Log first few parse failures to help debug */
-        g_warning("nip66 phase2: failed to parse event %u: %.200s...", i, json ? json : "(null)");
+        g_debug("nip66 phase2: failed to parse event %u: %.200s...", i, json ? json : "(null)");
       }
     }
     g_debug("nip66 phase2: parsed %u/%u events as relay metadata", parsed_count, results->len);
   } else {
-    g_warning("nip66 phase2: no results returned (results=%p, len=%u)",
+    g_debug("nip66 phase2: no results returned (results=%p, len=%u)",
               (void*)results, results ? results->len : 0);
   }
 

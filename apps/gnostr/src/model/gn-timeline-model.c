@@ -662,8 +662,8 @@ static gboolean on_tick_callback(GtkWidget     *widget,
   gint64 elapsed_us = g_get_monotonic_time() - start_us;
 
   if (elapsed_us > FRAME_BUDGET_US) {
-    g_warning("[FRAME] Budget exceeded: %ldus (budget: %dus, items: %u)",
-              (long)elapsed_us, FRAME_BUDGET_US, to_process);
+    g_debug("[FRAME] Budget exceeded: %ldus (budget: %dus, items: %u)",
+            (long)elapsed_us, FRAME_BUDGET_US, to_process);
 
     /* Reduce items_per_frame adaptively */
     if (self->items_per_frame > 1) {
@@ -771,8 +771,8 @@ static void check_queue_depth_warning(GnTimelineModel *self) {
 
   /* Emit warning if over threshold */
   if (depth > INCOMING_QUEUE_WARNING) {
-    g_warning("[THROTTLE] Queue depth warning: %u items (threshold: %d)",
-              depth, INCOMING_QUEUE_WARNING);
+    g_debug("[THROTTLE] Queue depth warning: %u items (threshold: %d)",
+            depth, INCOMING_QUEUE_WARNING);
     g_signal_emit(self, signals[SIGNAL_QUEUE_DEPTH_WARNING], 0, depth);
   }
 }
@@ -799,8 +799,8 @@ static void apply_backpressure(GnTimelineModel *self) {
     guint to_keep = INCOMING_QUEUE_WARNING / 2;  /* Keep 50% of warning threshold */
     guint to_drop = original_len - to_keep;
 
-    g_warning("[BACKPRESSURE] Dropping %u stale items from incoming queue (%u -> %u)",
-              to_drop, original_len, to_keep);
+    g_debug("[BACKPRESSURE] Dropping %u stale items from incoming queue (%u -> %u)",
+            to_drop, original_len, to_keep);
 
     /* Remove keys from hash set for dropped items */
     for (guint i = 0; i < to_drop; i++) {

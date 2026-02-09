@@ -209,8 +209,8 @@ static void spawn_worker_thread(const char *name,
         pthread_attr_destroy(&attr);
 
         if (rc != 0) {
-            g_warning("[POOL] pthread_create('%s', 32MB stack) failed: %s — "
-                      "falling back to g_thread_new", name, g_strerror(rc));
+            g_debug("[POOL] pthread_create('%s', 32MB stack) failed: %s — "
+                    "falling back to g_thread_new", name, g_strerror(rc));
             g_free(t);
             GThread *thr = g_thread_new(name, func, data);
             g_thread_unref(thr);
@@ -714,7 +714,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             g_debug("simple_pool: Relay %s from pool is disconnected, reconnecting...", url);
             Error *err = NULL;
             if (!nostr_relay_connect(relay, &err)) {
-                g_warning("simple_pool: reconnect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+                g_debug("simple_pool: reconnect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
                 if (err) free_error(err);
                 /* Skip this relay but don't remove from pool - it may connect later */
                 continue;
@@ -727,14 +727,14 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             Error *err = NULL;
             relay = nostr_relay_new(NULL, url, &err);
             if (!relay) {
-                g_warning("simple_pool: failed to create relay for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+                g_debug("simple_pool: failed to create relay for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
                 if (err) free_error(err);
                 continue;
             }
             /* Skip signature verification - nostrdb handles this during ingestion */
             relay->assume_valid = true;
             if (!nostr_relay_connect(relay, &err)) {
-                g_warning("simple_pool: connect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+                g_debug("simple_pool: connect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
                 if (err) free_error(err);
                 nostr_relay_free(relay);
                 continue;
@@ -750,7 +750,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, ctx->filters);
         if (!sub) {
-            g_warning("simple_pool: prepare_subscription failed for %s", url);
+            g_debug("simple_pool: prepare_subscription failed for %s", url);
             /* DON'T free relay if it's in the pool! */
             if (!relay_is_from_pool) {
                 nostr_relay_disconnect(relay);
@@ -760,7 +760,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         }
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
-            g_warning("simple_pool: subscription_fire failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+            g_debug("simple_pool: subscription_fire failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
             if (err) free_error(err);
             nostr_subscription_close(sub, NULL);
             nostr_subscription_free(sub);
@@ -1035,7 +1035,7 @@ static gpointer query_single_thread(gpointer user_data) {
                     i + 1, ctx->url_count, url);
             relay = nostr_relay_new(gctx, url, &err);
             if (!relay) {
-                g_warning("query_single: Failed to create relay for %s: %s", url,
+                g_debug("query_single: Failed to create relay for %s: %s", url,
                          err ? err->message : "unknown error");
                 if (err) { free_error(err); err = NULL; }
                 continue;
@@ -1047,7 +1047,7 @@ static gpointer query_single_thread(gpointer user_data) {
             g_debug("query_single: relay %zu/%zu connecting to %s...",
                     i + 1, ctx->url_count, url);
             if (!nostr_relay_connect(relay, &err)) {
-                g_warning("query_single: Failed to connect to %s: %s", url,
+                g_debug("query_single: Failed to connect to %s: %s", url,
                          err ? err->message : "unknown error");
                 if (err) { free_error(err); err = NULL; }
                 nostr_relay_free(relay);
@@ -1065,7 +1065,7 @@ static gpointer query_single_thread(gpointer user_data) {
 
         // Check if relay is connected
         if (!nostr_relay_is_connected(relay)) {
-            g_warning("query_single: Relay %s is not connected, skipping", url);
+            g_debug("query_single: Relay %s is not connected, skipping", url);
             continue;
         }
 
@@ -1077,7 +1077,7 @@ static gpointer query_single_thread(gpointer user_data) {
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
 
         if (!sub) {
-            g_warning("query_single: Failed to prepare subscription for %s", url);
+            g_debug("query_single: Failed to prepare subscription for %s", url);
             nostr_filters_free(filters);
             continue;
         }
@@ -1094,7 +1094,7 @@ static gpointer query_single_thread(gpointer user_data) {
         }
 
         if (!nostr_subscription_fire(sub, &err)) {
-            g_warning("query_single: Failed to fire subscription to %s: %s", url,
+            g_debug("query_single: Failed to fire subscription to %s: %s", url,
                      err ? err->message : "unknown error");
             if (err) { free_error(err); err = NULL; }
             nostr_subscription_close(sub, NULL);
@@ -1621,7 +1621,7 @@ static void fetch_profiles_state_free(FetchProfilesState *state) {
         }
         
         if (timeout_count > 0) {
-            g_warning("PROFILE_FETCH: cleanup leaked %u subscription(s)", timeout_count);
+            g_debug("PROFILE_FETCH: cleanup leaked %u subscription(s)", timeout_count);
         }
         
         g_ptr_array_free(cleanup_handles, TRUE);
@@ -1777,19 +1777,19 @@ static void *fetch_profiles_goroutine(void *arg) {
         pthread_mutex_unlock(&pool->pool_mutex);
         
         if (!relay) {
-            g_warning("[GOROUTINE] Relay not in pool after ensure (skipping): %s", url);
+            g_debug("[GOROUTINE] Relay not in pool after ensure (skipping): %s", url);
             continue;
         }
         
         if (!nostr_relay_is_connected(relay)) {
-            g_warning("[GOROUTINE] Relay not connected after ensure (skipping): %s", url);
+            g_debug("[GOROUTINE] Relay not connected after ensure (skipping): %s", url);
             continue;
         }
         
         /* Create subscription */
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
         if (!sub) {
-            g_warning("[GOROUTINE] prepare_subscription failed: %s", url);
+            g_debug("[GOROUTINE] prepare_subscription failed: %s", url);
             continue;
         }
         
@@ -1843,7 +1843,7 @@ static void *fetch_profiles_goroutine(void *arg) {
             if (rc != 0) {
                 /* ETIMEDOUT */
                 int count = atomic_load(&wg->counter);
-                g_warning("[GOROUTINE] Timeout waiting for subscriptions to fire (counter=%d), proceeding anyway", count);
+                g_debug("[GOROUTINE] Timeout waiting for subscriptions to fire (counter=%d), proceeding anyway", count);
                 break;
             }
         }
@@ -1948,7 +1948,7 @@ static void *fetch_profiles_goroutine(void *arg) {
                 GoChannel *ch_closed = nostr_subscription_get_closed_channel(item->sub);
                 char *closed_msg = NULL;
                 if (ch_closed && go_channel_try_receive(ch_closed, (void**)&closed_msg) == 0) {
-                    g_warning("[GOROUTINE] CLOSED received from %s: %s",
+                    g_debug("[GOROUTINE] CLOSED received from %s: %s",
                               item->relay_url, closed_msg ? closed_msg : "(no reason)");
                     const char *sid = nostr_subscription_get_id(item->sub);
                     event_bus_emit_closed(item->relay_url, sid, closed_msg);
