@@ -882,8 +882,12 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
     goto cleanup;
   }
 
-  /* Ingest into local store */
-  storage_ndb_ingest_event_json(json, NULL);
+  /* Ingest into local store (background) */
+  {
+    GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(b, g_strdup(json));
+    storage_ndb_ingest_events_async(b);
+  }
 
   /* Parse and display */
   NostrEvent *evt = nostr_event_new();
@@ -1116,8 +1120,12 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
     goto cleanup;
   }
 
-  /* Ingest into local store */
-  storage_ndb_ingest_event_json(json, NULL);
+  /* Ingest into local store (background) */
+  {
+    GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(b, g_strdup(json));
+    storage_ndb_ingest_events_async(b);
+  }
 
   /* Parse profile and display */
   char *display_name = NULL;

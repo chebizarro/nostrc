@@ -691,8 +691,12 @@ void gnostr_thread_view_set_focus_event_with_json(GnostrThreadView *self,
     ThreadEventItem *item = add_event_from_json(self, event_json);
     if (item) {
       g_message("[THREAD_VIEW] Pre-populated focus event from JSON: %.16s...", event_id_hex);
-      /* Also ingest into nostrdb for future queries */
-      storage_ndb_ingest_event_json(event_json, NULL);
+      /* Also ingest into nostrdb in background for future queries */
+      {
+        GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+        g_ptr_array_add(b, g_strdup(event_json));
+        storage_ndb_ingest_events_async(b);
+      }
     }
   }
 
@@ -732,8 +736,12 @@ void gnostr_thread_view_set_thread_root_with_json(GnostrThreadView *self,
     ThreadEventItem *item = add_event_from_json(self, event_json);
     if (item) {
       g_message("[THREAD_VIEW] Pre-populated root event from JSON: %.16s...", root_event_id_hex);
-      /* Also ingest into nostrdb for future queries */
-      storage_ndb_ingest_event_json(event_json, NULL);
+      /* Also ingest into nostrdb in background for future queries */
+      {
+        GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+        g_ptr_array_add(b, g_strdup(event_json));
+        storage_ndb_ingest_events_async(b);
+      }
     }
   }
 

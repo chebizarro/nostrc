@@ -182,7 +182,11 @@ static void on_query_single_done_multi(GObject *source, GAsyncResult *res, gpoin
     if (json) {
       /* cache positive */
       if (ctx && ctx->key) embed_cache_put_json(ctx->key, json);
-      storage_ndb_ingest_event_json(json, NULL);
+      {
+        GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+        g_ptr_array_add(b, g_strdup(json));
+        storage_ndb_ingest_events_async(b);
+      }
       NostrEvent *evt = nostr_event_new();
       if (evt && nostr_event_deserialize(evt, json) == 0) {
         const char *content = nostr_event_get_content(evt);

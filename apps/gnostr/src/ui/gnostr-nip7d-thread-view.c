@@ -967,8 +967,12 @@ on_thread_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data)
     if (results && results->len > 0) {
         const char *json = g_ptr_array_index(results, 0);
         if (json) {
-            /* Ingest into nostrdb */
-            storage_ndb_ingest_event_json(json, NULL);
+            /* Ingest into nostrdb (background) */
+            {
+              GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+              g_ptr_array_add(b, g_strdup(json));
+              storage_ndb_ingest_events_async(b);
+            }
 
             /* Parse thread */
             GnostrThread *thread = gnostr_thread_parse_from_json(json);

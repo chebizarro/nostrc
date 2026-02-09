@@ -3712,8 +3712,12 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
       if (evt) {
         const char *content = gnostr_event_get_content(evt);
         if (content && *content) {
-          /* Ingest into nostrdb for future use */
-          storage_ndb_ingest_event_json(evt_json, NULL);
+          /* Ingest into nostrdb in background for future use */
+          {
+            GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+            g_ptr_array_add(b, g_strdup(evt_json));
+            storage_ndb_ingest_events_async(b);
+          }
 
           /* Update profile provider cache (this parses the JSON for us) */
           if (self->user_pubkey_hex) {
@@ -7413,13 +7417,11 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
       gnostr_note_card_row_set_liked(ctx->row, TRUE);
     }
 
-    /* Store reaction in local NostrdB cache */
+    /* Store reaction in local NostrdB cache (background) */
     if (signed_event_json) {
-      int ingest_rc = storage_ndb_ingest_event_json(signed_event_json, NULL);
-      if (ingest_rc != 0) {
-        g_warning("[LIKE] Failed to store reaction locally");
-      } else {
-      }
+      GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+      g_ptr_array_add(b, g_strdup(signed_event_json));
+      storage_ndb_ingest_events_async(b);
     }
   } else {
     show_toast(self, "Failed to publish reaction");

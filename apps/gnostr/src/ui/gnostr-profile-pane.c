@@ -3607,9 +3607,11 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
     self->current_event_json = best_event_json;
     best_event_json = NULL;
 
-    /* Ingest into nostrdb so future lookups hit the cache */
+    /* Ingest into nostrdb in background so future lookups hit the cache */
     if (self->current_event_json) {
-      storage_ndb_ingest_event_json(self->current_event_json, NULL);
+      GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
+      g_ptr_array_add(batch, g_strdup(self->current_event_json));
+      storage_ndb_ingest_events_async(batch);
     }
 
     gnostr_profile_pane_update_from_json(self, best_content);
