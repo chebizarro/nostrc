@@ -688,24 +688,26 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
     free(filter_strs);
     free(sub_msg);
 
-    // Wait for a response with timeout (3 seconds)
-    Error *write_err = NULL;
-    GoSelectCase cases[1];
-    cases[0].op = GO_SELECT_RECEIVE;
-    cases[0].chan = write_channel;
-    cases[0].recv_buf = (void **)&write_err;
-    
-    GoSelectResult result = go_select_timeout(cases, 1, 3000); // 3 second timeout
-    
-    if (result.selected_case == -1) {
-        // Timeout - writer will deliver result or error later and free the channel
-        fprintf(stderr, "[nostr_subscription_fire] TIMEOUT waiting for write confirmation (relay may be dead)\n");
-        if (err) *err = new_error(1, "write timeout - relay connection may be dead");
-        return false;
-    }
-    if (write_err) {
-        if (err) *err = write_err;
-        return false;
+    /* Non-blocking check for immediate write failure only.
+     * DO NOT block here — this function may be called from the GTK main
+     * thread and any blocking wait stalls the entire UI.  The relay's
+     * writer thread completes the WebSocket send asynchronously; if the
+     * relay is truly dead, EOSE timeout / reconnect logic handles it. */
+    {
+        Error *write_err = NULL;
+        GoSelectCase cases[1];
+        cases[0].op = GO_SELECT_RECEIVE;
+        cases[0].chan = write_channel;
+        cases[0].recv_buf = (void **)&write_err;
+
+        GoSelectResult result = go_select_timeout(cases, 1, 0);
+
+        if (result.selected_case >= 0 && write_err) {
+            fprintf(stderr, "[nostr_subscription_fire] write failed: %s\n",
+                    write_err->message ? write_err->message : "unknown");
+            if (err) *err = write_err;
+            return false;
+        }
     }
 
     // Mark the subscription as live

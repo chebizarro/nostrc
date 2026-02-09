@@ -1226,28 +1226,27 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
         return;
     }
 
-    /* Wait for write confirmation (no timeout per project policy) */
-    Error *write_err = NULL;
-    GoSelectCase cases[1];
-    cases[0].op = GO_SELECT_RECEIVE;
-    cases[0].chan = write_ch;
-    cases[0].recv_buf = (void **)&write_err;
+    /* Non-blocking check for immediate write failure only.
+     * DO NOT block — nostr_relay_publish is called from the GTK main
+     * thread (likes, DMs, chess, reports, etc.) and any blocking wait
+     * stalls the entire UI.  The relay writer thread will complete the
+     * WebSocket send asynchronously. */
+    {
+        Error *write_err = NULL;
+        GoSelectCase cases[1];
+        cases[0].op = GO_SELECT_RECEIVE;
+        cases[0].chan = write_ch;
+        cases[0].recv_buf = (void **)&write_err;
 
-    int result = go_select(cases, 1);
-    go_channel_free(write_ch);
+        GoSelectResult result = go_select_timeout(cases, 1, 0);
 
-    if (result < 0) {
-        fprintf(stderr, "[nostr_relay_publish] ERROR: go_select failed\n");
-        return;
+        if (result.selected_case >= 0 && write_err) {
+            fprintf(stderr, "[nostr_relay_publish] write failed: %s\n",
+                    write_err->message ? write_err->message : "unknown");
+            free_error(write_err);
+            return;
+        }
     }
-    if (write_err) {
-        fprintf(stderr, "[nostr_relay_publish] ERROR: write failed: %s\n",
-                write_err->message ? write_err->message : "unknown");
-        free_error(write_err);
-        return;
-    }
-
-    fprintf(stderr, "[nostr_relay_publish] SUCCESS: event sent\n");
 }
 
 void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
