@@ -598,8 +598,13 @@ gn_secure_entry_dispose(GObject *object)
   /* Stop the timeout */
   gn_secure_entry_stop_timeout(self);
 
-  /* Clear the secure buffer immediately */
-  gn_secure_entry_clear(self);
+  /* Securely zero the buffer without emitting signals — during dispose the
+   * parent widget may already be freed, so signal handlers that access the
+   * parent would hit a use-after-free. */
+  if (self->secure_buffer && self->buffer_len > 0) {
+    gn_secure_zero(self->secure_buffer, self->buffer_capacity);
+    self->buffer_len = 0;
+  }
 
   /* Dispose of the template children */
   gtk_widget_dispose_template(GTK_WIDGET(self), GN_TYPE_SECURE_ENTRY);
