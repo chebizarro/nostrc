@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <stdatomic.h>
 #include "libnostr_store.h"
 #include "libnostr_errors.h"
 #include "store_int.h"
@@ -45,6 +46,11 @@ typedef struct {
 
 static pthread_key_t tls_txn_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
+/* nostrc-uaf1: Atomic flag to prevent TLS destructors from accessing ndb
+ * after ndb_destroy has freed the LMDB environment. Worker threads from
+ * GLib's thread pool may exit after shutdown, triggering their TLS
+ * destructors — which would UAF the freed MDB_env. */
+static atomic_bool tls_ndb_alive = false;
 
 /* Cleanup function for thread-local transactions */
 static void tls_txn_destructor(void *data)
@@ -52,7 +58,11 @@ static void tls_txn_destructor(void *data)
     tls_txn_t *tls = (tls_txn_t*)data;
     if (tls) {
         if (tls->txn) {
-            ndb_end_query(tls->txn);
+            /* Only end the LMDB transaction if the database is still alive.
+             * After ndb_destroy, the MDB_env is freed — calling ndb_end_query
+             * would be a use-after-free. Just free the txn struct. */
+            if (atomic_load(&tls_ndb_alive))
+                ndb_end_query(tls->txn);
             free(tls->txn);
         }
         free(tls);
@@ -63,6 +73,7 @@ static void tls_txn_destructor(void *data)
 static void tls_init(void)
 {
     pthread_key_create(&tls_txn_key, tls_txn_destructor);
+    atomic_store(&tls_ndb_alive, true);
 }
 
 /* very small helpers to parse minimal JSON-like key/values without deps */
@@ -172,6 +183,10 @@ static void ln_ndb_close(ln_store *s)
   if (s->impl) {
     struct ln_ndb_impl *impl = (struct ln_ndb_impl *)s->impl;
     if (impl->db) {
+      /* nostrc-uaf1: Signal TLS destructors BEFORE freeing the LMDB env.
+       * Worker threads exiting after this point will skip ndb_end_query
+       * in their TLS destructor, avoiding use-after-free on MDB_env. */
+      atomic_store(&tls_ndb_alive, false);
       ndb_destroy((struct ndb *)impl->db);
       impl->db = NULL;
     }
