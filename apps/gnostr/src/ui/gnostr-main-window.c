@@ -71,6 +71,9 @@
 #include "../util/blossom_settings.h"
 /* NIP-42 relay authentication */
 #include "../util/nip42_auth.h"
+/* NIP-47 Nostr Wallet Connect */
+#include "../util/nwc.h"
+#include "gnostr-nwc-connect.h"
 /* NIP-66 relay discovery */
 #include "../util/nip66_relay_discovery.h"
 /* Metrics dashboard */
@@ -3521,6 +3524,139 @@ static void settings_dialog_setup_metrics_panel(SettingsDialogCtx *ctx) {
   g_object_set_data_full(G_OBJECT(ctx->win), "metrics-panel-ctx", mctx, metrics_panel_ctx_free);
 }
 
+/* --- NIP-47 Wallet (Lightning) settings panel --- */
+
+typedef struct {
+  SettingsDialogCtx *dialog_ctx;
+} WalletPanelCtx;
+
+static void on_nwc_balance_finish(GObject *source, GAsyncResult *result, gpointer user_data) {
+  GnostrNwcService *nwc = GNOSTR_NWC_SERVICE(source);
+  GtkLabel *lbl = GTK_LABEL(user_data);
+
+  GError *error = NULL;
+  gint64 balance_msat = 0;
+
+  if (gnostr_nwc_service_get_balance_finish(nwc, result, &balance_msat, &error)) {
+    gchar *formatted = gnostr_nwc_format_balance(balance_msat);
+    if (GTK_IS_LABEL(lbl)) gtk_label_set_text(lbl, formatted);
+    g_free(formatted);
+  } else {
+    if (GTK_IS_LABEL(lbl)) gtk_label_set_text(lbl, "Unable to fetch");
+    g_clear_error(&error);
+  }
+  g_object_unref(lbl);
+}
+
+static void on_nwc_refresh_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GtkLabel *lbl = GTK_LABEL(user_data);
+  GnostrNwcService *nwc = gnostr_nwc_service_get_default();
+  if (!gnostr_nwc_service_is_connected(nwc)) return;
+  gnostr_nwc_service_get_balance_async(nwc, NULL, on_nwc_balance_finish, g_object_ref(lbl));
+}
+
+static void on_nwc_connect_clicked_settings(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  GnostrNwcConnect *dialog = gnostr_nwc_connect_new(ctx->win);
+  gtk_window_present(GTK_WINDOW(dialog));
+}
+
+static void on_nwc_disconnect_clicked_settings(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  GnostrNwcService *nwc = gnostr_nwc_service_get_default();
+  gnostr_nwc_service_disconnect(nwc);
+  gnostr_nwc_service_save_to_settings(nwc);
+
+  /* Update UI to disconnected state */
+  GtkBuilder *b = ctx->builder;
+  GtkLabel *lbl_status = GTK_LABEL(gtk_builder_get_object(b, "lbl_nwc_status"));
+  if (lbl_status) gtk_label_set_text(lbl_status, "Not connected");
+
+  GtkWidget *balance_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_balance_row"));
+  GtkWidget *wallet_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_wallet_row"));
+  GtkWidget *relay_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_relay_row"));
+  GtkWidget *btn_disconnect = GTK_WIDGET(gtk_builder_get_object(b, "btn_nwc_disconnect"));
+  GtkWidget *btn_connect = GTK_WIDGET(gtk_builder_get_object(b, "btn_nwc_connect"));
+
+  if (balance_row) gtk_widget_set_visible(balance_row, FALSE);
+  if (wallet_row) gtk_widget_set_visible(wallet_row, FALSE);
+  if (relay_row) gtk_widget_set_visible(relay_row, FALSE);
+  if (btn_disconnect) gtk_widget_set_visible(btn_disconnect, FALSE);
+  if (btn_connect) gtk_widget_set_visible(btn_connect, TRUE);
+}
+
+static void settings_dialog_setup_wallet_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkBuilder *b = ctx->builder;
+  GnostrNwcService *nwc = gnostr_nwc_service_get_default();
+  gboolean connected = gnostr_nwc_service_is_connected(nwc);
+
+  /* Status label */
+  GtkLabel *lbl_status = GTK_LABEL(gtk_builder_get_object(b, "lbl_nwc_status"));
+  if (lbl_status) {
+    gtk_label_set_text(lbl_status, connected ? "Connected" : "Not connected");
+    if (connected) {
+      gtk_widget_remove_css_class(GTK_WIDGET(lbl_status), "dim-label");
+      gtk_widget_add_css_class(GTK_WIDGET(lbl_status), "success");
+    }
+  }
+
+  /* Show/hide connected details */
+  GtkWidget *balance_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_balance_row"));
+  GtkWidget *wallet_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_wallet_row"));
+  GtkWidget *relay_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_relay_row"));
+  GtkWidget *btn_disconnect = GTK_WIDGET(gtk_builder_get_object(b, "btn_nwc_disconnect"));
+  GtkWidget *btn_connect_w = GTK_WIDGET(gtk_builder_get_object(b, "btn_nwc_connect"));
+
+  if (balance_row) gtk_widget_set_visible(balance_row, connected);
+  if (wallet_row) gtk_widget_set_visible(wallet_row, connected);
+  if (relay_row) gtk_widget_set_visible(relay_row, connected);
+  if (btn_disconnect) gtk_widget_set_visible(btn_disconnect, connected);
+  if (btn_connect_w) gtk_widget_set_visible(btn_connect_w, !connected);
+
+  if (connected) {
+    /* Wallet pubkey */
+    GtkLabel *lbl_wallet = GTK_LABEL(gtk_builder_get_object(b, "lbl_nwc_wallet"));
+    if (lbl_wallet) {
+      const gchar *pk = gnostr_nwc_service_get_wallet_pubkey(nwc);
+      if (pk && strlen(pk) >= 64) {
+        gchar *trunc = g_strdup_printf("%.8s...%.8s", pk, pk + 56);
+        gtk_label_set_text(lbl_wallet, trunc);
+        g_free(trunc);
+      }
+    }
+
+    /* Relay */
+    GtkLabel *lbl_relay = GTK_LABEL(gtk_builder_get_object(b, "lbl_nwc_relay"));
+    if (lbl_relay) {
+      const gchar *relay = gnostr_nwc_service_get_relay(nwc);
+      gtk_label_set_text(lbl_relay, relay ? relay : "Not specified");
+    }
+  }
+
+  /* Connect button handlers */
+  GtkButton *btn_connect = GTK_BUTTON(gtk_builder_get_object(b, "btn_nwc_connect"));
+  if (btn_connect) {
+    g_signal_connect(btn_connect, "clicked", G_CALLBACK(on_nwc_connect_clicked_settings), ctx);
+  }
+
+  GtkButton *btn_disc = GTK_BUTTON(gtk_builder_get_object(b, "btn_nwc_disconnect"));
+  if (btn_disc) {
+    g_signal_connect(btn_disc, "clicked", G_CALLBACK(on_nwc_disconnect_clicked_settings), ctx);
+  }
+
+  /* Balance refresh button */
+  GtkButton *btn_refresh = GTK_BUTTON(gtk_builder_get_object(b, "btn_nwc_refresh"));
+  GtkLabel *lbl_balance = GTK_LABEL(gtk_builder_get_object(b, "lbl_nwc_balance"));
+  if (btn_refresh && lbl_balance) {
+    g_signal_connect(btn_refresh, "clicked", G_CALLBACK(on_nwc_refresh_clicked), lbl_balance);
+  }
+}
+
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
@@ -3584,6 +3720,7 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   settings_dialog_setup_blossom_panel(ctx);
   settings_dialog_setup_media_panel(ctx);
   settings_dialog_setup_metrics_panel(ctx);
+  settings_dialog_setup_wallet_panel(ctx);
 
   /* Connect plugin manager panel signals */
   GnostrPluginManagerPanel *plugin_panel = GNOSTR_PLUGIN_MANAGER_PANEL(
@@ -5860,6 +5997,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->ingest_thread = g_thread_new("ndb-ingest", ingest_thread_func, self);
   /* Initialize profile provider */
   gnostr_profile_provider_init(0); /* Use env/default cap */
+  /* NIP-47: Load saved NWC connection from GSettings */
+  gnostr_nwc_service_load_from_settings(gnostr_nwc_service_get_default());
   /* LEGITIMATE TIMEOUTS - Periodic stats logging (60s intervals).
    * nostrc-b0h: Audited - diagnostic logging at fixed intervals is appropriate. */
   g_timeout_add_seconds(60, (GSourceFunc)gnostr_profile_provider_log_stats, NULL);

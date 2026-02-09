@@ -2198,6 +2198,191 @@ Window settings_window {
             }
           };
         }
+
+        StackPage {
+          name: "lightning";
+          title: "Lightning";
+          icon-name: "flash-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+
+              Label {
+                label: "Nostr Wallet Connect (NIP-47)";
+                xalign: 0;
+
+                styles [
+                  "heading",
+                ]
+              }
+
+              Label {
+                label: "Connect a lightning wallet to send and receive zaps directly from the app.";
+                xalign: 0;
+                wrap: true;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              ListBox {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                ListBoxRow {
+                  activatable: false;
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+
+                    Label {
+                      label: "Status";
+                      hexpand: true;
+                      xalign: 0;
+                    }
+
+                    Label lbl_nwc_status {
+                      label: "Not connected";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+                  }
+                }
+
+                ListBoxRow nwc_balance_row {
+                  activatable: false;
+                  visible: false;
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+
+                    Label {
+                      label: "Balance";
+                      hexpand: true;
+                      xalign: 0;
+                    }
+
+                    Label lbl_nwc_balance {
+                      label: "---";
+                    }
+
+                    Button btn_nwc_refresh {
+                      icon-name: "view-refresh-symbolic";
+                      tooltip-text: "Refresh balance";
+
+                      styles [
+                        "flat",
+                      ]
+                    }
+                  }
+                }
+
+                ListBoxRow nwc_wallet_row {
+                  activatable: false;
+                  visible: false;
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+
+                    Label {
+                      label: "Wallet";
+                      hexpand: true;
+                      xalign: 0;
+                    }
+
+                    Label lbl_nwc_wallet {
+                      label: "";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+                  }
+                }
+
+                ListBoxRow nwc_relay_row {
+                  activatable: false;
+                  visible: false;
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+
+                    Label {
+                      label: "Relay";
+                      hexpand: true;
+                      xalign: 0;
+                    }
+
+                    Label lbl_nwc_relay {
+                      label: "";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                halign: end;
+
+                Button btn_nwc_disconnect {
+                  label: "Disconnect";
+                  visible: false;
+
+                  styles [
+                    "destructive-action",
+                  ]
+                }
+
+                Button btn_nwc_connect {
+                  label: "Connect Wallet";
+
+                  styles [
+                    "suggested-action",
+                  ]
+                }
+              }
+            }
+          };
+        }
       }
     }
   }
