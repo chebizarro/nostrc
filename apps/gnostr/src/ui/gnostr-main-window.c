@@ -8334,13 +8334,17 @@ static gboolean periodic_model_refresh(gpointer user_data) {
   return G_SOURCE_CONTINUE;
 }
 
-/* Retry live subscription after failure */
+/* Retry live subscription after failure.
+ * Inherits a strong ref from the failure path in on_pool_relays_connected.
+ * start_pool_live takes its own ref, so we unref the inherited one. (nostrc-04er) */
 static gboolean retry_pool_live(gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+    g_object_unref(self);
     return G_SOURCE_REMOVE;
   }
   start_pool_live(self);
+  g_object_unref(self); /* balance ref inherited from failure path */
   return G_SOURCE_REMOVE;
 }
 

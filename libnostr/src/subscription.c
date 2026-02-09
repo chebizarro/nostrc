@@ -595,12 +595,16 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
         return false;
     }
 
-    // Serialize filters into JSON (supports 1 or more filters)
-    if (!subscription->filters) {
+    /* Snapshot the filters pointer to prevent TOCTOU race (nostrc-m13c).
+     * Another thread could NULL subscription->filters between our check and use.
+     * The local snapshot is safe because the caller holds a ref (nostrc-nr96)
+     * and the GObject wrapper owns the filters (nostrc-aaf0). */
+    NostrFilters *filters = subscription->filters;
+    if (!filters) {
         if (err) *err = new_error(1, "filters are NULL");
         return false;
     }
-    
+
     // Build the subscription message. Operation is REQ by default, or COUNT if count_result channel is set.
     // For a single filter: ["OP","<id>",<filter>]
     // For multiple filters: ["OP","<id>",<filter1>,<filter2>,...]
@@ -608,10 +612,10 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
         if (err) *err = new_error(1, "subscription id is NULL");
         return false;
     }
-    
-    size_t count = subscription->filters->count;
+
+    size_t count = filters->count;
     int use_empty_filter = 0;
-    if (count == 0 || !subscription->filters->filters) {
+    if (count == 0 || !filters->filters) {
         // NIP-01 permits an empty filter {}; use that to mean "match-all".
         use_empty_filter = 1;
         count = 1;
@@ -629,7 +633,7 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
         if (use_empty_filter) {
             s = strdup("{}");
         } else {
-            const NostrFilter *f = &subscription->filters->filters[i];
+            const NostrFilter *f = &filters->filters[i];
             s = nostr_filter_serialize(f);
         }
         if (!s) {
