@@ -25,11 +25,13 @@ SoupSession *gnostr_get_shared_soup_session(void) {
   }
 
   if (!s_shared_session) {
-    /* Create session with conservative connection limits to avoid
-     * overwhelming the TLS stack on macOS (libgnutls issues) */
+    /* nostrc-bnr1: Increased max-conns-per-host from 2 to 6 to reduce
+     * connection starvation. With 12 concurrent avatar fetches all targeting
+     * the same CDN host (nostr.build, void.cat, etc.), only 2 slots caused
+     * banner requests to queue for a long time. 6 matches Chrome's default. */
     s_shared_session = soup_session_new_with_options(
-      "max-conns", 10,           /* Total max connections */
-      "max-conns-per-host", 2,   /* Max per host */
+      "max-conns", 24,           /* Total max connections */
+      "max-conns-per-host", 6,   /* Max per host (was 2) */
       "timeout", 30,             /* 30 second timeout */
       NULL);
 

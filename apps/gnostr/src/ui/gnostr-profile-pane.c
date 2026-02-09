@@ -1639,6 +1639,9 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     g_cancellable_cancel(self->banner_cancellable);
     g_clear_object(&self->banner_cancellable);
   }
+  /* nostrc-bnr1: Clear loading_banner_url so in-flight dedup doesn't stale-skip
+   * when the same banner URL is loaded after a profile switch. */
+  g_clear_pointer(&self->loading_banner_url, g_free);
 #endif
   
   /* Reset UI to loading state */
@@ -2498,12 +2501,18 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
   SoupSession *session = gnostr_get_shared_soup_session();
   if (!session) {
     g_warning("profile_pane: shared soup session unavailable for banner load");
+    /* nostrc-bnr1: Clean up state so in-flight dedup doesn't permanently block
+     * future loads for this URL after a transient failure. */
+    g_clear_object(&self->banner_cancellable);
+    g_clear_pointer(&self->loading_banner_url, g_free);
     return;
   }
 
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
     g_warning("profile_pane: invalid banner URL: %s", url);
+    g_clear_object(&self->banner_cancellable);
+    g_clear_pointer(&self->loading_banner_url, g_free);
     return;
   }
 
