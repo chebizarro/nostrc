@@ -1672,7 +1672,8 @@ StorageNdbCursor *storage_ndb_cursor_new(const char *filter_json, guint batch_si
   StorageNdbCursor *cursor = g_new0(StorageNdbCursor, 1);
   cursor->filter_json = g_strdup(filter_json);
   cursor->batch_size = batch_size;
-  cursor->seen_keys = g_hash_table_new(g_int64_hash, g_int64_equal);
+  /* nostrc-tyu9: use g_free as key_destroy to avoid leaking g_new'd uint64_t keys */
+  cursor->seen_keys = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, NULL);
   cursor->entries = g_new(StorageNdbCursorEntry, batch_size);
   cursor->entries_capacity = batch_size;
   cursor->first_call = TRUE;
