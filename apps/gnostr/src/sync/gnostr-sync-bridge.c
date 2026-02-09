@@ -3,6 +3,7 @@
  * @brief Bridge between negentropy sync events and UI data refresh
  *
  * Subscribes to negentropy::kind::* EventBus topics:
+ * - kind:0    → refreshes profile provider LRU cache from NDB
  * - kind:3    → triggers follow list re-fetch from NDB cache
  * - kind:10000 → triggers mute list reload from NDB cache
  *
@@ -13,12 +14,14 @@
 
 #include "gnostr-sync-bridge.h"
 #include "gnostr-sync-service.h"
+#include "../ui/gnostr-profile-provider.h"
 #include "../util/follow_list.h"
 #include "../util/mute_list.h"
 #include <nostr_event_bus.h>
 
 /* Bridge state */
 static gchar *bridge_user_pubkey = NULL;
+static NostrEventBusHandle *handle_kind0 = NULL;
 static NostrEventBusHandle *handle_kind3 = NULL;
 static NostrEventBusHandle *handle_kind10000 = NULL;
 static NostrEventBusHandle *handle_sync_complete = NULL;
@@ -31,6 +34,31 @@ static gboolean bridge_initialized = FALSE;
  * The sync service emits from the main thread (GTask callback),
  * so these are main-thread safe.
  * ============================================================================ */
+
+/* hq-yrqwk: When negentropy syncs new kind:0 profiles into NDB, refresh
+ * the profile provider's in-memory LRU cache so the UI reflects them. */
+static void
+on_kind0_changed(const gchar *topic, gpointer event_data, gpointer user_data)
+{
+  (void)topic;
+  (void)event_data;
+  (void)user_data;
+
+  g_debug("[SYNC-BRIDGE] Profile (kind:0) sync detected changes");
+
+  if (!bridge_user_pubkey) {
+    g_debug("[SYNC-BRIDGE] No user pubkey set, skipping profile cache refresh");
+    return;
+  }
+
+  /* Re-warm the profile provider cache from NDB.
+   * The negentropy sync has ingested new kind:0 events, so the LRU
+   * cache may have stale data. prewarm_async re-reads from NDB. */
+  gnostr_profile_provider_prewarm_async(bridge_user_pubkey);
+
+  g_debug("[SYNC-BRIDGE] Triggered profile cache refresh for %.8s...",
+          bridge_user_pubkey);
+}
 
 static void
 on_kind3_changed(const gchar *topic, gpointer event_data, gpointer user_data)
@@ -105,6 +133,9 @@ gnostr_sync_bridge_init(const char *user_pubkey_hex)
   }
 
   /* Subscribe to kind-specific sync events */
+  handle_kind0 = nostr_event_bus_subscribe(bus,
+    "negentropy::kind::0", on_kind0_changed, NULL);
+
   handle_kind3 = nostr_event_bus_subscribe(bus,
     "negentropy::kind::3", on_kind3_changed, NULL);
 
@@ -140,6 +171,8 @@ gnostr_sync_bridge_shutdown(void)
 
   NostrEventBus *bus = nostr_event_bus_get_default();
   if (bus) {
+    if (handle_kind0)
+      nostr_event_bus_unsubscribe(bus, handle_kind0);
     if (handle_kind3)
       nostr_event_bus_unsubscribe(bus, handle_kind3);
     if (handle_kind10000)
@@ -148,6 +181,7 @@ gnostr_sync_bridge_shutdown(void)
       nostr_event_bus_unsubscribe(bus, handle_sync_complete);
   }
 
+  handle_kind0 = NULL;
   handle_kind3 = NULL;
   handle_kind10000 = NULL;
   handle_sync_complete = NULL;

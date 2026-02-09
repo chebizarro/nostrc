@@ -123,6 +123,12 @@ guint gnostr_profile_provider_watch(const char *pubkey_hex,
 
 void gnostr_profile_provider_unwatch(guint watch_id);
 
+/* hq-yrqwk: Pre-warm the LRU cache from NDB for a user and their follow list.
+ * Runs asynchronously in a GTask worker thread.
+ * Call after login when user_pubkey_hex is known. Also callable from
+ * sync bridge when kind:0 profiles are synced to refresh stale cache. */
+void gnostr_profile_provider_prewarm_async(const char *user_pubkey_hex);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,6 +1,7 @@
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
 #include "../util/utils.h"
+#include "../util/follow_list.h"
 #include <json.h>          /* nostr_json_is_object_str (no GObject wrapper yet) */
 #include "nostr_json.h"    /* GObject JSON utilities */
 #include <stdio.h>
@@ -416,4 +417,60 @@ void gnostr_profile_provider_log_stats(void) {
   g_message("[PROFILE_PROVIDER] cache=%u/%u hits=%" G_GUINT64_FORMAT " misses=%" G_GUINT64_FORMAT
             " db_hits=%" G_GUINT64_FORMAT " db_misses=%" G_GUINT64_FORMAT,
             cache_size, cap, hits, misses, db_hits, db_misses);
+}
+
+/* hq-yrqwk: Pre-warm LRU cache from NDB for user + follow list profiles.
+ * Runs in a GTask worker thread to avoid blocking startup or UI. */
+static void
+prewarm_task_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
+                  gpointer task_data, GCancellable *cancellable G_GNUC_UNUSED)
+{
+  const char *user_pk = (const char *)task_data;
+  guint warmed = 0;
+
+  /* 1. Pre-warm the user's own profile */
+  GnostrProfileMeta *m = gnostr_profile_provider_get(user_pk);
+  if (m) {
+    warmed++;
+    gnostr_profile_meta_free(m);
+  }
+
+  /* 2. Get follow list pubkeys and pre-warm each */
+  gchar **follow_pks = gnostr_follow_list_get_pubkeys_cached(user_pk);
+  if (follow_pks) {
+    for (guint i = 0; follow_pks[i]; i++) {
+      m = gnostr_profile_provider_get(follow_pks[i]);
+      if (m) {
+        warmed++;
+        gnostr_profile_meta_free(m);
+      }
+    }
+    g_strfreev(follow_pks);
+  }
+
+  g_task_return_int(task, (gssize)warmed);
+}
+
+static void
+prewarm_task_done(GObject *source G_GNUC_UNUSED, GAsyncResult *result,
+                  gpointer user_data G_GNUC_UNUSED)
+{
+  GTask *task = G_TASK(result);
+  gssize warmed = g_task_propagate_int(task, NULL);
+  g_debug("[PROFILE_PROVIDER] Pre-warm complete: %d profiles loaded from NDB",
+          (int)warmed);
+  gnostr_profile_provider_log_stats();
+}
+
+void
+gnostr_profile_provider_prewarm_async(const char *user_pubkey_hex)
+{
+  if (!user_pubkey_hex || !s_init) return;
+
+  GTask *task = g_task_new(NULL, NULL, prewarm_task_done, NULL);
+  g_task_set_task_data(task, g_strdup(user_pubkey_hex), g_free);
+  g_task_run_in_thread(task, prewarm_task_func);
+  g_object_unref(task);
+
+  g_debug("[PROFILE_PROVIDER] Pre-warm started for user %.16s...", user_pubkey_hex);
 }

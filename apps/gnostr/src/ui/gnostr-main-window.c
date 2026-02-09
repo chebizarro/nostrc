@@ -4157,6 +4157,11 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
     /* Update sync bridge with user pubkey for follow list refresh */
     gnostr_sync_bridge_set_user_pubkey(self->user_pubkey_hex);
+
+    /* hq-yrqwk: Pre-warm profile provider cache from NDB.
+     * Loads user's own profile + follow list profiles into LRU so
+     * the timeline renders with instant profile data. */
+    gnostr_profile_provider_prewarm_async(self->user_pubkey_hex);
   }
 
   show_toast(self, "Signed in successfully");
