@@ -1,5 +1,6 @@
 #include "gnostr-composer.h"
 #include "gnostr-main-window.h"
+#include "../util/media_upload.h"
 #include "../util/blossom.h"
 #include "../util/blossom_settings.h"
 #include "../util/gnostr-drafts.h"
@@ -286,15 +287,6 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
     return;
   }
 
-  /* Check if any Blossom servers are configured */
-  gsize n_servers = gnostr_blossom_settings_get_server_count();
-  if (n_servers == 0) {
-    g_warning("No Blossom servers configured");
-    composer_show_toast(self, "No media servers configured. Add one in Settings.");
-    g_free(path);
-    return;
-  }
-
   /* Show upload progress */
   self->upload_in_progress = TRUE;
   if (self->upload_progress_box && GTK_IS_WIDGET(self->upload_progress_box)) {
@@ -318,11 +310,11 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
   }
   self->upload_cancellable = g_cancellable_new();
 
-  /* Start async upload with automatic fallback to next server on failure */
-  g_message("composer: starting upload of %s (trying %zu servers with fallback)", path, n_servers);
-  gnostr_blossom_upload_with_fallback_async(path, NULL,
-                                             on_blossom_upload_complete, self,
-                                             self->upload_cancellable);
+  /* nostrc-fs5g: Use unified upload (Blossom with NIP-96 fallback) */
+  g_message("composer: starting media upload of %s", path);
+  gnostr_media_upload_async(path, NULL,
+                             on_blossom_upload_complete, self,
+                             self->upload_cancellable);
   g_free(path);
 }
 
