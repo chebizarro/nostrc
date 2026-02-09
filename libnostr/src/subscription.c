@@ -850,14 +850,20 @@ bool nostr_subscription_should_throttle(const NostrSubscription *sub) {
 uint64_t nostr_subscription_get_throttle_delay_us(const NostrSubscription *sub) {
     uint32_t util = nostr_subscription_get_queue_utilization(sub);
 
+    /* nostrc-kw9r: Slash throttle delays.  The previous 10–50 ms sleeps in
+     * message_loop blocked recv_channel drain long enough for the LWS
+     * service thread to hit the channel-full drop path (the "recv_channel
+     * full after retries" spam).  The recv_channel increase to 2048 and
+     * the MAX_EVENTS_PER_TICK bump to 50 on the GTK side make aggressive
+     * throttling unnecessary — light back-pressure is still useful. */
     if (util <= 80) {
-        return 0;  // No throttling needed
+        return 0;       // No throttling needed
     } else if (util <= 90) {
-        return 1000;  // 1ms - light throttle
+        return 100;     // 100µs - light yield
     } else if (util <= 95) {
-        return 10000;  // 10ms - moderate throttle
+        return 500;     // 500µs - moderate
     } else {
-        return 50000;  // 50ms - heavy throttle
+        return 2000;    // 2ms - heavy (was 50ms — that's what killed us)
     }
 }
 

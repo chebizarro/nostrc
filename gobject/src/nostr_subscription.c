@@ -46,10 +46,15 @@ enum {
 static GParamSpec *obj_properties[N_PROPERTIES] = { NULL, };
 static guint sub_signals[GNOSTR_SUBSCRIPTION_SIGNALS_COUNT] = { 0 };
 
-/* nostrc-mzab: Max events to emit per main loop iteration.
+/* nostrc-mzab / nostrc-kw9r: Max events to emit per main loop iteration.
  * Prevents startup floods from blocking the UI — between batches the
- * main loop processes GTK redraws and input events. */
-#define MAX_EVENTS_PER_TICK 5
+ * main loop processes GTK redraws and input events.
+ *
+ * Raised from 5 → 50: at 5/tick the subscription events channel fills
+ * during the startup burst, triggering throttle sleeps (up to 50ms) in
+ * message_loop which backs up the recv_channel and causes drops.
+ * 50/tick still leaves >80% of each frame for GTK rendering. */
+#define MAX_EVENTS_PER_TICK 50
 
 struct _GNostrSubscription {
     GObject parent_instance;

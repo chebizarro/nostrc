@@ -583,7 +583,12 @@ NostrConnection *nostr_connection_new(const char *url) {
     /* Create channels BEFORE enqueue — websocket_callback may fire
      * immediately after lws_client_connect_via_info returns on the
      * service thread, so recv_channel must exist. */
-    conn->recv_channel = go_channel_create(256);
+    /* nostrc-kw9r: Bump recv_channel from 256 → 2048.
+     * At startup relays burst hundreds of stored events.  The LWS service
+     * thread is a singleton shared by ALL connections — when even one
+     * recv_channel is full the retry/drop loop blocks every connection.
+     * 2048 pointers ≈ 16 KB, trivial memory for 8× headroom. */
+    conn->recv_channel = go_channel_create(2048);
     conn->send_channel = go_channel_create(16);
 
     /* Phase 2: Ensure shared context (fast mutex — microseconds, not seconds) */
