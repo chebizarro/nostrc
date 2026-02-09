@@ -308,18 +308,33 @@ static void relay_free_impl(NostrRelay *relay) {
         if (relay->priv->subscription_channel_close_queue) go_channel_close(relay->priv->subscription_channel_close_queue);
         if (relay->priv->debug_raw) go_channel_close(relay->priv->debug_raw);
     }
-    // Close network connection last
-    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: closing network connection\n");
-    if (relay->connection) {
-        nostr_connection_close(relay->connection);
+    // Snapshot and NULL out connection BEFORE waiting for workers.
+    // Workers read relay->connection under priv->mutex (write_operations line 494);
+    // they'll see NULL and skip the write, avoiding UAF on the freed connection.
+    // This matches the safe ordering in nostr_relay_close().
+    NostrConnection *conn = NULL;
+    if (relay->priv) {
+        nsync_mu_lock(&relay->priv->mutex);
+        conn = relay->connection;
         relay->connection = NULL;
+        nsync_mu_unlock(&relay->priv->mutex);
     }
-    // Wait for worker goroutines to finish
+    // Wait for worker goroutines to finish — workers may still be in-flight
+    // but will see connection == NULL and exit their write path safely.
     if (relay->priv) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: waiting for workers\n");
         go_wait_group_wait(&relay->priv->workers);
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: workers joined\n");
         go_wait_group_destroy(&relay->priv->workers);
+    }
+    // NOW safe to close connection — all workers have exited.
+    // Free connection-owned channels before closing (relay owns channel lifecycle,
+    // same as nostr_relay_close lines 1522-1525).
+    if (conn) {
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: closing network connection\n");
+        if (conn->recv_channel) { go_channel_free(conn->recv_channel); conn->recv_channel = NULL; }
+        if (conn->send_channel) { go_channel_free(conn->send_channel); conn->send_channel = NULL; }
+        nostr_connection_close(conn);
     }
 
     // Free resources
