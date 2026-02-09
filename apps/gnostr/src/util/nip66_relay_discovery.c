@@ -12,6 +12,7 @@
 
 #ifndef GNOSTR_NIP66_TEST_ONLY
 #include "relays.h"
+#include "utils.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr_pool.h"
@@ -1145,7 +1146,12 @@ static GNostrPool *g_nip66_pool = NULL;
 
 static GNostrPool *get_nip66_pool(void)
 {
-  if (!g_nip66_pool) g_nip66_pool = gnostr_pool_new();
+  if (!g_nip66_pool) {
+    g_nip66_pool = gnostr_pool_new();
+    /* Wire nostrdb cache-first query + event sink so NIP-66 results
+     * are persisted and subsequent discoveries check cache first. */
+    gnostr_pool_wire_ndb(g_nip66_pool);
+  }
   return g_nip66_pool;
 }
 
@@ -1623,7 +1629,7 @@ static void on_streaming_events(GNostrPool *pool, GPtrArray *events, gpointer us
   Nip66StreamingCtx *ctx = (Nip66StreamingCtx *)user_data;
   if (!ctx || !events) return;
 
-  g_message("nip66 streaming: received batch of %u events", events->len);
+  g_debug("nip66 streaming: received batch of %u events", events->len);
 
   /* Check cancellation */
   if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) return;
@@ -1657,7 +1663,7 @@ static void on_streaming_events(GNostrPool *pool, GPtrArray *events, gpointer us
       continue;
     }
     g_hash_table_add(ctx->seen_urls, url_lower);
-    g_message("nip66 streaming: new relay %s (total: %u)", meta->relay_url, ctx->relays_found->len + 1);
+    g_debug("nip66 streaming: new relay %s (total: %u)", meta->relay_url, ctx->relays_found->len + 1);
 
     /* Cache it (parse a fresh copy for the cache) */
     char *cache_json = nostr_event_serialize(ev);
@@ -1706,13 +1712,13 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     g_error_free(error);
   }
 
-  g_warning("nip66 streaming: query returned %u raw results", results ? results->len : 0);
+  g_debug("nip66 streaming: query returned %u raw results", results ? results->len : 0);
 
   /* hq-r248b: Process results here (previously handled via streaming signal).
    * Results are JSON strings - parse each as relay metadata. */
   guint parse_ok = 0, parse_fail = 0, filtered = 0, duped = 0;
   if (results && results->len > 0) {
-    g_warning("nip66 streaming: processing %u results from query", results->len);
+    g_debug("nip66 streaming: processing %u results from query", results->len);
     for (guint i = 0; i < results->len; i++) {
       const char *json = g_ptr_array_index(results, i);
       if (!json) continue;
@@ -1739,7 +1745,7 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
       g_ptr_array_add(ctx->relays_found, meta);
     }
   }
-  g_warning("nip66 streaming: parse results: ok=%u fail=%u filtered=%u duped=%u",
+  g_debug("nip66 streaming: parse results: ok=%u fail=%u filtered=%u duped=%u",
             parse_ok, parse_fail, filtered, duped);
   if (results) g_ptr_array_unref(results);
 
@@ -1749,7 +1755,7 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
     ctx->events_handler_id = 0;
   }
 
-  g_warning("nip66 streaming: query complete with %u relays",
+  g_debug("nip66 streaming: query complete with %u relays",
             ctx->relays_found ? ctx->relays_found->len : 0);
 
   /* Invoke completion callback */

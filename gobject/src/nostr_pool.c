@@ -649,6 +649,7 @@ query_thread_func(GTask         *task,
 
     GPtrArray *items = g_ptr_array_new();
     GoContext *bg = go_context_background();
+    gboolean have_temp_relay = FALSE;  /* limit to 1 temp relay to avoid serial blocking */
 
     for (guint i = 0; i < n_relays; i++) {
         if (cancellable && g_cancellable_is_cancelled(cancellable))
@@ -688,6 +689,16 @@ query_thread_func(GTask         *task,
         }
 
         if (!used_real) {
+            /* Limit temp relay creation to ONE successful connection.
+             * Each temp relay blocks on DNS + TLS + WS handshake (~1-5s).
+             * With N relays, sequential creation blocks for N * 1-5s,
+             * stalling ALL queries at startup.  One relay returning
+             * results is enough; the rest can be queried on next sync. */
+            if (have_temp_relay) {
+                g_debug("pool_query_thread: relay[%u] %s skipped (already have temp relay)", i, url);
+                continue;
+            }
+
             /* Real relay unavailable — create a temporary one for this query. */
             g_debug("pool_query_thread: relay[%u] %s creating temp relay", i, url);
             Error *err = NULL;
@@ -736,6 +747,7 @@ query_thread_func(GTask         *task,
             item->owns_relay = TRUE;
             item->sub = sub;
             g_ptr_array_add(items, item);
+            have_temp_relay = TRUE;
         }
     }
 

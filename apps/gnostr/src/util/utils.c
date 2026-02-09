@@ -158,6 +158,12 @@ void gnostr_cleanup_shared_query_pool(void) {
   g_mutex_unlock(&s_query_pool_mutex);
 }
 
+void gnostr_pool_wire_ndb(GNostrPool *pool) {
+  g_return_if_fail(pool != NULL);
+  gnostr_pool_set_cache_query(pool, ndb_cache_query, NULL, NULL);
+  gnostr_pool_set_event_sink(pool, ndb_event_sink, NULL, NULL);
+}
+
 gboolean str_has_prefix_http(const char *s) {
   return s && (g_str_has_prefix(s, "http://") || g_str_has_prefix(s, "https://"));
 }

@@ -55,6 +55,18 @@ GNostrPool *gnostr_get_shared_query_pool(void);
  */
 void gnostr_cleanup_shared_query_pool(void);
 
+/**
+ * gnostr_pool_wire_ndb:
+ * @pool: a #GNostrPool to configure
+ *
+ * Wires a pool with nostrdb cache-first query and event sink callbacks.
+ * After calling this, the pool checks nostrdb before hitting the network
+ * and auto-persists all relay results to nostrdb.
+ *
+ * Safe to call multiple times — idempotent.
+ */
+void gnostr_pool_wire_ndb(GNostrPool *pool);
+
 gboolean str_has_prefix_http(const char *s);
 
 /**
