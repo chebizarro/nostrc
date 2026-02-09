@@ -2148,6 +2148,17 @@ static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, 
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
     g_debug("Media: Invalid image URL: %s", url);
+    /* nostrc-img1: Clean up orphaned cancellable so URL can be retried */
+    g_hash_table_remove(self->media_cancellables, url);
+    return;
+  }
+
+  /* nostrc-img1: Check SoupSession is available (NULL during shutdown) */
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) {
+    g_debug("Media: SoupSession unavailable, skipping: %s", url);
+    g_hash_table_remove(self->media_cancellables, url);
+    g_object_unref(msg);
     return;
   }
 
@@ -2158,9 +2169,9 @@ static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, 
 
   /* Start async fetch */
   soup_session_send_and_read_async(
-    gnostr_get_shared_soup_session(),
+    session,
     msg,
-    G_PRIORITY_LOW,
+    G_PRIORITY_DEFAULT,
     cancellable,
     on_media_image_loaded,
     ctx
@@ -2185,6 +2196,15 @@ static void lazy_load_context_free(LazyLoadContext *ctx) {
   if (ctx->timeout_id > 0) {
     g_source_remove(ctx->timeout_id);
     ctx->timeout_id = 0;
+  }
+  /* nostrc-img1: Disconnect signal handlers to prevent stale callbacks
+   * on recycled widgets. Without this, map/unmap handlers fire on
+   * dead contexts after the picture widget is reused. */
+  if (ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
+    if (ctx->map_handler_id > 0)
+      g_signal_handler_disconnect(ctx->picture, ctx->map_handler_id);
+    if (ctx->unmap_handler_id > 0)
+      g_signal_handler_disconnect(ctx->picture, ctx->unmap_handler_id);
   }
   g_free(ctx->url);
   g_free(ctx);
@@ -4439,10 +4459,16 @@ static void load_article_header_image(GnostrNoteCardRow *self, const char *url) 
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) return;
 
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) {
+    g_object_unref(msg);
+    return;
+  }
+
   soup_session_send_and_read_async(
-    gnostr_get_shared_soup_session(),
+    session,
     msg,
-    G_PRIORITY_LOW,
+    G_PRIORITY_DEFAULT,
     self->article_image_cancellable,
     on_article_image_loaded,
     self
@@ -4769,7 +4795,14 @@ static void load_video_thumbnail(GnostrNoteCardRow *self, const char *thumb_url)
   ctx->url = g_strdup(thumb_url);
   g_object_weak_ref(G_OBJECT(ctx->picture), on_video_thumb_picture_destroyed, ctx);
 
-  soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT,
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) {
+    g_object_unref(msg);
+    video_thumb_ctx_free(ctx);
+    return;
+  }
+
+  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
                                     self->video_thumb_cancellable,
                                     on_video_thumb_bytes_ready, ctx);
   g_object_unref(msg);

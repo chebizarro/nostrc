@@ -36,7 +36,9 @@ static GHashTable *s_avatar_bad_urls = NULL;      /* negative cache: URLs that r
 static GnostrAvatarMetrics s_avatar_metrics = {0};
 
 /* --- Concurrent Request Limiter --- */
-#define AVATAR_MAX_CONCURRENT_FETCHES 12  /* Max simultaneous HTTP requests */
+/* nostrc-img1: Reduced from 12 to 6 — avatar fetches were consuming half the
+ * SoupSession's 24-connection pool, starving timeline media image loads. */
+#define AVATAR_MAX_CONCURRENT_FETCHES 6   /* Max simultaneous HTTP requests */
 
 typedef struct _PendingFetch {
   char *url;
