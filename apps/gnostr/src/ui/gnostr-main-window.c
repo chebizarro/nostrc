@@ -221,6 +221,13 @@ struct _GnostrMainWindow {
 
   /* nostrc-61s.6: Background operation mode */
   gboolean         background_mode_enabled; /* hide on close instead of quit */
+
+  /* nostrc-mzab: Background NDB ingestion to avoid blocking main thread.
+   * Events are queued here and consumed by a dedicated ingestion thread,
+   * so ndb_process_event_with() never blocks the GTK main loop. */
+  GAsyncQueue     *ingest_queue;           /* owned; char* JSON strings */
+  GThread         *ingest_thread;          /* owned; background ingestion worker */
+  gboolean         ingest_running;         /* atomic; FALSE signals thread to exit */
 };
 
 /* Forward declarations for local helpers used before their definitions */
@@ -230,6 +237,7 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]);
 /* Forward declarations needed early due to reordering */
 static void gnostr_load_settings(GnostrMainWindow *self);
 static unsigned int getenv_uint_default(const char *name, unsigned int defval);
+static gpointer ingest_thread_func(gpointer data);
 static void start_pool_live(GnostrMainWindow *self);
 static void start_profile_subscription(GnostrMainWindow *self);
 static void start_bg_profile_prefetch(GnostrMainWindow *self);
@@ -5769,6 +5777,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   
   /* Initialize dedup table */
   self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  /* nostrc-mzab: Start background NDB ingestion thread */
+  self->ingest_queue = g_async_queue_new_full(g_free);
+  __atomic_store_n(&self->ingest_running, TRUE, __ATOMIC_SEQ_CST);
+  self->ingest_thread = g_thread_new("ndb-ingest", ingest_thread_func, self);
   /* Initialize profile provider */
   gnostr_profile_provider_init(0); /* Use env/default cap */
   /* LEGITIMATE TIMEOUTS - Periodic stats logging (60s intervals).
@@ -6526,6 +6538,19 @@ G_DEFINE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, ADW_TYPE_APPLICATION_W
 static void gnostr_main_window_dispose(GObject *object) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
   g_debug("main-window: dispose");
+
+  /* nostrc-mzab: Stop background NDB ingestion thread.
+   * Signal the thread to stop and join it before any other cleanup,
+   * since other dispose steps may destroy resources the thread uses. */
+  if (self->ingest_thread) {
+    __atomic_store_n(&self->ingest_running, FALSE, __ATOMIC_SEQ_CST);
+    g_thread_join(self->ingest_thread);
+    self->ingest_thread = NULL;
+  }
+  if (self->ingest_queue) {
+    g_async_queue_unref(self->ingest_queue);
+    self->ingest_queue = NULL;
+  }
 
   /* Unwatch profile provider to prevent callbacks after dispose */
   if (self->profile_watch_id) {
@@ -8348,42 +8373,72 @@ static gboolean retry_pool_live(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-/* Live subscription event handler: ingest individual events into nostrdb. */
+/* nostrc-mzab: Background NDB ingestion thread.
+ * Drains the ingest_queue and calls storage_ndb_ingest_event_json()
+ * off the main thread, so ndb_process_event (which can block when the
+ * ndb ingestion pipeline is full) never stalls the GTK main loop. */
+static gpointer
+ingest_thread_func(gpointer data)
+{
+  GnostrMainWindow *self = (GnostrMainWindow *)data;
+
+  while (__atomic_load_n(&self->ingest_running, __ATOMIC_SEQ_CST)) {
+    gchar *json = g_async_queue_timeout_pop(self->ingest_queue, 100000); /* 100ms */
+    if (!json)
+      continue;
+
+    int rc = storage_ndb_ingest_event_json(json, NULL);
+    if (rc != 0) {
+      g_debug("[INGEST-BG] Failed: rc=%d json_len=%zu", rc, strlen(json));
+    }
+    g_free(json);
+  }
+
+  /* Drain remaining events before exit */
+  gchar *json;
+  while ((json = g_async_queue_try_pop(self->ingest_queue)) != NULL) {
+    storage_ndb_ingest_event_json(json, NULL);
+    g_free(json);
+  }
+
+  return NULL;
+}
+
+/* nostrc-mzab: Quick kind extraction from event JSON without full deserialization.
+ * Returns -1 if "kind" field not found. Avoids the overhead of allocating
+ * and parsing a full NostrEvent just to check the kind number. */
+static int
+extract_kind_from_json(const char *json)
+{
+  const char *p = strstr(json, "\"kind\"");
+  if (!p) return -1;
+  p += 6; /* skip "kind" */
+  while (*p == ' ' || *p == ':' || *p == '\t') p++;
+  if (*p < '0' || *p > '9') return -1;
+  return (int)strtol(p, NULL, 10);
+}
+
+/* Live subscription event handler: filter by kind and queue for background ingestion.
+ * nostrc-mzab: No longer calls storage_ndb_ingest_event_json on the main thread.
+ * Uses lightweight JSON scanning instead of full NostrEvent deserialization. */
 static void on_pool_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data) {
   (void)sub;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
 
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_json) return;
 
-  /* Parse event to get kind for filtering */
-  NostrEvent *evt = nostr_event_new();
-  if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
-    if (evt) nostr_event_free(evt);
-    return;
-  }
+  /* Quick kind extraction (no allocation, no full JSON parse) */
+  int kind = extract_kind_from_json(event_json);
+  if (kind < 0) return;
 
-  int kind = nostr_event_get_kind(evt);
-  /* Ingest timeline events and NIP-34 git events (30617 repos, 1617 patches, 1621 issues, 1622 replies) */
+  /* Filter: only ingest timeline events and NIP-34 git events */
   if (!(kind == 0 || kind == 1 || kind == 5 || kind == 6 || kind == 7 || kind == 16 || kind == 1111 ||
         kind == 30617 || kind == 1617 || kind == 1621 || kind == 1622)) {
-    nostr_event_free(evt);
     return;
   }
 
-  const char *id = nostr_event_get_id(evt);
-  if (!id || strlen(id) != 64) {
-    nostr_event_free(evt);
-    return;
-  }
-
-  /* Ingest to nostrdb for persistence; UI models subscribe to nostrdb and update from there. */
-  int ingest_rc = storage_ndb_ingest_event_json(event_json, NULL);
-  if (ingest_rc != 0) {
-    g_debug("[INGEST] Failed to ingest event %.8s kind=%d: rc=%d json_len=%zu",
-            id, kind, ingest_rc, strlen(event_json));
-  }
-
-  nostr_event_free(evt);
+  /* Queue for background ingestion (never blocks main thread) */
+  g_async_queue_push(self->ingest_queue, g_strdup(event_json));
 }
 
 /* Live subscription EOSE handler */

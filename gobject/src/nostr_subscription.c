@@ -46,6 +46,11 @@ enum {
 static GParamSpec *obj_properties[N_PROPERTIES] = { NULL, };
 static guint sub_signals[GNOSTR_SUBSCRIPTION_SIGNALS_COUNT] = { 0 };
 
+/* nostrc-mzab: Max events to emit per main loop iteration.
+ * Prevents startup floods from blocking the UI — between batches the
+ * main loop processes GTK redraws and input events. */
+#define MAX_EVENTS_PER_TICK 50
+
 struct _GNostrSubscription {
     GObject parent_instance;
 
@@ -58,6 +63,13 @@ struct _GNostrSubscription {
     /* Monitor thread */
     GThread *monitor_thread;
     gboolean monitor_running;             /* atomic flag */
+
+    /* Batched event delivery to main thread (nostrc-mzab).
+     * The monitor thread appends serialized event JSONs to event_queue
+     * and a single coalescing idle source drains them in chunks. */
+    GMutex event_queue_mutex;
+    GPtrArray *event_queue;               /* pending event JSON strings (char*) */
+    gboolean event_idle_scheduled;        /* TRUE while drain idle is pending */
 };
 
 G_DEFINE_TYPE(GNostrSubscription, gnostr_subscription, G_TYPE_OBJECT)
@@ -94,11 +106,6 @@ gnostr_subscription_set_state_internal(GNostrSubscription *self,
 
 typedef struct {
     GNostrSubscription *self;
-    gchar *event_json;
-} EventSignalData;
-
-typedef struct {
-    GNostrSubscription *self;
 } EoseSignalData;
 
 typedef struct {
@@ -106,20 +113,55 @@ typedef struct {
     gchar *reason;
 } ClosedSignalData;
 
+/* nostrc-mzab: Batched event drain — processes up to MAX_EVENTS_PER_TICK
+ * events per main loop iteration, then yields so GTK can render and
+ * process input. Re-invoked via G_SOURCE_CONTINUE until queue is empty.
+ *
+ * Uses G_PRIORITY_DEFAULT_IDLE (200) so UI painting (priority 120) and
+ * input events (priority 0) always take precedence over event ingestion. */
 static gboolean
-emit_event_on_main(gpointer data)
+drain_event_queue_on_main(gpointer data)
 {
-    EventSignalData *sdata = data;
-    GNostrSubscription *self = sdata->self;
+    GNostrSubscription *self = GNOSTR_SUBSCRIPTION(data);
 
-    __atomic_add_fetch(&self->event_count, 1, __ATOMIC_SEQ_CST);
-    g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_EVENT], 0,
-                  sdata->event_json);
+    /* Steal up to MAX_EVENTS_PER_TICK events from the queue */
+    g_mutex_lock(&self->event_queue_mutex);
+    guint avail = self->event_queue->len;
+    guint n = MIN(avail, MAX_EVENTS_PER_TICK);
 
-    g_free(sdata->event_json);
-    g_object_unref(self);
-    g_free(sdata);
+    gchar **batch = NULL;
+    if (n > 0) {
+        batch = g_new(gchar *, n);
+        for (guint i = 0; i < n; i++)
+            batch[i] = g_ptr_array_index(self->event_queue, i);
+        g_ptr_array_remove_range(self->event_queue, 0, n);
+    }
+
+    gboolean more = (self->event_queue->len > 0);
+    if (!more)
+        self->event_idle_scheduled = FALSE;
+    g_mutex_unlock(&self->event_queue_mutex);
+
+    /* Emit signals outside lock */
+    for (guint i = 0; i < n; i++) {
+        __atomic_add_fetch(&self->event_count, 1, __ATOMIC_SEQ_CST);
+        g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_EVENT], 0,
+                      batch[i]);
+        g_free(batch[i]);
+    }
+    g_free(batch);
+
+    if (more)
+        return G_SOURCE_CONTINUE;
+
+    /* No more events — remove the idle source (destroy notify unrefs self) */
     return G_SOURCE_REMOVE;
+}
+
+static void
+drain_event_queue_destroy(gpointer data)
+{
+    g_object_unref(GNOSTR_SUBSCRIPTION(data));
 }
 
 static gboolean
@@ -167,7 +209,7 @@ subscription_monitor_thread(gpointer data)
     while (__atomic_load_n(&self->monitor_running, __ATOMIC_SEQ_CST)) {
         gboolean any_activity = FALSE;
 
-        /* Drain events channel */
+        /* Drain events channel into batched queue (nostrc-mzab) */
         void *msg = NULL;
         while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
             any_activity = TRUE;
@@ -176,10 +218,16 @@ subscription_monitor_thread(gpointer data)
                 char *json = nostr_event_serialize(ev);
                 nostr_event_free(ev);
                 if (json) {
-                    EventSignalData *sdata = g_new(EventSignalData, 1);
-                    sdata->self = g_object_ref(self);
-                    sdata->event_json = json;
-                    g_idle_add_full(G_PRIORITY_DEFAULT, emit_event_on_main, sdata, NULL);
+                    g_mutex_lock(&self->event_queue_mutex);
+                    g_ptr_array_add(self->event_queue, json);
+                    if (!self->event_idle_scheduled) {
+                        self->event_idle_scheduled = TRUE;
+                        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                                        drain_event_queue_on_main,
+                                        g_object_ref(self),
+                                        drain_event_queue_destroy);
+                    }
+                    g_mutex_unlock(&self->event_queue_mutex);
                 }
             }
             msg = NULL;
@@ -276,6 +324,20 @@ gnostr_subscription_finalize(GObject *object)
         nostr_filters_free(self->owned_filters);
         self->owned_filters = NULL;
     }
+
+    /* nostrc-mzab: Discard any queued events not yet delivered.
+     * The idle source (if pending) holds a ref, so finalize only runs
+     * after the source is removed — the queue should already be empty.
+     * This is a safety net for edge cases. */
+    g_mutex_lock(&self->event_queue_mutex);
+    if (self->event_queue) {
+        for (guint i = 0; i < self->event_queue->len; i++)
+            g_free(g_ptr_array_index(self->event_queue, i));
+        g_ptr_array_free(self->event_queue, TRUE);
+        self->event_queue = NULL;
+    }
+    g_mutex_unlock(&self->event_queue_mutex);
+    g_mutex_clear(&self->event_queue_mutex);
 
     /* Release relay reference */
     g_clear_object(&self->relay);
@@ -406,6 +468,11 @@ gnostr_subscription_init(GNostrSubscription *self)
     self->event_count = 0;
     self->monitor_thread = NULL;
     self->monitor_running = FALSE;
+
+    /* nostrc-mzab: Batched event queue */
+    g_mutex_init(&self->event_queue_mutex);
+    self->event_queue = g_ptr_array_new();
+    self->event_idle_scheduled = FALSE;
 }
 
 /* --- Public API --- */
