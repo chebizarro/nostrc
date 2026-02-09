@@ -432,7 +432,6 @@ gnostr_fetch_profile_badges_async(const gchar *pubkey_hex,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_profile_badges_fetched, ctx);
   }
 
@@ -538,7 +537,6 @@ fetch_badge_definitions(BadgeFetchCtx *ctx)
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_badge_definition_fetched, badge_ptr);
     }
 
@@ -715,7 +713,6 @@ gnostr_fetch_badge_definition_async(const gchar *naddr,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_single_definition_fetched, ctx);
   }
 

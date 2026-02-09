@@ -647,7 +647,7 @@ void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    /* nostrc-uaf3: task takes ownership of _qf — do NOT stash on pool */
     gnostr_pool_query_async(pool, _qf, NULL, on_blossom_fetch_complete, ctx);
   }
 

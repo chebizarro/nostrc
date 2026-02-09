@@ -357,7 +357,7 @@ void gnostr_contact_list_fetch_async(GnostrContactList *self,
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(s_contact_list_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+      /* nostrc-uaf3: task takes ownership of _qf — do NOT stash on pool */
       gnostr_pool_query_async(s_contact_list_pool, _qf, NULL, /* cancellable */
         on_contact_list_query_done, ctx);
     }

@@ -2285,12 +2285,8 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
   {
     GNostrPool *pool = gnostr_get_shared_query_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
-    static gint _qf_counter_anc = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_anc, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-anc-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_missing_ancestors_done, self);
   }
 
@@ -2365,12 +2361,8 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     {
       GNostrPool *pool = gnostr_get_shared_query_pool();
       gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
-      static gint _qf_counter_thr = 0;
-      int _qfid = g_atomic_int_add(&_qf_counter_thr, 1);
-      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-thr-%d", _qfid);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_replies);
-      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
     }
 
@@ -2416,12 +2408,8 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     {
       GNostrPool *pool = gnostr_get_shared_query_pool();
       gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
-      static gint _qf_counter_root = 0;
-      int _qfid = g_atomic_int_add(&_qf_counter_root, 1);
-      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-root-%d", _qfid);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_ids);
-      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_root_fetch_done, self);
     }
 
@@ -2441,12 +2429,8 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     {
       GNostrPool *pool = gnostr_get_shared_query_pool();
       gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
-      static gint _qf_counter_nip22 = 0;
-      int _qfid = g_atomic_int_add(&_qf_counter_nip22, 1);
-      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-nip22-%d", _qfid);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_nip22);
-      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
     }
 
@@ -2480,12 +2464,8 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     {
       GNostrPool *pool = gnostr_get_shared_query_pool();
       gnostr_pool_sync_relays(pool, (const gchar **)urls2, relay_arr2->len);
-      static gint _qf_counter_focus = 0;
-      int _qfid = g_atomic_int_add(&_qf_counter_focus, 1);
-      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-focus-%d", _qfid);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_focus_replies);
-      g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
     }
 
@@ -2625,12 +2605,8 @@ static void fetch_children_from_relays(GnostrThreadView *self) {
   {
     GNostrPool *pool = gnostr_get_shared_query_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_arr->len);
-    static gint _qf_counter_child = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_child, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-child-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_children_query_done, self);
   }
 

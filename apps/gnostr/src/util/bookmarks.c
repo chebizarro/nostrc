@@ -638,7 +638,6 @@ void gnostr_bookmarks_fetch_with_strategy_async(GnostrBookmarks *self,
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(s_bookmarks_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(s_bookmarks_pool, _qf, NULL, /* cancellable */
         on_bookmarks_query_done, ctx);
     }

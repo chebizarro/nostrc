@@ -1136,7 +1136,6 @@ void gnostr_nip89_query_handlers_async(guint event_kind,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(s_nip89_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(s_nip89_pool, _qf, ctx->cancellable, on_nip89_relay_query_done, ctx);
   }
 

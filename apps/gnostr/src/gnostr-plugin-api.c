@@ -701,8 +701,6 @@ gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *context,
 
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
 
-  static gint _plugin_qf_counter = 0;
-
   /* Get pool and relay URLs */
   GNostrPool *pool = context->pool;
   if (!pool) {
@@ -751,9 +749,6 @@ gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *context,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    int _qfid = g_atomic_int_add(&_plugin_qf_counter, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, cancellable,
                             on_request_relay_events_done, task);
   }

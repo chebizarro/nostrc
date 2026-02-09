@@ -443,7 +443,6 @@ void gnostr_app_data_fetch_async(const char *pubkey_hex,
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(get_nip78_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(get_nip78_pool(), _qf, NULL, on_fetch_single_done, ctx);
     }
 
@@ -597,7 +596,6 @@ void gnostr_app_data_fetch_all_async(const char *pubkey_hex,
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(get_nip78_pool()), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(get_nip78_pool(), _qf, NULL, on_fetch_all_done, ctx);
     }
 

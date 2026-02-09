@@ -452,7 +452,7 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(nip65_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
+    /* nostrc-uaf3: task takes ownership of _qf — do NOT stash on pool */
     gnostr_pool_query_async(nip65_pool, _qf, ctx->cancellable, on_nip65_query_done, ctx);
   }
 
@@ -774,7 +774,6 @@ void gnostr_nip17_fetch_dm_relays_async(const gchar *pubkey_hex,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(nip17_dm_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(nip17_dm_pool, _qf, ctx->cancellable, on_nip17_dm_query_done, ctx);
   }
 

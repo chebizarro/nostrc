@@ -318,12 +318,8 @@ static void query_relays_for_follow_list_cb(FollowListFetchCtx *ctx,
   {
     /* nostrc-9pj1: Use unique key per query to avoid freeing filters still in use
      * by a concurrent query thread (use-after-free on overlapping fetches). */
-    static gint _qf_counter_fl = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_fl, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-fl-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, ctx->cancellable, cb, ctx);
   }
 

@@ -135,7 +135,7 @@ void gnostr_pool_sync_relays(GNostrPool *self, const gchar **urls, gsize url_cou
 /**
  * gnostr_pool_query_async:
  * @self: a #GNostrPool
- * @filters: (transfer none): filters for the query
+ * @filters: (transfer full): filters for the query (task takes ownership)
  * @cancellable: (nullable): optional #GCancellable
  * @callback: (scope async): callback when query completes
  * @user_data: (closure): user data for @callback

@@ -1317,11 +1317,9 @@ static void start_phase2_relay_discovery(Nip66DiscoveryCtx *ctx)
   {
     /* nostrc-ns2k: Use unique key to avoid freeing filters from concurrent queries */
     static gint _qf_counter_n66p2 = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_n66p2, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-n66p2-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(get_nip66_pool()), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    /* nostrc-uaf3: task takes ownership of _qf */
     gnostr_pool_query_async(get_nip66_pool(), _qf, ctx->cancellable, on_phase2_relay_meta_done, ctx);
   }
 
@@ -1486,11 +1484,9 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
     gnostr_pool_sync_relays(get_nip66_pool(), (const gchar **)urls, relay_urls->len);
   {
     static gint _qf_counter_n66d = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_n66d, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-n66d-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(get_nip66_pool()), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    /* nostrc-uaf3: task takes ownership of _qf */
     gnostr_pool_query_async(get_nip66_pool(), _qf, ctx->cancellable, on_phase2_relay_meta_done, ctx);
   }
 
@@ -1561,11 +1557,9 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
     /* nostrc-ns2k: Use unique key per query to avoid freeing filters still in use
      * by a concurrent query thread (use-after-free on overlapping fetches). */
     static gint _qf_counter_n66m = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_n66m, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-n66m-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(get_nip66_pool()), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    /* nostrc-uaf3: task takes ownership of _qf */
     gnostr_pool_query_async(get_nip66_pool(), _qf, ctx->cancellable, on_phase2_relay_meta_done, ctx);
   }
 
@@ -1852,11 +1846,9 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
     /* nostrc-ns2k: Use unique key per query to avoid freeing filters still in use
      * by a concurrent query thread (use-after-free on overlapping fetches). */
     static gint _qf_counter_n66s = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_n66s, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-n66s-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, ctx->filter);
-    g_object_set_data_full(G_OBJECT(ctx->pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
+    /* nostrc-uaf3: task takes ownership of _qf */
     gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_streaming_query_complete, ctx);
   }
 

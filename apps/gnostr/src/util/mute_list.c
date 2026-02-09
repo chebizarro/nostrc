@@ -693,7 +693,6 @@ void gnostr_mute_list_fetch_async(GnostrMuteList *self,
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(s_mute_list_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(s_mute_list_pool, _qf, NULL, /* cancellable */
         on_mute_list_query_done, ctx);
     }
@@ -768,7 +767,6 @@ void gnostr_mute_list_fetch_with_strategy_async(GnostrMuteList *self,
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(s_mute_list_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(s_mute_list_pool, _qf, NULL, on_mute_list_query_done, ctx);
     }
 

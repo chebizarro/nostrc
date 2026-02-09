@@ -498,7 +498,6 @@ static void do_network_search(SearchContext *ctx)
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(search_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(search_pool, _qf, ctx->cancellable, on_network_search_done, ctx);
   }
 

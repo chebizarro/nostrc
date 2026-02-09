@@ -458,7 +458,6 @@ void gnostr_nip51_settings_load_async(const gchar *pubkey_hex,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(nip51_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(nip51_pool, _qf, NULL, /* cancellable */
     on_nip51_query_done, ctx);
   }

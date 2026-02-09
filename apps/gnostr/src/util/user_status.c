@@ -461,7 +461,6 @@ void gnostr_user_status_fetch_async(const gchar *pubkey_hex,
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(ctx->pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(ctx->pool, _qf, ctx->cancellable, on_status_fetch_done, ctx);
   }
 

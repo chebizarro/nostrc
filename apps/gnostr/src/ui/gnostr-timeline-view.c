@@ -296,7 +296,6 @@ static void start_or_attach_request(const char *key, const char **urls, size_t u
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, f);
-      g_object_set_data_full(G_OBJECT(s_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(s_pool, _qf, in->canc, on_query_single_done_multi, ctx);
     }
   }

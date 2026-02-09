@@ -3046,12 +3046,8 @@ static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_url
   {
     GNostrPool *pool = gnostr_get_shared_query_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
-    static gint _qf_counter_posts = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_posts, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-posts-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, self->posts_cancellable, on_posts_query_done, self);
   }
 
@@ -3835,12 +3831,8 @@ static void load_media(GnostrProfilePane *self) {
   {
     GNostrPool *pool = gnostr_get_shared_query_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
-    static gint _qf_counter_media = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_media, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-media-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, self->media_cancellable, on_media_query_done, self);
   }
 
@@ -4161,12 +4153,8 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
 
     GNostrPool *pool = gnostr_get_shared_query_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
-    static gint _qf_counter_prof = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_prof, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-prof-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, pf);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, self->profile_cancellable, on_profile_fetch_done, self);
     nostr_filter_free(pf);
   }
@@ -4430,12 +4418,8 @@ static void load_highlights(GnostrProfilePane *self) {
   {
     GNostrPool *pool = gnostr_get_shared_query_pool();
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
-    static gint _qf_counter_hl = 0;
-    int _qfid = g_atomic_int_add(&_qf_counter_hl, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-hl-%d", _qfid);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    g_object_set_data_full(G_OBJECT(pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(pool, _qf, self->highlights_cancellable, on_highlights_query_done, self);
   }
 

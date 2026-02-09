@@ -912,11 +912,14 @@ gnostr_pool_query_async(GNostrPool          *self,
 
     g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
 
-    /* Stash filters on the task so the thread can access them.
-     * Caller retains ownership but filters must outlive the task thread's
-     * initial subscription setup. We store without destroy notify since
-     * the caller manages lifetime (typically via context struct or pool stash). */
-    g_object_set_data(G_OBJECT(task), "filters", filters);
+    /* nostrc-uaf3: Task takes ownership of filters so they survive for the
+     * entire worker thread lifetime. Previously callers stashed filters on the
+     * pool with g_object_set_data_full(pool, "qf", ...), but re-entrant calls
+     * on the same pool replaced "qf" and freed the old filters while the worker
+     * thread was still using them → heap-use-after-free in nostr_subscription_fire.
+     * Now the GTask itself owns the filters via destroy notify. */
+    g_object_set_data_full(G_OBJECT(task), "filters", filters,
+                           (GDestroyNotify)nostr_filters_free);
 
     g_task_run_in_thread(task, query_thread_func);
     g_object_unref(task);

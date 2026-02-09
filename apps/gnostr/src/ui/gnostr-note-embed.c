@@ -921,7 +921,6 @@ cleanup:
 /* Shared pool for embed queries - initialized lazily with pre-connected relays */
 static GNostrPool *embed_pool = NULL;
 static gboolean embed_pool_initialized = FALSE;
-static gint _embed_qf_counter = 0;
 static gulong embed_relay_change_handler_id = 0;
 
 /* Relay change callback for embed pool (nostrc-36y.4: live relay switching) */
@@ -1007,9 +1006,6 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
-      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
-      g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
     }
 
@@ -1050,9 +1046,6 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
-    g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
   }
 
@@ -1214,9 +1207,6 @@ static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_
       nostr_filter_set_limit(filter, 1);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
-      char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
-      g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_profile_relay_query_done, self);
       nostr_filter_free(filter);
     }
@@ -1255,9 +1245,6 @@ static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubk
     nostr_filter_set_limit(filter, 1);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    int _qfid = g_atomic_int_add(&_embed_qf_counter, 1);
-    char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-%d", _qfid);
-    g_object_set_data_full(G_OBJECT(embed_pool), _qfk, _qf, (GDestroyNotify)nostr_filters_free);
     gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_profile_relay_query_done, self);
     nostr_filter_free(filter);
   }

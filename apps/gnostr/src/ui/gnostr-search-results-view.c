@@ -689,7 +689,6 @@ execute_relay_search(GnostrSearchResultsView *self, const char *query)
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      g_object_set_data_full(G_OBJECT(s_pool), "qf", _qf, (GDestroyNotify)nostr_filters_free);
       gnostr_pool_query_async(s_pool, _qf, self->search_cancellable, on_relay_search_done, ctx);
     }
 
