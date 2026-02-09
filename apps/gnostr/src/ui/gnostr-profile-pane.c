@@ -1981,12 +1981,15 @@ static void load_image_async(GnostrProfilePane *self, const char *url, GtkPictur
 
 /* Context for banner async loading */
 typedef struct _BannerLoadCtx {
-  GnostrProfilePane *self;  /* weak ref */
+  GnostrProfilePane *self;  /* raw pointer — only dereference after GNOSTR_IS_PROFILE_PANE check */
   char *url;                /* owned */
+  SoupMessage *msg;         /* owned ref — needed for HTTP status check in callback */
+  gboolean cancelled;       /* set TRUE on cancellation to avoid accessing self */
 } BannerLoadCtx;
 
 static void banner_load_ctx_free(BannerLoadCtx *ctx) {
   if (!ctx) return;
+  g_clear_object(&ctx->msg);
   g_free(ctx->url);
   g_free(ctx);
 }
@@ -2000,13 +2003,30 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_warning("profile_pane: banner fetch FAILED for url=%s: %s", ctx->url, error->message);
+      /* nostrc-g92j: Only access self when NOT cancelled — on cancellation the
+       * pane may already be finalized, making ctx->self a dangling pointer. */
+      if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+        g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     }
     g_clear_error(&error);
-    /* Clear in-flight URL so retries are allowed (nostrc-q8u0) */
-    if (GNOSTR_IS_PROFILE_PANE(ctx->self))
-      g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     banner_load_ctx_free(ctx);
     return;
+  }
+
+  /* nostrc-g92j: Check HTTP status code BEFORE processing body.
+   * libsoup3 returns response body even for 4xx/5xx errors — the HTML error
+   * page would be passed to gdk_texture_new_from_bytes and fail silently.
+   * This was the root cause of "banner not displaying" for many profiles. */
+  if (ctx->msg) {
+    guint status = soup_message_get_status(ctx->msg);
+    if (status < 200 || status >= 300) {
+      g_warning("profile_pane: banner HTTP %u for url=%s", status, ctx->url);
+      if (bytes) g_bytes_unref(bytes);
+      if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+        g_clear_pointer(&ctx->self->loading_banner_url, g_free);
+      banner_load_ctx_free(ctx);
+      return;
+    }
   }
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
@@ -2018,8 +2038,10 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
     return;
   }
 
-  g_debug("profile_pane: banner response %zu bytes for url=%s",
-          g_bytes_get_size(bytes), ctx->url);
+  g_debug("profile_pane: banner response %zu bytes (HTTP %u) for url=%s",
+          g_bytes_get_size(bytes),
+          ctx->msg ? soup_message_get_status(ctx->msg) : 0,
+          ctx->url);
 
   /* Create texture from bytes at FULL RESOLUTION for banner quality */
   GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
@@ -2084,25 +2106,24 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
 
   /* Uses shared session from gnostr_get_shared_soup_session() */
 
-  /* Setup context */
-  BannerLoadCtx *ctx = g_new0(BannerLoadCtx, 1);
-  ctx->self = self;
-  ctx->url = g_strdup(url);
-
   /* Fetch banner at full resolution */
   SoupSession *session = gnostr_get_shared_soup_session();
   if (!session) {
     g_warning("profile_pane: shared soup session unavailable for banner load");
-    banner_load_ctx_free(ctx);
     return;
   }
 
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
     g_warning("profile_pane: invalid banner URL: %s", url);
-    banner_load_ctx_free(ctx);
     return;
   }
+
+  /* Setup context — store msg ref for HTTP status check in callback (nostrc-g92j) */
+  BannerLoadCtx *ctx = g_new0(BannerLoadCtx, 1);
+  ctx->self = self;
+  ctx->url = g_strdup(url);
+  ctx->msg = g_object_ref(msg);
 
   g_debug("profile_pane: loading banner at full resolution url=%s", url);
   soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,

@@ -617,6 +617,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                           <object class="GtkSpinner" id="spinner_new_notes">
                                             <property name="visible">false</property>
                                             <property name="spinning">true</property>
+                                            <property name="width-request">16</property>
+                                            <property name="height-request">16</property>
                                           </object>
                                         </child>
                                         <child>
