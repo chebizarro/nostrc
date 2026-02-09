@@ -1095,6 +1095,91 @@ static void finish_dm_send_with_error(DmSendCtx *ctx, const char *msg) {
     dm_send_ctx_free(ctx);
 }
 
+/* hq-0df86: Worker thread data for async relay publishing */
+typedef struct {
+    NostrEvent *event;
+    GPtrArray  *relay_urls;
+    guint       success_count;
+    guint       fail_count;
+} DmRelayPublishData;
+
+static void dm_relay_publish_data_free(DmRelayPublishData *d) {
+    if (!d) return;
+    if (d->event) nostr_event_free(d->event);
+    if (d->relay_urls) g_ptr_array_unref(d->relay_urls);
+    g_free(d);
+}
+
+/* hq-0df86: Worker thread — connect+publish loop runs off main thread */
+static void
+dm_publish_thread(GTask *task, gpointer source_object,
+                  gpointer task_data, GCancellable *cancellable)
+{
+    (void)source_object; (void)cancellable;
+    DmRelayPublishData *d = (DmRelayPublishData *)task_data;
+
+    for (guint i = 0; i < d->relay_urls->len; i++) {
+        const char *url = (const char *)g_ptr_array_index(d->relay_urls, i);
+        GNostrRelay *relay = gnostr_relay_new(url);
+        if (!relay) { d->fail_count++; continue; }
+
+        GError *conn_err = NULL;
+        if (!gnostr_relay_connect(relay, &conn_err)) {
+            g_debug("[DM_SERVICE] Failed to connect to %s: %s",
+                    url, conn_err ? conn_err->message : "unknown");
+            g_clear_error(&conn_err);
+            g_object_unref(relay);
+            d->fail_count++;
+            continue;
+        }
+
+        GError *pub_err = NULL;
+        if (gnostr_relay_publish(relay, d->event, &pub_err)) {
+            g_message("[DM_SERVICE] Published DM to %s", url);
+            d->success_count++;
+        } else {
+            g_debug("[DM_SERVICE] Publish failed to %s: %s",
+                    url, pub_err ? pub_err->message : "unknown");
+            g_clear_error(&pub_err);
+            d->fail_count++;
+        }
+        g_object_unref(relay);
+    }
+
+    g_task_return_boolean(task, d->success_count > 0);
+}
+
+/* hq-0df86: Completion callback — runs on main thread */
+static void
+dm_publish_task_done(GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+    (void)source_object;
+    DmSendCtx *ctx = (DmSendCtx *)user_data;
+
+    GTask *task = G_TASK(res);
+    DmRelayPublishData *d = g_task_get_task_data(task);
+
+    GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+    if (d->success_count > 0) {
+        result->success = TRUE;
+        result->relays_published = d->success_count;
+        g_message("[DM_SERVICE] DM sent successfully to %u relays (failed: %u)",
+                  d->success_count, d->fail_count);
+    } else {
+        result->success = FALSE;
+        result->error_message = g_strdup("Failed to publish to any relay");
+        g_warning("[DM_SERVICE] DM send failed - no successful publishes");
+    }
+
+    if (ctx->callback) {
+        ctx->callback(result, ctx->user_data);
+    } else {
+        gnostr_dm_send_result_free(result);
+    }
+
+    dm_send_ctx_free(ctx);
+}
+
 /* Step 3: Publish gift wrap to relays */
 static void
 on_dm_relays_fetched(GPtrArray *relays, gpointer user_data)
@@ -1120,64 +1205,15 @@ on_dm_relays_fetched(GPtrArray *relays, gpointer user_data)
         return;
     }
 
-    /* Publish to each relay */
-    ctx->relays_published = 0;
-    ctx->relays_failed = 0;
+    /* hq-0df86: Move connect+publish loop to worker thread to avoid blocking UI */
+    DmRelayPublishData *wd = g_new0(DmRelayPublishData, 1);
+    wd->event = gift_wrap;    /* transfer ownership */
+    wd->relay_urls = relays;  /* transfer ownership */
 
-    for (guint i = 0; i < relays->len; i++) {
-        const char *url = (const char *)g_ptr_array_index(relays, i);
-        GNostrRelay *relay = gnostr_relay_new(url);
-        if (!relay) {
-            ctx->relays_failed++;
-            continue;
-        }
-
-        GError *conn_err = NULL;
-        if (!gnostr_relay_connect(relay, &conn_err)) {
-            g_debug("[DM_SERVICE] Failed to connect to %s: %s",
-                    url, conn_err ? conn_err->message : "unknown");
-            g_clear_error(&conn_err);
-            g_object_unref(relay);
-            ctx->relays_failed++;
-            continue;
-        }
-
-        GError *pub_err = NULL;
-        if (gnostr_relay_publish(relay, gift_wrap, &pub_err)) {
-            g_message("[DM_SERVICE] Published DM to %s", url);
-            ctx->relays_published++;
-        } else {
-            g_debug("[DM_SERVICE] Publish failed to %s: %s",
-                    url, pub_err ? pub_err->message : "unknown");
-            g_clear_error(&pub_err);
-            ctx->relays_failed++;
-        }
-        g_object_unref(relay);
-    }
-
-    nostr_event_free(gift_wrap);
-    g_ptr_array_unref(relays);
-
-    /* Check result */
-    GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
-    if (ctx->relays_published > 0) {
-        result->success = TRUE;
-        result->relays_published = ctx->relays_published;
-        g_message("[DM_SERVICE] DM sent successfully to %u relays (failed: %u)",
-                  ctx->relays_published, ctx->relays_failed);
-    } else {
-        result->success = FALSE;
-        result->error_message = g_strdup("Failed to publish to any relay");
-        g_warning("[DM_SERVICE] DM send failed - no successful publishes");
-    }
-
-    if (ctx->callback) {
-        ctx->callback(result, ctx->user_data);
-    } else {
-        gnostr_dm_send_result_free(result);
-    }
-
-    dm_send_ctx_free(ctx);
+    GTask *task = g_task_new(NULL, NULL, dm_publish_task_done, ctx);
+    g_task_set_task_data(task, wd, (GDestroyNotify)dm_relay_publish_data_free);
+    g_task_run_in_thread(task, dm_publish_thread);
+    g_object_unref(task);
 }
 
 /* Step 2: Gift wrap created - fetch recipient relays and publish */

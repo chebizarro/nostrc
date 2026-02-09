@@ -374,6 +374,90 @@ static void blossom_publish_ctx_free(BlossomPublishCtx *ctx) {
   g_free(ctx);
 }
 
+/* hq-0df86: Worker thread data for async relay publishing */
+typedef struct {
+  NostrEvent *event;
+  GPtrArray  *relay_urls;
+  guint       success_count;
+  guint       fail_count;
+} BlossomRelayPublishData;
+
+static void blossom_relay_publish_data_free(BlossomRelayPublishData *d) {
+  if (!d) return;
+  if (d->event) nostr_event_free(d->event);
+  if (d->relay_urls) g_ptr_array_free(d->relay_urls, TRUE);
+  g_free(d);
+}
+
+/* hq-0df86: Worker thread — connect+publish loop runs off main thread */
+static void
+blossom_publish_thread(GTask *task, gpointer source_object,
+                       gpointer task_data, GCancellable *cancellable)
+{
+  (void)source_object; (void)cancellable;
+  BlossomRelayPublishData *d = (BlossomRelayPublishData *)task_data;
+
+  for (guint i = 0; i < d->relay_urls->len; i++) {
+    const gchar *url = (const gchar *)g_ptr_array_index(d->relay_urls, i);
+    GNostrRelay *relay = gnostr_relay_new(url);
+    if (!relay) { d->fail_count++; continue; }
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_debug("blossom: failed to connect to %s: %s", url,
+              conn_err ? conn_err->message : "unknown");
+      g_clear_error(&conn_err);
+      g_object_unref(relay);
+      d->fail_count++;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, d->event, &pub_err)) {
+      g_debug("blossom: published kind 10063 to %s", url);
+      d->success_count++;
+    } else {
+      g_debug("blossom: publish failed to %s: %s", url,
+              pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+      d->fail_count++;
+    }
+    g_object_unref(relay);
+  }
+
+  g_task_return_boolean(task, d->success_count > 0);
+}
+
+/* hq-0df86: Completion callback — runs on main thread */
+static void
+blossom_publish_task_done(GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+  (void)source_object;
+  BlossomPublishCtx *ctx = (BlossomPublishCtx *)user_data;
+
+  GTask *task = G_TASK(res);
+  BlossomRelayPublishData *d = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_task_propagate_boolean(task, &error);
+
+  if (ctx->callback) {
+    if (d->success_count > 0) {
+      ctx->callback(TRUE, NULL, ctx->user_data);
+    } else {
+      GError *err = g_error_new_literal(
+          g_quark_from_static_string("blossom-settings"), 1,
+          "Failed to publish to any relay");
+      ctx->callback(FALSE, err, ctx->user_data);
+      g_error_free(err);
+    }
+  }
+
+  g_debug("blossom: published to %u relays, failed %u",
+          d->success_count, d->fail_count);
+  g_clear_error(&error);
+  blossom_publish_ctx_free(ctx);
+}
+
 static void on_blossom_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   BlossomPublishCtx *ctx = (BlossomPublishCtx*)user_data;
   (void)source;
@@ -420,57 +504,17 @@ static void on_blossom_sign_complete(GObject *source, GAsyncResult *res, gpointe
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
   gnostr_load_relays_into(relay_urls);
 
-  /* Publish to each relay */
-  guint success_count = 0;
-  guint fail_count = 0;
-  for (guint i = 0; i < relay_urls->len; i++) {
-    const gchar *url = (const gchar*)g_ptr_array_index(relay_urls, i);
-    GNostrRelay *relay = gnostr_relay_new(url);
-    if (!relay) {
-      fail_count++;
-      continue;
-    }
-
-    GError *conn_err = NULL;
-    if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_debug("blossom: failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
-      g_clear_error(&conn_err);
-      g_object_unref(relay);
-      fail_count++;
-      continue;
-    }
-
-    GError *pub_err = NULL;
-    if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_debug("blossom: published kind 10063 to %s", url);
-      success_count++;
-    } else {
-      g_debug("blossom: publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
-      g_clear_error(&pub_err);
-      fail_count++;
-    }
-    g_object_unref(relay);
-  }
-
-  /* Cleanup */
-  nostr_event_free(event);
   g_free(signed_event_json);
-  g_ptr_array_free(relay_urls, TRUE);
 
-  /* Notify callback */
-  if (ctx->callback) {
-    if (success_count > 0) {
-      ctx->callback(TRUE, NULL, ctx->user_data);
-    } else {
-      GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"), 1,
-                                         "Failed to publish to any relay");
-      ctx->callback(FALSE, err, ctx->user_data);
-      g_error_free(err);
-    }
-  }
+  /* hq-0df86: Move connect+publish loop to worker thread to avoid blocking UI */
+  BlossomRelayPublishData *wd = g_new0(BlossomRelayPublishData, 1);
+  wd->event = event;          /* transfer ownership */
+  wd->relay_urls = relay_urls; /* transfer ownership */
 
-  g_debug("blossom: published to %u relays, failed %u", success_count, fail_count);
-  blossom_publish_ctx_free(ctx);
+  GTask *task = g_task_new(NULL, NULL, blossom_publish_task_done, ctx);
+  g_task_set_task_data(task, wd, (GDestroyNotify)blossom_relay_publish_data_free);
+  g_task_run_in_thread(task, blossom_publish_thread);
+  g_object_unref(task);
 }
 
 /* Context for async load operation */

@@ -481,6 +481,91 @@ static void nip51_backup_ctx_free(Nip51BackupCtx *ctx) {
   g_free(ctx);
 }
 
+/* hq-0df86: Worker thread data for async relay publishing */
+typedef struct {
+  NostrEvent *event;
+  GPtrArray  *relay_urls;
+  guint       success_count;
+  guint       fail_count;
+} Nip51RelayPublishData;
+
+static void nip51_relay_publish_data_free(Nip51RelayPublishData *d) {
+  if (!d) return;
+  if (d->event) nostr_event_free(d->event);
+  if (d->relay_urls) g_ptr_array_free(d->relay_urls, TRUE);
+  g_free(d);
+}
+
+/* hq-0df86: Worker thread — connect+publish loop runs off main thread */
+static void
+nip51_publish_thread(GTask *task, gpointer source_object,
+                     gpointer task_data, GCancellable *cancellable)
+{
+  (void)source_object; (void)cancellable;
+  Nip51RelayPublishData *d = (Nip51RelayPublishData *)task_data;
+
+  for (guint i = 0; i < d->relay_urls->len; i++) {
+    const gchar *url = (const gchar *)g_ptr_array_index(d->relay_urls, i);
+    GNostrRelay *relay = gnostr_relay_new(url);
+    if (!relay) { d->fail_count++; continue; }
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_debug("nip51_settings: failed to connect to %s: %s", url,
+              conn_err ? conn_err->message : "unknown");
+      g_clear_error(&conn_err);
+      g_object_unref(relay);
+      d->fail_count++;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, d->event, &pub_err)) {
+      g_message("nip51_settings: published to %s", url);
+      d->success_count++;
+    } else {
+      g_debug("nip51_settings: publish failed to %s: %s", url,
+              pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+      d->fail_count++;
+    }
+    g_object_unref(relay);
+  }
+
+  g_task_return_boolean(task, d->success_count > 0);
+}
+
+/* hq-0df86: Completion callback — runs on main thread */
+static void
+nip51_publish_task_done(GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+  (void)source_object;
+  Nip51BackupCtx *ctx = (Nip51BackupCtx *)user_data;
+
+  GTask *task = G_TASK(res);
+  Nip51RelayPublishData *d = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_task_propagate_boolean(task, &error);
+
+  /* Update last sync timestamp on success */
+  if (d->success_count > 0) {
+    set_last_sync((gint64)time(NULL));
+  }
+
+  if (ctx->callback) {
+    if (d->success_count > 0) {
+      ctx->callback(TRUE, NULL, ctx->user_data);
+    } else {
+      ctx->callback(FALSE, "Failed to publish to any relay", ctx->user_data);
+    }
+  }
+
+  g_message("nip51_settings: published to %u relays, failed %u",
+            d->success_count, d->fail_count);
+  g_clear_error(&error);
+  nip51_backup_ctx_free(ctx);
+}
+
 static void on_nip51_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   Nip51BackupCtx *ctx = (Nip51BackupCtx*)user_data;
   (void)source;
@@ -519,60 +604,17 @@ static void on_nip51_sign_complete(GObject *source, GAsyncResult *res, gpointer 
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
   gnostr_load_relays_into(relay_urls);
 
-  /* Publish to relays */
-  guint success_count = 0;
-  guint fail_count = 0;
-
-  for (guint i = 0; i < relay_urls->len; i++) {
-    const gchar *url = (const gchar*)g_ptr_array_index(relay_urls, i);
-    GNostrRelay *relay = gnostr_relay_new(url);
-    if (!relay) {
-      fail_count++;
-      continue;
-    }
-
-    GError *conn_err = NULL;
-    if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_debug("nip51_settings: failed to connect to %s: %s",
-              url, conn_err ? conn_err->message : "unknown");
-      g_clear_error(&conn_err);
-      g_object_unref(relay);
-      fail_count++;
-      continue;
-    }
-
-    GError *pub_err = NULL;
-    if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_message("nip51_settings: published to %s", url);
-      success_count++;
-    } else {
-      g_debug("nip51_settings: publish failed to %s: %s",
-              url, pub_err ? pub_err->message : "unknown");
-      g_clear_error(&pub_err);
-      fail_count++;
-    }
-    g_object_unref(relay);
-  }
-
-  nostr_event_free(event);
   g_free(signed_event_json);
-  g_ptr_array_free(relay_urls, TRUE);
 
-  /* Update last sync timestamp on success */
-  if (success_count > 0) {
-    set_last_sync((gint64)time(NULL));
-  }
+  /* hq-0df86: Move connect+publish loop to worker thread to avoid blocking UI */
+  Nip51RelayPublishData *wd = g_new0(Nip51RelayPublishData, 1);
+  wd->event = event;          /* transfer ownership */
+  wd->relay_urls = relay_urls; /* transfer ownership */
 
-  if (ctx->callback) {
-    if (success_count > 0) {
-      ctx->callback(TRUE, NULL, ctx->user_data);
-    } else {
-      ctx->callback(FALSE, "Failed to publish to any relay", ctx->user_data);
-    }
-  }
-
-  g_message("nip51_settings: published to %u relays, failed %u", success_count, fail_count);
-  nip51_backup_ctx_free(ctx);
+  GTask *task = g_task_new(NULL, NULL, nip51_publish_task_done, ctx);
+  g_task_set_task_data(task, wd, (GDestroyNotify)nip51_relay_publish_data_free);
+  g_task_run_in_thread(task, nip51_publish_thread);
+  g_object_unref(task);
 }
 
 void gnostr_nip51_settings_backup_async(GnostrNip51SettingsBackupCallback callback,
