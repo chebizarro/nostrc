@@ -369,6 +369,55 @@ static void on_nwc_response_event(GnostrPluginEvent *event, gpointer user_data) 
   g_hash_table_remove(self->pending_requests, ref_id);
 }
 
+/* hq-gflmf: Context for async publish callback in NWC request flow */
+typedef struct {
+  Nip47NwcPlugin *plugin;    /* borrowed ref — lives as long as plugin is active */
+  gchar *request_event_id;
+  gchar *method;
+  GTask *caller_task;        /* the task returned to the NWC caller */
+} NwcPublishCtx;
+
+static void
+nwc_publish_ctx_free(NwcPublishCtx *ctx)
+{
+  if (!ctx) return;
+  g_free(ctx->request_event_id);
+  g_free(ctx->method);
+  g_free(ctx);
+}
+
+/* hq-gflmf: Callback when async publish completes — runs on main thread */
+static void
+on_nwc_publish_done(GObject      *source G_GNUC_UNUSED,
+                    GAsyncResult *res,
+                    gpointer      user_data)
+{
+  NwcPublishCtx *ctx = (NwcPublishCtx *)user_data;
+  GError *pub_error = NULL;
+
+  gboolean ok = gnostr_plugin_context_publish_event_finish(NULL, res, &pub_error);
+
+  if (!ok) {
+    g_warning("[NIP-47] Failed to publish %s request: %s", ctx->method,
+              pub_error ? pub_error->message : "unknown error");
+    /* Remove from pending — the timeout will be cleaned up via task data */
+    if (ctx->plugin && ctx->plugin->pending_requests) {
+      g_hash_table_remove(ctx->plugin->pending_requests, ctx->request_event_id);
+    }
+    g_task_return_error(ctx->caller_task, pub_error);
+    g_object_unref(ctx->caller_task);
+    nwc_publish_ctx_free(ctx);
+    return;
+  }
+
+  g_debug("[NIP-47] Published %s request (event_id=%.16s...)",
+          ctx->method, ctx->request_event_id);
+
+  /* Task stays alive in pending_requests until response or timeout */
+  g_object_unref(ctx->caller_task);
+  nwc_publish_ctx_free(ctx);
+}
+
 /* Execute a NWC request */
 static void nwc_execute_request_async(Nip47NwcPlugin *self,
                                       const gchar *method,
@@ -418,20 +467,17 @@ static void nwc_execute_request_async(Nip47NwcPlugin *self,
 
   g_task_set_task_data(task, pending, (GDestroyNotify)nwc_pending_request_free);
 
-  /* Publish the request event */
-  GError *pub_error = NULL;
-  if (!gnostr_plugin_context_publish_event(self->context, event_json, &pub_error)) {
-    g_warning("[NIP-47] Failed to publish %s request: %s", method,
-              pub_error ? pub_error->message : "unknown error");
-    g_hash_table_remove(self->pending_requests, request_event_id);
-    g_task_return_error(task, pub_error);
-    g_object_unref(task);
-    g_free(request_event_id);
-    g_free(event_json);
-    return;
-  }
+  /* hq-gflmf: Publish asynchronously — relay connect + publish runs on a
+   * GTask worker thread instead of blocking the main GTK thread. */
+  NwcPublishCtx *pub_ctx = g_new0(NwcPublishCtx, 1);
+  pub_ctx->plugin = self;
+  pub_ctx->request_event_id = g_strdup(request_event_id);
+  pub_ctx->method = g_strdup(method);
+  pub_ctx->caller_task = g_object_ref(task);
 
-  g_debug("[NIP-47] Published %s request (event_id=%.16s...)", method, request_event_id);
+  gnostr_plugin_context_publish_event_async(self->context, event_json,
+                                            cancellable, on_nwc_publish_done,
+                                            pub_ctx);
 
   g_free(request_event_id);
   g_free(event_json);
