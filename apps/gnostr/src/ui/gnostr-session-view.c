@@ -303,11 +303,14 @@ static GtkWidget *create_account_row(const char *npub, gboolean is_current) {
 
   /* Try to load profile and avatar for this account */
   char *pubkey_hex = npub_to_pubkey_hex(npub);
-  const char *display_name = NULL;
+  char *display_name = NULL;
   if (pubkey_hex) {
     GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
     if (meta) {
-      display_name = meta->display_name ? meta->display_name : meta->name;
+      /* nostrc-uaf4: Copy display_name before freeing meta — the pointer
+       * into meta->display_name/name becomes dangling after free. */
+      const char *dn = meta->display_name ? meta->display_name : meta->name;
+      display_name = dn ? g_strdup(dn) : NULL;
       set_initials_label(avatar_initials, display_name, NULL);
 
       /* Load avatar image if available */
@@ -363,6 +366,7 @@ static GtkWidget *create_account_row(const char *npub, gboolean is_current) {
   /* Disable activation for current account */
   gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), !is_current);
 
+  g_free(display_name);
   return row;
 }
 
