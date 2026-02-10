@@ -2,6 +2,7 @@
 #include "gnostr-profile-edit.h"
 #include "gnostr-status-dialog.h"
 #include "gnostr-image-viewer.h"
+#include "gnostr-video-player.h"
 #include "note_card_row.h"
 #include "note-card-factory.h"
 #include "gnostr-highlight-card.h"
@@ -177,6 +178,9 @@ static ProfilePostItem *profile_post_item_new(const char *id_hex, const char *pu
                       NULL);
 }
 
+/* Forward declaration — defined near is_media_url() */
+static gboolean is_video_url(const char *url);
+
 /* Media item for the grid model */
 typedef struct _ProfileMediaItem {
   GObject parent_instance;
@@ -185,6 +189,7 @@ typedef struct _ProfileMediaItem {
   char *event_id_hex;  /* Source event ID */
   char *mime_type;     /* MIME type if known */
   gint64 created_at;
+  gboolean is_video;   /* TRUE for video URLs */
 } ProfileMediaItem;
 
 typedef struct _ProfileMediaItemClass {
@@ -255,13 +260,15 @@ static void profile_media_item_class_init(ProfileMediaItemClass *klass) {
 static void profile_media_item_init(ProfileMediaItem *self) { (void)self; }
 
 static ProfileMediaItem *profile_media_item_new(const char *url, const char *thumb_url, const char *event_id_hex, const char *mime_type, gint64 created_at) {
-  return g_object_new(profile_media_item_get_type(),
+  ProfileMediaItem *item = g_object_new(profile_media_item_get_type(),
                       "url", url,
                       "thumb-url", thumb_url ? thumb_url : url,
                       "event-id-hex", event_id_hex,
                       "mime-type", mime_type,
                       "created-at", created_at,
                       NULL);
+  item->is_video = is_video_url(url);
+  return item;
 }
 
 /* Maximum media items to fetch per page */
@@ -3231,6 +3238,24 @@ static void load_posts(GnostrProfilePane *self) {
 }
 
 /* Check if URL looks like media (image/video) */
+/* Check if a URL points to a video file by extension */
+static gboolean is_video_url(const char *url) {
+  if (!url || !*url) return FALSE;
+  const char *video_exts[] = { ".mp4", ".webm", ".mov", ".avi", ".mkv", NULL };
+  const char *last_dot = strrchr(url, '.');
+  if (!last_dot) return FALSE;
+  char *ext_lower = g_ascii_strdown(last_dot, -1);
+  gboolean result = FALSE;
+  for (int i = 0; video_exts[i]; i++) {
+    if (g_str_has_prefix(ext_lower, video_exts[i])) {
+      result = TRUE;
+      break;
+    }
+  }
+  g_free(ext_lower);
+  return result;
+}
+
 static gboolean is_media_url(const char *url) {
   if (!url || !*url) return FALSE;
 
@@ -3433,18 +3458,34 @@ static void setup_media_item(GtkSignalListItemFactory *factory, GtkListItem *lis
   (void)factory;
   (void)user_data;
 
-  /* Create a square frame with image inside */
+  /* Create a square frame with overlay for play icon on videos */
   GtkWidget *frame = gtk_frame_new(NULL);
   gtk_widget_set_size_request(frame, 100, 100);
   gtk_widget_add_css_class(frame, "profile-media-item");
+
+  GtkWidget *overlay = gtk_overlay_new();
 
   GtkWidget *picture = gtk_picture_new();
   gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
   gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE);
   gtk_widget_set_size_request(picture, 100, 100);
+  gtk_overlay_set_child(GTK_OVERLAY(overlay), picture);
 
-  gtk_frame_set_child(GTK_FRAME(frame), picture);
+  /* Play icon overlay for video items (hidden by default, shown in bind) */
+  GtkWidget *play_icon = gtk_image_new_from_icon_name("media-playback-start-symbolic");
+  gtk_image_set_pixel_size(GTK_IMAGE(play_icon), 32);
+  gtk_widget_set_halign(play_icon, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(play_icon, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class(play_icon, "osd");
+  gtk_widget_set_visible(play_icon, FALSE);
+  gtk_overlay_add_overlay(GTK_OVERLAY(overlay), play_icon);
+
+  gtk_frame_set_child(GTK_FRAME(frame), overlay);
   gtk_list_item_set_child(list_item, frame);
+
+  /* Store references for bind/unbind access */
+  g_object_set_data(G_OBJECT(frame), "play-icon", play_icon);
+  g_object_set_data(G_OBJECT(frame), "picture", picture);
 }
 
 static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -3457,11 +3498,16 @@ static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list
   GtkWidget *frame = gtk_list_item_get_child(list_item);
   if (!GTK_IS_FRAME(frame)) return;
 
-  GtkWidget *picture = gtk_frame_get_child(GTK_FRAME(frame));
+  GtkWidget *picture = g_object_get_data(G_OBJECT(frame), "picture");
+  GtkWidget *play_icon = g_object_get_data(G_OBJECT(frame), "play-icon");
   if (!GTK_IS_PICTURE(picture)) return;
 
   /* Clear previous paintable — critical when GridView recycles items */
   gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
+
+  /* Show/hide play icon based on whether this is a video */
+  if (play_icon)
+    gtk_widget_set_visible(play_icon, media->is_video);
 
   const char *url = media->thumb_url ? media->thumb_url : media->url;
   if (url && *url) {
@@ -3484,14 +3530,33 @@ static void unbind_media_item(GtkSignalListItemFactory *factory, GtkListItem *li
   GtkWidget *frame = gtk_list_item_get_child(list_item);
   if (!GTK_IS_FRAME(frame)) return;
 
-  GtkWidget *picture = gtk_frame_get_child(GTK_FRAME(frame));
-  if (!GTK_IS_PICTURE(picture)) return;
+  GtkWidget *picture = g_object_get_data(G_OBJECT(frame), "picture");
+  GtkWidget *play_icon = g_object_get_data(G_OBJECT(frame), "play-icon");
 
   /* Clear paintable on unbind so recycled items don't flash stale images */
-  gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
+  if (GTK_IS_PICTURE(picture))
+    gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
+
+  /* Hide play icon so recycled items don't flash stale video markers */
+  if (play_icon)
+    gtk_widget_set_visible(play_icon, FALSE);
 }
 
-/* nostrc-7x61: Handle media grid item activation (click) to open image viewer */
+/* Escape key handler for video player window */
+static gboolean on_video_window_key(GtkEventControllerKey *controller,
+                                    guint keyval, guint keycode,
+                                    GdkModifierType state, gpointer user_data)
+{
+  (void)controller; (void)keycode; (void)state;
+  if (keyval == GDK_KEY_Escape) {
+    GtkWindow *win = GTK_WINDOW(user_data);
+    gtk_window_close(win);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+/* nostrc-7x61: Handle media grid item activation (click) to open viewer */
 static void on_media_item_activated(GtkGridView *grid_view, guint position, gpointer user_data) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
   (void)grid_view;
@@ -3505,35 +3570,65 @@ static void on_media_item_activated(GtkGridView *grid_view, guint position, gpoi
     return;
   }
 
-  /* Build gallery of all media URLs */
+  /* Get parent window */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+  if (clicked->is_video) {
+    /* Video: open full-window video player (not fullscreen) */
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(win), "Video");
+    gtk_window_set_default_size(GTK_WINDOW(win), 1280, 720);
+    gtk_window_set_modal(GTK_WINDOW(win), TRUE);
+    if (parent) gtk_window_set_transient_for(GTK_WINDOW(win), parent);
+
+    GnostrVideoPlayer *player = gnostr_video_player_new();
+    gnostr_video_player_set_autoplay(player, TRUE);
+    gnostr_video_player_set_uri(player, clicked->url);
+    gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
+    gtk_widget_set_vexpand(GTK_WIDGET(player), TRUE);
+    gtk_window_set_child(GTK_WINDOW(win), GTK_WIDGET(player));
+
+    /* Escape to close */
+    GtkEventController *key_ctrl = gtk_event_controller_key_new();
+    g_signal_connect(key_ctrl, "key-pressed",
+                     G_CALLBACK(on_video_window_key), win);
+    gtk_widget_add_controller(win, key_ctrl);
+
+    gtk_window_present(GTK_WINDOW(win));
+    g_object_unref(clicked);
+    return;
+  }
+
+  /* Image: build gallery of image-only URLs (skip videos) */
   guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->media_model));
   GPtrArray *urls = g_ptr_array_new();
+  guint image_position = 0;
+  gboolean found_clicked = FALSE;
 
   for (guint i = 0; i < n_items; i++) {
     ProfileMediaItem *item = g_list_model_get_item(G_LIST_MODEL(self->media_model), i);
-    if (item && item->url) {
+    if (item && item->url && !item->is_video) {
+      if (i < position) image_position++;
+      if (i == position) found_clicked = TRUE;
       g_ptr_array_add(urls, (gpointer)item->url);
     }
     if (item) g_object_unref(item);
   }
   g_ptr_array_add(urls, NULL);  /* NULL-terminate */
 
-  /* Get parent window for the viewer */
-  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
-
   /* Create and present image viewer */
   GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
 
-  if (urls->len > 1) {
-    /* Multiple images - set as gallery */
-    gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata, position);
-  } else {
-    /* Single image */
+  if (urls->len > 2) {  /* >2 because of NULL terminator */
+    gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata,
+                                    found_clicked ? image_position : 0);
+  } else if (urls->len > 1) {
     gnostr_image_viewer_set_image_url(viewer, clicked->url);
   }
 
-  gnostr_image_viewer_present(viewer);
+  if (urls->len > 1)  /* have at least one image URL + NULL */
+    gnostr_image_viewer_present(viewer);
 
   g_ptr_array_free(urls, TRUE);
   g_object_unref(clicked);
