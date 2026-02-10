@@ -167,8 +167,9 @@ int main(int argc, char **argv) {
 
   GError *sub_error = NULL;
   GNostrSubscription *sub = gnostr_pool_subscribe(pool, filters, &sub_error);
-  nostr_filters_free(filters);
+  /* gnostr_pool_subscribe takes ownership of filters on success */
   if (!sub) {
+    nostr_filters_free(filters); /* caller retains ownership on failure */
     fprintf(stderr, "gnostr-live-log: subscribe failed: %s\n",
             sub_error ? sub_error->message : "(unknown)");
     g_clear_error(&sub_error);

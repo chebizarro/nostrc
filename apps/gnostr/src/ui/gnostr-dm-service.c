@@ -251,18 +251,21 @@ gnostr_dm_service_start(GnostrDmService *self,
     NostrFilters *filters = nostr_filters_new();
     nostr_filters_add(filters, filter);
 
-    /* Subscribe */
+    /* Subscribe — gnostr_pool_subscribe takes ownership of filters on
+     * success (stored as owned_filters in GNostrSubscription).  On failure,
+     * filters are detached and ownership returns to the caller. */
     GError *sub_error = NULL;
     GNostrSubscription *sub = gnostr_pool_subscribe(self->pool, filters, &sub_error);
-    nostr_filters_free(filters);
-    nostr_filter_free(filter);
+    nostr_filter_free(filter); /* safe: nostr_filters_add used move semantics */
 
     if (!sub) {
+        nostr_filters_free(filters); /* caller retains ownership on failure */
         g_warning("[DM_SERVICE] Gift wrap subscription failed: %s",
                   sub_error ? sub_error->message : "(unknown)");
         g_clear_error(&sub_error);
         return;
     }
+    /* filters now owned by subscription — do NOT free */
 
     self->sub = sub; /* takes ownership */
     self->events_handler = g_signal_connect(

@@ -1612,10 +1612,10 @@ on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_dat
 
   GError *sub_error = NULL;
   GNostrSubscription *sub = gnostr_pool_subscribe(self->nip46_pool, filters, &sub_error);
-  nostr_filters_free(filters);
-  nostr_filter_free(filter);
+  nostr_filter_free(filter); /* safe: nostr_filters_add used move semantics */
 
   if (!sub) {
+    nostr_filters_free(filters); /* caller retains ownership on failure */
     g_warning("[NIP46_LOGIN] Subscription failed: %s",
               sub_error ? sub_error->message : "(unknown)");
     set_bunker_status(self, BUNKER_STATUS_ERROR,
@@ -1624,6 +1624,7 @@ on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_dat
     g_clear_error(&sub_error);
     return;
   }
+  /* filters now owned by subscription — do NOT free */
 
   self->nip46_sub = sub;
   self->nip46_events_handler = g_signal_connect(
