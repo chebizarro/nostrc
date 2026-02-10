@@ -2732,6 +2732,14 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
   GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
   if (urls->len > 2) {  /* More than just clicked + NULL terminator */
     gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata, clicked_index);
+    /* hq-snq39: Override initial image with already-loaded texture to avoid
+     * re-downloading. set_gallery starts an HTTP fetch for the current image,
+     * but we already have the decoded texture from the timeline. Cancel the
+     * redundant fetch and display the texture immediately. */
+    GdkPaintable *gallery_paintable = gtk_picture_get_paintable(GTK_PICTURE(pic));
+    if (gallery_paintable && GDK_IS_TEXTURE(gallery_paintable)) {
+      gnostr_image_viewer_set_texture(viewer, GDK_TEXTURE(gallery_paintable));
+    }
   } else {
     /* hq-snq39: Use already-loaded texture if available to avoid re-download */
     GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(pic));

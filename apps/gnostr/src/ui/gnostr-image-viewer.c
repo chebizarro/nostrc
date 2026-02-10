@@ -599,6 +599,9 @@ static void on_zoom_scale_changed(GtkGestureZoom *gesture,
 typedef struct {
   GnostrImageViewer *viewer;  /* Weak reference */
   char *url;
+#ifdef HAVE_SOUP3
+  SoupMessage *msg;  /* For HTTP status checking */
+#endif
 } ImageLoadCtx;
 
 static void on_image_viewer_destroyed(gpointer data, GObject *where_the_object_was) {
@@ -612,6 +615,9 @@ static void image_load_ctx_free(ImageLoadCtx *ctx) {
   if (ctx->viewer) {
     g_object_weak_unref(G_OBJECT(ctx->viewer), on_image_viewer_destroyed, ctx);
   }
+#ifdef HAVE_SOUP3
+  g_clear_object(&ctx->msg);
+#endif
   g_free(ctx->url);
   g_free(ctx);
 }
@@ -624,7 +630,8 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_warning("ImageViewer: Failed to load image: %s", error->message);
+      g_warning("ImageViewer: Failed to load image '%s': %s",
+                ctx->url ? ctx->url : "?", error->message);
     }
     g_error_free(error);
     image_load_ctx_free(ctx);
@@ -640,6 +647,24 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 
   GnostrImageViewer *self = ctx->viewer;
 
+  /* hq-snq39: Check HTTP status code before trying to decode.
+   * Non-2xx responses (403, 404, 5xx) return HTML error pages that
+   * gdk_texture_new_from_bytes will fail to decode, leaving a blank viewer. */
+  if (ctx->msg) {
+    guint status = soup_message_get_status(ctx->msg);
+    if (status < 200 || status >= 300) {
+      g_warning("ImageViewer: HTTP %u for '%s'",
+                status, ctx->url ? ctx->url : "?");
+      if (bytes) g_bytes_unref(bytes);
+      if (GTK_IS_WIDGET(self->spinner)) {
+        gtk_widget_set_visible(self->spinner, FALSE);
+        gtk_spinner_stop(GTK_SPINNER(self->spinner));
+      }
+      image_load_ctx_free(ctx);
+      return;
+    }
+  }
+
   /* Hide spinner */
   if (GTK_IS_WIDGET(self->spinner)) {
     gtk_widget_set_visible(self->spinner, FALSE);
@@ -648,7 +673,8 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    g_warning("ImageViewer: Empty image data");
+    g_warning("ImageViewer: Empty image data for '%s'",
+              ctx->url ? ctx->url : "?");
     image_load_ctx_free(ctx);
     return;
   }
@@ -658,7 +684,8 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   g_bytes_unref(bytes);
 
   if (error) {
-    g_warning("ImageViewer: Failed to create texture: %s", error->message);
+    g_warning("ImageViewer: Failed to create texture for '%s': %s",
+              ctx->url ? ctx->url : "?", error->message);
     g_error_free(error);
     image_load_ctx_free(ctx);
     return;
@@ -674,7 +701,7 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 
   /* Apply initial fit zoom */
   zoom_to_fit(self);
-  
+
   image_load_ctx_free(ctx);
 }
 #endif
@@ -725,6 +752,7 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
   ImageLoadCtx *ctx = g_new0(ImageLoadCtx, 1);
   ctx->viewer = self;
   ctx->url = g_strdup(url);
+  ctx->msg = g_object_ref(msg);  /* Keep ref for HTTP status check in callback */
   g_object_weak_ref(G_OBJECT(self), on_image_viewer_destroyed, ctx);
 
   g_debug("ImageViewer: fetching image: %s", url);
