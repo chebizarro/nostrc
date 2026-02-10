@@ -292,6 +292,18 @@ gnostr_relay_constructed(GObject *object)
     }
 }
 
+/* nostrc-ws3: Background thread func for nostr_relay_free.
+ * relay_free_impl calls go_wait_group_wait which blocks until
+ * worker goroutines exit.  Must not run on the main thread. */
+static void
+relay_free_thread_func(GTask *task, gpointer source G_GNUC_UNUSED,
+                       gpointer task_data, GCancellable *cancel G_GNUC_UNUSED)
+{
+    NostrRelay *relay = (NostrRelay *)task_data;
+    nostr_relay_free(relay);
+    g_task_return_boolean(task, TRUE);
+}
+
 static void
 gnostr_relay_finalize(GObject *object)
 {
@@ -327,8 +339,19 @@ gnostr_relay_finalize(GObject *object)
     if (self->relay) {
         nostr_relay_set_state_callback(self->relay, NULL, NULL);
         nostr_relay_set_auth_callback(self->relay, NULL, NULL);
-        nostr_relay_free(self->relay);
+
+        /* nostrc-ws3: Dispatch nostr_relay_free to a background thread.
+         * relay_free_impl blocks in go_wait_group_wait() waiting for worker
+         * goroutines to exit.  If finalize runs on the GTK main thread
+         * (e.g., sync_relays → remove_relay → last unref → finalize),
+         * this blocks the main loop and freezes the app. */
+        NostrRelay *relay = self->relay;
         self->relay = NULL;
+
+        GTask *task = g_task_new(NULL, NULL, NULL, NULL);
+        g_task_set_task_data(task, relay, NULL);
+        g_task_run_in_thread(task, relay_free_thread_func);
+        g_object_unref(task);
     }
 
     /* Free auth handler user data */
