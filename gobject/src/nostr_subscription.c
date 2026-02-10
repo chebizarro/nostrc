@@ -319,6 +319,13 @@ gnostr_subscription_finalize(GObject *object)
     /* Close core subscription */
     if (self->subscription) {
         nostr_subscription_close(self->subscription, NULL);
+        /* nostrc-ws3: Cancel subscription context + wait for lifecycle
+         * worker BEFORE free.  Without this, subscription_destroy blocks
+         * forever in go_wait_group_wait because the lifecycle thread is
+         * stuck in go_channel_receive(done) waiting for context
+         * cancellation that nostr_subscription_close does NOT do.
+         * Same fix as nostrc-ws2 in query_thread_func. */
+        nostr_subscription_wait(self->subscription);
         nostr_subscription_free(self->subscription);
         self->subscription = NULL;
     }
