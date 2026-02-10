@@ -134,6 +134,7 @@ gboolean gnostr_sync_service_is_running(GnostrSyncService *self);
  *
  * Negentropy-specific (emitted on completion):
  *   "negentropy::sync-complete"     - Full sync result with kind details
+ *   "negentropy::kind::0"           - Profile metadata may have changed
  *   "negentropy::kind::3"           - Contact list may have changed
  *   "negentropy::kind::10000"       - Mute list may have changed
  *

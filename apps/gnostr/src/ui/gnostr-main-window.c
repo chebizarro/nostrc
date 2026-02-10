@@ -65,6 +65,8 @@
 #include "../util/mute_list.h"
 /* NIP-02 contact list */
 #include "../util/nip02_contacts.h"
+/* NIP-77 negentropy sync */
+#include "../sync/gnostr-sync-service.h"
 /* NIP-32 labeling */
 #include "../util/nip32_labels.h"
 /* NIP-51 settings sync */
@@ -2426,6 +2428,23 @@ static void settings_dialog_ctx_free(SettingsDialogCtx *ctx) {
 }
 
 /* Callback for NIP-51 backup button */
+/* hq-cnkj3: Negentropy background sync toggle changed */
+static void on_negentropy_sync_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  (void)user_data;
+  gboolean enabled = gtk_switch_get_active(sw);
+
+  GSettings *client = g_settings_new("org.gnostr.Client");
+  g_settings_set_boolean(client, "negentropy-auto-sync", enabled);
+  g_object_unref(client);
+
+  GnostrSyncService *svc = gnostr_sync_service_get_default();
+  if (enabled)
+    gnostr_sync_service_start(svc);
+  else
+    gnostr_sync_service_stop(svc);
+}
+
 static void on_nip51_backup_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
@@ -2559,6 +2578,15 @@ static void settings_dialog_setup_account_panel(SettingsDialogCtx *ctx) {
   GtkButton *btn_restore = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_nip51_restore"));
   if (btn_backup) g_signal_connect(btn_backup, "clicked", G_CALLBACK(on_nip51_backup_clicked), ctx);
   if (btn_restore) g_signal_connect(btn_restore, "clicked", G_CALLBACK(on_nip51_restore_clicked), ctx);
+
+  /* hq-cnkj3: Negentropy background sync toggle */
+  GtkSwitch *w_neg = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_negentropy_sync_enabled"));
+  if (w_neg) {
+    GSettings *client = g_settings_new("org.gnostr.Client");
+    gtk_switch_set_active(w_neg, g_settings_get_boolean(client, "negentropy-auto-sync"));
+    g_signal_connect(w_neg, "notify::active", G_CALLBACK(on_negentropy_sync_changed), NULL);
+    g_object_unref(client);
+  }
 }
 
 /* Populate the relay list in settings */
@@ -4177,6 +4205,16 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
      * Loads user's own profile + follow list profiles into LRU so
      * the timeline renders with instant profile data. */
     gnostr_profile_provider_prewarm_async(self->user_pubkey_hex);
+
+    /* hq-cnkj3: Start negentropy sync service if enabled */
+    {
+      GSettings *client = g_settings_new("org.gnostr.Client");
+      if (g_settings_get_boolean(client, "negentropy-auto-sync")) {
+        GnostrSyncService *svc = gnostr_sync_service_get_default();
+        if (svc) gnostr_sync_service_start(svc);
+      }
+      g_object_unref(client);
+    }
   }
 
   show_toast(self, "Signed in successfully");

@@ -1810,6 +1810,61 @@ Window settings_window {
                   spacing: 8;
 
                   Label {
+                    label: "Background Sync (NIP-77)";
+                    xalign: 0;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+
+                  Label {
+                    label: "Keeps contacts, mutes, and profiles in sync with relays using negentropy protocol";
+                    xalign: 0;
+                    wrap: true;
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  ListBox {
+                    selection-mode: none;
+
+                    styles [
+                      "boxed-list",
+                    ]
+
+                    ListBoxRow {
+                      activatable: false;
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 12;
+                        margin-start: 12;
+                        margin-end: 12;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        Label {
+                          label: "Enable Background Sync";
+                          hexpand: true;
+                          xalign: 0;
+                        }
+
+                        Switch w_negentropy_sync_enabled {
+                          valign: center;
+                        }
+                      }
+                    }
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 8;
+
+                  Label {
                     label: "Synced Data";
                     xalign: 0;
 

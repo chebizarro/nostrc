@@ -221,6 +221,23 @@
         Unix timestamp of the last successful NIP-51 settings sync.
       </description>
     </key>
+    <!-- NIP-77 negentropy background sync (hq-cnkj3) -->
+    <key name="negentropy-auto-sync" type="b">
+      <default>false</default>
+      <summary>Negentropy auto-sync enabled</summary>
+      <description>
+        Enable automatic background sync via negentropy protocol (NIP-77).
+        Keeps contacts, mutes, and profiles in sync with relays.
+      </description>
+    </key>
+    <key name="negentropy-sync-interval" type="u">
+      <default>300</default>
+      <summary>Negentropy sync interval (seconds)</summary>
+      <description>
+        Background sync interval in seconds (60-3600).
+        Lower values sync more frequently but use more bandwidth.
+      </description>
+    </key>
     <!-- Cache size limits -->
     <key name="image-cache-max-mb" type="i">
       <default>500</default>

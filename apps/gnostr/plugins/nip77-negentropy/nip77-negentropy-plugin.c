@@ -134,38 +134,11 @@ nip77_negentropy_plugin_init(Nip77NegentropyPlugin *self)
 static void
 load_settings(Nip77NegentropyPlugin *self)
 {
-  if (!self->context)
-    return;
-
-  GError *error = NULL;
-
-  /* Load auto-sync enabled */
-  GBytes *enabled_data = gnostr_plugin_context_load_data(self->context,
-                                                         SETTINGS_KEY_AUTO_SYNC_ENABLED,
-                                                         &error);
-  if (enabled_data) {
-    gsize size;
-    const gchar *data = g_bytes_get_data(enabled_data, &size);
-    if (size == sizeof(gboolean)) {
-      memcpy(&self->auto_sync_enabled, data, sizeof(gboolean));
-    }
-    g_bytes_unref(enabled_data);
-  }
-  g_clear_error(&error);
-
-  /* Load sync interval */
-  GBytes *interval_data = gnostr_plugin_context_load_data(self->context,
-                                                          SETTINGS_KEY_SYNC_INTERVAL,
-                                                          &error);
-  if (interval_data) {
-    gsize size;
-    const gchar *data = g_bytes_get_data(interval_data, &size);
-    if (size == sizeof(guint)) {
-      memcpy(&self->auto_sync_interval_sec, data, sizeof(guint));
-    }
-    g_bytes_unref(interval_data);
-  }
-  g_clear_error(&error);
+  /* hq-cnkj3: Read from GSettings instead of plugin context storage */
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  self->auto_sync_enabled = g_settings_get_boolean(settings, "negentropy-auto-sync");
+  self->auto_sync_interval_sec = g_settings_get_uint(settings, "negentropy-sync-interval");
+  g_object_unref(settings);
 
   g_debug("[NIP-77] Loaded settings: auto_sync=%d, interval=%u sec",
           self->auto_sync_enabled, self->auto_sync_interval_sec);
@@ -174,24 +147,11 @@ load_settings(Nip77NegentropyPlugin *self)
 static void
 save_settings(Nip77NegentropyPlugin *self)
 {
-  if (!self->context)
-    return;
-
-  GError *error = NULL;
-
-  /* Save auto-sync enabled */
-  GBytes *enabled_data = g_bytes_new(&self->auto_sync_enabled, sizeof(gboolean));
-  gnostr_plugin_context_store_data(self->context, SETTINGS_KEY_AUTO_SYNC_ENABLED,
-                                   enabled_data, &error);
-  g_bytes_unref(enabled_data);
-  g_clear_error(&error);
-
-  /* Save sync interval */
-  GBytes *interval_data = g_bytes_new(&self->auto_sync_interval_sec, sizeof(guint));
-  gnostr_plugin_context_store_data(self->context, SETTINGS_KEY_SYNC_INTERVAL,
-                                   interval_data, &error);
-  g_bytes_unref(interval_data);
-  g_clear_error(&error);
+  /* hq-cnkj3: Write to GSettings instead of plugin context storage */
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_settings_set_boolean(settings, "negentropy-auto-sync", self->auto_sync_enabled);
+  g_settings_set_uint(settings, "negentropy-sync-interval", self->auto_sync_interval_sec);
+  g_object_unref(settings);
 }
 
 /* ============================================================================
@@ -243,9 +203,9 @@ on_auto_sync_timer(gpointer user_data)
   char **relay_urls = gnostr_plugin_context_get_relay_urls(self->context, &n_urls);
 
   if (relay_urls && n_urls > 0) {
-    /* Sync kind:3 (contact lists) and kind:10000 (mute lists) */
-    static const int sync_kinds[] = { 3, 10000 };
-    static const size_t sync_kind_count = 2;
+    /* hq-cnkj3: Sync kind:0 (profiles), kind:3 (contacts), kind:10000 (mutes) */
+    static const int sync_kinds[] = { 0, 3, 10000 };
+    static const size_t sync_kind_count = 3;
 
     self->total_syncs++;
 
