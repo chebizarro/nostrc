@@ -546,17 +546,19 @@ static void *write_operations(void *arg) {
         }
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
-        // Send result back to caller, then close+free the answer channel.
-        // The publisher (nostr_relay_publish) only closes the channel — it
-        // does NOT free it, because we still hold req->answer.  We own the
-        // channel lifetime: send result, then close+free.
+        // Send result back to caller, then close the answer channel.
+        // nostrc-pub3: Do NOT free req->answer.  The channel is buffered
+        // (capacity 1) so go_channel_send returns immediately.  The
+        // publisher may still be inside go_select_timeout polling the
+        // channel; freeing here is UAF.  Close signals completion so the
+        // publisher's poll sees the value or the closed state.  The channel
+        // leaks (~384 B per write) — acceptable until proper refcounting.
         if (werr) {
             go_channel_send(req->answer, werr);
         } else {
             go_channel_send(req->answer, NULL);
         }
         go_channel_close(req->answer);
-        go_channel_free(req->answer);
         free(req);
     }
 
@@ -1289,9 +1291,9 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
             fprintf(stderr, "[nostr_relay_publish] write timed out (5s) for %s\n",
                     relay->url ? relay->url : "(null)");
         }
-        /* Close signals to write_operations that nobody is listening.
-         * Do NOT free — write_operations owns the channel lifetime
-         * (it calls close+free after go_channel_send). */
+        /* nostrc-pub3: Close signals disinterest.  Do NOT free — the channel
+         * is intentionally leaked because write_operations may still hold
+         * req->answer (same pointer).  See write_operations comment. */
         go_channel_close(write_ch);
     }
 }
