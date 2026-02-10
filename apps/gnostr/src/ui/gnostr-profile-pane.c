@@ -780,6 +780,13 @@ static void on_load_more_clicked(GtkButton *btn, gpointer user_data) {
   load_posts(self);
 }
 
+/* hq-jtbk4: Load More handler for media tab */
+static void on_media_load_more_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)btn;
+  load_media(self);
+}
+
 /* ============================================================================
  * nostrc-mizr: Tag parsing helpers (duplicated from timeline-view since static)
  * ============================================================================ */
@@ -3691,9 +3698,46 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
     const char *content = nostr_event_get_content(evt);
     NostrTags *tags = nostr_event_get_tags(evt);
     gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+    int kind = nostr_event_get_kind(evt);
 
     if (created_at > 0 && created_at < oldest_timestamp) {
       oldest_timestamp = created_at;
+    }
+
+    /* hq-jtbk4: NIP-71 video events (kind 34235/34236) — extract video URL
+     * from "url" or "streaming" tag, and thumbnail from "thumb" tag */
+    if (kind == 34235 || kind == 34236) {
+      const char *video_url = NULL;
+      const char *thumb_url = NULL;
+      size_t tag_count = nostr_tags_size(tags);
+      for (size_t t = 0; t < tag_count; t++) {
+        NostrTag *tag = nostr_tags_get(tags, t);
+        if (!tag) continue;
+        const char *tkey = nostr_tag_get_key(tag);
+        if (!tkey) continue;
+        if (!video_url && g_strcmp0(tkey, "url") == 0) {
+          video_url = nostr_tag_get_value(tag);
+        } else if (!video_url && g_strcmp0(tkey, "streaming") == 0) {
+          video_url = nostr_tag_get_value(tag);
+        } else if (!thumb_url && g_strcmp0(tkey, "thumb") == 0) {
+          thumb_url = nostr_tag_get_value(tag);
+        }
+      }
+      if (video_url && *video_url) {
+        gchar *norm_url = normalize_media_url(video_url);
+        if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
+            !media_url_exists_in_model(self->media_model, norm_url)) {
+          g_hash_table_add(seen_urls, g_strdup(norm_url));
+          const char *display_thumb = (thumb_url && *thumb_url) ? thumb_url : video_url;
+          ProfileMediaItem *item = profile_media_item_new(
+              video_url, display_thumb, id_hex, NULL, created_at);
+          g_list_store_append(self->media_model, item);
+          g_object_unref(item);
+        }
+        g_free(norm_url);
+      }
+      nostr_event_free(evt);
+      continue;
     }
 
     /* Extract media URLs from content */
@@ -3761,9 +3805,9 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
     return 0;
   }
 
-  /* Build NIP-01 filter JSON for author's kind:1 posts */
+  /* Build NIP-01 filter JSON for author's kind:1 posts + NIP-71 video events */
   GString *filter_json = g_string_new("[{");
-  g_string_append(filter_json, "\"kinds\":[1],");
+  g_string_append(filter_json, "\"kinds\":[1,34235,34236],");
   g_string_append_printf(filter_json, "\"authors\":[\"%s\"],", self->current_pubkey);
 
   /* Apply pagination if we already have media */
@@ -3819,10 +3863,48 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
     const char *content = nostr_event_get_content(evt);
     NostrTags *tags = nostr_event_get_tags(evt);
     gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+    int kind = nostr_event_get_kind(evt);
 
     /* Track oldest timestamp for pagination */
     if (created_at > 0 && created_at < oldest_timestamp) {
       oldest_timestamp = created_at;
+    }
+
+    /* hq-jtbk4: NIP-71 video events (kind 34235/34236) — extract video URL
+     * from "url" or "streaming" tag, and thumbnail from "thumb" tag */
+    if (kind == 34235 || kind == 34236) {
+      const char *video_url = NULL;
+      const char *thumb_url = NULL;
+      size_t tag_count = nostr_tags_size(tags);
+      for (size_t t = 0; t < tag_count; t++) {
+        NostrTag *tag = nostr_tags_get(tags, t);
+        if (!tag) continue;
+        const char *tkey = nostr_tag_get_key(tag);
+        if (!tkey) continue;
+        if (!video_url && g_strcmp0(tkey, "url") == 0) {
+          video_url = nostr_tag_get_value(tag);
+        } else if (!video_url && g_strcmp0(tkey, "streaming") == 0) {
+          video_url = nostr_tag_get_value(tag);
+        } else if (!thumb_url && g_strcmp0(tkey, "thumb") == 0) {
+          thumb_url = nostr_tag_get_value(tag);
+        }
+      }
+      if (video_url && *video_url) {
+        gchar *norm_url = normalize_media_url(video_url);
+        if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
+            !media_url_exists_in_model(self->media_model, norm_url)) {
+          g_hash_table_add(seen_urls, g_strdup(norm_url));
+          const char *display_thumb = (thumb_url && *thumb_url) ? thumb_url : video_url;
+          ProfileMediaItem *item = profile_media_item_new(
+              video_url, display_thumb, id_hex, NULL, created_at);
+          g_list_store_append(self->media_model, item);
+          g_object_unref(item);
+          added++;
+        }
+        g_free(norm_url);
+      }
+      nostr_event_free(evt);
+      continue;
     }
 
     /* Extract media URLs from content */
@@ -3914,6 +3996,12 @@ static void load_media(GnostrProfilePane *self) {
       /* nostrc-7x61: Connect activate signal to open image viewer on click */
       g_signal_connect(self->media_grid, "activate", G_CALLBACK(on_media_item_activated), self);
     }
+
+    /* hq-jtbk4: Connect Load More button for media pagination */
+    if (self->btn_media_load_more) {
+      g_signal_connect(self->btn_media_load_more, "clicked",
+                       G_CALLBACK(on_media_load_more_clicked), self);
+    }
   }
 
   /* Try loading from nostrdb cache first */
@@ -3939,11 +4027,11 @@ static void load_media(GnostrProfilePane *self) {
   if (self->btn_media_load_more)
     gtk_widget_set_visible(self->btn_media_load_more, FALSE);
 
-  /* Build filter for kind 1 events by this author */
+  /* Build filter for kind 1 text notes + NIP-71 video events by this author */
   NostrFilter *filter = nostr_filter_new();
 
-  int kinds[1] = { 1 };
-  nostr_filter_set_kinds(filter, kinds, 1);
+  int kinds[3] = { 1, 34235, 34236 };
+  nostr_filter_set_kinds(filter, kinds, 3);
 
   const char *authors[1] = { self->current_pubkey };
   nostr_filter_set_authors(filter, authors, 1);
