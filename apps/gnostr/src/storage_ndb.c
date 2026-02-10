@@ -178,81 +178,6 @@ static char *ensure_tags_field(const char *json)
   return result;
 }
 
-/* hq-j5c3s: Delayed ingest verification for profile events (kind:0).
- * NDB ingestion is async (queued to writer thread), so we schedule a
- * delayed check to confirm the event actually persisted. */
-typedef struct {
-  char *event_id_hex;  /* 64-char hex event ID */
-  char *pubkey_hex;    /* 64-char hex pubkey */
-  gint64 kind;
-} IngestVerifyCtx;
-
-static void ingest_verify_ctx_free(IngestVerifyCtx *ctx)
-{
-  g_free(ctx->event_id_hex);
-  g_free(ctx->pubkey_hex);
-  g_free(ctx);
-}
-
-static gboolean verify_ingest_cb(gpointer user_data)
-{
-  IngestVerifyCtx *ctx = user_data;
-
-  /* nostrc-ndb1: Invalidate the TLS transaction cache before reading.
-   * NDB ingestion is async (writer thread), and the LMDB read transaction
-   * cached in TLS may have been opened BEFORE the writer committed.
-   * LMDB snapshot isolation means that stale transaction will never see
-   * the newly written data.  Force a fresh transaction. */
-  storage_ndb_invalidate_txn_cache();
-
-  /* Try to look up the event by ID */
-  char *json = NULL;
-  int json_len = 0;
-  int rc = storage_ndb_get_note_by_id_nontxn(ctx->event_id_hex, &json, &json_len);
-
-  if (rc != 0) {
-    g_warning("hq-j5c3s: Ingest verification FAILED for kind:%" G_GINT64_FORMAT
-              " event %s — not found in NDB after ingest",
-              ctx->kind, ctx->event_id_hex);
-  } else {
-    g_debug("hq-j5c3s: Ingest verified kind:%" G_GINT64_FORMAT " event %s (%d bytes)",
-            ctx->kind, ctx->event_id_hex, json_len);
-  }
-
-  /* For kind:0 profiles, also verify the profile index is populated */
-  if (ctx->kind == 0 && ctx->pubkey_hex) {
-    void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
-      unsigned char pk32[32];
-      gboolean hex_ok = TRUE;
-      for (int i = 0; i < 32; i++) {
-        unsigned int byte;
-        if (sscanf(ctx->pubkey_hex + i * 2, "%2x", &byte) != 1) {
-          hex_ok = FALSE;
-          break;
-        }
-        pk32[i] = (unsigned char)byte;
-      }
-      if (hex_ok) {
-        char *prof_json = NULL;
-        int prof_len = 0;
-        int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &prof_json, &prof_len);
-        if (prc != 0) {
-          g_warning("hq-j5c3s: Profile index MISSING for pubkey %s after kind:0 ingest",
-                    ctx->pubkey_hex);
-        } else {
-          g_debug("hq-j5c3s: Profile index OK for pubkey %s (%d bytes)",
-                  ctx->pubkey_hex, prof_len);
-        }
-      }
-      storage_ndb_end_query(txn);
-    }
-  }
-
-  ingest_verify_ctx_free(ctx);
-  return G_SOURCE_REMOVE; /* one-shot */
-}
-
 int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
 {
   if (!g_store || !json) return LN_ERR_INGEST;
@@ -273,25 +198,6 @@ int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
     /* Track successful ingestions */
     g_ingest_count++;
     g_ingest_bytes += len;
-
-    /* hq-j5c3s: Schedule delayed verification for kind:0 profile events.
-     * NDB queues ingestion to its writer thread, so we check after 500ms
-     * that the event actually persisted. */
-    gint64 kind = gnostr_json_get_int64(fixed_json, "kind", NULL);
-    if (kind == 0) {
-      gchar *eid = gnostr_json_get_string(fixed_json, "id", NULL);
-      gchar *pk = gnostr_json_get_string(fixed_json, "pubkey", NULL);
-      if (eid && pk) {
-        IngestVerifyCtx *vctx = g_new0(IngestVerifyCtx, 1);
-        vctx->event_id_hex = eid;  /* transfer ownership */
-        vctx->pubkey_hex = pk;     /* transfer ownership */
-        vctx->kind = kind;
-        g_timeout_add(500, verify_ingest_cb, vctx);
-      } else {
-        g_free(eid);
-        g_free(pk);
-      }
-    }
   }
 
   free(fixed_json);
