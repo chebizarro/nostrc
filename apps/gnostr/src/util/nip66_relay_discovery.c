@@ -417,15 +417,15 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
   if (!event_json || !*event_json) return NULL;
 
   if (!gnostr_json_is_valid(event_json)) {
-    g_warning("nip66: parse_relay_meta: invalid JSON (first 120 chars): %.120s", event_json);
+    fprintf(stderr, "[NIP66] parse_relay_meta: invalid JSON (first 200 chars): %.200s\n", event_json);
     return NULL;
   }
 
   /* Validate kind */
   int64_t kind_val = gnostr_json_get_int64(event_json, "kind", NULL);
   if (kind_val != GNOSTR_NIP66_KIND_RELAY_META) {
-    g_warning("nip66: parse_relay_meta: kind mismatch: got %" G_GINT64_FORMAT " expected %d",
-              kind_val, GNOSTR_NIP66_KIND_RELAY_META);
+    fprintf(stderr, "[NIP66] parse_relay_meta: kind mismatch: got %" G_GINT64_FORMAT " expected %d (first 200 chars): %.200s\n",
+              kind_val, GNOSTR_NIP66_KIND_RELAY_META, event_json);
     return NULL;
   }
 
@@ -440,6 +440,10 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
   /* Parse tags */
   char *tags_json = NULL;
   tags_json = gnostr_json_get_raw(event_json, "tags", NULL);
+  if (!tags_json) {
+    fprintf(stderr, "[NIP66] parse_relay_meta: no 'tags' key in event (id=%.8s)\n",
+            meta->event_id_hex ? meta->event_id_hex : "?");
+  }
   if (tags_json) {
     /* d tag = relay URL */
     gchar *d_val = find_tag_value(tags_json, "d", 1);
@@ -452,6 +456,11 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
     if (!meta->relay_url) {
       gchar *r_val = find_tag_value(tags_json, "r", 1);
       if (r_val) meta->relay_url = r_val;
+    }
+
+    if (!meta->relay_url) {
+      fprintf(stderr, "[NIP66] parse_relay_meta: no 'd' or 'r' tag found (id=%.8s, tags first 200 chars): %.200s\n",
+              meta->event_id_hex ? meta->event_id_hex : "?", tags_json);
     }
 
     /* n tag = network type */
@@ -1148,9 +1157,11 @@ static GNostrPool *get_nip66_pool(void)
 {
   if (!g_nip66_pool) {
     g_nip66_pool = gnostr_pool_new();
-    /* Wire nostrdb cache-first query + event sink so NIP-66 results
-     * are persisted and subsequent discoveries check cache first. */
-    gnostr_pool_wire_ndb(g_nip66_pool);
+    /* hq-n7iln: Do NOT wire nostrdb cache on the NIP-66 pool.
+     * Relay discovery must always query the network for fresh results.
+     * The cache would return stale kind:30166 events from previous
+     * sessions and skip the network entirely (cache HIT → return
+     * immediately), making discovery show outdated or no relays. */
   }
   return g_nip66_pool;
 }
@@ -1717,6 +1728,12 @@ static void on_streaming_query_complete(GObject *source, GAsyncResult *res, gpoi
   }
 
   fprintf(stderr, "[NIP66] streaming query returned %u raw results\n", results ? results->len : 0);
+
+  /* hq-n7iln: Log first event to diagnose format issues */
+  if (results && results->len > 0) {
+    const char *first = g_ptr_array_index(results, 0);
+    fprintf(stderr, "[NIP66] first result (200 chars): %.200s\n", first ? first : "(null)");
+  }
 
   /* hq-r248b: Process results here (previously handled via streaming signal).
    * Results are JSON strings - parse each as relay metadata. */
