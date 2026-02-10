@@ -6336,6 +6336,77 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
       gnostr_session_view_set_authenticated(self->session_view, signed_in);
     }
+
+    /* nostrc-avatar: On session restore, run the same per-user initialization
+     * that on_login_signed_in does. Without this, avatar/name never populate,
+     * DMs don't work, notifications don't subscribe, etc. */
+    if (signed_in && self->user_pubkey_hex) {
+      /* Register reactive profile watch — any future profile update
+       * (from timeline subscription, dedicated fetch, etc.) auto-updates
+       * the account menu avatar/name. */
+      if (self->profile_watch_id) {
+        gnostr_profile_provider_unwatch(self->profile_watch_id);
+      }
+      self->profile_watch_id = gnostr_profile_provider_watch(
+        self->user_pubkey_hex, on_user_profile_watch, self);
+
+      /* Try cached profile first for instant avatar */
+      GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
+      if (meta) {
+        const char *final_name = (meta->display_name && *meta->display_name)
+                                 ? meta->display_name : meta->name;
+        if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+          gnostr_session_view_set_user_profile(self->session_view,
+                                                self->user_pubkey_hex,
+                                                final_name,
+                                                meta->picture);
+        }
+        gnostr_profile_meta_free(meta);
+      }
+
+      /* Async: NIP-65 → profile fetch from relays (updates via profile watch) */
+      gnostr_nip65_load_on_login_async(self->user_pubkey_hex,
+                                        on_nip65_loaded_for_profile,
+                                        g_object_ref(self));
+
+      /* Pre-warm profile provider cache from NDB */
+      gnostr_profile_provider_prewarm_async(self->user_pubkey_hex);
+
+      /* Start gift wrap subscription for encrypted DMs */
+      start_gift_wrap_subscription(self);
+
+      /* Start notification subscriptions */
+      {
+        GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
+        gnostr_badge_manager_set_user_pubkey(badge_mgr, self->user_pubkey_hex);
+        gnostr_badge_manager_set_event_callback(badge_mgr, on_notification_event, self, NULL);
+        gnostr_badge_manager_start_subscriptions(badge_mgr);
+
+        GtkWidget *nw = gnostr_session_view_get_notifications_view(self->session_view);
+        if (nw && GNOSTR_IS_NOTIFICATIONS_VIEW(nw)) {
+          gnostr_notifications_view_set_loading(GNOSTR_NOTIFICATIONS_VIEW(nw), TRUE);
+          gnostr_badge_manager_load_history(badge_mgr, GNOSTR_NOTIFICATIONS_VIEW(nw));
+        }
+      }
+
+      /* NIP-51: sync mutes, follows, bookmarks from relays */
+      gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
+
+      /* Update sync bridge with user pubkey */
+      gnostr_sync_bridge_set_user_pubkey(self->user_pubkey_hex);
+
+      /* Blossom: fetch media server preferences */
+      gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);
+
+      /* Tell profile pane the current user's pubkey */
+      GtkWidget *pp = self->session_view
+        ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
+      if (pp && GNOSTR_IS_PROFILE_PANE(pp)) {
+        gnostr_profile_pane_set_own_pubkey(GNOSTR_PROFILE_PANE(pp), self->user_pubkey_hex);
+      }
+
+      g_debug("[AUTH] Restored session services for user %.16s...", self->user_pubkey_hex);
+    }
   }
 }
 
