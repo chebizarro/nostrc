@@ -92,22 +92,35 @@ static gchar *insert_zwsp(const char *str, gsize interval) {
 
   /* Worst case: every character gets a 3-byte ZWS before it */
   GString *result = g_string_sized_new(len + (len / interval) * 3 + 1);
-  gsize token_len = 0;  /* length of current non-whitespace run */
+  gsize token_len = 0;  /* length of current non-whitespace run in codepoints */
 
-  for (gsize i = 0; i < len; i++) {
-    char c = str[i];
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-      /* Whitespace resets the token counter */
-      g_string_append_c(result, c);
+  /* Iterate by UTF-8 codepoints so ZWS is never inserted mid-character */
+  const char *p = str;
+  while (*p) {
+    gunichar ch = g_utf8_get_char_validated(p, -1);
+    const char *next = g_utf8_next_char(p);
+    gsize char_bytes = (gsize)(next - p);
+
+    if (ch == (gunichar)-1 || ch == (gunichar)-2) {
+      /* Invalid UTF-8 byte — copy as-is and move on */
+      g_string_append_c(result, *p);
+      p++;
+      token_len++;
+      continue;
+    }
+
+    if (g_unichar_isspace(ch)) {
+      g_string_append_len(result, p, (gssize)char_bytes);
       token_len = 0;
     } else {
       token_len++;
       if (token_len > 1 && (token_len % interval) == 1) {
-        /* Insert ZWS before this character (U+200B = 0xE2 0x80 0x8B) */
+        /* Insert ZWS before this codepoint (U+200B = 0xE2 0x80 0x8B) */
         g_string_append_len(result, "\xe2\x80\x8b", 3);
       }
-      g_string_append_c(result, c);
+      g_string_append_len(result, p, (gssize)char_bytes);
     }
+    p = next;
   }
 
   return g_string_free(result, FALSE);
