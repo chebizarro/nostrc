@@ -490,13 +490,17 @@ do_template_dispose:
    * measure remaining children while others are being disposed.
    *
    * Same pattern as OG preview widget fix (nostrc-14wu). */
-  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
+  /* nostrc-pgo5: Use LABEL_SAFE_TO_UPDATE (checks gtk_widget_get_native)
+   * instead of plain GTK_IS_LABEL.  During list cleanup the native surface
+   * may already be gone, so gtk_label_set_text unrefs a PangoLayout whose
+   * PangoContext is NULL → SEGV in pango.  Same pattern as nostrc-pgo3. */
+  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
     gtk_label_set_text(GTK_LABEL(self->content_label), "");
   }
-  if (self->lbl_display && GTK_IS_LABEL(self->lbl_display)) {
+  if (LABEL_SAFE_TO_UPDATE(self->lbl_display)) {
     gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
   }
-  if (self->lbl_handle && GTK_IS_LABEL(self->lbl_handle)) {
+  if (LABEL_SAFE_TO_UPDATE(self->lbl_handle)) {
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
   }
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
