@@ -6843,16 +6843,105 @@ GnostrMainWindow *gnostr_main_window_new(AdwApplication *app) {
 /* ---- GObject type boilerplate and template binding ---- */
 G_DEFINE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, ADW_TYPE_APPLICATION_WINDOW)
 
+/* nostrc-u6hlt: Helper for timed g_thread_join so dispose never blocks
+ * the main thread indefinitely.  A short-lived helper thread performs the
+ * blocking join and signals a condition variable when done. */
+typedef struct {
+  GThread  *target;      /* thread to join */
+  GMutex    mu;
+  GCond     cond;
+  gboolean  done;        /* TRUE once g_thread_join has returned */
+  gboolean  abandoned;   /* TRUE if caller timed out and will not free ctx */
+} IngestJoinCtx;
+
+static gpointer
+ingest_join_thread_func(gpointer data)
+{
+  IngestJoinCtx *ctx = data;
+  g_thread_join(ctx->target);
+
+  g_mutex_lock(&ctx->mu);
+  ctx->done = TRUE;
+  gboolean abandoned = ctx->abandoned;
+  g_cond_signal(&ctx->cond);
+  g_mutex_unlock(&ctx->mu);
+
+  /* If the caller timed out and abandoned us, we own the context and
+   * must free it ourselves to avoid leaking / use-after-free. */
+  if (abandoned) {
+    g_mutex_clear(&ctx->mu);
+    g_cond_clear(&ctx->cond);
+    g_free(ctx);
+  }
+  return NULL;
+}
+
 static void gnostr_main_window_dispose(GObject *object) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
   g_debug("main-window: dispose");
 
-  /* nostrc-mzab: Stop background NDB ingestion thread.
-   * Signal the thread to stop and join it before any other cleanup,
-   * since other dispose steps may destroy resources the thread uses. */
+  /* nostrc-u6hlt: Stop background NDB ingestion thread WITHOUT blocking
+   * the main thread indefinitely.
+   *
+   * Previous code called g_thread_join() directly on the main thread.
+   * If the ingest thread was stuck (mutex contention, large queue
+   * backlog in the drain loop, blocked I/O in storage_ndb_ingest),
+   * the app hung on shutdown with no error output.
+   *
+   * Fix: (1) signal the thread to stop, (2) push a sentinel into the
+   * queue so it wakes immediately, (3) dispatch g_thread_join to a
+   * short-lived helper thread and wait on a GCond with a 2 s deadline.
+   * The ingest thread's drain loop is also capped so it exits fast. */
   if (self->ingest_thread) {
     __atomic_store_n(&self->ingest_running, FALSE, __ATOMIC_SEQ_CST);
-    g_thread_join(self->ingest_thread);
+
+    /* Wake the thread immediately instead of waiting up to 100 ms. */
+    if (self->ingest_queue)
+      g_async_queue_push(self->ingest_queue, g_strdup(""));
+
+    /* Timed join: helper thread performs the blocking g_thread_join
+     * while we wait on a condition variable with a deadline.
+     * Heap-allocate the context so the joiner thread can safely
+     * reference it even if we time out and return from dispose. */
+    IngestJoinCtx *jctx = g_new0(IngestJoinCtx, 1);
+    g_mutex_init(&jctx->mu);
+    g_cond_init(&jctx->cond);
+    jctx->target    = self->ingest_thread;
+    jctx->done      = FALSE;
+    jctx->abandoned = FALSE;
+
+    GThread *joiner = g_thread_new("ingest-join",
+                                   ingest_join_thread_func, jctx);
+
+    gint64 deadline = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;
+    g_mutex_lock(&jctx->mu);
+    while (!jctx->done) {
+      if (!g_cond_wait_until(&jctx->cond, &jctx->mu, deadline)) {
+        /* Timeout elapsed -- ingest thread did not exit in time. */
+        g_warning("main-window: ingest thread did not exit within 2 s; "
+                  "abandoning join to avoid blocking shutdown");
+        break;
+      }
+    }
+    gboolean joined = jctx->done;
+    if (!joined)
+      jctx->abandoned = TRUE;   /* joiner thread will free jctx */
+    g_mutex_unlock(&jctx->mu);
+
+    if (joined) {
+      /* Joiner thread has finished; collect it and free context. */
+      g_thread_join(joiner);
+      g_mutex_clear(&jctx->mu);
+      g_cond_clear(&jctx->cond);
+      g_free(jctx);
+    } else {
+      /* Joiner is still blocked inside g_thread_join on the ingest
+       * thread.  Detach it -- both threads are leaked but the process
+       * is exiting and the OS will reclaim resources.  The joiner
+       * thread owns jctx and will free it when it eventually returns. */
+      g_thread_unref(joiner);
+    }
+
     self->ingest_thread = NULL;
   }
   if (self->ingest_queue) {
@@ -8704,6 +8793,12 @@ ingest_thread_func(gpointer data)
     if (!json)
       continue;
 
+    /* nostrc-u6hlt: Skip empty sentinel pushed by dispose to wake us. */
+    if (json[0] == '\0') {
+      g_free(json);
+      continue;
+    }
+
     int rc = storage_ndb_ingest_event_json(json, NULL);
     if (rc != 0) {
       g_debug("[INGEST-BG] Failed: rc=%d json_len=%zu", rc, strlen(json));
@@ -8711,11 +8806,25 @@ ingest_thread_func(gpointer data)
     g_free(json);
   }
 
-  /* Drain remaining events before exit */
-  gchar *json;
-  while ((json = g_async_queue_try_pop(self->ingest_queue)) != NULL) {
-    storage_ndb_ingest_event_json(json, NULL);
-    g_free(json);
+  /* nostrc-u6hlt: Drain remaining events before exit, but cap at 64
+   * items and 500 ms to avoid blocking shutdown if the queue has a
+   * large backlog or storage_ndb_ingest is slow.  Remaining events
+   * will be picked up on next launch via normal relay sync. */
+  {
+    gchar *json;
+    int drained = 0;
+    gint64 drain_deadline = g_get_monotonic_time() + 500000; /* 500 ms */
+    while (drained < 64 &&
+           g_get_monotonic_time() < drain_deadline &&
+           (json = g_async_queue_try_pop(self->ingest_queue)) != NULL) {
+      if (json[0] != '\0')  /* skip sentinel */
+        storage_ndb_ingest_event_json(json, NULL);
+      g_free(json);
+      drained++;
+    }
+    /* Discard any remaining items without processing. */
+    while ((json = g_async_queue_try_pop(self->ingest_queue)) != NULL)
+      g_free(json);
   }
 
   return NULL;
