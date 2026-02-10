@@ -289,10 +289,21 @@ repo_matches_filter(GnostrRepoBrowser *self, RepoData *data)
 static void
 rebuild_list(GnostrRepoBrowser *self)
 {
-  /* Clear existing rows */
+  /* Clear existing rows — call prepare_for_unbind on NoteCardRow children
+   * before removal to prevent Pango layout corruption during disposal.
+   * nostrc-pgo2: Repo browser manages NoteCardRow lifecycle manually (not
+   * via GtkListItemFactory), so we must handle unbind ourselves. */
   GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->repo_list))) != NULL)
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->repo_list))) != NULL) {
+    /* NoteCardRow is inside: ListBoxRow → Box → NoteCardRow */
+    GtkWidget *container = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(child));
+    if (container && GTK_IS_BOX(container)) {
+      GtkWidget *first = gtk_widget_get_first_child(container);
+      if (first && GNOSTR_IS_NOTE_CARD_ROW(first))
+        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(first));
+    }
     gtk_list_box_remove(self->repo_list, child);
+  }
 
   /* Add matching repositories */
   GHashTableIter iter;

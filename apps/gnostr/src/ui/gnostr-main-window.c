@@ -7299,11 +7299,23 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
       g_clear_error(&pub_err);
       r->fail_count++;
     }
-    /* Properly disconnect before unreffing to ensure background worker
-     * goroutines (write_operations) exit before the connection is freed.
-     * relay_free_impl frees the connection before waiting for workers,
-     * causing a UAF if we skip the explicit disconnect. */
-    gnostr_relay_disconnect(relay);
+    /* nostrc-pub1: Do NOT disconnect — just release our reference.
+     * gnostr_relay_new() returns the SHARED relay from the registry
+     * (nostrc-kw9r), so calling gnostr_relay_disconnect() here:
+     *   (a) Closes send_channel BEFORE LWS writes the EVENT frame to
+     *       the socket — the 5s write confirmation in nostr_relay_publish
+     *       only confirms enqueue to send_channel, not actual socket
+     *       write.  Disconnect kills the message.
+     *   (b) Disconnects the shared relay used by the live pool and all
+     *       other app components — breaking subscriptions.
+     *   (c) Emits GObject signals from this worker thread via
+     *       gnostr_relay_set_state_internal — same class of bug as
+     *       nostrc-blk2 (freezes GTK).
+     *
+     * The old UAF concern (relay_free_impl freeing connection before
+     * workers exit) was fixed in nostrc-ws1: channels now close BEFORE
+     * go_wait_group_wait.  And for shared relays, other refs keep the
+     * relay alive — unref just decrements. */
     g_object_unref(relay);
   }
 

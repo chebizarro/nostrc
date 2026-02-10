@@ -269,17 +269,19 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
                        : g_strdup(url);
         gchar *esc_href = g_markup_escape_text(href, -1);
 
-        /* Truncate display if too long, insert ZWS for wrapping */
+        /* Truncate display if too long */
         gchar *display;
         if (len > 40) {
           display = g_strdup_printf("%.35s...", url);
         } else {
           display = g_strdup(url);
         }
-        /* hq-nu5gp: Insert ZWS for line-break opportunities in displayed URLs */
-        gchar *wrapped_display = insert_zwsp(display, 20);
-        g_free(display);
-        display = wrapped_display;
+        /* nostrc-pgo2: Do NOT insert ZWS inside <a> link text.  ZWS (U+200B)
+         * inside Pango markup <a> elements corrupts PangoLayout's internal
+         * line list (NULL entries), causing SEGV in pango_layout_line_unref
+         * during gtk_widget_allocate.  URLs are already truncated to ~35 chars
+         * so they don't need explicit line-break hints, and PANGO_WRAP_WORD_CHAR
+         * on the label handles wrapping. */
         gchar *esc_display = g_markup_escape_text(display, -1);
 
         g_string_append_printf(out,
