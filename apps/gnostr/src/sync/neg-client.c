@@ -546,10 +546,9 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
     /* nostr_relay_write takes ownership of a malloc'd string */
     GoChannel *wch = nostr_relay_write(relay, strdup(neg_open));
     g_free(neg_open);
-    /* nostrc-pub3: Do NOT free the answer channel — write_operations holds
-     * req->answer (same pointer) and may not have processed the request yet.
-     * Freeing here is UAF.  Close to signal fire-and-forget; channel leaks. */
-    if (wch) go_channel_close(wch);
+    /* hq-e3ach: close + unref to drop our reference; write_operations
+     * holds the other ref and will free when done. */
+    if (wch) { go_channel_close(wch); go_channel_unref(wch); }
   }
 
   /* === Phase 5: Protocol loop === */
@@ -583,7 +582,7 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
       free(next_hex);
       GoChannel *wch = nostr_relay_write(relay, strdup(neg_msg));
       g_free(neg_msg);
-      if (wch) go_channel_close(wch);  /* nostrc-pub3: no free, see above */
+      if (wch) { go_channel_close(wch); go_channel_unref(wch); }  /* hq-e3ach */
     }
 
     /* === Phase 5.5: Fetch missing events (NEED IDs) === */
@@ -599,7 +598,7 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
       gchar *neg_close = g_strdup_printf("[\"NEG-CLOSE\",\"%s\"]", sub_id);
       GoChannel *wch = nostr_relay_write(relay, strdup(neg_close));
       g_free(neg_close);
-      if (wch) go_channel_close(wch);  /* nostrc-pub3: no free, see above */
+      if (wch) { go_channel_close(wch); go_channel_unref(wch); }  /* hq-e3ach */
     }
 
     if (proto_err) {

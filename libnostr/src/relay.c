@@ -546,19 +546,17 @@ static void *write_operations(void *arg) {
         }
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
-        // Send result back to caller, then close the answer channel.
-        // nostrc-pub3: Do NOT free req->answer.  The channel is buffered
-        // (capacity 1) so go_channel_send returns immediately.  The
-        // publisher may still be inside go_select_timeout polling the
-        // channel; freeing here is UAF.  Close signals completion so the
-        // publisher's poll sees the value or the closed state.  The channel
-        // leaks (~384 B per write) — acceptable until proper refcounting.
+        // Send result back to caller, then close + unref the answer channel.
+        // hq-e3ach: The answer channel has refs=2 (one for caller, one for us).
+        // We close to signal completion, then unref to drop our reference.
+        // The caller's unref will trigger the actual free.
         if (werr) {
             go_channel_send(req->answer, werr);
         } else {
             go_channel_send(req->answer, NULL);
         }
         go_channel_close(req->answer);
+        go_channel_unref(req->answer);
         free(req);
     }
 
@@ -1190,12 +1188,17 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     if (!r) return NULL;
     GoChannel *chan = go_channel_create(1);
 
+    // hq-e3ach: Bump refcount to 2 so both the caller and write_operations
+    // each own a reference.  Each side calls go_channel_unref when done.
+    go_channel_ref(chan);
+
     // Copy message so caller can free its own buffer safely
     char *msg_copy = strdup(msg ? msg : "");
     NostrRelayWriteRequest *req = (NostrRelayWriteRequest *)malloc(sizeof(NostrRelayWriteRequest));
     if (!req || !msg_copy) {
         if (req) free(req);
         if (msg_copy) free(msg_copy);
+        go_channel_unref(chan); // drop the extra ref we just took
         go(write_error, chan);
         return chan;
     }
@@ -1291,10 +1294,10 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
             fprintf(stderr, "[nostr_relay_publish] write timed out (5s) for %s\n",
                     relay->url ? relay->url : "(null)");
         }
-        /* nostrc-pub3: Close signals disinterest.  Do NOT free — the channel
-         * is intentionally leaked because write_operations may still hold
-         * req->answer (same pointer).  See write_operations comment. */
+        /* hq-e3ach: Close signals disinterest, unref drops our reference.
+         * write_operations holds the other ref and will free when done. */
         go_channel_close(write_ch);
+        go_channel_unref(write_ch);
     }
 }
 

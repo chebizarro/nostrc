@@ -277,7 +277,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_invalid_magic_send", 1);
         return -1;
     }
-    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+    if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
@@ -437,7 +437,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
-    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+    if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
@@ -516,14 +516,14 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
     }
 #endif
     // Check freed flag before taking mutex to avoid use-after-free
-    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+    if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
     int rc = -1;
     NLOCK(&chan->mutex);
     // Re-check freed flag under mutex in case of race
-    if (NOSTR_UNLIKELY(atomic_load_explicit(&chan->freed, memory_order_acquire))) {
+    if (NOSTR_UNLIKELY(atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0)) {
         NUNLOCK(&chan->mutex);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
@@ -658,15 +658,20 @@ GoChannel *go_channel_create(size_t capacity) {
     nsync_mu_init(&chan->mutex);
     nsync_cv_init(&chan->cond_full);
     nsync_cv_init(&chan->cond_empty);
-    atomic_store_explicit(&chan->freed, 0, memory_order_relaxed);
+    atomic_store_explicit(&chan->refs, 1, memory_order_relaxed);
     return chan;
 }
 
-/* Free the channel resources */
-void go_channel_free(GoChannel *chan) {
-    if (chan == NULL) {
-        return;
-    }
+/* Increment reference count (hq-e3ach). */
+GoChannel *go_channel_ref(GoChannel *chan) {
+    if (chan == NULL) return NULL;
+    atomic_fetch_add_explicit(&chan->refs, 1, memory_order_relaxed);
+    return chan;
+}
+
+/* Decrement reference count; destroy when it reaches zero (hq-e3ach). */
+void go_channel_unref(GoChannel *chan) {
+    if (chan == NULL) return;
 
     // Magic number validation: detect garbage/invalid pointers
     if (chan->magic != GO_CHANNEL_MAGIC) {
@@ -674,14 +679,18 @@ void go_channel_free(GoChannel *chan) {
         return;
     }
 
-    // Double-free guard: if already freed, return immediately
-    int was = atomic_exchange_explicit(&chan->freed, 1, memory_order_acq_rel);
-    if (NOSTR_UNLIKELY(was)) {
-        // Optional: emit a metric or stderr to help track erroneous frees
+    // Decrement refs. If previous value was 1 we are the last owner.
+    int prev = atomic_fetch_sub_explicit(&chan->refs, 1, memory_order_acq_rel);
+    if (prev > 1) {
+        return; // Other owners remain
+    }
+    if (NOSTR_UNLIKELY(prev <= 0)) {
+        // Double-free or over-unref guard
         nostr_metric_counter_add("go_chan_double_free_guard", 1);
         return;
     }
 
+    // prev == 1: we are the last reference — perform actual cleanup
     NLOCK(&chan->mutex);
     // Mark closed and wake all waiters to prevent further use
     atomic_store_explicit(&chan->closed, 1, memory_order_release);
@@ -699,6 +708,11 @@ void go_channel_free(GoChannel *chan) {
     }
     NUNLOCK(&chan->mutex);
     free(chan);
+}
+
+/* Free the channel resources — backward compatible wrapper (hq-e3ach). */
+void go_channel_free(GoChannel *chan) {
+    go_channel_unref(chan);
 }
 
 /* Send data to the channel */
@@ -1066,7 +1080,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
-    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+    if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
         ensure_histos();
         return -1;
     }
@@ -1208,7 +1222,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
-    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+    if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
         ensure_histos();
         return -1;
     }

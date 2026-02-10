@@ -43,8 +43,9 @@ typedef struct GoChannel {
     _Alignas(NOSTR_CACHELINE) nsync_mu mutex;      // Mutex separated from hot counters
     nsync_cv cond_full;
     nsync_cv cond_empty;
-    // Double-free guard: set to 1 when freed. Placed at end to avoid shifting aligned fields.
-    _Atomic int freed;
+    // Reference count for shared ownership (hq-e3ach). Starts at 1.
+    // When refs drops to 0 the channel is destroyed.
+    _Atomic int refs;
     // Linked list of select waiters (protected by mutex)
     struct GoSelectWaiter *select_waiters;
 } __attribute__((aligned(NOSTR_CACHELINE))) GoChannel;
@@ -59,6 +60,8 @@ _Static_assert((offsetof(GoChannel, mutex) % NOSTR_CACHELINE) == 0, "GoChannel.m
 #endif
 
 GoChannel *go_channel_create(size_t capacity);
+GoChannel *go_channel_ref(GoChannel *chan);
+void go_channel_unref(GoChannel *chan);
 void go_channel_free(GoChannel *chan);
 int go_channel_send(GoChannel *chan, void *data);
 int go_channel_has_space(const void *chan);

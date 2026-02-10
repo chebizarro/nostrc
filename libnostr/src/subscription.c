@@ -582,9 +582,10 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
                 fprintf(stderr, "[sub %s] close: write queued (err=%p)\n",
                         sub->priv->id, (void *)write_err);
             }
-            /* nostrc-pub3: close to signal fire-and-forget; do NOT free —
-             * write_operations holds req->answer (same pointer). */
+            /* hq-e3ach: close to signal fire-and-forget; unref drops our
+             * reference.  write_operations holds the other ref. */
             go_channel_close(write_channel);
+            go_channel_unref(write_channel);
         }
     }
 }
@@ -738,13 +739,15 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
             fprintf(stderr, "[nostr_subscription_fire] write failed: %s\n",
                     write_err->message ? write_err->message : "unknown");
             if (err) *err = write_err;
-            /* nostrc-pub3: close to signal fire-and-forget; do NOT free. */
+            /* hq-e3ach: close + unref to drop our reference. */
             go_channel_close(write_channel);
+            go_channel_unref(write_channel);
             return false;
         }
-        /* nostrc-pub3: close to signal fire-and-forget; do NOT free —
-         * write_operations holds req->answer (same pointer). */
+        /* hq-e3ach: close + unref to drop our reference.
+         * write_operations holds the other ref. */
         go_channel_close(write_channel);
+        go_channel_unref(write_channel);
     }
 
     // Mark the subscription as live
