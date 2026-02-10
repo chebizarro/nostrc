@@ -1799,12 +1799,28 @@ void gnostr_nip66_discover_relays_streaming_async(GnostrNip66RelayFoundCallback 
   ctx->seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   ctx->pool = pool;
 
-  /* Collect relay URLs */
+  /* Collect relay URLs (deduplicated) */
+  GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
   for (const gchar **p = s_known_monitor_relays; *p; p++) {
-    g_ptr_array_add(relay_urls, g_strdup(*p));
+    if (!g_hash_table_contains(seen, *p)) {
+      g_hash_table_add(seen, (gpointer)*p);
+      g_ptr_array_add(relay_urls, g_strdup(*p));
+    }
   }
-  gnostr_load_relays_into(relay_urls);
+  {
+    GPtrArray *user_relays = g_ptr_array_new_with_free_func(g_free);
+    gnostr_load_relays_into(user_relays);
+    for (guint i = 0; i < user_relays->len; i++) {
+      const gchar *url = g_ptr_array_index(user_relays, i);
+      if (url && !g_hash_table_contains(seen, url)) {
+        g_hash_table_add(seen, (gpointer)url);
+        g_ptr_array_add(relay_urls, g_strdup(url));
+      }
+    }
+    g_ptr_array_unref(user_relays);
+  }
+  g_hash_table_unref(seen);
 
   if (relay_urls->len == 0) {
     g_ptr_array_unref(relay_urls);
