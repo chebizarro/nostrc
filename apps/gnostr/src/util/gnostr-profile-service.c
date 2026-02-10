@@ -317,7 +317,21 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     return;
   }
 
-  /* Check if we have relays and pool */
+  /* Auto-configure relays from user settings if not set */
+  if (!svc->relay_urls || svc->relay_url_count == 0) {
+    GPtrArray *configured = g_ptr_array_new_with_free_func(g_free);
+    gnostr_load_relays_into(configured);
+    if (configured->len > 0) {
+      svc->relay_urls = g_new0(char*, configured->len);
+      svc->relay_url_count = configured->len;
+      for (guint i = 0; i < configured->len; i++) {
+        svc->relay_urls[i] = g_strdup(g_ptr_array_index(configured, i));
+      }
+      g_debug("[PROFILE_SERVICE] Auto-configured %zu relays from settings",
+              svc->relay_url_count);
+    }
+    g_ptr_array_unref(configured);
+  }
   if (!svc->relay_urls || svc->relay_url_count == 0) {
     g_warning("[PROFILE_SERVICE] No relays configured, cannot fetch");
     g_mutex_unlock(&svc->mutex);
