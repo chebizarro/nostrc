@@ -27,7 +27,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define NEG_SYNC_TIMEOUT_SECS 30
+#define NEG_HANDSHAKE_TIMEOUT_MS 5000   /* max wait for WebSocket establishment */
+#define NEG_PROTOCOL_DEADLINE_SECS 30  /* max wait for relay NIP-77 response (GCond, not polling) */
 
 GQuark
 gnostr_neg_error_quark(void)
@@ -411,6 +412,22 @@ task_data_free(gpointer p)
   g_free(d);
 }
 
+/* State callback: unblocks the handshake wait when relay connects or fails. */
+static void
+neg_relay_state_cb(NostrRelay *relay,
+                   NostrRelayConnectionState old_state,
+                   NostrRelayConnectionState new_state,
+                   void *user_data)
+{
+  (void)relay; (void)old_state;
+  GoChannel *ch = (GoChannel *)user_data;
+  if (new_state == NOSTR_RELAY_STATE_CONNECTED ||
+      new_state == NOSTR_RELAY_STATE_DISCONNECTED) {
+    int dummy = 1;
+    go_channel_try_send(ch, &dummy);
+  }
+}
+
 static void
 sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
 {
@@ -487,14 +504,27 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
     goto cleanup;
   }
 
-  /* Wait for WebSocket handshake (up to 5s) */
-  for (int i = 0; i < 50 && !nostr_relay_is_established(relay); i++) {
-    if (g_cancellable_is_cancelled(cancel)) break;
-    g_usleep(100000);
+  /* Wait for WebSocket handshake using state callback + channel (no polling).
+   * The relay fires the state callback from its worker thread when the
+   * connection transitions to CONNECTED or DISCONNECTED. */
+  if (!nostr_relay_is_established(relay)) {
+    GoChannel *ready_ch = go_channel_create(1);
+    nostr_relay_set_state_callback(relay, neg_relay_state_cb, ready_ch);
+
+    /* Check again after setting callback to avoid race */
+    if (!nostr_relay_is_established(relay)) {
+      GoSelectCase cases[1] = {
+        { .op = GO_SELECT_RECEIVE, .chan = ready_ch, .recv_buf = NULL },
+      };
+      go_select_timeout(cases, 1, NEG_HANDSHAKE_TIMEOUT_MS);
+    }
+
+    nostr_relay_set_state_callback(relay, NULL, NULL);
+    go_channel_free(ready_ch);
   }
   if (!nostr_relay_is_established(relay)) {
     g_task_return_new_error(task, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_CONNECTION,
-                            "WebSocket handshake timed out");
+                            "WebSocket handshake failed");
     goto cleanup;
   }
 
@@ -521,7 +551,7 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
 
   /* === Phase 5: Protocol loop === */
   {
-    gint64 deadline = g_get_monotonic_time() + NEG_SYNC_TIMEOUT_SECS * G_USEC_PER_SEC;
+    gint64 deadline = g_get_monotonic_time() + NEG_PROTOCOL_DEADLINE_SECS * G_USEC_PER_SEC;
     GError *proto_err = NULL;
 
     while (!g_cancellable_is_cancelled(cancel)) {

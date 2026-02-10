@@ -1856,20 +1856,8 @@ static void *fetch_profiles_goroutine(void *arg) {
     /* Collect events with timeout */
     guint64 t_start = g_get_monotonic_time();
     
-    /* Timeout configuration:
-     * - HARD: Absolute maximum time to wait (configurable via env var)
-     * Default to 120s hard timeout to accommodate slow relays and message processing delays
-     * Can be overridden via GNOSTR_PROFILE_TIMEOUT_MS environment variable */
-    
-    guint64 HARD_TIMEOUT_US = 120000000;  // Default 120 seconds (2 minutes)
-    const char *timeout_env = getenv("GNOSTR_PROFILE_TIMEOUT_MS");
-    if (timeout_env && *timeout_env) {
-        int timeout_ms = atoi(timeout_env);
-        if (timeout_ms > 0) {
-            HARD_TIMEOUT_US = (guint64)timeout_ms * 1000;
-            g_debug("[GOROUTINE] Using custom timeout: %dms", timeout_ms);
-        }
-    }
+    /* No hard timeout — exit is EOSE-driven (all fired relays sent EOSE)
+     * or cancellation-driven (GCancellable from caller). */
     
     /* nostrc-3gd6: Replaced try_receive + 10ms sleep loop with go_select_timeout.
      * Build a select case array from all subscription channels, block until any
@@ -1993,11 +1981,9 @@ static void *fetch_profiles_goroutine(void *arg) {
             break;
         }
 
-        if (HARD_TIMEOUT_US > 0 && (now - t_start) > HARD_TIMEOUT_US) {
-            g_warning("[GOROUTINE] Hard timeout after %lums - some relays may not have sent EOSE (eosed=%u/%u)",
-                      (unsigned long)((now - t_start) / 1000), eosed_count, fired_count);
-            break;
-        }
+        /* No hard timeout.  Loop exits when all relays EOSE, cancellation,
+         * or zero fired subscriptions.  Broken relays that never send EOSE
+         * are the relay's problem — the caller can cancel. */
     }
     
 cleanup_and_exit:

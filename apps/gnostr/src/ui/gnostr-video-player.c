@@ -17,8 +17,7 @@ static int s_media_backend_status = -1; /* -1 = unchecked, 0 = unavailable, 1 = 
 /* Controls auto-hide timeout in seconds */
 #define CONTROLS_HIDE_TIMEOUT_SEC 3
 
-/* Loading timeout in seconds - show error if video doesn't prepare in this time */
-#define LOADING_TIMEOUT_SEC 15
+
 
 struct _GnostrVideoPlayer {
   GtkWidget parent_instance;
@@ -101,7 +100,6 @@ static void schedule_hide_controls(GnostrVideoPlayer *self);
 static gboolean position_update_tick(gpointer user_data);
 static void show_error_state(GnostrVideoPlayer *self, const char *message);
 static void show_loading_state(GnostrVideoPlayer *self, gboolean loading);
-static gboolean loading_timeout_cb(gpointer user_data);
 static void cancel_loading_timeout(GnostrVideoPlayer *self);
 
 /* Media stream error callback - called when video fails to load or play */
@@ -216,26 +214,6 @@ static void cancel_loading_timeout(GnostrVideoPlayer *self) {
     g_source_remove(self->loading_timeout_id);
     self->loading_timeout_id = 0;
   }
-}
-
-/* Loading timeout callback - show error if video didn't prepare in time */
-static gboolean loading_timeout_cb(gpointer user_data) {
-  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
-
-  if (!GNOSTR_IS_VIDEO_PLAYER(self) || self->disposed) {
-    return G_SOURCE_REMOVE;
-  }
-
-  self->loading_timeout_id = 0;
-
-  /* Check if still loading (not prepared and no error) */
-  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
-  if (stream && !gtk_media_stream_is_prepared(stream) && !self->has_error) {
-    g_warning("Video loading timeout: %s", self->uri ? self->uri : "(null)");
-    show_error_state(self, _("Video took too long to load"));
-  }
-
-  return G_SOURCE_REMOVE;
 }
 
 /* Format time in MM:SS or HH:MM:SS format */
@@ -993,13 +971,9 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
 
   if (self->media_file) {
     if (uri && *uri) {
-      /* Show loading spinner while video prepares */
+      /* Show loading spinner while video prepares.
+       * on_media_prepared / on_media_error handle the outcome — no timeout. */
       show_loading_state(self, TRUE);
-
-      /* LEGITIMATE TIMEOUT - Loading timeout to detect stalled streams.
-       * nostrc-b0h: Audited - timeout for error handling is appropriate. */
-      self->loading_timeout_id = g_timeout_add_seconds(LOADING_TIMEOUT_SEC,
-                                                        loading_timeout_cb, self);
 
       GFile *file = g_file_new_for_uri(uri);
       gtk_media_file_set_file(self->media_file, file);
