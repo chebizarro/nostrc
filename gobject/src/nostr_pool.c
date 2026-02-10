@@ -4,7 +4,7 @@
  * GNostrPool: GObject wrapper for managing multiple Nostr relay connections.
  *
  * Replaces GnostrSimplePool with a proper GObject implementation:
- * - Properties with notify signals (relays, default-timeout)
+ * - Properties with notify signals (relays)
  * - Signals for relay lifecycle (relay-added, relay-removed, relay-state-changed)
  * - Async query methods with GCancellable support
  * - GListStore-backed relay list for GtkListView integration
@@ -44,7 +44,6 @@ void gnostr_subscription_detach_filters(GNostrSubscription *self); /* nostrc-aaf
 enum {
     PROP_0,
     POOL_PROP_RELAYS,
-    POOL_PROP_DEFAULT_TIMEOUT,
     POOL_N_PROPERTIES
 };
 
@@ -64,7 +63,6 @@ struct _GNostrPool {
     GObject parent_instance;
 
     GListStore *relays;          /* GListStore of GNostrRelay* */
-    guint default_timeout;       /* Default query timeout in ms */
 
     /* Internal: track state-changed signal handlers per relay */
     GHashTable *relay_handler_ids; /* url -> GUINT_TO_POINTER(handler_id) */
@@ -169,9 +167,6 @@ gnostr_pool_get_property(GObject    *object,
     case POOL_PROP_RELAYS:
         g_value_set_object(value, self->relays);
         break;
-    case POOL_PROP_DEFAULT_TIMEOUT:
-        g_value_set_uint(value, self->default_timeout);
-        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -187,9 +182,6 @@ gnostr_pool_set_property(GObject      *object,
     GNostrPool *self = GNOSTR_POOL(object);
 
     switch (property_id) {
-    case POOL_PROP_DEFAULT_TIMEOUT:
-        gnostr_pool_set_default_timeout(self, g_value_get_uint(value));
-        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -260,20 +252,6 @@ gnostr_pool_class_init(GNostrPoolClass *klass)
                             G_TYPE_LIST_STORE,
                             G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
-    /**
-     * GNostrPool:default-timeout:
-     *
-     * Default timeout in milliseconds for query operations.
-     * 0 means no timeout.
-     */
-    pool_properties[POOL_PROP_DEFAULT_TIMEOUT] =
-        g_param_spec_uint("default-timeout",
-                          "Default Timeout",
-                          "Default query timeout in milliseconds (0 = no timeout)",
-                          0, G_MAXUINT, 30000,
-                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
-                          G_PARAM_STATIC_STRINGS);
-
     g_object_class_install_properties(object_class, POOL_N_PROPERTIES, pool_properties);
 
     /* Signals */
@@ -330,7 +308,6 @@ static void
 gnostr_pool_init(GNostrPool *self)
 {
     self->relays = g_list_store_new(GNOSTR_TYPE_RELAY);
-    self->default_timeout = 30000; /* 30 seconds */
     self->relay_handler_ids = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                      g_free, NULL);
 }
@@ -501,25 +478,6 @@ gnostr_pool_sync_relays(GNostrPool *self, const gchar **urls, gsize url_count)
     g_hash_table_destroy(desired);
 }
 
-guint
-gnostr_pool_get_default_timeout(GNostrPool *self)
-{
-    g_return_val_if_fail(GNOSTR_IS_POOL(self), 0);
-    return self->default_timeout;
-}
-
-void
-gnostr_pool_set_default_timeout(GNostrPool *self, guint timeout_ms)
-{
-    g_return_if_fail(GNOSTR_IS_POOL(self));
-
-    if (self->default_timeout == timeout_ms)
-        return;
-
-    self->default_timeout = timeout_ms;
-    g_object_notify_by_pspec(G_OBJECT(self), pool_properties[POOL_PROP_DEFAULT_TIMEOUT]);
-}
-
 /* --- Async query implementation --- */
 
 /* nostrc-snap: Relay snapshot entry — captured on main thread, read-only on
@@ -546,12 +504,8 @@ typedef struct {
     GNostrPool *pool;           /* weak ref */
     GPtrArray *results;         /* collected event JSON strings */
     GHashTable *seen_ids;       /* dedup set */
-    guint pending_relays;       /* count of relays not yet EOSE */
-    guint timeout_source_id;    /* GSource ID for timeout */
-    gboolean completed;         /* whether we've already returned results */
     /* nostrc-snap: Immutable relay list snapshot for worker thread */
     GPtrArray *relay_snapshots; /* RelaySnapshotEntry* (owned) */
-    guint timeout_ms;           /* default_timeout snapshot */
     /* Event sink: snapshot of pool's sink callback for worker thread */
     GNostrPoolEventSinkFunc event_sink_func;
     gpointer event_sink_data;
@@ -564,41 +518,10 @@ static void
 query_async_data_free(QueryAsyncData *data)
 {
     if (!data) return;
-    if (data->timeout_source_id > 0)
-        g_source_remove(data->timeout_source_id);
     g_clear_pointer(&data->seen_ids, g_hash_table_destroy);
     g_clear_pointer(&data->relay_snapshots, g_ptr_array_unref);
     /* Don't free results - ownership transferred to GTask */
     g_free(data);
-}
-
-static void
-query_complete(GTask *task, QueryAsyncData *data)
-{
-    if (data->completed)
-        return;
-    data->completed = TRUE;
-
-    if (data->timeout_source_id > 0) {
-        g_source_remove(data->timeout_source_id);
-        data->timeout_source_id = 0;
-    }
-
-    g_task_return_pointer(task, data->results,
-                          (GDestroyNotify)g_ptr_array_unref);
-}
-
-static gboolean
-query_timeout_cb(gpointer user_data)
-{
-    GTask *task = G_TASK(user_data);
-    QueryAsyncData *data = g_task_get_task_data(task);
-
-    data->timeout_source_id = 0;
-    g_debug("Query timed out with %u results", data->results->len);
-    query_complete(task, data);
-
-    return G_SOURCE_REMOVE;
 }
 
 /* nostrc-snap: Worker thread for async query.
@@ -910,8 +833,6 @@ gnostr_pool_query_async(GNostrPool          *self,
     data->pool = self;
     data->results = g_ptr_array_new_with_free_func(g_free);
     data->seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    data->completed = FALSE;
-
     /* nostrc-snap: Snapshot relay list on main thread.
      *
      * CRITICAL FIX: The shared query pool's relay list is mutated by
@@ -928,7 +849,6 @@ gnostr_pool_query_async(GNostrPool          *self,
      * By snapshotting here, each query gets its own immutable relay list
      * that cannot be trampled by subsequent sync_relays() calls. */
     data->relay_snapshots = g_ptr_array_new_with_free_func(relay_snapshot_entry_free);
-    data->timeout_ms = self->default_timeout;
     {
         guint n = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
         for (guint i = 0; i < n; i++) {

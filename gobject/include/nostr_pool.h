@@ -29,7 +29,7 @@ G_DECLARE_FINAL_TYPE(GNostrPool, gnostr_pool, GNOSTR, POOL, GObject)
  * ## Properties
  *
  * - #GNostrPool:relays - GListStore of GNostrRelay objects
- * - #GNostrPool:default-timeout - Default timeout in milliseconds
+ *
  *
  * ## Signals
  *
@@ -165,25 +165,6 @@ GPtrArray *gnostr_pool_query_finish(GNostrPool    *self,
                                     GError       **error);
 
 /* --- Properties --- */
-
-/**
- * gnostr_pool_get_default_timeout:
- * @self: a #GNostrPool
- *
- * Gets the default timeout in milliseconds for query operations.
- *
- * Returns: the timeout in milliseconds
- */
-guint gnostr_pool_get_default_timeout(GNostrPool *self);
-
-/**
- * gnostr_pool_set_default_timeout:
- * @self: a #GNostrPool
- * @timeout_ms: timeout in milliseconds (0 for no timeout)
- *
- * Sets the default timeout for query operations.
- */
-void gnostr_pool_set_default_timeout(GNostrPool *self, guint timeout_ms);
 
 /**
  * gnostr_pool_connect_all_async:
