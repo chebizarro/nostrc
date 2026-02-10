@@ -544,8 +544,13 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
         proxy, &rumor_json, res, &error);
 
-    /* Remove from pending */
-    g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
+    /* Steal from pending (suppress destroy func) — we still need ctx fields below */
+    {
+        gpointer stolen_key = NULL;
+        g_hash_table_steal_extended(self->pending_decrypts, ctx->gift_wrap_id,
+                                     &stolen_key, NULL);
+        g_free(stolen_key);
+    }
 
     if (!ok || !rumor_json) {
         g_warning("[DM_SERVICE] Failed to decrypt rumor: %s",
@@ -719,8 +724,8 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         g_warning("[DM_SERVICE] Failed to decrypt seal: %s",
                   error ? error->message : "unknown");
         g_clear_error(&error);
+        /* g_hash_table_remove frees ctx via destroy func */
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
-        decrypt_ctx_free(ctx);
         return;
     }
 
@@ -733,7 +738,6 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         nostr_event_free(seal);
         g_free(seal_json);
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
-        decrypt_ctx_free(ctx);
         return;
     }
     g_free(seal_json);
@@ -743,7 +747,6 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         g_warning("[DM_SERVICE] Invalid seal kind: %d", nostr_event_get_kind(seal));
         nostr_event_free(seal);
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
-        decrypt_ctx_free(ctx);
         return;
     }
 
@@ -752,7 +755,6 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         g_warning("[DM_SERVICE] Invalid seal signature");
         nostr_event_free(seal);
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
-        decrypt_ctx_free(ctx);
         return;
     }
 
@@ -765,7 +767,6 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     if (!ctx->seal_pubkey || !ctx->encrypted_rumor) {
         g_warning("[DM_SERVICE] Missing seal pubkey or content");
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
-        decrypt_ctx_free(ctx);
         return;
     }
 
