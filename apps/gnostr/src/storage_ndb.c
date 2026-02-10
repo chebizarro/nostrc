@@ -198,6 +198,13 @@ static gboolean verify_ingest_cb(gpointer user_data)
 {
   IngestVerifyCtx *ctx = user_data;
 
+  /* nostrc-ndb1: Invalidate the TLS transaction cache before reading.
+   * NDB ingestion is async (writer thread), and the LMDB read transaction
+   * cached in TLS may have been opened BEFORE the writer committed.
+   * LMDB snapshot isolation means that stale transaction will never see
+   * the newly written data.  Force a fresh transaction. */
+  storage_ndb_invalidate_txn_cache();
+
   /* Try to look up the event by ID */
   char *json = NULL;
   int json_len = 0;
