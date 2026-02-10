@@ -546,12 +546,17 @@ static void *write_operations(void *arg) {
         }
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
-        // Send result back to caller
+        // Send result back to caller, then close+free the answer channel.
+        // The publisher (nostr_relay_publish) only closes the channel — it
+        // does NOT free it, because we still hold req->answer.  We own the
+        // channel lifetime: send result, then close+free.
         if (werr) {
             go_channel_send(req->answer, werr);
         } else {
             go_channel_send(req->answer, NULL);
         }
+        go_channel_close(req->answer);
+        go_channel_free(req->answer);
         free(req);
     }
 
@@ -1284,8 +1289,10 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
             fprintf(stderr, "[nostr_relay_publish] write timed out (5s) for %s\n",
                     relay->url ? relay->url : "(null)");
         }
+        /* Close signals to write_operations that nobody is listening.
+         * Do NOT free — write_operations owns the channel lifetime
+         * (it calls close+free after go_channel_send). */
         go_channel_close(write_ch);
-        go_channel_free(write_ch);
     }
 }
 
