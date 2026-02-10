@@ -710,13 +710,39 @@ static void og_preview_widget_finalize(GObject *object) {
   G_OBJECT_CLASS(og_preview_widget_parent_class)->finalize(object);
 }
 
+/* Clamp natural width so OG preview never forces the timeline to expand.
+ * GtkPicture reports its image's intrinsic dimensions as natural size
+ * (often 1200×630 for OG images).  Without clamping, the timeline expands
+ * to the image width and the window can't be shrunk back. */
+static void
+og_preview_widget_measure(GtkWidget      *widget,
+                          GtkOrientation  orientation,
+                          int             for_size,
+                          int            *minimum,
+                          int            *natural,
+                          int            *minimum_baseline,
+                          int            *natural_baseline)
+{
+  GTK_WIDGET_CLASS(og_preview_widget_parent_class)->measure(
+      widget, orientation, for_size,
+      minimum, natural, minimum_baseline, natural_baseline);
+
+  if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+    /* Natural = minimum: the widget is happy with whatever width the
+     * parent allocates.  The GtkPicture (can_shrink=TRUE, content_fit=COVER)
+     * scales down to fit the allocation. */
+    *natural = *minimum;
+  }
+}
+
 static void og_preview_widget_class_init(OgPreviewWidgetClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  
+
   object_class->dispose = og_preview_widget_dispose;
   object_class->finalize = og_preview_widget_finalize;
-  
+  widget_class->measure = og_preview_widget_measure;
+
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_css_name(widget_class, "og-preview");
 }
