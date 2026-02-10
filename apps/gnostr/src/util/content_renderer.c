@@ -77,56 +77,6 @@ static gboolean is_video_url_n(const char *u, gsize len) {
 }
 
 /**
- * Insert zero-width spaces (U+200B) into long unbroken tokens within a string
- * to provide line-break opportunities for Pango/GTK text wrapping.
- * A "token" is a run of non-whitespace characters. ZWSPs are inserted every
- * `interval` characters within tokens longer than `interval`.
- * This prevents long unbroken strings (bech32 entities, hex IDs, long URLs)
- * from forcing the window to maximum width.
- * Returns a newly allocated string. Caller must free.
- */
-static gchar *insert_zwsp(const char *str, gsize interval) {
-  if (!str || !*str) return g_strdup(str ? str : "");
-  gsize len = strlen(str);
-  if (len <= interval) return g_strdup(str);
-
-  /* Worst case: every character gets a 3-byte ZWS before it */
-  GString *result = g_string_sized_new(len + (len / interval) * 3 + 1);
-  gsize token_len = 0;  /* length of current non-whitespace run in codepoints */
-
-  /* Iterate by UTF-8 codepoints so ZWS is never inserted mid-character */
-  const char *p = str;
-  while (*p) {
-    gunichar ch = g_utf8_get_char_validated(p, -1);
-    const char *next = g_utf8_next_char(p);
-    gsize char_bytes = (gsize)(next - p);
-
-    if (ch == (gunichar)-1 || ch == (gunichar)-2) {
-      /* Invalid UTF-8 byte — copy as-is and move on */
-      g_string_append_c(result, *p);
-      p++;
-      token_len++;
-      continue;
-    }
-
-    if (g_unichar_isspace(ch)) {
-      g_string_append_len(result, p, (gssize)char_bytes);
-      token_len = 0;
-    } else {
-      token_len++;
-      if (token_len > 1 && (token_len % interval) == 1) {
-        /* Insert ZWS before this codepoint (U+200B = 0xE2 0x80 0x8B) */
-        g_string_append_len(result, "\xe2\x80\x8b", 3);
-      }
-      g_string_append_len(result, p, (gssize)char_bytes);
-    }
-    p = next;
-  }
-
-  return g_string_free(result, FALSE);
-}
-
-/**
  * Format a bech32 mention for display.
  * Profile mentions: @display_name or truncated bech32
  * Event mentions: truncated bech32
@@ -197,11 +147,11 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
   /* Parse content into blocks on-the-fly */
   storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
   if (!blocks) {
-    /* Fallback: escape the whole string, with ZWS for wrapping long tokens */
-    gchar *escaped = g_markup_escape_text(content, content_len);
-    gchar *wrapped = insert_zwsp(escaped, 20);
-    g_free(escaped);
-    return wrapped;
+    /* Fallback: just escape the whole string.
+     * nostrc-pgo4: Do NOT insert ZWS — it corrupts PangoLayout line lists
+     * and causes SEGV in pango_renderer_draw_layout_line.
+     * PANGO_WRAP_WORD_CHAR on the label handles wrapping. */
+    return g_markup_escape_text(content, content_len);
   }
 
   GString *out = g_string_new("");
@@ -225,13 +175,13 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
           g_free(text);
           text = g_steal_pointer(&valid);
         }
-        /* hq-nu5gp: Insert ZWS into long unbroken tokens (bech32, hex IDs)
-         * to prevent them from forcing the window to maximum width */
-        gchar *wrapped = insert_zwsp(text, 20);
-        gchar *escaped = g_markup_escape_text(wrapped, -1);
+        /* nostrc-pgo4: Do NOT insert ZWS — it corrupts PangoLayout line
+         * lists causing SEGV in pango_renderer_draw_layout_line during
+         * the GTK frame clock snapshot.  PANGO_WRAP_WORD_CHAR on the
+         * content label handles wrapping for long tokens. */
+        gchar *escaped = g_markup_escape_text(text, -1);
         g_string_append(out, escaped);
         g_free(escaped);
-        g_free(wrapped);
         break;
       }
 
