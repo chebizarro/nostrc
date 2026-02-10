@@ -838,6 +838,15 @@ query_thread_func(GTask         *task,
         if (!item) continue;
         if (item->sub) {
             nostr_subscription_close(item->sub, NULL);
+            /* nostrc-ws2: Cancel subscription context + wait for lifecycle
+             * worker BEFORE free.  Without this, subscription_destroy blocks
+             * forever in go_wait_group_wait because the lifecycle thread is
+             * stuck in go_channel_receive(done) waiting for context
+             * cancellation that never comes — the relay is still alive.
+             * This leaks GTask worker threads; after enough thread-view
+             * opens/closes the GLib thread pool is exhausted and the entire
+             * app appears frozen. */
+            nostr_subscription_wait(item->sub);
             nostr_subscription_free(item->sub);
         }
         /* Relay is owned by the pool snapshot (grelay_ref keeps it alive).
