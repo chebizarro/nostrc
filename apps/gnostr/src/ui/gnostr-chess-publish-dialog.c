@@ -389,7 +389,7 @@ on_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
 
     /* Move connect+publish loop to background thread */
     gnostr_publish_to_relays_async(event, write_relays,
-        (GnostrRelayPublishDoneCallback)chess_publish_done, ctx);
+        chess_publish_done, ctx);
 }
 
 static void chess_publish_done(guint success_count, guint fail_count, gpointer user_data) {

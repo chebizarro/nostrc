@@ -605,8 +605,8 @@ status_publish_done(guint success_count, guint fail_count, gpointer user_data)
 {
   StatusPublishContext *ctx = (StatusPublishContext *)user_data;
 
-  /* Update cache with our own status */
-  if (ctx->signed_event_json) {
+  /* Update cache with our own status on successful publish */
+  if (success_count > 0 && ctx->signed_event_json) {
     GnostrUserStatus *status = gnostr_user_status_parse_event(ctx->signed_event_json);
     if (status) {
       gnostr_user_status_cache_set(status);
