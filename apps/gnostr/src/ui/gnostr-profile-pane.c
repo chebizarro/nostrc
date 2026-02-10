@@ -326,6 +326,7 @@ struct _GnostrProfilePane {
   GListStore *posts_model;
   GtkSelectionModel *posts_selection;
   NoteCardFactory *posts_note_factory;  /* nostrc-brc4: Store for cleanup */
+  GHashTable *posts_seen_ids;  /* hq-kwou5: O(1) dedup set for post IDs */
 
   /* Media tab widgets */
   GtkWidget *media_container;
@@ -505,6 +506,8 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   }
   g_clear_object(&self->posts_selection);
   g_clear_object(&self->posts_model);
+  /* hq-kwou5: Free dedup hash set */
+  g_clear_pointer(&self->posts_seen_ids, g_hash_table_destroy);
   /* nostrc-brc4: Clean up NoteCardFactory */
   g_clear_object(&self->posts_note_factory);
 
@@ -1767,6 +1770,10 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
   if (self->posts_model) {
     g_list_store_remove_all(self->posts_model);
   }
+  /* hq-kwou5: Clear dedup set when posts are cleared */
+  if (self->posts_seen_ids) {
+    g_hash_table_remove_all(self->posts_seen_ids);
+  }
   self->posts_loaded = FALSE;
   self->posts_oldest_timestamp = 0;
 
@@ -2849,20 +2856,22 @@ static void update_profile_ui(GnostrProfilePane *self, const char *profile_json)
   g_free(lud16);
 }
 
-/* Helper: Check if a post with this ID already exists in the model */
+/* hq-kwou5: O(1) dedup check using hash set instead of O(n) linear scan.
+ * The old implementation iterated the entire GListModel for each new post,
+ * causing O(n*m) behavior that blocked the main thread during cache loads. */
 static gboolean post_exists_in_model(GnostrProfilePane *self, const char *id_hex) {
-  if (!self->posts_model || !id_hex) return FALSE;
+  if (!id_hex) return FALSE;
+  if (!self->posts_seen_ids) return FALSE;
+  return g_hash_table_contains(self->posts_seen_ids, id_hex);
+}
 
-  guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->posts_model));
-  for (guint i = 0; i < n_items; i++) {
-    ProfilePostItem *item = g_list_model_get_item(G_LIST_MODEL(self->posts_model), i);
-    if (item) {
-      gboolean match = (item->id_hex && g_strcmp0(item->id_hex, id_hex) == 0);
-      g_object_unref(item);
-      if (match) return TRUE;
-    }
+/* hq-kwou5: Track a post ID in the dedup set */
+static void post_track_id(GnostrProfilePane *self, const char *id_hex) {
+  if (!id_hex) return;
+  if (!self->posts_seen_ids) {
+    self->posts_seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   }
-  return FALSE;
+  g_hash_table_add(self->posts_seen_ids, g_strdup(id_hex));
 }
 
 /* Load posts from local nostrdb cache.
@@ -2955,8 +2964,9 @@ static guint load_posts_from_cache(GnostrProfilePane *self) {
     item->avatar_url = g_strdup(self->current_avatar_url);
     item->tags_json = tags_json_g;  /* GLib-owned copy */
 
-    /* Add to model */
+    /* Add to model + track in dedup set (hq-kwou5) */
     g_list_store_append(self->posts_model, item);
+    post_track_id(self, id_hex);
     g_object_unref(item);
     added++;
 
@@ -3061,8 +3071,9 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
     item->avatar_url = g_strdup(self->current_avatar_url);
     item->tags_json = tags_json_g;  /* GLib-owned copy */
 
-    /* Add to model */
+    /* Add to model + track in dedup set (hq-kwou5) */
     g_list_store_append(self->posts_model, item);
+    post_track_id(self, id_hex);
     g_object_unref(item);
     added++;
 
@@ -4789,6 +4800,18 @@ const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *self) {
   return self->current_pubkey;
 }
 
+/* hq-kwou5: Idle callback for deferred profile fetch.  Runs after the panel
+ * has had a chance to paint its "Loading..." placeholder, preventing the
+ * LMDB reads + JSON parsing from blocking the initial slide-in animation. */
+static gboolean deferred_fetch_profile_idle(gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
+  if (!self->current_pubkey || !*self->current_pubkey) return G_SOURCE_REMOVE;
+
+  fetch_profile_from_cache_or_network(self);
+  return G_SOURCE_REMOVE;
+}
+
 void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_hex) {
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
   g_return_if_fail(pubkey_hex != NULL);
@@ -4861,8 +4884,15 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
                                      on_nip65_relays_fetched, self);
   }
 
-  /* Fetch profile from cache first, then network for updates */
-  fetch_profile_from_cache_or_network(self);
+  /* hq-kwou5: Defer profile fetch to an idle callback so the panel can
+   * paint its "Loading..." state immediately.  The old synchronous call
+   * ran LMDB reads + JSON parsing + gnostr_pool_sync_relays on the main
+   * thread before the panel was ever shown, causing visible freezes.
+   * g_idle_add_full with g_object_ref/unref prevents use-after-free if
+   * the pane is destroyed before the idle fires. */
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                  deferred_fetch_profile_idle, g_object_ref(self),
+                  (GDestroyNotify)g_object_unref);
 }
 
 /* Public API to update profile from JSON (called by main window) */
