@@ -8342,6 +8342,9 @@ static gboolean profile_dispatch_next(gpointer data) {
                           self->profile_fetch_cancellable,
                           on_profiles_batch_done,
                           ctx);
+  /* nostrc-uaf5: GTask takes ownership of filters — NULL out to prevent
+   * double-free when profile_dispatch_next is called again. */
+  self->profile_batch_filters = NULL;
 
   g_free((gpointer)authors);
   /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */
