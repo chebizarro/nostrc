@@ -303,6 +303,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="GtkButton" id="btn_inspect_json">
+            <property name="icon-name">text-x-generic-symbolic</property>
+            <property name="tooltip-text" translatable="yes">View profile event JSON</property>
+            <property name="halign">2</property>
+            <property name="margin-end">16</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+        <child>
           <object class="GtkStackSwitcher" id="tab_switcher">
             <property name="stack">content_stack</property>
             <property name="halign">3</property>

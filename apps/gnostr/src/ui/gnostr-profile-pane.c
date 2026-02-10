@@ -294,6 +294,7 @@ struct _GnostrProfilePane {
   GtkWidget *own_profile_actions;
   GtkWidget *btn_edit_profile;
   GtkWidget *btn_set_status;
+  GtkWidget *btn_inspect_json;
 
   /* Tab widgets */
   GtkWidget *tab_switcher;
@@ -618,6 +619,55 @@ static void on_message_clicked(GtkButton *btn, gpointer user_data) {
   if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
 
   g_signal_emit(self, signals[SIGNAL_MESSAGE_REQUESTED], 0, self->current_pubkey);
+}
+
+/* View profile kind:0 event JSON (same pattern as note_card_row.c show_json_viewer) */
+static void on_inspect_json_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)btn;
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  const char *json = self->current_event_json;
+  if (!json || !*json) {
+    g_warning("No profile event JSON available to inspect");
+    return;
+  }
+
+  /* Prettify */
+  char *pretty = gnostr_json_prettify(json, NULL);
+  const char *display = pretty ? pretty : json;
+
+  /* Create viewer window */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+  GtkWidget *dialog = gtk_window_new();
+  gtk_window_set_title(GTK_WINDOW(dialog), "Profile JSON (kind:0)");
+  gtk_window_set_default_size(GTK_WINDOW(dialog), 700, 500);
+  gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+  if (parent) gtk_window_set_transient_for(GTK_WINDOW(dialog), parent);
+
+  GtkWidget *scrolled = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+                                 GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+
+  GtkWidget *text_view = gtk_text_view_new();
+  gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
+  gtk_text_view_set_monospace(GTK_TEXT_VIEW(text_view), TRUE);
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
+  gtk_widget_set_margin_start(text_view, 12);
+  gtk_widget_set_margin_end(text_view, 12);
+  gtk_widget_set_margin_top(text_view, 12);
+  gtk_widget_set_margin_bottom(text_view, 12);
+
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+  gtk_text_buffer_set_text(buffer, display, -1);
+
+  free(pretty);
+
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
+  gtk_window_set_child(GTK_WINDOW(dialog), scrolled);
+  gtk_window_present(GTK_WINDOW(dialog));
 }
 
 static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
@@ -1402,6 +1452,7 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, own_profile_actions);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_edit_profile);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_set_status);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_inspect_json);
 
   /* Tab widgets */
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, tab_switcher);
@@ -1520,6 +1571,11 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   }
   if (self->btn_message) {
     g_signal_connect(self->btn_message, "clicked", G_CALLBACK(on_message_clicked), self);
+  }
+
+  /* Connect inspect JSON button */
+  if (self->btn_inspect_json) {
+    g_signal_connect(self->btn_inspect_json, "clicked", G_CALLBACK(on_inspect_json_clicked), self);
   }
 
   /* nostrc-qvba: Connect bio label link activation */
