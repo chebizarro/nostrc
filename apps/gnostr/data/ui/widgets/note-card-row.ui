@@ -137,6 +137,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkLabel" id="lbl_display">
                                 <property name="xalign">0</property>
+                                <property name="ellipsize">3</property>
+                                <property name="max-width-chars">30</property>
                                 <style>
                                   <class name="note-author"/>
                                 </style>
@@ -288,8 +290,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkLabel" id="subject_label">
                     <property name="visible">false</property>
                     <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
                     <property name="xalign">0</property>
                     <property name="use-markup">true</property>
+                    <property name="max-width-chars">80</property>
                     <style>
                       <class name="note-subject"/>
                     </style>

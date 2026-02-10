@@ -134,6 +134,8 @@ template $GnostrNoteCardRow: Widget {
 
                             Label lbl_display {
                                 xalign: 0.0;
+                                ellipsize: end;
+                                max-width-chars: 30;
 
                                 styles [
                                     "note-author",
@@ -279,8 +281,10 @@ template $GnostrNoteCardRow: Widget {
                 Label subject_label {
                     visible: false;
                     wrap: true;
+                    wrap-mode: word_char;
                     xalign: 0.0;
                     use-markup: true;
+                    max-width-chars: 80;
 
                     styles [
                         "note-subject",

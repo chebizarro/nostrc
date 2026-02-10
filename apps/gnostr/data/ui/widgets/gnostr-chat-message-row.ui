@@ -104,6 +104,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="wrap-mode">2</property>
                 <property name="selectable">true</property>
                 <property name="use-markup">false</property>
+                <property name="max-width-chars">80</property>
               </object>
             </child>
             <child>

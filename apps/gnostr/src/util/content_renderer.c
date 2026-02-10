@@ -77,6 +77,43 @@ static gboolean is_video_url_n(const char *u, gsize len) {
 }
 
 /**
+ * Insert zero-width spaces (U+200B) into long unbroken tokens within a string
+ * to provide line-break opportunities for Pango/GTK text wrapping.
+ * A "token" is a run of non-whitespace characters. ZWSPs are inserted every
+ * `interval` characters within tokens longer than `interval`.
+ * This prevents long unbroken strings (bech32 entities, hex IDs, long URLs)
+ * from forcing the window to maximum width.
+ * Returns a newly allocated string. Caller must free.
+ */
+static gchar *insert_zwsp(const char *str, gsize interval) {
+  if (!str || !*str) return g_strdup(str ? str : "");
+  gsize len = strlen(str);
+  if (len <= interval) return g_strdup(str);
+
+  /* Worst case: every character gets a 3-byte ZWS before it */
+  GString *result = g_string_sized_new(len + (len / interval) * 3 + 1);
+  gsize token_len = 0;  /* length of current non-whitespace run */
+
+  for (gsize i = 0; i < len; i++) {
+    char c = str[i];
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      /* Whitespace resets the token counter */
+      g_string_append_c(result, c);
+      token_len = 0;
+    } else {
+      token_len++;
+      if (token_len > 1 && (token_len % interval) == 1) {
+        /* Insert ZWS before this character (U+200B = 0xE2 0x80 0x8B) */
+        g_string_append_len(result, "\xe2\x80\x8b", 3);
+      }
+      g_string_append_c(result, c);
+    }
+  }
+
+  return g_string_free(result, FALSE);
+}
+
+/**
  * Format a bech32 mention for display.
  * Profile mentions: @display_name or truncated bech32
  * Event mentions: truncated bech32
@@ -147,8 +184,11 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
   /* Parse content into blocks on-the-fly */
   storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
   if (!blocks) {
-    /* Fallback: escape the whole string */
-    return g_markup_escape_text(content, content_len);
+    /* Fallback: escape the whole string, with ZWS for wrapping long tokens */
+    gchar *escaped = g_markup_escape_text(content, content_len);
+    gchar *wrapped = insert_zwsp(escaped, 20);
+    g_free(escaped);
+    return wrapped;
   }
 
   GString *out = g_string_new("");
@@ -172,9 +212,13 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
           g_free(text);
           text = g_steal_pointer(&valid);
         }
-        gchar *escaped = g_markup_escape_text(text, -1);
+        /* hq-nu5gp: Insert ZWS into long unbroken tokens (bech32, hex IDs)
+         * to prevent them from forcing the window to maximum width */
+        gchar *wrapped = insert_zwsp(text, 20);
+        gchar *escaped = g_markup_escape_text(wrapped, -1);
         g_string_append(out, escaped);
         g_free(escaped);
+        g_free(wrapped);
         break;
       }
 
@@ -212,13 +256,17 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
                        : g_strdup(url);
         gchar *esc_href = g_markup_escape_text(href, -1);
 
-        /* Truncate display if too long */
+        /* Truncate display if too long, insert ZWS for wrapping */
         gchar *display;
         if (len > 40) {
           display = g_strdup_printf("%.35s...", url);
         } else {
           display = g_strdup(url);
         }
+        /* hq-nu5gp: Insert ZWS for line-break opportunities in displayed URLs */
+        gchar *wrapped_display = insert_zwsp(display, 20);
+        g_free(display);
+        display = wrapped_display;
         gchar *esc_display = g_markup_escape_text(display, -1);
 
         g_string_append_printf(out,
