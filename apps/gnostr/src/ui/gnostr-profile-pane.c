@@ -4148,6 +4148,17 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
   g_ptr_array_unref(results);
 }
 
+/* hq-zgxxb: Add URL to relay array if not already present */
+static void
+pp_add_relay_if_unique(GPtrArray *relay_urls, const gchar *url)
+{
+  for (guint j = 0; j < relay_urls->len; j++) {
+    if (g_strcmp0(url, g_ptr_array_index(relay_urls, j)) == 0)
+      return;
+  }
+  g_ptr_array_add(relay_urls, g_strdup(url));
+}
+
 /* Fetch profile from nostrdb cache first, then from network */
 static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
@@ -4275,6 +4286,30 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
 
   /* Use read relays from GSettings */
   gnostr_get_read_relay_urls_into(relay_urls);
+
+  /* hq-zgxxb: Merge target user's NIP-65 write relays for better profile discovery.
+   * Write relays = where they publish their profile/posts. */
+  if (self->nip65_relays && self->nip65_relays->len > 0) {
+    GPtrArray *write_relays = gnostr_nip65_get_write_relays(self->nip65_relays);
+    for (guint i = 0; i < write_relays->len; i++) {
+      pp_add_relay_if_unique(relay_urls, g_ptr_array_index(write_relays, i));
+    }
+    g_ptr_array_unref(write_relays);
+  }
+
+  /* hq-zgxxb: Add profile-indexing relays when viewing other users' profiles.
+   * These relays index kind:0 metadata and improve discovery. */
+  if (self->own_pubkey &&
+      g_ascii_strcasecmp(self->current_pubkey, self->own_pubkey) != 0) {
+    static const char *profile_indexers[] = {
+      "wss://purplepag.es",
+      "wss://relay.nostr.band",
+      NULL
+    };
+    for (int i = 0; profile_indexers[i]; i++) {
+      pp_add_relay_if_unique(relay_urls, profile_indexers[i]);
+    }
+  }
 
   g_debug("profile_pane: %u relays configured for network fetch", relay_urls->len);
   if (relay_urls->len == 0) {
@@ -4665,6 +4700,19 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   }
 
   g_debug("profile_pane: set_pubkey DONE for %.8s, fetching profile...", hex);
+
+  /* hq-zgxxb: Start NIP-65 fetch early for other users' profiles.
+   * This runs in parallel with the profile fetch so NIP-65 data
+   * is available sooner for posts tab. */
+  if (self->own_pubkey && g_ascii_strcasecmp(hex, self->own_pubkey) != 0) {
+    if (self->nip65_cancellable) {
+      g_cancellable_cancel(self->nip65_cancellable);
+      g_clear_object(&self->nip65_cancellable);
+    }
+    self->nip65_cancellable = g_cancellable_new();
+    gnostr_nip65_fetch_relays_async(hex, self->nip65_cancellable,
+                                     on_nip65_relays_fetched, self);
+  }
 
   /* Fetch profile from cache first, then network for updates */
   fetch_profile_from_cache_or_network(self);
