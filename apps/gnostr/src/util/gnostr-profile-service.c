@@ -196,7 +196,7 @@ static gboolean debounce_timeout_cb(gpointer user_data);
 typedef struct {
   GnostrProfileService *svc;
   GPtrArray *batch;      /* owned; char* pubkeys */
-  NostrFilters *filters; /* owned; freed in callback */
+  NostrFilters *filters; /* NOT owned — GTask owns via destroy notify */
 } BatchFetchCtx;
 
 static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -270,9 +270,10 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
     }
   }
 
-  /* Cleanup */
+  /* Cleanup — filters are owned by the GTask (via g_object_set_data_full
+   * with nostr_filters_free destroy notify in gnostr_pool_query_async),
+   * so do NOT free them here. */
   if (batch) g_ptr_array_free(batch, TRUE);
-  if (ctx->filters) nostr_filters_free(ctx->filters);
   g_free(ctx);
 
   /* Mark fetch no longer in progress and dispatch next batch */
