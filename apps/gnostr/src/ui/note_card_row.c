@@ -1711,11 +1711,39 @@ static void on_show_sensitive_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+/* Clamp natural horizontal width so note cards never force the timeline to
+ * expand beyond its allocated width.  Child widgets like GtkPicture report
+ * their intrinsic pixel dimensions as natural size (often 1200+ px for images).
+ * Without clamping, the GtkListView grows to accommodate the largest natural
+ * width, making the timeline fill the entire screen.  Same pattern as
+ * og_preview_widget_measure (nostrc-14wu). */
+static void
+gnostr_note_card_row_measure(GtkWidget      *widget,
+                             GtkOrientation  orientation,
+                             int             for_size,
+                             int            *minimum,
+                             int            *natural,
+                             int            *minimum_baseline,
+                             int            *natural_baseline)
+{
+  GTK_WIDGET_CLASS(gnostr_note_card_row_parent_class)->measure(
+      widget, orientation, for_size,
+      minimum, natural, minimum_baseline, natural_baseline);
+
+  if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+    /* Tell the layout: "I'm happy with minimum width."  The card will
+     * still expand to fill whatever the parent allocates, but it won't
+     * *request* more than the minimum. */
+    *natural = *minimum;
+  }
+}
+
 static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
   gclass->dispose = gnostr_note_card_row_dispose;
   gclass->finalize = gnostr_note_card_row_finalize;
+  wclass->measure = gnostr_note_card_row_measure;
 
   gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);
