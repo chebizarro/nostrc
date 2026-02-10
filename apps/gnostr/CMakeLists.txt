@@ -611,6 +611,8 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/gobject/src/nostr-enums.c
     ${PROJECT_ROOT}/gobject/src/nostr-error.c
     ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
+  # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
+  target_compile_definitions(gnostr-test-blossom PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
   if (TARGET nostr_nip46_core)
     target_link_libraries(gnostr-test-blossom PRIVATE nostr_nip46_core)
@@ -648,6 +650,8 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/gobject/src/nostr-enums.c
     ${PROJECT_ROOT}/gobject/src/nostr-error.c
     ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
+  # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
+  target_compile_definitions(gnostr-test-blossom-settings PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3
     nostr libgo)
