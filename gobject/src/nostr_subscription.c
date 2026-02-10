@@ -267,14 +267,57 @@ subscription_monitor_thread(gpointer data)
     return NULL;
 }
 
+/* nostrc-xkpze: Background thread func for monitor join.
+ * g_thread_join blocks until the monitor thread exits.  If called on
+ * the main thread (via dispose/finalize chain during app shutdown),
+ * it freezes the UI.  Same class of bug as nostrc-ws1 / nostrc-ws3. */
+static void
+monitor_join_thread_func(GTask *task, gpointer source G_GNUC_UNUSED,
+                         gpointer task_data, GCancellable *cancel G_GNUC_UNUSED)
+{
+    GThread *thread = (GThread *)task_data;
+    g_thread_join(thread);
+    g_task_return_boolean(task, TRUE);
+}
+
 static void
 stop_monitor(GNostrSubscription *self)
 {
+    if (!self->monitor_thread)
+        return;
+
+    /* 1. Signal the monitor thread to stop. */
     __atomic_store_n(&self->monitor_running, FALSE, __ATOMIC_SEQ_CST);
-    if (self->monitor_thread) {
-        g_thread_join(self->monitor_thread);
-        self->monitor_thread = NULL;
+
+    /* 2. Close channels so try_receive returns immediately (-1) and the
+     *    monitor loop cannot block.  Defense in depth: the flag alone
+     *    should suffice since try_receive is non-blocking, but closing
+     *    channels matches the nostrc-ws1 pattern and handles any edge
+     *    case where a channel call might stall. */
+    if (self->subscription) {
+        GoChannel *ch;
+        ch = nostr_subscription_get_events_channel(self->subscription);
+        if (ch && !go_channel_is_closed(ch))
+            go_channel_close(ch);
+        ch = nostr_subscription_get_eose_channel(self->subscription);
+        if (ch && !go_channel_is_closed(ch))
+            go_channel_close(ch);
+        ch = nostr_subscription_get_closed_channel(self->subscription);
+        if (ch && !go_channel_is_closed(ch))
+            go_channel_close(ch);
     }
+
+    /* 3. Dispatch g_thread_join to a background thread so we never
+     *    block the main thread.  The monitor thread holds its own ref
+     *    on self (taken in fire), which it drops on exit, so the join
+     *    completing is the only thing that matters here. */
+    GThread *thread = self->monitor_thread;
+    self->monitor_thread = NULL;
+
+    GTask *task = g_task_new(NULL, NULL, NULL, NULL);
+    g_task_set_task_data(task, thread, NULL);
+    g_task_run_in_thread(task, monitor_join_thread_func);
+    g_object_unref(task);
 }
 
 /* --- GObject boilerplate --- */
