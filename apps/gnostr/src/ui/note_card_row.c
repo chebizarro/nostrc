@@ -35,12 +35,17 @@
  * Checks:
  * 1. Widget pointer is not NULL
  * 2. Widget is a valid GtkLabel
+ * 3. Widget is connected to a native surface (has a valid PangoContext)
  * NOTE: Removed gtk_widget_get_mapped() check - it was causing timestamps
  * and other labels to be skipped for items not yet scrolled into view.
- * GTK labels can safely accept text even when not mapped. The original
- * nostrc-0acr crash was likely due to NULL/invalid pointers, not unmapped state. */
+ * GTK labels can safely accept text even when not mapped. But they DO need
+ * a native surface — gtk_label_set_text unrefs the old PangoLayout, and if
+ * the label was orphaned from its surface (e.g. timer ref keeps the row alive
+ * after window destroy), the PangoContext is gone → SEGV in pango finalize.
+ * nostrc-pgo3: Add native surface check to prevent SEGV in update_timestamp_tick. */
 #define LABEL_SAFE_TO_UPDATE(lbl) \
-  ((lbl) != NULL && GTK_IS_LABEL(lbl))
+  ((lbl) != NULL && GTK_IS_LABEL(lbl) && \
+   gtk_widget_get_native(GTK_WIDGET(lbl)) != NULL)
 
 /* No longer using mutex - proper fix is at backend level */
 
