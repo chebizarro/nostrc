@@ -574,7 +574,10 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
     free(resp_id);
 
     if (!pending) {
-        fprintf(stderr, "[nip46] persistent_cb: no pending request for this response id\n");
+        /* Normal: signer relays may echo duplicate responses, or signer apps
+         * may send a second response (e.g. error after success) for the same
+         * request ID.  The first response was already dispatched. */
+        fprintf(stderr, "[nip46] persistent_cb: ignoring duplicate/late response (already handled)\n");
         free(response_json);
         return;
     }

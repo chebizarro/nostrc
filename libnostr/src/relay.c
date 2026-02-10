@@ -1262,11 +1262,10 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
         return;
     }
 
-    /* Non-blocking check for immediate write failure only.
-     * DO NOT block — nostr_relay_publish is called from the GTK main
-     * thread (likes, DMs, chess, reports, etc.) and any blocking wait
-     * stalls the entire UI.  The relay writer thread will complete the
-     * WebSocket send asynchronously. */
+    /* Wait for write confirmation so callers can safely disconnect after
+     * publish returns.  All current callers run on worker threads (GTask,
+     * NIP-46, FUSE, etc.) so blocking is safe.  5 s is generous for an
+     * already-connected WebSocket write. */
     {
         Error *write_err = NULL;
         GoSelectCase cases[1];
@@ -1274,14 +1273,19 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
         cases[0].chan = write_ch;
         cases[0].recv_buf = (void **)&write_err;
 
-        GoSelectResult result = go_select_timeout(cases, 1, 0);
+        GoSelectResult result = go_select_timeout(cases, 1, 5000);
 
         if (result.selected_case >= 0 && write_err) {
-            fprintf(stderr, "[nostr_relay_publish] write failed: %s\n",
+            fprintf(stderr, "[nostr_relay_publish] write failed for %s: %s\n",
+                    relay->url ? relay->url : "(null)",
                     write_err->message ? write_err->message : "unknown");
             free_error(write_err);
-            return;
+        } else if (result.selected_case < 0) {
+            fprintf(stderr, "[nostr_relay_publish] write timed out (5s) for %s\n",
+                    relay->url ? relay->url : "(null)");
         }
+        go_channel_close(write_ch);
+        go_channel_free(write_ch);
     }
 }
 
