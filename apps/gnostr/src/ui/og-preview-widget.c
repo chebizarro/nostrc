@@ -658,19 +658,27 @@ static void og_preview_widget_dispose(GObject *object) {
 
   /* Clear label text BEFORE unparenting to prevent Pango layout crashes.
    * During cascade disposal, Pango tries to finalize layouts and can crash
-   * if the layout data is corrupted or widgets are disposed in wrong order. */
-  if (self->title_label && GTK_IS_LABEL(self->title_label)) {
+   * if the layout data is corrupted or widgets are disposed in wrong order.
+   * nostrc-pgo5: MUST check gtk_widget_get_native() before gtk_label_set_text.
+   * When the widget tree is already being torn down (e.g., gtk_box_remove in
+   * prepare_for_bind), the PangoContext is gone and gtk_label_set_text will
+   * SEGV trying to unref the old PangoLayout with a NULL context. */
+#define OG_LABEL_SAFE(lbl) \
+  ((lbl) != NULL && GTK_IS_LABEL(lbl) && \
+   gtk_widget_get_native(GTK_WIDGET(lbl)) != NULL)
+  if (OG_LABEL_SAFE(self->title_label)) {
     gtk_label_set_text(GTK_LABEL(self->title_label), "");
   }
-  if (self->description_label && GTK_IS_LABEL(self->description_label)) {
+  if (OG_LABEL_SAFE(self->description_label)) {
     gtk_label_set_text(GTK_LABEL(self->description_label), "");
   }
-  if (self->site_label && GTK_IS_LABEL(self->site_label)) {
+  if (OG_LABEL_SAFE(self->site_label)) {
     gtk_label_set_text(GTK_LABEL(self->site_label), "");
   }
-  if (self->error_label && GTK_IS_LABEL(self->error_label)) {
+  if (OG_LABEL_SAFE(self->error_label)) {
     gtk_label_set_text(GTK_LABEL(self->error_label), "");
   }
+#undef OG_LABEL_SAFE
 
   g_clear_pointer(&self->play_overlay, gtk_widget_unparent);
 #ifdef HAVE_WEBKITGTK
