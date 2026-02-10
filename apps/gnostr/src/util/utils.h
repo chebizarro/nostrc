@@ -2,6 +2,7 @@
 #define GNOSTR_UTIL_H
 
 #include <glib.h>
+#include <nostr-event.h>
 
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -68,6 +69,33 @@ void gnostr_cleanup_shared_query_pool(void);
 void gnostr_pool_wire_ndb(GNostrPool *pool);
 
 gboolean str_has_prefix_http(const char *s);
+
+/**
+ * GnostrRelayPublishDoneCallback:
+ * @success_count: number of relays that accepted the event
+ * @fail_count: number of relays that failed
+ * @user_data: user data passed to gnostr_publish_to_relays_async()
+ *
+ * Called on the main thread when the async publish completes.
+ */
+typedef void (*GnostrRelayPublishDoneCallback)(guint success_count,
+                                                guint fail_count,
+                                                gpointer user_data);
+
+/**
+ * gnostr_publish_to_relays_async:
+ * @event: (transfer full): a signed NostrEvent to publish
+ * @relay_urls: (transfer full): a GPtrArray of relay URL strings
+ * @callback: (nullable): completion callback (runs on main thread)
+ * @user_data: user data for @callback
+ *
+ * Publishes @event to each relay in @relay_urls on a background thread.
+ * Takes ownership of both @event and @relay_urls.
+ */
+void gnostr_publish_to_relays_async(NostrEvent *event,
+                                     GPtrArray *relay_urls,
+                                     GnostrRelayPublishDoneCallback callback,
+                                     gpointer user_data);
 
 /**
  * gnostr_ensure_hex_pubkey:

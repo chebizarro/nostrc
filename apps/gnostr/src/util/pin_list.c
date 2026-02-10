@@ -25,6 +25,7 @@
 #include "nostr-event.h"
 #include "nostr-relay.h"
 #include "nostr_pool.h"
+#include "utils.h"
 #endif
 
 /* Kind 10001 = Pin List per NIP-51 */
@@ -488,6 +489,8 @@ static void save_context_free(SaveContext *ctx) {
     }
 }
 
+static void pin_list_publish_done(guint success_count, guint fail_count, gpointer user_data);
+
 static void on_pin_list_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
     SaveContext *ctx = (SaveContext *)user_data;
     (void)source;
@@ -526,56 +529,27 @@ static void on_pin_list_sign_complete(GObject *source, GAsyncResult *res, gpoint
         return;
     }
 
-    /* Get relay URLs for publishing */
+    /* Publish to relays asynchronously (hq-gflmf) */
     GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
     gnostr_load_relays_into(relay_urls);
 
-    /* Publish to each relay */
-    guint success_count = 0;
-    guint fail_count = 0;
+    g_free(signed_event_json);
+    gnostr_publish_to_relays_async(event, relay_urls,
+        pin_list_publish_done, ctx);
+    /* event + relay_urls ownership transferred; ctx freed in callback */
+}
 
-    for (guint i = 0; i < relay_urls->len; i++) {
-        const char *url = (const char *)g_ptr_array_index(relay_urls, i);
-        GNostrRelay *relay = gnostr_relay_new(url);
-        if (!relay) {
-            fail_count++;
-            continue;
-        }
+static void
+pin_list_publish_done(guint success_count, guint fail_count, gpointer user_data)
+{
+    SaveContext *ctx = (SaveContext *)user_data;
 
-        GError *conn_err = NULL;
-        if (!gnostr_relay_connect(relay, &conn_err)) {
-            g_debug("pin_list: failed to connect to %s: %s",
-                    url, conn_err ? conn_err->message : "unknown");
-            g_clear_error(&conn_err);
-            g_object_unref(relay);
-            fail_count++;
-            continue;
-        }
-
-        GError *pub_err = NULL;
-        if (gnostr_relay_publish(relay, event, &pub_err)) {
-            g_message("pin_list: published to %s", url);
-            success_count++;
-        } else {
-            g_debug("pin_list: publish failed to %s: %s",
-                    url, pub_err ? pub_err->message : "unknown");
-            g_clear_error(&pub_err);
-            fail_count++;
-        }
-        g_object_unref(relay);
-    }
-
-    /* Update state on success */
     if (success_count > 0) {
         g_mutex_lock(&ctx->pin_list->lock);
         ctx->pin_list->dirty = FALSE;
         ctx->pin_list->last_event_time = (gint64)time(NULL);
         g_mutex_unlock(&ctx->pin_list->lock);
     }
-
-    nostr_event_free(event);
-    g_free(signed_event_json);
-    g_ptr_array_free(relay_urls, TRUE);
 
     if (ctx->callback) {
         if (success_count > 0) {

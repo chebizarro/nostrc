@@ -14,6 +14,7 @@
 #include <json.h>
 #include "nostr_relay.h"
 #include "nostr-event.h"
+#include "../util/utils.h"
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-report-dialog.ui"
 
@@ -266,6 +267,8 @@ static void report_context_free(ReportContext *ctx) {
   g_free(ctx);
 }
 
+static void report_publish_done(guint success_count, guint fail_count, gpointer user_data);
+
 /* Callback when unified signer service completes signing */
 static void on_sign_report_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   ReportContext *ctx = (ReportContext*)user_data;
@@ -319,54 +322,27 @@ static void on_sign_report_complete(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  /* Publish to each write relay */
-  guint success_count = 0;
-  guint fail_count = 0;
-
-  for (guint i = 0; i < write_relays->len; i++) {
-    const char *url = (const char*)g_ptr_array_index(write_relays, i);
-    if (!url || !*url) continue;
-
-    GNostrRelay *relay = gnostr_relay_new(url);
-    if (!relay) {
-      fail_count++;
-      continue;
-    }
-
-    GError *conn_err = NULL;
-    if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_clear_error(&conn_err);
-      g_object_unref(relay);
-      fail_count++;
-      continue;
-    }
-
-    GError *pub_err = NULL;
-    if (gnostr_relay_publish(relay, event, &pub_err)) {
-      success_count++;
-    } else {
-      g_clear_error(&pub_err);
-      fail_count++;
-    }
-    g_object_unref(relay);
-  }
-
-  g_debug("[NIP-56] Published report to %u/%u relays", success_count, write_relays->len);
-
-  /* Cleanup */
-  g_ptr_array_unref(write_relays);
-  nostr_event_free(event);
   g_free(signed_event_json);
 
-  /* Success */
-  show_toast(self, "Report submitted successfully");
-  g_signal_emit(self, signals[SIGNAL_REPORT_SENT], 0, ctx->event_id_hex, ctx->report_type);
-  set_processing(self, FALSE, NULL);
+  /* hq-gflmf: Move connect+publish loop to background thread */
+  gnostr_publish_to_relays_async(event, write_relays,
+    (GnostrRelayPublishDoneCallback)report_publish_done, ctx);
+}
 
-  /* Close dialog after short delay.
-   * nostrc-gdhp: Hold ref to prevent use-after-free if window is destroyed first. */
-  g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, (GSourceFunc)gtk_window_close,
-                     g_object_ref(GTK_WINDOW(self)), g_object_unref);
+static void report_publish_done(guint success_count, guint fail_count, gpointer user_data) {
+  ReportContext *ctx = (ReportContext *)user_data;
+  if (!ctx) return;
+
+  g_debug("[NIP-56] Published report to %u relays, failed %u", success_count, fail_count);
+
+  if (GNOSTR_IS_REPORT_DIALOG(ctx->self)) {
+    GnostrReportDialog *self = ctx->self;
+    show_toast(self, "Report submitted successfully");
+    g_signal_emit(self, signals[SIGNAL_REPORT_SENT], 0, ctx->event_id_hex, ctx->report_type);
+    set_processing(self, FALSE, NULL);
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, (GSourceFunc)gtk_window_close,
+                       g_object_ref(GTK_WINDOW(self)), g_object_unref);
+  }
 
   report_context_free(ctx);
 }

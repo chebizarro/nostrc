@@ -8,6 +8,7 @@
 #ifndef GNOSTR_RELAY_TEST_ONLY
 #include "nostr_pool.h"
 #include "nostr_relay.h"
+#include "utils.h"
 #endif
 
 /* -- Settings persistence (GKeyFile) -- */
@@ -1031,6 +1032,8 @@ static void nip65_publish_ctx_free(Nip65PublishCtx *ctx) {
   g_free(ctx);
 }
 
+static void nip65_publish_done(guint success_count, guint fail_count, gpointer user_data);
+
 static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   Nip65PublishCtx *ctx = (Nip65PublishCtx*)user_data;
   (void)source;
@@ -1067,11 +1070,10 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  /* Get relay URLs from config - defaults in GSettings schema */
-  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(relay_urls);
+  /* NIP-11: Pre-filter relay URLs based on cached relay info (hq-gflmf) */
+  GPtrArray *all_urls = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(all_urls);
 
-  /* Extract event properties for NIP-11 validation */
   const char *nip65_content = nostr_event_get_content(event);
   gint nip65_content_len = nip65_content ? (gint)strlen(nip65_content) : 0;
   NostrTags *nip65_tags = nostr_event_get_tags(event);
@@ -1079,78 +1081,54 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
   gint64 nip65_created_at = nostr_event_get_created_at(event);
   gssize nip65_serialized_len = signed_event_json ? (gssize)strlen(signed_event_json) : -1;
 
-  /* Publish to each relay */
-  guint success_count = 0;
-  guint fail_count = 0;
-  for (guint i = 0; i < relay_urls->len; i++) {
-    const gchar *url = (const gchar*)g_ptr_array_index(relay_urls, i);
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < all_urls->len; i++) {
+    const gchar *url = (const gchar*)g_ptr_array_index(all_urls, i);
+    gboolean valid = TRUE;
 
-    /* NIP-11: Check relay limitations before publishing */
     GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
     if (relay_info) {
       GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
         relay_info, nip65_content, nip65_content_len, nip65_tag_count, nip65_created_at, nip65_serialized_len);
-
       if (!gnostr_relay_validation_result_is_valid(validation)) {
         gchar *errors = gnostr_relay_validation_result_format_errors(validation);
         g_debug("nip65: skipping %s due to limit violations: %s", url, errors ? errors : "unknown");
         g_free(errors);
-        gnostr_relay_validation_result_free(validation);
-        gnostr_relay_info_free(relay_info);
-        fail_count++;
-        continue;
+        valid = FALSE;
       }
       gnostr_relay_validation_result_free(validation);
 
-      /* nostrc-23: Check auth_required / payment_required before publishing */
-      GnostrRelayValidationResult *pub_validation =
-          gnostr_relay_info_validate_for_publishing(relay_info);
-      if (!gnostr_relay_validation_result_is_valid(pub_validation)) {
-        gchar *errors = gnostr_relay_validation_result_format_errors(pub_validation);
-        g_debug("nip65: skipping %s due to publish policy: %s", url, errors ? errors : "unknown");
-        g_free(errors);
+      if (valid) {
+        /* nostrc-23: Check auth_required / payment_required before publishing */
+        GnostrRelayValidationResult *pub_validation =
+            gnostr_relay_info_validate_for_publishing(relay_info);
+        if (!gnostr_relay_validation_result_is_valid(pub_validation)) {
+          gchar *errors = gnostr_relay_validation_result_format_errors(pub_validation);
+          g_debug("nip65: skipping %s due to publish policy: %s", url, errors ? errors : "unknown");
+          g_free(errors);
+          valid = FALSE;
+        }
         gnostr_relay_validation_result_free(pub_validation);
-        gnostr_relay_info_free(relay_info);
-        fail_count++;
-        continue;
       }
-      gnostr_relay_validation_result_free(pub_validation);
       gnostr_relay_info_free(relay_info);
     }
 
-    GNostrRelay *relay = gnostr_relay_new(url);
-    if (!relay) {
-      fail_count++;
-      continue;
-    }
-
-    GError *conn_err = NULL;
-    if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_debug("nip65: failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
-      g_clear_error(&conn_err);
-      g_object_unref(relay);
-      fail_count++;
-      continue;
-    }
-
-    GError *pub_err = NULL;
-    if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_debug("nip65: published to %s", url);
-      success_count++;
-    } else {
-      g_debug("nip65: publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
-      g_clear_error(&pub_err);
-      fail_count++;
-    }
-    g_object_unref(relay);
+    if (valid)
+      g_ptr_array_add(relay_urls, g_strdup(url));
   }
+  g_ptr_array_free(all_urls, TRUE);
 
-  /* Cleanup */
-  nostr_event_free(event);
   g_free(signed_event_json);
-  g_ptr_array_free(relay_urls, TRUE);
+  gnostr_publish_to_relays_async(event, relay_urls,
+      nip65_publish_done, ctx);
+  /* event + relay_urls ownership transferred; ctx freed in callback */
+}
 
-  /* Notify callback */
+static void
+nip65_publish_done(guint success_count, guint fail_count, gpointer user_data)
+{
+  Nip65PublishCtx *ctx = (Nip65PublishCtx *)user_data;
+
   if (ctx->callback) {
     if (success_count > 0) {
       ctx->callback(TRUE, NULL, ctx->user_data);

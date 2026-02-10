@@ -18,6 +18,7 @@
 #include "nostr-tag.h"
 #include "nostr_pool.h"
 #include "../ipc/gnostr-signer-service.h"
+#include "utils.h"
 #endif
 
 /* Kind 3 = Contact List per NIP-02 */
@@ -608,6 +609,8 @@ gboolean gnostr_contact_list_remove(GnostrContactList *self,
 
 #ifndef GNOSTR_NIP02_CONTACTS_TEST_ONLY
 
+static void contacts_publish_done(guint success_count, guint fail_count, gpointer user_data);
+
 /* ---- Save (sign + publish) Implementation (nostrc-s0e0) ---- */
 
 typedef struct {
@@ -637,43 +640,19 @@ static void publish_contact_list_to_relays(ContactListSaveContext *ctx,
     /* Ingest into local NDB cache */
     storage_ndb_ingest_event_json(signed_event_json, NULL);
 
-    /* Get relay URLs and publish */
+    /* Publish to relays asynchronously (hq-gflmf) */
     GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
     gnostr_load_relays_into(relay_urls);
 
-    guint success_count = 0;
-    guint fail_count = 0;
+    gnostr_publish_to_relays_async(event, relay_urls,
+        contacts_publish_done, ctx);
+    /* event + relay_urls ownership transferred; ctx freed in callback */
+}
 
-    for (guint i = 0; i < relay_urls->len; i++) {
-        const gchar *url = (const gchar *)g_ptr_array_index(relay_urls, i);
-        GNostrRelay *relay = gnostr_relay_new(url);
-        if (!relay) { fail_count++; continue; }
-
-        GError *conn_err = NULL;
-        if (!gnostr_relay_connect(relay, &conn_err)) {
-            g_debug("nip02_contacts: failed to connect to %s: %s",
-                    url, conn_err ? conn_err->message : "unknown");
-            g_clear_error(&conn_err);
-            g_object_unref(relay);
-            fail_count++;
-            continue;
-        }
-
-        GError *pub_err = NULL;
-        if (gnostr_relay_publish(relay, event, &pub_err)) {
-            g_message("nip02_contacts: published kind 3 to %s", url);
-            success_count++;
-        } else {
-            g_debug("nip02_contacts: publish failed to %s: %s",
-                    url, pub_err ? pub_err->message : "unknown");
-            g_clear_error(&pub_err);
-            fail_count++;
-        }
-        g_object_unref(relay);
-    }
-
-    nostr_event_free(event);
-    g_ptr_array_free(relay_urls, TRUE);
+static void
+contacts_publish_done(guint success_count, guint fail_count, gpointer user_data)
+{
+    ContactListSaveContext *ctx = (ContactListSaveContext *)user_data;
 
     if (success_count > 0) {
         g_mutex_lock(&ctx->contact_list->lock);

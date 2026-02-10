@@ -18,6 +18,7 @@
 #include <json.h>
 /* Use gobject relay wrapper for GLib integration */
 #include "nostr_relay.h"
+#include "../util/utils.h"
 
 struct _GnostrChessPublishDialog {
     AdwDialog parent_instance;
@@ -308,6 +309,7 @@ on_cancel_clicked(GtkButton *btn, gpointer user_data)
 typedef struct {
     GnostrChessPublishDialog *self;  /* weak ref */
     gchar *pgn_content;               /* owned */
+    gchar *event_id;                   /* owned, for signal emission */
 } PublishContext;
 
 static void
@@ -315,8 +317,11 @@ publish_context_free(PublishContext *ctx)
 {
     if (!ctx) return;
     g_clear_pointer(&ctx->pgn_content, g_free);
+    g_clear_pointer(&ctx->event_id, g_free);
     g_free(ctx);
 }
+
+static void chess_publish_done(guint success_count, guint fail_count, gpointer user_data);
 
 /* Callback when signing completes */
 static void
@@ -378,61 +383,35 @@ on_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
         return;
     }
 
-    /* Publish to each write relay */
-    guint success_count = 0;
-    guint fail_count = 0;
-
-    for (guint i = 0; i < write_relays->len; i++) {
-        const char *url = (const char*)g_ptr_array_index(write_relays, i);
-        if (!url || !*url) continue;
-
-        GNostrRelay *relay = gnostr_relay_new(url);
-        if (!relay) {
-            fail_count++;
-            continue;
-        }
-
-        GError *conn_err = NULL;
-        if (!gnostr_relay_connect(relay, &conn_err)) {
-            g_clear_error(&conn_err);
-            g_object_unref(relay);
-            fail_count++;
-            continue;
-        }
-
-        GError *pub_err = NULL;
-        if (gnostr_relay_publish(relay, event, &pub_err)) {
-            success_count++;
-        } else {
-            g_clear_error(&pub_err);
-            fail_count++;
-        }
-        g_object_unref(relay);
-    }
-
-    g_debug("[NIP-64] Published chess game to %u/%u relays", success_count, write_relays->len);
-
-    /* Get event ID for signal */
-    char *event_id = nostr_event_get_id(event);
-
-    /* Cleanup */
-    g_ptr_array_unref(write_relays);
-    nostr_event_free(event);
+    /* hq-gflmf: Extract event ID before transferring ownership */
+    ctx->event_id = nostr_event_get_id(event);
     g_free(signed_event_json);
 
-    if (success_count > 0) {
-        show_toast(self, _("Chess game published to Nostr!"));
-        g_signal_emit(self, signals[SIGNAL_PUBLISHED], 0, event_id ? event_id : "");
+    /* Move connect+publish loop to background thread */
+    gnostr_publish_to_relays_async(event, write_relays,
+        (GnostrRelayPublishDoneCallback)chess_publish_done, ctx);
+}
 
-        /* Close dialog after short delay */
-        g_timeout_add(1000, (GSourceFunc)adw_dialog_close, ADW_DIALOG(self));
-    } else {
-        show_toast(self, _("Failed to publish to relays"));
-        g_signal_emit(self, signals[SIGNAL_PUBLISH_FAILED], 0, "Relay publish failed");
-        set_publishing_state(self, FALSE, NULL);
+static void chess_publish_done(guint success_count, guint fail_count, gpointer user_data) {
+    PublishContext *ctx = (PublishContext *)user_data;
+    if (!ctx) return;
+
+    g_debug("[NIP-64] Published chess game: %u succeeded, %u failed", success_count, fail_count);
+
+    if (GNOSTR_IS_CHESS_PUBLISH_DIALOG(ctx->self)) {
+        GnostrChessPublishDialog *self = ctx->self;
+        if (success_count > 0) {
+            show_toast(self, _("Chess game published to Nostr!"));
+            g_signal_emit(self, signals[SIGNAL_PUBLISHED], 0,
+                          ctx->event_id ? ctx->event_id : "");
+            g_timeout_add(1000, (GSourceFunc)adw_dialog_close, ADW_DIALOG(self));
+        } else {
+            show_toast(self, _("Failed to publish to relays"));
+            g_signal_emit(self, signals[SIGNAL_PUBLISH_FAILED], 0, "Relay publish failed");
+            set_publishing_state(self, FALSE, NULL);
+        }
     }
 
-    g_free(event_id);
     publish_context_free(ctx);
 }
 

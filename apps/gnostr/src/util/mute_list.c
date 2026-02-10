@@ -1058,6 +1058,8 @@ static void save_context_free(SaveContext *ctx) {
 
 #ifndef GNOSTR_MUTE_LIST_TEST_ONLY
 
+static void mute_list_publish_done(guint success_count, guint fail_count, gpointer user_data);
+
 /* Publish signed event to relays */
 static void publish_to_relays(SaveContext *ctx, const char *signed_event_json) {
     /* Parse the signed event */
@@ -1073,49 +1075,20 @@ static void publish_to_relays(SaveContext *ctx, const char *signed_event_json) {
         return;
     }
 
-    /* Get relay URLs */
+    /* Publish to relays asynchronously (hq-gflmf) */
     GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
     gnostr_load_relays_into(relay_urls);
 
-    /* Publish to relays */
-    guint success_count = 0;
-    guint fail_count = 0;
+    gnostr_publish_to_relays_async(event, relay_urls,
+        mute_list_publish_done, ctx);
+    /* event + relay_urls ownership transferred; ctx freed in callback */
+}
 
-    for (guint i = 0; i < relay_urls->len; i++) {
-        const gchar *url = (const gchar*)g_ptr_array_index(relay_urls, i);
-        GNostrRelay *relay = gnostr_relay_new(url);
-        if (!relay) {
-            fail_count++;
-            continue;
-        }
+static void
+mute_list_publish_done(guint success_count, guint fail_count, gpointer user_data)
+{
+    SaveContext *ctx = (SaveContext *)user_data;
 
-        GError *conn_err = NULL;
-        if (!gnostr_relay_connect(relay, &conn_err)) {
-            g_debug("mute_list: failed to connect to %s: %s",
-                    url, conn_err ? conn_err->message : "unknown");
-            g_clear_error(&conn_err);
-            g_object_unref(relay);
-            fail_count++;
-            continue;
-        }
-
-        GError *pub_err = NULL;
-        if (gnostr_relay_publish(relay, event, &pub_err)) {
-            g_message("mute_list: published to %s", url);
-            success_count++;
-        } else {
-            g_debug("mute_list: publish failed to %s: %s",
-                    url, pub_err ? pub_err->message : "unknown");
-            g_clear_error(&pub_err);
-            fail_count++;
-        }
-        g_object_unref(relay);
-    }
-
-    nostr_event_free(event);
-    g_ptr_array_free(relay_urls, TRUE);
-
-    /* Update state on success */
     if (success_count > 0) {
         g_mutex_lock(&ctx->mute_list->lock);
         ctx->mute_list->dirty = FALSE;

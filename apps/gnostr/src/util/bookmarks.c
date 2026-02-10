@@ -23,6 +23,7 @@
 #include "nostr-event.h"
 #include "nostr-relay.h"
 #include "nostr_pool.h"
+#include "utils.h"
 #endif
 
 /* Kind 10003 = Bookmark List per NIP-51 */
@@ -823,6 +824,7 @@ static char *build_private_tags_json(GnostrBookmarks *self) {
 /* Forward declarations */
 static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content);
 static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+static void bookmarks_publish_done(guint success_count, guint fail_count, gpointer user_data);
 
 /* Callback when private tags are encrypted */
 static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -963,7 +965,7 @@ static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpoin
         return;
     }
 
-    /* Get relay URLs for publishing */
+    /* Publish to relays asynchronously (hq-gflmf) */
     GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
     gnostr_get_write_relay_urls_into(relay_urls);
 
@@ -972,42 +974,17 @@ static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpoin
         gnostr_load_relays_into(relay_urls);
     }
 
-    /* Publish to each relay */
-    guint success_count = 0;
-    guint fail_count = 0;
+    g_free(signed_event_json);
+    gnostr_publish_to_relays_async(event, relay_urls,
+        bookmarks_publish_done, ctx);
+    /* event + relay_urls ownership transferred; ctx freed in callback */
+}
 
-    for (guint i = 0; i < relay_urls->len; i++) {
-        const char *url = (const char *)g_ptr_array_index(relay_urls, i);
-        GNostrRelay *relay = gnostr_relay_new(url);
-        if (!relay) {
-            fail_count++;
-            continue;
-        }
+static void
+bookmarks_publish_done(guint success_count, guint fail_count, gpointer user_data)
+{
+    SaveContext *ctx = (SaveContext *)user_data;
 
-        GError *conn_err = NULL;
-        if (!gnostr_relay_connect(relay, &conn_err)) {
-            g_debug("bookmarks: failed to connect to %s: %s",
-                    url, conn_err ? conn_err->message : "unknown");
-            g_clear_error(&conn_err);
-            g_object_unref(relay);
-            fail_count++;
-            continue;
-        }
-
-        GError *pub_err = NULL;
-        if (gnostr_relay_publish(relay, event, &pub_err)) {
-            g_message("bookmarks: published to %s", url);
-            success_count++;
-        } else {
-            g_debug("bookmarks: publish failed to %s: %s",
-                    url, pub_err ? pub_err->message : "unknown");
-            g_clear_error(&pub_err);
-            fail_count++;
-        }
-        g_object_unref(relay);
-    }
-
-    /* Update state on success */
     if (success_count > 0) {
         g_mutex_lock(&ctx->bookmarks->lock);
         ctx->bookmarks->dirty = FALSE;
@@ -1015,12 +992,6 @@ static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpoin
         g_mutex_unlock(&ctx->bookmarks->lock);
     }
 
-    /* Cleanup */
-    nostr_event_free(event);
-    g_free(signed_event_json);
-    g_ptr_array_free(relay_urls, TRUE);
-
-    /* Notify callback */
     if (ctx->callback) {
         if (success_count > 0) {
             ctx->callback(ctx->bookmarks, TRUE, NULL, ctx->user_data);

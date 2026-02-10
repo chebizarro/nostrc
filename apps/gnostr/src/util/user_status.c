@@ -529,6 +529,7 @@ gchar *gnostr_user_status_build_event_json(GnostrUserStatusType type,
 typedef struct {
   GnostrUserStatusType type;
   gchar *content;
+  gchar *signed_event_json;  /* stashed for cache update in publish callback */
   GnostrUserStatusPublishCallback callback;
   gpointer user_data;
 } StatusPublishContext;
@@ -536,8 +537,11 @@ typedef struct {
 static void status_publish_context_free(StatusPublishContext *ctx) {
   if (!ctx) return;
   g_free(ctx->content);
+  g_free(ctx->signed_event_json);
   g_free(ctx);
 }
+
+static void status_publish_done(guint success_count, guint fail_count, gpointer user_data);
 
 static void on_status_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   StatusPublishContext *ctx = user_data;
@@ -574,7 +578,7 @@ static void on_status_sign_complete(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  /* Get write relays and publish */
+  /* Get write relays and publish asynchronously (hq-gflmf) */
   GPtrArray *relay_urls = gnostr_get_write_relay_urls();
   if (relay_urls->len == 0) {
     g_warning("[NIP-38] No write relays configured");
@@ -588,49 +592,30 @@ static void on_status_sign_complete(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  guint success_count = 0;
-  guint fail_count = 0;
+  /* Stash signed JSON for cache update in callback */
+  ctx->signed_event_json = signed_event_json;
 
-  for (guint i = 0; i < relay_urls->len; i++) {
-    const gchar *url = g_ptr_array_index(relay_urls, i);
-    GNostrRelay *relay = gnostr_relay_new(url);
-    if (!relay) {
-      fail_count++;
-      continue;
-    }
+  gnostr_publish_to_relays_async(event, relay_urls,
+      status_publish_done, ctx);
+  /* event + relay_urls ownership transferred; ctx freed in callback */
+}
 
-    GError *conn_err = NULL;
-    if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_debug("[NIP-38] Failed to connect to %s: %s",
-              url, conn_err ? conn_err->message : "unknown");
-      g_clear_error(&conn_err);
-      g_object_unref(relay);
-      fail_count++;
-      continue;
-    }
-
-    GError *pub_err = NULL;
-    if (gnostr_relay_publish(relay, event, &pub_err)) {
-      success_count++;
-      g_debug("[NIP-38] Published status to %s", url);
-    } else {
-      g_debug("[NIP-38] Failed to publish to %s: %s",
-              url, pub_err ? pub_err->message : "unknown");
-      g_clear_error(&pub_err);
-      fail_count++;
-    }
-    g_object_unref(relay);
-  }
+static void
+status_publish_done(guint success_count, guint fail_count, gpointer user_data)
+{
+  StatusPublishContext *ctx = (StatusPublishContext *)user_data;
 
   /* Update cache with our own status */
-  GnostrUserStatus *status = gnostr_user_status_parse_event(signed_event_json);
-  if (status) {
-    gnostr_user_status_cache_set(status);
-    gnostr_user_status_free(status);
+  if (ctx->signed_event_json) {
+    GnostrUserStatus *status = gnostr_user_status_parse_event(ctx->signed_event_json);
+    if (status) {
+      gnostr_user_status_cache_set(status);
+      gnostr_user_status_free(status);
+    }
   }
 
   g_debug("[NIP-38] Published status to %u/%u relays",
-          success_count, relay_urls->len);
+          success_count, success_count + fail_count);
 
   if (ctx->callback) {
     if (success_count > 0) {
@@ -640,9 +625,6 @@ static void on_status_sign_complete(GObject *source, GAsyncResult *res, gpointer
     }
   }
 
-  nostr_event_free(event);
-  g_free(signed_event_json);
-  g_ptr_array_unref(relay_urls);
   status_publish_context_free(ctx);
 }
 

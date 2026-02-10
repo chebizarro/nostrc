@@ -1,8 +1,10 @@
 #include "utils.h"
 #include "nostr_nip19.h"
+#include "nostr_relay.h"
 #include "../storage_ndb.h"
 #include "nostr-filter.h"
 #include "json.h"
+#include <gio/gio.h>
 #include <string.h>
 
 #ifdef HAVE_SOUP3
@@ -208,4 +210,103 @@ gchar *gnostr_ensure_hex_pubkey(const char *input) {
   g_warning("gnostr_ensure_hex_pubkey: unrecognized format '%.*s...' (len=%zu)",
             10, input, strlen(input));
   return NULL;
+}
+
+/* hq-gflmf: Shared async relay publish — moves connect+publish loops off
+ * the main thread for all callers (bookmarks, pin_list, mute_list, etc.). */
+
+typedef struct {
+  NostrEvent *event;
+  GPtrArray  *relay_urls;
+  guint       success_count;
+  guint       fail_count;
+  GnostrRelayPublishDoneCallback callback;
+  gpointer    user_data;
+} RelayPublishWorkData;
+
+static void
+relay_publish_work_data_free(gpointer p)
+{
+  RelayPublishWorkData *d = (RelayPublishWorkData *)p;
+  if (!d) return;
+  if (d->event) nostr_event_free(d->event);
+  if (d->relay_urls) g_ptr_array_free(d->relay_urls, TRUE);
+  g_free(d);
+}
+
+static void
+relay_publish_worker(GTask *task, gpointer source_object,
+                     gpointer task_data, GCancellable *cancellable)
+{
+  (void)source_object; (void)cancellable;
+  RelayPublishWorkData *d = (RelayPublishWorkData *)task_data;
+
+  for (guint i = 0; i < d->relay_urls->len; i++) {
+    const gchar *url = (const gchar *)g_ptr_array_index(d->relay_urls, i);
+    GNostrRelay *relay = gnostr_relay_new(url);
+    if (!relay) { d->fail_count++; continue; }
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_debug("publish_async: connect failed %s: %s", url,
+              conn_err ? conn_err->message : "unknown");
+      g_clear_error(&conn_err);
+      g_object_unref(relay);
+      d->fail_count++;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, d->event, &pub_err)) {
+      d->success_count++;
+    } else {
+      g_debug("publish_async: publish failed %s: %s", url,
+              pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+      d->fail_count++;
+    }
+    g_object_unref(relay);
+  }
+
+  g_task_return_boolean(task, d->success_count > 0);
+}
+
+static void
+relay_publish_done(GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+  (void)source_object; (void)user_data;
+  GTask *task = G_TASK(res);
+  RelayPublishWorkData *d = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_task_propagate_boolean(task, &error);
+  g_clear_error(&error);
+
+  if (d->callback) {
+    d->callback(d->success_count, d->fail_count, d->user_data);
+  }
+}
+
+void
+gnostr_publish_to_relays_async(NostrEvent *event,
+                                GPtrArray *relay_urls,
+                                GnostrRelayPublishDoneCallback callback,
+                                gpointer user_data)
+{
+  if (!event || !relay_urls || relay_urls->len == 0) {
+    if (callback) callback(0, 0, user_data);
+    if (event) nostr_event_free(event);
+    if (relay_urls) g_ptr_array_free(relay_urls, TRUE);
+    return;
+  }
+
+  RelayPublishWorkData *d = g_new0(RelayPublishWorkData, 1);
+  d->event = event;
+  d->relay_urls = relay_urls;
+  d->callback = callback;
+  d->user_data = user_data;
+
+  GTask *task = g_task_new(NULL, NULL, relay_publish_done, NULL);
+  g_task_set_task_data(task, d, relay_publish_work_data_free);
+  g_task_run_in_thread(task, relay_publish_worker);
+  g_object_unref(task);
 }
