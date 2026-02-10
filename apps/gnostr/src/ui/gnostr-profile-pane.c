@@ -259,10 +259,13 @@ static void profile_media_item_class_init(ProfileMediaItemClass *klass) {
 
 static void profile_media_item_init(ProfileMediaItem *self) { (void)self; }
 
+/* hq-sk01n: thumb_url may be NULL for video items without an imeta thumb.
+ * Keep it NULL so bind_media_item skips downloading (the avatar downloader
+ * would fail trying to decode raw video data as an image). */
 static ProfileMediaItem *profile_media_item_new(const char *url, const char *thumb_url, const char *event_id_hex, const char *mime_type, gint64 created_at) {
   ProfileMediaItem *item = g_object_new(profile_media_item_get_type(),
                       "url", url,
-                      "thumb-url", thumb_url ? thumb_url : url,
+                      "thumb-url", thumb_url,
                       "event-id-hex", event_id_hex,
                       "mime-type", mime_type,
                       "created-at", created_at,
@@ -3263,6 +3266,21 @@ static gboolean is_video_url(const char *url) {
   return result;
 }
 
+/* hq-sk01n: Struct to carry URL + optional thumb URL from imeta tag extraction */
+typedef struct {
+  char *url;
+  char *thumb_url;  /* NULL if no thumb available (e.g. video without imeta thumb) */
+} MediaUrlInfo;
+
+static void media_url_info_free(gpointer data) {
+  MediaUrlInfo *info = data;
+  if (info) {
+    g_free(info->url);
+    g_free(info->thumb_url);
+    g_free(info);
+  }
+}
+
 static gboolean is_media_url(const char *url) {
   if (!url || !*url) return FALSE;
 
@@ -3343,9 +3361,12 @@ static GPtrArray *extract_media_urls_from_content(const char *content) {
   return urls;
 }
 
-/* Extract media URLs from event tags (imeta NIP-92 and r tags) */
+/* hq-sk01n: Extract media URLs from event tags (imeta NIP-92 and r tags).
+ * Returns GPtrArray of MediaUrlInfo* with url and optional thumb_url.
+ * For imeta tags, also extracts the "thumb <url>" field so video items
+ * can display an actual image thumbnail instead of fetching raw video data. */
 static GPtrArray *extract_media_urls_from_tags(NostrTags *tags) {
-  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  GPtrArray *urls = g_ptr_array_new_with_free_func(media_url_info_free);
   if (!tags) return urls;
 
   size_t tag_count = nostr_tags_size(tags);
@@ -3356,26 +3377,49 @@ static GPtrArray *extract_media_urls_from_tags(NostrTags *tags) {
     const char *key = nostr_tag_get_key(tag);
     if (!key) continue;
 
-    /* Handle imeta tags (NIP-92): ["imeta", "url <url>", "m <mimetype>", ...] */
+    /* Handle imeta tags (NIP-92): ["imeta", "url <url>", "m <mimetype>", "thumb <url>", ...] */
     if (g_strcmp0(key, "imeta") == 0) {
       size_t val_count = nostr_tag_size(tag);
+      const char *found_url = NULL;
+      const char *found_thumb = NULL;
+      /* Scan all fields in the imeta tag to find url and thumb */
       for (size_t j = 1; j < val_count; j++) {
         const char *val = nostr_tag_get(tag, j);
         if (!val) continue;
-        /* Look for "url <url>" format */
         if (g_str_has_prefix(val, "url ")) {
-          const char *url = val + 4; /* skip "url " */
-          if (*url && (g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://"))) {
-            g_ptr_array_add(urls, g_strdup(url));
+          const char *u = val + 4;
+          if (*u && (g_str_has_prefix(u, "http://") || g_str_has_prefix(u, "https://"))) {
+            found_url = u;
+          }
+        } else if (g_str_has_prefix(val, "thumb ")) {
+          const char *t = val + 6;
+          if (*t && (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://"))) {
+            found_thumb = t;
           }
         }
       }
+      if (found_url) {
+        MediaUrlInfo *info = g_new0(MediaUrlInfo, 1);
+        info->url = g_strdup(found_url);
+        /* For videos: use imeta thumb if available, else NULL (skip download).
+         * For images: use the URL itself as thumbnail. */
+        if (is_video_url(found_url)) {
+          info->thumb_url = found_thumb ? g_strdup(found_thumb) : NULL;
+        } else {
+          info->thumb_url = g_strdup(found_url);
+        }
+        g_ptr_array_add(urls, info);
+      }
     }
-    /* Handle r tags: ["r", "<url>"] */
+    /* Handle r tags: ["r", "<url>"] — no thumb field available */
     else if (g_strcmp0(key, "r") == 0) {
       const char *url = nostr_tag_get_value(tag);
       if (url && is_media_url(url)) {
-        g_ptr_array_add(urls, g_strdup(url));
+        MediaUrlInfo *info = g_new0(MediaUrlInfo, 1);
+        info->url = g_strdup(url);
+        /* r tags have no thumb; images use url, videos get NULL */
+        info->thumb_url = is_video_url(url) ? NULL : g_strdup(url);
+        g_ptr_array_add(urls, info);
       }
     }
   }
@@ -3516,9 +3560,12 @@ static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list
   if (play_icon)
     gtk_widget_set_visible(play_icon, media->is_video);
 
-  const char *url = media->thumb_url ? media->thumb_url : media->url;
+  /* hq-sk01n: Use thumb_url for the thumbnail download. For videos with an
+   * imeta "thumb" field, this points to an actual image. For videos without
+   * a thumb (from content text or r tags), thumb_url is NULL — skip
+   * downloading entirely and rely on the play icon overlay. */
+  const char *url = media->thumb_url;
   if (url && *url) {
-    /* Try to load from cache or download */
     GdkTexture *cached = gnostr_avatar_try_load_cached(url);
     if (cached) {
       gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(cached));
@@ -3528,6 +3575,8 @@ static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list
       gnostr_avatar_download_async(url, picture, NULL);
     }
   }
+  /* else: no thumbnail available (video without imeta thumb) — paintable
+   * stays NULL, the play icon overlay is sufficient visual indication. */
 }
 
 static void unbind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -3728,7 +3777,9 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
         if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
             !media_url_exists_in_model(self->media_model, norm_url)) {
           g_hash_table_add(seen_urls, g_strdup(norm_url));
-          const char *display_thumb = (thumb_url && *thumb_url) ? thumb_url : video_url;
+          /* hq-sk01n: Pass actual thumb or NULL — never fall back to video_url
+           * which would cause the avatar downloader to fetch raw video data */
+          const char *display_thumb = (thumb_url && *thumb_url) ? thumb_url : NULL;
           ProfileMediaItem *item = profile_media_item_new(
               video_url, display_thumb, id_hex, NULL, created_at);
           g_list_store_append(self->media_model, item);
@@ -3740,7 +3791,8 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
       continue;
     }
 
-    /* Extract media URLs from content */
+    /* hq-sk01n: Extract media URLs from content text. For video URLs found
+     * in content, pass NULL thumb_url (no imeta thumb available). */
     GPtrArray *content_urls = extract_media_urls_from_content(content);
     for (guint j = 0; j < content_urls->len; j++) {
       const char *url = g_ptr_array_index(content_urls, j);
@@ -3749,7 +3801,9 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
       if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
           !media_url_exists_in_model(self->media_model, norm_url)) {
         g_hash_table_add(seen_urls, g_strdup(norm_url));
-        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        /* hq-sk01n: videos from content have no thumb; images use url as thumb */
+        const char *thumb = is_video_url(url) ? NULL : url;
+        ProfileMediaItem *item = profile_media_item_new(url, thumb, id_hex, NULL, created_at);
         g_list_store_append(self->media_model, item);
         g_object_unref(item);
       }
@@ -3757,16 +3811,17 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
     }
     g_ptr_array_unref(content_urls);
 
-    /* Extract media URLs from imeta tags (NIP-92) and r tags */
+    /* hq-sk01n: Extract media URLs from imeta tags (NIP-92) and r tags.
+     * Now returns MediaUrlInfo structs with separate url and thumb_url. */
     GPtrArray *tag_urls = extract_media_urls_from_tags(tags);
     for (guint j = 0; j < tag_urls->len; j++) {
-      const char *url = g_ptr_array_index(tag_urls, j);
+      MediaUrlInfo *info = g_ptr_array_index(tag_urls, j);
       /* nostrc-tv0u: Deduplicate by normalized URL */
-      gchar *norm_url = normalize_media_url(url);
+      gchar *norm_url = normalize_media_url(info->url);
       if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
           !media_url_exists_in_model(self->media_model, norm_url)) {
         g_hash_table_add(seen_urls, g_strdup(norm_url));
-        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        ProfileMediaItem *item = profile_media_item_new(info->url, info->thumb_url, id_hex, NULL, created_at);
         g_list_store_append(self->media_model, item);
         g_object_unref(item);
       }
@@ -3894,7 +3949,8 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
         if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
             !media_url_exists_in_model(self->media_model, norm_url)) {
           g_hash_table_add(seen_urls, g_strdup(norm_url));
-          const char *display_thumb = (thumb_url && *thumb_url) ? thumb_url : video_url;
+          /* hq-sk01n: Pass actual thumb or NULL — never fall back to video_url */
+          const char *display_thumb = (thumb_url && *thumb_url) ? thumb_url : NULL;
           ProfileMediaItem *item = profile_media_item_new(
               video_url, display_thumb, id_hex, NULL, created_at);
           g_list_store_append(self->media_model, item);
@@ -3907,7 +3963,8 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
       continue;
     }
 
-    /* Extract media URLs from content */
+    /* hq-sk01n: Extract media URLs from content text.
+     * For video URLs from content, pass NULL thumb_url. */
     GPtrArray *content_urls = extract_media_urls_from_content(content);
     for (guint j = 0; j < content_urls->len; j++) {
       const char *url = g_ptr_array_index(content_urls, j);
@@ -3916,7 +3973,8 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
       if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
           !media_url_exists_in_model(self->media_model, norm_url)) {
         g_hash_table_add(seen_urls, g_strdup(norm_url));
-        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        const char *thumb = is_video_url(url) ? NULL : url;
+        ProfileMediaItem *item = profile_media_item_new(url, thumb, id_hex, NULL, created_at);
         g_list_store_append(self->media_model, item);
         g_object_unref(item);
         added++;
@@ -3925,16 +3983,17 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
     }
     g_ptr_array_unref(content_urls);
 
-    /* Extract media URLs from imeta tags (NIP-92) and r tags */
+    /* hq-sk01n: Extract media URLs from imeta tags (NIP-92) and r tags.
+     * Returns MediaUrlInfo with url + optional thumb_url. */
     GPtrArray *tag_urls = extract_media_urls_from_tags(tags);
     for (guint j = 0; j < tag_urls->len; j++) {
-      const char *url = g_ptr_array_index(tag_urls, j);
+      MediaUrlInfo *info = g_ptr_array_index(tag_urls, j);
       /* nostrc-tv0u: Deduplicate by normalized URL */
-      gchar *norm_url = normalize_media_url(url);
+      gchar *norm_url = normalize_media_url(info->url);
       if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
           !media_url_exists_in_model(self->media_model, norm_url)) {
         g_hash_table_add(seen_urls, g_strdup(norm_url));
-        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        ProfileMediaItem *item = profile_media_item_new(info->url, info->thumb_url, id_hex, NULL, created_at);
         g_list_store_append(self->media_model, item);
         g_object_unref(item);
         added++;
