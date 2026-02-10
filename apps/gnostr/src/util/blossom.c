@@ -302,15 +302,23 @@ static void on_upload_response(GObject *source, GAsyncResult *res, gpointer user
   /* Construct URL if not provided by server */
   if (!blob->url || !*blob->url) {
     g_free(blob->url);
-    /* Determine extension from mime type */
+    /* Use the ORIGINAL mime type (ctx->mime_type) for the extension, not
+     * blob->mime_type which may have been overwritten by the server response
+     * (e.g. server converts jpg→webp and reports type:"image/webp").
+     * If we used the server type, ALL uploads get .webp regardless of the
+     * original file type. */
     const char *ext = "";
-    if (blob->mime_type) {
-      if (g_str_has_suffix(blob->mime_type, "png")) ext = ".png";
-      else if (g_str_has_suffix(blob->mime_type, "jpeg")) ext = ".jpg";
-      else if (g_str_has_suffix(blob->mime_type, "gif")) ext = ".gif";
-      else if (g_str_has_suffix(blob->mime_type, "webp")) ext = ".webp";
-      else if (g_str_has_suffix(blob->mime_type, "mp4")) ext = ".mp4";
-      else if (g_str_has_suffix(blob->mime_type, "webm")) ext = ".webm";
+    const char *orig_mime = ctx->mime_type;
+    if (orig_mime) {
+      if (g_str_has_suffix(orig_mime, "png")) ext = ".png";
+      else if (g_str_has_suffix(orig_mime, "jpeg")) ext = ".jpg";
+      else if (g_str_has_suffix(orig_mime, "gif")) ext = ".gif";
+      else if (g_str_has_suffix(orig_mime, "webp")) ext = ".webp";
+      else if (g_str_has_suffix(orig_mime, "svg+xml")) ext = ".svg";
+      else if (g_str_has_suffix(orig_mime, "avif")) ext = ".avif";
+      else if (g_str_has_suffix(orig_mime, "mp4")) ext = ".mp4";
+      else if (g_str_has_suffix(orig_mime, "webm")) ext = ".webm";
+      else if (g_str_has_suffix(orig_mime, "quicktime")) ext = ".mov";
     }
     blob->url = g_strdup_printf("%s/%s%s", ctx->server_url, blob->sha256, ext);
   }
