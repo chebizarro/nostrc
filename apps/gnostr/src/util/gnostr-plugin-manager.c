@@ -698,7 +698,14 @@ gnostr_plugin_manager_get_plugin_settings_widget(GnostrPluginManager *manager,
   GnostrUIExtension *ui_ext = GNOSTR_UI_EXTENSION(exten);
   GtkWidget *widget = gnostr_ui_extension_create_settings_page(ui_ext, ctx);
 
-  g_object_unref(exten);
+  /* Keep extension alive while the widget exists — the settings page
+   * connects signal handlers with the extension as user_data. */
+  if (widget) {
+    g_object_set_data_full(G_OBJECT(widget), "plugin-extension",
+                           exten, g_object_unref);
+  } else {
+    g_object_unref(exten);
+  }
   return widget;
 #else
   (void)manager;

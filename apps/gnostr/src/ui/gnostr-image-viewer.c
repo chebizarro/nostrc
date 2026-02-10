@@ -695,16 +695,9 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
   }
   self->cancellable = g_cancellable_new();
 
-  /* Check avatar cache first — thumbnail may already be cached */
-  GdkTexture *cached = gnostr_avatar_try_load_cached(url);
-  if (cached) {
-    g_clear_object(&self->texture);
-    self->texture = cached;  /* Takes ownership */
-    if (GTK_IS_PICTURE(self->picture))
-      gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(cached));
-    zoom_to_fit(self);
-    return;
-  }
+  /* Always fetch the full-size image from the network.  The avatar cache
+   * stores downscaled thumbnails which are too small for the image viewer.
+   * DO NOT use gnostr_avatar_try_load_cached here. */
 
   /* Show loading spinner */
   gtk_widget_set_visible(self->spinner, TRUE);

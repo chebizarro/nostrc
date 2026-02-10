@@ -621,8 +621,13 @@ gnostr_picture_grid_show_overlay(GnostrPictureGrid *self,
   GnostrPictureMeta *meta = g_hash_table_lookup(self->pictures, event_id);
   if (!meta) return;
 
-  const char *url = gnostr_picture_get_thumbnail_url(meta);
-  if (!url) return;
+  /* Get all full-size image URLs for the viewer (NOT thumbnail URLs) */
+  size_t url_count = 0;
+  char **urls = gnostr_picture_get_all_image_urls(meta, &url_count);
+
+  /* Fallback to thumbnail only if no full-size URLs available */
+  const char *fallback_url = gnostr_picture_get_thumbnail_url(meta);
+  if ((!urls || url_count == 0) && !fallback_url) return;
 
   /* Get parent window for transient */
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
@@ -636,14 +641,12 @@ gnostr_picture_grid_show_overlay(GnostrPictureGrid *self,
                      G_CALLBACK(on_image_viewer_destroyed), self);
   }
 
-  /* Get all image URLs for gallery navigation */
-  size_t url_count = 0;
-  char **urls = gnostr_picture_get_all_image_urls(meta, &url_count);
-
   if (urls && url_count > 1) {
     gnostr_image_viewer_set_gallery(self->image_viewer, (const char * const *)urls, 0);
+  } else if (urls && url_count == 1) {
+    gnostr_image_viewer_set_image_url(self->image_viewer, urls[0]);
   } else {
-    gnostr_image_viewer_set_image_url(self->image_viewer, url);
+    gnostr_image_viewer_set_image_url(self->image_viewer, fallback_url);
   }
 
   gnostr_image_viewer_present(self->image_viewer);
