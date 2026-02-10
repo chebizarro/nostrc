@@ -2290,6 +2290,13 @@ static void on_picture_unmapped(GtkWidget *widget, gpointer user_data) {
 static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_the_object_was) {
   LazyLoadContext *ctx = (LazyLoadContext *)user_data;
   (void)where_the_object_was;
+  /* nostrc-img2: The picture is being finalized — GtkWidget::dispose already
+   * cleared all signal handlers.  NULL out picture so lazy_load_context_free
+   * skips the g_signal_handler_disconnect calls (which would warn
+   * "instance has no handler with id" for the map/unmap handlers). */
+  ctx->picture = NULL;
+  ctx->map_handler_id = 0;
+  ctx->unmap_handler_id = 0;
   lazy_load_context_free(ctx);
 }
 
