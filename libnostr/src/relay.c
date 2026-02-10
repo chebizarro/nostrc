@@ -319,17 +319,32 @@ static void relay_free_impl(NostrRelay *relay) {
         relay->connection = NULL;
         nsync_mu_unlock(&relay->priv->mutex);
     }
-    // Wait for worker goroutines to finish — workers may still be in-flight
-    // but will see connection == NULL and exit their write path safely.
+    /* nostrc-ws1: Close send/recv channels BEFORE waiting for workers.
+     * Without this, write_operations can block forever in
+     * go_channel_send(send_channel) if the channel is full and the LWS
+     * service thread is busy (e.g., synchronous DNS).  Closing the channels
+     * sets chan->closed and broadcasts cond_full/cond_empty, which unblocks
+     * any worker stuck in go_channel_send/receive.
+     *
+     * This is safe because:
+     * - relay->connection is already NULL (workers won't start new ops)
+     * - go_channel_close is idempotent (double-close is a no-op)
+     * - LWS callbacks check conn via opaque user data (NULL after
+     *   nostr_connection_close), so they won't access closed channels */
+    if (conn) {
+        if (conn->recv_channel) go_channel_close(conn->recv_channel);
+        if (conn->send_channel) go_channel_close(conn->send_channel);
+    }
+    // Wait for worker goroutines to finish — workers will now unblock
+    // quickly since channels are closed and context is canceled.
     if (relay->priv) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: waiting for workers\n");
         go_wait_group_wait(&relay->priv->workers);
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: workers joined\n");
         go_wait_group_destroy(&relay->priv->workers);
     }
-    // NOW safe to close connection — all workers have exited.
-    // Free connection-owned channels before closing (relay owns channel lifecycle,
-    // same as nostr_relay_close lines 1522-1525).
+    // NOW safe to free connection — all workers have exited.
+    // go_channel_free handles already-closed channels correctly.
     if (conn) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: closing network connection\n");
         if (conn->recv_channel) { go_channel_free(conn->recv_channel); conn->recv_channel = NULL; }
@@ -1532,17 +1547,18 @@ bool nostr_relay_close(NostrRelay *r, Error **err) {
         return false;
     }
 
-    // Ownership note:
-    // - nostr_connection_close() only closes channels; it MUST NOT free them.
-    // - nostr_relay_close() is responsible for freeing conn->recv_channel/send_channel
-    //   but ONLY AFTER all workers have exited to avoid use-after-free in go_select.
-    // Ensure workers exit before tearing down the connection to avoid UAF
-    // Workers observe r->connection == NULL and/or context cancel and then call done
+    /* nostrc-ws1: Close send/recv channels BEFORE waiting for workers to
+     * prevent deadlock.  write_operations can block in go_channel_send()
+     * on a full send_channel; closing it wakes the blocked sender.
+     * go_channel_close is idempotent — double-close in nostr_connection_close
+     * is safe. */
+    if (conn->recv_channel) go_channel_close(conn->recv_channel);
+    if (conn->send_channel) go_channel_close(conn->send_channel);
+    // Workers observe closed channels / NULL connection / canceled context → exit
     go_wait_group_wait(&r->priv->workers);
-    // Now that workers are done, it's safe to free connection-owned channels
+    // Now that workers are done, it's safe to free channels and connection.
     if (conn->recv_channel) { go_channel_free(conn->recv_channel); conn->recv_channel = NULL; }
     if (conn->send_channel) { go_channel_free(conn->send_channel); conn->send_channel = NULL; }
-    // Close the network connection outside the relay mutex
     nostr_connection_close(conn);
     return true;
 }

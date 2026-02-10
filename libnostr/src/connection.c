@@ -848,7 +848,6 @@ void nostr_connection_close(NostrConnection *conn) {
 }
 
 void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char *message, Error **err) {
-    (void)ctx; // currently unused here; selection handled at higher level
     if (!conn || !message) {
         if (err) {
             *err = new_error(1, "Invalid connection or message");
@@ -907,12 +906,16 @@ void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char 
     strcpy(msg->data, message);
     msg->length = message_length;
 
-    // Add the message to the send channel
-    if (go_channel_send(conn->send_channel, msg) != 0) {
+    /* nostrc-ws1: Use context-aware send so that relay shutdown (context
+     * cancellation) can unblock a worker stuck waiting for space in
+     * send_channel.  Previously ctx was ignored ((void)ctx), so
+     * write_operations could block forever in go_channel_send() while
+     * relay_free_impl waited for the worker → main-thread deadlock. */
+    if (go_channel_send_with_context(conn->send_channel, msg, ctx) != 0) {
         free(msg->data);
         free(msg);
         if (err) {
-            *err = new_error(1, "failed to enqueue message (channel closed)");
+            *err = new_error(1, "failed to enqueue message (channel closed or context canceled)");
         }
         return;
     }
