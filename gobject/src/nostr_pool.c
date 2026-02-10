@@ -723,11 +723,17 @@ query_thread_func(GTask         *task,
 
     /* nostrc-blk1: Drain events using protocol signals only — no arbitrary
      * timeouts.  Relays signal completion via EOSE, or the subscription
-     * gets closed/disconnected.  This is WebSocket + Nostr, not REST. */
+     * gets closed/disconnected.  This is WebSocket + Nostr, not REST.
+     *
+     * EOSE quorum: once a majority of relays have EOSE'd, start a short
+     * grace window (2s) for stragglers, then break.  One misbehaving relay
+     * must not block the entire query for minutes. */
     gint64 poll_start = g_get_monotonic_time();
     gint64 first_event_time = 0;
+    gint64 quorum_time = 0;        /* when quorum was first reached (0 = not yet) */
+    const gint64 QUORUM_GRACE_US = 2 * G_USEC_PER_SEC; /* 2s grace after quorum */
     guint poll_iterations = 0;
-    g_debug("pool_query_thread: polling for events (no timeout — protocol-driven)");
+    g_debug("pool_query_thread: polling for events (protocol-driven + EOSE quorum)");
 
     for (;;) {
         poll_iterations++;
@@ -799,6 +805,31 @@ query_thread_func(GTask         *task,
             fprintf(stderr, "[POOL_QUERY] all relays done after %lldms, %u results collected\n",
                     (long long)((g_get_monotonic_time() - poll_start) / 1000), data->results->len);
             break;
+        }
+
+        /* EOSE quorum: count how many relays have finished */
+        if (!all_done && items->len >= 2) {
+            guint n_eosed = 0;
+            for (guint i = 0; i < items->len; i++) {
+                RelaySubItem *item = g_ptr_array_index(items, i);
+                if (item && item->eosed) n_eosed++;
+            }
+            /* Quorum = strict majority (more than half) */
+            if (n_eosed > items->len / 2) {
+                if (quorum_time == 0) {
+                    quorum_time = g_get_monotonic_time();
+                    fprintf(stderr, "[POOL_QUERY] EOSE quorum reached (%u/%u relays) after %lldms — "
+                            "grace window %lldms for stragglers\n",
+                            n_eosed, items->len,
+                            (long long)((quorum_time - poll_start) / 1000),
+                            (long long)(QUORUM_GRACE_US / 1000));
+                } else if (g_get_monotonic_time() - quorum_time > QUORUM_GRACE_US) {
+                    fprintf(stderr, "[POOL_QUERY] quorum grace expired — %u/%u relays done, "
+                            "%u results, breaking\n",
+                            n_eosed, items->len, data->results->len);
+                    break;
+                }
+            }
         }
 
         if (!any_activity)

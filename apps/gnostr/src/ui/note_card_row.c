@@ -472,7 +472,30 @@ do_template_dispose:
    * gtk_label_set_attributes(), gtk_picture_set_paintable(), etc. can trigger
    * recalculation/rendering while the widget is being disposed, causing crashes.
    * GTK will handle all widget cleanup automatically during finalization. */
-  
+
+  /* nostrc-pgo1: Pango layout corruption fix — two-part defense:
+   *
+   * Part 1: Clear label text BEFORE template disposal. PangoLayout's internal
+   * line list can become corrupted (NULL entries) with complex markup containing
+   * ZWS characters and <a href> links. Clearing the text forces a fresh, clean
+   * PangoLayout. Without this, pango_layout_line_unref hits NULL during
+   * GtkLabel finalize → PangoLayout finalize cascade.
+   *
+   * Part 2: NULL the layout manager to prevent the BoxLayout from trying to
+   * measure remaining children while others are being disposed.
+   *
+   * Same pattern as OG preview widget fix (nostrc-14wu). */
+  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
+    gtk_label_set_text(GTK_LABEL(self->content_label), "");
+  }
+  if (self->lbl_display && GTK_IS_LABEL(self->lbl_display)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
+  }
+  if (self->lbl_handle && GTK_IS_LABEL(self->lbl_handle)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
+  }
+  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
