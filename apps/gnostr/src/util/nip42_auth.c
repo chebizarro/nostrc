@@ -18,14 +18,28 @@
 #include "nostr-event.h"
 #include <string.h>
 
-/* Context for synchronous wait on async signer result */
+/* Context for synchronous wait on async signer result.
+ * Heap-allocated because the async callback may fire AFTER the waiter
+ * times out and returns (stack-use-after-return if on stack). */
 typedef struct {
     GMutex mutex;
     GCond cond;
     gboolean done;
+    gboolean timed_out;  /* set by waiter on timeout; callback owns cleanup */
     char *signed_json;   /* result: signed event JSON (owned) */
     GError *error;       /* result: error if signing failed (owned) */
 } SyncSignCtx;
+
+static void
+sync_sign_ctx_free(SyncSignCtx *ctx)
+{
+    if (!ctx) return;
+    g_free(ctx->signed_json);
+    g_clear_error(&ctx->error);
+    g_mutex_clear(&ctx->mutex);
+    g_cond_clear(&ctx->cond);
+    g_free(ctx);
+}
 
 /* Callback for async signer - signals the waiting thread */
 static void
@@ -37,6 +51,12 @@ on_sign_complete(GnostrSignerService *service G_GNUC_UNUSED,
     SyncSignCtx *ctx = user_data;
 
     g_mutex_lock(&ctx->mutex);
+    if (ctx->timed_out) {
+        /* Waiter already returned — we own the ctx, free it */
+        g_mutex_unlock(&ctx->mutex);
+        sync_sign_ctx_free(ctx);
+        return;
+    }
     ctx->done = TRUE;
     if (error) {
         ctx->error = g_error_copy(error);
@@ -76,51 +96,46 @@ nip42_auth_sign_func(NostrEvent *event,
         return;
     }
 
-    /* Sign synchronously by running the main loop until the async callback fires */
-    SyncSignCtx ctx = { .done = FALSE };
-    g_mutex_init(&ctx.mutex);
-    g_cond_init(&ctx.cond);
+    /* Sign synchronously by waiting on an async callback.
+     * Heap-allocate ctx because the callback may fire AFTER timeout
+     * (stack-use-after-return if on stack — nostrc-auth1). */
+    SyncSignCtx *ctx = g_new0(SyncSignCtx, 1);
+    g_mutex_init(&ctx->mutex);
+    g_cond_init(&ctx->cond);
 
     gnostr_signer_service_sign_event_async(signer, unsigned_json, NULL,
-                                            on_sign_complete, &ctx);
+                                            on_sign_complete, ctx);
     free(unsigned_json);
 
-    /* Wait for the signer callback (runs main loop iterations to process it) */
-    g_mutex_lock(&ctx.mutex);
+    /* Wait for the signer callback */
+    g_mutex_lock(&ctx->mutex);
     gint64 deadline = g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND;
-    while (!ctx.done) {
-        if (!g_cond_wait_until(&ctx.cond, &ctx.mutex, deadline)) {
-            /* Timeout */
-            g_mutex_unlock(&ctx.mutex);
+    while (!ctx->done) {
+        if (!g_cond_wait_until(&ctx->cond, &ctx->mutex, deadline)) {
+            /* Timeout — transfer ownership to callback */
+            ctx->timed_out = TRUE;
+            g_mutex_unlock(&ctx->mutex);
             g_set_error(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
                         "NIP-42: signer timed out after 10s");
-            g_mutex_clear(&ctx.mutex);
-            g_cond_clear(&ctx.cond);
+            /* Do NOT free ctx — on_sign_complete will free when it fires */
             return;
         }
     }
-    g_mutex_unlock(&ctx.mutex);
+    g_mutex_unlock(&ctx->mutex);
 
-    if (ctx.error) {
-        if (error) *error = ctx.error;
-        else g_error_free(ctx.error);
-        g_free(ctx.signed_json);
-        g_mutex_clear(&ctx.mutex);
-        g_cond_clear(&ctx.cond);
+    if (ctx->error) {
+        if (error) *error = g_error_copy(ctx->error);
+        sync_sign_ctx_free(ctx);
         return;
     }
 
     /* Parse signed JSON to extract id, pubkey, sig and update the event */
-    if (ctx.signed_json) {
-        /* Extract fields from the signed JSON using the nostr JSON helpers.
-         * The signer returns a complete signed event JSON. We need to copy
-         * the id, pubkey, created_at, and sig fields back into the event. */
-        gchar *id = gnostr_json_get_string(ctx.signed_json, "id", NULL);
-        gchar *pubkey = gnostr_json_get_string(ctx.signed_json, "pubkey", NULL);
-        gchar *sig = gnostr_json_get_string(ctx.signed_json, "sig", NULL);
+    if (ctx->signed_json) {
+        gchar *id = gnostr_json_get_string(ctx->signed_json, "id", NULL);
+        gchar *pubkey = gnostr_json_get_string(ctx->signed_json, "pubkey", NULL);
+        gchar *sig = gnostr_json_get_string(ctx->signed_json, "sig", NULL);
 
         if (id && pubkey && sig) {
-            /* Transfer ownership - event takes these strings */
             if (event->id) free(event->id);
             event->id = id;
             if (event->pubkey) free(event->pubkey);
@@ -129,7 +144,7 @@ nip42_auth_sign_func(NostrEvent *event,
             event->sig = sig;
 
             GError *ts_err = NULL;
-            gint64 created_at = gnostr_json_get_int64(ctx.signed_json, "created_at", &ts_err);
+            gint64 created_at = gnostr_json_get_int64(ctx->signed_json, "created_at", &ts_err);
             if (!ts_err) event->created_at = created_at;
             g_clear_error(&ts_err);
 
@@ -143,9 +158,7 @@ nip42_auth_sign_func(NostrEvent *event,
         }
     }
 
-    g_free(ctx.signed_json);
-    g_mutex_clear(&ctx.mutex);
-    g_cond_clear(&ctx.cond);
+    sync_sign_ctx_free(ctx);
 }
 
 void
