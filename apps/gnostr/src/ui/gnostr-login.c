@@ -340,7 +340,9 @@ static gboolean on_nip46_pubkey_result(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-/* GTask thread function for get_public_key RPC */
+/* hq-9ohcb: GTask thread function for get_public_key RPC.
+ * Reuses self->nip46_session (already configured in on_nip46_connect_success)
+ * instead of creating a fresh session that would need to reconnect to the relay. */
 static void nip46_get_pubkey_thread(GTask *task,
                                     gpointer source_object,
                                     gpointer task_data,
@@ -351,37 +353,25 @@ static void nip46_get_pubkey_thread(GTask *task,
 
   g_message("[NIP46_LOGIN] *** STARTING get_public_key RPC THREAD ***");
   g_message("[NIP46_LOGIN] Context: signer_pubkey=%s", ctx->signer_pubkey_hex);
-  g_message("[NIP46_LOGIN] Context: nostrconnect_uri=%.60s...", ctx->nostrconnect_uri ? ctx->nostrconnect_uri : "(null)");
-  g_message("[NIP46_LOGIN] Context: nostrconnect_secret=%s", ctx->nostrconnect_secret ? "present" : "NULL");
 
-  /* Create a fresh session for the RPC call */
-  NostrNip46Session *rpc_session = nostr_nip46_client_new();
-  if (!rpc_session) {
-    g_warning("[NIP46_LOGIN] Failed to create RPC session");
+  /* Reuse the session configured in on_nip46_connect_success.
+   * This avoids creating a completely new relay connection that may stall. */
+  GnostrLogin *self = ctx->self;
+  NostrNip46Session *session = self ? self->nip46_session : NULL;
+  if (!session) {
+    g_warning("[NIP46_LOGIN] No session available for get_public_key RPC");
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "Failed to create RPC session");
+                            "No NIP-46 session available");
     return;
   }
 
-  /* Set up the session for RPC:
-   * - remote_pubkey = signer's communication pubkey
-   * - secret = our client private key
-   * - relays = from URI */
-  if (ctx->nostrconnect_uri) {
-    nostr_nip46_client_connect(rpc_session, ctx->nostrconnect_uri, NULL);
-  }
-  if (ctx->nostrconnect_secret) {
-    nostr_nip46_client_set_secret(rpc_session, ctx->nostrconnect_secret);
-  }
-  if (ctx->signer_pubkey_hex) {
-    nostr_nip46_client_set_signer_pubkey(rpc_session, ctx->signer_pubkey_hex);
-  }
-
-  /* Call get_public_key RPC to get the user's actual pubkey */
+  /* Call get_public_key RPC to get the user's actual pubkey.
+   * nip46_rpc_call will start the persistent pool on the session if needed. */
   char *user_pubkey_hex = NULL;
-  int rc = nostr_nip46_client_get_public_key_rpc(rpc_session, &user_pubkey_hex);
+  int rc = nostr_nip46_client_get_public_key_rpc(session, &user_pubkey_hex);
 
-  nostr_nip46_session_free(rpc_session);
+  /* Do NOT free the session — it's owned by self->nip46_session
+   * and will be used for future signing operations. */
 
   if (rc != 0 || !user_pubkey_hex) {
     g_warning("[NIP46_LOGIN] get_public_key RPC failed: %d", rc);
@@ -404,6 +394,12 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *result, gpointer u
   g_warning("[NIP46_LOGIN] on_get_pubkey_done: result=%s error=%s",
             user_pubkey_hex ? user_pubkey_hex : "(null)",
             error ? error->message : "(none)");
+
+  /* hq-9ohcb: Now that the RPC is done (success or failure), stop the
+   * listener that was kept alive during the get_public_key call. */
+  if (ctx->self && GNOSTR_IS_LOGIN(ctx->self)) {
+    stop_nip46_listener(ctx->self);
+  }
 
   if (error) {
     g_warning("[NIP46_LOGIN] get_public_key async failed: %s", error->message);
@@ -445,14 +441,13 @@ static gboolean on_nip46_connect_success(gpointer data) {
 
   GnostrLogin *self = ctx->self;
 
-  /* Stop the listener (we're not in the callback anymore) */
-  g_warning("[NIP46_LOGIN] About to stop listener...");
-  stop_nip46_listener(self);
-  g_warning("[NIP46_LOGIN] Listener stopped OK");
+  /* hq-9ohcb: Do NOT stop the listener here — the relay connection is alive
+   * and working. Tearing it down forces the get_public_key RPC to establish
+   * a fresh connection that may stall for 30s. The listener will be stopped
+   * in on_get_pubkey_done after the RPC completes. */
 
-  g_warning("[NIP46_LOGIN] Connect success!");
-  g_warning("[NIP46_LOGIN] Signer pubkey (communication): %s", ctx->signer_pubkey_hex);
-  g_warning("[NIP46_LOGIN] Spawning get_public_key RPC to get user's ACTUAL pubkey...");
+  g_debug("[NIP46_LOGIN] Connect success, signer pubkey: %s", ctx->signer_pubkey_hex);
+  g_debug("[NIP46_LOGIN] Spawning get_public_key RPC to get user's actual pubkey");
 
   /* Update status to show we're getting the pubkey */
   set_bunker_status(self, BUNKER_STATUS_CONNECTING,
@@ -472,8 +467,6 @@ static gboolean on_nip46_connect_success(gpointer data) {
     nostr_nip46_client_set_secret(self->nip46_session, ctx->nostrconnect_secret);
   }
   if (ctx->signer_pubkey_hex) {
-    fprintf(stderr, "\n*** LOGIN: SETTING SIGNER PUBKEY ON SESSION ***\n");
-    fprintf(stderr, "ctx->signer_pubkey_hex = %s\n", ctx->signer_pubkey_hex);
     nostr_nip46_client_set_signer_pubkey(self->nip46_session, ctx->signer_pubkey_hex);
   }
 
@@ -894,12 +887,19 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
   /* Store secret bytes for NIP-44 decryption later */
   memcpy(self->nostrconnect_secret_bytes, secret_bytes, 32);
 
-  /* Encode secret as hex for the URI query parameter */
+  /* hq-9ohcb: Generate SEPARATE random bytes for the URI ?secret= parameter.
+   * The URI secret is a handshake token, NOT the client private key.
+   * Using the same bytes for both leaks the client nsec in the QR code. */
+  uint8_t uri_secret_bytes[32];
+  for (int i = 0; i < 32; i++) {
+    uri_secret_bytes[i] = g_random_int_range(0, 256);
+  }
   char secret_hex[65];
   for (int i = 0; i < 32; i++) {
-    snprintf(secret_hex + i * 2, 3, "%02x", secret_bytes[i]);
+    snprintf(secret_hex + i * 2, 3, "%02x", uri_secret_bytes[i]);
   }
   secret_hex[64] = '\0';
+  memset(uri_secret_bytes, 0, sizeof(uri_secret_bytes));
 
   g_free(self->nostrconnect_secret);
   self->nostrconnect_secret = g_strdup(secret_hex);
