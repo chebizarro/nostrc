@@ -187,7 +187,37 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
 
 /* Internal: actual deallocation when refcount drops to 0 (nostrc-nr96) */
 static void subscription_destroy(NostrSubscription *sub) {
-    // Ensure lifecycle worker has exited (caller should have unsubscribed)
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] destroy: canceling context and closing channels before wait\n",
+                sub->priv->id ? sub->priv->id : "null");
+    }
+
+    /* hq-hbvok: Cancel context BEFORE wait to unblock the lifecycle worker.
+     * The lifecycle worker (nostr_subscription_start) blocks on
+     * go_channel_receive(done) — that channel only unblocks when the
+     * context is canceled.  Without this, go_wait_group_wait below hangs
+     * forever if nobody else canceled the context first. */
+    if (sub->priv->cancel) {
+        sub->priv->cancel(sub->context);
+        sub->priv->cancel = NULL;
+    }
+
+    /* hq-hbvok: Close channels BEFORE wait.  The lifecycle worker or
+     * dispatchers may be blocked on go_channel_send to these channels.
+     * go_channel_close is the ONLY way to unblock a stuck send.
+     * go_channel_close is idempotent — safe even if the lifecycle worker
+     * already closed the events channel. */
+    if (sub->end_of_stored_events) {
+        go_channel_close(sub->end_of_stored_events);
+    }
+    if (sub->closed_reason) {
+        go_channel_close(sub->closed_reason);
+    }
+    if (sub->events) {
+        go_channel_close(sub->events);
+    }
+
+    // Now wait for the lifecycle worker — it can proceed since channels are closed
     go_wait_group_wait(&sub->priv->wg);
 
     // Drain any remaining events from the channel to prevent memory leaks
