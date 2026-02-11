@@ -139,6 +139,29 @@ static gchar *format_mention_display(struct nostr_bech32 *bech32,
   }
 }
 
+/* nostrc-pgo5: Strip ZWS (U+200B = \xe2\x80\x8b) from strings to prevent
+ * Pango layout corruption.  ZWS in Pango markup corrupts the internal line
+ * list (NULL entries) causing SEGV in pango_layout_line_unref during
+ * gtk_widget_allocate.  Relay events can contain actual ZWS characters in
+ * their text, so we must strip them after rendering. */
+char *
+gnostr_strip_zwsp(char *str)
+{
+  if (!str) return str;
+  char *src = str, *dst = str;
+  while (*src) {
+    if ((unsigned char)src[0] == 0xe2 &&
+        (unsigned char)src[1] == 0x80 &&
+        (unsigned char)src[2] == 0x8b) {
+      src += 3;
+    } else {
+      *dst++ = *src++;
+    }
+  }
+  *dst = '\0';
+  return str;
+}
+
 char *gnostr_render_content_markup(const char *content, int content_len) {
   if (!content || !*content) return g_strdup("");
 
@@ -151,7 +174,7 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
      * nostrc-pgo4: Do NOT insert ZWS — it corrupts PangoLayout line lists
      * and causes SEGV in pango_renderer_draw_layout_line.
      * PANGO_WRAP_WORD_CHAR on the label handles wrapping. */
-    return g_markup_escape_text(content, content_len);
+    return gnostr_strip_zwsp(g_markup_escape_text(content, content_len));
   }
 
   GString *out = g_string_new("");
@@ -317,6 +340,7 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
   storage_ndb_blocks_free(blocks);
 
   gchar *result = g_string_free(out, FALSE);
+  gnostr_strip_zwsp(result);
   return (result && *result) ? result : (g_free(result), g_strdup(""));
 }
 

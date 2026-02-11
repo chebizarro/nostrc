@@ -3015,7 +3015,7 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
   if (tags_json && *tags_json) {
     gchar *subject = extract_subject_from_tags_json(tags_json);
     if (subject && self->subject_label && GTK_IS_LABEL(self->subject_label)) {
-      gchar *escaped = g_markup_escape_text(subject, -1);
+      gchar *escaped = gnostr_strip_zwsp(g_markup_escape_text(subject, -1));
       gtk_label_set_markup(GTK_LABEL(self->subject_label), escaped);
       gtk_widget_set_visible(self->subject_label, TRUE);
       g_free(escaped);
