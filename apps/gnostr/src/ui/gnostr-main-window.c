@@ -6326,7 +6326,7 @@ deferred_heavy_init_cb(gpointer data)
   /* LEGITIMATE TIMEOUTS - Periodic stats logging (60s intervals).
    * nostrc-b0h: Audited - diagnostic logging at fixed intervals is appropriate. */
   g_timeout_add_seconds(60, profile_provider_log_stats_cb, NULL);
-  g_timeout_add_seconds(60, memory_stats_cb, self);
+  g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 60, memory_stats_cb, g_object_ref(self), g_object_unref);
 
   /* Pre-populate/apply cached profiles here */
   prepopulate_all_profiles_from_cache(self);
@@ -8485,7 +8485,7 @@ static gboolean profile_dispatch_next(gpointer data) {
   if (self->profile_fetch_active >= self->profile_fetch_max_concurrent) {
     g_debug("profile_fetch: at max concurrent (%u/%u), deferring batch",
             self->profile_fetch_active, self->profile_fetch_max_concurrent);
-    g_timeout_add(500, profile_dispatch_next, g_object_ref(self));
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 500, profile_dispatch_next, g_object_ref(self), g_object_unref);
     return G_SOURCE_REMOVE;
   }
   
@@ -8525,7 +8525,7 @@ static gboolean profile_dispatch_next(gpointer data) {
              self->profile_fetch_queue->len);
       if (!self->profile_fetch_source_id) {
         guint delay = self->profile_fetch_debounce_ms ? self->profile_fetch_debounce_ms : 150;
-        self->profile_fetch_source_id = g_timeout_add(delay, profile_fetch_fire_idle, g_object_ref(self));
+        self->profile_fetch_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, delay, profile_fetch_fire_idle, g_object_ref(self), g_object_unref);
       } else {
         g_warning("profile_fetch: fetch already scheduled (source_id=%u)", self->profile_fetch_source_id);
       }
@@ -8769,7 +8769,7 @@ on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
     self->reconnection_in_progress = FALSE;
 
     if (self->health_check_source_id == 0) {
-        self->health_check_source_id = g_timeout_add_seconds(30, check_relay_health, self);
+        self->health_check_source_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 30, check_relay_health, g_object_ref(self), g_object_unref);
     }
 
     g_object_unref(self); /* balance ref from start_pool_live */

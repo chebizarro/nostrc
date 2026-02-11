@@ -809,6 +809,11 @@ static void gn_timeline_view_init(GnTimelineView *self) {
                                                    G_CALLBACK(on_vadjustment_changed), self);
 
   /* LEGITIMATE TIMEOUT - Periodic scroll position check for "at top" detection.
-   * nostrc-b0h: Audited - polling scroll position is appropriate for this use. */
-  self->scroll_check_id = g_timeout_add(100, check_scroll_position, self);
+   * nostrc-b0h: Audited - polling scroll position is appropriate for this use.
+   * nostrc-x52i: Use _full variant with g_object_ref/unref to prevent UAF if
+   * widget is destroyed while timer is pending. */
+  self->scroll_check_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 100,
+                                              check_scroll_position,
+                                              g_object_ref(self),
+                                              g_object_unref);
 }

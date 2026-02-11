@@ -430,9 +430,10 @@ static gboolean on_nip46_connect_success(gpointer data) {
 
   g_message("[NIP46_LOGIN] *** on_nip46_connect_success ENTERED ***");
 
+  /* nostrc-x52i: ctx is freed by the idle source's destroy notify
+   * (nip46_connect_ctx_free). Do NOT manually free it here. */
   if (!ctx || !ctx->self || !GNOSTR_IS_LOGIN(ctx->self)) {
     g_warning("[NIP46_LOGIN] on_nip46_connect_success: invalid context");
-    nip46_connect_ctx_free(ctx);
     return G_SOURCE_REMOVE;
   }
 
@@ -467,10 +468,19 @@ static gboolean on_nip46_connect_success(gpointer data) {
     nostr_nip46_client_set_signer_pubkey(self->nip46_session, ctx->signer_pubkey_hex);
   }
 
-  /* Spawn async task for get_public_key RPC
-   * We pass ownership of ctx to the task chain */
-  GTask *task = g_task_new(NULL, self->cancellable, on_get_pubkey_done, ctx);
-  g_task_set_task_data(task, ctx, NULL); /* ctx freed in callback, not here */
+  /* nostrc-x52i: Create a separate Nip46ConnectCtx for the GTask chain.
+   * The idle source's destroy notify will free the original ctx after this
+   * callback returns, so the task needs its own copy. */
+  Nip46ConnectCtx *task_ctx = g_new0(Nip46ConnectCtx, 1);
+  task_ctx->self = g_object_ref(self);
+  task_ctx->signer_pubkey_hex = g_strdup(ctx->signer_pubkey_hex);
+  task_ctx->nostrconnect_uri = g_strdup(ctx->nostrconnect_uri);
+  task_ctx->nostrconnect_secret = g_strdup(ctx->nostrconnect_secret);
+  task_ctx->relay_url = g_strdup(ctx->relay_url);
+
+  /* Spawn async task for get_public_key RPC */
+  GTask *task = g_task_new(NULL, self->cancellable, on_get_pubkey_done, task_ctx);
+  g_task_set_task_data(task, task_ctx, NULL); /* task_ctx freed in on_get_pubkey_done */
   g_task_run_in_thread(task, nip46_get_pubkey_thread);
   g_object_unref(task);
 
@@ -647,10 +657,20 @@ typedef struct {
   GnostrLogin *self;
 } CheckLocalCtx;
 
+/* nostrc-x52i: Destroy notify for CheckLocalCtx used by g_idle_add_full.
+ * Releases the GObject ref and frees the context struct. */
+static void check_local_ctx_free(gpointer data) {
+  CheckLocalCtx *ctx = data;
+  if (!ctx) return;
+  g_clear_object(&ctx->self);
+  g_free(ctx);
+}
+
 static void check_local_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   CheckLocalCtx *ctx = (CheckLocalCtx*)user_data;
   GnostrLogin *self = ctx->self;
-  g_free(ctx);
+  /* nostrc-x52i: ctx is now freed by the idle source's destroy notify
+   * (check_local_ctx_free), not here. */
   (void)source;
   (void)res;
 
@@ -719,16 +739,14 @@ static gboolean check_local_idle(gpointer user_data) {
   CheckLocalCtx *ctx = (CheckLocalCtx*)user_data;
   GnostrLogin *self = ctx->self;
 
+  /* nostrc-x52i: ctx and self ref are freed by the destroy notify
+   * (check_local_ctx_free) when the idle source is removed. */
   if (!GNOSTR_IS_LOGIN(self)) {
-    g_object_unref(self);
-    g_free(ctx);
     return G_SOURCE_REMOVE;
   }
 
   /* Do the D-Bus check synchronously (it's fast) then update UI */
   check_local_complete(NULL, NULL, ctx);
-  /* ctx is freed inside check_local_complete; release our ref */
-  g_object_unref(self);
   return G_SOURCE_REMOVE;
 }
 
@@ -752,17 +770,29 @@ static void check_local_signer_availability(GnostrLogin *self) {
 
   CheckLocalCtx *ctx = g_new0(CheckLocalCtx, 1);
   ctx->self = g_object_ref(self);
-  g_idle_add(check_local_idle, ctx);
+  /* nostrc-x52i: Use _full variant with destroy notify to ensure ctx and
+   * self ref are freed even if the idle source is removed before firing. */
+  g_idle_add_full(G_PRIORITY_DEFAULT, check_local_idle, ctx, check_local_ctx_free);
 }
 
 typedef struct {
   GnostrLogin *self;
 } LocalSignInCtx;
 
+/* nostrc-x52i: Destroy notify for LocalSignInCtx used by g_idle_add_full.
+ * Releases the GObject ref and frees the context struct. */
+static void local_sign_in_ctx_free(gpointer data) {
+  LocalSignInCtx *ctx = data;
+  if (!ctx) return;
+  g_clear_object(&ctx->self);
+  g_free(ctx);
+}
+
 static void local_sign_in_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   LocalSignInCtx *ctx = (LocalSignInCtx*)user_data;
   GnostrLogin *self = ctx->self;
-  g_free(ctx);
+  /* nostrc-x52i: ctx is now freed by the idle source's destroy notify
+   * (local_sign_in_ctx_free), not here. */
 
   if (!GNOSTR_IS_LOGIN(self)) return;
 
@@ -813,10 +843,9 @@ static void local_sign_in_complete(GObject *source, GAsyncResult *res, gpointer 
 
 static gboolean local_sign_in_idle(gpointer user_data) {
   LocalSignInCtx *ctx = (LocalSignInCtx*)user_data;
-  GnostrLogin *self = ctx->self;
+  /* nostrc-x52i: ctx and self ref are freed by the destroy notify
+   * (local_sign_in_ctx_free) when the idle source is removed. */
   local_sign_in_complete(NULL, NULL, ctx);
-  /* ctx is freed inside local_sign_in_complete; release our ref */
-  g_object_unref(self);
   return G_SOURCE_REMOVE;
 }
 
@@ -833,7 +862,9 @@ static void on_local_signer_clicked(GtkButton *btn, gpointer user_data) {
 
   LocalSignInCtx *ctx = g_new0(LocalSignInCtx, 1);
   ctx->self = g_object_ref(self);
-  g_idle_add(local_sign_in_idle, ctx);
+  /* nostrc-x52i: Use _full variant with destroy notify to ensure ctx and
+   * self ref are freed even if the idle source is removed before firing. */
+  g_idle_add_full(G_PRIORITY_DEFAULT, local_sign_in_idle, ctx, local_sign_in_ctx_free);
 }
 
 /* ---- Remote Signer (NIP-46) ---- */
@@ -1578,7 +1609,12 @@ static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json,
   }
 
   nostr_event_free(event);
-  g_idle_add_full(G_PRIORITY_HIGH, on_nip46_connect_success, ctx, NULL);
+  /* nostrc-x52i: Use nip46_connect_ctx_free as destroy notify so ctx (including
+   * its g_object_ref on self) is properly freed even if the idle source is
+   * removed before the callback fires. The callback creates a separate copy
+   * for the GTask chain it spawns. */
+  g_idle_add_full(G_PRIORITY_HIGH, on_nip46_connect_success, ctx,
+                  nip46_connect_ctx_free);
 }
 
 static void

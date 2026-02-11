@@ -2394,8 +2394,12 @@ static void on_picture_mapped(GtkWidget *widget, gpointer user_data) {
 
   /* LEGITIMATE TIMEOUT - Debounce lazy loading to avoid loading during fast scrolling.
    * 150ms delay ensures user has paused on this item before fetching media.
-   * nostrc-b0h: Audited - scroll debounce for lazy loading is appropriate. */
-  ctx->timeout_id = g_timeout_add(150, on_lazy_load_timeout, ctx);
+   * nostrc-b0h: Audited - scroll debounce for lazy loading is appropriate.
+   * nostrc-x52i: Use _full variant. Destroy notify is NULL because the
+   * LazyLoadContext lifecycle is managed by the picture widget's weak ref
+   * (on_lazy_load_picture_destroyed), NOT by this timer source. */
+  ctx->timeout_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 150,
+                                        on_lazy_load_timeout, ctx, NULL);
 }
 
 /* Called when the picture widget becomes hidden */

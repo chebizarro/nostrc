@@ -1795,7 +1795,12 @@ static void schedule_metadata_batch(GnostrTimelineView *self, GObject *item)
   g_ptr_array_add(self->pending_metadata_items, g_object_ref(item));
 
   if (self->metadata_batch_idle_id == 0) {
-    self->metadata_batch_idle_id = g_idle_add(metadata_batch_idle_cb, self);
+    /* nostrc-x52i: Use _full variant with g_object_ref/unref to prevent UAF if
+     * widget is destroyed while idle callback is pending. */
+    self->metadata_batch_idle_id = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                                                    metadata_batch_idle_cb,
+                                                    g_object_ref(self),
+                                                    g_object_unref);
   }
 }
 
@@ -2536,11 +2541,17 @@ static void on_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
   update_visible_range(self);
 
   /* LEGITIMATE TIMEOUT - Detect scroll idle for deferred operations.
-   * nostrc-b0h: Audited - scroll idle detection is appropriate. */
+   * nostrc-b0h: Audited - scroll idle detection is appropriate.
+   * nostrc-x52i: Use _full variant with g_object_ref/unref to prevent UAF if
+   * widget is destroyed while timeout is pending. */
   if (self->scroll_idle_id > 0) {
     g_source_remove(self->scroll_idle_id);
   }
-  self->scroll_idle_id = g_timeout_add(SCROLL_IDLE_TIMEOUT_MS, scroll_idle_timeout_cb, self);
+  self->scroll_idle_id = g_timeout_add_full(G_PRIORITY_DEFAULT,
+                                             SCROLL_IDLE_TIMEOUT_MS,
+                                             scroll_idle_timeout_cb,
+                                             g_object_ref(self),
+                                             g_object_unref);
 
   g_debug("[SCROLL] value=%.0f velocity=%.2f px/ms fast=%s",
           value, self->scroll_velocity, self->is_fast_scrolling ? "YES" : "no");
