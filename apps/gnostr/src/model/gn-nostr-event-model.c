@@ -2053,27 +2053,19 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
           continue;
         }
 
-        /* Gate by presence of kind-0 profile */
+        /* nostrc-gate: Opportunistically cache profile, never gate display */
         uint8_t pk32[32];
         if (!hex_to_bytes32(pubkey_hex, pk32)) {
           nostr_event_free(evt);
           continue;
         }
 
-        if (!db_has_profile_event_for_pubkey(txn, pk32)) {
-          /* Queue and request profile */
-          gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
-          if (first_pending) {
-            g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-          }
-          nostr_event_free(evt);
-          continue;
+        if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex)) {
+          /* Profile not in DB yet -- request background fetch */
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
         }
 
-        /* Cache profile + mark ready */
-        (void)profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
-
-        /* Parse thread info best-effort */
+        /* Always show note regardless of profile availability */
         char *root_id = NULL;
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
@@ -2257,14 +2249,14 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
       if (nk == 0) { nostr_event_free(evt); continue; }
       if (note_ptr && storage_ndb_note_is_expired(note_ptr)) { nostr_event_free(evt); continue; }
 
+      /* nostrc-gate: Always include entry; profile check is advisory only */
       uint8_t pk32[32];
       gboolean has_prof = FALSE;
       if (hex_to_bytes32(pk, pk32))
         has_prof = db_has_profile_event_for_pubkey(txn, pk32);
 
       char *root_id = NULL, *reply_id = NULL;
-      if (has_prof)
-        parse_nip10_tags(evt, &root_id, &reply_id);
+      parse_nip10_tags(evt, &root_id, &reply_id);
 
       RefreshEntry *e = g_new0(RefreshEntry, 1);
       e->note_key = nk;
@@ -2275,7 +2267,7 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
       e->has_profile = has_prof;
       g_ptr_array_add(entries, e);
 
-      if (has_prof) ready++;
+      ready++;
       if (ready >= snap->qlimit) { nostr_event_free(evt); break; }
 
       nostr_event_free(evt);
@@ -2313,20 +2305,20 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
     if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
       continue;
 
-    if (!e->has_profile) {
-      gboolean first = add_pending(self, e->pubkey_hex, e->note_key, e->created_at);
-      if (first)
-        g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
-      continue;
-    }
-
-    /* Ensure profile is in cache */
+    /* nostrc-gate: Opportunistically cache profile, never gate display */
     if (have_txn) {
       uint8_t pk32[32];
-      if (hex_to_bytes32(e->pubkey_hex, pk32))
-        (void)profile_cache_ensure_from_db(self, txn, pk32, e->pubkey_hex);
+      if (hex_to_bytes32(e->pubkey_hex, pk32)) {
+        if (!profile_cache_ensure_from_db(self, txn, pk32, e->pubkey_hex)) {
+          /* Profile not in DB yet -- request background fetch */
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
+        }
+      }
+    } else if (!e->has_profile) {
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
     }
 
+    /* Always show note regardless of profile availability */
     add_note_internal(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0);
     added++;
   }
@@ -2455,6 +2447,7 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
     return;
   }
 
+  /* nostrc-gate: Opportunistically cache profile, never gate display */
   uint8_t pk32[32];
   if (!hex_to_bytes32(pubkey_hex, pk32)) {
     storage_ndb_end_query(txn);
@@ -2462,17 +2455,12 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
     return;
   }
 
-  if (!db_has_profile_event_for_pubkey(txn, pk32)) {
-    gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
-    if (first_pending) g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-    storage_ndb_end_query(txn);
-    nostr_event_free(evt);
-    return;
+  if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex)) {
+    /* Profile not in DB yet -- request background fetch */
+    g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
   }
 
-  (void)profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
-
-  /* Best-effort thread parse */
+  /* Always show note regardless of profile availability */
   char *root_id = NULL;
   char *reply_id = NULL;
   parse_nip10_tags(evt, &root_id, &reply_id);
@@ -2638,24 +2626,19 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
           continue;
         }
 
+        /* nostrc-gate: Opportunistically cache profile, never gate display */
         uint8_t pk32[32];
         if (!hex_to_bytes32(pubkey_hex, pk32)) {
           nostr_event_free(evt);
           continue;
         }
 
-        /* Gate by presence of kind-0 profile */
-        if (!db_has_profile_event_for_pubkey(txn, pk32)) {
-          gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
-          if (first_pending) {
-            g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-          }
-          nostr_event_free(evt);
-          continue;
+        if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex)) {
+          /* Profile not in DB yet -- request background fetch */
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
         }
 
-        (void)profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
-
+        /* Always show note regardless of profile availability */
         char *root_id = NULL;
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
@@ -2837,24 +2820,19 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
           continue;
         }
 
+        /* nostrc-gate: Opportunistically cache profile, never gate display */
         uint8_t pk32[32];
         if (!hex_to_bytes32(pubkey_hex, pk32)) {
           nostr_event_free(evt);
           continue;
         }
 
-        /* Gate by presence of kind-0 profile */
-        if (!db_has_profile_event_for_pubkey(txn, pk32)) {
-          gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
-          if (first_pending) {
-            g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-          }
-          nostr_event_free(evt);
-          continue;
+        if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex)) {
+          /* Profile not in DB yet -- request background fetch */
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
         }
 
-        (void)profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
-
+        /* Always show note regardless of profile availability */
         char *root_id = NULL;
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
