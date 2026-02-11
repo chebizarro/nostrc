@@ -336,6 +336,26 @@ gnostr_repo_browser_dispose(GObject *object)
 {
   GnostrRepoBrowser *self = GNOSTR_REPO_BROWSER(object);
 
+  /* nostrc-b3b0: Call prepare_for_unbind on all NoteCardRow children BEFORE
+   * the widget tree is torn down. Without this, NoteCardRow dispose runs
+   * with live PangoLayout refs to a freed PangoContext -> Pango SEGV.
+   * The NoteCardRow hierarchy is: ListBoxRow -> Box -> NoteCardRow. */
+  if (self->repo_list) {
+    GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(self->repo_list));
+    while (row != NULL) {
+      GtkWidget *next = gtk_widget_get_next_sibling(row);
+      if (GTK_IS_LIST_BOX_ROW(row)) {
+        GtkWidget *container = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(row));
+        if (container && GTK_IS_BOX(container)) {
+          GtkWidget *first = gtk_widget_get_first_child(container);
+          if (first && GNOSTR_IS_NOTE_CARD_ROW(first))
+            gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(first));
+        }
+      }
+      row = next;
+    }
+  }
+
   g_clear_pointer(&self->repositories, g_hash_table_unref);
   g_clear_pointer(&self->filter_text, g_free);
   g_clear_pointer(&self->selected_id, g_free);

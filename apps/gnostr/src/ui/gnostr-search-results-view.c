@@ -272,6 +272,38 @@ bind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
     g_object_unref(item);
 }
 
+/* Row factory unbind callback — nostrc-b3b0: prevent Pango SEGV on model clear.
+ * When g_list_store_remove_all is called, GTK unbinds rows before disposal.
+ * Without this, NoteCardRow dispose runs with live PangoLayout refs → SEGV. */
+static void
+unbind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GtkWidget *child = gtk_list_item_get_child(list_item);
+    if (child && GNOSTR_IS_NOTE_CARD_ROW(child)) {
+        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(child));
+    }
+}
+
+/* Row factory teardown callback — nostrc-b3b0: safety net for mass removal.
+ * During g_list_store_remove_all, GTK may teardown rows whose unbind already
+ * ran (prepare_for_unbind is idempotent via the disposed flag). But if teardown
+ * fires without a prior unbind (edge case during rapid model changes), this
+ * prevents Pango SEGV from uncleaned PangoLayouts. */
+static void
+teardown_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GtkWidget *child = gtk_list_item_get_child(list_item);
+    if (child && GNOSTR_IS_NOTE_CARD_ROW(child)) {
+        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(child));
+    }
+}
+
 /* Row activation handler */
 static void
 on_row_activated(GtkListView *list_view, guint position, gpointer user_data)
@@ -353,6 +385,8 @@ gnostr_search_results_view_init(GnostrSearchResultsView *self)
     GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
     g_signal_connect(factory, "setup", G_CALLBACK(setup_result_row), self);
     g_signal_connect(factory, "bind", G_CALLBACK(bind_result_row), self);
+    g_signal_connect(factory, "unbind", G_CALLBACK(unbind_result_row), self);
+    g_signal_connect(factory, "teardown", G_CALLBACK(teardown_result_row), self);
     gtk_list_view_set_factory(self->results_list, factory);
     gtk_list_view_set_model(self->results_list, GTK_SELECTION_MODEL(self->selection));
     g_object_unref(factory);
