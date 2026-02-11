@@ -1327,7 +1327,7 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     return;
   }
 
-  guint added = 0, filtered = 0, pending = 0, no_note = 0;
+  guint added = 0, filtered = 0, no_note = 0;
 
   for (guint i = 0; i < n_keys; i++) {
     uint64_t note_key = note_keys[i];
@@ -1358,38 +1358,23 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     char *reply_id = NULL;
     storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
 
-    if (author_is_ready(self, pubkey_hex)) {
-      /* nostrc-slot: Pre-cache item while txn is open to avoid new transaction later */
-      precache_item_from_note(self, note_key, created_at, note);
-      add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-      g_free(root_id);
-      g_free(reply_id);
-      added++;
-      continue;
+    /* nostrc-gate: Opportunistically cache profile, but never gate display on it.
+     * Notes display immediately with pubkey prefix as fallback; profile info
+     * (name, avatar) updates reactively when it arrives from relays. */
+    if (!author_is_ready(self, pubkey_hex)) {
+      GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
+      if (!p) {
+        /* Profile not in DB yet — request background fetch */
+        g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
+      }
     }
 
-    /* Check DB for an existing profile and cache/mark ready if present */
-    GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
-    if (p) {
-      (void)p;
-      /* nostrc-slot: Pre-cache item while txn is open to avoid new transaction later */
-      precache_item_from_note(self, note_key, created_at, note);
-      add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-      g_free(root_id);
-      g_free(reply_id);
-      added++;
-      continue;
-    }
-
+    /* Always show the note regardless of profile availability */
+    precache_item_from_note(self, note_key, created_at, note);
+    add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
     g_free(root_id);
     g_free(reply_id);
-
-    /* Still not ready: queue note and request profile fetch */
-    gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
-    if (first_pending) {
-      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-    }
-    pending++;
+    added++;
   }
 
   storage_ndb_end_query(txn);
