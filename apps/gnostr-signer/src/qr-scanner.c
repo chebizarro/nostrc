@@ -274,6 +274,13 @@ static gboolean is_type_accepted(GnQrScanner *self, GnQrContentType type) {
 }
 
 /* Process a frame for QR codes */
+static gboolean process_frame(GnQrScanner *self);
+
+/* Proper GSourceFunc wrapper for process_frame (ABI-safe) */
+static gboolean process_frame_timeout_cb(gpointer data) {
+  return process_frame(GN_QR_SCANNER(data));
+}
+
 static gboolean process_frame(GnQrScanner *self) {
   if (self->state != SCANNER_STATE_RUNNING) {
     return G_SOURCE_REMOVE;
@@ -412,7 +419,7 @@ gboolean gn_qr_scanner_start(GnQrScanner *self,
   }
 
   /* Start frame processing timer (10 FPS for scanning) */
-  self->scan_timer_id = g_timeout_add(100, (GSourceFunc)process_frame, self);
+  self->scan_timer_id = g_timeout_add(100, process_frame_timeout_cb, self);
 
   /* Show preview */
   gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "preview");

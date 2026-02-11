@@ -917,6 +917,12 @@ compute_ai_move_thread(GTask *task,
 /**
  * Callback when AI move computation completes
  */
+/* Proper GSourceFunc wrapper for request_ai_move (ABI-safe) */
+static gboolean request_ai_move_timeout_cb(gpointer data) {
+    gnostr_chess_session_request_ai_move(GNOSTR_CHESS_SESSION(data));
+    return G_SOURCE_REMOVE;
+}
+
 static void
 on_ai_move_complete(GObject *source_object,
                     GAsyncResult *res,
@@ -996,7 +1002,7 @@ on_ai_move_complete(GObject *source_object,
             /* Add a small delay to prevent blocking the main loop.
              * nostrc-gdhp: ref-holding timer prevents use-after-free. */
             g_timeout_add_full(G_PRIORITY_DEFAULT, 100,
-                               (GSourceFunc)gnostr_chess_session_request_ai_move,
+                               request_ai_move_timeout_cb,
                                g_object_ref(self), g_object_unref);
         }
     }

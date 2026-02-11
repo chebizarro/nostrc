@@ -307,7 +307,8 @@ static void on_copy_seed_clicked(GtkButton *btn, gpointer user_data) {
       g_timeout_add_seconds(60, clear_clipboard_timeout, display);
 
       /* Restore button after 3 seconds */
-      g_timeout_add_seconds(3, (GSourceFunc)restore_copy_button_cb, self);
+      g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 3, restore_copy_button_cb,
+                                 g_object_ref(self), g_object_unref);
     }
 
     g_debug("Seed phrase copied to clipboard");

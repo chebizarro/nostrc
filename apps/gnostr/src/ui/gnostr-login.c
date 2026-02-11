@@ -720,12 +720,15 @@ static gboolean check_local_idle(gpointer user_data) {
   GnostrLogin *self = ctx->self;
 
   if (!GNOSTR_IS_LOGIN(self)) {
+    g_object_unref(self);
     g_free(ctx);
     return G_SOURCE_REMOVE;
   }
 
   /* Do the D-Bus check synchronously (it's fast) then update UI */
   check_local_complete(NULL, NULL, ctx);
+  /* ctx is freed inside check_local_complete; release our ref */
+  g_object_unref(self);
   return G_SOURCE_REMOVE;
 }
 
@@ -748,7 +751,7 @@ static void check_local_signer_availability(GnostrLogin *self) {
   gtk_label_set_text(GTK_LABEL(self->lbl_local_status), "Checking...");
 
   CheckLocalCtx *ctx = g_new0(CheckLocalCtx, 1);
-  ctx->self = self;
+  ctx->self = g_object_ref(self);
   g_idle_add(check_local_idle, ctx);
 }
 
@@ -810,7 +813,10 @@ static void local_sign_in_complete(GObject *source, GAsyncResult *res, gpointer 
 
 static gboolean local_sign_in_idle(gpointer user_data) {
   LocalSignInCtx *ctx = (LocalSignInCtx*)user_data;
+  GnostrLogin *self = ctx->self;
   local_sign_in_complete(NULL, NULL, ctx);
+  /* ctx is freed inside local_sign_in_complete; release our ref */
+  g_object_unref(self);
   return G_SOURCE_REMOVE;
 }
 
@@ -826,7 +832,7 @@ static void on_local_signer_clicked(GtkButton *btn, gpointer user_data) {
   gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
 
   LocalSignInCtx *ctx = g_new0(LocalSignInCtx, 1);
-  ctx->self = self;
+  ctx->self = g_object_ref(self);
   g_idle_add(local_sign_in_idle, ctx);
 }
 

@@ -529,6 +529,13 @@ static gboolean profile_apply_on_main(gpointer data) {
 #define SEEN_TEXTS_MAX 10000
 #define LIKED_EVENTS_MAX 5000
 
+/* Proper GSourceFunc wrapper for gnostr_profile_provider_log_stats (ABI-safe) */
+static gboolean profile_provider_log_stats_cb(gpointer data) {
+  (void)data;
+  gnostr_profile_provider_log_stats();
+  return G_SOURCE_CONTINUE;
+}
+
 static gboolean memory_stats_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_CONTINUE;
@@ -622,7 +629,7 @@ schedule_only:
   } else {
     guint delay = self->profile_fetch_debounce_ms ? self->profile_fetch_debounce_ms : 150;
     GnostrMainWindow *ref = g_object_ref(self);
-    self->profile_fetch_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, delay, (GSourceFunc)profile_fetch_fire_idle, ref, (GDestroyNotify)g_object_unref);
+    self->profile_fetch_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, delay, profile_fetch_fire_idle, ref, g_object_unref);
   }
 }
 
@@ -5880,8 +5887,8 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
             self->profile_batches ? self->profile_batches->len : 0,
             self->profile_fetch_active, self->profile_fetch_max_concurrent);
     g_idle_add_full(G_PRIORITY_DEFAULT,
-                    (GSourceFunc)profile_dispatch_next, g_object_ref(self), 
-                    (GDestroyNotify)g_object_unref);
+                    profile_dispatch_next, g_object_ref(self),
+                    g_object_unref);
     /* NOTE: Don't unref self here - ctx->self holds the reference and will be freed below */
   } else {
     g_warning("profile_fetch: cannot dispatch next batch - invalid context");
@@ -6146,7 +6153,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   gnostr_nwc_service_load_from_settings(gnostr_nwc_service_get_default());
   /* LEGITIMATE TIMEOUTS - Periodic stats logging (60s intervals).
    * nostrc-b0h: Audited - diagnostic logging at fixed intervals is appropriate. */
-  g_timeout_add_seconds(60, (GSourceFunc)gnostr_profile_provider_log_stats, NULL);
+  g_timeout_add_seconds(60, profile_provider_log_stats_cb, NULL);
   g_timeout_add_seconds(60, memory_stats_cb, self);
   /* Avatar texture cache is managed by gnostr-avatar-cache module (initialized on first use) */
   /* Initialize liked events cache (NIP-25 reactions) */
@@ -6353,9 +6360,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->backfill_interval_sec > 0) {
     self->backfill_source_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT,
         self->backfill_interval_sec,
-        (GSourceFunc)periodic_backfill_cb,
+        periodic_backfill_cb,
         g_object_ref(self),
-        (GDestroyNotify)g_object_unref);
+        g_object_unref);
   }
 
   /* DB-only: startup profile prepopulation and backfill are handled above in init */

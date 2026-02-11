@@ -337,6 +337,12 @@ static void profile_publish_context_free(ProfilePublishContext *ctx) {
 }
 
 /* Callback when unified signer service completes signing for profile */
+/* Proper GSourceFunc wrapper for gtk_window_close (ABI-safe) */
+static gboolean close_window_timeout_cb(gpointer data) {
+  gtk_window_close(GTK_WINDOW(data));
+  return G_SOURCE_REMOVE;
+}
+
 static void on_profile_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   ProfilePublishContext *ctx = (ProfilePublishContext *)user_data;
   (void)source;
@@ -377,7 +383,7 @@ static void on_profile_sign_complete(GObject *source, GAsyncResult *res, gpointe
 
   /* Close dialog after short delay.
    * nostrc-gdhp: Hold ref to prevent use-after-free if window is destroyed first. */
-  g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, (GSourceFunc)gtk_window_close,
+  g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, close_window_timeout_cb,
                      g_object_ref(self), g_object_unref);
 
   /* Cleanup */

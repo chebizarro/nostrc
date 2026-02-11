@@ -585,8 +585,10 @@ static gpointer nwc_response_poll_thread(gpointer user_data) {
   GnostrNwcService *self = ctx->service;
 
   if (!ctx->relay || !ctx->sub) {
-    g_main_context_invoke(NULL, (GSourceFunc)g_task_return_new_error,
-                          ctx->task);
+    g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "NWC relay or subscription not available");
+    g_object_unref(ctx->task);
+    nwc_request_context_free(ctx);
     return NULL;
   }
 

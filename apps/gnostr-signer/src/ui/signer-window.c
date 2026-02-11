@@ -509,7 +509,8 @@ static void signer_window_init(SignerWindow *self) {
   /* Schedule deferred page data initialization using g_idle_add
    * This runs after the window is displayed, improving perceived startup time */
   if (!self->deferred_init_scheduled) {
-    g_idle_add(signer_window_deferred_page_init, self);
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, signer_window_deferred_page_init,
+                    g_object_ref(self), g_object_unref);
     self->deferred_init_scheduled = TRUE;
   }
 

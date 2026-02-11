@@ -67,7 +67,8 @@ static void copy_to_clipboard(SheetQrDisplay *self) {
   gtk_widget_add_css_class(self->btn_copy, "success");
 
   /* Reset after delay */
-  g_timeout_add_seconds(2, reset_copy_button_cb, self);
+  g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 2, reset_copy_button_cb,
+                             g_object_ref(self), g_object_unref);
 }
 
 /* Button handlers */

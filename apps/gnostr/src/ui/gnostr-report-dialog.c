@@ -348,6 +348,12 @@ static void on_sign_report_complete(GObject *source, GAsyncResult *res, gpointer
     report_publish_done, ctx);
 }
 
+/* Proper GSourceFunc wrapper for gtk_window_close (ABI-safe) */
+static gboolean close_window_timeout_cb(gpointer data) {
+  gtk_window_close(GTK_WINDOW(data));
+  return G_SOURCE_REMOVE;
+}
+
 static void report_publish_done(guint success_count, guint fail_count, gpointer user_data) {
   ReportContext *ctx = (ReportContext *)user_data;
   if (!ctx) return;
@@ -366,7 +372,7 @@ static void report_publish_done(guint success_count, guint fail_count, gpointer 
     if (success_count > 0) {
       show_toast(self, "Report submitted successfully");
       g_signal_emit(self, signals[SIGNAL_REPORT_SENT], 0, ctx->event_id_hex, ctx->report_type);
-      g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, (GSourceFunc)gtk_window_close,
+      g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, close_window_timeout_cb,
                          g_object_ref(GTK_WINDOW(self)), g_object_unref);
     } else {
       show_toast(self, "Failed to submit report");

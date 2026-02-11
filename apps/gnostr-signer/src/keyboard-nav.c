@@ -14,6 +14,13 @@
 #include "keyboard-nav.h"
 #include <gdk/gdkkeysyms.h>
 
+/* Proper GSourceOnceFunc wrapper for gtk_widget_grab_focus (ABI-safe, ref-holding) */
+static void grab_focus_once_cb(gpointer data) {
+  GtkWidget *widget = GTK_WIDGET(data);
+  gtk_widget_grab_focus(widget);
+  g_object_unref(widget);
+}
+
 /* ======== Dialog Focus Management ======== */
 
 typedef struct {
@@ -28,7 +35,7 @@ on_dialog_map(GtkWidget *widget, gpointer user_data)
 
   if (data->first_focus && gtk_widget_get_visible(data->first_focus)) {
     /* Use idle to ensure widget is fully realized */
-    g_idle_add_once((GSourceOnceFunc)gtk_widget_grab_focus, data->first_focus);
+    g_idle_add_once(grab_focus_once_cb, g_object_ref(data->first_focus));
   }
 }
 
