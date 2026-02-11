@@ -148,21 +148,18 @@ typedef enum {
 static void set_bunker_status(GnostrLogin *self, BunkerStatusState state,
                                const char *message, const char *detail);
 
+static gboolean hide_toast_timeout_cb(gpointer user_data) {
+  gtk_revealer_set_reveal_child(GTK_REVEALER(user_data), FALSE);
+  return G_SOURCE_REMOVE;
+}
+
 static void show_toast(GnostrLogin *self, const char *msg) {
   if (!self->toast_label || !self->toast_revealer) return;
   gtk_label_set_text(GTK_LABEL(self->toast_label), msg ? msg : "");
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->toast_revealer), TRUE);
   /* Auto-hide after 3 seconds */
-  g_timeout_add_seconds(3, (GSourceFunc)(void*)gtk_revealer_set_reveal_child,
-                        self->toast_revealer);
-}
-
-static gboolean hide_toast_on_main(gpointer user_data) {
-  GtkRevealer *revealer = GTK_REVEALER(user_data);
-  if (GTK_IS_REVEALER(revealer)) {
-    gtk_revealer_set_reveal_child(revealer, FALSE);
-  }
-  return G_SOURCE_REMOVE;
+  g_timeout_add_full(G_PRIORITY_DEFAULT, 3000, hide_toast_timeout_cb,
+                     g_object_ref(self->toast_revealer), g_object_unref);
 }
 
 /* Helper to set bunker status UI state */

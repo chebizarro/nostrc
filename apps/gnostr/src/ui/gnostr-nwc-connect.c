@@ -60,13 +60,18 @@ static void on_refresh_balance_clicked(GtkButton *btn, gpointer user_data);
 static void on_close_clicked(GtkButton *btn, gpointer user_data);
 static void update_ui_for_state(GnostrNwcConnect *self);
 
+static gboolean hide_toast_timeout_cb(gpointer user_data) {
+  gtk_revealer_set_reveal_child(GTK_REVEALER(user_data), FALSE);
+  return G_SOURCE_REMOVE;
+}
+
 static void show_toast(GnostrNwcConnect *self, const char *msg) {
   if (!self->toast_label || !self->toast_revealer) return;
   gtk_label_set_text(GTK_LABEL(self->toast_label), msg);
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->toast_revealer), TRUE);
   /* Auto-hide after 3 seconds */
-  g_timeout_add_seconds(3, (GSourceFunc)gtk_revealer_set_reveal_child,
-                        self->toast_revealer);
+  g_timeout_add_full(G_PRIORITY_DEFAULT, 3000, hide_toast_timeout_cb,
+                     g_object_ref(self->toast_revealer), g_object_unref);
 }
 
 static void gnostr_nwc_connect_dispose(GObject *obj) {
