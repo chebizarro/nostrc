@@ -33,7 +33,8 @@
 #define MODEL_PAGE_SIZE 50          /* Items per query page */
 #define MODEL_MAX_CACHED 200        /* Max cached items */
 #define PROFILE_CACHE_MAX 500       /* Max cached profiles */
-#define UPDATE_DEBOUNCE_MS 50       /* Debounce UI updates during rapid ingestion */
+/* REMOVED: UPDATE_DEBOUNCE_MS - Legacy debounce timer removed (hq-s42q7).
+ * All models now use the tick callback for frame-synced updates. */
 #define MODEL_MAX_WINDOW 1000       /* Max items in model - oldest evicted beyond this */
 
 /* Frame-aware batching */
@@ -93,13 +94,7 @@ struct _GnTimelineModel {
   gint64 last_pending_signal_us; /* Throttle SIGNAL_NEW_ITEMS_PENDING emission */
   guint evict_defer_counter;     /* Defer window eviction to avoid replace-all every frame */
 
-  /* Batch insertion tracking for debounce */
-  GArray *batch_buffer;      /* Temp buffer for sorting incoming items */
-  guint batch_insert_count;  /* Items to insert at position 0 */
-
-  /* Update debouncing for crash resistance */
-  guint update_debounce_id;
-  gboolean needs_refresh;
+  /* Batch mode for initial load */
   guint pending_update_old_count;  /* Count before batch started */
   gboolean in_batch_mode;          /* Suppress signals during initial load */
   guint initial_load_timeout_id;   /* Timer to end initial batch mode */
@@ -135,8 +130,6 @@ struct _GnTimelineModel {
 /* Forward declarations */
 static void gn_timeline_model_list_model_iface_init(GListModelInterface *iface);
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
-static void gn_timeline_model_schedule_update(GnTimelineModel *self);
-static gboolean on_update_debounce_timeout(gpointer user_data);
 static gboolean on_end_batch_mode_idle(gpointer user_data);
 static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal);
 
@@ -288,42 +281,11 @@ static GnNostrProfile *profile_cache_get(GnTimelineModel *self, const char *pubk
   return g_hash_table_lookup(self->profile_cache, pubkey_hex);
 }
 
-/* ============== Update Debouncing ============== */
-
-static gboolean on_update_debounce_timeout(gpointer user_data) {
-  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
-  if (!GN_IS_TIMELINE_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->update_debounce_id = 0;
-
-  if (!self->needs_refresh) return G_SOURCE_REMOVE;
-  self->needs_refresh = FALSE;
-
-  guint inserted = self->batch_insert_count;
-  if (inserted > 0) {
-    /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
-     * Two sequential items_changed signals break GTK's widget cache. */
-    guint evicted = enforce_window_size(self, FALSE);
-
-    if (evicted > 0) {
-      /* Prepend + tail eviction can't be a single positional signal.
-       * Use replace-all: items_changed(0, old_total, new_total) (nostrc-2n7). */
-      guint gtk_old = self->pending_update_old_count;
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old, self->notes->len);
-      g_debug("[TIMELINE] Debounced insert+evict: added %u, evicted %u (replace-all)",
-              inserted, evicted);
-    } else {
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
-      g_debug("[TIMELINE] Debounced insert: %u items at position 0", inserted);
-    }
-  }
-
-  /* Reset batch counter for next debounce window */
-  self->batch_insert_count = 0;
-  self->pending_update_old_count = self->notes->len;
-
-  return G_SOURCE_REMOVE;
-}
+/* REMOVED: on_update_debounce_timeout, gn_timeline_model_schedule_update,
+ * UPDATE_DEBOUNCE_MS - Legacy debounce timer removed (hq-s42q7).
+ * All GnTimelineModel instances use the tick callback via set_view_widget().
+ * The tick callback (on_tick_callback) handles insertion buffer draining,
+ * reveal queue batching, reveal key sweeping, and window eviction. */
 
 /**
  * on_end_batch_mode_idle:
@@ -345,25 +307,6 @@ static gboolean on_end_batch_mode_idle(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-static void gn_timeline_model_schedule_update(GnTimelineModel *self) {
-  g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
-
-  /* Skip if in batch mode - we'll emit signal when batch ends */
-  if (self->in_batch_mode) return;
-
-  /* LEGITIMATE TIMEOUT - Debounce model updates for batching.
-   * nostrc-b0h: Audited - batching UI updates is appropriate. */
-  if (self->update_debounce_id > 0) {
-    g_source_remove(self->update_debounce_id);
-  }
-
-  self->update_debounce_id = g_timeout_add(
-    UPDATE_DEBOUNCE_MS,
-    on_update_debounce_timeout,
-    self
-  );
-}
-
 /* REMOVED: on_initial_load_timeout - replaced by on_end_batch_mode_idle.
  * Batch mode is now ended reactively when first notes arrive via an idle
  * callback, not via a fixed timeout. This eliminates artificial delays. */
@@ -378,14 +321,6 @@ static void add_note_key_to_set(GnTimelineModel *self, uint64_t key) {
   uint64_t *key_copy = g_new(uint64_t, 1);
   *key_copy = key;
   g_hash_table_add(self->note_key_set, key_copy);
-}
-
-static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
-  const NoteEntry *ea = (const NoteEntry *)a;
-  const NoteEntry *eb = (const NoteEntry *)b;
-  if (ea->created_at > eb->created_at) return -1;
-  if (ea->created_at < eb->created_at) return 1;
-  return 0;
 }
 
 static gint note_entry_compare_oldest_first(gconstpointer a, gconstpointer b) {
@@ -482,14 +417,15 @@ static void remove_note_key_from_insertion_set(GnTimelineModel *self, uint64_t k
  *
  * Ensure a tick callback is registered with the associated view widget.
  * If no widget is associated or widget is not realized, this is a no-op
- * and items will be processed via the legacy debounce path.
+ * and items will be processed once the widget is set and realized.
  */
 static void ensure_tick_callback(GnTimelineModel *self) {
   /* Already have an active tick callback */
   if (self->tick_callback_id != 0)
     return;
 
-  /* No widget associated - fall back to debounce */
+  /* No widget associated yet - items will be processed once a widget is set
+   * via gn_timeline_model_set_view_widget(). All models require a tick widget. */
   if (!self->tick_widget)
     return;
 
@@ -1155,11 +1091,10 @@ static void batch_process_thread_func(GTask        *task,
  *
  * Main-thread callback invoked when the worker thread finishes. Performs
  * dedup checks (GHashTable lookups must happen on the main thread) and
- * inserts validated entries directly into the insertion buffer (frame-aware
- * pipeline) or legacy batch buffer.
+ * inserts validated entries into the insertion buffer.
  *
  * Pipeline: NDB worker -> insertion_buffer -> tick callback -> notes.
- * The tick callback is the sole rate limiter.
+ * The tick callback is the sole rate limiter (hq-s42q7).
  *
  * IMPORTANT: No GObject signals are emitted from the worker thread.
  * All signal emission happens here, on the main thread.
@@ -1178,19 +1113,6 @@ static void batch_process_complete_cb(GObject      *source_object,
     return;
   }
 
-  gboolean use_insertion_pipeline = (self->tick_widget != NULL &&
-                                    self->insertion_buffer != NULL);
-
-  /* Legacy path: Capture count at start of first batch in debounce window */
-  if (!use_insertion_pipeline && !self->needs_refresh) {
-    self->pending_update_old_count = self->notes->len;
-  }
-
-  /* Legacy path: Clear batch buffer for this batch */
-  if (!use_insertion_pipeline) {
-    g_array_set_size(self->batch_buffer, 0);
-  }
-
   guint inserted_count = 0;
   gint64 arrival_time_us = g_get_monotonic_time();
 
@@ -1203,76 +1125,39 @@ static void batch_process_complete_cb(GObject      *source_object,
     if (has_note_key(self, note_key)) continue;
 
     /* Skip if already in insertion buffer */
-    if (use_insertion_pipeline) {
-      if (has_note_key_pending(self, note_key)) continue;
-    }
+    if (has_note_key_pending(self, note_key)) continue;
 
-    if (use_insertion_pipeline) {
-      /* Insert directly into insertion buffer (sorted).
-       * The tick callback drains at items_per_frame items/frame. */
-      PendingEntry entry = {
-        .note_key = note_key,
-        .created_at = created_at,
-        .arrival_time_us = arrival_time_us
-      };
-      insertion_buffer_sorted_insert(self->insertion_buffer, &entry);
-      add_note_key_to_insertion_set(self, note_key);
-      inserted_count++;
-    } else {
-      NoteEntry entry = { .note_key = note_key, .created_at = created_at };
-      g_array_append_val(self->batch_buffer, entry);
-      add_note_key_to_set(self, note_key);
-
-      /* Update timestamps immediately for legacy path */
-      if (created_at > self->newest_timestamp || self->newest_timestamp == 0) {
-        self->newest_timestamp = created_at;
-      }
-      if (created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
-        self->oldest_timestamp = created_at;
-      }
-    }
+    /* Insert directly into insertion buffer (sorted).
+     * The tick callback drains at items_per_frame items/frame. */
+    PendingEntry entry = {
+      .note_key = note_key,
+      .created_at = created_at,
+      .arrival_time_us = arrival_time_us
+    };
+    insertion_buffer_sorted_insert(self->insertion_buffer, &entry);
+    add_note_key_to_insertion_set(self, note_key);
+    inserted_count++;
   }
 
-  if (use_insertion_pipeline) {
-    if (inserted_count > 0) {
-      /* Track peak insertion buffer depth for monitoring */
-      if (self->insertion_buffer->len > self->peak_insertion_depth) {
-        self->peak_insertion_depth = self->insertion_buffer->len;
-      }
-
-      g_debug("[INSERT] Inserted %u items into insertion buffer (pending: %u)",
-              inserted_count, self->insertion_buffer->len);
-
-      /* Apply backpressure if insertion buffer exceeds capacity */
-      apply_insertion_backpressure(self);
-
-      /* Clear backpressure flag if insertion buffer is under control */
-      if (self->insertion_buffer->len < INSERTION_BUFFER_MAX) {
-        self->backpressure_active = FALSE;
-      }
-
-      /* Ensure tick callback is running to drain insertion buffer */
-      ensure_tick_callback(self);
+  if (inserted_count > 0) {
+    /* Track peak insertion buffer depth for monitoring */
+    if (self->insertion_buffer->len > self->peak_insertion_depth) {
+      self->peak_insertion_depth = self->insertion_buffer->len;
     }
-  } else {
-    guint batch_count = self->batch_buffer->len;
-    if (batch_count > 0) {
-      g_array_sort(self->batch_buffer, note_entry_compare_oldest_first);
-      g_array_append_vals(self->notes, self->batch_buffer->data, batch_count);
 
-      self->batch_insert_count += batch_count;
+    g_debug("[INSERT] Inserted %u items into insertion buffer (pending: %u)",
+            inserted_count, self->insertion_buffer->len);
 
-      if (!self->user_at_top) {
-        self->unseen_count += batch_count;
-      }
+    /* Apply backpressure if insertion buffer exceeds capacity */
+    apply_insertion_backpressure(self);
 
-      self->needs_refresh = TRUE;
-      gn_timeline_model_schedule_update(self);
-
-      if (!self->user_at_top && self->unseen_count > 0) {
-        g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
-      }
+    /* Clear backpressure flag if insertion buffer is under control */
+    if (self->insertion_buffer->len < INSERTION_BUFFER_MAX) {
+      self->backpressure_active = FALSE;
     }
+
+    /* Ensure tick callback is running to drain insertion buffer */
+    ensure_tick_callback(self);
   }
 
   /* nostrc-perf: Trigger background profile prefetch for unique pubkeys collected
@@ -1378,7 +1263,6 @@ void gn_timeline_model_refresh(GnTimelineModel *self) {
 
   /* Clear everything including insertion buffer pipeline */
   g_array_set_size(self->notes, 0);
-  g_array_set_size(self->batch_buffer, 0);
   g_array_set_size(self->insertion_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
   g_hash_table_remove_all(self->insertion_key_set);
@@ -1386,7 +1270,6 @@ void gn_timeline_model_refresh(GnTimelineModel *self) {
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
   self->unseen_count = 0;
-  self->batch_insert_count = 0;
   self->backpressure_active = FALSE;
 
   /* Query initial items from NostrDB */
@@ -1419,7 +1302,6 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
 
   /* Clear all arrays and hash tables including insertion buffer pipeline */
   g_array_set_size(self->notes, 0);
-  g_array_set_size(self->batch_buffer, 0);
   g_array_set_size(self->insertion_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
   g_hash_table_remove_all(self->insertion_key_set);
@@ -1427,7 +1309,6 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
   self->unseen_count = 0;
-  self->batch_insert_count = 0;
   self->backpressure_active = FALSE;
 
   if (old_count > 0) {
@@ -1749,12 +1630,6 @@ void gn_timeline_model_begin_batch(GnTimelineModel *self) {
   self->in_batch_mode = TRUE;
   self->pending_update_old_count = self->notes->len;
 
-  /* Cancel any pending debounce since we're now in batch mode */
-  if (self->update_debounce_id > 0) {
-    g_source_remove(self->update_debounce_id);
-    self->update_debounce_id = 0;
-  }
-
   g_debug("[TIMELINE] Begin batch mode (current count: %u)", self->pending_update_old_count);
 }
 
@@ -1777,7 +1652,6 @@ void gn_timeline_model_end_batch(GnTimelineModel *self) {
 
   /* Reset for future batches */
   self->pending_update_old_count = new_count;
-  self->needs_refresh = FALSE;
 }
 
 /* ============== Frame-Aware Batching Public API ============== */
@@ -1863,12 +1737,6 @@ void gn_timeline_model_reset_peak_queue_depth(GnTimelineModel *self) {
 static void gn_timeline_model_dispose(GObject *object) {
   GnTimelineModel *self = GN_TIMELINE_MODEL(object);
 
-  /* Cancel pending update debounce */
-  if (self->update_debounce_id > 0) {
-    g_source_remove(self->update_debounce_id);
-    self->update_debounce_id = 0;
-  }
-
   /* Cancel initial load timer */
   if (self->initial_load_timeout_id > 0) {
     g_source_remove(self->initial_load_timeout_id);
@@ -1910,7 +1778,6 @@ static void gn_timeline_model_dispose(GObject *object) {
 
   /* Free arrays and hash set */
   g_clear_pointer(&self->notes, g_array_unref);
-  g_clear_pointer(&self->batch_buffer, g_array_unref);
   g_clear_pointer(&self->note_key_set, g_hash_table_unref);
 
   /* Free query */
@@ -1956,7 +1823,6 @@ static void gn_timeline_model_class_init(GnTimelineModelClass *klass) {
 
 static void gn_timeline_model_init(GnTimelineModel *self) {
   self->notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
-  self->batch_buffer = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
   self->note_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
   self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
