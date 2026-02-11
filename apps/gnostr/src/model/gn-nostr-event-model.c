@@ -1156,14 +1156,8 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
      * When a kind-1 reply arrives, increment direct_replies on the parent.
      * When a kind-6 repost arrives, increment reposts on the target. */
     if (reply_id && strlen(reply_id) == 64) {
-      unsigned char parent_id32[32];
-      gboolean cvt_ok = TRUE;
-      for (int j = 0; j < 32; j++) {
-        unsigned int byte;
-        if (sscanf(reply_id + 2*j, "%02x", &byte) != 1) { cvt_ok = FALSE; break; }
-        parent_id32[j] = (unsigned char)byte;
-      }
-      if (cvt_ok) {
+      uint8_t parent_id32[32];
+      if (hex_to_bytes32(reply_id, parent_id32)) {
         if (kind == 1 || kind == 1111)
           storage_ndb_increment_note_meta(parent_id32, "direct_replies");
         else if (kind == 6)
@@ -1304,16 +1298,9 @@ static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, gu
       g_hash_table_insert(self->reaction_cache, g_strdup(target_event_id), GUINT_TO_POINTER(new_count));
 
       /* hq-vvmzu: Also persist reaction count to ndb_note_meta for O(1) reads */
-      unsigned char target_id32[32];
-      if (strlen(target_event_id) == 64) {
-        gboolean ok = TRUE;
-        for (int j = 0; j < 32; j++) {
-          unsigned int byte;
-          if (sscanf(target_event_id + 2*j, "%02x", &byte) != 1) { ok = FALSE; break; }
-          target_id32[j] = (unsigned char)byte;
-        }
-        if (ok) storage_ndb_increment_note_meta(target_id32, "reactions");
-      }
+      uint8_t target_id32[32];
+      if (hex_to_bytes32(target_event_id, target_id32))
+        storage_ndb_increment_note_meta(target_id32, "reactions");
 
       /* Mark for UI update */
       g_hash_table_add(events_to_update, g_strdup(target_event_id));
