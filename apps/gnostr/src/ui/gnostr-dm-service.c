@@ -10,7 +10,7 @@
 #include "gnostr-dm-conversation-view.h"
 #include "../util/utils.h"
 #include "gnostr-profile-provider.h"
-#include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-service.h"
 #include "../util/relays.h"
 #include "../util/dm_files.h"
 #include "nostr_pool.h"
@@ -527,10 +527,11 @@ static void decrypt_ctx_free(DecryptContext *ctx) {
 
 /* Step 3: Process decrypted rumor and update inbox */
 static void
-on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
+on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
+                   GError *error, gpointer user_data)
 {
+    (void)service;
     DecryptContext *ctx = (DecryptContext*)user_data;
-    GError *error = NULL;
 
     if (!ctx || !ctx->service) {
         decrypt_ctx_free(ctx);
@@ -538,11 +539,6 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     }
 
     GnostrDmService *self = ctx->service;
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-
-    char *rumor_json = NULL;
-    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
-        proxy, &rumor_json, res, &error);
 
     /* Steal from pending (suppress destroy func) — we still need ctx fields below */
     {
@@ -552,10 +548,9 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         g_free(stolen_key);
     }
 
-    if (!ok || !rumor_json) {
+    if (!rumor_json) {
         g_warning("[DM_SERVICE] Failed to decrypt rumor: %s",
                   error ? error->message : "unknown");
-        g_clear_error(&error);
         decrypt_ctx_free(ctx);
         return;
     }
@@ -567,11 +562,9 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     if (!nostr_event_deserialize_compact(rumor, rumor_json, NULL)) {
         g_warning("[DM_SERVICE] Failed to parse rumor JSON");
         nostr_event_free(rumor);
-        g_free(rumor_json);
         decrypt_ctx_free(ctx);
         return;
     }
-    g_free(rumor_json);
 
     /* Validate: rumor kind should be 14 (DIRECT_MESSAGE) or 15 (FILE_MESSAGE) */
     int rumor_kind = nostr_event_get_kind(rumor);
@@ -703,10 +696,10 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
 
 /* Step 2: Decrypt seal content to get rumor */
 static void
-on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
+on_seal_decrypted(GnostrSignerService *service, const char *seal_json,
+                  GError *error, gpointer user_data)
 {
     DecryptContext *ctx = (DecryptContext*)user_data;
-    GError *error = NULL;
 
     if (!ctx || !ctx->service) {
         decrypt_ctx_free(ctx);
@@ -714,16 +707,10 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     }
 
     GnostrDmService *self = ctx->service;
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
 
-    char *seal_json = NULL;
-    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
-        proxy, &seal_json, res, &error);
-
-    if (!ok || !seal_json) {
+    if (!seal_json) {
         g_warning("[DM_SERVICE] Failed to decrypt seal: %s",
                   error ? error->message : "unknown");
-        g_clear_error(&error);
         /* g_hash_table_remove frees ctx via destroy func */
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
         return;
@@ -736,11 +723,9 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     if (!nostr_event_deserialize_compact(seal, seal_json, NULL)) {
         g_warning("[DM_SERVICE] Failed to parse seal JSON");
         nostr_event_free(seal);
-        g_free(seal_json);
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
         return;
     }
-    g_free(seal_json);
 
     /* Validate seal kind */
     if (nostr_event_get_kind(seal) != NOSTR_KIND_SEAL) {
@@ -770,12 +755,13 @@ on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
         return;
     }
 
-    /* Decrypt rumor using seal sender's pubkey */
-    nostr_org_nostr_signer_call_nip44_decrypt(
-        proxy,
-        ctx->encrypted_rumor,
+    /* Decrypt rumor using seal sender's pubkey.
+     * nostrc-dbus1: Use signer service abstraction — works with both
+     * NIP-46 (remote signer) and NIP-55L (local D-Bus signer). */
+    gnostr_signer_service_nip44_decrypt_async(
+        service,
         ctx->seal_pubkey,
-        self->user_pubkey,
+        ctx->encrypted_rumor,
         NULL, /* GCancellable */
         on_rumor_decrypted,
         ctx);
@@ -803,13 +789,11 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
     g_debug("[DM_SERVICE] Processing gift wrap %.8s from ephemeral key %.8s",
             id, ephemeral_pk);
 
-    /* Get signer proxy */
-    GError *error = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
-    if (!proxy) {
-        g_warning("[DM_SERVICE] Failed to get signer proxy: %s",
-                  error ? error->message : "unknown");
-        g_clear_error(&error);
+    /* nostrc-dbus1: Check signer availability through the signer service
+     * abstraction, which handles both NIP-46 and NIP-55L methods. */
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    if (!gnostr_signer_service_is_available(signer)) {
+        g_debug("[DM_SERVICE] No signer connected, skipping gift wrap %.8s", id);
         return;
     }
 
@@ -823,12 +807,12 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
     /* Track pending decryption */
     g_hash_table_insert(self->pending_decrypts, g_strdup(id), ctx);
 
-    /* Start async decrypt of gift wrap content */
-    nostr_org_nostr_signer_call_nip44_decrypt(
-        proxy,
-        ctx->encrypted_seal,
+    /* Start async decrypt of gift wrap content using signer service.
+     * This works with whichever signing method is active (NIP-46 or NIP-55L). */
+    gnostr_signer_service_nip44_decrypt_async(
+        signer,
         ctx->ephemeral_pubkey,
-        self->user_pubkey,
+        ctx->encrypted_seal,
         NULL, /* GCancellable */
         on_seal_decrypted,
         ctx);
