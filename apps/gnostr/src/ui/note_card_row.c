@@ -52,6 +52,36 @@ static void media_load_ctx_free(MediaLoadCtx *ctx) {
 }
 #endif
 
+/* nostrc-dqwq.2: Per-URL metadata for deferred media widget creation.
+ * Stored in self->pending_media_items during bind; consumed on map signal. */
+typedef struct {
+  gchar *url;         /* Media URL (owned) */
+  gint   height;      /* Preferred widget height in pixels */
+  gint   width;       /* Preferred widget width (0 = default) */
+  gchar *alt_text;    /* Alt text for accessibility (nullable, owned) */
+  gboolean is_video;  /* TRUE for video, FALSE for image */
+} PendingMediaItem;
+
+static PendingMediaItem *pending_media_item_new(const char *url, int height,
+                                                 int width, const char *alt_text,
+                                                 gboolean is_video) {
+  PendingMediaItem *item = g_new0(PendingMediaItem, 1);
+  item->url = g_strdup(url);
+  item->height = height;
+  item->width = width;
+  item->alt_text = g_strdup(alt_text);
+  item->is_video = is_video;
+  return item;
+}
+
+static void pending_media_item_free(gpointer data) {
+  PendingMediaItem *item = data;
+  if (!item) return;
+  g_free(item->url);
+  g_free(item->alt_text);
+  g_free(item);
+}
+
 /* Media image cache to reduce memory usage - LRU with bounded size */
 #define MEDIA_IMAGE_CACHE_MAX 50  /* Max cached media images */
 static GHashTable *s_media_image_cache = NULL;  /* URL -> GdkTexture */
@@ -285,6 +315,16 @@ struct _GnostrNoteCardRow {
   /* Disposal state - prevents async callbacks from accessing widget after dispose starts */
   gboolean disposed;
 
+  /* nostrc-dqwq.2: Deferred media widget creation.
+   * During bind, store media URLs instead of creating heavyweight GtkPicture /
+   * GnostrVideoPlayer widgets.  The actual widgets are created only when the
+   * row's media_box receives the GtkWidget::map signal (i.e., becomes visible).
+   * Items bound in GTK's buffer zone but never scrolled into view skip media
+   * widget creation entirely. */
+  GPtrArray *pending_media_items;     /* Array of PendingMediaItem* (nullable) */
+  gulong media_map_handler_id;        /* map signal handler on media_box */
+  gboolean media_widgets_created;     /* TRUE after on_media_box_mapped fires */
+
   /* Binding lifecycle tracking (nostrc-534d):
    * Each time the row is bound to a list item, it gets a unique binding_id.
    * When unbound, binding_id is set to 0. Async callbacks capture the binding_id
@@ -386,6 +426,16 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   }
   self->og_preview = NULL;
   
+  /* nostrc-dqwq.2: Disconnect deferred media map handler and free pending items
+   * before template disposal. Must happen before video player stop since those
+   * players may not have been created yet if the row was never mapped. */
+  if (self->media_map_handler_id > 0 && self->media_box && GTK_IS_BOX(self->media_box)) {
+    g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
+    self->media_map_handler_id = 0;
+  }
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  self->media_widgets_created = FALSE;
+
   /* NIP-71: Stop ALL video players BEFORE template disposal to prevent GStreamer from
    * accessing Pango layouts while the widget is being disposed. This fixes crashes
    * when many items are removed at once (e.g., clicking "New Notes" toast).
@@ -569,6 +619,8 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->video_url, g_free);
   g_clear_pointer(&self->video_thumb_url, g_free);
   g_clear_pointer(&self->video_title, g_free);
+  /* nostrc-dqwq.2: deferred media cleanup */
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -2838,6 +2890,88 @@ static gchar *extract_subject_from_tags_json(const char *tags_json) {
   return ctx.subject;
 }
 
+/* nostrc-dqwq.2: Create actual media widgets from the pending list.
+ * Called either from the map signal handler (deferred path) or directly
+ * if the media_box is already mapped when URLs are stored. */
+static void realize_pending_media_widgets(GnostrNoteCardRow *self) {
+  if (!self || self->disposed || self->binding_id == 0) return;
+  if (!self->pending_media_items || self->pending_media_items->len == 0) return;
+  if (self->media_widgets_created) return;
+  if (!self->media_box || !GTK_IS_BOX(self->media_box)) return;
+
+  self->media_widgets_created = TRUE;
+
+  for (guint i = 0; i < self->pending_media_items->len; i++) {
+    PendingMediaItem *item = g_ptr_array_index(self->pending_media_items, i);
+    if (!item || !item->url) continue;
+
+    if (!item->is_video) {
+      GtkWidget *container = create_image_container(item->url, item->height, item->alt_text);
+      GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
+      GtkGesture *click_gesture = gtk_gesture_click_new();
+      gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
+      g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
+      gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
+      gtk_box_append(GTK_BOX(self->media_box), container);
+      gtk_widget_set_visible(self->media_box, TRUE);
+#ifdef HAVE_SOUP3
+      load_media_image(self, item->url, GTK_PICTURE(pic));
+#endif
+    } else {
+      GnostrVideoPlayer *player = gnostr_video_player_new();
+      gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
+      int w = item->width > 0 ? item->width : 608;
+      gtk_widget_set_size_request(GTK_WIDGET(player), w, item->height);
+      if (item->alt_text && *item->alt_text) {
+        gtk_widget_set_tooltip_text(GTK_WIDGET(player), item->alt_text);
+      }
+      gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
+      gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
+      gnostr_video_player_set_uri(player, item->url);
+      gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
+      gtk_widget_set_visible(self->media_box, TRUE);
+    }
+  }
+
+  /* Free pending items now that widgets are created */
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+}
+
+/* nostrc-dqwq.2: GtkWidget::map signal handler for deferred media creation.
+ * Fired when the media_box becomes visible (scrolled into viewport). */
+static void on_media_box_mapped(GtkWidget *widget, gpointer user_data) {
+  (void)widget;
+  GnostrNoteCardRow *self = (GnostrNoteCardRow *)user_data;
+  if (!self || self->disposed || self->binding_id == 0) return;
+
+  g_debug("nostrc-dqwq.2: media_box mapped, creating %u deferred media widgets",
+          self->pending_media_items ? self->pending_media_items->len : 0);
+  realize_pending_media_widgets(self);
+}
+
+/* nostrc-dqwq.2: Store media URLs for deferred creation and connect map handler.
+ * Clears any existing media widgets and pending items first. */
+static void defer_media_widget_creation(GnostrNoteCardRow *self) {
+  if (!self->media_box || !GTK_IS_BOX(self->media_box)) return;
+  if (!self->pending_media_items || self->pending_media_items->len == 0) return;
+
+  /* Make media_box visible so the map signal can fire when it enters viewport.
+   * Without this, an invisible widget never receives map. */
+  gtk_widget_set_visible(self->media_box, TRUE);
+
+  /* Connect map signal if not already connected */
+  if (self->media_map_handler_id == 0) {
+    self->media_map_handler_id = g_signal_connect(
+        self->media_box, "map", G_CALLBACK(on_media_box_mapped), self);
+  }
+
+  /* If the media_box is already mapped (e.g., non-recycled widget or
+   * manual add), create widgets immediately */
+  if (gtk_widget_get_mapped(self->media_box)) {
+    realize_pending_media_widgets(self);
+  }
+}
+
 /* nostrc-dqwq.1: Apply a pre-rendered content result to the row widgets.
  * The render result is borrowed (not freed by this function). */
 void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
@@ -2858,7 +2992,9 @@ void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
     gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
   }
 
-  /* Media detection from unified render result */
+  /* nostrc-dqwq.2: Defer media widget creation to map signal.
+   * Store URLs now; actual GtkPicture/GnostrVideoPlayer widgets are created
+   * only when the row scrolls into the viewport (media_box receives map). */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
     while (child) {
@@ -2868,32 +3004,23 @@ void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
     }
     gtk_widget_set_visible(self->media_box, FALSE);
 
-    if (render->media_urls) {
+    /* Clear any previous pending items */
+    g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+    self->media_widgets_created = FALSE;
+
+    if (render->media_urls && render->media_urls->len > 0) {
+      self->pending_media_items = g_ptr_array_new_with_free_func(pending_media_item_free);
       for (guint i = 0; i < render->media_urls->len; i++) {
         const char *url = g_ptr_array_index(render->media_urls, i);
         if (is_image_url(url)) {
-          GtkWidget *container = create_image_container(url, 300, NULL);
-          GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
-          GtkGesture *click_gesture = gtk_gesture_click_new();
-          gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-          g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
-          gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
-          gtk_box_append(GTK_BOX(self->media_box), container);
-          gtk_widget_set_visible(self->media_box, TRUE);
-#ifdef HAVE_SOUP3
-          load_media_image(self, url, GTK_PICTURE(pic));
-#endif
+          g_ptr_array_add(self->pending_media_items,
+                          pending_media_item_new(url, 300, 0, NULL, FALSE));
         } else if (is_video_url(url)) {
-          GnostrVideoPlayer *player = gnostr_video_player_new();
-          gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
-          gtk_widget_set_size_request(GTK_WIDGET(player), 608, 300);
-          gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
-          gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
-          gnostr_video_player_set_uri(player, url);
-          gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
-          gtk_widget_set_visible(self->media_box, TRUE);
+          g_ptr_array_add(self->pending_media_items,
+                          pending_media_item_new(url, 300, 608, NULL, TRUE));
         }
       }
+      defer_media_widget_creation(self);
     }
   }
 
@@ -3002,6 +3129,8 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
     gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
   }
 
+  /* nostrc-dqwq.2: Defer media widget creation to map signal (imeta path).
+   * Store URLs + imeta sizing now; actual widgets created on map. */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
     while (child) {
@@ -3011,7 +3140,12 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
     }
     gtk_widget_set_visible(self->media_box, FALSE);
 
-    if (render->all_urls) {
+    /* Clear any previous pending items */
+    g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+    self->media_widgets_created = FALSE;
+
+    if (render->all_urls && render->all_urls->len > 0) {
+      self->pending_media_items = g_ptr_array_new_with_free_func(pending_media_item_free);
       for (guint i = 0; i < render->all_urls->len; i++) {
         const char *url = g_ptr_array_index(render->all_urls, i);
         GnostrImeta *imeta = imeta_list ? gnostr_imeta_find_by_url(imeta_list, url) : NULL;
@@ -3035,24 +3169,10 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
             if (height > 400) height = 400;
             if (height < 100) height = 100;
           }
-
           const char *alt_text = (imeta && imeta->alt && *imeta->alt) ? imeta->alt : NULL;
-          GtkWidget *container = create_image_container(url, height, alt_text);
-          GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
-
-          GtkGesture *click_gesture = gtk_gesture_click_new();
-          gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-          g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
-          gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
-
-          gtk_box_append(GTK_BOX(self->media_box), container);
-          gtk_widget_set_visible(self->media_box, TRUE);
-#ifdef HAVE_SOUP3
-          load_media_image(self, url, GTK_PICTURE(pic));
-#endif
+          g_ptr_array_add(self->pending_media_items,
+                          pending_media_item_new(url, height, 0, alt_text, FALSE));
         } else if (media_type == GNOSTR_MEDIA_TYPE_VIDEO) {
-          GnostrVideoPlayer *player = gnostr_video_player_new();
-          gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
           int max_width = 608;
           int height = 300;
           if (imeta && imeta->width > 0 && imeta->height > 0) {
@@ -3061,15 +3181,12 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
             if (height > 400) height = 400;
             if (height < 100) height = 100;
           }
-          gtk_widget_set_size_request(GTK_WIDGET(player), max_width, height);
-          if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(GTK_WIDGET(player), imeta->alt);
-          gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
-          gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
-          gnostr_video_player_set_uri(player, url);
-          gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
-          gtk_widget_set_visible(self->media_box, TRUE);
+          const char *alt_text = (imeta && imeta->alt && *imeta->alt) ? imeta->alt : NULL;
+          g_ptr_array_add(self->pending_media_items,
+                          pending_media_item_new(url, height, max_width, alt_text, TRUE));
         }
       }
+      defer_media_widget_creation(self);
     }
   }
 
@@ -5694,6 +5811,16 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
    * was recycled and the callback should be ignored. */
   self->binding_id = binding_id_counter++;
 
+  /* nostrc-dqwq.2: Reset deferred media state for fresh binding.
+   * prepare_for_unbind already disconnected the handler and freed items,
+   * but reset the flag for safety in case unbind was skipped. */
+  self->media_widgets_created = FALSE;
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  if (self->media_map_handler_id > 0 && self->media_box && GTK_IS_BOX(self->media_box)) {
+    g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
+  }
+  self->media_map_handler_id = 0;
+
   /* nostrc-NEW: Clear stale OG preview from previous binding.
    * prepare_for_unbind sets self->og_preview=NULL but doesn't remove the widget
    * from container. If the new event has no URL, the old preview stays visible
@@ -5764,6 +5891,16 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
    * gtk_image_definition_unref crashes if the GtkPicture is already in
    * an invalid state during rapid widget recycling. Let GTK handle
    * cleanup automatically during disposal. */
+
+  /* nostrc-dqwq.2: Disconnect deferred media map handler to prevent stale
+   * callbacks on recycled widgets. Also clear any pending items that were
+   * never realized (row was buffered but never scrolled into view). */
+  if (self->media_map_handler_id > 0 && self->media_box && GTK_IS_BOX(self->media_box)) {
+    g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
+  }
+  self->media_map_handler_id = 0;
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  self->media_widgets_created = FALSE;
 
   /* NIP-71: Stop ALL video players IMMEDIATELY to prevent GStreamer from
    * accessing Pango layouts or other widget memory while the widget is being
