@@ -44,8 +44,7 @@
 #define INSERTION_BUFFER_MAX 100    /* Max items in insertion buffer before backpressure */
 
 /* Smooth "New Notes" Reveal Animation */
-#define REVEAL_ITEMS_PER_BATCH 3    /* Items revealed per animation tick */
-#define REVEAL_STAGGER_MS 50        /* Delay between reveal batches */
+#define REVEAL_ITEMS_PER_BATCH 3    /* Items revealed per tick callback frame */
 #define REVEAL_ANIMATION_MS 200     /* CSS fade-in duration per item */
 
 /* Signal throttling: avoid per-frame toast/label updates */
@@ -128,10 +127,9 @@ struct _GnTimelineModel {
   GArray *reveal_queue;          /* Items being revealed with animation */
   guint reveal_position;         /* Current position in reveal sequence */
   gboolean reveal_in_progress;   /* TRUE while reveal animation is active */
-  guint reveal_timer_id;         /* Timer for staggered reveal (g_timeout) */
   GFunc reveal_complete_cb;      /* Callback when reveal finishes */
   gpointer reveal_complete_data; /* User data for completion callback */
-  GHashTable *revealing_keys;    /* note_key -> TRUE for items currently being revealed */
+  GHashTable *revealing_keys;    /* note_key -> gint64* (monotonic start time in usec) */
 };
 
 /* Forward declarations */
@@ -155,12 +153,12 @@ static void apply_insertion_backpressure(GnTimelineModel *self);
 static gint pending_entry_compare_newest_first(gconstpointer a, gconstpointer b);
 
 /* Smooth "New Notes" Reveal Animation forward declarations */
-static gboolean on_reveal_timer_tick(gpointer user_data);
 static void process_reveal_batch(GnTimelineModel *self);
 static void cancel_reveal_animation(GnTimelineModel *self);
 static void mark_key_revealing(GnTimelineModel *self, uint64_t key);
 static gboolean is_key_revealing(GnTimelineModel *self, uint64_t key);
-static gboolean on_clear_revealing_key(gpointer user_data);
+static guint sweep_revealing_keys(GnTimelineModel *self);
+static gboolean has_active_reveals(GnTimelineModel *self);
 
 /* GTask worker thread for NDB batch processing */
 typedef struct {
@@ -616,83 +614,125 @@ static gboolean on_tick_callback(GtkWidget     *widget,
   /* Track frame budget */
   gint64 start_us = g_get_monotonic_time();
 
+  /* --- Phase 1: Process reveal queue (animated reveal batching) --- */
+  if (self->reveal_in_progress && self->reveal_queue &&
+      self->reveal_position < self->reveal_queue->len) {
+    process_reveal_batch(self);
+
+    /* Check if reveal is complete */
+    if (self->reveal_position >= self->reveal_queue->len) {
+      g_debug("[REVEAL] Animation complete, %u items revealed", self->reveal_queue->len);
+
+      /* Clear reveal state */
+      g_array_set_size(self->reveal_queue, 0);
+      self->reveal_in_progress = FALSE;
+      self->reveal_position = 0;
+
+      /* Deferred eviction: trim window once after all items revealed. */
+      guint evicted = enforce_window_size(self, TRUE);
+      if (evicted > 0) {
+        g_debug("[REVEAL] Post-reveal eviction: %u items", evicted);
+      }
+
+      /* Clear unseen count since all items are now revealed */
+      self->unseen_count = 0;
+      g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+
+      /* Invoke completion callback */
+      if (self->reveal_complete_cb) {
+        GFunc cb = self->reveal_complete_cb;
+        gpointer data = self->reveal_complete_data;
+        self->reveal_complete_cb = NULL;
+        self->reveal_complete_data = NULL;
+        cb(self, data);
+      }
+    }
+  }
+
+  /* --- Phase 2: Process pending items from insertion buffer --- */
   guint to_process = MIN(self->insertion_buffer->len, self->items_per_frame);
 
-  if (to_process == 0) {
-    /* Nothing to do, remove callback until more items arrive */
-    g_debug("[FRAME] No pending items, removing tick callback");
-    self->tick_callback_id = 0;
-    return G_SOURCE_REMOVE;
-  }
+  if (to_process > 0) {
+    /* Process the batch */
+    guint gtk_old_count = self->notes->len;
+    process_pending_items(self, to_process);
 
-  /* Process the batch */
-  guint gtk_old_count = self->notes->len;
-  process_pending_items(self, to_process);
+    /* Defer window eviction to avoid the expensive replace-all signal on every
+     * frame.  When the model is at capacity, every prepend evicts from the tail,
+     * which forces g_list_model_items_changed(0, old_count, new_count) — a full
+     * model replacement that makes GTK rebind every visible widget.  By deferring
+     * eviction to every EVICT_DEFER_FRAMES frames, we emit the cheap prepend
+     * signal (0, 0, N) most of the time.  The model temporarily exceeds
+     * MODEL_MAX_WINDOW by at most EVICT_DEFER_FRAMES * items_per_frame items. */
+    self->evict_defer_counter++;
+    gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
+                         (self->insertion_buffer->len == 0); /* last batch: clean up */
+    guint evicted = 0;
+    if (do_evict) {
+      evicted = enforce_window_size(self, FALSE);
+      self->evict_defer_counter = 0;
+    }
 
-  /* Defer window eviction to avoid the expensive replace-all signal on every
-   * frame.  When the model is at capacity, every prepend evicts from the tail,
-   * which forces g_list_model_items_changed(0, old_count, new_count) — a full
-   * model replacement that makes GTK rebind every visible widget.  By deferring
-   * eviction to every EVICT_DEFER_FRAMES frames, we emit the cheap prepend
-   * signal (0, 0, N) most of the time.  The model temporarily exceeds
-   * MODEL_MAX_WINDOW by at most EVICT_DEFER_FRAMES * items_per_frame items. */
-  self->evict_defer_counter++;
-  gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
-                       (self->insertion_buffer->len == 0); /* last batch: clean up */
-  guint evicted = 0;
-  if (do_evict) {
-    evicted = enforce_window_size(self, FALSE);
-    self->evict_defer_counter = 0;
-  }
+    /* Emit single atomic signal */
+    if (evicted > 0) {
+      /* Prepend + tail eviction: replace-all signal (nostrc-2n7) */
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old_count, self->notes->len);
+      g_debug("[FRAME] Processed %u items, evicted %u (replace-all)", to_process, evicted);
+    } else {
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, to_process);
+    }
 
-  /* Emit single atomic signal */
-  if (evicted > 0) {
-    /* Prepend + tail eviction: replace-all signal (nostrc-2n7) */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old_count, self->notes->len);
-    g_debug("[FRAME] Processed %u items, evicted %u (replace-all)", to_process, evicted);
-  } else {
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, to_process);
-  }
-
-  /* Track unseen items if user is scrolled down.
-   * Throttle the signal emission to avoid triggering the toast label/revealer
-   * update (g_strdup_printf + gtk_label_set_text + gtk_revealer_set_reveal_child)
-   * on every 16ms frame — the user can't perceive count changes at 60fps. */
-  if (!self->user_at_top) {
-    self->unseen_count += to_process;
-    gboolean is_last_batch = (self->insertion_buffer->len == 0);
-    if (is_last_batch ||
-        (start_us - self->last_pending_signal_us >= PENDING_SIGNAL_INTERVAL_US)) {
-      self->last_pending_signal_us = start_us;
-      g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+    /* Track unseen items if user is scrolled down.
+     * Throttle the signal emission to avoid triggering the toast label/revealer
+     * update (g_strdup_printf + gtk_label_set_text + gtk_revealer_set_reveal_child)
+     * on every 16ms frame — the user can't perceive count changes at 60fps. */
+    if (!self->user_at_top) {
+      self->unseen_count += to_process;
+      gboolean is_last_batch = (self->insertion_buffer->len == 0);
+      if (is_last_batch ||
+          (start_us - self->last_pending_signal_us >= PENDING_SIGNAL_INTERVAL_US)) {
+        self->last_pending_signal_us = start_us;
+        g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+      }
     }
   }
 
-  /* Check frame budget */
-  gint64 elapsed_us = g_get_monotonic_time() - start_us;
+  /* --- Phase 3: Sweep revealing keys that have expired --- */
+  sweep_revealing_keys(self);
 
-  if (elapsed_us > FRAME_BUDGET_US) {
-    g_debug("[FRAME] Budget exceeded: %ldus (budget: %dus, items: %u)",
-            (long)elapsed_us, FRAME_BUDGET_US, to_process);
+  /* --- Phase 4: Adaptive frame budget (only when processing insertions) --- */
+  if (to_process > 0) {
+    gint64 elapsed_us = g_get_monotonic_time() - start_us;
 
-    /* Reduce items_per_frame adaptively */
-    if (self->items_per_frame > 1) {
-      self->items_per_frame--;
-      g_debug("[FRAME] Reduced items_per_frame to %u", self->items_per_frame);
+    if (elapsed_us > FRAME_BUDGET_US) {
+      g_debug("[FRAME] Budget exceeded: %ldus (budget: %dus, items: %u)",
+              (long)elapsed_us, FRAME_BUDGET_US, to_process);
+
+      /* Reduce items_per_frame adaptively */
+      if (self->items_per_frame > 1) {
+        self->items_per_frame--;
+        g_debug("[FRAME] Reduced items_per_frame to %u", self->items_per_frame);
+      }
+    } else if (elapsed_us < FRAME_BUDGET_US / 2 && self->items_per_frame < 5) {
+      /* Well under budget, can potentially increase */
+      self->items_per_frame++;
+      g_debug("[FRAME] Increased items_per_frame to %u (elapsed: %ldus)",
+              self->items_per_frame, (long)elapsed_us);
     }
-  } else if (elapsed_us < FRAME_BUDGET_US / 2 && self->items_per_frame < 5) {
-    /* Well under budget, can potentially increase */
-    self->items_per_frame++;
-    g_debug("[FRAME] Increased items_per_frame to %u (elapsed: %ldus)",
-            self->items_per_frame, (long)elapsed_us);
   }
 
-  /* Continue callback if more items pending */
-  if (self->insertion_buffer->len > 0) {
+  /* --- Continue or remove: keep alive while there is any work remaining --- */
+  gboolean has_pending = (self->insertion_buffer->len > 0);
+  gboolean has_reveals = has_active_reveals(self);
+  gboolean has_reveal_queue = (self->reveal_in_progress &&
+                                self->reveal_queue &&
+                                self->reveal_position < self->reveal_queue->len);
+
+  if (has_pending || has_reveals || has_reveal_queue) {
     return G_SOURCE_CONTINUE;
   }
 
-  g_debug("[FRAME] All pending items processed, removing tick callback");
+  g_debug("[FRAME] All work complete, removing tick callback");
   self->tick_callback_id = 0;
   return G_SOURCE_REMOVE;
 }
@@ -760,11 +800,6 @@ static void insertion_buffer_sorted_insert(GArray *buf, PendingEntry *entry) {
  * when starting a new reveal.
  */
 static void cancel_reveal_animation(GnTimelineModel *self) {
-  if (self->reveal_timer_id > 0) {
-    g_source_remove(self->reveal_timer_id);
-    self->reveal_timer_id = 0;
-  }
-
   self->reveal_in_progress = FALSE;
   self->reveal_position = 0;
   self->reveal_complete_cb = NULL;
@@ -781,57 +816,71 @@ static void cancel_reveal_animation(GnTimelineModel *self) {
 }
 
 /**
- * Data structure for the timeout callback that clears revealing state.
- */
-typedef struct {
-  GnTimelineModel *model;
-  uint64_t note_key;
-} RevealingKeyData;
-
-/**
- * on_clear_revealing_key:
- * @user_data: RevealingKeyData pointer
- *
- * Timer callback to clear the revealing flag for a specific note key
- * after the CSS animation duration has elapsed.
- */
-static gboolean on_clear_revealing_key(gpointer user_data) {
-  RevealingKeyData *data = (RevealingKeyData *)user_data;
-  if (!data) return G_SOURCE_REMOVE;
-
-  GnTimelineModel *self = data->model;
-  if (GN_IS_TIMELINE_MODEL(self) && self->revealing_keys) {
-    g_hash_table_remove(self->revealing_keys, &data->note_key);
-    g_debug("[REVEAL] Cleared revealing state for key %lu", (unsigned long)data->note_key);
-  }
-
-  g_object_unref(data->model);
-  g_free(data);
-  return G_SOURCE_REMOVE;
-}
-
-/**
  * mark_key_revealing:
  * @self: The model
  * @key: Note key to mark
  *
- * Mark a note key as currently being revealed. Schedules automatic
- * clearing after REVEAL_ANIMATION_MS.
+ * Mark a note key as currently being revealed. Stores the monotonic
+ * start time so the tick callback can clear the flag once
+ * REVEAL_ANIMATION_MS has elapsed. No per-item timer is created;
+ * the tick callback sweeps all revealing keys each frame.
  */
 static void mark_key_revealing(GnTimelineModel *self, uint64_t key) {
   if (!self->revealing_keys) return;
 
   uint64_t *key_copy = g_new(uint64_t, 1);
   *key_copy = key;
-  g_hash_table_add(self->revealing_keys, key_copy);
+  gint64 *start_time = g_new(gint64, 1);
+  *start_time = g_get_monotonic_time();
+  g_hash_table_insert(self->revealing_keys, key_copy, start_time);
+}
 
-  /* LEGITIMATE TIMEOUT - Clear revealing flag after CSS animation completes.
-   * nostrc-b0h: Audited - animation timing is appropriate. */
-  /* nostrc-gdhp: ref model to prevent use-after-free in timer callback. */
-  RevealingKeyData *data = g_new(RevealingKeyData, 1);
-  data->model = g_object_ref(self);
-  data->note_key = key;
-  g_timeout_add(REVEAL_ANIMATION_MS, on_clear_revealing_key, data);
+/**
+ * sweep_revealing_keys:
+ * @self: The model
+ *
+ * Iterate over revealing_keys and remove entries whose animation
+ * duration (REVEAL_ANIMATION_MS) has elapsed.
+ *
+ * Returns: Number of keys cleared this sweep.
+ */
+static guint sweep_revealing_keys(GnTimelineModel *self) {
+  if (!self->revealing_keys) return 0;
+
+  gint64 now_us = g_get_monotonic_time();
+  gint64 threshold_us = (gint64)REVEAL_ANIMATION_MS * 1000;
+  guint cleared = 0;
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->revealing_keys);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    gint64 *start_us = (gint64 *)value;
+    if (now_us - *start_us >= threshold_us) {
+      g_hash_table_iter_remove(&iter);
+      cleared++;
+    }
+  }
+
+  if (cleared > 0) {
+    g_debug("[REVEAL] Swept %u expired revealing keys (%u remaining)",
+            cleared, g_hash_table_size(self->revealing_keys));
+  }
+
+  return cleared;
+}
+
+/**
+ * has_active_reveals:
+ * @self: The model
+ *
+ * Check whether there are any keys still in the revealing state.
+ *
+ * Returns: TRUE if there are active revealing keys.
+ */
+static gboolean has_active_reveals(GnTimelineModel *self) {
+  if (!self->revealing_keys) return FALSE;
+  return g_hash_table_size(self->revealing_keys) > 0;
 }
 
 /**
@@ -907,70 +956,6 @@ static void process_reveal_batch(GnTimelineModel *self) {
 
   /* Update position for next batch */
   self->reveal_position = batch_end;
-}
-
-/**
- * on_reveal_timer_tick:
- * @user_data: The GnTimelineModel
- *
- * Timer callback for staggered reveal animation.
- * Processes one batch of items and schedules the next batch if more remain.
- */
-static gboolean on_reveal_timer_tick(gpointer user_data) {
-  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
-  if (!GN_IS_TIMELINE_MODEL(self)) {
-    return G_SOURCE_REMOVE;
-  }
-
-  self->reveal_timer_id = 0;  /* Timer has fired */
-
-  if (!self->reveal_in_progress) {
-    return G_SOURCE_REMOVE;
-  }
-
-  /* Process next batch */
-  process_reveal_batch(self);
-
-  /* Check if we're done */
-  if (self->reveal_position >= self->reveal_queue->len) {
-    g_debug("[REVEAL] Animation complete, %u items revealed", self->reveal_queue->len);
-
-    /* Clear reveal state */
-    g_array_set_size(self->reveal_queue, 0);
-    self->reveal_in_progress = FALSE;
-    self->reveal_position = 0;
-
-    /* Deferred eviction: trim window once after all items revealed.
-     * We skipped enforce_window_size in process_reveal_batch to avoid
-     * the replace-all signal on every 50ms batch. */
-    guint evicted = enforce_window_size(self, TRUE);
-    if (evicted > 0) {
-      g_debug("[REVEAL] Post-reveal eviction: %u items", evicted);
-    }
-
-    /* Clear unseen count since all items are now revealed */
-    self->unseen_count = 0;
-    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
-
-    /* Invoke completion callback */
-    if (self->reveal_complete_cb) {
-      GFunc cb = self->reveal_complete_cb;
-      gpointer data = self->reveal_complete_data;
-      self->reveal_complete_cb = NULL;
-      self->reveal_complete_data = NULL;
-      cb(self, data);
-    }
-
-    return G_SOURCE_REMOVE;
-  }
-
-  /* LEGITIMATE TIMEOUT - Staggered reveal animation timing.
-   * nostrc-b0h: Audited - animation timing is appropriate. */
-  self->reveal_timer_id = g_timeout_add(REVEAL_STAGGER_MS,
-                                         on_reveal_timer_tick,
-                                         self);
-
-  return G_SOURCE_REMOVE;  /* One-shot, we reschedule manually */
 }
 
 /* ============== GListModel Interface ============== */
@@ -1600,11 +1585,11 @@ void gn_timeline_model_flush_pending(GnTimelineModel *self) {
  * @complete_cb: (nullable): Callback when reveal finishes (signature: void (*)(gpointer model, gpointer user_data))
  * @complete_data: (nullable): User data for completion callback
  *
- * Flush pending items with a smooth staggered reveal animation.
+ * Flush pending items with a smooth frame-synced reveal animation.
  *
  * Instead of inserting all pending items at once (which causes jarring UX),
  * this function moves pending items to a reveal queue and animates them in
- * one-by-one with a 50ms stagger between each batch.
+ * batches via the tick callback (one batch per frame, ~16ms).
  *
  * The completion callback is invoked AFTER all items are revealed, allowing
  * the caller to perform scroll-to-top after the animation completes.
@@ -1647,9 +1632,6 @@ void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
     g_array_set_size(self->insertion_buffer, 0);
   }
 
-  /* Remove tick callback since we're doing animated reveal instead */
-  remove_tick_callback(self);
-
   if (total_to_reveal == 0) {
     g_debug("[REVEAL] No items to reveal, calling completion immediately");
 
@@ -1674,11 +1656,10 @@ void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
   self->reveal_complete_cb = complete_cb;
   self->reveal_complete_data = complete_data;
 
-  /* Start the reveal animation immediately (first batch processes now).
-   * Use g_idle_add() instead of g_timeout_add(0, ...) - both run on next
-   * main loop iteration but g_idle_add() is more efficient and expresses
-   * intent more clearly. */
-  self->reveal_timer_id = g_idle_add(on_reveal_timer_tick, self);
+  /* Start the reveal animation via the tick callback. The tick callback
+   * processes reveal_queue batches in Phase 1, pending items in Phase 2,
+   * and sweeps expired revealing keys in Phase 3 — all frame-synced. */
+  ensure_tick_callback(self);
 }
 
 /**
@@ -2001,10 +1982,9 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   self->reveal_queue = g_array_new(FALSE, FALSE, sizeof(PendingEntry));
   self->reveal_position = 0;
   self->reveal_in_progress = FALSE;
-  self->reveal_timer_id = 0;
   self->reveal_complete_cb = NULL;
   self->reveal_complete_data = NULL;
-  self->revealing_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
+  self->revealing_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_free);
 
   /* Start in batch mode to prevent widget recycling storms during initial load.
    * Batch mode will be ended after the first batch of notes is processed,
