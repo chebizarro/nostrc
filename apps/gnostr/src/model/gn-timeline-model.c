@@ -37,8 +37,15 @@
  * All models now use the tick callback for frame-synced updates. */
 #define MODEL_MAX_WINDOW 1000       /* Max items in model - oldest evicted beyond this */
 
-/* Frame-aware batching */
-#define ITEMS_PER_FRAME_DEFAULT 3   /* Start conservative per design review */
+/* Frame-aware batching — adaptive drain rate (nostrc-adap)
+ *
+ * Instead of a fixed items_per_frame that slowly adapts ±1 per frame,
+ * compute batch_limit dynamically each frame based on insertion buffer depth.
+ * Deep buffer (startup flood) → drain aggressively (up to 50/frame).
+ * Shallow buffer (steady state) → conservative (3/frame) for smooth scroll.
+ * An inline frame-time guard yields early if the budget is exceeded. */
+#define ITEMS_PER_FRAME_FLOOR 3     /* Steady-state conservative drain */
+#define ITEMS_PER_FRAME_MAX 50      /* Ceiling during aggressive drain */
 #define FRAME_BUDGET_US 12000       /* 12ms target, leaving 4ms margin for 16.6ms frame */
 
 /* Insertion buffer pipeline */
@@ -111,7 +118,6 @@ struct _GnTimelineModel {
   GArray *insertion_buffer;        /* PendingEntry items awaiting frame-synced insertion */
   GHashTable *insertion_key_set;   /* note_key -> TRUE for O(1) dedup in insertion buffer */
   guint tick_callback_id;          /* gtk_widget_add_tick_callback ID, 0 if inactive */
-  guint items_per_frame;           /* Max items to insert per frame (adaptive) */
   GtkWidget *tick_widget;          /* Widget providing frame clock (weak ref) */
 
   /* Backpressure tracking */
@@ -585,21 +591,53 @@ static gboolean on_tick_callback(GtkWidget     *widget,
     }
   }
 
-  /* --- Phase 2: Process pending items from insertion buffer --- */
-  guint to_process = MIN(self->insertion_buffer->len, self->items_per_frame);
+  /* --- Phase 2: Process pending items from insertion buffer (nostrc-adap) ---
+   *
+   * Adaptive batch sizing: compute batch_limit from buffer depth each frame.
+   * Deep buffer → drain aggressively (up to ITEMS_PER_FRAME_MAX).
+   * Shallow buffer → conservative (ITEMS_PER_FRAME_FLOOR) for smooth scroll.
+   * Process in sub-batches of 10 with inline frame-time guard. */
+  guint buffer_depth = self->insertion_buffer->len;
+  guint total_processed = 0;
 
-  if (to_process > 0) {
-    /* Process the batch */
+  if (buffer_depth > 0) {
+    guint batch_limit;
+    if (buffer_depth > 50) {
+      batch_limit = ITEMS_PER_FRAME_MAX;  /* 50 — aggressive startup drain */
+    } else if (buffer_depth > 20) {
+      batch_limit = 20;
+    } else if (buffer_depth > 10) {
+      batch_limit = 10;
+    } else {
+      batch_limit = ITEMS_PER_FRAME_FLOOR;  /* 3 — smooth steady state */
+    }
+
     guint gtk_old_count = self->notes->len;
-    process_pending_items(self, to_process);
+
+    /* Process in sub-batches of 10, checking frame budget between chunks */
+    while (total_processed < batch_limit && self->insertion_buffer->len > 0) {
+      guint chunk = MIN(10, MIN(batch_limit - total_processed,
+                                self->insertion_buffer->len));
+      process_pending_items(self, chunk);
+      total_processed += chunk;
+
+      /* Frame-time guard: yield if budget exhausted */
+      if (total_processed >= 10) {
+        gint64 elapsed = g_get_monotonic_time() - start_us;
+        if (elapsed > FRAME_BUDGET_US) {
+          g_debug("[FRAME] Budget hit at %u items (%ldus), yielding",
+                  total_processed, (long)elapsed);
+          break;
+        }
+      }
+    }
 
     /* Defer window eviction to avoid the expensive replace-all signal on every
      * frame.  When the model is at capacity, every prepend evicts from the tail,
      * which forces g_list_model_items_changed(0, old_count, new_count) — a full
      * model replacement that makes GTK rebind every visible widget.  By deferring
      * eviction to every EVICT_DEFER_FRAMES frames, we emit the cheap prepend
-     * signal (0, 0, N) most of the time.  The model temporarily exceeds
-     * MODEL_MAX_WINDOW by at most EVICT_DEFER_FRAMES * items_per_frame items. */
+     * signal (0, 0, N) most of the time. */
     self->evict_defer_counter++;
     gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
                          (self->insertion_buffer->len == 0); /* last batch: clean up */
@@ -613,9 +651,9 @@ static gboolean on_tick_callback(GtkWidget     *widget,
     if (evicted > 0) {
       /* Prepend + tail eviction: replace-all signal (nostrc-2n7) */
       g_list_model_items_changed(G_LIST_MODEL(self), 0, gtk_old_count, self->notes->len);
-      g_debug("[FRAME] Processed %u items, evicted %u (replace-all)", to_process, evicted);
+      g_debug("[FRAME] Processed %u items, evicted %u (replace-all)", total_processed, evicted);
     } else {
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, to_process);
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, total_processed);
     }
 
     /* Track unseen items if user is scrolled down.
@@ -623,7 +661,7 @@ static gboolean on_tick_callback(GtkWidget     *widget,
      * update (g_strdup_printf + gtk_label_set_text + gtk_revealer_set_reveal_child)
      * on every 16ms frame — the user can't perceive count changes at 60fps. */
     if (!self->user_at_top) {
-      self->unseen_count += to_process;
+      self->unseen_count += total_processed;
       gboolean is_last_batch = (self->insertion_buffer->len == 0);
       if (is_last_batch ||
           (start_us - self->last_pending_signal_us >= PENDING_SIGNAL_INTERVAL_US)) {
@@ -635,27 +673,6 @@ static gboolean on_tick_callback(GtkWidget     *widget,
 
   /* --- Phase 3: Sweep revealing keys that have expired --- */
   sweep_revealing_keys(self);
-
-  /* --- Phase 4: Adaptive frame budget (only when processing insertions) --- */
-  if (to_process > 0) {
-    gint64 elapsed_us = g_get_monotonic_time() - start_us;
-
-    if (elapsed_us > FRAME_BUDGET_US) {
-      g_debug("[FRAME] Budget exceeded: %ldus (budget: %dus, items: %u)",
-              (long)elapsed_us, FRAME_BUDGET_US, to_process);
-
-      /* Reduce items_per_frame adaptively */
-      if (self->items_per_frame > 1) {
-        self->items_per_frame--;
-        g_debug("[FRAME] Reduced items_per_frame to %u", self->items_per_frame);
-      }
-    } else if (elapsed_us < FRAME_BUDGET_US / 2 && self->items_per_frame < 5) {
-      /* Well under budget, can potentially increase */
-      self->items_per_frame++;
-      g_debug("[FRAME] Increased items_per_frame to %u (elapsed: %ldus)",
-              self->items_per_frame, (long)elapsed_us);
-    }
-  }
 
   /* --- Continue or remove: keep alive while there is any work remaining --- */
   gboolean has_pending = (self->insertion_buffer->len > 0);
@@ -1128,7 +1145,7 @@ static void batch_process_complete_cb(GObject      *source_object,
     if (has_note_key_pending(self, note_key)) continue;
 
     /* Insert directly into insertion buffer (sorted).
-     * The tick callback drains at items_per_frame items/frame. */
+     * The tick callback drains adaptively based on buffer depth. */
     PendingEntry entry = {
       .note_key = note_key,
       .created_at = created_at,
@@ -1836,7 +1853,6 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   /* Frame-aware batching: insertion buffer pipeline */
   self->insertion_buffer = g_array_new(FALSE, FALSE, sizeof(PendingEntry));
   self->insertion_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
-  self->items_per_frame = ITEMS_PER_FRAME_DEFAULT;
   self->tick_callback_id = 0;
   self->tick_widget = NULL;
 
