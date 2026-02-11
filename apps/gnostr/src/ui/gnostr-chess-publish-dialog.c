@@ -48,6 +48,10 @@ struct _GnostrChessPublishDialog {
     /* State */
     gboolean is_publishing;
     GCancellable *cancellable;
+
+    /* nostrc-05yz (harden-8): Disposed flag to prevent async callbacks from
+     * accessing widgets after dispose. */
+    gboolean disposed;
 };
 
 G_DEFINE_TYPE(GnostrChessPublishDialog, gnostr_chess_publish_dialog, ADW_TYPE_DIALOG)
@@ -77,6 +81,10 @@ static void
 gnostr_chess_publish_dialog_dispose(GObject *object)
 {
     GnostrChessPublishDialog *self = GNOSTR_CHESS_PUBLISH_DIALOG(object);
+
+    /* nostrc-05yz (harden-8): Mark disposed FIRST to prevent async callbacks
+     * from accessing widgets after dispose begins. */
+    self->disposed = TRUE;
 
     if (self->cancellable) {
         g_cancellable_cancel(self->cancellable);
@@ -336,6 +344,13 @@ on_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
     }
 
     GnostrChessPublishDialog *self = ctx->self;
+
+    /* nostrc-05yz (harden-8): Bail if dialog was disposed while async was in-flight */
+    if (self->disposed) {
+        publish_context_free(ctx);
+        return;
+    }
+
     GError *error = NULL;
     char *signed_event_json = NULL;
 
@@ -405,6 +420,13 @@ static void chess_publish_done(guint success_count, guint fail_count, gpointer u
 
     if (GNOSTR_IS_CHESS_PUBLISH_DIALOG(ctx->self)) {
         GnostrChessPublishDialog *self = ctx->self;
+
+        /* nostrc-05yz (harden-8): Bail if dialog was disposed while publish was in-flight */
+        if (self->disposed) {
+            publish_context_free(ctx);
+            return;
+        }
+
         if (success_count > 0) {
             show_toast(self, _("Chess game published to Nostr!"));
             g_signal_emit(self, signals[SIGNAL_PUBLISHED], 0,

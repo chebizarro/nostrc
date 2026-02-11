@@ -1,5 +1,6 @@
 #include "note_card_row.h"
 #include "og-preview-widget.h"
+#include "gnostr-label-guard.h"
 #include "gnostr-image-viewer.h"
 #include "gnostr-video-player.h"
 #include "gnostr-note-embed.h"
@@ -31,21 +32,8 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/note-card-row.ui"
 
-/* nostrc-0acr: Safe label update helper to prevent NULL pointer crash.
- * Checks:
- * 1. Widget pointer is not NULL
- * 2. Widget is a valid GtkLabel
- * 3. Widget is connected to a native surface (has a valid PangoContext)
- * NOTE: Removed gtk_widget_get_mapped() check - it was causing timestamps
- * and other labels to be skipped for items not yet scrolled into view.
- * GTK labels can safely accept text even when not mapped. But they DO need
- * a native surface — gtk_label_set_text unrefs the old PangoLayout, and if
- * the label was orphaned from its surface (e.g. timer ref keeps the row alive
- * after window destroy), the PangoContext is gone → SEGV in pango finalize.
- * nostrc-pgo3: Add native surface check to prevent SEGV in update_timestamp_tick. */
-#define LABEL_SAFE_TO_UPDATE(lbl) \
-  ((lbl) != NULL && GTK_IS_LABEL(lbl) && \
-   gtk_widget_get_native(GTK_WIDGET(lbl)) != NULL)
+/* nostrc-05yz (harden-6): Label guard macro moved to gnostr-label-guard.h
+ * as GNOSTR_LABEL_SAFE (was LABEL_SAFE_TO_UPDATE). See that header for docs. */
 
 /* No longer using mutex - proper fix is at backend level */
 
@@ -490,17 +478,17 @@ do_template_dispose:
    * measure remaining children while others are being disposed.
    *
    * Same pattern as OG preview widget fix (nostrc-14wu). */
-  /* nostrc-pgo5: Use LABEL_SAFE_TO_UPDATE (checks gtk_widget_get_native)
+  /* nostrc-pgo5: Use GNOSTR_LABEL_SAFE (checks gtk_widget_get_native)
    * instead of plain GTK_IS_LABEL.  During list cleanup the native surface
    * may already be gone, so gtk_label_set_text unrefs a PangoLayout whose
    * PangoContext is NULL → SEGV in pango.  Same pattern as nostrc-pgo3. */
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  if (GNOSTR_LABEL_SAFE(self->content_label)) {
     gtk_label_set_text(GTK_LABEL(self->content_label), "");
   }
-  if (LABEL_SAFE_TO_UPDATE(self->lbl_display)) {
+  if (GNOSTR_LABEL_SAFE(self->lbl_display)) {
     gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
   }
-  if (LABEL_SAFE_TO_UPDATE(self->lbl_handle)) {
+  if (GNOSTR_LABEL_SAFE(self->lbl_handle)) {
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
   }
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
@@ -2484,7 +2472,7 @@ static gboolean update_timestamp_tick(gpointer user_data) {
     else if (diff < 3600) g_snprintf(buf, sizeof(buf), "%ldm", diff/60);
     else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
-    if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
+    if (GNOSTR_LABEL_SAFE(self->lbl_timestamp)) {
       gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
     }
   }
@@ -2511,7 +2499,7 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
     else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
     /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
-    if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
+    if (GNOSTR_LABEL_SAFE(self->lbl_timestamp)) {
       gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
     }
 
@@ -2541,7 +2529,7 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
         timestamp_timer_destroy);
   } else {
     /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
-    if (LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
+    if (GNOSTR_LABEL_SAFE(self->lbl_timestamp)) {
       gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), fallback_ts ? fallback_ts : "now");
     }
   }
@@ -2862,7 +2850,7 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
 
   /* nostrc-nst: Use NDB content blocks for rendering instead of manual tokenization */
   gchar *markup = gnostr_render_content_markup(content, -1);
-  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
+  /* nostrc-wt3n: Don't use GNOSTR_LABEL_SAFE for content - it checks gtk_widget_get_mapped()
    * which is false during factory binding, causing content to be silently skipped.
    * Setting label text doesn't require mapping; GTK stores it for later rendering. */
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
@@ -4663,7 +4651,7 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
   }
 
   /* Set summary as content (with markdown conversion) */
-  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
+  /* nostrc-wt3n: Don't use GNOSTR_LABEL_SAFE for content - it checks gtk_widget_get_mapped()
    * which is false during factory binding, causing content to be silently skipped. */
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     if (summary && *summary) {
@@ -4678,7 +4666,7 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
 
   /* Update timestamp to show publication date */
   /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
-  if (published_at > 0 && LABEL_SAFE_TO_UPDATE(self->lbl_timestamp)) {
+  if (published_at > 0 && GNOSTR_LABEL_SAFE(self->lbl_timestamp)) {
     gchar *date_str = format_article_date(published_at);
     gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), date_str);
     g_free(date_str);
@@ -5059,7 +5047,7 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
   }
 
   /* Set summary as content if provided */
-  /* nostrc-wt3n: Don't use LABEL_SAFE_TO_UPDATE for content - it checks gtk_widget_get_mapped()
+  /* nostrc-wt3n: Don't use GNOSTR_LABEL_SAFE for content - it checks gtk_widget_get_mapped()
    * which is false during factory binding, causing content to be silently skipped. */
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     if (summary && *summary) {
@@ -5205,7 +5193,7 @@ void gnostr_note_card_row_set_git_repo_mode(GnostrNoteCardRow *self,
   g_string_free(meta_line, TRUE);
 
   /* Set content with markup */
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  if (GNOSTR_LABEL_SAFE(self->content_label)) {
     gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-repo-content");
   }
@@ -5271,7 +5259,7 @@ void gnostr_note_card_row_set_git_patch_mode(GnostrNoteCardRow *self,
                            commit_id);
   }
 
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  if (GNOSTR_LABEL_SAFE(self->content_label)) {
     gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-patch-content");
   }
@@ -5310,7 +5298,7 @@ void gnostr_note_card_row_set_git_issue_mode(GnostrNoteCardRow *self,
   g_string_append_printf(content, "\n<span size='small'>%s</span>",
                          is_open ? "Open" : "Closed");
 
-  if (LABEL_SAFE_TO_UPDATE(self->content_label)) {
+  if (GNOSTR_LABEL_SAFE(self->content_label)) {
     gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-issue-content");
   }

@@ -50,6 +50,10 @@ struct _GnostrReportDialog {
 
   /* Async context */
   GCancellable *cancellable;
+
+  /* nostrc-05yz (harden-8): Disposed flag to prevent async callbacks from
+   * accessing template widgets after dispose. */
+  gboolean disposed;
 };
 
 G_DEFINE_TYPE(GnostrReportDialog, gnostr_report_dialog, GTK_TYPE_WINDOW)
@@ -91,6 +95,10 @@ static void show_toast(GnostrReportDialog *self, const gchar *msg) {
 
 static void gnostr_report_dialog_dispose(GObject *obj) {
   GnostrReportDialog *self = GNOSTR_REPORT_DIALOG(obj);
+
+  /* nostrc-05yz (harden-8): Mark disposed FIRST to prevent async callbacks
+   * from accessing template widgets after dispose begins. */
+  self->disposed = TRUE;
 
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
@@ -279,6 +287,12 @@ static void on_sign_report_complete(GObject *source, GAsyncResult *res, gpointer
   }
   GnostrReportDialog *self = ctx->self;
 
+  /* nostrc-05yz (harden-8): Bail if dialog was disposed while async was in-flight */
+  if (self->disposed) {
+    report_context_free(ctx);
+    return;
+  }
+
   GError *error = NULL;
   char *signed_event_json = NULL;
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
@@ -337,6 +351,13 @@ static void report_publish_done(guint success_count, guint fail_count, gpointer 
 
   if (GNOSTR_IS_REPORT_DIALOG(ctx->self)) {
     GnostrReportDialog *self = ctx->self;
+
+    /* nostrc-05yz (harden-8): Bail if dialog was disposed while publish was in-flight */
+    if (self->disposed) {
+      report_context_free(ctx);
+      return;
+    }
+
     if (success_count > 0) {
       show_toast(self, "Report submitted successfully");
       g_signal_emit(self, signals[SIGNAL_REPORT_SENT], 0, ctx->event_id_hex, ctx->report_type);
