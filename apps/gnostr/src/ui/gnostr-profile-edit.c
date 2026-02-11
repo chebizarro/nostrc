@@ -2,7 +2,10 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../util/nip39_identity.h"
+#include "../util/relays.h"
+#include "../util/utils.h"
 #include "nostr_json.h"
+#include <json.h>
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
@@ -37,6 +40,7 @@ struct _GnostrProfileEdit {
 
   /* State */
   gboolean saving;
+  gboolean disposed;                /* hq-6zc5r: prevent async callbacks post-dispose */
   char *original_json;              /* Preserve unknown fields (raw JSON string) */
   GPtrArray *external_identities;   /* GnostrExternalIdentity* array */
 };
@@ -58,6 +62,9 @@ static void on_add_identity_clicked(GtkButton *btn, gpointer user_data);
 
 static void gnostr_profile_edit_dispose(GObject *obj) {
   GnostrProfileEdit *self = GNOSTR_PROFILE_EDIT(obj);
+  /* hq-6zc5r: Mark disposed before cleanup to prevent async publish callbacks
+   * from accessing template widgets after dispose. */
+  self->disposed = TRUE;
   g_clear_pointer(&self->original_json, g_free);
   g_clear_pointer(&self->external_identities, g_ptr_array_unref);
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_PROFILE_EDIT);
@@ -336,13 +343,29 @@ static void profile_publish_context_free(ProfilePublishContext *ctx) {
   g_free(ctx);
 }
 
-/* Callback when unified signer service completes signing for profile */
-/* Proper GSourceFunc wrapper for gtk_window_close (ABI-safe) */
-static gboolean close_window_timeout_cb(gpointer data) {
-  gtk_window_close(GTK_WINDOW(data));
-  return G_SOURCE_REMOVE;
+/* hq-6zc5r: Callback when relay publishing completes */
+static void profile_publish_done(guint success_count, guint fail_count, gpointer user_data) {
+  ProfilePublishContext *ctx = (ProfilePublishContext *)user_data;
+  if (!ctx) return;
+
+  g_debug("[PROFILE_EDIT] Published to %u relays, failed %u", success_count, fail_count);
+
+  if (GNOSTR_IS_PROFILE_EDIT(ctx->self) && !ctx->self->disposed) {
+    GnostrProfileEdit *self = ctx->self;
+    if (success_count > 0) {
+      /* hq-6zc5r: Close on confirmed relay acceptance */
+      gtk_window_close(GTK_WINDOW(self));
+    } else {
+      show_toast(self, "Failed to publish profile. Try again.");
+      set_ui_sensitive(self, TRUE);
+      self->saving = FALSE;
+    }
+  }
+
+  profile_publish_context_free(ctx);
 }
 
+/* Callback when unified signer service completes signing for profile */
 static void on_profile_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   ProfilePublishContext *ctx = (ProfilePublishContext *)user_data;
   (void)source;
@@ -371,24 +394,41 @@ static void on_profile_sign_complete(GObject *source, GAsyncResult *res, gpointe
 
   g_message("[PROFILE_EDIT] Signed event: %.100s...", signed_event_json);
 
-  /* Profile signed successfully - emit signal with the new profile content.
-   * The main window / SimplePool will handle actual relay publishing. */
-  set_ui_sensitive(self, TRUE);
-  self->saving = FALSE;
-
-  show_toast(self, "Profile saved!");
-
-  /* Emit signal with the new profile content */
+  /* Emit signal with profile content for immediate local UI update */
   g_signal_emit(self, signals[SIGNAL_PROFILE_SAVED], 0, ctx->profile_content);
 
-  /* Close dialog after short delay.
-   * nostrc-gdhp: Hold ref to prevent use-after-free if window is destroyed first. */
-  g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, close_window_timeout_cb,
-                     g_object_ref(self), g_object_unref);
-
-  /* Cleanup */
+  /* hq-6zc5r: Publish to relays and close on confirmation, not blind timeout.
+   * Parse signed event for relay publishing. */
+  NostrEvent *event = nostr_event_new();
+  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, NULL);
   g_free(signed_event_json);
-  profile_publish_context_free(ctx);
+
+  if (parse_rc != 1) {
+    show_toast(self, "Failed to parse signed profile event");
+    nostr_event_free(event);
+    set_ui_sensitive(self, TRUE);
+    self->saving = FALSE;
+    profile_publish_context_free(ctx);
+    return;
+  }
+
+  GPtrArray *write_relays = gnostr_get_write_relay_urls();
+  if (!write_relays || write_relays->len == 0) {
+    show_toast(self, "No write relays configured");
+    nostr_event_free(event);
+    if (write_relays) g_ptr_array_unref(write_relays);
+    set_ui_sensitive(self, TRUE);
+    self->saving = FALSE;
+    profile_publish_context_free(ctx);
+    return;
+  }
+
+  show_toast(self, "Publishing profile...");
+
+  /* gnostr_publish_to_relays_async takes ownership of event and write_relays.
+   * ctx ownership transferred to profile_publish_done callback. */
+  gnostr_publish_to_relays_async(event, write_relays,
+    profile_publish_done, ctx);
 }
 
 static void on_save_clicked(GtkButton *btn, gpointer user_data) {

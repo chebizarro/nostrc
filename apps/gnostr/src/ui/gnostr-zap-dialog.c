@@ -465,12 +465,6 @@ static void set_processing(GnostrZapDialog *self, gboolean processing, const gch
   update_zap_button_label(self);
 }
 
-/* Proper GSourceFunc wrapper for gtk_window_close (ABI-safe) */
-static gboolean close_window_timeout_cb(gpointer data) {
-  gtk_window_close(GTK_WINDOW(data));
-  return G_SOURCE_REMOVE;
-}
-
 /* Payment callback */
 static void on_payment_finish(GObject *source, GAsyncResult *result, gpointer user_data) {
   GnostrNwcService *nwc = GNOSTR_NWC_SERVICE(source);
@@ -488,11 +482,9 @@ static void on_payment_finish(GObject *source, GAsyncResult *result, gpointer us
     g_signal_emit(self, signals[SIGNAL_ZAP_SENT], 0, self->event_id, amount_msat);
     show_toast(self, "Zap sent!");
 
-    /* LEGITIMATE TIMEOUT - Auto-close after success feedback.
-     * nostrc-b0h: Audited - brief delay for user to see success is appropriate.
-     * nostrc-gdhp: Hold ref to prevent use-after-free if window is destroyed first. */
-    g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, close_window_timeout_cb,
-                       g_object_ref(GTK_WINDOW(self)), g_object_unref);
+    /* hq-6zc5r: Close immediately on confirmed payment success instead of
+     * blind timeout. The NWC service has already confirmed payment. */
+    gtk_window_close(GTK_WINDOW(self));
   } else {
     const gchar *msg = error ? error->message : "Payment failed";
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
