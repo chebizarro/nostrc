@@ -46,16 +46,29 @@ enum {
 static GParamSpec *obj_properties[N_PROPERTIES] = { NULL, };
 static guint sub_signals[GNOSTR_SUBSCRIPTION_SIGNALS_COUNT] = { 0 };
 
-/* nostrc-mzab / nostrc-kw9r: Max events to emit per main loop iteration.
- * Prevents startup floods from blocking the UI — between batches the
- * main loop processes GTK redraws and input events.
+/* nostrc-mzab / nostrc-kw9r / nostrc-75o3: Max events to emit per main loop
+ * iteration.  Prevents startup floods from blocking the UI — between batches
+ * the main loop processes GTK redraws and input events.
  *
- * History: 5 (original, too slow → throttle cascade → recv_channel overflow)
- *        → 50 (too aggressive — starves GTK rendering + nostrdb dispatch,
- *              threads broke because main loop had no time between batches)
- *        → 20 (balanced: 4× original, drains fast enough to avoid overflow
- *              while leaving ~70% of each frame for rendering and dispatch) */
-#define MAX_EVENTS_PER_TICK 20
+ * History: 5 (original, too slow -> throttle cascade -> recv_channel overflow)
+ *        -> 50 (too aggressive — starves GTK rendering + nostrdb dispatch)
+ *        -> 20 (balanced but slow drain at startup)
+ *        -> 50 + frame-time guard (nostrc-75o3: drains fast, respects 16.6ms
+ *              frame budget via g_get_monotonic_time check every 10 events) */
+#define MAX_EVENTS_PER_TICK 50
+
+/* nostrc-75o3: Frame-time budget for event drain.  After every
+ * DRAIN_BATCH_CHECK events we sample g_get_monotonic_time(); if the
+ * elapsed wall time exceeds DRAIN_TIME_BUDGET_US we yield back to the
+ * main loop so GTK can paint and process input within its 16.6 ms frame. */
+#define DRAIN_BATCH_CHECK    10
+#define DRAIN_TIME_BUDGET_US 8000   /* 8 ms in microseconds */
+
+/* nostrc-75o3: Bound event queue capacity.  At startup 10 relays x 100
+ * events = 1000 events backlog.  NDB persistence stores all events via
+ * the ingest path, so dropping oldest UI-queue entries is safe — they
+ * are already persisted and the UI will catch up on the next query. */
+#define EVENT_QUEUE_CAPACITY 200
 
 struct _GNostrSubscription {
     GObject parent_instance;
@@ -119,9 +132,12 @@ typedef struct {
     gchar *reason;
 } ClosedSignalData;
 
-/* nostrc-mzab: Batched event drain — processes up to MAX_EVENTS_PER_TICK
- * events per main loop iteration, then yields so GTK can render and
- * process input. Re-invoked via G_SOURCE_CONTINUE until queue is empty.
+/* nostrc-mzab / nostrc-75o3: Batched event drain with adaptive frame-time
+ * guard.  Processes up to MAX_EVENTS_PER_TICK events per main loop
+ * iteration, but checks elapsed wall-clock time every DRAIN_BATCH_CHECK
+ * events and yields early if over DRAIN_TIME_BUDGET_US.  This drains
+ * faster than the old fixed-20 limit while respecting GTK's 16.6 ms
+ * frame budget.
  *
  * Uses G_PRIORITY_DEFAULT_IDLE (200) so UI painting (priority 120) and
  * input events (priority 0) always take precedence over event ingestion. */
@@ -148,12 +164,42 @@ drain_event_queue_on_main(gpointer data)
         self->event_idle_scheduled = FALSE;
     g_mutex_unlock(&self->event_queue_mutex);
 
-    /* Emit signals outside lock */
+    /* Emit signals outside lock with frame-time guard (nostrc-75o3).
+     * After every DRAIN_BATCH_CHECK emissions, sample the monotonic
+     * clock.  If we have exceeded DRAIN_TIME_BUDGET_US, stop emitting
+     * and return the un-emitted tail to the queue so the next idle
+     * iteration picks them up. */
+    gint64 t_start = g_get_monotonic_time();
+    guint emitted = 0;
+
     for (guint i = 0; i < n; i++) {
         __atomic_add_fetch(&self->event_count, 1, __ATOMIC_SEQ_CST);
         g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_EVENT], 0,
                       batch[i]);
         g_free(batch[i]);
+        batch[i] = NULL;
+        emitted++;
+
+        /* Check frame budget every DRAIN_BATCH_CHECK events */
+        if (emitted % DRAIN_BATCH_CHECK == 0 && i + 1 < n) {
+            gint64 elapsed = g_get_monotonic_time() - t_start;
+            if (elapsed > DRAIN_TIME_BUDGET_US) {
+                /* Return un-emitted events to the front of the queue */
+                guint remaining = n - (i + 1);
+                if (remaining > 0) {
+                    g_mutex_lock(&self->event_queue_mutex);
+                    /* Prepend remaining events back to the queue */
+                    for (guint j = 0; j < remaining; j++) {
+                        g_ptr_array_insert(self->event_queue, (gint)j,
+                                           batch[i + 1 + j]);
+                        batch[i + 1 + j] = NULL;
+                    }
+                    more = TRUE;
+                    g_mutex_unlock(&self->event_queue_mutex);
+                }
+                break;
+            }
+        }
     }
     g_free(batch);
 
@@ -225,6 +271,17 @@ subscription_monitor_thread(gpointer data)
                 nostr_event_free(ev);
                 if (json) {
                     g_mutex_lock(&self->event_queue_mutex);
+
+                    /* nostrc-75o3: Bound event queue — drop oldest when
+                     * at capacity.  NDB persistence already stores all
+                     * events via the ingest path, so UI-level drops are
+                     * safe; the UI will catch up on the next query. */
+                    while (self->event_queue->len >= EVENT_QUEUE_CAPACITY) {
+                        gchar *oldest = g_ptr_array_index(self->event_queue, 0);
+                        g_free(oldest);
+                        g_ptr_array_remove_index(self->event_queue, 0);
+                    }
+
                     g_ptr_array_add(self->event_queue, json);
                     if (!self->event_idle_scheduled) {
                         self->event_idle_scheduled = TRUE;
