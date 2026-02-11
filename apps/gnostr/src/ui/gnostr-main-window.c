@@ -248,6 +248,8 @@ static gpointer ingest_thread_func(gpointer data);
 static void start_pool_live(GnostrMainWindow *self);
 static void start_profile_subscription(GnostrMainWindow *self);
 static void start_bg_profile_prefetch(GnostrMainWindow *self);
+/* nostrc-75o3.1: Deferred heavy init that runs after first frame paint */
+static gboolean deferred_heavy_init_cb(gpointer data);
 static void on_relay_config_changed(gpointer user_data);
 static gboolean on_relay_config_changed_restart(gpointer user_data);
 /* Gift wrap (NIP-59) subscription for private DMs */
@@ -6096,72 +6098,14 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   }
 
   gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_LOADING);
-  /* Initialize GListModel-based event model */
-  self->event_model = gn_nostr_event_model_new();
-  
-  /* Configure initial query for kind-1 notes */
-  GnNostrQueryParams params = {
-    .kinds = (gint[]){1},
-    .n_kinds = 1,
-    .authors = NULL,
-    .n_authors = 0,
-    .since = 0,
-    .until = 0,
-    .limit = 500  /* Match MODEL_MAX_EVENTS to avoid unnecessary work */
-  };
-  gn_nostr_event_model_set_query(self->event_model, &params);
 
-  /* REPOMARK:SCOPE: 4 - Wire GnNostrEventModel "need-profile" signal to enqueue_profile_author() and disable legacy thread_roots/prefetch initialization in gnostr_main_window_init */
-  g_signal_connect(self->event_model, "need-profile", G_CALLBACK(on_event_model_need_profile), self);
-  /* nostrc-yi2: Calm timeline - connect new items pending signal */
-  g_signal_connect(self->event_model, "new-items-pending", G_CALLBACK(on_event_model_new_items_pending), self);
-  
-  /* Attach model to timeline view (accessed via session view) */
-  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
-  if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
-    /* Wrap GListModel in a selection model */
-    GtkSelectionModel *selection = GTK_SELECTION_MODEL(
-      gtk_single_selection_new(G_LIST_MODEL(self->event_model))
-    );
-    gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(timeline), selection);
-    g_object_unref(selection); /* View takes ownership */
-
-    /* Connect scroll edge detection for sliding window pagination */
-    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(timeline));
-    if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
-      GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
-      if (vadj) {
-        g_signal_connect(vadj, "value-changed", G_CALLBACK(on_timeline_scroll_value_changed), self);
-      }
-    }
-
-    /* nostrc-7vm: Connect tab filter changed signal for hashtag/author feeds */
-    g_signal_connect(timeline, "tab-filter-changed", G_CALLBACK(on_timeline_tab_filter_changed), self);
-
-    /* Do NOT call refresh here; we refresh once in initial_refresh_timeout_cb to avoid duplicate rebuilds. */
-  }
-  
   /* Initialize dedup table */
   self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  /* nostrc-mzab: Start background NDB ingestion thread */
-  self->ingest_queue = g_async_queue_new_full(g_free);
-  __atomic_store_n(&self->ingest_running, TRUE, __ATOMIC_SEQ_CST);
-  self->ingest_thread = g_thread_new("ndb-ingest", ingest_thread_func, self);
-  /* Initialize profile provider */
-  gnostr_profile_provider_init(0); /* Use env/default cap */
-  /* NIP-47: Load saved NWC connection from GSettings */
-  gnostr_nwc_service_load_from_settings(gnostr_nwc_service_get_default());
-  /* LEGITIMATE TIMEOUTS - Periodic stats logging (60s intervals).
-   * nostrc-b0h: Audited - diagnostic logging at fixed intervals is appropriate. */
-  g_timeout_add_seconds(60, profile_provider_log_stats_cb, NULL);
-  g_timeout_add_seconds(60, memory_stats_cb, self);
-  /* Avatar texture cache is managed by gnostr-avatar-cache module (initialized on first use) */
   /* Initialize liked events cache (NIP-25 reactions) */
   self->liked_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   /* Initialize reconnection flag */
   self->reconnection_in_progress = FALSE;
-  /* Pre-populate/apply cached profiles here */
-  prepopulate_all_profiles_from_cache(self);
+
   /* Initialize tuning knobs from env with sensible defaults */
   self->batch_max = getenv_uint_default("GNOSTR_BATCH_MAX", 5);
   self->post_interval_ms = getenv_uint_default("GNOSTR_POST_INTERVAL_MS", 150);
@@ -6175,6 +6119,65 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Load persisted settings (overrides env defaults) */
   gnostr_load_settings(self);
   self->backfill_source_id = 0;
+
+  /* Init demand-driven profile fetch state */
+  self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+  self->profile_fetch_source_id = 0;
+  self->profile_fetch_debounce_ms = 50; /* Reduced from 150ms for faster response */
+  self->profile_fetch_cancellable = g_cancellable_new();
+  self->profile_fetch_active = 0;
+  self->profile_fetch_max_concurrent = 5; /* Increased from 3 - goroutines are lightweight */
+
+  /* Init debounced NostrDB profile sweep */
+  self->ndb_sweep_source_id = 0;
+  self->ndb_sweep_debounce_ms = 1000; /* 1 second - prevents transaction contention */
+
+  /* nostrc-bkor: Init gift wrap state and DM service BEFORE starting the subscription.
+   * Previously these were initialized AFTER start_gift_wrap_subscription(), which wiped
+   * the user_pubkey_hex and sub_gift_wrap that the subscription had just set. This caused
+   * the logged-in user's pubkey to be NULL on app restart, breaking View Profile and
+   * other features that depend on user_pubkey_hex. */
+  self->sub_gift_wrap = 0;
+  self->user_pubkey_hex = NULL;
+  self->gift_wrap_queue = NULL; /* Created lazily when first gift wrap arrives */
+
+  /* Init NIP-17 DM service and wire to inbox view (before gift wrap subscription
+   * so dm_service is available when start_gift_wrap_subscription sets pubkey on it) */
+  self->dm_service = gnostr_dm_service_new();
+
+  GtkWidget *dm_inbox = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
+                          ? gnostr_session_view_get_dm_inbox(self->session_view)
+                          : NULL;
+  if (dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(dm_inbox)) {
+    gnostr_dm_service_set_inbox_view(self->dm_service, GNOSTR_DM_INBOX_VIEW(dm_inbox));
+    g_debug("[DM_SERVICE] Connected DM service to inbox view");
+
+    /* Wire inbox signals for conversation navigation */
+    g_signal_connect(dm_inbox, "open-conversation",
+                     G_CALLBACK(on_dm_inbox_open_conversation), self);
+    g_signal_connect(dm_inbox, "compose-dm",
+                     G_CALLBACK(on_dm_inbox_compose), self);
+  }
+
+  /* Wire conversation view signals */
+  GtkWidget *dm_conv = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
+                         ? gnostr_session_view_get_dm_conversation(self->session_view)
+                         : NULL;
+  if (dm_conv && GNOSTR_IS_DM_CONVERSATION_VIEW(dm_conv)) {
+    g_signal_connect(dm_conv, "go-back",
+                     G_CALLBACK(on_dm_conversation_go_back), self);
+    g_signal_connect(dm_conv, "send-message",
+                     G_CALLBACK(on_dm_conversation_send_message), self);
+    g_signal_connect(dm_conv, "send-file",
+                     G_CALLBACK(on_dm_conversation_send_file), self);
+    g_signal_connect(dm_conv, "open-profile",
+                     G_CALLBACK(on_dm_conversation_open_profile), self);
+    g_debug("[DM_SERVICE] Connected conversation view signals");
+  }
+
+  /* Wire DM service message-received for live updates */
+  g_signal_connect(self->dm_service, "message-received",
+                   G_CALLBACK(on_dm_service_message_received), self);
 
   /* nostrc-61s.6: Connect close-request signal for background mode */
   g_signal_connect(self, "close-request", G_CALLBACK(on_window_close_request), NULL);
@@ -6247,80 +6250,98 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_key_pressed), self);
     gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
   }
-  
+
+  /* nostrc-75o3.1: Defer ALL heavy initialization to a G_PRIORITY_LOW idle callback.
+   * This lets GTK paint the skeleton LOADING page before event model setup,
+   * relay connections, NDB queries, profile subscriptions, and gift wrap startup.
+   * g_object_ref ensures `self` survives until the idle fires; g_object_unref is
+   * the GDestroyNotify that balances it when the source is removed. */
+  g_idle_add_full(G_PRIORITY_LOW, deferred_heavy_init_cb,
+                  g_object_ref(self), g_object_unref);
+}
+
+/* nostrc-75o3.1: Heavy initialization deferred to after first frame paint.
+ * Runs at G_PRIORITY_LOW so GTK has already rendered the LOADING page. */
+static gboolean
+deferred_heavy_init_cb(gpointer data)
+{
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
+
+  g_debug("[STARTUP] deferred_heavy_init_cb: beginning heavy init");
+
+  /* Initialize GListModel-based event model */
+  self->event_model = gn_nostr_event_model_new();
+
+  /* Configure initial query for kind-1 notes */
+  GnNostrQueryParams params = {
+    .kinds = (gint[]){1},
+    .n_kinds = 1,
+    .authors = NULL,
+    .n_authors = 0,
+    .since = 0,
+    .until = 0,
+    .limit = 500  /* Match MODEL_MAX_EVENTS to avoid unnecessary work */
+  };
+  gn_nostr_event_model_set_query(self->event_model, &params);
+
+  /* REPOMARK:SCOPE: 4 - Wire GnNostrEventModel "need-profile" signal to enqueue_profile_author() and disable legacy thread_roots/prefetch initialization in gnostr_main_window_init */
+  g_signal_connect(self->event_model, "need-profile", G_CALLBACK(on_event_model_need_profile), self);
+  /* nostrc-yi2: Calm timeline - connect new items pending signal */
+  g_signal_connect(self->event_model, "new-items-pending", G_CALLBACK(on_event_model_new_items_pending), self);
+
+  /* Attach model to timeline view (accessed via session view) */
+  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
+  if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+    /* Wrap GListModel in a selection model */
+    GtkSelectionModel *selection = GTK_SELECTION_MODEL(
+      gtk_single_selection_new(G_LIST_MODEL(self->event_model))
+    );
+    gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(timeline), selection);
+    g_object_unref(selection); /* View takes ownership */
+
+    /* Connect scroll edge detection for sliding window pagination */
+    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(timeline));
+    if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
+      GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+      if (vadj) {
+        g_signal_connect(vadj, "value-changed", G_CALLBACK(on_timeline_scroll_value_changed), self);
+      }
+    }
+
+    /* nostrc-7vm: Connect tab filter changed signal for hashtag/author feeds */
+    g_signal_connect(timeline, "tab-filter-changed", G_CALLBACK(on_timeline_tab_filter_changed), self);
+
+    /* Do NOT call refresh here; we refresh once in initial_refresh_timeout_cb to avoid duplicate rebuilds. */
+  }
+
+  /* nostrc-mzab: Start background NDB ingestion thread */
+  self->ingest_queue = g_async_queue_new_full(g_free);
+  __atomic_store_n(&self->ingest_running, TRUE, __ATOMIC_SEQ_CST);
+  self->ingest_thread = g_thread_new("ndb-ingest", ingest_thread_func, self);
+  /* Initialize profile provider */
+  gnostr_profile_provider_init(0); /* Use env/default cap */
+  /* NIP-47: Load saved NWC connection from GSettings */
+  gnostr_nwc_service_load_from_settings(gnostr_nwc_service_get_default());
+  /* LEGITIMATE TIMEOUTS - Periodic stats logging (60s intervals).
+   * nostrc-b0h: Audited - diagnostic logging at fixed intervals is appropriate. */
+  g_timeout_add_seconds(60, profile_provider_log_stats_cb, NULL);
+  g_timeout_add_seconds(60, memory_stats_cb, self);
+
+  /* Pre-populate/apply cached profiles here */
+  prepopulate_all_profiles_from_cache(self);
+
+  if (!self->pool) self->pool = gnostr_pool_new();
+
+  /* NIP-42: Install relay AUTH handler so challenges are signed automatically (nostrc-kn38) */
+  gnostr_nip42_setup_pool_auth(self->pool);
+
   /* CRITICAL: Initialize pool and relays BEFORE timeline prepopulation!
    * Timeline prepopulation triggers profile fetches, which need relays in the pool.
    * If we prepopulate first, profile fetches will skip all relays (not in pool yet). */
   start_pool_live(self);
   /* Also start profile subscription if identity is configured */
   start_profile_subscription(self);
-
-  /* NOTE: Periodic refresh disabled - nostrdb ingestion drives UI updates via GnNostrEventModel.
-   * This avoids duplicate processing and high memory usage. Initial refresh occurs in
-   * initial_refresh_timeout_cb, and subsequent updates stream from nostrdb watchers. */
-
-  /* Init demand-driven profile fetch state */
-  self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
-  self->profile_fetch_source_id = 0;
-  self->profile_fetch_debounce_ms = 50; /* Reduced from 150ms for faster response */
-  self->profile_fetch_cancellable = g_cancellable_new();
-  self->profile_fetch_active = 0;
-  self->profile_fetch_max_concurrent = 5; /* Increased from 3 - goroutines are lightweight */
-
-  /* Init debounced NostrDB profile sweep */
-  self->ndb_sweep_source_id = 0;
-  self->ndb_sweep_debounce_ms = 1000; /* 1 second - prevents transaction contention */
-  if (!self->pool) self->pool = gnostr_pool_new();
-
-  /* NIP-42: Install relay AUTH handler so challenges are signed automatically (nostrc-kn38) */
-  gnostr_nip42_setup_pool_auth(self->pool);
-
-  /* nostrc-bkor: Init gift wrap state and DM service BEFORE starting the subscription.
-   * Previously these were initialized AFTER start_gift_wrap_subscription(), which wiped
-   * the user_pubkey_hex and sub_gift_wrap that the subscription had just set. This caused
-   * the logged-in user's pubkey to be NULL on app restart, breaking View Profile and
-   * other features that depend on user_pubkey_hex. */
-  self->sub_gift_wrap = 0;
-  self->user_pubkey_hex = NULL;
-  self->gift_wrap_queue = NULL; /* Created lazily when first gift wrap arrives */
-
-  /* Init NIP-17 DM service and wire to inbox view (before gift wrap subscription
-   * so dm_service is available when start_gift_wrap_subscription sets pubkey on it) */
-  self->dm_service = gnostr_dm_service_new();
-
-  GtkWidget *dm_inbox = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
-                          ? gnostr_session_view_get_dm_inbox(self->session_view)
-                          : NULL;
-  if (dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(dm_inbox)) {
-    gnostr_dm_service_set_inbox_view(self->dm_service, GNOSTR_DM_INBOX_VIEW(dm_inbox));
-    g_debug("[DM_SERVICE] Connected DM service to inbox view");
-
-    /* Wire inbox signals for conversation navigation */
-    g_signal_connect(dm_inbox, "open-conversation",
-                     G_CALLBACK(on_dm_inbox_open_conversation), self);
-    g_signal_connect(dm_inbox, "compose-dm",
-                     G_CALLBACK(on_dm_inbox_compose), self);
-  }
-
-  /* Wire conversation view signals */
-  GtkWidget *dm_conv = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
-                         ? gnostr_session_view_get_dm_conversation(self->session_view)
-                         : NULL;
-  if (dm_conv && GNOSTR_IS_DM_CONVERSATION_VIEW(dm_conv)) {
-    g_signal_connect(dm_conv, "go-back",
-                     G_CALLBACK(on_dm_conversation_go_back), self);
-    g_signal_connect(dm_conv, "send-message",
-                     G_CALLBACK(on_dm_conversation_send_message), self);
-    g_signal_connect(dm_conv, "send-file",
-                     G_CALLBACK(on_dm_conversation_send_file), self);
-    g_signal_connect(dm_conv, "open-profile",
-                     G_CALLBACK(on_dm_conversation_open_profile), self);
-    g_debug("[DM_SERVICE] Connected conversation view signals");
-  }
-
-  /* Wire DM service message-received for live updates */
-  g_signal_connect(self->dm_service, "message-received",
-                   G_CALLBACK(on_dm_service_message_received), self);
 
   /* nostrc-bkor: Start gift wrap subscription AFTER state init and DM service setup.
    * This sets user_pubkey_hex from saved settings on app restart. */
@@ -6364,8 +6385,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
         g_object_ref(self),
         g_object_unref);
   }
-
-  /* DB-only: startup profile prepopulation and backfill are handled above in init */
 
   /* Initialize button sensitivity based on current sign-in state */
   {
@@ -6417,7 +6436,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
      * that on_login_signed_in does. Without this, avatar/name never populate,
      * DMs don't work, notifications don't subscribe, etc. */
     if (signed_in && self->user_pubkey_hex) {
-      /* Register reactive profile watch — any future profile update
+      /* Register reactive profile watch -- any future profile update
        * (from timeline subscription, dedicated fetch, etc.) auto-updates
        * the account menu avatar/name. */
       if (self->profile_watch_id) {
@@ -6440,7 +6459,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
         gnostr_profile_meta_free(meta);
       }
 
-      /* Async: NIP-65 → profile fetch from relays (updates via profile watch) */
+      /* Async: NIP-65 -> profile fetch from relays (updates via profile watch) */
       gnostr_nip65_load_on_login_async(self->user_pubkey_hex,
                                         on_nip65_loaded_for_profile,
                                         g_object_ref(self));
@@ -6484,6 +6503,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       g_debug("[AUTH] Restored session services for user %.16s...", self->user_pubkey_hex);
     }
   }
+
+  g_debug("[STARTUP] deferred_heavy_init_cb: heavy init complete");
+  return G_SOURCE_REMOVE;
 }
 
 static void on_event_model_need_profile(GnNostrEventModel *model, const char *pubkey_hex, gpointer user_data) {

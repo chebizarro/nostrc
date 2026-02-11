@@ -35,21 +35,39 @@ void gnostr_app_update_relay_status(int connected_count, int total_count) {
   gnostr_tray_icon_set_relay_status(g_tray_icon, connected_count, total_count, state);
 }
 
+/* nostrc-75o3.1: Deferred plugin discovery context.
+ * Plugin discovery and loading run after the first frame so the window
+ * appears immediately instead of blocking for several seconds. */
+typedef struct {
+  GtkApplication *app;
+  GtkWindow      *win;
+} DeferredPluginCtx;
+
+static gboolean
+deferred_plugin_init_cb(gpointer data)
+{
+  DeferredPluginCtx *ctx = data;
+  GnostrPluginManager *plugin_manager = gnostr_plugin_manager_get_default();
+  gnostr_plugin_manager_init_with_app(plugin_manager, ctx->app);
+  gnostr_plugin_manager_discover_plugins(plugin_manager);
+  gnostr_plugin_manager_load_enabled_plugins(plugin_manager);
+  gnostr_plugin_manager_set_main_window(plugin_manager, ctx->win);
+  g_free(ctx);
+  return G_SOURCE_REMOVE;
+}
+
 static void on_activate(GApplication *app, gpointer user_data) {
   (void)user_data;
 
-  /* Initialize plugin manager */
-  GnostrPluginManager *plugin_manager = gnostr_plugin_manager_get_default();
-  gnostr_plugin_manager_init_with_app(plugin_manager, GTK_APPLICATION(app));
-  gnostr_plugin_manager_discover_plugins(plugin_manager);
-  gnostr_plugin_manager_load_enabled_plugins(plugin_manager);
-
   GnostrMainWindow *win = gnostr_main_window_new(ADW_APPLICATION(app));
-
-  /* Set main window on plugin manager for plugin UI access */
-  gnostr_plugin_manager_set_main_window(plugin_manager, GTK_WINDOW(win));
-
   gtk_window_present(GTK_WINDOW(win));
+
+  /* nostrc-75o3.1: Defer heavy plugin discovery until after the first frame.
+   * The window is already visible in LOADING state at this point. */
+  DeferredPluginCtx *ctx = g_new0(DeferredPluginCtx, 1);
+  ctx->app = GTK_APPLICATION(app);
+  ctx->win = GTK_WINDOW(win);
+  g_idle_add_full(G_PRIORITY_LOW, deferred_plugin_init_cb, ctx, NULL);
 
   /* Create system tray icon now that GTK is fully initialized.
    * Must be done here (not before g_application_run) to avoid
