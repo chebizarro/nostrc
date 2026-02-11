@@ -18,10 +18,24 @@
 #define DEFERRED_NOTES_MAX 200       /* Max deferred notes before force flush */
 #define PENDING_BY_AUTHOR_MAX 500    /* Max pending authors before cleanup */
 
-/* nostrc-yi2: Calm timeline - debounce and rate limiting */
-#define DEBOUNCE_INTERVAL_MS 500     /* Batch rapid updates */
-#define MAX_UPDATES_PER_SEC 3        /* Rate limit UI refreshes */
-#define MIN_UPDATE_INTERVAL_MS (1000 / MAX_UPDATES_PER_SEC)
+/* nostrc-yi2: Calm timeline - debounce batching (rate limiter removed, see hq-hdq47).
+ *
+ * The debounce timer only fires when the user is scrolled down (deferred mode).
+ * When user_at_top == TRUE, notes are inserted immediately with no delay.
+ *
+ * hq-hdq47 audit:
+ * - Reduced from 500ms to 50ms (matching GnTimelineModel's UPDATE_DEBOUNCE_MS).
+ *   500ms was overly conservative -- notes appeared half a second late even after
+ *   batching completed.
+ * - Removed MAX_UPDATES_PER_SEC / MIN_UPDATE_INTERVAL_MS rate limiter.
+ *   The rate limiter (3/sec = 333ms min interval) was added pre-nostrc-pri1 as a
+ *   safety net against rapid items_changed signals.  With enforce_window now running
+ *   at G_PRIORITY_DEFAULT_IDLE (nostrc-pri1), nested signal storms are already
+ *   prevented.  The rate limiter just added extra rescheduling latency.
+ * - enforce_window_idle_cb is retained: it is the correct mechanism for preventing
+ *   nested items_changed signals during window eviction.
+ */
+#define DEBOUNCE_INTERVAL_MS 50      /* Batch rapid updates (was 500ms, see hq-hdq47) */
 
 /* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
 #define FILTER_TIMELINE   "{\"kinds\":[1,6,9735]}"
@@ -98,11 +112,11 @@ struct _GnNostrEventModel {
   guint visible_end;    /* Last visible position in the list */
   GHashTable *skip_animation_keys;  /* key: uint64_t*, value: GINT_TO_POINTER(1) */
 
-  /* nostrc-yi2: Calm timeline - debounce and batching */
+  /* nostrc-yi2: Calm timeline - debounce and batching
+   * hq-hdq47: Removed last_update_time_ms / rate limiter. See #define block. */
   gboolean user_at_top;           /* TRUE if user is at scroll top (auto-scroll allowed) */
   GArray *deferred_notes;         /* NoteEntry items waiting to be inserted */
   guint debounce_source_id;       /* Pending debounce timeout */
-  gint64 last_update_time_ms;     /* Timestamp of last items-changed emission */
   guint pending_new_count;        /* Count of new items waiting (for indicator) */
 
   /* Deferred enforce_window to avoid nested items_changed signals */
@@ -187,7 +201,6 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
 static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at);
 static gboolean flush_deferred_notes_cb(gpointer user_data);
 static void schedule_deferred_flush(GnNostrEventModel *self);
-static gint64 get_current_time_ms(void);
 
 /* Subscription callbacks */
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
@@ -654,11 +667,6 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
           *reply_id ? *reply_id : "(null)");
 }
 
-/* nostrc-yi2: Get current time in milliseconds */
-static gint64 get_current_time_ms(void) {
-  return g_get_monotonic_time() / 1000;
-}
-
 /* Compare function for sorting NoteEntry by created_at (newest first) */
 static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
   const NoteEntry *ea = (const NoteEntry *)a;
@@ -690,15 +698,9 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  /* Rate limit check */
-  gint64 now_ms = get_current_time_ms();
-  gint64 elapsed = now_ms - self->last_update_time_ms;
-  if (elapsed < MIN_UPDATE_INTERVAL_MS && self->last_update_time_ms > 0) {
-    /* Too soon, reschedule */
-    gint64 delay = MIN_UPDATE_INTERVAL_MS - elapsed;
-    self->debounce_source_id = g_timeout_add((guint)delay, flush_deferred_notes_cb, self);
-    return G_SOURCE_REMOVE;
-  }
+  /* hq-hdq47: Rate limiter removed. The debounce timer (DEBOUNCE_INTERVAL_MS)
+   * already batches rapid arrivals. enforce_window runs at DEFAULT_IDLE priority
+   * (nostrc-pri1), preventing nested items_changed signal storms. */
 
   guint total_deferred = self->deferred_notes->len;
   g_debug("[CALM] Flushing %u deferred notes (batched)", total_deferred);
@@ -757,9 +759,6 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
   /* Clear deferred queue */
   g_array_set_size(self->deferred_notes, 0);
 
-  /* Update timestamp */
-  self->last_update_time_ms = now_ms;
-
   /* Clear pending count and notify */
   self->pending_new_count = 0;
   g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
@@ -772,7 +771,8 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
 
 /* nostrc-yi2: Schedule a flush of deferred notes.
  * LEGITIMATE TIMEOUT - Debounce batching of note insertions.
- * nostrc-b0h: Audited - batching UI updates is appropriate. */
+ * nostrc-b0h: Audited - batching UI updates is appropriate.
+ * hq-hdq47: Reduced from 500ms to 50ms. */
 static void schedule_deferred_flush(GnNostrEventModel *self) {
   if (self->debounce_source_id > 0) {
     return;  /* Already scheduled */
@@ -1776,11 +1776,11 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->visible_end = 10;  /* Default to showing first 10 items as "visible" */
   self->skip_animation_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
-  /* nostrc-yi2: Initialize calm timeline fields */
+  /* nostrc-yi2: Initialize calm timeline fields
+   * hq-hdq47: Removed last_update_time_ms (rate limiter removed). */
   self->user_at_top = TRUE;  /* Assume user starts at top */
   self->deferred_notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
   self->debounce_source_id = 0;
-  self->last_update_time_ms = 0;
   self->pending_new_count = 0;
 
   /* NIP-25/57: Initialize reaction and zap caches */
@@ -2923,21 +2923,18 @@ guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self) {
   return self->pending_new_count;
 }
 
-/* nostrc-yi2: Force flush of deferred notes (e.g., when user clicks indicator)
- * This bypasses the rate limiter since it's a user-initiated action. */
+/* nostrc-yi2: Force flush of deferred notes (e.g., when user clicks indicator).
+ * hq-hdq47: Rate limiter removed, so this is just a direct flush now. */
 void gn_nostr_event_model_flush_pending(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
   if (self->deferred_notes && self->deferred_notes->len > 0) {
-    g_debug("[CALM] Manually flushing %u deferred notes (bypassing rate limit)", self->deferred_notes->len);
+    g_debug("[CALM] Manually flushing %u deferred notes", self->deferred_notes->len);
     /* Cancel any pending debounce */
     if (self->debounce_source_id > 0) {
       g_source_remove(self->debounce_source_id);
       self->debounce_source_id = 0;
     }
-    /* Reset last_update_time to bypass the rate limiter in flush_deferred_notes_cb.
-     * User-initiated flushes should be instant, not rate-limited. */
-    self->last_update_time_ms = 0;
     flush_deferred_notes_cb(self);
   }
 }
