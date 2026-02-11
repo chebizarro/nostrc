@@ -16,7 +16,6 @@
 #define PROFILE_CACHE_MAX 500
 #define AUTHORS_READY_MAX 1000
 #define DEFERRED_NOTES_MAX 200       /* Max deferred notes before force flush */
-#define PENDING_BY_AUTHOR_MAX 500    /* Max pending authors before cleanup */
 
 /* nostrc-yi2: Calm timeline - debounce batching (rate limiter removed, see hq-hdq47).
  *
@@ -49,11 +48,6 @@ typedef struct {
   uint64_t note_key;
   gint64 created_at;
 } NoteEntry;
-
-typedef struct {
-  uint64_t note_key;
-  gint64 created_at;
-} PendingEntry;
 
 struct _GnNostrEventModel {
   GObject parent_instance;
@@ -102,8 +96,6 @@ struct _GnNostrEventModel {
   /* Author readiness (kind 0 exists in DB / loaded) - with LRU eviction */
   GHashTable *authors_ready;      /* key: pubkey hex (string), value: GINT_TO_POINTER(1) */
   GQueue *authors_ready_lru;      /* char* pubkey in LRU order (head=oldest) */
-  GHashTable *pending_by_author;  /* key: pubkey hex (string), value: GArray* (PendingEntry) */
-
   /* Thread info cache - note_key -> ThreadInfo */
   GHashTable *thread_info;
 
@@ -193,10 +185,6 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
 static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char *pubkey_hex, gint64 created_at);
 static void enforce_window(GnNostrEventModel *self);
 static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key);
-static void pending_remove_note_key(GnNostrEventModel *self, uint64_t note_key);
-static gboolean add_pending(GnNostrEventModel *self, const char *pubkey_hex, uint64_t note_key, gint64 created_at);
-static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex);
-
 /* nostrc-yi2: Calm timeline helpers */
 static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at);
 static gboolean flush_deferred_notes_cb(gpointer user_data);
@@ -915,41 +903,6 @@ static void enforce_window(GnNostrEventModel *self) {
     G_PRIORITY_DEFAULT_IDLE, enforce_window_idle_cb, self, NULL);
 }
 
-/* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
-static gboolean add_pending(GnNostrEventModel *self, const char *pubkey_hex, uint64_t note_key, gint64 created_at) {
-  if (!self || !self->pending_by_author || !pubkey_hex) return FALSE;
-
-  /* Enforce limit on pending_by_author to prevent unbounded memory growth */
-  guint pending_size = g_hash_table_size(self->pending_by_author);
-  if (pending_size > PENDING_BY_AUTHOR_MAX) {
-    g_debug("[MODEL] pending_by_author exceeded limit (%u > %u), clearing oldest entries",
-            pending_size, PENDING_BY_AUTHOR_MAX);
-    /* Clear half the entries to avoid frequent cleanup */
-    GHashTableIter iter;
-    gpointer k, v;
-    guint to_remove = pending_size / 2;
-    guint removed = 0;
-    g_hash_table_iter_init(&iter, self->pending_by_author);
-    while (g_hash_table_iter_next(&iter, &k, &v) && removed < to_remove) {
-      g_hash_table_iter_remove(&iter);
-      removed++;
-    }
-  }
-
-  GArray *arr = g_hash_table_lookup(self->pending_by_author, pubkey_hex);
-  gboolean first = (arr == NULL);
-
-  if (!arr) {
-    arr = g_array_new(FALSE, FALSE, sizeof(PendingEntry));
-    g_hash_table_insert(self->pending_by_author, g_strdup(pubkey_hex), arr);
-  }
-
-  PendingEntry pe = { .note_key = note_key, .created_at = created_at };
-  g_array_append_val(arr, pe);
-
-  return first;
-}
-
 /* nostrc-5r8b: Helper to insert note without emitting signal (for batching) */
 static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
                                     const char *root_id, const char *parent_id, guint depth) {
@@ -985,107 +938,6 @@ static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, g
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
   return TRUE;  /* Actually inserted */
-}
-
-/* nostrc-5r8b: Batched flush to avoid UI thread blocking.
- * Instead of emitting items_changed for each note, we batch all insertions
- * and emit a SINGLE signal at the end. This reduces O(N) layout recalculations
- * to O(1), dramatically improving performance when many pending notes flush. */
-static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex) {
-  if (!self || !pubkey_hex || !self->pending_by_author) return;
-
-  gpointer orig_key = NULL;
-  gpointer value = NULL;
-
-  if (!g_hash_table_lookup_extended(self->pending_by_author, pubkey_hex, &orig_key, &value)) {
-    return;
-  }
-
-  /* Steal so we can process without destroy notify running */
-  g_hash_table_steal(self->pending_by_author, orig_key);
-
-  GArray *arr = (GArray *)value;
-  char *key_str = (char *)orig_key;
-
-  if (!arr || arr->len == 0) {
-    if (arr) g_array_unref(arr);
-    g_free(key_str);
-    return;
-  }
-
-  guint old_len = self->notes->len;
-  guint inserted_count = 0;
-
-  /* Open transaction to access note tags for NIP-10 parsing */
-  void *txn = NULL;
-  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
-
-  for (guint i = 0; i < arr->len; i++) {
-    PendingEntry *pe = &g_array_index(arr, PendingEntry, i);
-
-    /* Extract NIP-10 thread info if we have a transaction */
-    char *root_id = NULL;
-    char *reply_id = NULL;
-    if (have_txn) {
-      storage_ndb_note *note = storage_ndb_get_note_ptr(txn, pe->note_key);
-      if (note) {
-        storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
-        /* nostrc-slot: Pre-cache item while txn is open to avoid new transaction later */
-        precache_item_from_note(self, pe->note_key, pe->created_at, note);
-      }
-    }
-
-    /* Insert without emitting signal */
-    if (insert_note_silent(self, pe->note_key, pe->created_at, root_id, reply_id, 0)) {
-      inserted_count++;
-    }
-    g_free(root_id);
-    g_free(reply_id);
-  }
-
-  if (have_txn) {
-    storage_ndb_end_query(txn);
-  }
-
-  g_array_unref(arr);
-  g_free(key_str);
-
-  /* Emit a SINGLE items_changed covering all insertions.
-   * We use (0, 0, new_len - old_len) which tells ListView to re-read
-   * items from position 0. This is more efficient than N individual signals. */
-  if (inserted_count > 0) {
-    guint new_len = self->notes->len;
-    g_debug("[FLUSH] Batched %u note insertions (%u -> %u items)", inserted_count, old_len, new_len);
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, new_len - old_len);
-  }
-
-  enforce_window(self);
-}
-
-/* Remove a note_key from any pending queues. */
-static void pending_remove_note_key(GnNostrEventModel *self, uint64_t note_key) {
-  if (!self || !self->pending_by_author) return;
-
-  GHashTableIter iter;
-  gpointer k, v;
-  g_hash_table_iter_init(&iter, self->pending_by_author);
-
-  while (g_hash_table_iter_next(&iter, &k, &v)) {
-    GArray *arr = (GArray *)v;
-    if (!arr) continue;
-
-    /* Remove in reverse to preserve indices */
-    for (gint i = (gint)arr->len - 1; i >= 0; i--) {
-      PendingEntry *pe = &g_array_index(arr, PendingEntry, (guint)i);
-      if (pe->note_key == note_key) {
-        g_array_remove_index(arr, (guint)i);
-      }
-    }
-
-    if (arr->len == 0) {
-      g_hash_table_iter_remove(&iter);
-    }
-  }
 }
 
 /* Remove a note from the visible list by note_key (incremental). */
@@ -1177,7 +1029,6 @@ static void handle_delete_event_json(GnNostrEventModel *self, void *txn, const c
 
       /* Authorized: pubkeys match, proceed with deletion */
       (void)remove_note_by_key(self, target_key);
-      pending_remove_note_key(self, target_key);
     }
   }
 
@@ -1308,9 +1159,6 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     profile_cache_update_from_content(self, pubkey_hex, content, (gsize)content_len);
     notify_cached_items_for_pubkey(self, pubkey_hex);
-
-    /* Any pending notes for this author can now be inserted */
-    flush_pending_notes(self, pubkey_hex);
   }
 
   storage_ndb_end_query(txn);
@@ -1692,7 +1540,6 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   if (self->authors_ready_lru) {
     g_queue_free_full(self->authors_ready_lru, g_free);
   }
-  if (self->pending_by_author) g_hash_table_unref(self->pending_by_author);
   if (self->thread_info) g_hash_table_unref(self->thread_info);
 
   /* nostrc-7o7: Clean up animation skip tracking */
@@ -1782,7 +1629,6 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
 
   self->authors_ready = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->authors_ready_lru = g_queue_new();
-  self->pending_by_author = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_array_unref);
 
   self->limit = MODEL_MAX_ITEMS;
   self->window_size = MODEL_MAX_ITEMS;
@@ -2381,9 +2227,6 @@ void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex,
 
   profile_cache_update_from_content(self, pubkey_hex, content_json, strlen(content_json));
   notify_cached_items_for_pubkey(self, pubkey_hex);
-
-  /* New profile may unblock pending notes */
-  flush_pending_notes(self, pubkey_hex);
 }
 
 void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, const char *pubkey) {
@@ -2397,11 +2240,10 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
 
   guint old_size = self->notes->len;
   if (old_size == 0) {
-    /* Still clear caches/pending to be safe */
+    /* Still clear caches to be safe */
     g_hash_table_remove_all(self->item_cache);
     g_queue_clear(self->cache_lru);
     g_hash_table_remove_all(self->thread_info);
-    g_hash_table_remove_all(self->pending_by_author);
     return;
   }
 
@@ -2414,7 +2256,6 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
   g_hash_table_remove_all(self->thread_info);
-  g_hash_table_remove_all(self->pending_by_author);
 
   g_debug("[MODEL] Cleared %u items", old_size);
 }
