@@ -8616,7 +8616,8 @@ static void on_relay_config_changed(gpointer user_data) {
     /* LEGITIMATE TIMEOUT - Allow cancellation to complete before restart.
      * 100ms gives goroutines time to clean up connections gracefully.
      * nostrc-b0h: Audited - brief delay for async cleanup is appropriate. */
-    g_timeout_add(100, (GSourceFunc)on_relay_config_changed_restart, self);
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 100, on_relay_config_changed_restart,
+                       g_object_ref(self), g_object_unref);
   }
 
   /* Restart DM service to pick up new DM relays (nostrc-36y.4) */
@@ -8674,8 +8675,10 @@ on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
                   err ? err->message : "(unknown)");
         g_clear_error(&err);
         nostr_filters_free(filters);
-        /* retry_pool_live expects a ref; reuse the one we hold */
-        g_timeout_add_seconds(5, retry_pool_live, self);
+        /* retry_pool_live expects a ref; reuse the one we hold.
+         * g_timeout_add_full adds a safety ref via destroy notify. */
+        g_timeout_add_full(G_PRIORITY_DEFAULT, 5000, retry_pool_live,
+                           g_object_ref(self), g_object_unref);
         self->reconnection_in_progress = FALSE;
         return;
     }
@@ -8693,7 +8696,8 @@ on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
         g_warning("live: pool_subscribe failed: %s - retrying in 5 seconds",
                   sub_error ? sub_error->message : "(unknown)");
         g_clear_error(&sub_error);
-        g_timeout_add_seconds(5, retry_pool_live, self);
+        g_timeout_add_full(G_PRIORITY_DEFAULT, 5000, retry_pool_live,
+                           g_object_ref(self), g_object_unref);
         self->reconnection_in_progress = FALSE;
         return;
     }

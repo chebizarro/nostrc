@@ -327,6 +327,11 @@ change_password_ctx_free(ChangePasswordCtx *ctx)
   g_free(ctx);
 }
 
+static gboolean auto_close_dialog_cb(gpointer user_data) {
+  adw_dialog_close(ADW_DIALOG(user_data));
+  return G_SOURCE_REMOVE;
+}
+
 static void
 change_password_dbus_done(GObject *src, GAsyncResult *res, gpointer user_data)
 {
@@ -380,7 +385,8 @@ change_password_dbus_done(GObject *src, GAsyncResult *res, gpointer user_data)
       adw_banner_set_revealed(self->banner_status, TRUE);
 
       /* Close dialog after brief delay */
-      g_timeout_add(1500, (GSourceFunc)adw_dialog_close, self);
+      g_timeout_add_full(G_PRIORITY_DEFAULT, 1500, auto_close_dialog_cb,
+                         g_object_ref(self), g_object_unref);
     } else {
       adw_banner_set_title(self->banner_status, "Password change failed. Please check your current password.");
       adw_banner_set_revealed(self->banner_status, TRUE);

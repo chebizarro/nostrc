@@ -392,6 +392,11 @@ on_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
         chess_publish_done, ctx);
 }
 
+static gboolean auto_close_dialog_cb(gpointer user_data) {
+    adw_dialog_close(ADW_DIALOG(user_data));
+    return G_SOURCE_REMOVE;
+}
+
 static void chess_publish_done(guint success_count, guint fail_count, gpointer user_data) {
     PublishContext *ctx = (PublishContext *)user_data;
     if (!ctx) return;
@@ -404,7 +409,8 @@ static void chess_publish_done(guint success_count, guint fail_count, gpointer u
             show_toast(self, _("Chess game published to Nostr!"));
             g_signal_emit(self, signals[SIGNAL_PUBLISHED], 0,
                           ctx->event_id ? ctx->event_id : "");
-            g_timeout_add(1000, (GSourceFunc)adw_dialog_close, ADW_DIALOG(self));
+            g_timeout_add_full(G_PRIORITY_DEFAULT, 1000, auto_close_dialog_cb,
+                               g_object_ref(self), g_object_unref);
         } else {
             show_toast(self, _("Failed to publish to relays"));
             g_signal_emit(self, signals[SIGNAL_PUBLISH_FAILED], 0, "Relay publish failed");
