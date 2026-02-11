@@ -293,6 +293,9 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
 /* Forward declarations for search results view signal handlers (nostrc-29) */
 static void on_search_open_note(GnostrSearchResultsView *view, const char *event_id_hex, gpointer user_data);
 static void on_search_open_profile(GnostrSearchResultsView *view, const char *pubkey_hex, gpointer user_data);
+/* Forward declarations for notification view signal handlers */
+static void on_notification_open_note(GnostrNotificationsView *view, const char *note_id, gpointer user_data);
+static void on_notification_open_profile(GnostrNotificationsView *view, const char *pubkey_hex, gpointer user_data);
 /* Forward declarations for marketplace/classifieds signal handlers */
 static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data);
 static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const char *pubkey_hex, const char *lud16, gpointer user_data);
@@ -4621,6 +4624,24 @@ static void on_search_open_profile(GnostrSearchResultsView *view, const char *pu
   on_note_card_open_profile(NULL, pubkey_hex, self);
 }
 
+/* Notification view signal handlers */
+static void on_notification_open_note(GnostrNotificationsView *view, const char *note_id, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !note_id) return;
+  gnostr_main_window_view_thread(GTK_WIDGET(self), note_id);
+  /* Dismiss notification popover so thread panel is visible */
+  GtkWidget *popover = gtk_widget_get_ancestor(GTK_WIDGET(view), GTK_TYPE_POPOVER);
+  if (popover) gtk_popover_popdown(GTK_POPOVER(popover));
+}
+
+static void on_notification_open_profile(GnostrNotificationsView *view, const char *pubkey_hex, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+  gnostr_main_window_open_profile(GTK_WIDGET(self), pubkey_hex);
+  GtkWidget *popover = gtk_widget_get_ancestor(GTK_WIDGET(view), GTK_TYPE_POPOVER);
+  if (popover) gtk_popover_popdown(GTK_POPOVER(popover));
+}
+
 /* Marketplace/Classifieds signal handlers (NIP-15/NIP-99) */
 static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data) {
   (void)view;
@@ -6189,6 +6210,16 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                        G_CALLBACK(on_search_open_note), self);
       g_signal_connect(search_view, "open-profile",
                        G_CALLBACK(on_search_open_profile), self);
+    }
+  }
+  /* Connect notification view signals */
+  {
+    GtkWidget *notif_view = self->session_view ? gnostr_session_view_get_notifications_view(self->session_view) : NULL;
+    if (notif_view && GNOSTR_IS_NOTIFICATIONS_VIEW(notif_view)) {
+      g_signal_connect(notif_view, "open-note",
+                       G_CALLBACK(on_notification_open_note), self);
+      g_signal_connect(notif_view, "open-profile",
+                       G_CALLBACK(on_notification_open_profile), self);
     }
   }
   /* Connect marketplace/classifieds view signals (NIP-15/NIP-99) - accessed via session view */
