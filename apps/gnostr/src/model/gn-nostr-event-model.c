@@ -113,6 +113,9 @@ struct _GnNostrEventModel {
 
   /* Deferred enforce_window to avoid nested items_changed signals */
   guint enforce_window_idle_id;
+
+  /* Async pagination state */
+  gboolean async_loading;
 };
 
 typedef struct {
@@ -2216,6 +2219,149 @@ void gn_nostr_event_model_refresh_async(GnNostrEventModel *self) {
   g_task_set_task_data(task, snap, (GDestroyNotify)refresh_snap_free);
   g_task_run_in_thread(task, refresh_thread_func);
   g_object_unref(task);
+}
+
+/* --- Async pagination: load_older / load_newer off main thread --- */
+
+/* Main-thread callback: apply pre-processed entries WITHOUT clearing model */
+static void
+on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)user_data;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(source);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return;
+
+  self->async_loading = FALSE;
+
+  GPtrArray *entries = g_task_propagate_pointer(G_TASK(result), NULL);
+  if (!entries) return;
+
+  /* Recover trim parameters from GTask qdata */
+  guint trim_max = GPOINTER_TO_UINT(
+      g_object_get_data(G_OBJECT(result), "paginate-trim-max"));
+  gboolean trim_newer = GPOINTER_TO_INT(
+      g_object_get_data(G_OBJECT(result), "paginate-trim-newer"));
+
+  /* Open a quick read txn for profile cache fills */
+  void *txn = NULL;
+  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
+
+  guint added = 0;
+  for (guint i = 0; i < entries->len; i++) {
+    RefreshEntry *e = g_ptr_array_index(entries, i);
+    if (!e) continue;
+
+    /* Skip duplicates already in model */
+    if (has_note_key(self, e->note_key)) continue;
+
+    /* Mute list check (must be on main thread) */
+    GnostrMuteList *ml = gnostr_mute_list_get_default();
+    if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
+      continue;
+
+    /* nostrc-gate: Opportunistically cache profile, never gate display */
+    if (have_txn) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(e->pubkey_hex, pk32)) {
+        if (!profile_cache_ensure_from_db(self, txn, pk32, e->pubkey_hex))
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
+      }
+    } else if (!e->has_profile) {
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
+    }
+
+    add_note_internal(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0);
+    added++;
+  }
+
+  if (have_txn) storage_ndb_end_query(txn);
+
+  /* Trim model to bounded size if requested */
+  if (trim_max > 0 && self->notes->len > trim_max) {
+    if (trim_newer)
+      gn_nostr_event_model_trim_newer(self, trim_max);
+    else
+      gn_nostr_event_model_trim_older(self, trim_max);
+  }
+
+  g_debug("[MODEL] Async paginate: %u added, %u total", added, self->notes->len);
+  g_ptr_array_unref(entries);
+}
+
+void
+gn_nostr_event_model_load_older_async(GnNostrEventModel *self, guint count,
+                                       guint max_items)
+{
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+  if (count == 0 || self->async_loading) return;
+
+  gint64 oldest_ts = gn_nostr_event_model_get_oldest_timestamp(self);
+  if (oldest_ts == 0) {
+    /* No events yet — fall back to async refresh */
+    gn_nostr_event_model_refresh_async(self);
+    return;
+  }
+
+  self->async_loading = TRUE;
+
+  RefreshQuerySnap *snap = refresh_snap_new(self);
+  snap->until = oldest_ts - 1;
+  snap->since = 0;
+  snap->qlimit = count;
+
+  GTask *task = g_task_new(self, NULL, on_paginate_async_done, NULL);
+  g_task_set_task_data(task, snap, (GDestroyNotify)refresh_snap_free);
+
+  /* Store trim info as GTask qdata (read by callback) */
+  g_object_set_data(G_OBJECT(task), "paginate-trim-max",
+                    GUINT_TO_POINTER(max_items));
+  g_object_set_data(G_OBJECT(task), "paginate-trim-newer",
+                    GINT_TO_POINTER(TRUE)); /* loaded older → trim newer */
+
+  g_task_run_in_thread(task, refresh_thread_func);
+  g_object_unref(task);
+}
+
+void
+gn_nostr_event_model_load_newer_async(GnNostrEventModel *self, guint count,
+                                       guint max_items)
+{
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+  if (count == 0 || self->async_loading) return;
+
+  gint64 newest_ts = gn_nostr_event_model_get_newest_timestamp(self);
+  if (newest_ts == 0) {
+    gn_nostr_event_model_refresh_async(self);
+    return;
+  }
+
+  self->async_loading = TRUE;
+
+  RefreshQuerySnap *snap = refresh_snap_new(self);
+  snap->since = newest_ts + 1;
+  snap->until = 0;
+  /* Query more to ensure contiguous events (NDB returns newest-first) */
+  guint query_limit = count * 4;
+  if (query_limit < 100) query_limit = 100;
+  snap->qlimit = query_limit;
+
+  GTask *task = g_task_new(self, NULL, on_paginate_async_done, NULL);
+  g_task_set_task_data(task, snap, (GDestroyNotify)refresh_snap_free);
+
+  g_object_set_data(G_OBJECT(task), "paginate-trim-max",
+                    GUINT_TO_POINTER(max_items));
+  g_object_set_data(G_OBJECT(task), "paginate-trim-newer",
+                    GINT_TO_POINTER(FALSE)); /* loaded newer → trim older */
+
+  g_task_run_in_thread(task, refresh_thread_func);
+  g_object_unref(task);
+}
+
+gboolean
+gn_nostr_event_model_is_async_loading(GnNostrEventModel *self)
+{
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), FALSE);
+  return self->async_loading;
 }
 
 void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json) {

@@ -861,12 +861,16 @@ int storage_ndb_increment_note_meta(const unsigned char id32[32], const char *fi
 {
   if (!id32 || !field) return -1;
 
-  /* Read existing counts */
+  /* Read existing counts.
+   * nostrc-dbus1: Use plain begin_query (no retry+usleep) because this is
+   * called from on_sub_timeline_batch on the main thread.  The retry variant
+   * does exponential-backoff usleep which blocks the main loop during event
+   * floods.  Meta counts are best-effort — a missed increment is harmless. */
   StorageNdbNoteCounts counts;
   memset(&counts, 0, sizeof(counts));
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) == 0 && txn) {
+  if (storage_ndb_begin_query(&txn) == 0 && txn) {
     storage_ndb_read_note_counts(txn, id32, &counts);
     storage_ndb_end_query(txn);
   }

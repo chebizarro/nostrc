@@ -4508,7 +4508,7 @@ static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const c
   gnostr_mute_list_add_pubkey(mute_list, pubkey_hex, FALSE);
 
   if (self->event_model) {
-    gn_nostr_event_model_refresh(GN_NOSTR_EVENT_MODEL(self->event_model));
+    gn_nostr_event_model_refresh_async(GN_NOSTR_EVENT_MODEL(self->event_model));
   }
 
   show_toast(self, "User muted");
@@ -5552,7 +5552,7 @@ void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex) {
 
   /* Refresh the timeline to filter out the muted user */
   if (self->event_model) {
-    gn_nostr_event_model_refresh(GN_NOSTR_EVENT_MODEL(self->event_model));
+    gn_nostr_event_model_refresh_async(GN_NOSTR_EVENT_MODEL(self->event_model));
   }
 
   show_toast(self, "User muted");
@@ -5577,7 +5577,7 @@ void gnostr_main_window_mute_thread(GtkWidget *window, const char *event_id_hex)
 
   /* Refresh the timeline to filter out the muted thread */
   if (self->event_model) {
-    gn_nostr_event_model_refresh(GN_NOSTR_EVENT_MODEL(self->event_model));
+    gn_nostr_event_model_refresh_async(GN_NOSTR_EVENT_MODEL(self->event_model));
   }
 
   show_toast(self, "Thread muted");
@@ -6560,7 +6560,7 @@ static void on_event_model_need_profile(GnNostrEventModel *model, const char *pu
 static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model) return;
-  if (self->loading_older) return; /* Already loading */
+  if (gn_nostr_event_model_is_async_loading(self->event_model)) return;
 
   gdouble value = gtk_adjustment_get_value(adj);
   gdouble upper = gtk_adjustment_get_upper(adj);
@@ -6595,32 +6595,14 @@ static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_d
   /* Trigger load newer when within 20% of the top */
   gdouble top_threshold = lower + (page_size * 0.2);
   if (value <= top_threshold && upper > page_size) {
-    self->loading_older = TRUE; /* Reuse flag to prevent concurrent loads */
-    guint added = gn_nostr_event_model_load_newer(self->event_model, batch);
-    (void)added;
-    self->loading_older = FALSE;
-
-    /* Trim older events to keep memory bounded */
-    guint current = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
-    if (current > max_items) {
-      gn_nostr_event_model_trim_older(self->event_model, max_items);
-    }
+    gn_nostr_event_model_load_newer_async(self->event_model, batch, max_items);
     return;
   }
 
   /* Trigger load older when within 20% of the bottom */
   gdouble bottom_threshold = upper - page_size - (page_size * 0.2);
   if (value >= bottom_threshold && upper > page_size) {
-    self->loading_older = TRUE;
-    guint added = gn_nostr_event_model_load_older(self->event_model, batch);
-    g_debug("[SCROLL] Loaded %u older events", added);
-    self->loading_older = FALSE;
-
-    /* Trim newer events to keep memory bounded */
-    guint current = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
-    if (current > max_items) {
-      gn_nostr_event_model_trim_newer(self->event_model, max_items);
-    }
+    gn_nostr_event_model_load_older_async(self->event_model, batch, max_items);
   }
 }
 
@@ -6708,7 +6690,7 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
   if (query) {
     /* Apply the new query to the model */
     gn_nostr_event_model_set_timeline_query(self->event_model, query);
-    gn_nostr_event_model_refresh(self->event_model);
+    gn_nostr_event_model_refresh_async(self->event_model);
     gn_timeline_query_free(query);
   }
 }
@@ -8983,9 +8965,9 @@ static gboolean periodic_model_refresh(gpointer user_data) {
   }
   
   if (self->event_model) {
-    gn_nostr_event_model_refresh(self->event_model);
+    gn_nostr_event_model_refresh_async(self->event_model);
   }
-  
+
   return G_SOURCE_CONTINUE;
 }
 

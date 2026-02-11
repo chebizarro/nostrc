@@ -68,6 +68,12 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count);
  * Returns the number of events added. */
 guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count);
 
+/* Async sliding window pagination: NDB query + parse on worker thread.
+ * max_items: trim model to this size after load (0 = no trim). */
+void gn_nostr_event_model_load_older_async(GnNostrEventModel *self, guint count, guint max_items);
+void gn_nostr_event_model_load_newer_async(GnNostrEventModel *self, guint count, guint max_items);
+gboolean gn_nostr_event_model_is_async_loading(GnNostrEventModel *self);
+
 /* Get the timestamp of the oldest event in the model (0 if empty). */
 gint64 gn_nostr_event_model_get_oldest_timestamp(GnNostrEventModel *self);
 
