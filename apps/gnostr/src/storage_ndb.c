@@ -1729,6 +1729,43 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
   storage_ndb_note_get_nip10_thread_full(note, root_id_out, reply_id_out, NULL, NULL);
 }
 
+/* Get the last "e" tag value from a note as hex string.
+ * Useful for reactions (kind 7) and zaps (kind 9735) where the last
+ * e-tag is the target event. Uses direct tag iteration — no NDB query.
+ * Returns g_strdup'd hex string, or NULL if no e-tag found.
+ * Caller must g_free() the result. */
+char *storage_ndb_note_get_last_etag(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return NULL;
+
+  char last_e_hex[65] = {0};
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    if (ndb_tag_count(tag) < 2) continue;
+
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (!key.str || strcmp(key.str, "e") != 0) continue;
+
+    struct ndb_str val = ndb_tag_str(note, tag, 1);
+    if (val.flag == NDB_PACKED_ID && val.id) {
+      storage_ndb_hex_encode(val.id, last_e_hex);
+    } else if (val.flag != NDB_PACKED_ID && val.str && strlen(val.str) == 64) {
+      memcpy(last_e_hex, val.str, 64);
+      last_e_hex[64] = '\0';
+    }
+  }
+
+  if (last_e_hex[0] == '\0') return NULL;
+  return g_strdup(last_e_hex);
+}
+
 /* ============== Hashtag Extraction API ============== */
 
 /* Extract hashtags ("t" tags) from note.

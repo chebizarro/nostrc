@@ -7,8 +7,6 @@
 #include "../util/mute_list.h"
 #include <nostr.h>
 #include <string.h>
-#include "nostr_json.h"
-#include <json.h>
 
 /* Window sizing and cache sizes */
 #define MODEL_MAX_ITEMS 100
@@ -524,72 +522,6 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
   return FALSE;
 }
 
-/* nostrc-3nj: Helper for iterating tags to find e-tag (replaces jansson iteration) */
-typedef struct {
-  char *target_event_id;
-  char *bolt11;
-  gboolean found_e;
-} TagIterCtx;
-
-static gboolean find_etag_iter_cb(gsize index, const gchar *element_json, gpointer user_data) {
-  TagIterCtx *ctx = (TagIterCtx *)user_data;
-  (void)index;
-
-  /* Each tag is an array like ["e", "<event_id>", ...] */
-  size_t arr_len = 0;
-  arr_len = gnostr_json_get_array_length(element_json, NULL, NULL);
-  if (arr_len < 0 || arr_len < 2) {
-    return true;  /* Continue */
-  }
-
-  char *tag_name = NULL;
-  tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
-  if (!tag_name) {
-    return true;
-  }
-
-  if (g_strcmp0(tag_name, "e") == 0 && !ctx->target_event_id) {
-    char *tag_value = NULL;
-    tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
-    if (tag_value) {
-      if (strlen(tag_value) == 64) {
-        ctx->target_event_id = tag_value;  /* Transfer ownership */
-        ctx->found_e = TRUE;
-      } else {
-        free(tag_value);
-      }
-    }
-  } else if (g_strcmp0(tag_name, "bolt11") == 0 && !ctx->bolt11) {
-    char *tag_value = NULL;
-    if ((tag_value = gnostr_json_get_array_string(element_json, NULL, 1, NULL)) != NULL && tag_value && *tag_value) {
-      ctx->bolt11 = tag_value;  /* Transfer ownership */
-    } else {
-      free(tag_value);
-    }
-  }
-
-  free(tag_name);
-  return true;  /* Continue to find both e and bolt11 */
-}
-
-/* nostrc-3nj: Extract first e-tag from event JSON using NostrJsonInterface */
-static char *extract_first_etag_from_event_json(const char *event_json) {
-  if (!event_json) return NULL;
-
-  char *tags_raw = NULL;
-  tags_raw = gnostr_json_get_raw(event_json, "tags", NULL);
-  if (!tags_raw) {
-    return NULL;
-  }
-
-  TagIterCtx ctx = { .target_event_id = NULL, .bolt11 = NULL, .found_e = FALSE };
-  gnostr_json_array_foreach_root(tags_raw, find_etag_iter_cb, &ctx);
-
-  free(tags_raw);
-  free(ctx.bolt11);  /* Not needed for this function */
-
-  return ctx.target_event_id;
-}
 
 /* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON).
  * NIP-10 specifies two modes:
@@ -1357,35 +1289,13 @@ static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, gu
     uint32_t kind = storage_ndb_note_kind(note);
     if (kind != 7) continue;
 
-    /* Extract target event ID from tags using tag iteration */
+    /* Extract target event ID from tags.
+     * Try NIP-10 thread parsing first, then direct tag iteration as fallback.
+     * Both use the note pointer directly — no NDB query needed. */
     char *target_event_id = NULL;
     storage_ndb_note_get_nip10_thread(note, NULL, &target_event_id);
-
-    /* If no reply_id, try getting from the first e-tag manually */
-    if (!target_event_id) {
-      /* Query the note JSON to parse tags */
-      const unsigned char *id32 = storage_ndb_note_id(note);
-      if (!id32) continue;
-
-      char id_hex[65];
-      storage_ndb_hex_encode(id32, id_hex);
-
-      char **arr = NULL;
-      int n = 0;
-      char *filter = g_strdup_printf("[{\"ids\":[\"%s\"]}]", id_hex);
-      int qrc = storage_ndb_query(txn, filter, &arr, &n);
-      g_free(filter);
-
-      if (qrc == 0 && arr && n > 0 && arr[0]) {
-        /* nostrc-3nj: Use NostrJsonInterface to find e-tag */
-        char *etag = extract_first_etag_from_event_json(arr[0]);
-        if (etag) {
-          target_event_id = g_strdup(etag);
-          free(etag);
-        }
-      }
-      storage_ndb_free_results(arr, n);
-    }
+    if (!target_event_id)
+      target_event_id = storage_ndb_note_get_last_etag(note);
 
     if (target_event_id) {
       /* Increment reaction count in cache */
@@ -1445,32 +1355,8 @@ static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n
     uint32_t kind = storage_ndb_note_kind(note);
     if (kind != 9735) continue;
 
-    /* Query the note JSON to parse tags for target event and bolt11 */
-    const unsigned char *id32 = storage_ndb_note_id(note);
-    if (!id32) continue;
-
-    char id_hex[65];
-    storage_ndb_hex_encode(id32, id_hex);
-
-    char **arr = NULL;
-    int n = 0;
-    char *filter = g_strdup_printf("[{\"ids\":[\"%s\"]}]", id_hex);
-    int qrc = storage_ndb_query(txn, filter, &arr, &n);
-    g_free(filter);
-
-    if (qrc != 0 || !arr || n == 0 || !arr[0]) {
-      storage_ndb_free_results(arr, n);
-      continue;
-    }
-
-    /* nostrc-3nj: Use NostrJsonInterface to find e-tag (target event) */
-    char *target_event_id = NULL;
-    char *etag = extract_first_etag_from_event_json(arr[0]);
-    if (etag) {
-      target_event_id = g_strdup(etag);
-      free(etag);
-    }
-    storage_ndb_free_results(arr, n);
+    /* Extract target event ID via direct tag iteration (no NDB query) */
+    char *target_event_id = storage_ndb_note_get_last_etag(note);
 
     if (target_event_id) {
       /* Get fresh stats from storage (includes this new zap) */

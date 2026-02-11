@@ -367,6 +367,11 @@ void storage_ndb_note_get_nip10_thread_full(storage_ndb_note *note,
                                              char **root_relay_hint_out,
                                              char **reply_relay_hint_out);
 
+/* Get the last "e" tag from a note via direct tag iteration (no NDB query).
+ * Useful for reactions (kind 7) and zaps (kind 9735).
+ * Returns g_strdup'd hex string, or NULL. Caller must g_free(). */
+char *storage_ndb_note_get_last_etag(storage_ndb_note *note);
+
 /* ============== Content Blocks API ============== */
 
 /* Opaque blocks handle - actually struct ndb_blocks* from nostrdb */
