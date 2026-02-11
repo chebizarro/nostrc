@@ -97,24 +97,19 @@ static void on_item_profile_changed(GObject *item, GParamSpec *pspec, gpointer u
   GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(child);
   GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(item);
 
-  /* Get profile info */
-  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
-  gchar *pubkey = NULL;
-  GObject *profile = NULL;
+  /* nostrc-dqwq: Use direct accessors for pubkey and profile (no allocation) */
+  const gchar *pubkey = gn_nostr_event_item_get_pubkey(event_item);
+  GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
 
-  g_object_get(G_OBJECT(event_item),
-               "pubkey", &pubkey,
-               "profile", &profile,
-               NULL);
+  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
 
   if (profile) {
-    g_object_get(profile,
+    g_object_get(G_OBJECT(profile),
                  "display-name", &display,
                  "name", &handle,
                  "picture-url", &avatar_url,
                  "nip05", &nip05,
                  NULL);
-    g_object_unref(profile);
 
     /* Update the row with the new profile data */
     gnostr_note_card_row_set_author(row, display, handle, avatar_url);
@@ -128,7 +123,6 @@ static void on_item_profile_changed(GObject *item, GParamSpec *pspec, gpointer u
   g_free(handle);
   g_free(avatar_url);
   g_free(nip05);
-  g_free(pubkey);
 }
 
 static void factory_setup_cb(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -159,34 +153,26 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
 
   if (!GN_IS_NOSTR_EVENT_ITEM(item)) return;
 
-  /* Extract data from item */
-  gchar *id_hex = NULL, *pubkey = NULL, *content = NULL;
-  gchar *root_id = NULL, *parent_id = NULL;
-  gint64 created_at = 0;
-  guint depth = 0;
+  /* nostrc-dqwq: Use direct accessors instead of g_object_get.
+   * Returns const pointers to cached fields — no allocation or g_free needed. */
+  const gchar *id_hex = gn_nostr_event_item_get_event_id(item);
+  const gchar *pubkey = gn_nostr_event_item_get_pubkey(item);
+  gint64 created_at = gn_nostr_event_item_get_created_at(item);
+  const gchar *content = gn_nostr_event_item_get_content(item);
+  const gchar *root_id = gn_nostr_event_item_get_thread_root_id(item);
+  const gchar *parent_id = gn_nostr_event_item_get_parent_id(item);
+  guint depth = gn_nostr_event_item_get_reply_depth(item);
 
-  g_object_get(G_OBJECT(item),
-               "event-id", &id_hex,
-               "pubkey", &pubkey,
-               "created-at", &created_at,
-               "content", &content,
-               "thread-root-id", &root_id,
-               "parent-id", &parent_id,
-               "reply-depth", &depth,
-               NULL);
-
-  /* Get profile info */
+  /* Get profile info — profile accessors return borrowed pointers, no alloc */
   gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
-  GObject *profile = NULL;
-  g_object_get(G_OBJECT(item), "profile", &profile, NULL);
+  GnNostrProfile *profile = gn_nostr_event_item_get_profile(item);
   if (profile) {
-    g_object_get(profile,
+    g_object_get(G_OBJECT(profile),
                  "display-name", &display,
                  "name", &handle,
                  "picture-url", &avatar_url,
                  "nip05", &nip05,
                  NULL);
-    g_object_unref(profile);
   }
 
   /* Fallback display name */
@@ -240,12 +226,9 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
                     GUINT_TO_POINTER(profile_handler_id));
   g_object_set_data(G_OBJECT(list_item), "bound-item", item);
 
-  /* Cleanup */
-  g_free(id_hex);
-  g_free(pubkey);
-  g_free(content);
-  g_free(root_id);
-  g_free(parent_id);
+  /* Cleanup — only free strings we allocated.
+   * nostrc-dqwq: id_hex, pubkey, content, root_id, parent_id are borrowed
+   * from the item's cached fields and must NOT be freed. */
   g_free(display);
   g_free(handle);
   g_free(avatar_url);
