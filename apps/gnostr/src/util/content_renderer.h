@@ -71,9 +71,9 @@ GPtrArray *gnostr_extract_media_urls(const char *content, int content_len);
  * gnostr_strip_zwsp:
  * @str: string to modify in-place (may be NULL)
  *
- * Strips Zero-Width Space (U+200B) characters from a string in-place.
- * ZWS in Pango text/markup corrupts PangoLayout's internal line list,
- * causing SEGV in pango_layout_line_unref during gtk_widget_allocate.
+ * Strips zero-width and invisible Unicode characters that corrupt Pango's
+ * internal layout line list: U+200B (ZWS), U+200C (ZWNJ), U+2060 (WJ),
+ * U+FEFF (BOM). Does NOT strip U+200D (ZWJ) used in emoji sequences.
  *
  * Returns: @str (same pointer, for chaining)
  */

@@ -139,24 +139,46 @@ static gchar *format_mention_display(struct nostr_bech32 *bech32,
   }
 }
 
-/* nostrc-pgo5: Strip ZWS (U+200B = \xe2\x80\x8b) from strings to prevent
- * Pango layout corruption.  ZWS in Pango markup corrupts the internal line
- * list (NULL entries) causing SEGV in pango_layout_line_unref during
- * gtk_widget_allocate.  Relay events can contain actual ZWS characters in
- * their text, so we must strip them after rendering. */
+/* nostrc-pgo5/pgo6: Strip zero-width and invisible Unicode characters that
+ * corrupt Pango's internal layout line list (NULL entries), causing SEGV in
+ * pango_layout_line_unref during gtk_widget_allocate or dispose.
+ *
+ * Stripped characters (UTF-8 byte sequences):
+ *   U+200B  ZWS   (Zero Width Space)       = \xe2\x80\x8b
+ *   U+200C  ZWNJ  (Zero Width Non-Joiner)  = \xe2\x80\x8c
+ *   U+2060  WJ    (Word Joiner)            = \xe2\x81\xa0
+ *   U+FEFF  BOM   (Byte Order Mark / ZWNBSP) = \xef\xbb\xbf
+ *
+ * NOT stripped: U+200D (ZWJ) — used in emoji sequences (family, flags).
+ * Relay events can contain any of these in their text. */
 char *
 gnostr_strip_zwsp(char *str)
 {
   if (!str) return str;
   char *src = str, *dst = str;
   while (*src) {
-    if ((unsigned char)src[0] == 0xe2 &&
-        (unsigned char)src[1] == 0x80 &&
-        (unsigned char)src[2] == 0x8b) {
-      src += 3;
-    } else {
-      *dst++ = *src++;
+    unsigned char c0 = (unsigned char)src[0];
+    if (c0 == 0xe2) {
+      unsigned char c1 = (unsigned char)src[1];
+      unsigned char c2 = (unsigned char)src[2];
+      /* U+200B (ZWS) = e2 80 8b, U+200C (ZWNJ) = e2 80 8c */
+      if (c1 == 0x80 && (c2 == 0x8b || c2 == 0x8c)) {
+        src += 3;
+        continue;
+      }
+      /* U+2060 (WJ) = e2 81 a0 */
+      if (c1 == 0x81 && c2 == 0xa0) {
+        src += 3;
+        continue;
+      }
+    } else if (c0 == 0xef) {
+      /* U+FEFF (BOM) = ef bb bf */
+      if ((unsigned char)src[1] == 0xbb && (unsigned char)src[2] == 0xbf) {
+        src += 3;
+        continue;
+      }
     }
+    *dst++ = *src++;
   }
   *dst = '\0';
   return str;

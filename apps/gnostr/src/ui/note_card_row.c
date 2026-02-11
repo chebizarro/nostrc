@@ -511,60 +511,57 @@ do_template_dispose:
     self->reactors = NULL;
   }
   
-  /* nostrc-b3b0: Defensive label clearing -- prevent Pango SEGV during
-   * gtk_widget_dispose_template even if prepare_for_unbind was never called.
-   * At dispose time, labels may still have PangoLayouts referencing a
-   * PangoContext owned by the (possibly gone) native surface. Clear all
-   * label text while the widget structure is still valid.
+  /* nostrc-pgo6: Defensive label clearing to prevent Pango SEGV during
+   * gtk_widget_dispose_template.
    *
-   * IMPORTANT: Do NOT use GNOSTR_LABEL_SAFE here -- it checks
-   * gtk_widget_get_native() which may already be NULL at dispose time.
-   * Use GTK_IS_LABEL() only. gtk_label_set_text("") safely resets the
-   * PangoLayout even without a native surface.
+   * PROBLEM: gtk_label_set_text("") unrefs the old PangoLayout. If the layout
+   * has corrupt line entries (NULL lines from ZWS or other Unicode issues),
+   * pango_layout_line_unref(NULL) SEGVs. This happens when the native surface
+   * is gone — prepare_for_unbind skipped clearing, and the layout is still
+   * corrupt from relay-sourced content.
    *
-   * Supersedes nostrc-pgo1/pgo5 partial clearing. Now clears ALL labels. */
-  if (GTK_IS_LABEL(self->content_label))
-    gtk_label_set_text(GTK_LABEL(self->content_label), "");
-  if (GTK_IS_LABEL(self->lbl_display))
-    gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
-  if (GTK_IS_LABEL(self->lbl_handle))
-    gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
-  if (GTK_IS_LABEL(self->lbl_timestamp))
-    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), "");
-  if (GTK_IS_LABEL(self->lbl_nip05))
-    gtk_label_set_text(GTK_LABEL(self->lbl_nip05), "");
-  if (GTK_IS_LABEL(self->lbl_nip05_separator))
-    gtk_label_set_text(GTK_LABEL(self->lbl_nip05_separator), "");
-  if (GTK_IS_LABEL(self->lbl_timestamp_separator))
-    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp_separator), "");
-  if (GTK_IS_LABEL(self->reply_indicator_label))
-    gtk_label_set_text(GTK_LABEL(self->reply_indicator_label), "");
-  if (GTK_IS_LABEL(self->reply_count_label))
-    gtk_label_set_text(GTK_LABEL(self->reply_count_label), "");
-  if (GTK_IS_LABEL(self->lbl_like_count))
-    gtk_label_set_text(GTK_LABEL(self->lbl_like_count), "");
-  if (GTK_IS_LABEL(self->lbl_zap_count))
-    gtk_label_set_text(GTK_LABEL(self->lbl_zap_count), "");
-  if (GTK_IS_LABEL(self->repost_indicator_label))
-    gtk_label_set_text(GTK_LABEL(self->repost_indicator_label), "");
-  if (GTK_IS_LABEL(self->lbl_repost_count))
-    gtk_label_set_text(GTK_LABEL(self->lbl_repost_count), "");
-  if (GTK_IS_LABEL(self->zap_indicator_label))
-    gtk_label_set_text(GTK_LABEL(self->zap_indicator_label), "");
-  if (GTK_IS_LABEL(self->sensitive_warning_label))
-    gtk_label_set_text(GTK_LABEL(self->sensitive_warning_label), "");
-  if (GTK_IS_LABEL(self->subject_label))
-    gtk_label_set_text(GTK_LABEL(self->subject_label), "");
-  if (GTK_IS_LABEL(self->article_title_label))
-    gtk_label_set_text(GTK_LABEL(self->article_title_label), "");
-  if (GTK_IS_LABEL(self->article_reading_time))
-    gtk_label_set_text(GTK_LABEL(self->article_reading_time), "");
-  if (GTK_IS_LABEL(self->video_title_label))
-    gtk_label_set_text(GTK_LABEL(self->video_title_label), "");
-  if (GTK_IS_LABEL(self->video_duration_badge))
-    gtk_label_set_text(GTK_LABEL(self->video_duration_badge), "");
-  if (GTK_IS_LABEL(self->avatar_initials))
-    gtk_label_set_text(GTK_LABEL(self->avatar_initials), "");
+   * FIX: Use GNOSTR_LABEL_SAFE (checks native surface). When native is valid,
+   * gtk_label_set_text safely replaces the layout. When native is gone AND the
+   * label has non-empty text (i.e. prepare_for_unbind didn't clear it), add
+   * g_object_ref to prevent gtk_widget_dispose_template from finalizing the
+   * label (which would crash in pango_layout_clear_lines). The label leaks
+   * ~1KB — acceptable to prevent SEGV. Empty labels (already cleared by
+   * prepare_for_unbind) are safe to finalize. */
+
+/* Safe dispose helper: clear if native available, ref-leak if not and non-empty */
+#define DISPOSE_LABEL(lbl) \
+  do { \
+    if (GNOSTR_LABEL_SAFE(lbl)) { \
+      gtk_label_set_text(GTK_LABEL(lbl), ""); \
+    } else if (GTK_IS_LABEL(lbl)) { \
+      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
+      if (_t && *_t) g_object_ref(lbl); \
+    } \
+  } while (0)
+
+  DISPOSE_LABEL(self->content_label);
+  DISPOSE_LABEL(self->lbl_display);
+  DISPOSE_LABEL(self->lbl_handle);
+  DISPOSE_LABEL(self->lbl_timestamp);
+  DISPOSE_LABEL(self->lbl_nip05);
+  DISPOSE_LABEL(self->lbl_nip05_separator);
+  DISPOSE_LABEL(self->lbl_timestamp_separator);
+  DISPOSE_LABEL(self->reply_indicator_label);
+  DISPOSE_LABEL(self->reply_count_label);
+  DISPOSE_LABEL(self->lbl_like_count);
+  DISPOSE_LABEL(self->lbl_zap_count);
+  DISPOSE_LABEL(self->repost_indicator_label);
+  DISPOSE_LABEL(self->lbl_repost_count);
+  DISPOSE_LABEL(self->zap_indicator_label);
+  DISPOSE_LABEL(self->sensitive_warning_label);
+  DISPOSE_LABEL(self->subject_label);
+  DISPOSE_LABEL(self->article_title_label);
+  DISPOSE_LABEL(self->article_reading_time);
+  DISPOSE_LABEL(self->video_title_label);
+  DISPOSE_LABEL(self->video_duration_badge);
+  DISPOSE_LABEL(self->avatar_initials);
+
+#undef DISPOSE_LABEL
 
   /* Part 2: NULL the layout manager to prevent the BoxLayout from trying to
    * measure remaining children while others are being disposed. */
@@ -4908,6 +4905,7 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     if (summary && *summary) {
       gchar *pango_summary = markdown_to_pango_summary(summary, 300);
+      gnostr_strip_zwsp(pango_summary); /* nostrc-pgo6: strip before Pango */
       gtk_label_set_markup(GTK_LABEL(self->content_label), pango_summary);
       g_free(pango_summary);
     } else {
@@ -5446,6 +5444,7 @@ void gnostr_note_card_row_set_git_repo_mode(GnostrNoteCardRow *self,
 
   /* Set content with markup */
   if (GNOSTR_LABEL_SAFE(self->content_label)) {
+    gnostr_strip_zwsp(content->str); /* nostrc-pgo6: strip before Pango */
     gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-repo-content");
   }
@@ -5512,6 +5511,7 @@ void gnostr_note_card_row_set_git_patch_mode(GnostrNoteCardRow *self,
   }
 
   if (GNOSTR_LABEL_SAFE(self->content_label)) {
+    gnostr_strip_zwsp(content->str); /* nostrc-pgo6: strip before Pango */
     gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-patch-content");
   }
@@ -5551,6 +5551,7 @@ void gnostr_note_card_row_set_git_issue_mode(GnostrNoteCardRow *self,
                          is_open ? "Open" : "Closed");
 
   if (GNOSTR_LABEL_SAFE(self->content_label)) {
+    gnostr_strip_zwsp(content->str); /* nostrc-pgo6: strip before Pango */
     gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-issue-content");
   }
@@ -6078,25 +6079,29 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
 void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
   g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
 
-  /* nostrc-5g2n: Clear label text WHILE the widget still has a native surface.
-   * This resets PangoLayouts to a clean state before disposal. Without this,
-   * the dispose() early-return path (self->disposed == TRUE) reaches
-   * gtk_widget_dispose_template with corrupt PangoLayouts (NULL line entries
-   * from complex ZWS+link markup). At that point GNOSTR_LABEL_SAFE fails
-   * because the native surface is already gone during g_list_store_remove_all
-   * teardown, so labels are NOT cleared, and pango_layout_line_unref SEGVs.
+  /* nostrc-pgo6: Clear ALL labels that might contain relay-sourced content
+   * WHILE the widget still has a native surface. This resets PangoLayouts
+   * to a clean state before disposal. Without this, dispose() reaches
+   * gtk_widget_dispose_template with potentially-corrupt PangoLayouts.
    *
-   * At unbind time the widget is still parented with a valid native surface,
-   * so gtk_label_set_text is safe here. */
-  if (GNOSTR_LABEL_SAFE(self->content_label)) {
+   * At unbind time the widget is usually still parented with a valid native
+   * surface, so gtk_label_set_text is safe. When native IS gone (hidden
+   * view eviction), the GNOSTR_LABEL_SAFE check skips the clear and
+   * dispose() handles it via the ref-leak safety net. */
+  if (GNOSTR_LABEL_SAFE(self->content_label))
     gtk_label_set_text(GTK_LABEL(self->content_label), "");
-  }
-  if (GNOSTR_LABEL_SAFE(self->lbl_display)) {
+  if (GNOSTR_LABEL_SAFE(self->lbl_display))
     gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
-  }
-  if (GNOSTR_LABEL_SAFE(self->lbl_handle)) {
+  if (GNOSTR_LABEL_SAFE(self->lbl_handle))
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
-  }
+  if (GNOSTR_LABEL_SAFE(self->subject_label))
+    gtk_label_set_text(GTK_LABEL(self->subject_label), "");
+  if (GNOSTR_LABEL_SAFE(self->lbl_nip05))
+    gtk_label_set_text(GTK_LABEL(self->lbl_nip05), "");
+  if (GNOSTR_LABEL_SAFE(self->article_title_label))
+    gtk_label_set_text(GTK_LABEL(self->article_title_label), "");
+  if (GNOSTR_LABEL_SAFE(self->video_title_label))
+    gtk_label_set_text(GTK_LABEL(self->video_title_label), "");
 
   /* Mark as disposed FIRST to prevent any async callbacks from running */
   self->disposed = TRUE;
