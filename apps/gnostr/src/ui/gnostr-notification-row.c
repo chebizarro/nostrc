@@ -48,6 +48,27 @@ gnostr_notification_row_dispose(GObject *object)
 {
     GnostrNotificationRow *self = GNOSTR_NOTIFICATION_ROW(object);
 
+    /* nostrc-b3b0: Disconnect signal handlers to prevent leaked closures.
+     * btn_avatar's "clicked" handler was connected in _init with self as
+     * user_data but never disconnected -- disconnect by data covers it.
+     * The GtkGestureClick controller is owned by the widget and cleaned up
+     * automatically by GTK when the widget is disposed. */
+    if (self->btn_avatar)
+        g_signal_handlers_disconnect_by_data(self->btn_avatar, self);
+
+    /* nostrc-b3b0: Defensive label clearing -- prevent Pango SEGV during
+     * widget disposal. Same pattern as NoteCardRow fix. */
+    if (GTK_IS_LABEL(self->lbl_actor))
+        gtk_label_set_text(GTK_LABEL(self->lbl_actor), "");
+    if (GTK_IS_LABEL(self->lbl_action))
+        gtk_label_set_text(GTK_LABEL(self->lbl_action), "");
+    if (GTK_IS_LABEL(self->lbl_content))
+        gtk_label_set_text(GTK_LABEL(self->lbl_content), "");
+    if (GTK_IS_LABEL(self->lbl_timestamp))
+        gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), "");
+    if (GTK_IS_LABEL(self->avatar_initials))
+        gtk_label_set_text(GTK_LABEL(self->avatar_initials), "");
+
     /* Unparent template child */
     GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self));
     if (child)

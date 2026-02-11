@@ -511,36 +511,63 @@ do_template_dispose:
     self->reactors = NULL;
   }
   
-  /* Do NOT manipulate widgets during disposal - any calls to gtk_label_set_text(),
-   * gtk_label_set_attributes(), gtk_picture_set_paintable(), etc. can trigger
-   * recalculation/rendering while the widget is being disposed, causing crashes.
-   * GTK will handle all widget cleanup automatically during finalization. */
-
-  /* nostrc-pgo1: Pango layout corruption fix — two-part defense:
+  /* nostrc-b3b0: Defensive label clearing -- prevent Pango SEGV during
+   * gtk_widget_dispose_template even if prepare_for_unbind was never called.
+   * At dispose time, labels may still have PangoLayouts referencing a
+   * PangoContext owned by the (possibly gone) native surface. Clear all
+   * label text while the widget structure is still valid.
    *
-   * Part 1: Clear label text BEFORE template disposal. PangoLayout's internal
-   * line list can become corrupted (NULL entries) with complex markup containing
-   * ZWS characters and <a href> links. Clearing the text forces a fresh, clean
-   * PangoLayout. Without this, pango_layout_line_unref hits NULL during
-   * GtkLabel finalize → PangoLayout finalize cascade.
+   * IMPORTANT: Do NOT use GNOSTR_LABEL_SAFE here -- it checks
+   * gtk_widget_get_native() which may already be NULL at dispose time.
+   * Use GTK_IS_LABEL() only. gtk_label_set_text("") safely resets the
+   * PangoLayout even without a native surface.
    *
-   * Part 2: NULL the layout manager to prevent the BoxLayout from trying to
-   * measure remaining children while others are being disposed.
-   *
-   * Same pattern as OG preview widget fix (nostrc-14wu). */
-  /* nostrc-pgo5: Use GNOSTR_LABEL_SAFE (checks gtk_widget_get_native)
-   * instead of plain GTK_IS_LABEL.  During list cleanup the native surface
-   * may already be gone, so gtk_label_set_text unrefs a PangoLayout whose
-   * PangoContext is NULL → SEGV in pango.  Same pattern as nostrc-pgo3. */
-  if (GNOSTR_LABEL_SAFE(self->content_label)) {
+   * Supersedes nostrc-pgo1/pgo5 partial clearing. Now clears ALL labels. */
+  if (GTK_IS_LABEL(self->content_label))
     gtk_label_set_text(GTK_LABEL(self->content_label), "");
-  }
-  if (GNOSTR_LABEL_SAFE(self->lbl_display)) {
+  if (GTK_IS_LABEL(self->lbl_display))
     gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
-  }
-  if (GNOSTR_LABEL_SAFE(self->lbl_handle)) {
+  if (GTK_IS_LABEL(self->lbl_handle))
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
-  }
+  if (GTK_IS_LABEL(self->lbl_timestamp))
+    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), "");
+  if (GTK_IS_LABEL(self->lbl_nip05))
+    gtk_label_set_text(GTK_LABEL(self->lbl_nip05), "");
+  if (GTK_IS_LABEL(self->lbl_nip05_separator))
+    gtk_label_set_text(GTK_LABEL(self->lbl_nip05_separator), "");
+  if (GTK_IS_LABEL(self->lbl_timestamp_separator))
+    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp_separator), "");
+  if (GTK_IS_LABEL(self->reply_indicator_label))
+    gtk_label_set_text(GTK_LABEL(self->reply_indicator_label), "");
+  if (GTK_IS_LABEL(self->reply_count_label))
+    gtk_label_set_text(GTK_LABEL(self->reply_count_label), "");
+  if (GTK_IS_LABEL(self->lbl_like_count))
+    gtk_label_set_text(GTK_LABEL(self->lbl_like_count), "");
+  if (GTK_IS_LABEL(self->lbl_zap_count))
+    gtk_label_set_text(GTK_LABEL(self->lbl_zap_count), "");
+  if (GTK_IS_LABEL(self->repost_indicator_label))
+    gtk_label_set_text(GTK_LABEL(self->repost_indicator_label), "");
+  if (GTK_IS_LABEL(self->lbl_repost_count))
+    gtk_label_set_text(GTK_LABEL(self->lbl_repost_count), "");
+  if (GTK_IS_LABEL(self->zap_indicator_label))
+    gtk_label_set_text(GTK_LABEL(self->zap_indicator_label), "");
+  if (GTK_IS_LABEL(self->sensitive_warning_label))
+    gtk_label_set_text(GTK_LABEL(self->sensitive_warning_label), "");
+  if (GTK_IS_LABEL(self->subject_label))
+    gtk_label_set_text(GTK_LABEL(self->subject_label), "");
+  if (GTK_IS_LABEL(self->article_title_label))
+    gtk_label_set_text(GTK_LABEL(self->article_title_label), "");
+  if (GTK_IS_LABEL(self->article_reading_time))
+    gtk_label_set_text(GTK_LABEL(self->article_reading_time), "");
+  if (GTK_IS_LABEL(self->video_title_label))
+    gtk_label_set_text(GTK_LABEL(self->video_title_label), "");
+  if (GTK_IS_LABEL(self->video_duration_badge))
+    gtk_label_set_text(GTK_LABEL(self->video_duration_badge), "");
+  if (GTK_IS_LABEL(self->avatar_initials))
+    gtk_label_set_text(GTK_LABEL(self->avatar_initials), "");
+
+  /* Part 2: NULL the layout manager to prevent the BoxLayout from trying to
+   * measure remaining children while others are being disposed. */
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
