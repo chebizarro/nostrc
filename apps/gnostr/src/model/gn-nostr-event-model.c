@@ -68,6 +68,7 @@ struct _GnNostrEventModel {
 
   /* Core data: note keys sorted by created_at (newest first) */
   GArray *notes;  /* element-type: NoteEntry */
+  GHashTable *note_key_set;  /* O(1) dedup: key = uint64_t*, value = GINT_TO_POINTER(1) */
 
   /* Lifetime nostrdb subscriptions (via dispatcher) */
   uint64_t sub_timeline;   /* kinds 1/6 */
@@ -502,24 +503,23 @@ static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char
   return TRUE;
 }
 
-/* Find insertion position for sorted insert (newest first) */
+/* Find insertion position for sorted insert (newest first) — O(log N) binary search */
 static guint find_sorted_position(GnNostrEventModel *self, gint64 created_at) {
-  for (guint i = 0; i < self->notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    if (entry->created_at < created_at) {
-      return i;
-    }
+  guint lo = 0, hi = self->notes->len;
+  while (lo < hi) {
+    guint mid = lo + (hi - lo) / 2;
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, mid);
+    if (entry->created_at >= created_at)
+      lo = mid + 1;
+    else
+      hi = mid;
   }
-  return self->notes->len;
+  return lo;
 }
 
-/* Check if note_key is already in the model */
+/* Check if note_key is already in the model — O(1) via hash set */
 static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
-  for (guint i = 0; i < self->notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    if (entry->note_key == key) return TRUE;
-  }
-  return FALSE;
+  return g_hash_table_contains(self->note_key_set, &key);
 }
 
 
@@ -783,6 +783,9 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   /* Insert note entry */
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
+  uint64_t *set_key = g_new(uint64_t, 1);
+  *set_key = note_key;
+  g_hash_table_add(self->note_key_set, set_key);
 
   /* Emit items-changed signal immediately for each insertion */
   g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
@@ -819,6 +822,7 @@ static gboolean enforce_window_idle_cb(gpointer user_data) {
   /* NOW clean up caches after GTK has finished with the widgets */
   for (guint i = 0; i < to_remove; i++) {
     uint64_t k = keys_to_remove[i];
+    g_hash_table_remove(self->note_key_set, &k);
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
@@ -872,6 +876,9 @@ static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, g
 
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
+  uint64_t *set_key = g_new(uint64_t, 1);
+  *set_key = note_key;
+  g_hash_table_add(self->note_key_set, set_key);
   return TRUE;  /* Actually inserted */
 }
 
@@ -886,6 +893,7 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
     /* Remove visible entry and emit change FIRST so GTK can tear down widgets
      * while cached items are still valid */
     g_array_remove_index(self->notes, i);
+    g_hash_table_remove(self->note_key_set, &note_key);
     g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
 
     /* NOW cleanup caches after GTK has finished with widgets */
@@ -1110,7 +1118,8 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     return;
   }
 
-  guint added = 0, filtered = 0, no_note = 0;
+  guint old_len = self->notes->len;
+  guint added = 0;
 
   for (guint i = 0; i < n_keys; i++) {
     uint64_t note_key = note_keys[i];
@@ -1120,41 +1129,32 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     uint32_t kind_u32 = storage_ndb_note_kind(note);
     int kind = (int)kind_u32;
-    /* Allow kind 1 (text notes), kind 6 (reposts), kind 1111 (NIP-22 comments), and kind 9735 (zap receipts) */
-    if (kind != 1 && kind != 6 && kind != 1111 && kind != 9735) { filtered++; continue; }
-
-    /* NIP-40: Filter out expired events */
-    if (storage_ndb_note_is_expired(note)) { filtered++; continue; }
+    if (kind != 1 && kind != 6 && kind != 1111 && kind != 9735) continue;
+    if (storage_ndb_note_is_expired(note)) continue;
 
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
 
     const unsigned char *pk32 = storage_ndb_note_pubkey(note);
-    if (!pk32) { no_note++; continue; }
+    if (!pk32) continue;
 
     char pubkey_hex[65];
     storage_ndb_hex_encode(pk32, pubkey_hex);
 
-    if (!note_matches_query(self, kind, pubkey_hex, created_at)) { filtered++; continue; }
+    if (!note_matches_query(self, kind, pubkey_hex, created_at)) continue;
 
     /* Extract NIP-10 thread info from note tags */
     char *root_id = NULL;
     char *reply_id = NULL;
     storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
 
-    /* nostrc-gate: Opportunistically cache profile, but never gate display on it.
-     * Notes display immediately with pubkey prefix as fallback; profile info
-     * (name, avatar) updates reactively when it arrives from relays. */
+    /* nostrc-gate: Opportunistically cache profile */
     if (!author_is_ready(self, pubkey_hex)) {
       GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
-      if (!p) {
-        /* Profile not in DB yet — request background fetch */
+      if (!p)
         g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-      }
     }
 
-    /* hq-vvmzu: Persist reply/repost counts to ndb_note_meta.
-     * When a kind-1 reply arrives, increment direct_replies on the parent.
-     * When a kind-6 repost arrives, increment reposts on the target. */
+    /* hq-vvmzu: Persist reply/repost counts to ndb_note_meta */
     if (reply_id && strlen(reply_id) == 64) {
       uint8_t parent_id32[32];
       if (hex_to_bytes32(reply_id, parent_id32)) {
@@ -1165,17 +1165,22 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
       }
     }
 
-    /* Always show the note regardless of profile availability */
+    /* Insert silently (no per-note items_changed) */
     precache_item_from_note(self, note_key, created_at, note);
-    add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+    if (insert_note_silent(self, note_key, created_at, root_id, reply_id, 0))
+      added++;
     g_free(root_id);
     g_free(reply_id);
-    added++;
   }
 
   storage_ndb_end_query(txn);
 
-  /* Enforce window size */
+  /* Emit ONE batched items_changed for all insertions */
+  if (added > 0) {
+    guint new_len = self->notes->len;
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+  }
+
   enforce_window(self);
 }
 
@@ -1406,6 +1411,7 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   g_free(self->root_event_id);
 
   if (self->notes) g_array_unref(self->notes);
+  if (self->note_key_set) g_hash_table_unref(self->note_key_set);
   if (self->item_cache) g_hash_table_unref(self->item_cache);
   if (self->cache_lru) g_queue_free(self->cache_lru);
   if (self->profile_cache) g_hash_table_unref(self->profile_cache);
@@ -1495,6 +1501,7 @@ static void gn_nostr_event_model_class_init(GnNostrEventModelClass *klass) {
 
 static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
+  self->note_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
   self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
   self->cache_lru = g_queue_new();
@@ -1679,8 +1686,6 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
 
       if (total > 0) {
         g_debug("[MODEL] Initial load: %u events from nostrdb cache", total);
-        /* Emit items_changed so the list view renders immediately */
-        g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
       }
     }
   }
@@ -2071,12 +2076,16 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
       g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
     }
 
-    /* Always show note regardless of profile availability */
-    add_note_internal(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0);
-    added++;
+    /* Insert silently (no per-note items_changed) */
+    if (insert_note_silent(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0))
+      added++;
   }
 
   if (have_txn) storage_ndb_end_query(txn);
+
+  /* ONE batched signal for all insertions */
+  if (added > 0)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
 
   enforce_window(self);
   g_debug("[MODEL] Async refresh complete: %u total items (%u added)", self->notes->len, added);
@@ -2119,6 +2128,7 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
   void *txn = NULL;
   gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
 
+  guint old_len = self->notes->len;
   guint added = 0;
   for (guint i = 0; i < entries->len; i++) {
     RefreshEntry *e = g_ptr_array_index(entries, i);
@@ -2143,11 +2153,37 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
       g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
     }
 
-    add_note_internal(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0);
+    /* Store thread info before insertion */
+    if (e->root_id || e->reply_id) {
+      if (!g_hash_table_contains(self->thread_info, &e->note_key)) {
+        ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+        tinfo->root_id = g_strdup(e->root_id);
+        tinfo->parent_id = g_strdup(e->reply_id);
+        tinfo->depth = 0;
+        uint64_t *key_copy = g_new(uint64_t, 1);
+        *key_copy = e->note_key;
+        g_hash_table_insert(self->thread_info, key_copy, tinfo);
+      }
+    }
+
+    /* Direct sorted insert — NO per-note signal, NO calm-timeline deferral
+     * (pagination is user-initiated, results must always appear) */
+    guint pos = find_sorted_position(self, e->created_at);
+    NoteEntry entry = { .note_key = e->note_key, .created_at = e->created_at };
+    g_array_insert_val(self->notes, pos, entry);
+    uint64_t *set_key = g_new(uint64_t, 1);
+    *set_key = e->note_key;
+    g_hash_table_add(self->note_key_set, set_key);
     added++;
   }
 
   if (have_txn) storage_ndb_end_query(txn);
+
+  /* Emit ONE batched items_changed for all insertions */
+  if (added > 0) {
+    guint new_len = self->notes->len;
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+  }
 
   /* Trim model to bounded size if requested */
   if (trim_max > 0 && self->notes->len > trim_max) {
@@ -2272,6 +2308,7 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
 
   /* NOW clear caches after GTK has finished with widgets */
+  g_hash_table_remove_all(self->note_key_set);
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
   g_hash_table_remove_all(self->thread_info);
@@ -2404,6 +2441,7 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
   /* NOW cleanup caches after GTK has finished with widgets */
   for (guint i = 0; i < to_remove; i++) {
     uint64_t k = keys_to_remove[i];
+    g_hash_table_remove(self->note_key_set, &k);
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
@@ -2586,6 +2624,7 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
   /* NOW cleanup caches after GTK has finished with widgets */
   for (guint i = 0; i < to_remove; i++) {
     uint64_t k = keys_to_remove[i];
+    g_hash_table_remove(self->note_key_set, &k);
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
