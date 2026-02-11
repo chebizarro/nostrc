@@ -664,6 +664,9 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
     NoteEntry *entry = &g_array_index(to_insert, NoteEntry, i - 1);
     NoteEntry new_entry = *entry;
     g_array_prepend_val(self->notes, new_entry);
+    uint64_t *set_key = g_new(uint64_t, 1);
+    *set_key = new_entry.note_key;
+    g_hash_table_add(self->note_key_set, set_key);
   }
 
   g_array_free(to_insert, TRUE);
@@ -1819,17 +1822,15 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
         }
 
         if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex)) {
-          /* Profile not in DB yet -- request background fetch */
           g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
         }
 
-        /* Always show note regardless of profile availability */
         char *root_id = NULL;
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
 
-        add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-        added++;
+        if (insert_note_silent(self, note_key, created_at, root_id, reply_id, 0))
+          added++;
 
         g_free(root_id);
         g_free(reply_id);
@@ -1845,6 +1846,10 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
 
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
+
+  /* ONE batched signal for all insertions */
+  if (added > 0)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
 
   enforce_window(self);
 
@@ -2500,6 +2505,7 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
   int result_count = 0;
   int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count);
 
+  guint old_len = self->notes->len;
   guint added = 0;
   if (query_rc == 0 && json_results && result_count > 0) {
     for (int i = 0; i < result_count; i++) {
@@ -2543,36 +2549,47 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
           continue;
         }
 
-        /* NIP-40: Filter out expired events */
         if (note_ptr && storage_ndb_note_is_expired(note_ptr)) {
           nostr_event_free(evt);
           continue;
         }
 
-        /* Skip if already in model */
         if (has_note_key(self, note_key)) {
           nostr_event_free(evt);
           continue;
         }
 
-        /* nostrc-gate: Opportunistically cache profile, never gate display */
         uint8_t pk32[32];
         if (!hex_to_bytes32(pubkey_hex, pk32)) {
           nostr_event_free(evt);
           continue;
         }
 
-        if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex)) {
-          /* Profile not in DB yet -- request background fetch */
+        if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex))
           g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-        }
 
-        /* Always show note regardless of profile availability */
         char *root_id = NULL;
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
 
-        add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+        /* Direct sorted insert — bypass deferral (user-initiated pagination) */
+        if (root_id || reply_id) {
+          if (!g_hash_table_contains(self->thread_info, &note_key)) {
+            ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+            tinfo->root_id = g_strdup(root_id);
+            tinfo->parent_id = g_strdup(reply_id);
+            tinfo->depth = 0;
+            uint64_t *key_copy = g_new(uint64_t, 1);
+            *key_copy = note_key;
+            g_hash_table_insert(self->thread_info, key_copy, tinfo);
+          }
+        }
+        guint pos = find_sorted_position(self, created_at);
+        NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+        g_array_insert_val(self->notes, pos, entry);
+        uint64_t *set_key = g_new(uint64_t, 1);
+        *set_key = note_key;
+        g_hash_table_add(self->note_key_set, set_key);
         added++;
 
         g_free(root_id);
@@ -2589,6 +2606,12 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
 
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
+
+  /* ONE batched signal for all insertions */
+  if (added > 0) {
+    guint new_len = self->notes->len;
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+  }
 
   g_debug("[MODEL] load_older: added %u events, total now %u", added, self->notes->len);
 
@@ -2693,6 +2716,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   int result_count = 0;
   int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count);
 
+  guint old_len = self->notes->len;
   guint added = 0;
   if (query_rc == 0 && json_results && result_count > 0) {
     /* Iterate from end (oldest in results) to get events closest to our current window.
@@ -2738,36 +2762,47 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
           continue;
         }
 
-        /* NIP-40: Filter out expired events */
         if (note_ptr && storage_ndb_note_is_expired(note_ptr)) {
           nostr_event_free(evt);
           continue;
         }
 
-        /* Skip if already in model */
         if (has_note_key(self, note_key)) {
           nostr_event_free(evt);
           continue;
         }
 
-        /* nostrc-gate: Opportunistically cache profile, never gate display */
         uint8_t pk32[32];
         if (!hex_to_bytes32(pubkey_hex, pk32)) {
           nostr_event_free(evt);
           continue;
         }
 
-        if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex)) {
-          /* Profile not in DB yet -- request background fetch */
+        if (!profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex))
           g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-        }
 
-        /* Always show note regardless of profile availability */
         char *root_id = NULL;
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
 
-        add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+        /* Direct sorted insert — bypass deferral (user-initiated pagination) */
+        if (root_id || reply_id) {
+          if (!g_hash_table_contains(self->thread_info, &note_key)) {
+            ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+            tinfo->root_id = g_strdup(root_id);
+            tinfo->parent_id = g_strdup(reply_id);
+            tinfo->depth = 0;
+            uint64_t *key_copy = g_new(uint64_t, 1);
+            *key_copy = note_key;
+            g_hash_table_insert(self->thread_info, key_copy, tinfo);
+          }
+        }
+        guint pos = find_sorted_position(self, created_at);
+        NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+        g_array_insert_val(self->notes, pos, entry);
+        uint64_t *set_key = g_new(uint64_t, 1);
+        *set_key = note_key;
+        g_hash_table_add(self->note_key_set, set_key);
         added++;
 
         g_free(root_id);
@@ -2785,6 +2820,11 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
 
+  /* ONE batched signal for all insertions */
+  if (added > 0) {
+    guint new_len = self->notes->len;
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+  }
 
   return added;
 }
