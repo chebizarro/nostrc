@@ -21,6 +21,7 @@
 #include "gn-nostr-profile.h"
 #include "gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
+#include "../ui/gnostr-profile-provider.h"
 #include "../util/mute_list.h"
 #include <string.h>
 #include <stdio.h>
@@ -180,6 +181,25 @@ static void cancel_reveal_animation(GnTimelineModel *self);
 static void mark_key_revealing(GnTimelineModel *self, uint64_t key);
 static gboolean is_key_revealing(GnTimelineModel *self, uint64_t key);
 static gboolean on_clear_revealing_key(gpointer user_data);
+
+/* Phase 4A: GTask worker thread for NDB batch processing (nostrc-sbqe) */
+typedef struct {
+  /* Input — set by on_sub_timeline_batch(), read by worker thread */
+  uint64_t *note_keys;        /* Owned copy of incoming note_keys array */
+  guint n_keys;
+  gint *kinds;                /* Copied from query (NULL = no filter) */
+  gsize n_kinds;
+
+  /* Output — written by worker thread, read by main-thread callback */
+  GArray *validated;           /* Array of NoteEntry (note_key, created_at) */
+  GPtrArray *prefetch_pubkeys; /* Unique pubkey hex strings for profile prefetch */
+} BatchProcessData;
+
+static void batch_process_data_free(gpointer data);
+static void batch_process_thread_func(GTask *task, gpointer source_object,
+                                       gpointer task_data, GCancellable *cancellable);
+static void batch_process_complete_cb(GObject *source_object, GAsyncResult *res,
+                                       gpointer user_data);
 
 /* REMOVED: INITIAL_LOAD_TIMEOUT_MS - Batch mode is now ended reactively via idle callback
  * when the first notes arrive, not via a fixed timeout. See on_sub_timeline_batch. */
@@ -1329,24 +1349,138 @@ static gint staged_entry_compare_newest_first(gconstpointer a, gconstpointer b) 
   return 0;
 }
 
-static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
-  (void)subid;
-  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
-  if (!GN_IS_TIMELINE_MODEL(self) || !note_keys || n_keys == 0) return;
+/* ============== Phase 4A: GTask Worker Thread (nostrc-sbqe) ============== */
+
+/**
+ * batch_process_data_free:
+ *
+ * Free all resources owned by BatchProcessData.
+ */
+static void batch_process_data_free(gpointer data) {
+  BatchProcessData *bp = data;
+  if (!bp) return;
+  g_free(bp->note_keys);
+  g_free(bp->kinds);
+  if (bp->validated)
+    g_array_unref(bp->validated);
+  if (bp->prefetch_pubkeys)
+    g_ptr_array_unref(bp->prefetch_pubkeys);
+  g_free(bp);
+}
+
+/**
+ * batch_process_thread_func:
+ *
+ * Runs on a GLib worker thread. Opens an NDB read transaction, queries each
+ * note key, checks kind filter and mute list (both are thread-safe), and
+ * builds an array of validated NoteEntry structs. Dedup hash-set lookups are
+ * intentionally NOT done here because GHashTable is not thread-safe — they
+ * are deferred to the main-thread completion callback.
+ */
+static void batch_process_thread_func(GTask        *task,
+                                       gpointer      source_object,
+                                       gpointer      task_data,
+                                       GCancellable *cancellable) {
+  (void)source_object;
+  (void)cancellable;
+
+  BatchProcessData *bp = task_data;
+  bp->validated = g_array_sized_new(FALSE, FALSE, sizeof(NoteEntry), bp->n_keys);
+
+  /* nostrc-perf: Collect unique pubkeys for background profile prefetch.
+   * Uses a local hash set for O(1) dedup within this batch. */
+  GHashTable *pk_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    /* Return empty array — not an error, just nothing to insert */
+    g_hash_table_destroy(pk_set);
+    g_task_return_pointer(task, bp, NULL);
+    return;
+  }
 
-  /*
-   * nostrc-0hp Phase 2: Two-stage throttled insertion pipeline
-   *
-   * If we have a tick widget registered, use the full two-stage pipeline:
-   *   Stage 1: Items go to incoming_queue (unlimited)
-   *   Stage 2: Throttled transfer to staging_buffer (bounded)
-   *   Stage 3: Frame-synced insertion from staging_buffer (tick callback)
-   *
-   * Otherwise, fall back to the legacy debounce path for backward compatibility.
-   */
+  for (guint i = 0; i < bp->n_keys; i++) {
+    uint64_t note_key = bp->note_keys[i];
+
+    /* Get note from NostrDB */
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+    if (!note) continue;
+
+    /* Check kind filter */
+    if (bp->kinds && bp->n_kinds > 0) {
+      int kind = storage_ndb_note_kind(note);
+      gboolean kind_ok = FALSE;
+      for (gsize k = 0; k < bp->n_kinds; k++) {
+        if (bp->kinds[k] == kind) {
+          kind_ok = TRUE;
+          break;
+        }
+      }
+      if (!kind_ok) continue;
+    }
+
+    /* Check mute list — thread-safe (mute_list uses internal GMutex) */
+    const unsigned char *pk = storage_ndb_note_pubkey(note);
+    if (pk) {
+      char pubkey_hex[65];
+      storage_ndb_hex_encode(pk, pubkey_hex);
+      GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+      if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
+        continue;
+      }
+      /* Collect unique pubkey for profile prefetch */
+      if (!g_hash_table_contains(pk_set, pubkey_hex)) {
+        g_hash_table_add(pk_set, g_strdup(pubkey_hex));
+      }
+    }
+
+    gint64 created_at = storage_ndb_note_created_at(note);
+    NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+    g_array_append_val(bp->validated, entry);
+  }
+
+  storage_ndb_end_query(txn);
+
+  /* Convert hash set to GPtrArray for the main-thread callback */
+  guint n_pks = g_hash_table_size(pk_set);
+  if (n_pks > 0) {
+    bp->prefetch_pubkeys = g_ptr_array_new_with_free_func(g_free);
+    GHashTableIter iter;
+    gpointer key;
+    g_hash_table_iter_init(&iter, pk_set);
+    while (g_hash_table_iter_next(&iter, &key, NULL)) {
+      g_ptr_array_add(bp->prefetch_pubkeys, g_strdup(key));
+    }
+  }
+  g_hash_table_destroy(pk_set);
+
+  g_task_return_pointer(task, bp, NULL);
+}
+
+/**
+ * batch_process_complete_cb:
+ *
+ * Main-thread callback invoked when the worker thread finishes. Performs
+ * dedup checks (GHashTable lookups must happen on the main thread) and
+ * inserts validated entries into the incoming queue or legacy batch buffer.
+ *
+ * IMPORTANT: No GObject signals are emitted from the worker thread.
+ * All signal emission happens here, on the main thread.
+ */
+static void batch_process_complete_cb(GObject      *source_object,
+                                       GAsyncResult *res,
+                                       gpointer      user_data) {
+  (void)user_data;
+  GnTimelineModel *self = GN_TIMELINE_MODEL(source_object);
+  if (!GN_IS_TIMELINE_MODEL(self)) return;
+
+  GTask *task = G_TASK(res);
+  BatchProcessData *bp = g_task_propagate_pointer(task, NULL);
+  if (!bp || !bp->validated || bp->validated->len == 0) {
+    if (bp) batch_process_data_free(bp);
+    return;
+  }
+
   gboolean use_throttled_pipeline = (self->tick_widget != NULL &&
                                       self->incoming_queue != NULL &&
                                       self->staging_buffer != NULL);
@@ -1364,10 +1498,12 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   guint incoming_count = 0;
   gint64 arrival_time_us = g_get_monotonic_time();
 
-  for (guint i = 0; i < n_keys; i++) {
-    uint64_t note_key = note_keys[i];
+  for (guint i = 0; i < bp->validated->len; i++) {
+    NoteEntry *ve = &g_array_index(bp->validated, NoteEntry, i);
+    uint64_t note_key = ve->note_key;
+    gint64 created_at = ve->created_at;
 
-    /* Skip if already have this note in main array */
+    /* Dedup: skip if already in main array (GHashTable, main-thread only) */
     if (has_note_key(self, note_key)) continue;
 
     /* Skip if already in pipeline (staging or incoming) */
@@ -1376,52 +1512,7 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
       if (has_note_key_incoming(self, note_key)) continue;
     }
 
-    /* Get note from NostrDB */
-    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
-    if (!note) continue;
-
-    int kind = storage_ndb_note_kind(note);
-
-    /* Check if kind matches query */
-    gboolean kind_ok = FALSE;
-    if (self->query && self->query->n_kinds > 0) {
-      for (gsize k = 0; k < self->query->n_kinds; k++) {
-        if (self->query->kinds[k] == kind) {
-          kind_ok = TRUE;
-          break;
-        }
-      }
-    } else {
-      kind_ok = TRUE;  /* No kind filter */
-    }
-    if (!kind_ok) continue;
-
-    /* Check mute list */
-    const unsigned char *pk = storage_ndb_note_pubkey(note);
-    if (pk) {
-      char pubkey_hex[65];
-      storage_ndb_hex_encode(pk, pubkey_hex);
-      GnostrMuteList *mute_list = gnostr_mute_list_get_default();
-      if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
-        continue;
-      }
-    }
-
-    gint64 created_at = storage_ndb_note_created_at(note);
-
-    /* Lazy population: do NOT pre-create GnNostrEventItem here.
-     * get_item() creates and populates items on-demand when GTK requests
-     * them for the visible viewport.  At startup, 100+ eager creates
-     * with hex encoding, strdup, hashtag+NIP-10 extraction ON THE MAIN
-     * THREAD caused 30-60s of sluggishness.  The LRU cache (200 items)
-     * and throttled pipeline bound NDB reader pressure during scroll. */
-
     if (use_throttled_pipeline) {
-      /*
-       * Phase 2 throttled path: Add to incoming queue (Stage 1).
-       * Items will be transferred to staging buffer at a controlled rate
-       * by the throttle timer, then processed frame-by-frame by tick callback.
-       */
       StagedEntry incoming = {
         .note_key = note_key,
         .created_at = created_at,
@@ -1431,7 +1522,6 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
       add_note_key_to_incoming_set(self, note_key);
       incoming_count++;
     } else {
-      /* Legacy path: Add to batch buffer for debounced insert */
       NoteEntry entry = { .note_key = note_key, .created_at = created_at };
       g_array_append_val(self->batch_buffer, entry);
       add_note_key_to_set(self, note_key);
@@ -1446,74 +1536,100 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     }
   }
 
-  storage_ndb_end_query(txn);
-
   if (use_throttled_pipeline) {
-    /*
-     * Phase 2: Schedule throttled transfer from incoming queue to staging.
-     * The throttle timer will move items at a controlled rate, and the
-     * tick callback will emit items_changed signals.
-     */
     if (incoming_count > 0) {
       g_debug("[THROTTLE] Queued %u items (total incoming: %u, staging: %u)",
               incoming_count,
               self->incoming_queue->len,
               self->staging_buffer->len);
 
-      /* Check queue depth warning */
       check_queue_depth_warning(self);
-
-      /* Schedule throttled transfer */
       schedule_throttled_transfer(self);
     }
   } else {
-    /* Legacy debounce path */
     guint batch_count = self->batch_buffer->len;
     if (batch_count > 0) {
-      /* Sort batch by created_at ascending (oldest first) for physical array order */
       g_array_sort(self->batch_buffer, note_entry_compare_oldest_first);
-
-      /* Append sorted batch — O(1) amortized per item */
       g_array_append_vals(self->notes, self->batch_buffer->data, batch_count);
 
-      /* Track batch for debounced signal emission */
       self->batch_insert_count += batch_count;
 
-      /* If user is not at top, these are "unseen" items */
       if (!self->user_at_top) {
         self->unseen_count += batch_count;
       }
 
-      /* Schedule debounced UI update */
       self->needs_refresh = TRUE;
       gn_timeline_model_schedule_update(self);
 
-      /* Emit pending signal for toast if user is scrolled down */
       if (!self->user_at_top && self->unseen_count > 0) {
         g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
       }
     }
   }
 
-  /*
-   * End batch mode reactively when first notes arrive.
-   * We use an idle callback (not a timeout!) to ensure:
-   * 1. All notes from this batch are processed first
-   * 2. GTK's main loop can catch up before we emit items_changed
-   *
-   * This replaces the old INITIAL_LOAD_TIMEOUT_MS approach which was:
-   * - Wasteful (always waited full timeout even if notes arrived immediately)
-   * - Unreliable (timeout could fire before notes arrived on slow networks)
-   */
+  /* nostrc-perf: Trigger background profile prefetch for unique pubkeys collected
+   * by the worker thread. By warming the LRU cache asynchronously, profiles will
+   * already be cached when GtkListView's factory_bind_cb runs. */
+  if (bp->prefetch_pubkeys && bp->prefetch_pubkeys->len > 0) {
+    const gchar **pk_array = g_new0(const gchar *, bp->prefetch_pubkeys->len + 1);
+    for (guint i = 0; i < bp->prefetch_pubkeys->len; i++) {
+      pk_array[i] = g_ptr_array_index(bp->prefetch_pubkeys, i);
+    }
+    pk_array[bp->prefetch_pubkeys->len] = NULL;
+    gnostr_profile_provider_prefetch_batch_async(pk_array);
+    g_free(pk_array);
+  }
+
+  /* End batch mode reactively when first notes arrive */
   if (self->in_batch_mode && self->notes->len > 0 && self->initial_load_timeout_id == 0) {
     g_debug("[TIMELINE] First notes received, scheduling batch mode end via idle");
     self->initial_load_timeout_id = g_idle_add_full(
-      G_PRIORITY_LOW,  /* Lower priority so other pending operations complete first */
+      G_PRIORITY_LOW,
       on_end_batch_mode_idle,
       self,
       NULL
     );
   }
+
+  batch_process_data_free(bp);
+}
+
+/* ============== Subscription Callback ============== */
+
+/**
+ * on_sub_timeline_batch:
+ *
+ * nostrc-sbqe Phase 4A: Subscription callback from NDB dispatcher.
+ *
+ * Instead of opening a transaction and querying each note on the main thread,
+ * we copy the incoming note_keys and dispatch a GTask to a worker thread.
+ * The worker thread owns the NDB read transaction, performs kind checks and
+ * mute list filtering, and returns validated NoteEntry structs. The main-thread
+ * completion callback (batch_process_complete_cb) does dedup and pipeline insertion.
+ */
+static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
+  if (!GN_IS_TIMELINE_MODEL(self) || !note_keys || n_keys == 0) return;
+
+  /* Prepare task data with a copy of the note_keys array and kind filter */
+  BatchProcessData *bp = g_new0(BatchProcessData, 1);
+  bp->note_keys = g_memdup2(note_keys, sizeof(uint64_t) * n_keys);
+  bp->n_keys = n_keys;
+
+  /* Copy kind filter from query (immutable struct, but worker must not touch self) */
+  if (self->query && self->query->n_kinds > 0) {
+    bp->n_kinds = self->query->n_kinds;
+    bp->kinds = g_memdup2(self->query->kinds, sizeof(gint) * bp->n_kinds);
+  } else {
+    bp->kinds = NULL;
+    bp->n_kinds = 0;
+  }
+
+  GTask *task = g_task_new(self, NULL, batch_process_complete_cb, NULL);
+  g_task_set_task_data(task, bp, NULL);  /* bp freed in complete_cb */
+  g_task_run_in_thread(task, batch_process_thread_func);
+  g_object_unref(task);
 }
 
 /* ============== Public API ============== */
