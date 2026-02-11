@@ -12,7 +12,11 @@ typedef NostrOrgNostrSigner NostrSignerProxy;
 /* Initialize and acquire a shared proxy. Returns NULL on failure. */
 NostrSignerProxy *gnostr_signer_proxy_get(GError **error);
 
-/* Optional: release shared proxy (called at app shutdown). */
+/* Clear cached failure state so next get() retries D-Bus.
+ * Call after NIP-46 login or when signer service becomes available. */
+void gnostr_signer_proxy_reset(void);
+
+/* Release shared proxy (called at app shutdown). */
 void gnostr_signer_proxy_shutdown(void);
 
 G_END_DECLS

@@ -7,10 +7,22 @@
 #include "signer_proxy.h"
 
 static NostrSignerProxy *g_shared_proxy = NULL;
+/* nostrc-dbus1: Cache D-Bus proxy failure to avoid repeated synchronous
+ * D-Bus round-trips that block the main thread.  Without this, every gift
+ * wrap event retries the sync call when the signer service is unavailable,
+ * causing multi-second startup freezes. */
+static gboolean g_signer_tried = FALSE;
 
 NostrSignerProxy *gnostr_signer_proxy_get(GError **error) {
   if (g_shared_proxy) return g_shared_proxy;
-  /* Fail-fast: acquire proxy on session bus at canonical path */
+  if (g_signer_tried) {
+    if (error) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                          "org.nostr.Signer not available (cached failure)");
+    }
+    return NULL;
+  }
+  g_signer_tried = TRUE;
   g_shared_proxy = nostr_org_nostr_signer_proxy_new_for_bus_sync(
       G_BUS_TYPE_SESSION,
       G_DBUS_PROXY_FLAGS_NONE,
@@ -19,14 +31,17 @@ NostrSignerProxy *gnostr_signer_proxy_get(GError **error) {
       NULL, /* GCancellable */
       error);
   if (!g_shared_proxy) {
-    /* error already set by GLib */
     return NULL;
   }
   return g_shared_proxy;
 }
 
+void gnostr_signer_proxy_reset(void) {
+  g_clear_object(&g_shared_proxy);
+  g_signer_tried = FALSE;
+}
+
 void gnostr_signer_proxy_shutdown(void) {
-  if (g_shared_proxy) {
-    g_clear_object(&g_shared_proxy);
-  }
+  g_clear_object(&g_shared_proxy);
+  g_signer_tried = FALSE;
 }

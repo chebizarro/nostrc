@@ -208,7 +208,9 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
   } else {
     g_mutex_unlock(&self->session_mutex);
 
-    /* Check if NIP-55L is available as fallback */
+    /* nostrc-dbus1: Reset cached D-Bus failure before retrying.
+     * The signer service may have started since our last attempt. */
+    gnostr_signer_proxy_reset();
     GError *error = NULL;
     self->nip55l_proxy = gnostr_signer_proxy_get(&error);
     if (self->nip55l_proxy) {
