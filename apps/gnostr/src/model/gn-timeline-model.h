@@ -141,7 +141,7 @@ guint gn_timeline_model_get_pending_count(GnTimelineModel *self);
  */
 void gn_timeline_model_flush_pending(GnTimelineModel *self);
 
-/* ============== Phase 3: Animated Reveal (nostrc-0hp) ============== */
+/* ============== Animated Reveal ============== */
 
 /**
  * gn_timeline_model_flush_pending_animated:
@@ -227,7 +227,7 @@ void gn_timeline_model_begin_batch(GnTimelineModel *self);
  */
 void gn_timeline_model_end_batch(GnTimelineModel *self);
 
-/* ============== Frame-Aware Batching (nostrc-0hp) ============== */
+/* ============== Frame-Aware Batching ============== */
 
 /**
  * gn_timeline_model_set_view_widget:
@@ -235,8 +235,8 @@ void gn_timeline_model_end_batch(GnTimelineModel *self);
  * @widget: (nullable): The view widget to use for frame clock, or NULL to disable
  *
  * Set the widget used for frame-synchronized updates. When set, new
- * items are staged and processed at most N items per frame, preventing
- * UI freezes during heavy traffic.
+ * items are queued in the insertion buffer and processed at most N items
+ * per frame, preventing UI freezes during heavy traffic.
  *
  * The model holds a weak reference to the widget. Call with NULL or
  * let the widget be destroyed to disable frame-aware batching.
@@ -247,32 +247,21 @@ void gn_timeline_model_set_view_widget(GnTimelineModel *self, GtkWidget *widget)
  * gn_timeline_model_get_staged_count:
  * @self: The model
  *
- * Get the number of items currently in the staging buffer awaiting
+ * Get the number of items currently in the insertion buffer awaiting
  * frame-synchronized insertion.
  *
- * Returns: Number of staged items
+ * Returns: Number of pending items in the insertion buffer
  */
 guint gn_timeline_model_get_staged_count(GnTimelineModel *self);
 
-/* ============== Phase 2: Staging Pipeline (nostrc-0hp) ============== */
-
-/**
- * gn_timeline_model_get_incoming_count:
- * @self: The model
- *
- * DEPRECATED (hq-a11by): Always returns 0.  The incoming queue has been
- * removed; items go directly into the staging buffer.
- *
- * Returns: 0
- */
-guint gn_timeline_model_get_incoming_count(GnTimelineModel *self);
+/* ============== Insertion Pipeline Diagnostics ============== */
 
 /**
  * gn_timeline_model_get_total_queued_count:
  * @self: The model
  *
- * Get the total number of items queued in the staging buffer.
- * This represents all items waiting to be inserted into the visible model.
+ * Get the total number of items queued in the insertion buffer.
+ * Equivalent to gn_timeline_model_get_staged_count().
  *
  * Returns: Total queued items
  */
@@ -282,10 +271,10 @@ guint gn_timeline_model_get_total_queued_count(GnTimelineModel *self);
  * gn_timeline_model_get_peak_queue_depth:
  * @self: The model
  *
- * Get the peak staging buffer depth (high-water mark) since last reset.
+ * Get the peak insertion buffer depth (high-water mark) since last reset.
  * Useful for monitoring and diagnostics.
  *
- * Returns: Peak staging depth
+ * Returns: Peak insertion buffer depth
  */
 guint gn_timeline_model_get_peak_queue_depth(GnTimelineModel *self);
 
@@ -293,30 +282,19 @@ guint gn_timeline_model_get_peak_queue_depth(GnTimelineModel *self);
  * gn_timeline_model_is_backpressure_active:
  * @self: The model
  *
- * Check if backpressure is currently being applied due to high staging depth.
- * When backpressure is active, oldest items may be dropped to prevent
- * unbounded buffer growth.
+ * Check if backpressure is currently being applied due to high insertion
+ * buffer depth. When backpressure is active, oldest items may be dropped
+ * to prevent unbounded buffer growth.
  *
  * Returns: TRUE if backpressure is active
  */
 gboolean gn_timeline_model_is_backpressure_active(GnTimelineModel *self);
 
 /**
- * gn_timeline_model_get_insertion_rate:
- * @self: The model
- *
- * DEPRECATED (hq-a11by): Always returns 0.0.  Rate tracking was removed
- * along with the throttle timer.
- *
- * Returns: 0.0
- */
-gdouble gn_timeline_model_get_insertion_rate(GnTimelineModel *self);
-
-/**
  * gn_timeline_model_reset_peak_queue_depth:
  * @self: The model
  *
- * Reset the peak staging depth counter.
+ * Reset the peak insertion buffer depth counter.
  */
 void gn_timeline_model_reset_peak_queue_depth(GnTimelineModel *self);
 

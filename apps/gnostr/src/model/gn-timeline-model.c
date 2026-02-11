@@ -36,14 +36,14 @@
 #define UPDATE_DEBOUNCE_MS 50       /* Debounce UI updates during rapid ingestion */
 #define MODEL_MAX_WINDOW 1000       /* Max items in model - oldest evicted beyond this */
 
-/* Phase 1: Frame-aware batching (nostrc-0hp) */
+/* Frame-aware batching */
 #define ITEMS_PER_FRAME_DEFAULT 3   /* Start conservative per design review */
 #define FRAME_BUDGET_US 12000       /* 12ms target, leaving 4ms margin for 16.6ms frame */
 
-/* Phase 2: Staging buffer pipeline (nostrc-0hp) */
-#define STAGING_BUFFER_MAX 100      /* Max items in staging before backpressure */
+/* Insertion buffer pipeline */
+#define INSERTION_BUFFER_MAX 100    /* Max items in insertion buffer before backpressure */
 
-/* Phase 3: Smooth "New Notes" Reveal Animation (nostrc-0hp) */
+/* Smooth "New Notes" Reveal Animation */
 #define REVEAL_ITEMS_PER_BATCH 3    /* Items revealed per animation tick */
 #define REVEAL_STAGGER_MS 50        /* Delay between reveal batches */
 #define REVEAL_ANIMATION_MS 200     /* CSS fade-in duration per item */
@@ -58,12 +58,12 @@ typedef struct {
   gint64 created_at;
 } NoteEntry;
 
-/* Staged entry for frame-aware batching (nostrc-0hp Phase 1) */
+/* Pending entry for frame-aware batching */
 typedef struct {
   uint64_t note_key;
   gint64 created_at;
-  gint64 arrival_time_us;  /* Monotonic time when staged, for backpressure */
-} StagedEntry;
+  gint64 arrival_time_us;  /* Monotonic time when queued, for backpressure */
+} PendingEntry;
 
 struct _GnTimelineModel {
   GObject parent_instance;
@@ -112,18 +112,19 @@ struct _GnTimelineModel {
   /* Subscription */
   uint64_t sub_timeline;
 
-  /* Frame-aware batching (nostrc-0hp Phase 1) */
-  GArray *staging_buffer;        /* StagedEntry items awaiting frame-synced insertion */
-  GHashTable *staged_key_set;    /* note_key -> TRUE for O(1) dedup in staging */
-  guint tick_callback_id;        /* gtk_widget_add_tick_callback ID, 0 if inactive */
-  guint items_per_frame;         /* Max items to insert per frame (adaptive) */
-  GtkWidget *tick_widget;        /* Widget providing frame clock (weak ref) */
+  /* Frame-aware batching: single insertion buffer pipeline (hq-fnuqs).
+   * NDB worker thread -> insertion_buffer -> tick callback -> notes. */
+  GArray *insertion_buffer;        /* PendingEntry items awaiting frame-synced insertion */
+  GHashTable *insertion_key_set;   /* note_key -> TRUE for O(1) dedup in insertion buffer */
+  guint tick_callback_id;          /* gtk_widget_add_tick_callback ID, 0 if inactive */
+  guint items_per_frame;           /* Max items to insert per frame (adaptive) */
+  GtkWidget *tick_widget;          /* Widget providing frame clock (weak ref) */
 
-  /* Phase 2: Backpressure tracking (nostrc-0hp) */
-  guint peak_staging_depth;      /* High-water mark for monitoring */
-  gboolean backpressure_active;  /* TRUE when backpressure is being applied */
+  /* Backpressure tracking */
+  guint peak_insertion_depth;      /* High-water mark for monitoring */
+  gboolean backpressure_active;    /* TRUE when backpressure is being applied */
 
-  /* Phase 3: Smooth "New Notes" Reveal Animation (nostrc-0hp) */
+  /* Smooth "New Notes" Reveal Animation */
   GArray *reveal_queue;          /* Items being revealed with animation */
   guint reveal_position;         /* Current position in reveal sequence */
   gboolean reveal_in_progress;   /* TRUE while reveal animation is active */
@@ -141,21 +142,19 @@ static gboolean on_update_debounce_timeout(gpointer user_data);
 static gboolean on_end_batch_mode_idle(gpointer user_data);
 static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal);
 
-/* Frame-aware batching forward declarations (nostrc-0hp Phase 1) */
+/* Frame-aware insertion buffer forward declarations */
 static gboolean on_tick_callback(GtkWidget *widget, GdkFrameClock *clock, gpointer user_data);
 static void on_tick_widget_destroyed(gpointer data, GObject *where_the_object_was);
 static void ensure_tick_callback(GnTimelineModel *self);
 static void remove_tick_callback(GnTimelineModel *self);
-static void process_staged_items(GnTimelineModel *self, guint count);
-static gboolean has_note_key_staged(GnTimelineModel *self, uint64_t key);
-static void add_note_key_to_staged_set(GnTimelineModel *self, uint64_t key);
-static void remove_note_key_from_staged_set(GnTimelineModel *self, uint64_t key);
+static void process_pending_items(GnTimelineModel *self, guint count);
+static gboolean has_note_key_pending(GnTimelineModel *self, uint64_t key);
+static void add_note_key_to_insertion_set(GnTimelineModel *self, uint64_t key);
+static void remove_note_key_from_insertion_set(GnTimelineModel *self, uint64_t key);
+static void apply_insertion_backpressure(GnTimelineModel *self);
+static gint pending_entry_compare_newest_first(gconstpointer a, gconstpointer b);
 
-/* Phase 2: Staging buffer forward declarations (nostrc-0hp) */
-static void apply_staging_backpressure(GnTimelineModel *self);
-static gint staged_entry_compare_newest_first(gconstpointer a, gconstpointer b);
-
-/* Phase 3: Smooth "New Notes" Reveal Animation forward declarations (nostrc-0hp) */
+/* Smooth "New Notes" Reveal Animation forward declarations */
 static gboolean on_reveal_timer_tick(gpointer user_data);
 static void process_reveal_batch(GnTimelineModel *self);
 static void cancel_reveal_animation(GnTimelineModel *self);
@@ -163,7 +162,7 @@ static void mark_key_revealing(GnTimelineModel *self, uint64_t key);
 static gboolean is_key_revealing(GnTimelineModel *self, uint64_t key);
 static gboolean on_clear_revealing_key(gpointer user_data);
 
-/* Phase 4A: GTask worker thread for NDB batch processing (nostrc-sbqe) */
+/* GTask worker thread for NDB batch processing */
 typedef struct {
   /* Input — set by on_sub_timeline_batch(), read by worker thread */
   uint64_t *note_keys;        /* Owned copy of incoming note_keys array */
@@ -192,7 +191,7 @@ enum {
   SIGNAL_NEW_ITEMS_PENDING,
   SIGNAL_NEED_PROFILE,
   SIGNAL_BACKPRESSURE_APPLIED,
-  SIGNAL_REVEAL_PROGRESS,     /* Phase 3: emitted during animated reveal */
+  SIGNAL_REVEAL_PROGRESS,     /* Emitted during animated reveal */
   N_SIGNALS
 };
 
@@ -438,45 +437,45 @@ static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal) {
   return to_evict;
 }
 
-/* ============== Frame-Aware Batching (nostrc-0hp Phase 1) ============== */
+/* ============== Insertion Buffer Pipeline ============== */
 
 /**
- * has_note_key_staged:
+ * has_note_key_pending:
  * @self: The model
  * @key: Note key to check
  *
- * Check if a note key is already in the staging buffer.
+ * Check if a note key is already in the insertion buffer.
  * O(1) lookup via hash set.
  */
-static gboolean has_note_key_staged(GnTimelineModel *self, uint64_t key) {
-  if (!self->staged_key_set) return FALSE;
-  return g_hash_table_contains(self->staged_key_set, &key);
+static gboolean has_note_key_pending(GnTimelineModel *self, uint64_t key) {
+  if (!self->insertion_key_set) return FALSE;
+  return g_hash_table_contains(self->insertion_key_set, &key);
 }
 
 /**
- * add_note_key_to_staged_set:
+ * add_note_key_to_insertion_set:
  * @self: The model
  * @key: Note key to add
  *
- * Add a note key to the staging dedup set.
+ * Add a note key to the insertion buffer dedup set.
  */
-static void add_note_key_to_staged_set(GnTimelineModel *self, uint64_t key) {
-  if (!self->staged_key_set) return;
+static void add_note_key_to_insertion_set(GnTimelineModel *self, uint64_t key) {
+  if (!self->insertion_key_set) return;
   uint64_t *key_copy = g_new(uint64_t, 1);
   *key_copy = key;
-  g_hash_table_add(self->staged_key_set, key_copy);
+  g_hash_table_add(self->insertion_key_set, key_copy);
 }
 
 /**
- * remove_note_key_from_staged_set:
+ * remove_note_key_from_insertion_set:
  * @self: The model
  * @key: Note key to remove
  *
- * Remove a note key from the staging dedup set.
+ * Remove a note key from the insertion buffer dedup set.
  */
-static void remove_note_key_from_staged_set(GnTimelineModel *self, uint64_t key) {
-  if (!self->staged_key_set) return;
-  g_hash_table_remove(self->staged_key_set, &key);
+static void remove_note_key_from_insertion_set(GnTimelineModel *self, uint64_t key) {
+  if (!self->insertion_key_set) return;
+  g_hash_table_remove(self->insertion_key_set, &key);
 }
 
 /**
@@ -540,31 +539,31 @@ static void remove_tick_callback(GnTimelineModel *self) {
 }
 
 /**
- * process_staged_items:
+ * process_pending_items:
  * @self: The model
  * @count: Maximum number of items to process
  *
- * Move items from staging buffer to main notes array.
+ * Move items from insertion buffer to main notes array.
  * Items are inserted at position 0 (newest first).
  */
-static void process_staged_items(GnTimelineModel *self, guint count) {
-  if (!self->staging_buffer || self->staging_buffer->len == 0)
+static void process_pending_items(GnTimelineModel *self, guint count) {
+  if (!self->insertion_buffer || self->insertion_buffer->len == 0)
     return;
 
-  guint to_process = MIN(count, self->staging_buffer->len);
+  guint to_process = MIN(count, self->insertion_buffer->len);
   guint actually_processed = 0;
 
   /*
-   * Process items from the front of staging buffer (FIFO order).
-   * Each item becomes a NoteEntry and is prepended to notes array.
+   * Process items from the front of insertion buffer (FIFO order).
+   * Each item becomes a NoteEntry and is appended to the notes array.
    */
   for (guint i = 0; i < to_process; i++) {
-    StagedEntry *staged = &g_array_index(self->staging_buffer, StagedEntry, i);
+    PendingEntry *pending = &g_array_index(self->insertion_buffer, PendingEntry, i);
 
     /* Create note entry for main array */
     NoteEntry entry = {
-      .note_key = staged->note_key,
-      .created_at = staged->created_at
+      .note_key = pending->note_key,
+      .created_at = pending->created_at
     };
 
     /* Append to end — O(1) amortized.  The physical array stores items
@@ -572,23 +571,23 @@ static void process_staged_items(GnTimelineModel *self, guint count) {
      * logical GListModel position is reversed in get_item(). */
     g_array_append_val(self->notes, entry);
 
-    /* Move from staged set to main set */
-    remove_note_key_from_staged_set(self, staged->note_key);
-    add_note_key_to_set(self, staged->note_key);
+    /* Move from insertion set to main set */
+    remove_note_key_from_insertion_set(self, pending->note_key);
+    add_note_key_to_set(self, pending->note_key);
 
     /* Update timestamps */
-    if (staged->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
-      self->newest_timestamp = staged->created_at;
+    if (pending->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
+      self->newest_timestamp = pending->created_at;
     }
 
     actually_processed++;
   }
 
-  /* Remove processed items from staging buffer */
+  /* Remove processed items from insertion buffer */
   if (actually_processed > 0) {
-    g_array_remove_range(self->staging_buffer, 0, actually_processed);
-    g_debug("[FRAME] Processed %u staged items, %u remaining",
-            actually_processed, self->staging_buffer->len);
+    g_array_remove_range(self->insertion_buffer, 0, actually_processed);
+    g_debug("[FRAME] Processed %u pending items, %u remaining",
+            actually_processed, self->insertion_buffer->len);
   }
 }
 
@@ -598,8 +597,8 @@ static void process_staged_items(GnTimelineModel *self, guint count) {
  * @clock: The frame clock (unused but available for timing)
  * @user_data: The GnTimelineModel
  *
- * Called once per frame by GTK. Processes a bounded number of staged items
- * and emits a single batched items_changed signal.
+ * Called once per frame by GTK. Processes a bounded number of pending items
+ * from the insertion buffer and emits a single batched items_changed signal.
  *
  * Returns: G_SOURCE_CONTINUE if more items pending, G_SOURCE_REMOVE otherwise
  */
@@ -617,18 +616,18 @@ static gboolean on_tick_callback(GtkWidget     *widget,
   /* Track frame budget */
   gint64 start_us = g_get_monotonic_time();
 
-  guint to_process = MIN(self->staging_buffer->len, self->items_per_frame);
+  guint to_process = MIN(self->insertion_buffer->len, self->items_per_frame);
 
   if (to_process == 0) {
     /* Nothing to do, remove callback until more items arrive */
-    g_debug("[FRAME] No staged items, removing tick callback");
+    g_debug("[FRAME] No pending items, removing tick callback");
     self->tick_callback_id = 0;
     return G_SOURCE_REMOVE;
   }
 
   /* Process the batch */
   guint gtk_old_count = self->notes->len;
-  process_staged_items(self, to_process);
+  process_pending_items(self, to_process);
 
   /* Defer window eviction to avoid the expensive replace-all signal on every
    * frame.  When the model is at capacity, every prepend evicts from the tail,
@@ -639,7 +638,7 @@ static gboolean on_tick_callback(GtkWidget     *widget,
    * MODEL_MAX_WINDOW by at most EVICT_DEFER_FRAMES * items_per_frame items. */
   self->evict_defer_counter++;
   gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
-                       (self->staging_buffer->len == 0); /* last batch: clean up */
+                       (self->insertion_buffer->len == 0); /* last batch: clean up */
   guint evicted = 0;
   if (do_evict) {
     evicted = enforce_window_size(self, FALSE);
@@ -661,7 +660,7 @@ static gboolean on_tick_callback(GtkWidget     *widget,
    * on every 16ms frame — the user can't perceive count changes at 60fps. */
   if (!self->user_at_top) {
     self->unseen_count += to_process;
-    gboolean is_last_batch = (self->staging_buffer->len == 0);
+    gboolean is_last_batch = (self->insertion_buffer->len == 0);
     if (is_last_batch ||
         (start_us - self->last_pending_signal_us >= PENDING_SIGNAL_INTERVAL_US)) {
       self->last_pending_signal_us = start_us;
@@ -689,41 +688,41 @@ static gboolean on_tick_callback(GtkWidget     *widget,
   }
 
   /* Continue callback if more items pending */
-  if (self->staging_buffer->len > 0) {
+  if (self->insertion_buffer->len > 0) {
     return G_SOURCE_CONTINUE;
   }
 
-  g_debug("[FRAME] All staged items processed, removing tick callback");
+  g_debug("[FRAME] All pending items processed, removing tick callback");
   self->tick_callback_id = 0;
   return G_SOURCE_REMOVE;
 }
 
-/* ============== Phase 2: Staging Buffer Pipeline (nostrc-0hp) ============== */
+/* ============== Insertion Buffer Backpressure ============== */
 
 /**
- * apply_staging_backpressure:
+ * apply_insertion_backpressure:
  * @self: The model
  *
- * Apply backpressure when staging buffer exceeds capacity.
+ * Apply backpressure when insertion buffer exceeds capacity.
  * Strategy: Drop oldest items (at the end of the newest-first sorted buffer)
- * to stay within STAGING_BUFFER_MAX.
+ * to stay within INSERTION_BUFFER_MAX.
  */
-static void apply_staging_backpressure(GnTimelineModel *self) {
-  if (!self->staging_buffer || self->staging_buffer->len <= STAGING_BUFFER_MAX)
+static void apply_insertion_backpressure(GnTimelineModel *self) {
+  if (!self->insertion_buffer || self->insertion_buffer->len <= INSERTION_BUFFER_MAX)
     return;
 
-  guint to_drop = self->staging_buffer->len - STAGING_BUFFER_MAX;
+  guint to_drop = self->insertion_buffer->len - INSERTION_BUFFER_MAX;
 
-  g_debug("[BACKPRESSURE] Dropping %u oldest items from staging buffer (%u -> %u)",
-          to_drop, self->staging_buffer->len, STAGING_BUFFER_MAX);
+  g_debug("[BACKPRESSURE] Dropping %u oldest items from insertion buffer (%u -> %u)",
+          to_drop, self->insertion_buffer->len, INSERTION_BUFFER_MAX);
 
-  /* Staging buffer is sorted newest-first, so oldest items are at the end.
+  /* Insertion buffer is sorted newest-first, so oldest items are at the end.
    * Remove from the tail to drop the oldest. */
-  for (guint i = self->staging_buffer->len - to_drop; i < self->staging_buffer->len; i++) {
-    StagedEntry *entry = &g_array_index(self->staging_buffer, StagedEntry, i);
-    remove_note_key_from_staged_set(self, entry->note_key);
+  for (guint i = self->insertion_buffer->len - to_drop; i < self->insertion_buffer->len; i++) {
+    PendingEntry *entry = &g_array_index(self->insertion_buffer, PendingEntry, i);
+    remove_note_key_from_insertion_set(self, entry->note_key);
   }
-  g_array_remove_range(self->staging_buffer, self->staging_buffer->len - to_drop, to_drop);
+  g_array_remove_range(self->insertion_buffer, self->insertion_buffer->len - to_drop, to_drop);
 
   self->backpressure_active = TRUE;
 
@@ -732,17 +731,17 @@ static void apply_staging_backpressure(GnTimelineModel *self) {
 }
 
 /**
- * staging_buffer_sorted_insert:
+ * insertion_buffer_sorted_insert:
  *
- * Insert a StagedEntry into the staging buffer at the correct position
+ * Insert a PendingEntry into the insertion buffer at the correct position
  * to maintain newest-first sort order.  Binary search O(log N) + one
  * memmove.  Replaces the O(N log N) g_array_sort after every transfer.
  */
-static void staging_buffer_sorted_insert(GArray *buf, StagedEntry *entry) {
+static void insertion_buffer_sorted_insert(GArray *buf, PendingEntry *entry) {
   guint lo = 0, hi = buf->len;
   while (lo < hi) {
     guint mid = lo + (hi - lo) / 2;
-    StagedEntry *e = &g_array_index(buf, StagedEntry, mid);
+    PendingEntry *e = &g_array_index(buf, PendingEntry, mid);
     if (entry->created_at > e->created_at)
       hi = mid;
     else
@@ -751,12 +750,7 @@ static void staging_buffer_sorted_insert(GArray *buf, StagedEntry *entry) {
   g_array_insert_val(buf, lo, *entry);
 }
 
-/* REMOVED: transfer_incoming_to_staging, on_throttle_transfer_timeout,
- * schedule_throttled_transfer — throttle timer stage eliminated (hq-a11by).
- * Items now go directly from batch_process_complete_cb into staging_buffer
- * via staging_buffer_sorted_insert.  The tick callback is the sole rate limiter. */
-
-/* ============== Phase 3: Smooth "New Notes" Reveal Animation (nostrc-0hp) ============== */
+/* ============== Smooth "New Notes" Reveal Animation ============== */
 
 /**
  * cancel_reveal_animation:
@@ -877,26 +871,26 @@ static void process_reveal_batch(GnTimelineModel *self) {
 
   /* Move items from reveal queue to main notes array */
   for (guint i = batch_start; i < batch_end; i++) {
-    StagedEntry *staged = &g_array_index(self->reveal_queue, StagedEntry, i);
+    PendingEntry *pending = &g_array_index(self->reveal_queue, PendingEntry, i);
 
     /* Create note entry for main array */
     NoteEntry entry = {
-      .note_key = staged->note_key,
-      .created_at = staged->created_at
+      .note_key = pending->note_key,
+      .created_at = pending->created_at
     };
 
     /* Append to end — O(1).  Logical position 0 via reversed get_item(). */
     g_array_append_val(self->notes, entry);
 
     /* Add to main key set */
-    add_note_key_to_set(self, staged->note_key);
+    add_note_key_to_set(self, pending->note_key);
 
     /* Mark this key as revealing for CSS animation */
-    mark_key_revealing(self, staged->note_key);
+    mark_key_revealing(self, pending->note_key);
 
     /* Update timestamps */
-    if (staged->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
-      self->newest_timestamp = staged->created_at;
+    if (pending->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
+      self->newest_timestamp = pending->created_at;
     }
   }
 
@@ -1031,7 +1025,7 @@ static gpointer gn_timeline_model_get_item(GListModel *list, guint position) {
     }
   }
 
-  /* nostrc-0hp Phase 3: Mark item as revealing if it's part of the current reveal */
+  /* Mark item as revealing if it's part of the current reveal */
   if (is_key_revealing(self, key)) {
     gn_nostr_event_item_set_revealing(item, TRUE);
   }
@@ -1051,19 +1045,19 @@ static void gn_timeline_model_list_model_iface_init(GListModelInterface *iface) 
 /* ============== Subscription Callback ============== */
 
 /**
- * staged_entry_compare_newest_first:
+ * pending_entry_compare_newest_first:
  *
- * Comparison function for sorting staged entries by created_at descending.
+ * Comparison function for sorting pending entries by created_at descending.
  */
-static gint staged_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
-  const StagedEntry *ea = (const StagedEntry *)a;
-  const StagedEntry *eb = (const StagedEntry *)b;
+static gint pending_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
+  const PendingEntry *ea = (const PendingEntry *)a;
+  const PendingEntry *eb = (const PendingEntry *)b;
   if (ea->created_at > eb->created_at) return -1;
   if (ea->created_at < eb->created_at) return 1;
   return 0;
 }
 
-/* ============== Phase 4A: GTask Worker Thread (nostrc-sbqe) ============== */
+/* ============== GTask Worker Thread ============== */
 
 /**
  * batch_process_data_free:
@@ -1176,12 +1170,11 @@ static void batch_process_thread_func(GTask        *task,
  *
  * Main-thread callback invoked when the worker thread finishes. Performs
  * dedup checks (GHashTable lookups must happen on the main thread) and
- * inserts validated entries directly into the staging buffer (frame-aware
+ * inserts validated entries directly into the insertion buffer (frame-aware
  * pipeline) or legacy batch buffer.
  *
- * hq-a11by: The throttle timer stage has been removed.  Items go directly
- * into the staging buffer via staging_buffer_sorted_insert.  The tick
- * callback is the sole rate limiter.
+ * Pipeline: NDB worker -> insertion_buffer -> tick callback -> notes.
+ * The tick callback is the sole rate limiter.
  *
  * IMPORTANT: No GObject signals are emitted from the worker thread.
  * All signal emission happens here, on the main thread.
@@ -1200,20 +1193,20 @@ static void batch_process_complete_cb(GObject      *source_object,
     return;
   }
 
-  gboolean use_staging_pipeline = (self->tick_widget != NULL &&
-                                    self->staging_buffer != NULL);
+  gboolean use_insertion_pipeline = (self->tick_widget != NULL &&
+                                    self->insertion_buffer != NULL);
 
   /* Legacy path: Capture count at start of first batch in debounce window */
-  if (!use_staging_pipeline && !self->needs_refresh) {
+  if (!use_insertion_pipeline && !self->needs_refresh) {
     self->pending_update_old_count = self->notes->len;
   }
 
   /* Legacy path: Clear batch buffer for this batch */
-  if (!use_staging_pipeline) {
+  if (!use_insertion_pipeline) {
     g_array_set_size(self->batch_buffer, 0);
   }
 
-  guint staged_count = 0;
+  guint inserted_count = 0;
   gint64 arrival_time_us = g_get_monotonic_time();
 
   for (guint i = 0; i < bp->validated->len; i++) {
@@ -1224,22 +1217,22 @@ static void batch_process_complete_cb(GObject      *source_object,
     /* Dedup: skip if already in main array (GHashTable, main-thread only) */
     if (has_note_key(self, note_key)) continue;
 
-    /* Skip if already in staging pipeline */
-    if (use_staging_pipeline) {
-      if (has_note_key_staged(self, note_key)) continue;
+    /* Skip if already in insertion buffer */
+    if (use_insertion_pipeline) {
+      if (has_note_key_pending(self, note_key)) continue;
     }
 
-    if (use_staging_pipeline) {
-      /* Insert directly into staging buffer (sorted) — no intermediate queue.
-       * The tick callback drains staging at 3 items/frame. */
-      StagedEntry entry = {
+    if (use_insertion_pipeline) {
+      /* Insert directly into insertion buffer (sorted).
+       * The tick callback drains at items_per_frame items/frame. */
+      PendingEntry entry = {
         .note_key = note_key,
         .created_at = created_at,
         .arrival_time_us = arrival_time_us
       };
-      staging_buffer_sorted_insert(self->staging_buffer, &entry);
-      add_note_key_to_staged_set(self, note_key);
-      staged_count++;
+      insertion_buffer_sorted_insert(self->insertion_buffer, &entry);
+      add_note_key_to_insertion_set(self, note_key);
+      inserted_count++;
     } else {
       NoteEntry entry = { .note_key = note_key, .created_at = created_at };
       g_array_append_val(self->batch_buffer, entry);
@@ -1255,25 +1248,25 @@ static void batch_process_complete_cb(GObject      *source_object,
     }
   }
 
-  if (use_staging_pipeline) {
-    if (staged_count > 0) {
-      /* Track peak staging depth for monitoring */
-      if (self->staging_buffer->len > self->peak_staging_depth) {
-        self->peak_staging_depth = self->staging_buffer->len;
+  if (use_insertion_pipeline) {
+    if (inserted_count > 0) {
+      /* Track peak insertion buffer depth for monitoring */
+      if (self->insertion_buffer->len > self->peak_insertion_depth) {
+        self->peak_insertion_depth = self->insertion_buffer->len;
       }
 
-      g_debug("[STAGING] Inserted %u items directly into staging (staging: %u)",
-              staged_count, self->staging_buffer->len);
+      g_debug("[INSERT] Inserted %u items into insertion buffer (pending: %u)",
+              inserted_count, self->insertion_buffer->len);
 
-      /* Apply backpressure if staging buffer exceeds capacity */
-      apply_staging_backpressure(self);
+      /* Apply backpressure if insertion buffer exceeds capacity */
+      apply_insertion_backpressure(self);
 
-      /* Clear backpressure flag if staging is under control */
-      if (self->staging_buffer->len < STAGING_BUFFER_MAX) {
+      /* Clear backpressure flag if insertion buffer is under control */
+      if (self->insertion_buffer->len < INSERTION_BUFFER_MAX) {
         self->backpressure_active = FALSE;
       }
 
-      /* Ensure tick callback is running to drain staging buffer */
+      /* Ensure tick callback is running to drain insertion buffer */
       ensure_tick_callback(self);
     }
   } else {
@@ -1329,13 +1322,13 @@ static void batch_process_complete_cb(GObject      *source_object,
 /**
  * on_sub_timeline_batch:
  *
- * nostrc-sbqe Phase 4A: Subscription callback from NDB dispatcher.
+ * Subscription callback from NDB dispatcher.
  *
- * Instead of opening a transaction and querying each note on the main thread,
- * we copy the incoming note_keys and dispatch a GTask to a worker thread.
+ * Copies incoming note_keys and dispatches a GTask to a worker thread.
  * The worker thread owns the NDB read transaction, performs kind checks and
  * mute list filtering, and returns validated NoteEntry structs. The main-thread
- * completion callback (batch_process_complete_cb) does dedup and pipeline insertion.
+ * completion callback (batch_process_complete_cb) does dedup and insertion
+ * buffer insertion.
  */
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
   (void)subid;
@@ -1398,12 +1391,12 @@ void gn_timeline_model_refresh(GnTimelineModel *self) {
 
   guint old_count = self->notes->len;
 
-  /* Clear everything including staging pipeline */
+  /* Clear everything including insertion buffer pipeline */
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->batch_buffer, 0);
-  g_array_set_size(self->staging_buffer, 0);
+  g_array_set_size(self->insertion_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
-  g_hash_table_remove_all(self->staged_key_set);
+  g_hash_table_remove_all(self->insertion_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
@@ -1439,12 +1432,12 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
 
   guint old_count = self->notes->len;
 
-  /* Clear all arrays and hash tables including staging pipeline */
+  /* Clear all arrays and hash tables including insertion buffer pipeline */
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->batch_buffer, 0);
-  g_array_set_size(self->staging_buffer, 0);
+  g_array_set_size(self->insertion_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
-  g_hash_table_remove_all(self->staged_key_set);
+  g_hash_table_remove_all(self->insertion_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
@@ -1607,7 +1600,7 @@ void gn_timeline_model_flush_pending(GnTimelineModel *self) {
  * @complete_cb: (nullable): Callback when reveal finishes (signature: void (*)(gpointer model, gpointer user_data))
  * @complete_data: (nullable): User data for completion callback
  *
- * Phase 3 (nostrc-0hp): Flush pending items with a smooth staggered reveal animation.
+ * Flush pending items with a smooth staggered reveal animation.
  *
  * Instead of inserting all pending items at once (which causes jarring UX),
  * this function moves pending items to a reveal queue and animates them in
@@ -1628,15 +1621,15 @@ void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
   cancel_reveal_animation(self);
 
   /*
-   * Collect items to reveal from the staging buffer.
+   * Collect items to reveal from the insertion buffer.
    * These are items that have arrived but haven't been displayed yet.
    */
   guint total_to_reveal = 0;
 
-  /* Transfer staging buffer items to reveal queue */
-  if (self->staging_buffer && self->staging_buffer->len > 0) {
-    for (guint i = 0; i < self->staging_buffer->len; i++) {
-      StagedEntry *entry = &g_array_index(self->staging_buffer, StagedEntry, i);
+  /* Transfer insertion buffer items to reveal queue */
+  if (self->insertion_buffer && self->insertion_buffer->len > 0) {
+    for (guint i = 0; i < self->insertion_buffer->len; i++) {
+      PendingEntry *entry = &g_array_index(self->insertion_buffer, PendingEntry, i);
 
       /* Skip if already in main notes array */
       if (has_note_key(self, entry->note_key))
@@ -1646,12 +1639,12 @@ void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
       total_to_reveal++;
     }
 
-    /* Clear the staging buffer and its key set */
-    for (guint i = 0; i < self->staging_buffer->len; i++) {
-      StagedEntry *entry = &g_array_index(self->staging_buffer, StagedEntry, i);
-      remove_note_key_from_staged_set(self, entry->note_key);
+    /* Clear the insertion buffer and its key set */
+    for (guint i = 0; i < self->insertion_buffer->len; i++) {
+      PendingEntry *entry = &g_array_index(self->insertion_buffer, PendingEntry, i);
+      remove_note_key_from_insertion_set(self, entry->note_key);
     }
-    g_array_set_size(self->staging_buffer, 0);
+    g_array_set_size(self->insertion_buffer, 0);
   }
 
   /* Remove tick callback since we're doing animated reveal instead */
@@ -1673,7 +1666,7 @@ void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
   g_debug("[REVEAL] Starting animated reveal of %u items", total_to_reveal);
 
   /* Sort reveal queue by created_at descending (newest first) */
-  g_array_sort(self->reveal_queue, staged_entry_compare_newest_first);
+  g_array_sort(self->reveal_queue, pending_entry_compare_newest_first);
 
   /* Set up reveal state */
   self->reveal_in_progress = TRUE;
@@ -1806,7 +1799,7 @@ void gn_timeline_model_end_batch(GnTimelineModel *self) {
   self->needs_refresh = FALSE;
 }
 
-/* ============== Frame-Aware Batching Public API (nostrc-0hp Phase 1) ============== */
+/* ============== Frame-Aware Batching Public API ============== */
 
 /**
  * Weak notify callback when the tick widget is destroyed.
@@ -1847,8 +1840,8 @@ void gn_timeline_model_set_view_widget(GnTimelineModel *self, GtkWidget *widget)
 
     g_debug("[FRAME] View widget set, enabling frame-aware batching");
 
-    /* If there are already staged items, start the tick callback */
-    if (self->staging_buffer && self->staging_buffer->len > 0) {
+    /* If there are already pending items, start the tick callback */
+    if (self->insertion_buffer && self->insertion_buffer->len > 0) {
       ensure_tick_callback(self);
     }
   } else {
@@ -1858,28 +1851,20 @@ void gn_timeline_model_set_view_widget(GnTimelineModel *self, GtkWidget *widget)
 
 guint gn_timeline_model_get_staged_count(GnTimelineModel *self) {
   g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
-  if (!self->staging_buffer) return 0;
-  return self->staging_buffer->len;
+  if (!self->insertion_buffer) return 0;
+  return self->insertion_buffer->len;
 }
 
-/* ============== Phase 2: Staging Pipeline Public API (nostrc-0hp) ============== */
-
-guint gn_timeline_model_get_incoming_count(GnTimelineModel *self) {
-  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
-  /* hq-a11by: incoming_queue removed. Items go directly to staging. */
-  return 0;
-}
+/* ============== Insertion Pipeline Diagnostics ============== */
 
 guint gn_timeline_model_get_total_queued_count(GnTimelineModel *self) {
   g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
-  /* hq-a11by: Only staging buffer remains in the pipeline. */
-  if (!self->staging_buffer) return 0;
-  return self->staging_buffer->len;
+  return gn_timeline_model_get_staged_count(self);
 }
 
 guint gn_timeline_model_get_peak_queue_depth(GnTimelineModel *self) {
   g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
-  return self->peak_staging_depth;
+  return self->peak_insertion_depth;
 }
 
 gboolean gn_timeline_model_is_backpressure_active(GnTimelineModel *self) {
@@ -1887,15 +1872,9 @@ gboolean gn_timeline_model_is_backpressure_active(GnTimelineModel *self) {
   return self->backpressure_active;
 }
 
-gdouble gn_timeline_model_get_insertion_rate(GnTimelineModel *self) {
-  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0.0);
-  /* hq-a11by: Rate tracking removed with throttle timer. Return 0. */
-  return 0.0;
-}
-
 void gn_timeline_model_reset_peak_queue_depth(GnTimelineModel *self) {
   g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
-  self->peak_staging_depth = 0;
+  self->peak_insertion_depth = 0;
 }
 
 /* ============== GObject Lifecycle ============== */
@@ -1915,7 +1894,7 @@ static void gn_timeline_model_dispose(GObject *object) {
     self->initial_load_timeout_id = 0;
   }
 
-  /* Frame-aware batching cleanup (nostrc-0hp Phase 1) */
+  /* Frame-aware batching cleanup */
   if (self->tick_widget) {
     if (self->tick_callback_id != 0) {
       gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
@@ -1925,10 +1904,10 @@ static void gn_timeline_model_dispose(GObject *object) {
                         on_tick_widget_destroyed, self);
     self->tick_widget = NULL;
   }
-  g_clear_pointer(&self->staging_buffer, g_array_unref);
-  g_clear_pointer(&self->staged_key_set, g_hash_table_unref);
+  g_clear_pointer(&self->insertion_buffer, g_array_unref);
+  g_clear_pointer(&self->insertion_key_set, g_hash_table_unref);
 
-  /* Phase 3: Cancel reveal animation and clean up (nostrc-0hp) */
+  /* Cancel reveal animation and clean up */
   cancel_reveal_animation(self);
   g_clear_pointer(&self->reveal_queue, g_array_unref);
   g_clear_pointer(&self->revealing_keys, g_hash_table_unref);
@@ -1979,7 +1958,6 @@ static void gn_timeline_model_class_init(GnTimelineModelClass *klass) {
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1, G_TYPE_STRING);
 
-  /* Phase 2 signal (nostrc-0hp) */
   signals[SIGNAL_BACKPRESSURE_APPLIED] =
     g_signal_new("backpressure-applied",
                  G_TYPE_FROM_CLASS(klass),
@@ -1987,7 +1965,6 @@ static void gn_timeline_model_class_init(GnTimelineModelClass *klass) {
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1, G_TYPE_UINT);
 
-  /* Phase 3 signals (nostrc-0hp) */
   signals[SIGNAL_REVEAL_PROGRESS] =
     g_signal_new("reveal-progress",
                  G_TYPE_FROM_CLASS(klass),
@@ -2009,19 +1986,19 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
 
   self->user_at_top = TRUE;
 
-  /* Frame-aware batching initialization (nostrc-0hp Phase 1) */
-  self->staging_buffer = g_array_new(FALSE, FALSE, sizeof(StagedEntry));
-  self->staged_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
+  /* Frame-aware batching: insertion buffer pipeline */
+  self->insertion_buffer = g_array_new(FALSE, FALSE, sizeof(PendingEntry));
+  self->insertion_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
   self->items_per_frame = ITEMS_PER_FRAME_DEFAULT;
   self->tick_callback_id = 0;
   self->tick_widget = NULL;
 
-  /* Phase 2: Backpressure tracking (nostrc-0hp, simplified by hq-a11by) */
-  self->peak_staging_depth = 0;
+  /* Backpressure tracking */
+  self->peak_insertion_depth = 0;
   self->backpressure_active = FALSE;
 
-  /* Phase 3: Smooth reveal animation initialization (nostrc-0hp) */
-  self->reveal_queue = g_array_new(FALSE, FALSE, sizeof(StagedEntry));
+  /* Smooth reveal animation */
+  self->reveal_queue = g_array_new(FALSE, FALSE, sizeof(PendingEntry));
   self->reveal_position = 0;
   self->reveal_in_progress = FALSE;
   self->reveal_timer_id = 0;
