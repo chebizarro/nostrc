@@ -482,7 +482,17 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
                                    display_name ? display_name : display_fallback,
                                    handle, avatar_url);
   gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, NULL);
-  gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+  /* nostrc-dqwq.1: Use cached render result to avoid re-rendering on rebind */
+  if (GN_IS_NOSTR_EVENT_ITEM(obj)) {
+    const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
+    if (cached) {
+      gnostr_note_card_row_set_content_rendered(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+    } else {
+      gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+    }
+  } else {
+    gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+  }
   gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
   gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
 

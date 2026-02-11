@@ -1,5 +1,6 @@
 #include "gn-nostr-event-item.h"
 #include "../storage_ndb.h"
+#include "../util/content_renderer.h"
 #include <string.h>
 #include "nostr_json.h"
 #include <json.h>
@@ -54,6 +55,10 @@ struct _GnNostrEventItem {
   /* NIP-40: Expiration timestamp (cached) */
   gint64 expiration;
   gboolean expiration_loaded;
+
+  /* nostrc-dqwq.1: Cached content render result (Pango markup + media URLs).
+   * Populated lazily on first access; content is immutable so cache never invalidates. */
+  GnContentRenderResult *cached_render;
 };
 
 G_DEFINE_TYPE(GnNostrEventItem, gn_nostr_event_item, G_TYPE_OBJECT)
@@ -255,6 +260,7 @@ static void gn_nostr_event_item_finalize(GObject *object) {
   g_free(self->cached_content);
   g_free(self->cached_tags_json);
   g_strfreev(self->cached_hashtags);
+  gnostr_content_render_result_free(self->cached_render);
   g_free(self->thread_root_id);
   g_free(self->parent_id);
 
@@ -768,6 +774,39 @@ gboolean gn_nostr_event_item_get_is_expired(GnNostrEventItem *self) {
   if (self->expiration == 0) return FALSE;
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   return (self->expiration < now);
+}
+
+/* nostrc-dqwq.1: Cached render result accessor.
+ * Lazily renders content on first call; returns cached result on subsequent calls.
+ * Content is immutable once ingested, so the cache never needs invalidation. */
+const GnContentRenderResult *gn_nostr_event_item_get_render_result(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+
+  if (self->cached_render)
+    return self->cached_render;
+
+  /* Ensure content is loaded from nostrdb before rendering */
+  ensure_note_loaded(self);
+  if (!self->cached_content)
+    return NULL;
+
+  self->cached_render = gnostr_render_content(self->cached_content, -1);
+  /* Strip ZWS from markup to prevent Pango SEGV (see gnostr_strip_zwsp docs) */
+  if (self->cached_render && self->cached_render->markup)
+    gnostr_strip_zwsp(self->cached_render->markup);
+
+  return self->cached_render;
+}
+
+/* nostrc-dqwq.1: Store a pre-built render result, taking ownership. */
+void gn_nostr_event_item_set_render_result(GnNostrEventItem *self, GnContentRenderResult *render) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+
+  if (self->cached_render == render)
+    return;
+
+  gnostr_content_render_result_free(self->cached_render);
+  self->cached_render = render;
 }
 
 /* nostrc-3nj: Callback for iterating tags array to find "e" tag */

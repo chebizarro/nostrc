@@ -2,6 +2,7 @@
 #define GN_NOSTR_EVENT_ITEM_H
 
 #include "gn-nostr-profile.h"
+#include "../util/content_renderer.h"
 #include <glib-object.h>
 #include <stdint.h>
 
@@ -84,6 +85,18 @@ char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self);
  * The note pointer must be valid (from storage_ndb_get_note_ptr with open txn). */
 struct ndb_note;
 void gn_nostr_event_item_populate_from_note(GnNostrEventItem *self, struct ndb_note *note);
+
+/* nostrc-dqwq.1: Cached render result for Pango markup + media URLs.
+ * On first call, lazily renders content via gnostr_render_content() and caches.
+ * On subsequent calls, returns the cached result directly (content is immutable).
+ * Returns: (transfer none)(nullable): cached render result, or NULL if content
+ *          is not yet loaded. Owned by the item; do NOT free. */
+const GnContentRenderResult *gn_nostr_event_item_get_render_result(GnNostrEventItem *self);
+
+/* nostrc-dqwq.1: Store a pre-built render result on the item.
+ * Takes ownership of @render (will be freed when the item is finalized).
+ * Intended for callers that build the result externally (e.g. imeta-aware path). */
+void gn_nostr_event_item_set_render_result(GnNostrEventItem *self, GnContentRenderResult *render);
 
 G_END_DECLS
 

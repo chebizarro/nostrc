@@ -2,6 +2,7 @@
 #define GNOSTR_NOTE_CARD_ROW_H
 
 #include <gtk/gtk.h>
+#include "../util/content_renderer.h"
 
 G_BEGIN_DECLS
 
@@ -41,6 +42,20 @@ GnostrNoteCardRow *gnostr_note_card_row_new(void);
 void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url);
 void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_at, const char *fallback_ts);
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content);
+
+/**
+ * gnostr_note_card_row_set_content_rendered:
+ * @self: note card row
+ * @content: raw text content (for clipboard; may be NULL if not needed)
+ * @render: (transfer none): pre-rendered content result (Pango markup + media URLs)
+ *
+ * nostrc-dqwq.1: Sets note content from a pre-rendered GnContentRenderResult,
+ * skipping the expensive gnostr_render_content() call. Used when the render
+ * result is cached on the GnNostrEventItem from a previous bind.
+ */
+void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
+                                                const char *content,
+                                                const GnContentRenderResult *render);
 
 /**
  * gnostr_note_card_row_set_content_with_imeta:

@@ -2838,9 +2838,12 @@ static gchar *extract_subject_from_tags_json(const char *tags_json) {
   return ctx.subject;
 }
 
-void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
+/* nostrc-dqwq.1: Apply a pre-rendered content result to the row widgets.
+ * The render result is borrowed (not freed by this function). */
+void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
+                                                const char *content,
+                                                const GnContentRenderResult *render) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
-  /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying label */
   if (self->disposed) return;
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -2848,8 +2851,7 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(content);
 
-  /* Single-pass content render: markup + media URLs + nostr refs + OG URL */
-  GnContentRenderResult *render = gnostr_render_content(content, -1);
+  if (!render) return;
 
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
@@ -2932,7 +2934,16 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
       og_preview_widget_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
     }
   }
+}
 
+void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;  /* nostrc-534d */
+
+  /* Render content (no cache available in this path) */
+  GnContentRenderResult *render = gnostr_render_content(content, -1);
+  gnostr_note_card_row_set_content_rendered(self, content, render);
   gnostr_content_render_result_free(render);
 }
 

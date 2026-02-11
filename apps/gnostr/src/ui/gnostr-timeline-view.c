@@ -2007,7 +2007,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         g_strfreev(hashtags);
       }
     } else {
-      gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+      /* nostrc-dqwq.1: Use cached render result from item to skip re-rendering */
+      if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+        const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
+        if (cached) {
+          gnostr_note_card_row_set_content_rendered(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+        } else {
+          gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+        }
+      } else {
+        gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+      }
     }
 
     /* Set hashtags from GnNostrEventItem if available (works even when tags_json is disabled) */

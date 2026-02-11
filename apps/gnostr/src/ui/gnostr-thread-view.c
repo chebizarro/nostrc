@@ -1602,7 +1602,15 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
 
   /* Set content and metadata */
   gnostr_note_card_row_set_timestamp(card, created_at, NULL);
-  gnostr_note_card_row_set_content(card, content);
+  /* nostrc-dqwq.1: Use cached render result to avoid re-rendering on rebind */
+  {
+    const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
+    if (cached) {
+      gnostr_note_card_row_set_content_rendered(card, content, cached);
+    } else {
+      gnostr_note_card_row_set_content(card, content);
+    }
+  }
   gnostr_note_card_row_set_depth(card, depth);
   gnostr_note_card_row_set_ids(card, event_id, root_id, pubkey);
 
