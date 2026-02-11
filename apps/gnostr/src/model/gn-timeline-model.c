@@ -75,7 +75,8 @@ struct _GnTimelineModel {
   /* Query filter */
   GnTimelineQuery *query;
 
-  /* Note keys array - sorted by created_at descending */
+  /* Note keys array - sorted by created_at ascending (oldest at 0, newest at end).
+   * Logical GListModel position is reversed in get_item(): position 0 = newest. */
   GArray *notes;
   GHashTable *note_key_set;  /* note_key -> TRUE for O(1) dedup lookups */
 
@@ -390,6 +391,14 @@ static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
   return 0;
 }
 
+static gint note_entry_compare_oldest_first(gconstpointer a, gconstpointer b) {
+  const NoteEntry *ea = (const NoteEntry *)a;
+  const NoteEntry *eb = (const NoteEntry *)b;
+  if (ea->created_at < eb->created_at) return -1;
+  if (ea->created_at > eb->created_at) return 1;
+  return 0;
+}
+
 /**
  * enforce_window_size:
  * @self: The model
@@ -404,26 +413,26 @@ static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal) {
   if (self->notes->len <= MODEL_MAX_WINDOW) return 0;
 
   guint to_evict = self->notes->len - MODEL_MAX_WINDOW;
-  guint evict_start = MODEL_MAX_WINDOW;  /* First item to evict */
 
-  /* Remove evicted items from the note_key_set */
-  for (guint i = evict_start; i < self->notes->len; i++) {
+  /* Physical array: oldest at index 0.  Evict from the front. */
+  for (guint i = 0; i < to_evict; i++) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
     g_hash_table_remove(self->note_key_set, &entry->note_key);
   }
 
-  /* Truncate the array */
-  g_array_set_size(self->notes, MODEL_MAX_WINDOW);
+  /* Remove the oldest items from the front */
+  g_array_remove_range(self->notes, 0, to_evict);
 
-  /* Update oldest_timestamp from new last item */
+  /* Update oldest_timestamp from new first item (oldest remaining) */
   if (self->notes->len > 0) {
-    NoteEntry *last = &g_array_index(self->notes, NoteEntry, self->notes->len - 1);
-    self->oldest_timestamp = last->created_at;
+    NoteEntry *first = &g_array_index(self->notes, NoteEntry, 0);
+    self->oldest_timestamp = first->created_at;
   }
 
   if (emit_signal && to_evict > 0) {
     g_debug("[TIMELINE] Evicted %u oldest items to enforce window size", to_evict);
-    g_list_model_items_changed(G_LIST_MODEL(self), evict_start, to_evict, 0);
+    /* Evicted items were at logical positions MODEL_MAX_WINDOW onward (bottom of list) */
+    g_list_model_items_changed(G_LIST_MODEL(self), MODEL_MAX_WINDOW, to_evict, 0);
   }
 
   return to_evict;
@@ -558,8 +567,10 @@ static void process_staged_items(GnTimelineModel *self, guint count) {
       .created_at = staged->created_at
     };
 
-    /* Insert at position 0 (newest first) */
-    g_array_prepend_val(self->notes, entry);
+    /* Append to end — O(1) amortized.  The physical array stores items
+     * in chronological order (oldest at index 0, newest at end).  The
+     * logical GListModel position is reversed in get_item(). */
+    g_array_append_val(self->notes, entry);
 
     /* Move from staged set to main set */
     remove_note_key_from_staged_set(self, staged->note_key);
@@ -819,6 +830,26 @@ static void apply_backpressure(GnTimelineModel *self) {
 }
 
 /**
+ * staging_buffer_sorted_insert:
+ *
+ * Insert a StagedEntry into the staging buffer at the correct position
+ * to maintain newest-first sort order.  Binary search O(log N) + one
+ * memmove.  Replaces the O(N log N) g_array_sort after every transfer.
+ */
+static void staging_buffer_sorted_insert(GArray *buf, StagedEntry *entry) {
+  guint lo = 0, hi = buf->len;
+  while (lo < hi) {
+    guint mid = lo + (hi - lo) / 2;
+    StagedEntry *e = &g_array_index(buf, StagedEntry, mid);
+    if (entry->created_at > e->created_at)
+      hi = mid;
+    else
+      lo = mid + 1;
+  }
+  g_array_insert_val(buf, lo, *entry);
+}
+
+/**
  * transfer_incoming_to_staging:
  * @self: The model
  *
@@ -872,8 +903,10 @@ static void transfer_incoming_to_staging(GnTimelineModel *self) {
       continue;
     }
 
-    /* Move to staging buffer */
-    g_array_append_val(self->staging_buffer, *entry);
+    /* Insert into staging buffer at sorted position — O(log N) search +
+     * one memmove.  Replaces the previous O(N log N) g_array_sort that
+     * ran on the entire buffer after every transfer. */
+    staging_buffer_sorted_insert(self->staging_buffer, entry);
 
     /* Update key sets */
     remove_note_key_from_incoming_set(self, entry->note_key);
@@ -897,9 +930,6 @@ static void transfer_incoming_to_staging(GnTimelineModel *self) {
             self->incoming_queue->len,
             self->staging_buffer->len,
             calculate_insertion_rate(self));
-
-    /* Sort staging buffer by created_at descending */
-    g_array_sort(self->staging_buffer, staged_entry_compare_newest_first);
 
     /* Ensure tick callback is running to process staged items */
     ensure_tick_callback(self);
@@ -1121,8 +1151,8 @@ static void process_reveal_batch(GnTimelineModel *self) {
       .created_at = staged->created_at
     };
 
-    /* Insert at position 0 (newest first) */
-    g_array_prepend_val(self->notes, entry);
+    /* Append to end — O(1).  Logical position 0 via reversed get_item(). */
+    g_array_append_val(self->notes, entry);
 
     /* Add to main key set */
     add_note_key_to_set(self, staged->note_key);
@@ -1233,7 +1263,11 @@ static gpointer gn_timeline_model_get_item(GListModel *list, guint position) {
     return NULL;
   }
 
-  NoteEntry *entry = &g_array_index(self->notes, NoteEntry, position);
+  /* Physical array: oldest at 0, newest at end.
+   * Logical GListModel: position 0 = newest.
+   * Reverse the mapping. */
+  guint physical = self->notes->len - 1 - position;
+  NoteEntry *entry = &g_array_index(self->notes, NoteEntry, physical);
   uint64_t key = entry->note_key;
 
   /* Check cache first */
@@ -1375,17 +1409,12 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     gint64 created_at = storage_ndb_note_created_at(note);
 
-    /* Pre-create and cache item while txn is open to avoid re-opening
-     * an NDB transaction later in get_item → ensure_note_loaded.  This
-     * eliminates the main-thread NDB reader slot pressure during scroll. */
-    if (!cache_get(self, note_key)) {
-      GnNostrEventItem *item = gn_nostr_event_item_new_from_key(note_key, created_at);
-      if (item) {
-        gn_nostr_event_item_populate_from_note(item, note);
-        cache_add(self, note_key, item);
-        g_object_unref(item);  /* cache_add took a ref */
-      }
-    }
+    /* Lazy population: do NOT pre-create GnNostrEventItem here.
+     * get_item() creates and populates items on-demand when GTK requests
+     * them for the visible viewport.  At startup, 100+ eager creates
+     * with hex encoding, strdup, hashtag+NIP-10 extraction ON THE MAIN
+     * THREAD caused 30-60s of sluggishness.  The LRU cache (200 items)
+     * and throttled pipeline bound NDB reader pressure during scroll. */
 
     if (use_throttled_pipeline) {
       /*
@@ -1441,11 +1470,11 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     /* Legacy debounce path */
     guint batch_count = self->batch_buffer->len;
     if (batch_count > 0) {
-      /* Sort batch by created_at descending (newest first) */
-      g_array_sort(self->batch_buffer, note_entry_compare_newest_first);
+      /* Sort batch by created_at ascending (oldest first) for physical array order */
+      g_array_sort(self->batch_buffer, note_entry_compare_oldest_first);
 
-      /* Insert sorted batch at position 0 */
-      g_array_prepend_vals(self->notes, self->batch_buffer->data, batch_count);
+      /* Append sorted batch — O(1) amortized per item */
+      g_array_append_vals(self->notes, self->batch_buffer->data, batch_count);
 
       /* Track batch for debounced signal emission */
       self->batch_insert_count += batch_count;
@@ -1629,6 +1658,10 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
     /* Non-blocking: no retry+sleep on main thread */
     storage_ndb_begin_query(&txn);
 
+    /* Collect older items into a temporary array first, then bulk-insert
+     * at physical position 0 (oldest end) in one operation. */
+    GArray *temp = g_array_sized_new(FALSE, FALSE, sizeof(NoteEntry), n_entries);
+
     for (guint i = 0; i < n_entries; i++) {
       uint64_t note_key = entries[i].note_key;
       uint32_t created_at = entries[i].created_at;
@@ -1651,9 +1684,8 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
         }
       }
 
-      /* Add to notes array at the end (older items) */
       NoteEntry entry = { .note_key = note_key, .created_at = (gint64)created_at };
-      g_array_append_val(self->notes, entry);
+      g_array_append_val(temp, entry);
       add_note_key_to_set(self, note_key);
       added++;
 
@@ -1664,22 +1696,21 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
     }
 
     if (txn) storage_ndb_end_query(txn);
+
+    /* Sort temp oldest-first, then bulk-insert at physical front */
+    if (added > 1) {
+      g_array_sort(temp, note_entry_compare_oldest_first);
+    }
+    if (added > 0) {
+      g_array_insert_vals(self->notes, 0, temp->data, added);
+    }
+    g_array_unref(temp);
   }
 
   storage_ndb_cursor_free(cursor);
 
   if (added > 0) {
     guint old_count = self->notes->len - added;
-    /*
-     * Sort only the newly added items (they're all at the end, all older than existing).
-     * This is safer than sorting the entire array and won't disturb existing positions.
-     */
-    if (added > 1) {
-      /* Sort just the appended portion */
-      NoteEntry *new_start = &g_array_index(self->notes, NoteEntry, old_count);
-      qsort(new_start, added, sizeof(NoteEntry),
-            (int (*)(const void *, const void *))note_entry_compare_newest_first);
-    }
 
     /* Enforce window size SILENTLY before emitting signal (nostrc-2n7).
      * Emitting two sequential items_changed signals (append then evict)
@@ -1690,7 +1721,7 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
     guint net_added = self->notes->len - old_count;
     if (net_added > 0) {
       g_list_model_items_changed(G_LIST_MODEL(self), old_count, 0, net_added);
-      g_debug("[TIMELINE] load_older: appended %u items at position %u (evicted %u)",
+      g_debug("[TIMELINE] load_older: inserted %u items at logical position %u (evicted %u)",
               net_added, old_count, added - net_added);
     }
   }

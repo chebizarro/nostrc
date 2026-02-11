@@ -162,19 +162,37 @@ gnostr_strip_zwsp(char *str)
   return str;
 }
 
-char *gnostr_render_content_markup(const char *content, int content_len) {
-  if (!content || !*content) return g_strdup("");
+/* Check if a URL is http(s) */
+static gboolean is_http_url_n(const char *u, uint32_t len) {
+  if (len < 8) return FALSE;
+  return (g_ascii_strncasecmp(u, "http://", 7) == 0 ||
+          g_ascii_strncasecmp(u, "https://", 8) == 0);
+}
+
+void gnostr_content_render_result_free(GnContentRenderResult *result) {
+  if (!result) return;
+  g_free(result->markup);
+  if (result->media_urls) g_ptr_array_unref(result->media_urls);
+  if (result->all_urls) g_ptr_array_unref(result->all_urls);
+  g_free(result->first_nostr_ref);
+  g_free(result->first_og_url);
+  g_free(result);
+}
+
+GnContentRenderResult *gnostr_render_content(const char *content, int content_len) {
+  GnContentRenderResult *res = g_new0(GnContentRenderResult, 1);
+
+  if (!content || !*content) {
+    res->markup = g_strdup("");
+    return res;
+  }
 
   if (content_len < 0) content_len = (int)strlen(content);
 
-  /* Parse content into blocks on-the-fly */
   storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
   if (!blocks) {
-    /* Fallback: just escape the whole string.
-     * nostrc-pgo4: Do NOT insert ZWS — it corrupts PangoLayout line lists
-     * and causes SEGV in pango_renderer_draw_layout_line.
-     * PANGO_WRAP_WORD_CHAR on the label handles wrapping. */
-    return gnostr_strip_zwsp(g_markup_escape_text(content, content_len));
+    res->markup = gnostr_strip_zwsp(g_markup_escape_text(content, content_len));
+    return res;
   }
 
   GString *out = g_string_new("");
@@ -191,17 +209,12 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
         struct ndb_str_block *sb = ndb_block_str(block);
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
-        /* nostrc-dct8: Sanitize invalid UTF-8 before Pango markup */
         g_autofree gchar *text = g_strndup(ptr, len);
         if (!g_utf8_validate(text, -1, NULL)) {
           gchar *valid = g_utf8_make_valid(text, -1);
           g_free(text);
           text = g_steal_pointer(&valid);
         }
-        /* nostrc-pgo4: Do NOT insert ZWS — it corrupts PangoLayout line
-         * lists causing SEGV in pango_renderer_draw_layout_line during
-         * the GTK frame clock snapshot.  PANGO_WRAP_WORD_CHAR on the
-         * content label handles wrapping for long tokens. */
         gchar *escaped = g_markup_escape_text(text, -1);
         g_string_append(out, escaped);
         g_free(escaped);
@@ -213,9 +226,7 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
         gchar *tag = g_strndup(ptr, len);
-        /* Validate UTF-8 before inserting into Pango markup */
         if (!g_utf8_validate(tag, -1, NULL)) {
-          /* Invalid UTF-8: render as plain text with replacement char */
           gchar *valid = g_utf8_make_valid(tag, -1);
           gchar *esc = g_markup_escape_text(valid, -1);
           g_string_append_printf(out, "#%s", esc);
@@ -236,25 +247,35 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
         uint32_t len = ndb_str_block_len(sb);
         gchar *url = g_strndup(ptr, len);
 
-        /* For www. URLs, use https:// in href */
+        /* Collect URL metadata during this single pass */
+        if (is_http_url_n(ptr, len)) {
+          /* all_urls: every http(s) URL */
+          if (!res->all_urls)
+            res->all_urls = g_ptr_array_new_with_free_func(g_free);
+          g_ptr_array_add(res->all_urls, g_strdup(url));
+
+          gboolean is_media = is_image_url_n(ptr, len) || is_video_url_n(ptr, len);
+          if (is_media) {
+            if (!res->media_urls)
+              res->media_urls = g_ptr_array_new_with_free_func(g_free);
+            g_ptr_array_add(res->media_urls, g_strdup(url));
+          } else if (!res->first_og_url) {
+            res->first_og_url = g_strdup(url);
+          }
+        }
+
+        /* Render markup */
         gchar *href = g_str_has_prefix(url, "www.")
                        ? g_strdup_printf("https://%s", url)
                        : g_strdup(url);
         gchar *esc_href = g_markup_escape_text(href, -1);
 
-        /* Truncate display if too long */
         gchar *display;
         if (len > 40) {
           display = g_strdup_printf("%.35s...", url);
         } else {
           display = g_strdup(url);
         }
-        /* nostrc-pgo2: Do NOT insert ZWS inside <a> link text.  ZWS (U+200B)
-         * inside Pango markup <a> elements corrupts PangoLayout's internal
-         * line list (NULL entries), causing SEGV in pango_layout_line_unref
-         * during gtk_widget_allocate.  URLs are already truncated to ~35 chars
-         * so they don't need explicit line-break hints, and PANGO_WRAP_WORD_CHAR
-         * on the label handles wrapping. */
         gchar *esc_display = g_markup_escape_text(display, -1);
 
         g_string_append_printf(out,
@@ -274,12 +295,25 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
         uint32_t str_len = ndb_str_block_len(sb);
         struct nostr_bech32 *bech32 = ndb_bech32_block(block);
 
-        /* Build nostr: href from the raw bech32 string */
         gchar *bech32_str = g_strndup(str_ptr, str_len);
         gchar *href = g_strdup_printf("nostr:%s", bech32_str);
         gchar *esc_href = g_markup_escape_text(href, -1);
 
-        /* Format display name */
+        /* Collect first nostr: ref for NIP-21 embed */
+        if (!res->first_nostr_ref && bech32) {
+          switch (bech32->type) {
+            case NOSTR_BECH32_NOTE:
+            case NOSTR_BECH32_NEVENT:
+            case NOSTR_BECH32_NADDR:
+            case NOSTR_BECH32_NPUB:
+            case NOSTR_BECH32_NPROFILE:
+              res->first_nostr_ref = g_strdup(href); /* "nostr:..." */
+              break;
+            default:
+              break;
+          }
+        }
+
         gchar *display = format_mention_display(bech32, str_ptr, str_len);
         gchar *esc_display = g_markup_escape_text(display, -1);
 
@@ -301,7 +335,6 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
         gchar *inv_str = g_strndup(ptr, len);
         gchar *esc = g_markup_escape_text(inv_str, -1);
 
-        /* Display as lightning link with truncated invoice */
         gchar *display;
         if (len > 20) {
           display = g_strdup_printf("\xe2\x9a\xa1%.12s\xe2\x80\xa6", inv_str);
@@ -320,7 +353,6 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
       }
 
       case BLOCK_MENTION_INDEX: {
-        /* Legacy #[N] style mention - render as-is for now */
         struct ndb_str_block *sb = ndb_block_str(block);
         if (sb) {
           const char *ptr = ndb_str_block_ptr(sb);
@@ -339,43 +371,24 @@ char *gnostr_render_content_markup(const char *content, int content_len) {
 
   storage_ndb_blocks_free(blocks);
 
-  gchar *result = g_string_free(out, FALSE);
-  gnostr_strip_zwsp(result);
-  return (result && *result) ? result : (g_free(result), g_strdup(""));
+  gchar *markup = g_string_free(out, FALSE);
+  gnostr_strip_zwsp(markup);
+  res->markup = (markup && *markup) ? markup : (g_free(markup), g_strdup(""));
+  return res;
+}
+
+/* Convenience wrappers — delegate to unified gnostr_render_content() */
+
+char *gnostr_render_content_markup(const char *content, int content_len) {
+  GnContentRenderResult *res = gnostr_render_content(content, content_len);
+  gchar *markup = g_strdup(res->markup);
+  gnostr_content_render_result_free(res);
+  return markup;
 }
 
 GPtrArray *gnostr_extract_media_urls(const char *content, int content_len) {
-  if (!content || !*content) return NULL;
-
-  if (content_len < 0) content_len = (int)strlen(content);
-
-  storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
-  if (!blocks) return NULL;
-
-  GPtrArray *urls = NULL;
-  struct ndb_block_iterator iter;
-  struct ndb_block *block;
-
-  ndb_blocks_iterate_start(content, blocks, &iter);
-
-  while ((block = ndb_blocks_iterate_next(&iter)) != NULL) {
-    if (ndb_get_block_type(block) != BLOCK_URL) continue;
-
-    struct ndb_str_block *sb = ndb_block_str(block);
-    const char *ptr = ndb_str_block_ptr(sb);
-    uint32_t len = ndb_str_block_len(sb);
-
-    /* Only http(s) URLs */
-    if (len < 8) continue;
-    if (g_ascii_strncasecmp(ptr, "http://", 7) != 0 &&
-        g_ascii_strncasecmp(ptr, "https://", 8) != 0) continue;
-
-    if (is_image_url_n(ptr, len) || is_video_url_n(ptr, len)) {
-      if (!urls) urls = g_ptr_array_new_with_free_func(g_free);
-      g_ptr_array_add(urls, g_strndup(ptr, len));
-    }
-  }
-
-  storage_ndb_blocks_free(blocks);
+  GnContentRenderResult *res = gnostr_render_content(content, content_len);
+  GPtrArray *urls = res->media_urls ? g_ptr_array_ref(res->media_urls) : NULL;
+  gnostr_content_render_result_free(res);
   return urls;
 }

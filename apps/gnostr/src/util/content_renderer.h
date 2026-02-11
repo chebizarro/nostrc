@@ -10,13 +10,46 @@
  */
 
 /**
+ * GnContentRenderResult:
+ *
+ * Unified result from a single-pass content render.  Collects Pango markup,
+ * media URLs, nostr references, and OG-preview URLs in one block iteration.
+ */
+typedef struct {
+  gchar     *markup;          /* Pango markup (transfer full, non-NULL) */
+  GPtrArray *media_urls;      /* image/video URLs by extension (nullable, element: gchar*) */
+  GPtrArray *all_urls;        /* ALL http(s) URLs in document order (nullable, element: gchar*) */
+  gchar     *first_nostr_ref; /* First nostr: URI for NIP-21 embed (nullable) */
+  gchar     *first_og_url;    /* First non-media http(s) URL for OG preview (nullable) */
+} GnContentRenderResult;
+
+/**
+ * gnostr_render_content:
+ * @content: raw note content string
+ * @content_len: length of content (-1 for strlen)
+ *
+ * Single-pass NDB block iteration producing markup + extracted URLs.
+ *
+ * Returns: (transfer full): newly allocated result. Caller must free with
+ *          gnostr_content_render_result_free().
+ */
+GnContentRenderResult *gnostr_render_content(const char *content, int content_len);
+
+/**
+ * gnostr_content_render_result_free:
+ * @result: (nullable): result to free
+ *
+ * Frees all fields and the struct itself.
+ */
+void gnostr_content_render_result_free(GnContentRenderResult *result);
+
+/**
  * gnostr_render_content_markup:
  * @content: raw note content string
  * @content_len: length of content (-1 for strlen)
  *
- * Parses content into NDB blocks and renders to Pango markup.
- * Handles: hashtags (#tag), mentions (nostr:npub/nprofile/note/nevent/naddr),
- * URLs (http/https), invoices (lnbc), and plain text.
+ * Convenience wrapper: returns only the Pango markup string.
+ * Equivalent to calling gnostr_render_content() and extracting ->markup.
  *
  * Returns: newly allocated Pango markup string. Caller must g_free().
  */
@@ -27,7 +60,7 @@ char *gnostr_render_content_markup(const char *content, int content_len);
  * @content: raw note content string
  * @content_len: length of content (-1 for strlen)
  *
- * Extracts image and video URLs from content blocks.
+ * Convenience wrapper: returns only image/video URLs.
  *
  * Returns: (transfer full): GPtrArray of URL strings (g_free each + g_ptr_array_unref).
  *          NULL if no media found.

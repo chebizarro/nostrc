@@ -2848,20 +2848,16 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(content);
 
-  /* nostrc-nst: Use NDB content blocks for rendering instead of manual tokenization */
-  gchar *markup = gnostr_render_content_markup(content, -1);
-  /* nostrc-wt3n: Don't use GNOSTR_LABEL_SAFE for content - it checks gtk_widget_get_mapped()
-   * which is false during factory binding, causing content to be silently skipped.
-   * Setting label text doesn't require mapping; GTK stores it for later rendering. */
+  /* Single-pass content render: markup + media URLs + nostr refs + OG URL */
+  GnContentRenderResult *render = gnostr_render_content(content, -1);
+
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-    gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
+    gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
   }
-  g_free(markup);
 
-  /* nostrc-nst: Media detection using NDB content blocks */
+  /* Media detection from unified render result */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
-    /* Clear existing media widgets */
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
     while (child) {
       GtkWidget *next = gtk_widget_get_next_sibling(child);
@@ -2870,10 +2866,9 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
     }
     gtk_widget_set_visible(self->media_box, FALSE);
 
-    GPtrArray *media_urls = gnostr_extract_media_urls(content, -1);
-    if (media_urls) {
-      for (guint i = 0; i < media_urls->len; i++) {
-        const char *url = g_ptr_array_index(media_urls, i);
+    if (render->media_urls) {
+      for (guint i = 0; i < render->media_urls->len; i++) {
+        const char *url = g_ptr_array_index(render->media_urls, i);
         if (is_image_url(url)) {
           GtkWidget *container = create_image_container(url, 300, NULL);
           GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
@@ -2897,108 +2892,48 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
           gtk_widget_set_visible(self->media_box, TRUE);
         }
       }
-      g_ptr_array_unref(media_urls);
     }
   }
 
-  /* Detect NIP-19/21 nostr: references and create embedded note widgets */
+  /* NIP-21 embed from unified render result */
   if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
-    /* Clear existing embeds from the embed_box */
     if (GTK_IS_FRAME(self->embed_box)) {
       gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
     }
     gtk_widget_set_visible(self->embed_box, FALSE);
     self->note_embed = NULL;
 
-    const char *p = content;
-    if (p && *p) {
-      /* Scan for nostr: URIs and bech32 references */
-      gchar **tokens = g_strsplit_set(p, " \n\t", -1);
-      const char *first_nostr_ref = NULL;
-
-      for (guint i = 0; tokens && tokens[i]; i++) {
-        const char *t = tokens[i];
-        if (!t || !*t) continue;
-
-        /* Check for nostr: URI or bare bech32 (NIP-21) */
-        if (g_str_has_prefix(t, "nostr:") ||
-            g_str_has_prefix(t, "note1") ||
-            g_str_has_prefix(t, "nevent1") ||
-            g_str_has_prefix(t, "naddr1") ||
-            g_str_has_prefix(t, "npub1") ||
-            g_str_has_prefix(t, "nprofile1")) {
-          first_nostr_ref = t;
-          break;
-        }
+    if (render->first_nostr_ref) {
+      self->note_embed = gnostr_note_embed_new();
+      gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
+      g_signal_connect(self->note_embed, "profile-clicked",
+                      G_CALLBACK(on_embed_profile_clicked), self);
+      gnostr_note_embed_set_nostr_uri(self->note_embed, render->first_nostr_ref);
+      if (GTK_IS_FRAME(self->embed_box)) {
+        gtk_frame_set_child(GTK_FRAME(self->embed_box), GTK_WIDGET(self->note_embed));
       }
-
-      if (first_nostr_ref) {
-        /* Create the NIP-21 embed widget */
-        self->note_embed = gnostr_note_embed_new();
-        
-        /* Use parent's cancellable for lifecycle management */
-        gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
-
-        /* Connect profile-clicked signal to relay to main window */
-        g_signal_connect(self->note_embed, "profile-clicked",
-                        G_CALLBACK(on_embed_profile_clicked), self);
-
-        /* Set the nostr URI - this triggers async loading via NIP-19 decoding */
-        gnostr_note_embed_set_nostr_uri(self->note_embed, first_nostr_ref);
-
-        /* Add embed widget to the embed_box frame */
-        if (GTK_IS_FRAME(self->embed_box)) {
-          gtk_frame_set_child(GTK_FRAME(self->embed_box), GTK_WIDGET(self->note_embed));
-        }
-        gtk_widget_set_visible(self->embed_box, TRUE);
-
-        /* Also emit the signal for timeline-level handling (backwards compatibility) */
-        g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, first_nostr_ref);
-      }
-
-      if (tokens) g_strfreev(tokens);
+      gtk_widget_set_visible(self->embed_box, TRUE);
+      g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, render->first_nostr_ref);
     }
   }
 
-  /* Detect first HTTP(S) URL and create OG preview */
+  /* OG preview from unified render result */
   if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
-    /* Clear any existing preview */
     if (self->og_preview) {
       gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       self->og_preview = NULL;
     }
     gtk_widget_set_visible(self->og_preview_container, FALSE);
-    
-    const char *p = content;
-    const char *url_start = NULL;
-    if (p && *p) {
-      /* Find first HTTP(S) URL */
-      gchar **tokens = g_strsplit_set(p, " \n\t", -1);
-      for (guint i = 0; tokens && tokens[i]; i++) {
-        const char *t = tokens[i];
-        if (!t || !*t) continue;
-        if (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://")) {
-          /* Skip media URLs */
-          if (!is_media_url(t)) {
-            url_start = t;
-            break;
-          }
-        }
-      }
-      
-      if (url_start) {
-        /* Create OG preview widget */
-        self->og_preview = og_preview_widget_new();
-        gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
-        gtk_widget_set_visible(self->og_preview_container, TRUE);
-        
-        /* Set URL to fetch metadata - use parent's cancellable for lifecycle management */
-        og_preview_widget_set_url_with_cancellable(self->og_preview, url_start, self->async_cancellable);
-      }
-      
-      if (tokens) g_strfreev(tokens);
+
+    if (render->first_og_url) {
+      self->og_preview = og_preview_widget_new();
+      gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      gtk_widget_set_visible(self->og_preview_container, TRUE);
+      og_preview_widget_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
     }
   }
+
+  gnostr_content_render_result_free(render);
 }
 
 /* NIP-92 imeta-aware content setter */
@@ -3049,13 +2984,12 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
     }
   }
 
-  /* nostrc-nst: Use NDB content blocks for text markup rendering */
-  gchar *markup = gnostr_render_content_markup(content, -1);
+  /* Single-pass content render: markup + all URLs */
+  GnContentRenderResult *render = gnostr_render_content(content, -1);
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-    gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
+    gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
   }
-  g_free(markup);
 
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
@@ -3066,78 +3000,69 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
     }
     gtk_widget_set_visible(self->media_box, FALSE);
 
-    if (content) {
-      gchar **tokens = g_strsplit_set(content, " \n\t", -1);
-      for (guint i = 0; tokens && tokens[i]; i++) {
-        const char *url = tokens[i];
-        if (!url || !*url) continue;
-        if (g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://")) {
-          GnostrImeta *imeta = imeta_list ? gnostr_imeta_find_by_url(imeta_list, url) : NULL;
-          GnostrMediaType media_type = GNOSTR_MEDIA_TYPE_UNKNOWN;
-          if (imeta) {
-            media_type = imeta->media_type;
-            g_debug("note_card: imeta for %s: type=%d dim=%dx%d alt=%s",
-                    url, media_type, imeta->width, imeta->height,
-                    imeta->alt ? imeta->alt : "(none)");
+    if (render->all_urls) {
+      for (guint i = 0; i < render->all_urls->len; i++) {
+        const char *url = g_ptr_array_index(render->all_urls, i);
+        GnostrImeta *imeta = imeta_list ? gnostr_imeta_find_by_url(imeta_list, url) : NULL;
+        GnostrMediaType media_type = GNOSTR_MEDIA_TYPE_UNKNOWN;
+        if (imeta) {
+          media_type = imeta->media_type;
+          g_debug("note_card: imeta for %s: type=%d dim=%dx%d alt=%s",
+                  url, media_type, imeta->width, imeta->height,
+                  imeta->alt ? imeta->alt : "(none)");
+        }
+        if (media_type == GNOSTR_MEDIA_TYPE_UNKNOWN) {
+          if (is_image_url(url)) media_type = GNOSTR_MEDIA_TYPE_IMAGE;
+          else if (is_video_url(url)) media_type = GNOSTR_MEDIA_TYPE_VIDEO;
+        }
+
+        if (media_type == GNOSTR_MEDIA_TYPE_IMAGE) {
+          int height = 300;
+          if (imeta && imeta->width > 0 && imeta->height > 0) {
+            int cw = 400;
+            height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
+            if (height > 400) height = 400;
+            if (height < 100) height = 100;
           }
-          if (media_type == GNOSTR_MEDIA_TYPE_UNKNOWN) {
-            if (is_image_url(url)) media_type = GNOSTR_MEDIA_TYPE_IMAGE;
-            else if (is_video_url(url)) media_type = GNOSTR_MEDIA_TYPE_VIDEO;
-          }
 
-          if (media_type == GNOSTR_MEDIA_TYPE_IMAGE) {
-            /* Calculate height from imeta dimensions if available */
-            int height = 300;
-            if (imeta && imeta->width > 0 && imeta->height > 0) {
-              int cw = 400;
-              height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
-              if (height > 400) height = 400;
-              if (height < 100) height = 100;
-            }
+          const char *alt_text = (imeta && imeta->alt && *imeta->alt) ? imeta->alt : NULL;
+          GtkWidget *container = create_image_container(url, height, alt_text);
+          GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
 
-            /* Create image container with spinner and error fallback */
-            const char *alt_text = (imeta && imeta->alt && *imeta->alt) ? imeta->alt : NULL;
-            GtkWidget *container = create_image_container(url, height, alt_text);
-            GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
+          GtkGesture *click_gesture = gtk_gesture_click_new();
+          gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
+          g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
+          gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
 
-            /* Add click gesture to the picture to open image viewer */
-            GtkGesture *click_gesture = gtk_gesture_click_new();
-            gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
-            gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
-
-            gtk_box_append(GTK_BOX(self->media_box), container);
-            gtk_widget_set_visible(self->media_box, TRUE);
+          gtk_box_append(GTK_BOX(self->media_box), container);
+          gtk_widget_set_visible(self->media_box, TRUE);
 #ifdef HAVE_SOUP3
-            load_media_image(self, url, GTK_PICTURE(pic));
+          load_media_image(self, url, GTK_PICTURE(pic));
 #endif
-          } else if (media_type == GNOSTR_MEDIA_TYPE_VIDEO) {
-            /* Use enhanced video player with controls overlay */
-            GnostrVideoPlayer *player = gnostr_video_player_new();
-            gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
-            /* Constrain video width to card width (640px) less margins (16px each side) */
-            int max_width = 608;
-            int height = 300;
-            if (imeta && imeta->width > 0 && imeta->height > 0) {
-              int cw = max_width;
-              height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
-              if (height > 400) height = 400;
-              if (height < 100) height = 100;
-            }
-            gtk_widget_set_size_request(GTK_WIDGET(player), max_width, height);
-            if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(GTK_WIDGET(player), imeta->alt);
-            gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
-            gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
-            /* Set video URI - settings (autoplay/loop) are read from GSettings */
-            gnostr_video_player_set_uri(player, url);
-            gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
-            gtk_widget_set_visible(self->media_box, TRUE);
+        } else if (media_type == GNOSTR_MEDIA_TYPE_VIDEO) {
+          GnostrVideoPlayer *player = gnostr_video_player_new();
+          gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
+          int max_width = 608;
+          int height = 300;
+          if (imeta && imeta->width > 0 && imeta->height > 0) {
+            int cw = max_width;
+            height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
+            if (height > 400) height = 400;
+            if (height < 100) height = 100;
           }
+          gtk_widget_set_size_request(GTK_WIDGET(player), max_width, height);
+          if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(GTK_WIDGET(player), imeta->alt);
+          gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
+          gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
+          gnostr_video_player_set_uri(player, url);
+          gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
+          gtk_widget_set_visible(self->media_box, TRUE);
         }
       }
-      g_strfreev(tokens);
     }
   }
+
+  gnostr_content_render_result_free(render);
 
   gnostr_imeta_list_free(imeta_list);
 
