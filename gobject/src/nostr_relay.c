@@ -606,8 +606,11 @@ gnostr_relay_new(const gchar *url)
 {
     g_return_val_if_fail(url != NULL, NULL);
 
-    /* Check shared registry for existing relay to this URL */
+    /* harden-5: Hold lock across both lookup and creation to prevent TOCTOU race.
+     * constructed() only allocates the core relay struct (no I/O), so this is safe. */
     G_LOCK(relay_registry);
+
+    /* Check registry for existing relay */
     if (g_relay_registry) {
         GNostrRelay *existing = g_hash_table_lookup(g_relay_registry, url);
         if (existing) {
@@ -616,12 +619,10 @@ gnostr_relay_new(const gchar *url)
             return existing;
         }
     }
-    G_UNLOCK(relay_registry);
 
+    /* Create new relay while holding lock to prevent duplicate creation */
     GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url", url, NULL);
 
-    /* Register for future reuse */
-    G_LOCK(relay_registry);
     if (!g_relay_registry) {
         g_relay_registry = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                   g_free, NULL);

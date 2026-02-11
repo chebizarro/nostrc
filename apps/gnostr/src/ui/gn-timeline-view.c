@@ -552,6 +552,16 @@ static void gn_timeline_view_dispose(GObject *object) {
     self->scroll_check_id = 0;
   }
 
+  /* harden-4: Disconnect vadjustment signal to prevent stale callback */
+  if (self->vadjustment_changed_id > 0) {
+    GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(
+      GTK_SCROLLED_WINDOW(self->scrolled_window));
+    if (adj) {
+      g_signal_handler_disconnect(adj, self->vadjustment_changed_id);
+    }
+    self->vadjustment_changed_id = 0;
+  }
+
   /* Disconnect signals */
   if (self->model) {
     /* nostrc-0hp: Disconnect view widget for frame-aware batching */
