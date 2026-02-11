@@ -348,7 +348,7 @@ static void on_fullscreen_window_close_request(GtkWindow *window, gpointer user_
 }
 
 static void show_controls(GnostrVideoPlayer *self) {
-  if (self->controls_visible) return;
+  if (self->disposed || self->controls_visible) return;
 
   self->controls_visible = TRUE;
 
@@ -382,6 +382,8 @@ static gboolean hide_controls_timeout(gpointer user_data) {
 }
 
 static void schedule_hide_controls(GnostrVideoPlayer *self) {
+  if (self->disposed) return;
+
   /* Cancel existing timer */
   if (self->controls_hide_timer_id > 0) {
     g_source_remove(self->controls_hide_timer_id);
@@ -389,9 +391,13 @@ static void schedule_hide_controls(GnostrVideoPlayer *self) {
   }
 
   /* LEGITIMATE TIMEOUT - Auto-hide controls after inactivity.
-   * nostrc-b0h: Audited - standard video player UX. */
-  self->controls_hide_timer_id = g_timeout_add_seconds(CONTROLS_HIDE_TIMEOUT_SEC,
-                                                        hide_controls_timeout, self);
+   * nostrc-b0h: Audited - standard video player UX.
+   * Ref-hold self to prevent UAF if widget is destroyed before timer fires. */
+  self->controls_hide_timer_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT,
+                                                             CONTROLS_HIDE_TIMEOUT_SEC,
+                                                             hide_controls_timeout,
+                                                             g_object_ref(self),
+                                                             g_object_unref);
 }
 
 static gboolean position_update_tick(gpointer user_data) {
@@ -911,8 +917,12 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
 
   /* LEGITIMATE TIMEOUT - Position slider update during playback (250ms).
-   * nostrc-b0h: Audited - polling playback position is standard. */
-  self->position_update_timer_id = g_timeout_add(250, position_update_tick, self);
+   * nostrc-b0h: Audited - polling playback position is standard.
+   * Ref-hold self to prevent UAF if widget is destroyed before timer fires. */
+  self->position_update_timer_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 250,
+                                                       position_update_tick,
+                                                       g_object_ref(self),
+                                                       g_object_unref);
 
   /* Make focusable for keyboard events */
   gtk_widget_set_focusable(GTK_WIDGET(self), TRUE);
