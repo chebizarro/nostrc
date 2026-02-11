@@ -12,6 +12,7 @@
 #include "gn-timeline-view.h"
 #include "note_card_row.h"
 #include "../model/gn-nostr-event-item.h"
+#include "../model/gn-nostr-profile.h"
 #include <adwaita.h>
 
 struct _GnTimelineView {
@@ -101,15 +102,13 @@ static void on_item_profile_changed(GObject *item, GParamSpec *pspec, gpointer u
   const gchar *pubkey = gn_nostr_event_item_get_pubkey(event_item);
   GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
 
-  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
-
   if (profile) {
-    g_object_get(G_OBJECT(profile),
-                 "display-name", &display,
-                 "name", &handle,
-                 "picture-url", &avatar_url,
-                 "nip05", &nip05,
-                 NULL);
+    /* nostrc-perf: Use const accessors instead of g_object_get to avoid
+     * 4 string allocations + 4 g_free calls per profile update callback. */
+    const gchar *display = gn_nostr_profile_get_display_name(profile);
+    const gchar *handle = gn_nostr_profile_get_name(profile);
+    const gchar *avatar_url = gn_nostr_profile_get_picture_url(profile);
+    const gchar *nip05 = gn_nostr_profile_get_nip05(profile);
 
     /* Update the row with the new profile data */
     gnostr_note_card_row_set_author(row, display, handle, avatar_url);
@@ -118,11 +117,6 @@ static void on_item_profile_changed(GObject *item, GParamSpec *pspec, gpointer u
       gnostr_note_card_row_set_nip05(row, nip05, pubkey);
     }
   }
-
-  g_free(display);
-  g_free(handle);
-  g_free(avatar_url);
-  g_free(nip05);
 }
 
 static void factory_setup_cb(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -131,6 +125,98 @@ static void factory_setup_cb(GtkListItemFactory *factory, GtkListItem *list_item
 
   GnostrNoteCardRow *row = gnostr_note_card_row_new();
   gtk_list_item_set_child(list_item, GTK_WIDGET(row));
+}
+
+/*
+ * nostrc-sbqe.3: Tier 2 map handler. Fired when the NoteCardRow widget
+ * becomes visible (mapped into the viewport). Performs all deferred work
+ * that was skipped during Tier 1 bind: avatar loading, depth/thread info,
+ * NIP-05 badge, media/OG/embed creation, profile signal connection, and
+ * reveal animation CSS.
+ *
+ * Items that scroll past during fast scroll never trigger this handler,
+ * so they only pay the Tier 1 cost (name + timestamp + markup label).
+ */
+static void on_row_mapped_tier2(GtkWidget *widget, gpointer user_data) {
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  if (!GTK_IS_LIST_ITEM(list_item)) return;
+
+  GtkWidget *child = gtk_list_item_get_child(list_item);
+  if (!GNOSTR_IS_NOTE_CARD_ROW(child) || child != widget) return;
+
+  GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(child);
+
+  /* Verify the row is still bound and not disposed (guards against stale map) */
+  if (gnostr_note_card_row_is_disposed(row) || !gnostr_note_card_row_is_bound(row)) return;
+
+  /* Retrieve the bound item. If it was cleared (unbind raced with map), bail. */
+  gpointer item_ptr = g_object_get_data(G_OBJECT(list_item), "bound-item");
+  if (!item_ptr || !GN_IS_NOSTR_EVENT_ITEM(item_ptr)) return;
+
+  GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(item_ptr);
+
+  /* Double-check event ID matches what we stored at bind time to detect recycling */
+  const gchar *stored_id = gnostr_note_card_row_get_event_id(row);
+  const gchar *item_id = gn_nostr_event_item_get_event_id(item);
+  if (!stored_id || !item_id || g_strcmp0(stored_id, item_id) != 0) return;
+
+  /* Retrieve the GnTimelineView for signal emission */
+  GnTimelineView *self = g_object_get_data(G_OBJECT(list_item), "timeline-view");
+
+  /* --- Tier 2 deferred work --- */
+
+  const gchar *pubkey = gn_nostr_event_item_get_pubkey(item);
+  const gchar *root_id = gn_nostr_event_item_get_thread_root_id(item);
+  const gchar *parent_id = gn_nostr_event_item_get_parent_id(item);
+  guint depth = gn_nostr_event_item_get_reply_depth(item);
+
+  /* Avatar loading (deferred from Tier 1 set_author_name_only) */
+  GnNostrProfile *profile = gn_nostr_event_item_get_profile(item);
+  if (profile) {
+    const gchar *avatar_url = gn_nostr_profile_get_picture_url(profile);
+    gnostr_note_card_row_set_avatar(row, avatar_url);
+
+    /* NIP-05 badge */
+    const gchar *nip05 = gn_nostr_profile_get_nip05(profile);
+    if (nip05 && pubkey) {
+      gnostr_note_card_row_set_nip05(row, nip05, pubkey);
+    }
+  }
+
+  /* Thread depth indicator */
+  gnostr_note_card_row_set_depth(row, depth);
+
+  /* Thread info / reply indicator */
+  gboolean is_reply = (parent_id != NULL && *parent_id != '\0');
+  gnostr_note_card_row_set_thread_info(row, root_id, parent_id, NULL, is_reply);
+
+  /* Deferred content (media widgets, OG previews, note embeds) */
+  const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(item);
+  if (cached) {
+    gnostr_note_card_row_apply_deferred_content(row, cached);
+  }
+
+  /* Profile signal connection (deferred from Tier 1) */
+  gpointer existing_handler = g_object_get_data(G_OBJECT(list_item), "profile-handler-id");
+  if (!existing_handler || GPOINTER_TO_UINT(existing_handler) == 0) {
+    gulong profile_handler_id = g_signal_connect(item, "notify::profile",
+                                                  G_CALLBACK(on_item_profile_changed),
+                                                  list_item);
+    g_object_set_data(G_OBJECT(list_item), "profile-handler-id",
+                      GUINT_TO_POINTER(profile_handler_id));
+  }
+
+  /* Request profile if needed */
+  if (self && pubkey && !profile) {
+    g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
+  }
+
+  /* Reveal animation CSS class */
+  if (gn_nostr_event_item_get_revealing(item)) {
+    gtk_widget_add_css_class(child, "note-revealing");
+  } else {
+    gtk_widget_remove_css_class(child, "note-revealing");
+  }
 }
 
 static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -153,6 +239,13 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
 
   if (!GN_IS_NOSTR_EVENT_ITEM(item)) return;
 
+  /* ============================================================
+   * nostrc-sbqe.3: TIER 1 (immediate) — Minimal bind.
+   * Only the essential fields needed for the item to display
+   * correctly in the list during fast scroll. Everything else
+   * is deferred to the GtkWidget::map signal handler (Tier 2).
+   * ============================================================ */
+
   /* nostrc-dqwq: Use direct accessors instead of g_object_get.
    * Returns const pointers to cached fields — no allocation or g_free needed. */
   const gchar *id_hex = gn_nostr_event_item_get_event_id(item);
@@ -160,80 +253,61 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
   gint64 created_at = gn_nostr_event_item_get_created_at(item);
   const gchar *content = gn_nostr_event_item_get_content(item);
   const gchar *root_id = gn_nostr_event_item_get_thread_root_id(item);
-  const gchar *parent_id = gn_nostr_event_item_get_parent_id(item);
-  guint depth = gn_nostr_event_item_get_reply_depth(item);
 
-  /* Get profile info — profile accessors return borrowed pointers, no alloc */
-  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
+  /* Tier 1: Author name + handle (NO avatar — deferred to Tier 2) */
   GnNostrProfile *profile = gn_nostr_event_item_get_profile(item);
+  const gchar *display = NULL, *handle = NULL;
   if (profile) {
-    g_object_get(G_OBJECT(profile),
-                 "display-name", &display,
-                 "name", &handle,
-                 "picture-url", &avatar_url,
-                 "nip05", &nip05,
-                 NULL);
+    display = gn_nostr_profile_get_display_name(profile);
+    handle = gn_nostr_profile_get_name(profile);
   }
-
-  /* Fallback display name */
   gchar *display_fallback = NULL;
   if (!display && !handle && pubkey && strlen(pubkey) >= 8) {
     display_fallback = g_strdup_printf("%.8s...", pubkey);
   }
-
-  /* Apply to row */
-  gnostr_note_card_row_set_author(row, display ? display : display_fallback, handle, avatar_url);
-  gnostr_note_card_row_set_timestamp(row, created_at, NULL);
-  gnostr_note_card_row_set_content(row, content);
-  gnostr_note_card_row_set_ids(row, id_hex, root_id, pubkey);
-  gnostr_note_card_row_set_depth(row, depth);
-
-  /* nostrc-5b8: Set thread info to show reply indicator for events with e-tags */
-  gboolean is_reply = (parent_id != NULL && *parent_id != '\0');
-  gnostr_note_card_row_set_thread_info(row, root_id, parent_id, NULL, is_reply);
-
-  if (nip05 && pubkey) {
-    gnostr_note_card_row_set_nip05(row, nip05, pubkey);
-  }
-
-  /* Request profile if needed */
-  if (pubkey && !profile) {
-    g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
-  }
-
-  /*
-   * nostrc-0hp Phase 3: Apply reveal animation CSS class.
-   * If the item is marked as "revealing", add the note-revealing CSS class
-   * to trigger the fade/slide animation defined in gnostr.css.
-   */
-  if (gn_nostr_event_item_get_revealing(item)) {
-    gtk_widget_add_css_class(child, "note-revealing");
-    g_debug("[TIMELINE-VIEW] Applied note-revealing CSS class to item");
-  } else {
-    /* Ensure class is removed if item is rebound without revealing state */
-    gtk_widget_remove_css_class(child, "note-revealing");
-  }
-
-  /*
-   * nostrc-7ycv: Connect to item's profile notify signal.
-   * When profile data arrives later (async fetch), update the row.
-   * Store the handler ID on the list_item so we can disconnect on unbind.
-   */
-  gulong profile_handler_id = g_signal_connect(item, "notify::profile",
-                                                G_CALLBACK(on_item_profile_changed),
-                                                list_item);
-  g_object_set_data(G_OBJECT(list_item), "profile-handler-id",
-                    GUINT_TO_POINTER(profile_handler_id));
-  g_object_set_data(G_OBJECT(list_item), "bound-item", item);
-
-  /* Cleanup — only free strings we allocated.
-   * nostrc-dqwq: id_hex, pubkey, content, root_id, parent_id are borrowed
-   * from the item's cached fields and must NOT be freed. */
-  g_free(display);
-  g_free(handle);
-  g_free(avatar_url);
-  g_free(nip05);
+  gnostr_note_card_row_set_author_name_only(row,
+                                             display ? display : display_fallback,
+                                             handle);
   g_free(display_fallback);
+
+  /* Tier 1: Timestamp */
+  gnostr_note_card_row_set_timestamp(row, created_at, NULL);
+
+  /* Tier 1: Content markup (from cached render — no media/OG/embed creation) */
+  const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(item);
+  if (cached) {
+    gnostr_note_card_row_set_content_markup_only(row, content, cached);
+  } else {
+    /* No cached render: fall back to full render (first bind of this item).
+     * This sets markup + media/OG but is unavoidable for uncached items. */
+    gnostr_note_card_row_set_content(row, content);
+  }
+
+  /* Tier 1: Event IDs (needed for click handling and Tier 2 validation) */
+  gnostr_note_card_row_set_ids(row, id_hex, root_id, pubkey);
+
+  /* ============================================================
+   * Store references for Tier 2 map handler.
+   * The item is alive as long as it is in the model.
+   * ============================================================ */
+  g_object_set_data(G_OBJECT(list_item), "bound-item", item);
+  g_object_set_data(G_OBJECT(list_item), "timeline-view", self);
+  /* Initialize profile handler as unset — Tier 2 will connect it */
+  g_object_set_data(G_OBJECT(list_item), "profile-handler-id", GUINT_TO_POINTER(0));
+
+  /* Connect Tier 2 map handler on the NoteCardRow widget.
+   * Store handler ID on list_item for disconnection in unbind. */
+  gulong map_handler_id = g_signal_connect(child, "map",
+                                            G_CALLBACK(on_row_mapped_tier2),
+                                            list_item);
+  g_object_set_data(G_OBJECT(list_item), "tier2-map-handler-id",
+                    GUINT_TO_POINTER(map_handler_id));
+
+  /* If the widget is ALREADY mapped (e.g., rebind of visible item without
+   * recycling), run Tier 2 immediately — the map signal will not fire again. */
+  if (gtk_widget_get_mapped(child)) {
+    on_row_mapped_tier2(child, list_item);
+  }
 }
 
 static void factory_unbind_cb(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -244,6 +318,17 @@ static void factory_unbind_cb(GtkListItemFactory *factory, GtkListItem *list_ite
   if (!GNOSTR_IS_NOTE_CARD_ROW(child)) return;
 
   GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(child);
+
+  /* nostrc-sbqe.3: Disconnect Tier 2 map handler to prevent stale callbacks
+   * when the row is recycled for a different item. */
+  gpointer map_handler_ptr = g_object_get_data(G_OBJECT(list_item), "tier2-map-handler-id");
+  if (map_handler_ptr) {
+    gulong map_handler_id = GPOINTER_TO_UINT(map_handler_ptr);
+    if (map_handler_id > 0 && GTK_IS_WIDGET(child)) {
+      g_signal_handler_disconnect(child, map_handler_id);
+    }
+  }
+  g_object_set_data(G_OBJECT(list_item), "tier2-map-handler-id", NULL);
 
   /*
    * nostrc-7ycv: Disconnect profile notify signal handler.
@@ -259,6 +344,7 @@ static void factory_unbind_cb(GtkListItemFactory *factory, GtkListItem *list_ite
   }
   g_object_set_data(G_OBJECT(list_item), "profile-handler-id", NULL);
   g_object_set_data(G_OBJECT(list_item), "bound-item", NULL);
+  g_object_set_data(G_OBJECT(list_item), "timeline-view", NULL);
 
   /* nostrc-0hp Phase 3: Remove reveal animation CSS class on unbind */
   gtk_widget_remove_css_class(child, "note-revealing");

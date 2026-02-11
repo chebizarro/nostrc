@@ -2470,6 +2470,65 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
 #endif
 }
 
+/**
+ * gnostr_note_card_row_set_author_name_only:
+ *
+ * nostrc-sbqe.3: Tier 1 bind helper. Sets ONLY display name and handle labels.
+ * Avatar loading is skipped entirely -- deferred to Tier 2 via set_avatar().
+ * This is the minimum author info needed for the card to display during fast scroll.
+ */
+void gnostr_note_card_row_set_author_name_only(GnostrNoteCardRow *self,
+                                                const char *display_name,
+                                                const char *handle) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+
+  if (GTK_IS_LABEL(self->lbl_display))
+    gtk_label_set_text(GTK_LABEL(self->lbl_display),
+                       (display_name && *display_name) ? display_name
+                       : (handle ? handle : _("Anonymous")));
+  if (GTK_IS_LABEL(self->lbl_handle))
+    gtk_label_set_text(GTK_LABEL(self->lbl_handle),
+                       (handle && *handle) ? handle : "@anon");
+
+  /* Show initials as placeholder until avatar loads in Tier 2 */
+  set_avatar_initials(self, display_name, handle);
+}
+
+/**
+ * gnostr_note_card_row_set_avatar:
+ *
+ * nostrc-sbqe.3: Tier 2 deferred avatar loading. Stores the URL and loads
+ * the avatar from cache or triggers an async download. Called from the map
+ * signal handler when the row actually becomes visible.
+ */
+void gnostr_note_card_row_set_avatar(GnostrNoteCardRow *self,
+                                      const char *avatar_url) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+
+  g_clear_pointer(&self->avatar_url, g_free);
+  self->avatar_url = g_strdup(avatar_url);
+
+#ifdef HAVE_SOUP3
+  if (avatar_url && *avatar_url && GTK_IS_PICTURE(self->avatar_image)) {
+    GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
+    if (cached) {
+      gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(cached));
+      gtk_widget_set_visible(self->avatar_image, TRUE);
+      if (GTK_IS_WIDGET(self->avatar_initials)) {
+        gtk_widget_set_visible(self->avatar_initials, FALSE);
+      }
+      g_object_unref(cached);
+    } else {
+      gnostr_avatar_download_async(avatar_url, self->avatar_image, self->avatar_initials);
+    }
+  }
+#endif
+}
+
 /* nostrc-p396s: Destroy notify for timestamp timer — releases the ref held
  * by the timer source to prevent use-after-free on the NoteCardRow. */
 static void timestamp_timer_destroy(gpointer user_data) {
@@ -3047,6 +3106,115 @@ void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
   }
 
   /* OG preview from unified render result */
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    if (self->og_preview) {
+      gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      self->og_preview = NULL;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+
+    if (render->first_og_url) {
+      self->og_preview = og_preview_widget_new();
+      gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      gtk_widget_set_visible(self->og_preview_container, TRUE);
+      og_preview_widget_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
+    }
+  }
+}
+
+/**
+ * gnostr_note_card_row_set_content_markup_only:
+ *
+ * nostrc-sbqe.3: Tier 1 bind helper. Sets ONLY the Pango markup label from
+ * a cached render result. Media widgets, OG previews, and note embeds are
+ * NOT created -- those are deferred to Tier 2 via apply_deferred_content().
+ * This avoids heavyweight widget creation for items in GTK's buffer zone.
+ */
+void gnostr_note_card_row_set_content_markup_only(GnostrNoteCardRow *self,
+                                                   const char *content,
+                                                   const GnContentRenderResult *render) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+
+  /* Store plain text content for clipboard operations */
+  g_clear_pointer(&self->content_text, g_free);
+  self->content_text = g_strdup(content);
+
+  if (!render || !render->markup) return;
+
+  /* Set only the label markup -- no media/OG/embed creation */
+  gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
+  gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
+}
+
+/**
+ * gnostr_note_card_row_apply_deferred_content:
+ *
+ * nostrc-sbqe.3: Tier 2 deferred content. Creates media widgets, OG previews,
+ * and note embeds from a cached render result. The Pango markup label should
+ * already be set via set_content_markup_only(). Call from map signal handler.
+ */
+void gnostr_note_card_row_apply_deferred_content(GnostrNoteCardRow *self,
+                                                  const GnContentRenderResult *render) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+  if (!render) return;
+
+  /* Deferred media widget creation (images, videos) */
+  if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    /* Clear any existing media children */
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->media_box), child);
+      child = next;
+    }
+    gtk_widget_set_visible(self->media_box, FALSE);
+
+    g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+    self->media_widgets_created = FALSE;
+
+    if (render->media_urls && render->media_urls->len > 0) {
+      self->pending_media_items = g_ptr_array_new_with_free_func(pending_media_item_free);
+      for (guint i = 0; i < render->media_urls->len; i++) {
+        const char *url = g_ptr_array_index(render->media_urls, i);
+        if (is_image_url(url)) {
+          g_ptr_array_add(self->pending_media_items,
+                          pending_media_item_new(url, 300, 0, NULL, FALSE));
+        } else if (is_video_url(url)) {
+          g_ptr_array_add(self->pending_media_items,
+                          pending_media_item_new(url, 300, 608, NULL, TRUE));
+        }
+      }
+      defer_media_widget_creation(self);
+    }
+  }
+
+  /* NIP-21 embed from render result */
+  if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    if (GTK_IS_FRAME(self->embed_box)) {
+      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+    }
+    gtk_widget_set_visible(self->embed_box, FALSE);
+    self->note_embed = NULL;
+
+    if (render->first_nostr_ref) {
+      self->note_embed = gnostr_note_embed_new();
+      gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
+      g_signal_connect(self->note_embed, "profile-clicked",
+                      G_CALLBACK(on_embed_profile_clicked), self);
+      gnostr_note_embed_set_nostr_uri(self->note_embed, render->first_nostr_ref);
+      if (GTK_IS_FRAME(self->embed_box)) {
+        gtk_frame_set_child(GTK_FRAME(self->embed_box), GTK_WIDGET(self->note_embed));
+      }
+      gtk_widget_set_visible(self->embed_box, TRUE);
+      g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, render->first_nostr_ref);
+    }
+  }
+
+  /* OG preview from render result */
   if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
     if (self->og_preview) {
       gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));

@@ -9,6 +9,7 @@
 #include "note-card-factory.h"
 #include "note_card_row.h"
 #include "../model/gn-nostr-event-item.h"
+#include "../model/gn-nostr-profile.h"
 
 struct _NoteCardFactory {
   GObject parent_instance;
@@ -385,6 +386,81 @@ on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
   }
 }
 
+/*
+ * nostrc-sbqe.3: Tier 2 map handler for NoteCardFactory.
+ * Fired when the NoteCardRow becomes visible (mapped). Performs deferred work:
+ * avatar loading, depth, thread info, NIP-05, deferred media/OG/embed, and
+ * profile signal connection.
+ */
+static void
+on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
+{
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  if (!GTK_IS_LIST_ITEM(list_item)) return;
+
+  GtkWidget *row = gtk_list_item_get_child(list_item);
+  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || row != widget) return;
+
+  GnostrNoteCardRow *card = GNOSTR_NOTE_CARD_ROW(row);
+  if (gnostr_note_card_row_is_disposed(card) || !gnostr_note_card_row_is_bound(card)) return;
+
+  GObject *obj = g_object_get_data(G_OBJECT(row), "bound-item");
+  if (!obj || !G_IS_OBJECT(obj)) return;
+
+  /* Validate the row still matches the item by checking event ID */
+  const gchar *stored_id = gnostr_note_card_row_get_event_id(card);
+  if (GN_IS_NOSTR_EVENT_ITEM(obj)) {
+    const gchar *item_id = gn_nostr_event_item_get_event_id(GN_NOSTR_EVENT_ITEM(obj));
+    if (!stored_id || !item_id || g_strcmp0(stored_id, item_id) != 0) return;
+  }
+
+  NoteCardFactory *self = g_object_get_data(G_OBJECT(row), "ncf-factory");
+
+  /* --- Tier 2 deferred work for GnNostrEventItem --- */
+  if (GN_IS_NOSTR_EVENT_ITEM(obj)) {
+    GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(obj);
+    const gchar *pubkey = gn_nostr_event_item_get_pubkey(event_item);
+    const gchar *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
+    const gchar *parent_id = gn_nostr_event_item_get_parent_id(event_item);
+    guint depth = gn_nostr_event_item_get_reply_depth(event_item);
+
+    /* Avatar loading */
+    GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+    if (profile) {
+      const gchar *avatar_url = gn_nostr_profile_get_picture_url(profile);
+      gnostr_note_card_row_set_avatar(card, avatar_url);
+
+      const gchar *nip05 = gn_nostr_profile_get_nip05(profile);
+      if (nip05 && pubkey) {
+        gnostr_note_card_row_set_nip05(card, nip05, pubkey);
+      }
+    }
+
+    /* Thread depth */
+    gnostr_note_card_row_set_depth(card, depth);
+
+    /* Thread info (if enabled) */
+    if (self && (self->bind_flags & NOTE_CARD_BIND_THREAD_INFO)) {
+      gboolean is_reply = (parent_id != NULL);
+      gnostr_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
+    }
+
+    /* Deferred content (media, OG, embeds) */
+    const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
+    if (cached) {
+      gnostr_note_card_row_apply_deferred_content(card, cached);
+    }
+  }
+
+  /* Profile signal connection (deferred from Tier 1) */
+  gulong existing = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
+  if (existing == 0) {
+    gulong handler_id = g_signal_connect(obj, "notify::profile",
+                                          G_CALLBACK(on_item_profile_changed), row);
+    g_object_set_data(G_OBJECT(row), "profile-handler-id", GUINT_TO_POINTER(handler_id));
+  }
+}
+
 static void
 factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 {
@@ -401,59 +477,71 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
    * and creates fresh cancellable. Must be called BEFORE populating the row. */
   gnostr_note_card_row_prepare_for_bind(GNOSTR_NOTE_CARD_ROW(row));
 
-  /* nostrc-NEW: Connect to profile changes for async profile updates.
-   * Store signal handler ID on the row for disconnection during unbind. */
-  gulong handler_id = g_signal_connect(obj, "notify::profile",
-                                        G_CALLBACK(on_item_profile_changed), row);
-  g_object_set_data(G_OBJECT(row), "profile-handler-id", GUINT_TO_POINTER(handler_id));
+  /* Store item reference for Tier 2 and profile handler cleanup */
   g_object_set_data(G_OBJECT(row), "bound-item", obj);
+  g_object_set_data(G_OBJECT(row), "ncf-factory", self);
+  /* Initialize profile handler as unset — Tier 2 will connect it */
+  g_object_set_data(G_OBJECT(row), "profile-handler-id", GUINT_TO_POINTER(0));
 
-  /* If custom bind callback is set, use it instead of default binding */
+  /* If custom bind callback is set, use it instead of default binding.
+   * Custom callbacks handle their own tiering (or do full bind). */
   if (self->bind_cb) {
     self->bind_cb(GNOSTR_NOTE_CARD_ROW(row), obj, self->bind_cb_data);
     gtk_widget_set_visible(row, TRUE);
     return;
   }
 
-  /* Extract data from the model item */
-  gchar *id_hex = NULL, *pubkey = NULL, *content = NULL;
-  gchar *display_name = NULL, *handle = NULL, *avatar_url = NULL;
-  gchar *root_id = NULL, *parent_id = NULL, *nip05 = NULL;
-  gint64 created_at = 0;
-  guint depth = 0;
-  gboolean is_reply = FALSE;
+  /* ============================================================
+   * nostrc-sbqe.3: TIER 1 (immediate) — Minimal bind.
+   * Only name + timestamp + content markup + IDs.
+   * ============================================================ */
 
-  /* Check if this is a GnNostrEventItem */
   if (GN_IS_NOSTR_EVENT_ITEM(obj)) {
     GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(obj);
 
-    g_object_get(obj,
-                 "event-id", &id_hex,
-                 "pubkey", &pubkey,
-                 "created-at", &created_at,
-                 "content", &content,
-                 "thread-root-id", &root_id,
-                 "parent-id", &parent_id,
-                 "reply-depth", &depth,
-                 "is-reply", &is_reply,
-                 NULL);
+    const gchar *id_hex = gn_nostr_event_item_get_event_id(event_item);
+    const gchar *pubkey = gn_nostr_event_item_get_pubkey(event_item);
+    gint64 created_at = gn_nostr_event_item_get_created_at(event_item);
+    const gchar *content = gn_nostr_event_item_get_content(event_item);
+    const gchar *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
 
-    /* Get profile information */
-    GObject *profile = NULL;
-    g_object_get(obj, "profile", &profile, NULL);
+    /* Tier 1: Author name + handle (NO avatar) */
+    GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+    const gchar *display_name = NULL, *handle = NULL;
     if (profile) {
-      g_object_get(profile,
-                   "display-name", &display_name,
-                   "name", &handle,
-                   "picture-url", &avatar_url,
-                   "nip05", &nip05,
-                   NULL);
-      g_object_unref(profile);
+      display_name = gn_nostr_profile_get_display_name(profile);
+      handle = gn_nostr_profile_get_name(profile);
     }
-  }
+    gchar *display_fallback = NULL;
+    if (!display_name && !handle && pubkey && strlen(pubkey) >= 8) {
+      display_fallback = g_strdup_printf("%.8s...", pubkey);
+    }
+    gnostr_note_card_row_set_author_name_only(GNOSTR_NOTE_CARD_ROW(row),
+                                               display_name ? display_name : display_fallback,
+                                               handle);
+    g_free(display_fallback);
 
-  /* Fallback: try to get properties generically */
-  if (!id_hex && G_IS_OBJECT(obj)) {
+    /* Tier 1: Timestamp */
+    gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, NULL);
+
+    /* Tier 1: Content markup (from cached render — no media/OG/embed) */
+    const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
+    if (cached) {
+      gnostr_note_card_row_set_content_markup_only(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+    } else {
+      /* No cache: fall back to full render (first bind) */
+      gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+    }
+
+    /* Tier 1: IDs (needed for click handling + Tier 2 validation) */
+    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
+
+  } else {
+    /* Non-GnNostrEventItem: use generic g_object_get path (full bind, no tiering) */
+    gchar *id_hex = NULL, *pubkey = NULL, *content = NULL;
+    gchar *display_name = NULL, *handle = NULL, *avatar_url = NULL;
+    gint64 created_at = 0;
+
     GObjectClass *klass = G_OBJECT_GET_CLASS(obj);
     if (g_object_class_find_property(klass, "id"))
       g_object_get(obj, "id", &id_hex, NULL);
@@ -469,58 +557,39 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
       g_object_get(obj, "handle", &handle, NULL);
     if (g_object_class_find_property(klass, "avatar-url"))
       g_object_get(obj, "avatar-url", &avatar_url, NULL);
-  }
 
-  /* Use pubkey prefix as fallback display name */
-  gchar *display_fallback = NULL;
-  if (!display_name && !handle && pubkey && strlen(pubkey) >= 8) {
-    display_fallback = g_strdup_printf("%.8s...", pubkey);
-  }
-
-  /* Basic binding (always performed) */
-  gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
-                                   display_name ? display_name : display_fallback,
-                                   handle, avatar_url);
-  gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, NULL);
-  /* nostrc-dqwq.1: Use cached render result to avoid re-rendering on rebind */
-  if (GN_IS_NOSTR_EVENT_ITEM(obj)) {
-    const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
-    if (cached) {
-      gnostr_note_card_row_set_content_rendered(GNOSTR_NOTE_CARD_ROW(row), content, cached);
-    } else {
-      gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+    gchar *display_fallback = NULL;
+    if (!display_name && !handle && pubkey && strlen(pubkey) >= 8) {
+      display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
-  } else {
+
+    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+                                     display_name ? display_name : display_fallback,
+                                     handle, avatar_url);
+    gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, NULL);
     gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
-  }
-  gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
-  gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
+    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, NULL, pubkey);
 
-  /* Thread info (if enabled) */
-  if (self->bind_flags & NOTE_CARD_BIND_THREAD_INFO) {
-    gnostr_note_card_row_set_thread_info(GNOSTR_NOTE_CARD_ROW(row),
-                                          root_id, parent_id, NULL, is_reply);
-  }
-
-  /* NIP-05 verification (if available) */
-  if (nip05 && pubkey) {
-    gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
+    g_free(id_hex);
+    g_free(pubkey);
+    g_free(content);
+    g_free(display_name);
+    g_free(handle);
+    g_free(avatar_url);
+    g_free(display_fallback);
   }
 
-  /* Note: Login state should be set by the view's custom bind callback
-   * since is_user_logged_in() is defined locally in each view file. */
+  /* Connect Tier 2 map handler on the NoteCardRow widget */
+  gulong map_handler_id = g_signal_connect(row, "map",
+                                            G_CALLBACK(on_ncf_row_mapped_tier2),
+                                            item);
+  g_object_set_data(G_OBJECT(row), "tier2-map-handler-id",
+                    GUINT_TO_POINTER(map_handler_id));
 
-  /* Cleanup */
-  g_free(id_hex);
-  g_free(pubkey);
-  g_free(content);
-  g_free(display_name);
-  g_free(handle);
-  g_free(avatar_url);
-  g_free(root_id);
-  g_free(parent_id);
-  g_free(nip05);
-  g_free(display_fallback);
+  /* If already mapped, run Tier 2 immediately */
+  if (gtk_widget_get_mapped(row)) {
+    on_ncf_row_mapped_tier2(row, item);
+  }
 
   gtk_widget_set_visible(row, TRUE);
 }
@@ -531,8 +600,15 @@ factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
 
-  /* nostrc-NEW: Disconnect profile change handler to prevent callbacks to stale row */
   if (row) {
+    /* nostrc-sbqe.3: Disconnect Tier 2 map handler */
+    gulong map_handler_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "tier2-map-handler-id"));
+    if (map_handler_id > 0 && GTK_IS_WIDGET(row)) {
+      g_signal_handler_disconnect(row, map_handler_id);
+    }
+    g_object_set_data(G_OBJECT(row), "tier2-map-handler-id", NULL);
+
+    /* Disconnect profile change handler to prevent callbacks to stale row */
     gulong handler_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
     GObject *bound_item = g_object_get_data(G_OBJECT(row), "bound-item");
     if (handler_id > 0 && bound_item && G_IS_OBJECT(bound_item)) {
@@ -540,6 +616,7 @@ factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     }
     g_object_set_data(G_OBJECT(row), "profile-handler-id", NULL);
     g_object_set_data(G_OBJECT(row), "bound-item", NULL);
+    g_object_set_data(G_OBJECT(row), "ncf-factory", NULL);
   }
 
   /* CRITICAL: Prepare row for unbinding BEFORE GTK disposes it.

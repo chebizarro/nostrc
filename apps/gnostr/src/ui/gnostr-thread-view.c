@@ -1546,6 +1546,87 @@ static void thread_factory_setup_cb(GtkSignalListItemFactory *factory,
 }
 
 /* nostrc-evz1: Factory bind callback - binds GnNostrEventItem to GnostrNoteCardRow */
+/*
+ * nostrc-sbqe.3: Tier 2 map handler for thread view.
+ * Fired when the NoteCardRow becomes visible. Performs deferred work:
+ * avatar, NIP-05, depth, thread info, login state, deferred content,
+ * and thread-graph CSS classes.
+ */
+static void on_thread_row_mapped_tier2(GtkWidget *widget, gpointer user_data) {
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  if (!GTK_IS_LIST_ITEM(list_item)) return;
+
+  GtkWidget *row = gtk_list_item_get_child(list_item);
+  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || row != widget) return;
+
+  GnostrNoteCardRow *card = GNOSTR_NOTE_CARD_ROW(row);
+  if (gnostr_note_card_row_is_disposed(card) || !gnostr_note_card_row_is_bound(card)) return;
+
+  gpointer item_ptr = g_object_get_data(G_OBJECT(list_item), "bound-item");
+  if (!item_ptr || !GN_IS_NOSTR_EVENT_ITEM(item_ptr)) return;
+
+  GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(item_ptr);
+  GnostrThreadView *self = g_object_get_data(G_OBJECT(list_item), "thread-view");
+
+  /* Validate event ID matches */
+  const char *stored_id = gnostr_note_card_row_get_event_id(card);
+  const char *event_id = gn_nostr_event_item_get_event_id(event_item);
+  if (!stored_id || !event_id || g_strcmp0(stored_id, event_id) != 0) return;
+
+  const char *pubkey = gn_nostr_event_item_get_pubkey(event_item);
+  const char *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
+  const char *parent_id = gn_nostr_event_item_get_parent_id(event_item);
+  guint depth = gn_nostr_event_item_get_reply_depth(event_item);
+
+  /* Avatar + NIP-05 */
+  GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+  if (profile) {
+    const char *avatar_url = gn_nostr_profile_get_picture_url(profile);
+    gnostr_note_card_row_set_avatar(card, avatar_url);
+
+    const char *nip05 = gn_nostr_profile_get_nip05(profile);
+    if (nip05 && pubkey) {
+      gnostr_note_card_row_set_nip05(card, nip05, pubkey);
+    }
+  }
+
+  /* Depth + thread info */
+  gnostr_note_card_row_set_depth(card, depth);
+  gboolean is_reply = (parent_id != NULL);
+  gnostr_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
+
+  /* Login state */
+  gnostr_note_card_row_set_logged_in(card, is_user_logged_in());
+
+  /* Deferred content (media, OG, embeds) */
+  const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
+  if (cached) {
+    gnostr_note_card_row_apply_deferred_content(card, cached);
+  }
+
+  /* Apply depth-based CSS class */
+  char depth_class[16];
+  snprintf(depth_class, sizeof(depth_class), "depth-%u", depth);
+  gtk_widget_add_css_class(row, depth_class);
+
+  /* Thread graph CSS classes */
+  if (self && self->thread_graph && event_id) {
+    ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id);
+    if (node) {
+      if (self->focus_event_id && g_strcmp0(event_id, self->focus_event_id) == 0) {
+        gtk_widget_add_css_class(row, "thread-focus-note");
+      }
+      if (node->is_focus_path) {
+        gtk_widget_add_css_class(row, "thread-focus-path");
+      }
+      if (self->thread_graph->root_id &&
+          g_strcmp0(event_id, self->thread_graph->root_id) == 0) {
+        gtk_widget_add_css_class(row, "thread-root-note");
+      }
+    }
+  }
+}
+
 static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
                                     GtkListItem *item,
                                     gpointer user_data) {
@@ -1566,94 +1647,61 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
    * and the card displays no content. Matches timeline-view pattern (nostrc-o7pp). */
   gnostr_note_card_row_prepare_for_bind(card);
 
-  /* Get event data */
+  /* ============================================================
+   * nostrc-sbqe.3: TIER 1 (immediate) — Minimal bind.
+   * ============================================================ */
+
   const char *event_id = gn_nostr_event_item_get_event_id(event_item);
   const char *pubkey = gn_nostr_event_item_get_pubkey(event_item);
   const char *content = gn_nostr_event_item_get_content(event_item);
   gint64 created_at = gn_nostr_event_item_get_created_at(event_item);
-  guint depth = gn_nostr_event_item_get_reply_depth(event_item);
   const char *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
-  const char *parent_id = gn_nostr_event_item_get_parent_id(event_item);
 
-  /* Get profile info - g_object_get returns newly allocated strings */
+  /* Tier 1: Author name + handle (NO avatar) */
   GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
-  gchar *display_name = NULL;
-  gchar *handle = NULL;
-  gchar *avatar_url = NULL;
-  gchar *nip05 = NULL;
-
+  const char *display_name = NULL, *handle = NULL;
   if (profile) {
-    g_object_get(profile,
-                 "display-name", &display_name,
-                 "name", &handle,
-                 "picture-url", &avatar_url,
-                 "nip05", &nip05,
-                 NULL);
+    display_name = gn_nostr_profile_get_display_name(profile);
+    handle = gn_nostr_profile_get_name(profile);
   }
-
-  /* Set author info with fallback */
   if (!display_name && !handle && pubkey) {
     char fallback[20];
     snprintf(fallback, sizeof(fallback), "%.8s...", pubkey);
-    gnostr_note_card_row_set_author(card, fallback, NULL, avatar_url);
+    gnostr_note_card_row_set_author_name_only(card, fallback, NULL);
   } else {
-    gnostr_note_card_row_set_author(card, display_name, handle, avatar_url);
+    gnostr_note_card_row_set_author_name_only(card, display_name, handle);
   }
 
-  /* Set content and metadata */
+  /* Tier 1: Timestamp */
   gnostr_note_card_row_set_timestamp(card, created_at, NULL);
-  /* nostrc-dqwq.1: Use cached render result to avoid re-rendering on rebind */
+
+  /* Tier 1: Content markup (from cached render) */
   {
     const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
     if (cached) {
-      gnostr_note_card_row_set_content_rendered(card, content, cached);
+      gnostr_note_card_row_set_content_markup_only(card, content, cached);
     } else {
       gnostr_note_card_row_set_content(card, content);
     }
   }
-  gnostr_note_card_row_set_depth(card, depth);
+
+  /* Tier 1: IDs (needed for click handling + Tier 2 validation) */
   gnostr_note_card_row_set_ids(card, event_id, root_id, pubkey);
 
-  gboolean is_reply = (parent_id != NULL);
-  gnostr_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
+  /* Store references for Tier 2 map handler */
+  g_object_set_data(G_OBJECT(item), "bound-item", (gpointer)event_item);
+  g_object_set_data(G_OBJECT(item), "thread-view", self);
 
-  if (nip05 && pubkey) {
-    gnostr_note_card_row_set_nip05(card, nip05, pubkey);
-  }
+  /* Connect Tier 2 map handler */
+  gulong map_handler_id = g_signal_connect(row, "map",
+                                            G_CALLBACK(on_thread_row_mapped_tier2),
+                                            item);
+  g_object_set_data(G_OBJECT(item), "tier2-map-handler-id",
+                    GUINT_TO_POINTER(map_handler_id));
 
-  gnostr_note_card_row_set_logged_in(card, is_user_logged_in());
-
-  /* Free profile strings from g_object_get */
-  g_free(display_name);
-  g_free(handle);
-  g_free(avatar_url);
-  g_free(nip05);
-
-  /* Apply depth-based CSS class */
-  char depth_class[16];
-  snprintf(depth_class, sizeof(depth_class), "depth-%u", depth);
-  gtk_widget_add_css_class(row, depth_class);
-
-  /* Look up ThreadNode for focus path and other styling */
-  if (self->thread_graph && event_id) {
-    ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id);
-    if (node) {
-      /* Highlight focus event */
-      if (self->focus_event_id && g_strcmp0(event_id, self->focus_event_id) == 0) {
-        gtk_widget_add_css_class(row, "thread-focus-note");
-      }
-
-      /* Focus path styling */
-      if (node->is_focus_path) {
-        gtk_widget_add_css_class(row, "thread-focus-path");
-      }
-
-      /* Root note styling */
-      if (self->thread_graph->root_id &&
-          g_strcmp0(event_id, self->thread_graph->root_id) == 0) {
-        gtk_widget_add_css_class(row, "thread-root-note");
-      }
-    }
+  /* If already mapped, run Tier 2 immediately */
+  if (gtk_widget_get_mapped(row)) {
+    on_thread_row_mapped_tier2(row, item);
   }
 }
 
@@ -1666,6 +1714,18 @@ static void thread_factory_unbind_cb(GtkSignalListItemFactory *factory,
   GtkWidget *row = gtk_list_item_get_child(item);
 
   if (!GTK_IS_WIDGET(row)) return;
+
+  /* nostrc-sbqe.3: Disconnect Tier 2 map handler */
+  gpointer map_handler_ptr = g_object_get_data(G_OBJECT(item), "tier2-map-handler-id");
+  if (map_handler_ptr) {
+    gulong map_handler_id = GPOINTER_TO_UINT(map_handler_ptr);
+    if (map_handler_id > 0 && GTK_IS_WIDGET(row)) {
+      g_signal_handler_disconnect(row, map_handler_id);
+    }
+  }
+  g_object_set_data(G_OBJECT(item), "tier2-map-handler-id", NULL);
+  g_object_set_data(G_OBJECT(item), "bound-item", NULL);
+  g_object_set_data(G_OBJECT(item), "thread-view", NULL);
 
   /* nostrc-7t5x: CRITICAL - Prepare row for unbinding. Cancels async operations
    * and clears binding_id to prevent stale callbacks from corrupting widget state.

@@ -44,6 +44,61 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content);
 
 /**
+ * gnostr_note_card_row_set_author_name_only:
+ * @self: note card row
+ * @display_name: (nullable): author display name
+ * @handle: (nullable): author handle (e.g., "@alice")
+ *
+ * nostrc-sbqe.3: Tier 1 bind helper. Sets ONLY the display name and handle
+ * labels, without triggering avatar loading. This is the minimum needed for
+ * the card to display correctly during fast scroll. Avatar loading is deferred
+ * to Tier 2 (map signal) via gnostr_note_card_row_set_avatar().
+ */
+void gnostr_note_card_row_set_author_name_only(GnostrNoteCardRow *self,
+                                                const char *display_name,
+                                                const char *handle);
+
+/**
+ * gnostr_note_card_row_set_avatar:
+ * @self: note card row
+ * @avatar_url: (nullable): URL for the avatar image
+ *
+ * nostrc-sbqe.3: Tier 2 deferred avatar loading. Loads the avatar from cache
+ * or initiates an async download. Call this from the map signal handler after
+ * the row becomes visible.
+ */
+void gnostr_note_card_row_set_avatar(GnostrNoteCardRow *self,
+                                      const char *avatar_url);
+
+/**
+ * gnostr_note_card_row_set_content_markup_only:
+ * @self: note card row
+ * @content: (nullable): raw text content (for clipboard)
+ * @render: (transfer none): pre-rendered content result
+ *
+ * nostrc-sbqe.3: Tier 1 bind helper. Sets ONLY the Pango markup label from
+ * a cached render result, without creating media widgets, OG previews, or
+ * note embeds. Those are deferred to Tier 2 via
+ * gnostr_note_card_row_apply_deferred_content().
+ */
+void gnostr_note_card_row_set_content_markup_only(GnostrNoteCardRow *self,
+                                                   const char *content,
+                                                   const GnContentRenderResult *render);
+
+/**
+ * gnostr_note_card_row_apply_deferred_content:
+ * @self: note card row
+ * @render: (transfer none): pre-rendered content result
+ *
+ * nostrc-sbqe.3: Tier 2 deferred content. Creates media widgets, OG previews,
+ * and note embeds from the cached render result. Call this from the map signal
+ * handler after the row becomes visible. The Pango markup label should already
+ * be set via gnostr_note_card_row_set_content_markup_only().
+ */
+void gnostr_note_card_row_apply_deferred_content(GnostrNoteCardRow *self,
+                                                  const GnContentRenderResult *render);
+
+/**
  * gnostr_note_card_row_set_content_rendered:
  * @self: note card row
  * @content: raw text content (for clipboard; may be NULL if not needed)
