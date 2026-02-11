@@ -1470,24 +1470,44 @@ static void on_item_notify_zap_total_msat(GObject *obj, GParamSpec *pspec, gpoin
     gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, total_msat);
 }
 
-/* Unbind cleanup: detach row from any inflight operations.
- * 
- * CRITICAL: We do NOT access gtk_list_item_get_item() here because during
- * fast scrolling, the underlying GObject may already be freed and its memory
- * reused. Even calling G_IS_OBJECT() on freed memory can corrupt the heap.
- * 
- * Signal disconnection is handled automatically by g_signal_connect_object()
- * which we use in factory_bind_cb - signals auto-disconnect when row is destroyed.
- */
+/* Unbind cleanup: disconnect signal handlers and detach inflight operations.
+ *
+ * nostrc-sig1: We MUST explicitly disconnect g_signal_connect_object handlers
+ * here. These handlers are on the item (obj), watching the row. They only
+ * auto-disconnect when the row is FINALIZED — but rows are RECYCLED (not
+ * finalized) between unbind/rebind. Without explicit disconnect, handlers
+ * accumulate across rebinds: after N rebinds, the old items have N sets of
+ * stale handlers whose closure invalidation notifiers reference this row.
+ * When those old items are finalized, the notifiers try to remove already-
+ * removed handlers → invalid_closure_notify assertion → FATAL.
+ *
+ * GTK4 guarantees the list_item's "item" property is still valid during
+ * the unbind signal (it's cleared AFTER the signal fires). */
 static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
-  
-  /* Only access the row widget, never the item's underlying object */
+
+  /* Disconnect g_signal_connect_object handlers from the item.
+   * These were connected in factory_bind_cb with row or item as user_data. */
+  GObject *obj = gtk_list_item_get_item(item);
+  if (obj && G_IS_OBJECT(obj)) {
+    /* Lines 2298-2311: handlers with row as user_data */
+    if (GTK_IS_WIDGET(row))
+      g_signal_handlers_disconnect_by_data(obj, row);
+    /* Line 2273: handler with item (GtkListItem) as user_data */
+    g_signal_handlers_disconnect_by_data(obj, item);
+  }
+
+  /* Disconnect accumulated "request-embed" handlers on the row (line 2283).
+   * Plain g_signal_connect adds a new handler on every bind without disconnect. */
+  if (GTK_IS_WIDGET(row)) {
+    g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
+  }
+
   if (GTK_IS_WIDGET(row)) {
     /* Detach this row from any inflight embed fetches */
     inflight_detach_row(row);
-    
+
     /* CRITICAL: Prepare the row for unbinding BEFORE GTK disposes it.
      * This cancels all async operations and sets the disposed flag to prevent
      * callbacks from corrupting Pango state during the unbind/dispose process. */
@@ -2277,9 +2297,8 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
     g_free(display_fallback);
     
-    /* Connect embed request signal
-     * NOTE: We don't need to disconnect first - g_signal_connect_object handles duplicates
-     * and auto-disconnects when row is destroyed */
+    /* Connect embed request signal.
+     * Disconnected in factory_unbind_cb to prevent accumulation across rebinds. */
     g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
   }
 
@@ -2290,10 +2309,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   /* Model-level profile gating handles profile fetching; no bind-time enqueue here. */
   g_free(pubkey);
 
-  /* Connect reactive updates so that later metadata changes update UI
-   * CRITICAL: Use g_signal_connect_object with row as the object parameter.
-   * This makes the signals automatically disconnect when row is destroyed,
-   * avoiding the need to manually disconnect in unbind (which causes race conditions). */
+  /* Connect reactive updates so that later metadata changes update UI.
+   * Uses g_signal_connect_object so handlers auto-disconnect if row is destroyed.
+   * Additionally, factory_unbind_cb explicitly disconnects these on recycle
+   * (nostrc-sig1) since rows are recycled, not destroyed, between rebinds. */
   if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
     g_signal_connect_object(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row, 0);
     g_signal_connect_object(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row, 0);
