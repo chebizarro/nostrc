@@ -817,14 +817,24 @@ int storage_ndb_write_note_counts(const unsigned char id32[32],
   struct ndb *ndb = get_ndb();
   if (!ndb) return -1;
 
-  /* Allocate buffer for meta builder (2KB is plenty for counts) */
-  unsigned char buf[2048];
+  /* HEAP-allocate buffer for meta builder.  ndb_set_note_meta sends the
+   * meta to the writer thread asynchronously — the buffer must outlive
+   * this function's stack frame.  The writer thread owns the allocation
+   * after ndb_set_note_meta returns (nostrdb frees it internally). */
+  unsigned char *buf = malloc(2048);
+  if (!buf) return -1;
+
   struct ndb_note_meta_builder builder;
-  if (!ndb_note_meta_builder_init(&builder, buf, sizeof(buf)))
+  if (!ndb_note_meta_builder_init(&builder, buf, 2048)) {
+    free(buf);
     return -1;
+  }
 
   struct ndb_note_meta_entry *entry = ndb_note_meta_add_entry(&builder);
-  if (!entry) return -1;
+  if (!entry) {
+    free(buf);
+    return -1;
+  }
 
   ndb_note_meta_counts_set(entry,
                             (uint32_t)counts->total_reactions,
@@ -835,8 +845,13 @@ int storage_ndb_write_note_counts(const unsigned char id32[32],
 
   struct ndb_note_meta *meta = NULL;
   ndb_note_meta_build(&builder, &meta);
-  if (!meta) return -1;
+  if (!meta) {
+    free(buf);
+    return -1;
+  }
 
+  /* ndb_set_note_meta takes ownership of buf via the writer thread.
+   * Do NOT free buf here — the writer thread reads it asynchronously. */
   return ndb_set_note_meta(ndb, id32, meta) ? 0 : -1;
 }
 
