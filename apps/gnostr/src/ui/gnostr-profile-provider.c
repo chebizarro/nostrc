@@ -419,6 +419,79 @@ void gnostr_profile_provider_log_stats(void) {
             cache_size, cap, hits, misses, db_hits, db_misses);
 }
 
+/* Check if a pubkey is already in the LRU cache (lock must NOT be held). */
+static gboolean
+is_pubkey_cached(const char *pk)
+{
+  if (!pk || strlen(pk) != 64) return FALSE;
+  G_LOCK(profile_provider);
+  gboolean cached = s_init && s_cache && g_hash_table_contains(s_cache, pk);
+  G_UNLOCK(profile_provider);
+  return cached;
+}
+
+/* nostrc-perf: Background task to prefetch a batch of profiles into cache.
+ * This runs gnostr_profile_provider_get() for each pubkey, which populates
+ * the LRU cache from NDB on a worker thread. By the time GtkListView binds
+ * visible items, profiles are already cached and the bind path is allocation-
+ * free (no blocking NDB transaction on the main thread). */
+static void
+prefetch_batch_task_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
+                         gpointer task_data, GCancellable *cancellable G_GNUC_UNUSED)
+{
+  gchar **pubkeys = (gchar **)task_data;
+  guint warmed = 0;
+
+  for (guint i = 0; pubkeys[i] != NULL; i++) {
+    /* Skip if already cached -- avoids unnecessary NDB transaction */
+    if (is_pubkey_cached(pubkeys[i])) continue;
+
+    GnostrProfileMeta *m = gnostr_profile_provider_get(pubkeys[i]);
+    if (m) {
+      warmed++;
+      gnostr_profile_meta_free(m);
+    }
+  }
+
+  g_task_return_int(task, (gssize)warmed);
+}
+
+static void
+prefetch_batch_task_done(GObject *source G_GNUC_UNUSED, GAsyncResult *result,
+                         gpointer user_data G_GNUC_UNUSED)
+{
+  GTask *task = G_TASK(result);
+  gssize warmed = g_task_propagate_int(task, NULL);
+  if (warmed > 0) {
+    g_debug("[PROFILE_PROVIDER] Prefetch batch complete: %d profiles loaded from NDB",
+            (int)warmed);
+  }
+}
+
+void
+gnostr_profile_provider_prefetch_batch_async(const char **pubkeys_hex)
+{
+  if (!pubkeys_hex || !s_init) return;
+
+  /* Count and copy the pubkey array -- caller retains ownership of original */
+  guint count = 0;
+  for (const char **p = pubkeys_hex; *p; p++) count++;
+  if (count == 0) return;
+
+  gchar **copy = g_new0(gchar *, count + 1);
+  for (guint i = 0; i < count; i++) {
+    copy[i] = g_strdup(pubkeys_hex[i]);
+  }
+  copy[count] = NULL;
+
+  GTask *task = g_task_new(NULL, NULL, prefetch_batch_task_done, NULL);
+  g_task_set_task_data(task, copy, (GDestroyNotify)g_strfreev);
+  g_task_run_in_thread(task, prefetch_batch_task_func);
+  g_object_unref(task);
+
+  g_debug("[PROFILE_PROVIDER] Prefetch batch started for %u pubkeys", count);
+}
+
 /* hq-yrqwk: Pre-warm LRU cache from NDB for user + follow list profiles.
  * Runs in a GTask worker thread to avoid blocking startup or UI. */
 static void

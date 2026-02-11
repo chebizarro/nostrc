@@ -129,6 +129,18 @@ void gnostr_profile_provider_unwatch(guint watch_id);
  * sync bridge when kind:0 profiles are synced to refresh stale cache. */
 void gnostr_profile_provider_prewarm_async(const char *user_pubkey_hex);
 
+/* nostrc-perf: Pre-warm the LRU cache for a batch of pubkeys on a background
+ * GTask thread. Called from timeline model after processing a batch of notes
+ * so that profiles are already cached when GtkListView binds visible items.
+ *
+ * Parameters:
+ *   pubkeys_hex: NULL-terminated array of 64-char hex pubkeys (ownership retained by caller)
+ *
+ * The array is copied internally; caller may free it after this call returns.
+ * Duplicate pubkeys and pubkeys already in cache are skipped efficiently.
+ */
+void gnostr_profile_provider_prefetch_batch_async(const char **pubkeys_hex);
+
 #ifdef __cplusplus
 }
 #endif
