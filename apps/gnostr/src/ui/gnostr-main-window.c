@@ -5888,7 +5888,8 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
             self->profile_batch_pos, 
             self->profile_batches ? self->profile_batches->len : 0,
             self->profile_fetch_active, self->profile_fetch_max_concurrent);
-    g_idle_add_full(G_PRIORITY_DEFAULT,
+    /* nostrc-pri1: DEFAULT_IDLE so profile batches don't compete with input */
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
                     profile_dispatch_next, g_object_ref(self),
                     g_object_unref);
     /* NOTE: Don't unref self here - ctx->self holds the reference and will be freed below */
@@ -6727,12 +6728,10 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   /* Defer scroll to next main loop iteration to let GTK finish processing
-   * the model changes from flush_pending. Using g_idle_add_full with HIGH
-   * priority runs before most other idle handlers but after GTK's internal
-   * processing completes. This is much faster than the previous 150ms timeout
-   * while still avoiding ListView crashes during widget recycling.
-   * We ref the window to ensure it stays valid until the idle fires. */
-  g_idle_add_full(G_PRIORITY_HIGH, scroll_to_top_idle, g_object_ref(self), NULL);
+   * the model changes from flush_pending.
+   * nostrc-pri1: Use DEFAULT priority (not HIGH) so this doesn't preempt
+   * pending user input events.  Still runs before rendering (120). */
+  g_idle_add_full(G_PRIORITY_DEFAULT, scroll_to_top_idle, g_object_ref(self), NULL);
 }
 
 /* nostrc-yo2m: Handle compose button click from session view */
@@ -8569,7 +8568,8 @@ static gboolean profile_dispatch_next(gpointer data) {
     /* Continue to next - we're already in a callback, so schedule via idle.
      * Use g_idle_add_full() instead of g_timeout_add_full(..., 0, ...) for
      * efficiency - both run on next main loop iteration but idle is cleaner. */
-    g_idle_add_full(G_PRIORITY_DEFAULT, profile_dispatch_next, g_object_ref(self), (GDestroyNotify)g_object_unref);
+    /* nostrc-pri1: DEFAULT_IDLE so profile batches don't compete with input */
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, profile_dispatch_next, g_object_ref(self), (GDestroyNotify)g_object_unref);
     /* NOTE: Don't unref - GLib handles it via g_idle_add_full's GDestroyNotify */
     return G_SOURCE_REMOVE;
   }

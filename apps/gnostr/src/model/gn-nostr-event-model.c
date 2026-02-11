@@ -910,7 +910,9 @@ static gboolean enforce_window_idle_cb(gpointer user_data) {
 static void enforce_window(GnNostrEventModel *self) {
   if (!self) return;
   if (self->enforce_window_idle_id > 0) return;  /* Already scheduled */
-  self->enforce_window_idle_id = g_idle_add(enforce_window_idle_cb, self);
+  /* nostrc-pri1: DEFAULT_IDLE so eviction runs after input + rendering */
+  self->enforce_window_idle_id = g_idle_add_full(
+    G_PRIORITY_DEFAULT_IDLE, enforce_window_idle_cb, self, NULL);
 }
 
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */

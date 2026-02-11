@@ -90,9 +90,14 @@ static void on_ndb_notify_from_writer(void *ctx, uint64_t subid) {
 
     /* Use explicit GSource pattern recommended by GNOME for cross-thread dispatch.
      * g_idle_source_new() + g_source_attach() is more reliable than
-     * g_main_context_invoke_full() when called from a foreign pthread. */
+     * g_main_context_invoke_full() when called from a foreign pthread.
+     *
+     * nostrc-pri1: Priority DEFAULT_IDLE (200) so NDB dispatch runs AFTER:
+     *   - User input events (G_PRIORITY_DEFAULT = 0)
+     *   - GTK frame rendering (GDK_PRIORITY_REDRAW = 120)
+     * This prevents event floods from starving the main loop. */
     GSource *source = g_idle_source_new();
-    g_source_set_priority(source, G_PRIORITY_DEFAULT);
+    g_source_set_priority(source, G_PRIORITY_DEFAULT_IDLE);
     g_source_set_callback(source, dispatch_subid_on_main, dctx, g_free);
     g_source_attach(source, disp->ui_context);
     g_source_unref(source);
@@ -144,6 +149,11 @@ static GnNdbHandler *lookup_handler_locked(GnNdbDispatcher *disp, uint64_t subid
   return (GnNdbHandler *)g_hash_table_lookup(disp->handlers, &subid);
 }
 
+/* nostrc-pri1: Maximum wall-clock microseconds to spend dispatching per
+ * main-loop iteration.  Yields back to GTK when exceeded so that input
+ * events and frame rendering are not starved during event floods. */
+#define GN_NDB_DISPATCH_BUDGET_US 4000  /* 4 ms */
+
 static gboolean dispatch_subid_on_main(gpointer data) {
   DispatchCtx *dctx = (DispatchCtx *)data;
   uint64_t subid = dctx ? dctx->subid : 0;
@@ -157,11 +167,25 @@ static gboolean dispatch_subid_on_main(gpointer data) {
   /* nostrc-mzab: Process a bounded number of events per main-loop tick.
    * Instead of draining everything in an unbounded while loop (which blocks
    * GTK rendering), process at most GN_NDB_DISPATCH_MAX_PER_TICK keys then
-   * yield back to the main loop. Return G_SOURCE_CONTINUE if more remain. */
+   * yield back to the main loop. Return G_SOURCE_CONTINUE if more remain.
+   *
+   * nostrc-pri1: Also enforce a wall-clock budget (4 ms) so that handler
+   * callbacks (which can be expensive — NDB reads, dedup, model inserts)
+   * don't accumulate past a frame boundary.  Check every 16 items. */
   uint64_t keys[GN_NDB_DISPATCH_BATCH_CAP];
   int total_polled = 0;
+  gint64 start_us = g_get_monotonic_time();
 
   while (total_polled < GN_NDB_DISPATCH_MAX_PER_TICK) {
+    /* Frame-time guard: yield if we've exceeded the dispatch budget */
+    if (total_polled > 0 && (total_polled % 16) == 0) {
+      gint64 elapsed = g_get_monotonic_time() - start_us;
+      if (elapsed > GN_NDB_DISPATCH_BUDGET_US) {
+        g_debug("dispatch: budget exceeded (%" G_GINT64_FORMAT " us after %d items), yielding",
+                elapsed, total_polled);
+        return G_SOURCE_CONTINUE;
+      }
+    }
     /* nostrc-x3on: Check handler BEFORE polling. If the subscription was
      * unsubscribed (e.g., thread view navigated away), stop immediately.
      * Without this, the loop keeps polling stale nostrdb queue entries
