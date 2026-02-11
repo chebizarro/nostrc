@@ -5879,6 +5879,26 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
 void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
   g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
 
+  /* nostrc-5g2n: Clear label text WHILE the widget still has a native surface.
+   * This resets PangoLayouts to a clean state before disposal. Without this,
+   * the dispose() early-return path (self->disposed == TRUE) reaches
+   * gtk_widget_dispose_template with corrupt PangoLayouts (NULL line entries
+   * from complex ZWS+link markup). At that point GNOSTR_LABEL_SAFE fails
+   * because the native surface is already gone during g_list_store_remove_all
+   * teardown, so labels are NOT cleared, and pango_layout_line_unref SEGVs.
+   *
+   * At unbind time the widget is still parented with a valid native surface,
+   * so gtk_label_set_text is safe here. */
+  if (GNOSTR_LABEL_SAFE(self->content_label)) {
+    gtk_label_set_text(GTK_LABEL(self->content_label), "");
+  }
+  if (GNOSTR_LABEL_SAFE(self->lbl_display)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
+  }
+  if (GNOSTR_LABEL_SAFE(self->lbl_handle)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
+  }
+
   /* Mark as disposed FIRST to prevent any async callbacks from running */
   self->disposed = TRUE;
 

@@ -553,8 +553,16 @@ factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 static void
 factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 {
-  (void)f; (void)item; (void)data;
-  /* GtkListView handles widget destruction automatically */
+  (void)f; (void)data;
+  /* nostrc-5g2n: Call prepare_for_unbind as a safety net during teardown.
+   * During g_list_store_remove_all, GTK may teardown rows whose unbind
+   * already ran (prepare_for_unbind is idempotent via the disposed flag).
+   * But if teardown fires without a prior unbind (edge case during rapid
+   * model changes), this prevents Pango SEGV from uncleaned PangoLayouts. */
+  GtkWidget *row = gtk_list_item_get_child(item);
+  if (row && GNOSTR_IS_NOTE_CARD_ROW(row)) {
+    gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(row));
+  }
 }
 
 /* ============================================================================
