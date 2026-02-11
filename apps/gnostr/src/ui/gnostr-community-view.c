@@ -505,6 +505,10 @@ unbind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
     GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
     if (!row) return;
 
+    /* nostrc-b3b0: Cancel async ops and clear labels before dispose to prevent
+     * Pango SEGV when g_list_store_remove_all triggers unbind without teardown. */
+    gnostr_note_card_row_prepare_for_unbind(row);
+
     /* Disconnect signal handlers */
     gulong h1 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
     gulong h2 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-view-thread"));
@@ -634,6 +638,11 @@ unbind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer
     GtkWidget *btn_approve = g_object_get_data(G_OBJECT(box), "btn_approve");
     GtkWidget *btn_reject = g_object_get_data(G_OBJECT(box), "btn_reject");
 
+    /* nostrc-b3b0: Cancel async ops and clear labels before dispose to prevent
+     * Pango SEGV when g_list_store_remove_all triggers unbind without teardown. */
+    if (row)
+        gnostr_note_card_row_prepare_for_unbind(row);
+
     /* Disconnect signal handlers */
     gulong h_profile = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
     gulong h_approve = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-approve"));
@@ -646,6 +655,37 @@ unbind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer
     g_object_set_data(G_OBJECT(list_item), "handler-open-profile", NULL);
     g_object_set_data(G_OBJECT(list_item), "handler-approve", NULL);
     g_object_set_data(G_OBJECT(list_item), "handler-reject", NULL);
+}
+
+/* nostrc-b3b0: Teardown safety nets. During g_list_store_remove_all, GTK may
+ * teardown rows whose unbind already ran (prepare_for_unbind is idempotent via
+ * the disposed flag). But if teardown fires without a prior unbind (edge case
+ * during rapid model changes), this prevents Pango SEGV. */
+static void
+teardown_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GtkWidget *child = gtk_list_item_get_child(list_item);
+    if (child && GNOSTR_IS_NOTE_CARD_ROW(child)) {
+        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(child));
+    }
+}
+
+static void
+teardown_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GtkWidget *box = gtk_list_item_get_child(list_item);
+    if (!box) return;
+
+    GnostrNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
+    if (row) {
+        gnostr_note_card_row_prepare_for_unbind(row);
+    }
 }
 
 static void
@@ -788,6 +828,7 @@ build_ui(GnostrCommunityView *self)
     g_signal_connect(approved_factory, "setup", G_CALLBACK(setup_post_row), self);
     g_signal_connect(approved_factory, "bind", G_CALLBACK(bind_post_row), self);
     g_signal_connect(approved_factory, "unbind", G_CALLBACK(unbind_post_row), self);
+    g_signal_connect(approved_factory, "teardown", G_CALLBACK(teardown_post_row), self);
 
     self->approved_list = gtk_list_view_new(GTK_SELECTION_MODEL(approved_selection), approved_factory);
     gtk_widget_add_css_class(self->approved_list, "navigation-sidebar");
@@ -811,6 +852,7 @@ build_ui(GnostrCommunityView *self)
     g_signal_connect(pending_factory, "setup", G_CALLBACK(setup_pending_row), self);
     g_signal_connect(pending_factory, "bind", G_CALLBACK(bind_pending_row), self);
     g_signal_connect(pending_factory, "unbind", G_CALLBACK(unbind_pending_row), self);
+    g_signal_connect(pending_factory, "teardown", G_CALLBACK(teardown_pending_row), self);
 
     self->pending_list = gtk_list_view_new(GTK_SELECTION_MODEL(pending_selection), pending_factory);
     gtk_widget_add_css_class(self->pending_list, "navigation-sidebar");
