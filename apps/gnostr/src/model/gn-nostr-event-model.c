@@ -1369,6 +1369,25 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
       }
     }
 
+    /* hq-vvmzu: Persist reply/repost counts to ndb_note_meta.
+     * When a kind-1 reply arrives, increment direct_replies on the parent.
+     * When a kind-6 repost arrives, increment reposts on the target. */
+    if (reply_id && strlen(reply_id) == 64) {
+      unsigned char parent_id32[32];
+      gboolean cvt_ok = TRUE;
+      for (int j = 0; j < 32; j++) {
+        unsigned int byte;
+        if (sscanf(reply_id + 2*j, "%02x", &byte) != 1) { cvt_ok = FALSE; break; }
+        parent_id32[j] = (unsigned char)byte;
+      }
+      if (cvt_ok) {
+        if (kind == 1 || kind == 1111)
+          storage_ndb_increment_note_meta(parent_id32, "direct_replies");
+        else if (kind == 6)
+          storage_ndb_increment_note_meta(parent_id32, "reposts");
+      }
+    }
+
     /* Always show the note regardless of profile availability */
     precache_item_from_note(self, note_key, created_at, note);
     add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
@@ -1522,6 +1541,18 @@ static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, gu
       gpointer existing = g_hash_table_lookup(self->reaction_cache, target_event_id);
       guint new_count = (existing ? GPOINTER_TO_UINT(existing) : 0) + 1;
       g_hash_table_insert(self->reaction_cache, g_strdup(target_event_id), GUINT_TO_POINTER(new_count));
+
+      /* hq-vvmzu: Also persist reaction count to ndb_note_meta for O(1) reads */
+      unsigned char target_id32[32];
+      if (strlen(target_event_id) == 64) {
+        gboolean ok = TRUE;
+        for (int j = 0; j < 32; j++) {
+          unsigned int byte;
+          if (sscanf(target_event_id + 2*j, "%02x", &byte) != 1) { ok = FALSE; break; }
+          target_id32[j] = (unsigned char)byte;
+        }
+        if (ok) storage_ndb_increment_note_meta(target_id32, "reactions");
+      }
 
       /* Mark for UI update */
       g_hash_table_add(events_to_update, g_strdup(target_event_id));
