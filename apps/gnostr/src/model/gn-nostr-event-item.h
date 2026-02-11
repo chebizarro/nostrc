@@ -26,6 +26,12 @@ gint64 gn_nostr_event_item_get_created_at(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_content(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_tags_json(GnNostrEventItem *self);
 const char * const *gn_nostr_event_item_get_hashtags(GnNostrEventItem *self);
+
+/* hq-ys1vk: Relay provenance - which relays a note was seen on.
+ * Returns NULL-terminated array of relay URL strings, or NULL if none/unknown.
+ * The array is owned by the item; do NOT free. */
+const char * const *gn_nostr_event_item_get_relay_urls(GnNostrEventItem *self);
+
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self);
 GnNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_thread_root_id(GnNostrEventItem *self);
@@ -64,6 +70,10 @@ void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked)
 /* NIP-18: Repost count support */
 guint gn_nostr_event_item_get_repost_count(GnNostrEventItem *self);
 void gn_nostr_event_item_set_repost_count(GnNostrEventItem *self, guint count);
+
+/* hq-vvmzu: Reply count support (from ndb_note_meta) */
+guint gn_nostr_event_item_get_reply_count(GnNostrEventItem *self);
+void gn_nostr_event_item_set_reply_count(GnNostrEventItem *self, guint count);
 
 /* NIP-57: Zap stats support */
 guint gn_nostr_event_item_get_zap_count(GnNostrEventItem *self);

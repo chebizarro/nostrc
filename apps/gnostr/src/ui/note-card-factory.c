@@ -450,6 +450,10 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
     if (cached) {
       gnostr_note_card_row_apply_deferred_content(card, cached);
     }
+
+    /* hq-ys1vk: Relay provenance (Tier 2 - requires txn) */
+    const char * const *relay_urls = gn_nostr_event_item_get_relay_urls(event_item);
+    gnostr_note_card_row_set_relay_info(card, relay_urls);
   }
 
   /* Profile signal connection (deferred from Tier 1) */

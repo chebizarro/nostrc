@@ -164,6 +164,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *avatar_image;
   GtkWidget *lbl_display;
   GtkWidget *lbl_handle;
+  GtkWidget *lbl_relay;  /* hq-ys1vk: relay provenance label */
   GtkWidget *lbl_nip05_separator;
   GtkWidget *lbl_nip05;
   GtkWidget *lbl_timestamp_separator;
@@ -542,6 +543,7 @@ do_template_dispose:
   DISPOSE_LABEL(self->content_label);
   DISPOSE_LABEL(self->lbl_display);
   DISPOSE_LABEL(self->lbl_handle);
+  DISPOSE_LABEL(self->lbl_relay);
   DISPOSE_LABEL(self->lbl_timestamp);
   DISPOSE_LABEL(self->lbl_nip05);
   DISPOSE_LABEL(self->lbl_nip05_separator);
@@ -569,7 +571,7 @@ do_template_dispose:
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
-  self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
+  self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_relay = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
   self->lbl_timestamp_separator = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
   self->emoji_box = NULL; self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
   self->btn_repost = NULL; self->btn_like = NULL; self->btn_bookmark = NULL; self->btn_thread = NULL;
@@ -1834,6 +1836,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_display);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_handle);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_relay);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_nip05_separator);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_nip05);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_timestamp_separator);
@@ -4675,6 +4678,65 @@ void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char * con
   gtk_widget_set_visible(self->hashtags_box, TRUE);
 }
 
+/* hq-ys1vk: Set relay provenance info on the note card.
+ * Extracts a short display name from the first relay URL and shows it
+ * in the header_bottom row. Full relay list is available via tooltip. */
+void gnostr_note_card_row_set_relay_info(GnostrNoteCardRow *self,
+                                          const char *const *relay_urls)
+{
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GTK_IS_LABEL(self->lbl_relay)) return;
+
+  if (!relay_urls || !relay_urls[0]) {
+    gtk_widget_set_visible(self->lbl_relay, FALSE);
+    return;
+  }
+
+  /* Extract short display name from first relay URL.
+   * "wss://relay.damus.io" -> "relay.damus.io"
+   * "wss://nos.lol" -> "nos.lol" */
+  const char *url = relay_urls[0];
+  const char *host = url;
+  if (g_str_has_prefix(url, "wss://"))
+    host = url + 6;
+  else if (g_str_has_prefix(url, "ws://"))
+    host = url + 5;
+
+  /* Strip trailing slash */
+  gchar *display = g_strdup(host);
+  gsize len = strlen(display);
+  if (len > 0 && display[len - 1] == '/')
+    display[len - 1] = '\0';
+
+  /* Count total relays for display */
+  int n_relays = 0;
+  for (int i = 0; relay_urls[i]; i++)
+    n_relays++;
+
+  gchar *label_text;
+  if (n_relays == 1) {
+    label_text = g_strdup_printf("via %s", display);
+  } else {
+    label_text = g_strdup_printf("via %s +%d", display, n_relays - 1);
+  }
+  gtk_label_set_text(GTK_LABEL(self->lbl_relay), label_text);
+  g_free(label_text);
+  g_free(display);
+
+  /* Build tooltip with full relay list */
+  GString *tooltip = g_string_new("Seen on:\n");
+  for (int i = 0; relay_urls[i]; i++) {
+    g_string_append_printf(tooltip, "  %s\n", relay_urls[i]);
+  }
+  /* Remove trailing newline */
+  if (tooltip->len > 0 && tooltip->str[tooltip->len - 1] == '\n')
+    g_string_truncate(tooltip, tooltip->len - 1);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->lbl_relay), tooltip->str);
+  g_string_free(tooltip, TRUE);
+
+  gtk_widget_set_visible(self->lbl_relay, TRUE);
+}
+
 /* ============================================
    NIP-23 Long-form Content Implementation
    ============================================ */
@@ -6094,6 +6156,10 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
     gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
   if (GNOSTR_LABEL_SAFE(self->lbl_handle))
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
+  if (GNOSTR_LABEL_SAFE(self->lbl_relay)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_relay), "");
+    gtk_widget_set_visible(self->lbl_relay, FALSE);
+  }
   if (GNOSTR_LABEL_SAFE(self->subject_label))
     gtk_label_set_text(GTK_LABEL(self->subject_label), "");
   if (GNOSTR_LABEL_SAFE(self->lbl_nip05))

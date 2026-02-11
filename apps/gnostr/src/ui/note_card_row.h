@@ -222,6 +222,12 @@ void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self);
 /* Hashtags: Set hashtags from "t" tags to display on this note */
 void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char *const *hashtags);
 
+/* hq-ys1vk: Relay provenance - show which relay(s) a note was seen on.
+ * @relay_urls: NULL-terminated array of relay URL strings, or NULL to hide.
+ * Displays the first relay name in the header and stores all URLs for tooltip. */
+void gnostr_note_card_row_set_relay_info(GnostrNoteCardRow *self,
+                                          const char *const *relay_urls);
+
 /* NIP-32 Labels: Set labels to display on this note */
 void gnostr_note_card_row_set_labels(GnostrNoteCardRow *self, GPtrArray *labels);
 

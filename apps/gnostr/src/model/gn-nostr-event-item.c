@@ -21,6 +21,8 @@ struct _GnNostrEventItem {
   char *cached_content;
   char *cached_tags_json;  /* NIP-92 imeta support */
   char **cached_hashtags;  /* "t" tags extracted directly */
+  char **cached_relay_urls; /* hq-ys1vk: relay provenance URLs */
+  gboolean relay_urls_loaded; /* TRUE after relay URL lookup attempted */
 
   /* Profile object */
   GnNostrProfile *profile;
@@ -44,6 +46,9 @@ struct _GnNostrEventItem {
   /* NIP-25: Reaction count (likes) */
   guint like_count;
   gboolean is_liked;  /* Whether current user has liked this event */
+
+  /* hq-vvmzu: Reply count (from ndb_note_meta) */
+  guint reply_count;
 
   /* NIP-18: Repost count */
   guint repost_count;
@@ -82,6 +87,7 @@ enum {
   PROP_REVEALING,
   PROP_LIKE_COUNT,
   PROP_IS_LIKED,
+  PROP_REPLY_COUNT,
   PROP_REPOST_COUNT,
   PROP_ZAP_COUNT,
   PROP_ZAP_TOTAL_MSAT,
@@ -260,6 +266,7 @@ static void gn_nostr_event_item_finalize(GObject *object) {
   g_free(self->cached_content);
   g_free(self->cached_tags_json);
   g_strfreev(self->cached_hashtags);
+  g_strfreev(self->cached_relay_urls);
   gnostr_content_render_result_free(self->cached_render);
   g_free(self->thread_root_id);
   g_free(self->parent_id);
@@ -330,6 +337,9 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
     case PROP_IS_LIKED:
       g_value_set_boolean(value, self->is_liked);
       break;
+    case PROP_REPLY_COUNT:
+      g_value_set_uint(value, self->reply_count);
+      break;
     case PROP_REPOST_COUNT:
       g_value_set_uint(value, self->repost_count);
       break;
@@ -376,6 +386,9 @@ static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, con
       break;
     case PROP_IS_LIKED:
       self->is_liked = g_value_get_boolean(value);
+      break;
+    case PROP_REPLY_COUNT:
+      self->reply_count = g_value_get_uint(value);
       break;
     case PROP_REPOST_COUNT:
       self->repost_count = g_value_get_uint(value);
@@ -436,6 +449,9 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
   properties[PROP_IS_LIKED] = g_param_spec_boolean("is-liked", "Is Liked",
                                                     "Whether current user has liked this event", FALSE,
                                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_REPLY_COUNT] = g_param_spec_uint("reply-count", "Reply Count",
+                                                   "Reply count from ndb_note_meta", 0, G_MAXUINT, 0,
+                                                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   properties[PROP_REPOST_COUNT] = g_param_spec_uint("repost-count", "Repost Count",
                                                     "NIP-18 repost count", 0, G_MAXUINT, 0,
                                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
@@ -510,6 +526,27 @@ const char * const *gn_nostr_event_item_get_hashtags(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
   ensure_note_loaded(self);
   return (const char * const *)self->cached_hashtags;
+}
+
+/* hq-ys1vk: Relay provenance getter.
+ * Lazily loads relay URLs from nostrdb on first access. This is a Tier 2
+ * operation (deferred until the card is visible) so a brief txn open is
+ * acceptable. */
+const char * const *gn_nostr_event_item_get_relay_urls(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  if (self->relay_urls_loaded)
+    return (const char * const *)self->cached_relay_urls;
+
+  self->relay_urls_loaded = TRUE;
+  if (self->note_key == 0) return NULL;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn)
+    return NULL;
+
+  self->cached_relay_urls = storage_ndb_note_get_relays(txn, self->note_key);
+  storage_ndb_end_query(txn);
+  return (const char * const *)self->cached_relay_urls;
 }
 
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self) {
@@ -717,6 +754,20 @@ void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked)
   if (self->is_liked != is_liked) {
     self->is_liked = is_liked;
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LIKED]);
+  }
+}
+
+/* hq-vvmzu: Reply count support (from ndb_note_meta) */
+guint gn_nostr_event_item_get_reply_count(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->reply_count;
+}
+
+void gn_nostr_event_item_set_reply_count(GnNostrEventItem *self, guint count) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->reply_count != count) {
+    self->reply_count = count;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REPLY_COUNT]);
   }
 }
 
