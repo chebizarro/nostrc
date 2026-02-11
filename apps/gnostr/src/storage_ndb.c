@@ -51,6 +51,9 @@ static guint64 g_ingest_bytes = 0;
 guint64 storage_ndb_get_ingest_count(void) { return g_ingest_count; }
 guint64 storage_ndb_get_ingest_bytes(void) { return g_ingest_bytes; }
 
+/* Forward declarations */
+static gboolean hex_to_id32(const char *hex, unsigned char out[32]);
+
 /* Get raw nostrdb handle from our store */
 static struct ndb *get_ndb(void)
 {

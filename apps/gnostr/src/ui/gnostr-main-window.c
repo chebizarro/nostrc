@@ -612,6 +612,13 @@ static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_he
     gnostr_profile_meta_free(meta);
     return;
   }
+
+  /* hq-xxnm5: Even if the profile is not in memory cache, skip if we
+   * recently fetched it from relays. This avoids redundant relay queries
+   * for profiles that were fetched but evicted from the LRU cache. */
+  if (!storage_ndb_is_profile_stale(pubkey_hex, 0)) {
+    return;
+  }
   
   if (!self->profile_fetch_queue)
     self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
@@ -5654,10 +5661,34 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   }
 
   (void)cached_applied; /* Used for DB cache optimization */
-  
-  /* NOTE: We still fetch ALL profiles from relays to check for updates.
-   * Cached profiles give instant UI feedback, relay fetch keeps them fresh. */
-  
+
+  /* hq-xxnm5: Filter out profiles that were recently fetched from relays.
+   * Only re-fetch profiles that are stale (older than STORAGE_NDB_PROFILE_STALE_SECS).
+   * This dramatically reduces redundant relay traffic on every scroll. */
+  {
+    GPtrArray *stale_authors = g_ptr_array_new_with_free_func(g_free);
+    guint skipped = 0;
+    for (guint i = 0; i < authors->len; i++) {
+      const char *pkhex = (const char*)g_ptr_array_index(authors, i);
+      if (!pkhex) continue;
+      if (storage_ndb_is_profile_stale(pkhex, 0)) {
+        g_ptr_array_add(stale_authors, g_strdup(pkhex));
+      } else {
+        skipped++;
+      }
+    }
+    if (skipped > 0) {
+      g_debug("[PROFILE] hq-xxnm5: Skipped %u recently-fetched profiles, %u stale to fetch",
+              skipped, stale_authors->len);
+    }
+    g_ptr_array_free(authors, TRUE);
+    authors = stale_authors;
+    if (authors->len == 0) {
+      g_ptr_array_free(authors, TRUE);
+      return G_SOURCE_REMOVE;
+    }
+  }
+
   /* Build relay URLs */
   const char **urls = NULL; size_t url_count = 0; NostrFilters *dummy = NULL;
   build_urls_and_filters(self, &urls, &url_count, &dummy, 0 /* unused for profiles */);
@@ -5841,6 +5872,14 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
           pctx->content_json = g_strdup(content);
           g_ptr_array_add(items, pctx);
           dispatched++;
+
+          /* hq-xxnm5: Record fetch timestamp so we can skip re-fetching
+           * this profile until it becomes stale. */
+          uint8_t pk32[32];
+          if (strlen(pk_hex) == 64 && hex_to_bytes32(pk_hex, pk32)) {
+            uint64_t now = (uint64_t)(g_get_real_time() / G_USEC_PER_SEC);
+            storage_ndb_write_last_profile_fetch(pk32, now);
+          }
         }
         deserialized++;
         g_object_unref(evt);

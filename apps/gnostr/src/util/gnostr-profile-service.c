@@ -240,6 +240,14 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
           /* Update the profile provider cache */
           gnostr_profile_provider_update(pubkey_hex, evt_json);
 
+          /* hq-xxnm5: Record fetch timestamp so we can skip re-fetching
+           * this profile until it becomes stale. */
+          unsigned char pk32[32];
+          if (hex_to_bytes32(pubkey_hex, pk32)) {
+            uint64_t now = (uint64_t)(g_get_real_time() / G_USEC_PER_SEC);
+            storage_ndb_write_last_profile_fetch(pk32, now);
+          }
+
           /* Get the updated profile and fire callbacks */
           GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
           fire_callbacks(svc, pubkey_hex, meta);
@@ -464,6 +472,16 @@ static gboolean debounce_timeout_cb(gpointer user_data) {
       fire_callbacks(svc, pubkey, meta);
       gnostr_profile_meta_free(meta);
     } else {
+      /* hq-xxnm5: Skip network fetch if we recently fetched this profile.
+       * Avoids redundant relay queries for profiles not in memory cache
+       * but already fetched within the staleness window. */
+      if (!storage_ndb_is_profile_stale(pubkey, 0)) {
+        g_debug("[PROFILE_SERVICE] Skipping %.8s: recently fetched (not stale)", pubkey);
+        /* Fire callbacks with NULL - profile exists in NDB but was evicted
+         * from memory. The caller will get a cache miss but won't spam relays. */
+        fire_callbacks(svc, pubkey, NULL);
+        continue;
+      }
       /* Need to fetch from network */
       g_ptr_array_add(need_fetch, g_strdup(pubkey));
     }
