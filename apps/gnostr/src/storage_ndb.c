@@ -21,6 +21,7 @@
 #  pragma GCC diagnostic ignored "-Wpedantic"
 #endif
 #include "nostrdb.h"
+#include "bindings/c/profile_reader.h"
 #include "block.h"
 #if defined(__clang__)
 #  pragma clang diagnostic pop
@@ -309,6 +310,74 @@ int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], c
   if (rc != LN_OK) return rc;
   *json_out = (char*)json; if (json_len) *json_len = len;
   return LN_OK;
+}
+
+/* ============== Direct Profile FlatBuffer API (hq-cgnhh) ============== */
+
+/* Helper: g_strdup a FlatBuffer string, returning NULL for empty/missing. */
+static char *
+gdup_fb_str(flatbuffers_string_t s)
+{
+  if (!s || !*s) return NULL;
+  return g_strdup(s);
+}
+
+int storage_ndb_get_profile_meta_direct(void *txn,
+                                        const unsigned char pk32[32],
+                                        StorageNdbProfileMeta *out)
+{
+  if (!txn || !pk32 || !out) return LN_ERR_QUERY;
+  memset(out, 0, sizeof(*out));
+
+  struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+  size_t record_len = 0;
+  uint64_t prim = 0;
+  void *root = ndb_get_profile_by_pubkey(ntxn, pk32, &record_len, &prim);
+  if (!root || record_len == 0) return LN_ERR_NOT_FOUND;
+
+  NdbProfileRecord_table_t record = NdbProfileRecord_as_root(root);
+  NdbProfile_table_t profile = NdbProfileRecord_profile(record);
+  if (!profile) return LN_ERR_NOT_FOUND;
+
+  /* Read fields directly from the FlatBuffer -- zero-copy pointers
+   * that are valid for the lifetime of the read transaction.
+   * We g_strdup each one so the caller can use them after txn ends. */
+  out->name         = gdup_fb_str(NdbProfile_name(profile));
+  out->display_name = gdup_fb_str(NdbProfile_display_name(profile));
+  out->picture      = gdup_fb_str(NdbProfile_picture(profile));
+  out->banner       = gdup_fb_str(NdbProfile_banner(profile));
+  out->nip05        = gdup_fb_str(NdbProfile_nip05(profile));
+  out->lud16        = gdup_fb_str(NdbProfile_lud16(profile));
+  out->about        = gdup_fb_str(NdbProfile_about(profile));
+  out->website      = gdup_fb_str(NdbProfile_website(profile));
+  out->lud06        = gdup_fb_str(NdbProfile_lud06(profile));
+
+  /* Get created_at from the associated kind:0 note */
+  uint64_t note_key = NdbProfileRecord_note_key(record);
+  if (note_key != 0) {
+    size_t note_size = 0;
+    struct ndb_note *note = ndb_get_note_by_key(ntxn, note_key, &note_size);
+    if (note) {
+      out->created_at = ndb_note_created_at(note);
+    }
+  }
+
+  return LN_OK;
+}
+
+void storage_ndb_profile_meta_clear(StorageNdbProfileMeta *meta)
+{
+  if (!meta) return;
+  g_free(meta->name);
+  g_free(meta->display_name);
+  g_free(meta->picture);
+  g_free(meta->banner);
+  g_free(meta->nip05);
+  g_free(meta->lud16);
+  g_free(meta->about);
+  g_free(meta->website);
+  g_free(meta->lud06);
+  memset(meta, 0, sizeof(*meta));
 }
 
 int storage_ndb_stat_json(char **json_out)
@@ -698,6 +767,140 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note)
 
   g_string_append_c(json, ']');
   return g_string_free(json, FALSE);
+}
+
+/* ============== Note Metadata API (hq-vvmzu) ============== */
+
+/* Read all pre-computed counts for a note from ndb_note_meta.
+ * Populates out struct; zeroes it first. Returns TRUE if metadata found. */
+gboolean storage_ndb_read_note_counts(void *txn, const unsigned char id32[32],
+                                       StorageNdbNoteCounts *out)
+{
+  if (!out) return FALSE;
+  memset(out, 0, sizeof(*out));
+  if (!txn || !id32) return FALSE;
+
+  struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
+  if (!meta) return FALSE;
+
+  struct ndb_note_meta_entry *entry =
+      ndb_note_meta_find_entry(meta, NDB_NOTE_META_COUNTS, NULL);
+  if (!entry) return FALSE;
+
+  uint32_t *total = ndb_note_meta_counts_total_reactions(entry);
+  if (total) out->total_reactions = (guint)*total;
+
+  uint16_t *dr = ndb_note_meta_counts_direct_replies(entry);
+  if (dr) out->direct_replies = (guint)*dr;
+
+  uint32_t *tr = ndb_note_meta_counts_thread_replies(entry);
+  if (tr) out->thread_replies = (guint)*tr;
+
+  uint16_t *rp = ndb_note_meta_counts_reposts(entry);
+  if (rp) out->reposts = (guint)*rp;
+
+  uint16_t *qt = ndb_note_meta_counts_quotes(entry);
+  if (qt) out->quotes = (guint)*qt;
+
+  return TRUE;
+}
+
+/* Write note metadata counts via ndb_set_note_meta.
+ * Builds a meta builder, adds a COUNTS entry, and commits. */
+int storage_ndb_write_note_counts(const unsigned char id32[32],
+                                   const StorageNdbNoteCounts *counts)
+{
+  if (!id32 || !counts) return -1;
+  struct ndb *ndb = get_ndb();
+  if (!ndb) return -1;
+
+  /* Allocate buffer for meta builder (2KB is plenty for counts) */
+  unsigned char buf[2048];
+  struct ndb_note_meta_builder builder;
+  if (!ndb_note_meta_builder_init(&builder, buf, sizeof(buf)))
+    return -1;
+
+  struct ndb_note_meta_entry *entry = ndb_note_meta_add_entry(&builder);
+  if (!entry) return -1;
+
+  ndb_note_meta_counts_set(entry,
+                            (uint32_t)counts->total_reactions,
+                            (uint16_t)counts->quotes,
+                            (uint16_t)counts->direct_replies,
+                            (uint32_t)counts->thread_replies,
+                            (uint16_t)counts->reposts);
+
+  struct ndb_note_meta *meta = NULL;
+  ndb_note_meta_build(&builder, &meta);
+  if (!meta) return -1;
+
+  return ndb_set_note_meta(ndb, id32, meta) ? 0 : -1;
+}
+
+/* Increment a specific count field for a note in ndb_note_meta.
+ * Reads existing counts, increments the named field, writes back. */
+int storage_ndb_increment_note_meta(const unsigned char id32[32], const char *field)
+{
+  if (!id32 || !field) return -1;
+
+  /* Read existing counts */
+  StorageNdbNoteCounts counts;
+  memset(&counts, 0, sizeof(counts));
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) == 0 && txn) {
+    storage_ndb_read_note_counts(txn, id32, &counts);
+    storage_ndb_end_query(txn);
+  }
+
+  /* Increment the requested field */
+  if (strcmp(field, "reactions") == 0)
+    counts.total_reactions++;
+  else if (strcmp(field, "direct_replies") == 0)
+    counts.direct_replies++;
+  else if (strcmp(field, "thread_replies") == 0)
+    counts.thread_replies++;
+  else if (strcmp(field, "reposts") == 0)
+    counts.reposts++;
+  else if (strcmp(field, "quotes") == 0)
+    counts.quotes++;
+  else
+    return -1;
+
+  return storage_ndb_write_note_counts(id32, &counts);
+}
+
+/* Batch count replies for multiple events using ndb_note_meta (O(1) per lookup). */
+GHashTable *storage_ndb_count_replies_batch(const char * const *event_ids, guint n_ids)
+{
+  GHashTable *counts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!event_ids || n_ids == 0) return counts;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return counts;
+
+  for (guint i = 0; i < n_ids; i++) {
+    if (!event_ids[i] || strlen(event_ids[i]) != 64) continue;
+
+    unsigned char id32[32];
+    if (!hex_to_id32(event_ids[i], id32)) continue;
+
+    struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
+    if (!meta) continue;
+
+    struct ndb_note_meta_entry *entry =
+        ndb_note_meta_find_entry(meta, NDB_NOTE_META_COUNTS, NULL);
+    if (!entry) continue;
+
+    uint16_t *dr = ndb_note_meta_counts_direct_replies(entry);
+    if (dr && *dr > 0) {
+      g_hash_table_insert(counts, g_strdup(event_ids[i]),
+                          GUINT_TO_POINTER((guint)*dr));
+    }
+  }
+
+  storage_ndb_end_query(txn);
+  return counts;
 }
 
 /* ============== NIP-25 Reaction Count API ============== */
@@ -1568,6 +1771,42 @@ char **storage_ndb_note_get_relays(void *txn, uint64_t note_key)
   }
   g_ptr_array_add(relays, NULL); /* NULL-terminate */
   return (char **)g_ptr_array_free(relays, FALSE);
+}
+
+/* ============== Profile Fetch Staleness API (hq-xxnm5) ============== */
+
+int storage_ndb_write_last_profile_fetch(const unsigned char *pubkey, uint64_t fetched_at)
+{
+  struct ndb *ndb = get_ndb();
+  if (!ndb || !pubkey) return 0;
+  return ndb_write_last_profile_fetch(ndb, pubkey, fetched_at);
+}
+
+uint64_t storage_ndb_read_last_profile_fetch(void *txn, const unsigned char *pubkey)
+{
+  if (!txn || !pubkey) return 0;
+  struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+  return ndb_read_last_profile_fetch(ntxn, pubkey);
+}
+
+gboolean storage_ndb_is_profile_stale(const char *pubkey_hex, uint64_t stale_secs)
+{
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return TRUE;
+  if (stale_secs == 0) stale_secs = STORAGE_NDB_PROFILE_STALE_SECS;
+
+  unsigned char pk32[32];
+  if (!hex_to_id32(pubkey_hex, pk32)) return TRUE;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return TRUE;
+
+  uint64_t last_fetch = storage_ndb_read_last_profile_fetch(txn, pk32);
+  storage_ndb_end_query(txn);
+
+  if (last_fetch == 0) return TRUE; /* never fetched */
+
+  uint64_t now = (uint64_t)(g_get_real_time() / G_USEC_PER_SEC);
+  return (now - last_fetch) > stale_secs;
 }
 
 /* ============== Contact List / Following API ============== */

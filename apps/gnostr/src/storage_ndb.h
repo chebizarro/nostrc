@@ -48,6 +48,37 @@ int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***
 int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len);
 int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], char **json_out, int *json_len);
 
+/* ============== Direct Profile FlatBuffer API (hq-cgnhh) ============== */
+
+/* Profile fields extracted directly from NdbProfile FlatBuffer, skipping
+ * the JSON round-trip (FlatBuffer -> JSON -> struct).
+ * All string fields are g_strdup'd copies; caller must g_free() each. */
+typedef struct {
+  char *name;          /* nullable */
+  char *display_name;  /* nullable */
+  char *picture;       /* nullable */
+  char *banner;        /* nullable */
+  char *nip05;         /* nullable */
+  char *lud16;         /* nullable */
+  char *about;         /* nullable */
+  char *website;       /* nullable */
+  char *lud06;         /* nullable */
+  uint32_t created_at; /* from the associated kind:0 note, 0 if unavailable */
+} StorageNdbProfileMeta;
+
+/* Read profile fields directly from the NdbProfile FlatBuffer record.
+ * This avoids the wasteful FlatBuffer -> JSON -> struct round-trip.
+ * Returns 0 on success and populates *out. Caller must call
+ * storage_ndb_profile_meta_clear() to free string fields.
+ * Returns nonzero on failure (not found, txn error, etc.). */
+int storage_ndb_get_profile_meta_direct(void *txn,
+                                        const unsigned char pk32[32],
+                                        StorageNdbProfileMeta *out);
+
+/* Free the string fields inside a StorageNdbProfileMeta.
+ * Does NOT free the struct itself (it is typically stack-allocated). */
+void storage_ndb_profile_meta_clear(StorageNdbProfileMeta *meta);
+
 /* Convenience: fetch a note by hex id with internal begin/end and retries.
  * Returns 0 on success, nonzero on failure. Allocates *json_out owned by store (do not free). */
 int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *json_len);
@@ -151,6 +182,32 @@ char **storage_ndb_note_get_hashtags(storage_ndb_note *note);
  * Caller must g_strfreev() the result. txn must be open. */
 char **storage_ndb_note_get_relays(void *txn, uint64_t note_key);
 
+/* ============== Profile Fetch Staleness API (hq-xxnm5) ============== */
+
+/* Default staleness threshold in seconds (1 hour).
+ * Profiles fetched more recently than this are considered fresh. */
+#define STORAGE_NDB_PROFILE_STALE_SECS 3600
+
+/* Write the timestamp of when a profile was last fetched from relays.
+ * pubkey: 32-byte binary pubkey.
+ * fetched_at: Unix timestamp (seconds since epoch).
+ * Returns 1 on success, 0 on failure. */
+int storage_ndb_write_last_profile_fetch(const unsigned char *pubkey, uint64_t fetched_at);
+
+/* Read the timestamp of when a profile was last fetched from relays.
+ * txn: open read transaction (struct ndb_txn* cast to void*).
+ * pubkey: 32-byte binary pubkey.
+ * Returns the Unix timestamp, or 0 if never fetched. */
+uint64_t storage_ndb_read_last_profile_fetch(void *txn, const unsigned char *pubkey);
+
+/* Check if a profile is stale (needs re-fetching from relays).
+ * pubkey_hex: 64-char hex pubkey string.
+ * stale_secs: staleness threshold in seconds (0 = use default).
+ * Returns TRUE if the profile has never been fetched or was fetched
+ * longer ago than stale_secs. Returns FALSE if recently fetched.
+ * Manages its own read transaction internally. */
+gboolean storage_ndb_is_profile_stale(const char *pubkey_hex, uint64_t stale_secs);
+
 /* ============== Contact List / Following API ============== */
 
 /* nostrc-f0ll: Get followed pubkeys from a user's contact list (kind 3).
@@ -158,6 +215,46 @@ char **storage_ndb_note_get_relays(void *txn, uint64_t note_key);
  * Returns NULL-terminated array of pubkey hex strings, or NULL if none/error.
  * Caller must g_strfreev() the result. */
 char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex);
+
+/* ============== Note Metadata API (hq-vvmzu) ============== */
+
+/* Per-note count structure for reading/writing ndb_note_meta. */
+typedef struct {
+  guint total_reactions;   /* Total reaction count */
+  guint direct_replies;    /* Direct reply count */
+  guint thread_replies;    /* Thread reply count (includes nested) */
+  guint reposts;           /* Repost count */
+  guint quotes;            /* Quote count */
+} StorageNdbNoteCounts;
+
+/* Read all pre-computed counts for a note from ndb_note_meta in one call.
+ * id32: 32-byte binary note ID. txn must be open.
+ * Populates out struct; zeroes it first. Returns TRUE if metadata was found. */
+gboolean storage_ndb_read_note_counts(void *txn, const unsigned char id32[32],
+                                       StorageNdbNoteCounts *out);
+
+/* Write/update note metadata counts via ndb_set_note_meta.
+ * id32: 32-byte binary note ID.
+ * counts: the count values to store.
+ * Returns 0 on success, nonzero on failure. */
+int storage_ndb_write_note_counts(const unsigned char id32[32],
+                                   const StorageNdbNoteCounts *counts);
+
+/* Increment a specific count field for a note in ndb_note_meta.
+ * Reads existing metadata, increments the field, and writes back.
+ * field: "reactions", "direct_replies", "thread_replies", "reposts", "quotes"
+ * id32: 32-byte binary note ID.
+ * Returns 0 on success, nonzero on failure. */
+int storage_ndb_increment_note_meta(const unsigned char id32[32], const char *field);
+
+/* Batch count replies for multiple events using ndb_note_meta.
+ * event_ids: array of 64-char hex event IDs
+ * n_ids: number of event IDs
+ * Returns GHashTable mapping event_id_hex (owned) -> GUINT_TO_POINTER(count).
+ * Uses direct_replies from ndb_note_meta for O(1) per lookup.
+ * Only events with count > 0 appear in the table.
+ * Caller must g_hash_table_unref(). */
+GHashTable *storage_ndb_count_replies_batch(const char * const *event_ids, guint n_ids);
 
 /* ============== NIP-25 Reaction Count API ============== */
 
