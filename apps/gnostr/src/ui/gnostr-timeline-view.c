@@ -1514,6 +1514,13 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
    * Plain g_signal_connect adds a new handler on every bind without disconnect. */
   if (GTK_IS_WIDGET(row)) {
     g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
+
+    /* Disconnect Tier 2 map handler if still active (not yet fired) */
+    gulong map_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
+    if (map_id > 0) {
+      g_signal_handler_disconnect(row, map_id);
+      g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GUINT_TO_POINTER(0));
+    }
   }
 
   if (GTK_IS_WIDGET(row)) {
@@ -1849,6 +1856,45 @@ static void schedule_metadata_batch(GnostrTimelineView *self, GObject *item)
   }
 }
 
+/*
+ * Tier 2 map handler for timeline view: creates embeds/media/OG when the row
+ * becomes visible. During Tier 1 (bind), only Pango markup is set via
+ * set_content_markup_only(). This avoids creating NoteEmbed widgets with
+ * synchronous NDB queries during the factory bind callback, which was blocking
+ * the main thread and causing freezes when scrolling to events with embeds.
+ * One-shot: disconnects itself after first run.
+ */
+static void
+on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
+{
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  if (!GTK_IS_LIST_ITEM(list_item)) return;
+
+  GtkWidget *row = gtk_list_item_get_child(list_item);
+  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || row != widget) return;
+  if (gnostr_note_card_row_is_disposed(GNOSTR_NOTE_CARD_ROW(row))) return;
+  if (!gnostr_note_card_row_is_bound(GNOSTR_NOTE_CARD_ROW(row))) return;
+
+  GObject *obj = gtk_list_item_get_item(list_item);
+  if (!obj) return;
+
+  extern GType gn_nostr_event_item_get_type(void);
+  if (!G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) return;
+
+  const GnContentRenderResult *cached =
+      gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
+  if (cached) {
+    gnostr_note_card_row_apply_deferred_content(GNOSTR_NOTE_CARD_ROW(row), cached);
+  }
+
+  /* One-shot: disconnect after first run */
+  gulong map_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
+  if (map_id > 0) {
+    g_signal_handler_disconnect(row, map_id);
+    g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GUINT_TO_POINTER(0));
+  }
+}
+
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f;
   GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(data);
@@ -2057,13 +2103,18 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         g_strfreev(hashtags);
       }
     } else {
-      /* nostrc-dqwq.1: Use cached render result from item to skip re-rendering */
+      /* Tier 1: markup only — defer embeds/media/OG to Tier 2 map handler.
+       * set_content_rendered and set_content create NoteEmbed widgets with
+       * synchronous NDB queries during bind, blocking the main thread. */
       if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
         const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
-        if (cached) {
-          gnostr_note_card_row_set_content_rendered(GNOSTR_NOTE_CARD_ROW(row), content, cached);
-        } else {
-          gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+        gnostr_note_card_row_set_content_markup_only(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+        /* Connect Tier 2 map handler for deferred embed/media/OG creation */
+        gulong map_id = g_signal_connect(row, "map",
+                                          G_CALLBACK(on_tv_row_mapped_tier2), item);
+        g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GUINT_TO_POINTER(map_id));
+        if (gtk_widget_get_mapped(row)) {
+          on_tv_row_mapped_tier2(row, item);
         }
       } else {
         gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
