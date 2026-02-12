@@ -79,12 +79,44 @@ static void gnostr_youtube_embed_finalize(GObject *object) {
   G_OBJECT_CLASS(gnostr_youtube_embed_parent_class)->finalize(object);
 }
 
+/* Clamp horizontal minimum/natural to zero so the YouTube embed never forces
+ * the timeline to expand beyond its allocated width. */
+static void
+gnostr_youtube_embed_measure(GtkWidget      *widget,
+                              GtkOrientation  orientation,
+                              int             for_size,
+                              int            *minimum,
+                              int            *natural,
+                              int            *minimum_baseline,
+                              int            *natural_baseline)
+{
+  GnostrYoutubeEmbed *self = GNOSTR_YOUTUBE_EMBED(widget);
+
+  if (self->disposed) {
+    *minimum = 0;
+    *natural = 0;
+    *minimum_baseline = -1;
+    *natural_baseline = -1;
+    return;
+  }
+
+  GTK_WIDGET_CLASS(gnostr_youtube_embed_parent_class)->measure(
+      widget, orientation, for_size,
+      minimum, natural, minimum_baseline, natural_baseline);
+
+  if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+    *minimum = 0;
+    *natural = 0;
+  }
+}
+
 static void gnostr_youtube_embed_class_init(GnostrYoutubeEmbedClass *klass) {
   GObjectClass *obj_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 
   obj_class->dispose = gnostr_youtube_embed_dispose;
   obj_class->finalize = gnostr_youtube_embed_finalize;
+  widget_class->measure = gnostr_youtube_embed_measure;
 
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
   gtk_widget_class_set_css_name(widget_class, "youtube-embed");

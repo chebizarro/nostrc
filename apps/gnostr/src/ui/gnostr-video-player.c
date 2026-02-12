@@ -830,12 +830,46 @@ static void on_settings_changed(GSettings *settings, const gchar *key, gpointer 
   }
 }
 
+/* Clamp horizontal minimum/natural to zero so video players never force the
+ * timeline to expand beyond its allocated width.  GtkMediaFile reports the
+ * video's intrinsic pixel dimensions (e.g. 640x360) which propagates through
+ * GtkPicture → overlay → BinLayout → GtkListView → window. */
+static void
+gnostr_video_player_measure(GtkWidget      *widget,
+                             GtkOrientation  orientation,
+                             int             for_size,
+                             int            *minimum,
+                             int            *natural,
+                             int            *minimum_baseline,
+                             int            *natural_baseline)
+{
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(widget);
+
+  if (self->disposed) {
+    *minimum = 0;
+    *natural = 0;
+    *minimum_baseline = -1;
+    *natural_baseline = -1;
+    return;
+  }
+
+  GTK_WIDGET_CLASS(gnostr_video_player_parent_class)->measure(
+      widget, orientation, for_size,
+      minimum, natural, minimum_baseline, natural_baseline);
+
+  if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+    *minimum = 0;
+    *natural = 0;
+  }
+}
+
 static void gnostr_video_player_class_init(GnostrVideoPlayerClass *klass) {
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
 
   gclass->dispose = gnostr_video_player_dispose;
   gclass->finalize = gnostr_video_player_finalize;
+  wclass->measure = gnostr_video_player_measure;
 
   gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BIN_LAYOUT);
   gtk_widget_class_set_css_name(wclass, "gnostr-video-player");
