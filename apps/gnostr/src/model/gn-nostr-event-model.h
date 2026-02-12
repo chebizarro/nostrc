@@ -4,6 +4,7 @@
 #include "gn-nostr-event-item.h"
 #include "gn-timeline-query.h"
 #include <gio/gio.h>
+#include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
@@ -98,6 +99,10 @@ void gn_nostr_event_model_set_visible_range(GnNostrEventModel *self, guint start
 void gn_nostr_event_model_set_user_at_top(GnNostrEventModel *self, gboolean at_top);
 guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self);
 void gn_nostr_event_model_flush_pending(GnNostrEventModel *self);
+
+/* Associate a widget for frame-synced insertion buffer drain (tick callback).
+ * Typically the GtkListView or its parent timeline view. */
+void gn_nostr_event_model_set_view_widget(GnNostrEventModel *self, GtkWidget *widget);
 
 G_END_DECLS
 

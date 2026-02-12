@@ -5,7 +5,9 @@
 #include "gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
 #include "../util/mute_list.h"
+#include "../ui/gnostr-profile-provider.h"
 #include <nostr.h>
+#include <gtk/gtk.h>
 #include <string.h>
 
 /* Window sizing and cache sizes */
@@ -13,26 +15,21 @@
 #define ITEM_CACHE_SIZE 100
 #define PROFILE_CACHE_MAX 500
 #define AUTHORS_READY_MAX 1000
-#define DEFERRED_NOTES_MAX 200       /* Max deferred notes before force flush */
 
-/* nostrc-yi2: Calm timeline - debounce batching (rate limiter removed, see hq-hdq47).
+/* Frame-aware batching — adaptive drain rate (backported from GnTimelineModel)
  *
- * The debounce timer only fires when the user is scrolled down (deferred mode).
- * When user_at_top == TRUE, notes are inserted immediately with no delay.
- *
- * hq-hdq47 audit:
- * - Reduced from 500ms to 50ms (matching GnTimelineModel's UPDATE_DEBOUNCE_MS).
- *   500ms was overly conservative -- notes appeared half a second late even after
- *   batching completed.
- * - Removed MAX_UPDATES_PER_SEC / MIN_UPDATE_INTERVAL_MS rate limiter.
- *   The rate limiter (3/sec = 333ms min interval) was added pre-nostrc-pri1 as a
- *   safety net against rapid items_changed signals.  With enforce_window now running
- *   at G_PRIORITY_DEFAULT_IDLE (nostrc-pri1), nested signal storms are already
- *   prevented.  The rate limiter just added extra rescheduling latency.
- * - enforce_window_idle_cb is retained: it is the correct mechanism for preventing
- *   nested items_changed signals during window eviction.
- */
-#define DEBOUNCE_INTERVAL_MS 50      /* Batch rapid updates (was 500ms, see hq-hdq47) */
+ * Instead of debounce timers, the pipeline uses gtk_widget_add_tick_callback
+ * for frame-synchronized insertion buffer drain. Batch size adapts dynamically
+ * based on insertion buffer depth:
+ *   Deep buffer (startup flood) → drain aggressively (up to 50/frame).
+ *   Shallow buffer (steady state) → conservative (3/frame) for smooth scroll.
+ * An inline frame-time guard yields early if the budget is exceeded. */
+#define ITEMS_PER_FRAME_FLOOR 3      /* Steady-state conservative drain */
+#define ITEMS_PER_FRAME_MAX 50       /* Ceiling during aggressive drain */
+#define FRAME_BUDGET_US 12000        /* 12ms target, leaving 4ms margin for 16.6ms frame */
+#define INSERTION_BUFFER_MAX 100     /* Max items in insertion buffer before backpressure */
+#define EVICT_DEFER_FRAMES 30        /* Only enforce window size every 30 frames (~500ms) */
+#define PENDING_SIGNAL_INTERVAL_US 250000  /* 250ms between new-items-pending emissions */
 
 /* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
 #define FILTER_TIMELINE   "{\"kinds\":[1,6,9735]}"
@@ -46,6 +43,59 @@ typedef struct {
   uint64_t note_key;
   gint64 created_at;
 } NoteEntry;
+
+/* Pending entry for frame-aware insertion buffer */
+typedef struct {
+  uint64_t note_key;
+  gint64   created_at;
+  gint64   arrival_time_us;  /* Monotonic time when queued, for backpressure */
+} PendingEntry;
+
+/* Validated entry produced by worker thread for timeline batch processing */
+typedef struct {
+  uint64_t note_key;
+  gint64   created_at;
+  char     pubkey_hex[65];
+  char    *root_id;       /* owned, nullable — NIP-10 thread root */
+  char    *reply_id;      /* owned, nullable — NIP-10 thread reply */
+  int      kind;
+} TimelineBatchEntry;
+
+static void timeline_batch_entry_clear(gpointer data) {
+  TimelineBatchEntry *e = data;
+  g_free(e->root_id);
+  g_free(e->reply_id);
+}
+
+/* Data passed to the timeline batch worker thread */
+typedef struct {
+  uint64_t *note_keys;    /* input: owned copy of note keys to process */
+  guint     n_keys;
+  gint     *kinds;        /* snapshot of filter kinds (owned) */
+  gsize     n_kinds;
+  char    **authors;      /* snapshot of filter authors (owned, NULL-terminated) */
+  gsize     n_authors;
+  gint64    since, until;
+  GArray   *validated;    /* output: TimelineBatchEntry array */
+  GPtrArray *prefetch_pubkeys;  /* output: unique pubkey hexes for profile prefetch */
+} TimelineBatchProcessData;
+
+static void timeline_batch_data_free(gpointer data) {
+  TimelineBatchProcessData *bp = data;
+  if (!bp) return;
+  g_free(bp->note_keys);
+  g_free(bp->kinds);
+  if (bp->authors) {
+    for (gsize i = 0; i < bp->n_authors; i++)
+      g_free(bp->authors[i]);
+    g_free(bp->authors);
+  }
+  if (bp->validated)
+    g_array_unref(bp->validated);
+  if (bp->prefetch_pubkeys)
+    g_ptr_array_unref(bp->prefetch_pubkeys);
+  g_free(bp);
+}
 
 struct _GnNostrEventModel {
   GObject parent_instance;
@@ -103,15 +153,20 @@ struct _GnNostrEventModel {
   guint visible_end;    /* Last visible position in the list */
   GHashTable *skip_animation_keys;  /* key: uint64_t*, value: GINT_TO_POINTER(1) */
 
-  /* nostrc-yi2: Calm timeline - debounce and batching
-   * hq-hdq47: Removed last_update_time_ms / rate limiter. See #define block. */
+  /* Scroll position awareness */
   gboolean user_at_top;           /* TRUE if user is at scroll top (auto-scroll allowed) */
-  GArray *deferred_notes;         /* NoteEntry items waiting to be inserted */
-  guint debounce_source_id;       /* Pending debounce timeout */
-  guint pending_new_count;        /* Count of new items waiting (for indicator) */
+  guint unseen_count;             /* Items added while user is scrolled down */
 
-  /* Deferred enforce_window to avoid nested items_changed signals */
-  guint enforce_window_idle_id;
+  /* Pipeline: worker thread → insertion_buffer → tick callback → notes array
+   * Backported from GnTimelineModel for frame-synced insertion with adaptive drain. */
+  GArray *insertion_buffer;       /* PendingEntry items awaiting frame-synced insertion */
+  GHashTable *insertion_key_set;  /* note_key → TRUE for O(1) dedup in insertion buffer */
+  guint tick_callback_id;         /* gtk_widget_add_tick_callback ID, 0 if inactive */
+  GtkWidget *tick_widget;         /* Widget providing frame clock (weak ref) */
+  guint peak_insertion_depth;     /* High-water mark for monitoring */
+  gboolean backpressure_active;   /* TRUE when backpressure is being applied */
+  guint evict_defer_counter;      /* Defer window eviction to avoid replace-all every frame */
+  gint64 last_pending_signal_us;  /* Throttle SIGNAL_NEW_ITEMS_PENDING emission */
 
   /* Async pagination state */
   gboolean async_loading;
@@ -185,12 +240,11 @@ static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, voi
 static void profile_cache_update_from_content(GnNostrEventModel *self, const char *pubkey_hex,
                                               const char *content, gsize content_len);
 static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char *pubkey_hex, gint64 created_at);
-static void enforce_window(GnNostrEventModel *self);
 static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key);
-/* nostrc-yi2: Calm timeline helpers */
-static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at);
-static gboolean flush_deferred_notes_cb(gpointer user_data);
-static void schedule_deferred_flush(GnNostrEventModel *self);
+
+/* Worker thread pipeline */
+static void timeline_batch_thread_func(GTask *task, gpointer source_object, gpointer task_data, GCancellable *cancellable);
+static void timeline_batch_complete_cb(GObject *source_object, GAsyncResult *res, gpointer user_data);
 
 /* Subscription callbacks */
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
@@ -522,6 +576,358 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
   return g_hash_table_contains(self->note_key_set, &key);
 }
 
+/* ============== Insertion Buffer Pipeline (backported from GnTimelineModel) ============== */
+
+/* Forward declarations for pipeline tick callback */
+static gboolean on_tick_callback(GtkWidget *widget, GdkFrameClock *clock, gpointer user_data);
+static void on_tick_widget_destroyed(gpointer data, GObject *where_the_object_was);
+
+/**
+ * has_note_key_pending:
+ * Check if a note key is already in the insertion buffer. O(1) lookup.
+ */
+static gboolean has_note_key_pending(GnNostrEventModel *self, uint64_t key) {
+  if (!self->insertion_key_set) return FALSE;
+  return g_hash_table_contains(self->insertion_key_set, &key);
+}
+
+/**
+ * add_note_key_to_insertion_set:
+ * Add a note key to the insertion buffer dedup set.
+ */
+static void add_note_key_to_insertion_set(GnNostrEventModel *self, uint64_t key) {
+  if (!self->insertion_key_set) return;
+  uint64_t *key_copy = g_new(uint64_t, 1);
+  *key_copy = key;
+  g_hash_table_add(self->insertion_key_set, key_copy);
+}
+
+/**
+ * remove_note_key_from_insertion_set:
+ * Remove a note key from the insertion buffer dedup set.
+ */
+static void remove_note_key_from_insertion_set(GnNostrEventModel *self, uint64_t key) {
+  if (!self->insertion_key_set) return;
+  g_hash_table_remove(self->insertion_key_set, &key);
+}
+
+/**
+ * ensure_tick_callback:
+ * Register a tick callback with the associated view widget for frame-synced drain.
+ * No-op if no widget is set or widget is not realized.
+ */
+static void ensure_tick_callback(GnNostrEventModel *self) {
+  if (self->tick_callback_id != 0)
+    return;
+  if (!self->tick_widget)
+    return;
+  if (!gtk_widget_get_realized(self->tick_widget)) {
+    g_debug("[FRAME] Widget not realized, deferring tick callback");
+    return;
+  }
+
+  self->tick_callback_id = gtk_widget_add_tick_callback(
+    self->tick_widget,
+    on_tick_callback,
+    g_object_ref(self),
+    g_object_unref
+  );
+
+  if (self->tick_callback_id != 0) {
+    g_debug("[FRAME] Tick callback registered (id=%u)", self->tick_callback_id);
+  }
+}
+
+/**
+ * remove_tick_callback:
+ * Remove the tick callback if active and clean up widget weak reference.
+ */
+static void remove_tick_callback(GnNostrEventModel *self) {
+  if (self->tick_callback_id != 0 && self->tick_widget) {
+    gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
+  }
+  self->tick_callback_id = 0;
+
+  if (self->tick_widget) {
+    g_object_weak_unref(G_OBJECT(self->tick_widget),
+                        on_tick_widget_destroyed, self);
+    self->tick_widget = NULL;
+  }
+}
+
+/**
+ * apply_insertion_backpressure:
+ * Drop oldest items (tail of newest-first buffer) when exceeding INSERTION_BUFFER_MAX.
+ */
+static void apply_insertion_backpressure(GnNostrEventModel *self) {
+  if (!self->insertion_buffer || self->insertion_buffer->len <= INSERTION_BUFFER_MAX)
+    return;
+
+  guint to_drop = self->insertion_buffer->len - INSERTION_BUFFER_MAX;
+
+  g_debug("[BACKPRESSURE] Dropping %u oldest items from insertion buffer (%u -> %u)",
+          to_drop, self->insertion_buffer->len, INSERTION_BUFFER_MAX);
+
+  for (guint i = self->insertion_buffer->len - to_drop; i < self->insertion_buffer->len; i++) {
+    PendingEntry *entry = &g_array_index(self->insertion_buffer, PendingEntry, i);
+    remove_note_key_from_insertion_set(self, entry->note_key);
+  }
+  g_array_remove_range(self->insertion_buffer, self->insertion_buffer->len - to_drop, to_drop);
+
+  self->backpressure_active = TRUE;
+}
+
+/**
+ * insertion_buffer_sorted_insert:
+ * Binary search insert into insertion buffer, maintaining newest-first order.
+ * O(log N) search + one memmove.
+ */
+static void insertion_buffer_sorted_insert(GArray *buf, PendingEntry *entry) {
+  guint lo = 0, hi = buf->len;
+  while (lo < hi) {
+    guint mid = lo + (hi - lo) / 2;
+    PendingEntry *e = &g_array_index(buf, PendingEntry, mid);
+    if (entry->created_at > e->created_at)
+      hi = mid;
+    else
+      lo = mid + 1;
+  }
+  g_array_insert_val(buf, lo, *entry);
+}
+
+/**
+ * enforce_window_inline:
+ * Evict oldest items from the tail of the newest-first notes array when
+ * exceeding MODEL_MAX_ITEMS. Returns the number of items evicted.
+ *
+ * Called from the tick callback instead of scheduling an idle, avoiding
+ * nested items_changed signals. Cache cleanup happens inline.
+ */
+static guint enforce_window_inline(GnNostrEventModel *self) {
+  if (self->is_thread_view) return 0;
+  guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
+  if (self->notes->len <= cap) return 0;
+
+  guint to_remove = self->notes->len - cap;
+
+  /* Clean up caches for evicted keys (oldest are at tail in newest-first array) */
+  for (guint i = 0; i < to_remove; i++) {
+    guint idx = self->notes->len - 1 - i;
+    NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
+    uint64_t k = old->note_key;
+    g_hash_table_remove(self->note_key_set, &k);
+    cache_lru_remove_key(self, k);
+    g_hash_table_remove(self->thread_info, &k);
+    g_hash_table_remove(self->item_cache, &k);
+  }
+
+  g_array_set_size(self->notes, cap);
+  return to_remove;
+}
+
+/**
+ * process_pending_items:
+ * Move items from insertion buffer to main notes array.
+ * Each item is inserted at its correct position via find_sorted_position()
+ * to maintain newest-first order.
+ */
+static void process_pending_items(GnNostrEventModel *self, guint count) {
+  if (!self->insertion_buffer || self->insertion_buffer->len == 0)
+    return;
+
+  guint to_process = MIN(count, self->insertion_buffer->len);
+  guint actually_processed = 0;
+
+  for (guint i = 0; i < to_process; i++) {
+    PendingEntry *pending = &g_array_index(self->insertion_buffer, PendingEntry, i);
+
+    NoteEntry entry = {
+      .note_key = pending->note_key,
+      .created_at = pending->created_at
+    };
+
+    /* Find correct position in newest-first sorted array */
+    guint pos = find_sorted_position(self, pending->created_at);
+    g_array_insert_val(self->notes, pos, entry);
+
+    /* Move from insertion set to main set */
+    remove_note_key_from_insertion_set(self, pending->note_key);
+    uint64_t *set_key = g_new(uint64_t, 1);
+    *set_key = pending->note_key;
+    g_hash_table_add(self->note_key_set, set_key);
+
+    /* Mark items outside visible range to skip animation */
+    if (pos < self->visible_start || pos > self->visible_end) {
+      uint64_t *anim_key = g_new(uint64_t, 1);
+      *anim_key = pending->note_key;
+      g_hash_table_insert(self->skip_animation_keys, anim_key, GINT_TO_POINTER(1));
+    }
+
+    actually_processed++;
+  }
+
+  if (actually_processed > 0) {
+    g_array_remove_range(self->insertion_buffer, 0, actually_processed);
+    g_debug("[FRAME] Processed %u pending items, %u remaining",
+            actually_processed, self->insertion_buffer->len);
+  }
+}
+
+/**
+ * on_tick_callback:
+ * Called once per frame by GTK. Processes pending items from insertion buffer
+ * using adaptive batch sizing, emits a single batched items_changed signal.
+ *
+ * Adaptive drain rate: buffer depth controls batch size each frame.
+ * Deep buffer (startup flood) → drain aggressively (up to ITEMS_PER_FRAME_MAX).
+ * Shallow buffer (steady state) → conservative (ITEMS_PER_FRAME_FLOOR).
+ * Sub-batches of 10 with inline frame-time guard.
+ */
+static gboolean on_tick_callback(GtkWidget     *widget,
+                                  GdkFrameClock *clock,
+                                  gpointer       user_data) {
+  (void)widget;
+  (void)clock;
+
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) {
+    return G_SOURCE_REMOVE;
+  }
+
+  gint64 start_us = g_get_monotonic_time();
+  guint buffer_depth = self->insertion_buffer->len;
+  guint total_processed = 0;
+
+  if (buffer_depth > 0) {
+    /* Adaptive batch sizing based on buffer depth */
+    guint batch_limit;
+    if (buffer_depth > 50) {
+      batch_limit = ITEMS_PER_FRAME_MAX;   /* 50 — aggressive startup drain */
+    } else if (buffer_depth > 20) {
+      batch_limit = 20;
+    } else if (buffer_depth > 10) {
+      batch_limit = 10;
+    } else {
+      batch_limit = ITEMS_PER_FRAME_FLOOR; /* 3 — smooth steady state */
+    }
+
+    guint old_count = self->notes->len;
+
+    /* Process in sub-batches of 10 with frame-time guard */
+    while (total_processed < batch_limit && self->insertion_buffer->len > 0) {
+      guint chunk = MIN(10, MIN(batch_limit - total_processed,
+                                self->insertion_buffer->len));
+      process_pending_items(self, chunk);
+      total_processed += chunk;
+
+      if (total_processed >= 10) {
+        gint64 elapsed = g_get_monotonic_time() - start_us;
+        if (elapsed > FRAME_BUDGET_US) {
+          g_debug("[FRAME] Budget hit at %u items (%ldus), yielding",
+                  total_processed, (long)elapsed);
+          break;
+        }
+      }
+    }
+
+    /* Deferred window eviction: avoid expensive replace-all signal every frame.
+     * By deferring eviction to every EVICT_DEFER_FRAMES frames, we can use
+     * the cheaper signal pattern most of the time. */
+    self->evict_defer_counter++;
+    gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
+                         (self->insertion_buffer->len == 0); /* last batch: clean up */
+    guint evicted = 0;
+    if (do_evict) {
+      evicted = enforce_window_inline(self);
+      self->evict_defer_counter = 0;
+    }
+
+    /* Emit single atomic items_changed signal.
+     * Items are sorted-inserted at various positions, so we use the full
+     * replace-all signal (0, old_count, new_count). This is still far cheaper
+     * than N individual signals. */
+    if (total_processed > 0 || evicted > 0) {
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, self->notes->len);
+      g_debug("[FRAME] Processed %u items, evicted %u, model %u -> %u",
+              total_processed, evicted, old_count, self->notes->len);
+    }
+
+    /* Track unseen items when user is scrolled down.
+     * Throttle signal emission to avoid per-frame toast label updates. */
+    if (!self->user_at_top && total_processed > 0) {
+      self->unseen_count += total_processed;
+      gboolean is_last_batch = (self->insertion_buffer->len == 0);
+      if (is_last_batch ||
+          (start_us - self->last_pending_signal_us >= PENDING_SIGNAL_INTERVAL_US)) {
+        self->last_pending_signal_us = start_us;
+        g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+      }
+    }
+  }
+
+  /* Continue while there is work remaining */
+  if (self->insertion_buffer->len > 0) {
+    return G_SOURCE_CONTINUE;
+  }
+
+  g_debug("[FRAME] All work complete, removing tick callback");
+  self->tick_callback_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+/**
+ * on_tick_widget_destroyed:
+ * Weak notify callback when the tick widget is destroyed.
+ */
+static void on_tick_widget_destroyed(gpointer data, GObject *where_the_object_was) {
+  (void)where_the_object_was;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return;
+
+  g_debug("[FRAME] Tick widget destroyed, disabling frame-aware batching");
+  self->tick_widget = NULL;
+  self->tick_callback_id = 0;
+}
+
+/**
+ * gn_nostr_event_model_set_view_widget:
+ * @self: The model
+ * @widget: A GtkWidget providing the frame clock for tick callbacks, or NULL
+ *
+ * Associates a widget with the model for frame-synced insertion buffer drain.
+ * If there are already pending items in the insertion buffer, the tick callback
+ * is started immediately.
+ */
+void gn_nostr_event_model_set_view_widget(GnNostrEventModel *self, GtkWidget *widget) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+
+  if (self->tick_widget == widget) return;
+
+  /* Clean up old widget */
+  if (self->tick_widget) {
+    if (self->tick_callback_id != 0) {
+      gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
+      self->tick_callback_id = 0;
+    }
+    g_object_weak_unref(G_OBJECT(self->tick_widget),
+                        on_tick_widget_destroyed, self);
+    self->tick_widget = NULL;
+  }
+
+  /* Set up new widget */
+  if (widget) {
+    self->tick_widget = widget;
+    g_object_weak_ref(G_OBJECT(widget), on_tick_widget_destroyed, self);
+
+    g_debug("[FRAME] View widget set, enabling frame-aware batching");
+
+    if (self->insertion_buffer && self->insertion_buffer->len > 0) {
+      ensure_tick_callback(self);
+    }
+  }
+}
+
+/* ============== End Insertion Buffer Pipeline ============== */
 
 /* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON).
  * NIP-10 specifies two modes:
@@ -600,142 +1006,6 @@ static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
   return 0;
 }
 
-/* nostrc-yi2: Actually insert deferred notes into the model
- * 
- * OPTIMIZATION: Instead of emitting items_changed for each insertion (which
- * causes GTK ListView to recalculate layout N times), we:
- * 1. Filter and sort all deferred notes
- * 2. Insert them all at position 0 (they're all newer than existing items)
- * 3. Emit a SINGLE items_changed signal covering all insertions
- * 
- * This reduces O(N) layout recalculations to O(1), dramatically improving
- * performance when flushing many deferred notes (e.g., clicking "N new notes").
- */
-static gboolean flush_deferred_notes_cb(gpointer user_data) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->debounce_source_id = 0;  /* Mark as not pending */
-
-  if (!self->deferred_notes || self->deferred_notes->len == 0) {
-    return G_SOURCE_REMOVE;
-  }
-
-  /* hq-hdq47: Rate limiter removed. The debounce timer (DEBOUNCE_INTERVAL_MS)
-   * already batches rapid arrivals. enforce_window runs at DEFAULT_IDLE priority
-   * (nostrc-pri1), preventing nested items_changed signal storms. */
-
-  guint total_deferred = self->deferred_notes->len;
-  g_debug("[CALM] Flushing %u deferred notes (batched)", total_deferred);
-
-  /* Step 1: Filter out duplicates and collect valid entries */
-  GArray *to_insert = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
-  for (guint i = 0; i < self->deferred_notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->deferred_notes, NoteEntry, i);
-    if (!has_note_key(self, entry->note_key)) {
-      g_array_append_val(to_insert, *entry);
-    }
-  }
-
-  guint n_to_insert = to_insert->len;
-  if (n_to_insert == 0) {
-    g_array_free(to_insert, TRUE);
-    g_array_set_size(self->deferred_notes, 0);
-    self->pending_new_count = 0;
-    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
-    return G_SOURCE_REMOVE;
-  }
-
-  /* Step 2: Sort by created_at (newest first) */
-  g_array_sort(to_insert, note_entry_compare_newest_first);
-
-  /* Step 3: Insert deferred notes at position 0 using direct insertion.
-   *
-   * IMPORTANT: We avoid the "replace all" pattern (items_changed(0, old_count, new_count))
-   * because it causes GTK to dispose many widgets simultaneously, which can trigger
-   * Pango layout corruption crashes during mass widget finalization.
-   *
-   * Instead, we insert at position 0. This shifts existing items but doesn't cause
-   * mass disposal - GTK just moves widgets to different positions. */
-
-  /* Insert deferred notes at the front (position 0), in reverse order so they
-   * end up sorted newest-first after all insertions */
-  for (guint i = n_to_insert; i > 0; i--) {
-    NoteEntry *entry = &g_array_index(to_insert, NoteEntry, i - 1);
-    NoteEntry new_entry = *entry;
-    g_array_prepend_val(self->notes, new_entry);
-    uint64_t *set_key = g_new(uint64_t, 1);
-    *set_key = new_entry.note_key;
-    g_hash_table_add(self->note_key_set, set_key);
-  }
-
-  g_array_free(to_insert, TRUE);
-
-  /* DON'T clear item cache - existing items are still valid, just at different positions.
-   * The cache is keyed by note_key, not position, so items remain valid.
-   * This avoids expensive DB transactions when GTK calls get_item after the signal. */
-
-  /* Step 4: Emit insertion signal - tells GTK "n_to_insert items added at position 0".
-   * This causes GTK to create new widgets and shift existing ones, but doesn't trigger
-   * mass widget disposal like the "replace all" pattern does. */
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, n_to_insert);
-
-  g_debug("[CALM] Batch inserted %u notes with single signal", n_to_insert);
-
-  /* Clear deferred queue */
-  g_array_set_size(self->deferred_notes, 0);
-
-  /* Clear pending count and notify */
-  self->pending_new_count = 0;
-  g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
-
-  /* Enforce window size to prevent unbounded growth */
-  enforce_window(self);
-
-  return G_SOURCE_REMOVE;
-}
-
-/* nostrc-yi2: Schedule a flush of deferred notes.
- * LEGITIMATE TIMEOUT - Debounce batching of note insertions.
- * nostrc-b0h: Audited - batching UI updates is appropriate.
- * hq-hdq47: Reduced from 500ms to 50ms. */
-static void schedule_deferred_flush(GnNostrEventModel *self) {
-  if (self->debounce_source_id > 0) {
-    return;  /* Already scheduled */
-  }
-  self->debounce_source_id = g_timeout_add(DEBOUNCE_INTERVAL_MS, flush_deferred_notes_cb, self);
-}
-
-/* nostrc-yi2: Defer note insertion (when user is not at top) */
-static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at) {
-  /* Check if already in main notes array - prevents duplicates */
-  if (has_note_key(self, note_key)) return;
-
-  /* Check if already in deferred queue */
-  for (guint i = 0; i < self->deferred_notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->deferred_notes, NoteEntry, i);
-    if (entry->note_key == note_key) return;  /* Already queued */
-  }
-
-  NoteEntry entry = { .note_key = note_key, .created_at = created_at };
-  g_array_append_val(self->deferred_notes, entry);
-
-  /* Enforce limit to prevent unbounded memory growth */
-  if (self->deferred_notes->len > DEFERRED_NOTES_MAX) {
-    g_debug("[CALM] Deferred notes exceeded limit (%u > %u), force flushing",
-            self->deferred_notes->len, DEFERRED_NOTES_MAX);
-    /* Remove oldest entries to stay within limit */
-    guint to_remove = self->deferred_notes->len - DEFERRED_NOTES_MAX;
-    g_array_remove_range(self->deferred_notes, 0, to_remove);
-  }
-
-  /* Update pending count and notify UI */
-  self->pending_new_count = self->deferred_notes->len;
-  g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->pending_new_count);
-
-  g_debug("[CALM] Deferred note insertion, %u pending", self->pending_new_count);
-}
-
 /* Add a note to the model (assumes gating has already been satisfied) */
 static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
                                const char *root_id, const char *parent_id, guint depth) {
@@ -764,15 +1034,6 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
     }
   }
 
-  /* nostrc-yi2: Calm timeline - defer insertion if user is scrolled down reading
-   * This prevents jarring auto-scroll and visual churn while the user is reading.
-   * Notes are queued and a "N new notes" indicator is shown instead.
-   * Skip deferral for thread views (they need immediate updates). */
-  if (!self->is_thread_view && !self->user_at_top) {
-    defer_note_insertion(self, note_key, created_at);
-    return;
-  }
-
   /* Find insertion position */
   guint pos = find_sorted_position(self, created_at);
 
@@ -794,57 +1055,6 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
 }
 
-/* Actual enforce_window implementation - called from idle to avoid nested signals */
-static gboolean enforce_window_idle_cb(gpointer user_data) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->enforce_window_idle_id = 0;
-
-  if (self->is_thread_view) return G_SOURCE_REMOVE;
-  guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
-
-  if (self->notes->len <= cap) return G_SOURCE_REMOVE;
-
-  guint to_remove = self->notes->len - cap;
-  guint old_len = self->notes->len;
-
-  /* Collect keys to remove BEFORE modifying any data structures */
-  uint64_t *keys_to_remove = g_new(uint64_t, to_remove);
-  for (guint i = 0; i < to_remove; i++) {
-    guint idx = old_len - 1 - i;
-    NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
-    keys_to_remove[i] = old->note_key;
-  }
-
-  /* Resize array and emit items_changed FIRST so GTK can tear down widgets
-   * while the cached items are still valid */
-  g_array_set_size(self->notes, cap);
-  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
-
-  /* NOW clean up caches after GTK has finished with the widgets */
-  for (guint i = 0; i < to_remove; i++) {
-    uint64_t k = keys_to_remove[i];
-    g_hash_table_remove(self->note_key_set, &k);
-    cache_lru_remove_key(self, k);
-    g_hash_table_remove(self->thread_info, &k);
-    g_hash_table_remove(self->item_cache, &k);
-  }
-
-  g_free(keys_to_remove);
-  return G_SOURCE_REMOVE;
-}
-
-/* Schedule enforce_window to run in idle - prevents nested items_changed signals
- * which cause GTK ListView widget teardown corruption */
-static void enforce_window(GnNostrEventModel *self) {
-  if (!self) return;
-  if (self->enforce_window_idle_id > 0) return;  /* Already scheduled */
-  /* nostrc-pri1: DEFAULT_IDLE so eviction runs after input + rendering */
-  self->enforce_window_idle_id = g_idle_add_full(
-    G_PRIORITY_DEFAULT_IDLE, enforce_window_idle_cb, self, NULL);
-}
-
 /* nostrc-5r8b: Helper to insert note without emitting signal (for batching) */
 static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
                                     const char *root_id, const char *parent_id, guint depth) {
@@ -861,12 +1071,6 @@ static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, g
       *key_copy = note_key;
       g_hash_table_insert(self->thread_info, key_copy, tinfo);
     }
-  }
-
-  /* nostrc-yi2: Defer if user is scrolled down (calm timeline) */
-  if (!self->is_thread_view && !self->user_at_top) {
-    defer_note_insertion(self, note_key, created_at);
-    return FALSE;  /* Deferred, not inserted */
   }
 
   /* Find sorted position and insert */
@@ -1110,28 +1314,43 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
   storage_ndb_end_query(txn);
 }
 
-static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
-  (void)subid;
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+/**
+ * timeline_batch_thread_func:
+ *
+ * Worker thread: opens NDB read txn, validates each note key, extracts NIP-10
+ * thread info, checks kind/author/time filters and mute list. Produces a
+ * GArray<TimelineBatchEntry> and collects unique pubkeys for profile prefetch.
+ *
+ * Thread-safe operations only: NDB reads, mute list (has internal GMutex).
+ * GHashTable dedup is deferred to the main-thread completion callback.
+ */
+static void timeline_batch_thread_func(GTask        *task,
+                                        gpointer      source_object,
+                                        gpointer      task_data,
+                                        GCancellable *cancellable) {
+  (void)source_object;
+  (void)cancellable;
+
+  TimelineBatchProcessData *bp = task_data;
+  bp->validated = g_array_sized_new(FALSE, FALSE, sizeof(TimelineBatchEntry), bp->n_keys);
+  g_array_set_clear_func(bp->validated, timeline_batch_entry_clear);
+
+  GHashTable *pk_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
-    g_warning("[TIMELINE] failed to begin query");
+    g_hash_table_destroy(pk_set);
+    g_task_return_pointer(task, bp, NULL);
     return;
   }
 
-  guint old_len = self->notes->len;
-  guint added = 0;
+  for (guint i = 0; i < bp->n_keys; i++) {
+    uint64_t note_key = bp->note_keys[i];
 
-  for (guint i = 0; i < n_keys; i++) {
-    uint64_t note_key = note_keys[i];
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
-
     if (!note) continue;
 
-    uint32_t kind_u32 = storage_ndb_note_kind(note);
-    int kind = (int)kind_u32;
+    int kind = (int)storage_ndb_note_kind(note);
     if (kind != 1 && kind != 6 && kind != 1111 && kind != 9735) continue;
     if (storage_ndb_note_is_expired(note)) continue;
 
@@ -1143,48 +1362,230 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     char pubkey_hex[65];
     storage_ndb_hex_encode(pk32, pubkey_hex);
 
-    if (!note_matches_query(self, kind, pubkey_hex, created_at)) continue;
+    /* Mute check — gnostr_mute_list uses internal GMutex, thread-safe */
+    GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+    if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex))
+      continue;
 
-    /* Extract NIP-10 thread info from note tags */
+    /* Kind filter from snapshot */
+    if (bp->n_kinds > 0) {
+      gboolean kind_ok = FALSE;
+      for (gsize k = 0; k < bp->n_kinds; k++) {
+        if (bp->kinds[k] == kind) { kind_ok = TRUE; break; }
+      }
+      if (!kind_ok) continue;
+    }
+
+    /* Author filter from snapshot */
+    if (bp->n_authors > 0) {
+      gboolean auth_ok = FALSE;
+      for (gsize a = 0; a < bp->n_authors; a++) {
+        if (bp->authors[a] && g_strcmp0(bp->authors[a], pubkey_hex) == 0) {
+          auth_ok = TRUE; break;
+        }
+      }
+      if (!auth_ok) continue;
+    }
+
+    /* Time range from snapshot */
+    if (bp->since > 0 && created_at > 0 && created_at < bp->since) continue;
+    if (bp->until > 0 && created_at > 0 && created_at > bp->until) continue;
+
+    /* NIP-10 thread info extraction (thread-safe NDB read) */
     char *root_id = NULL;
     char *reply_id = NULL;
     storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
 
-    /* nostrc-gate: Opportunistically cache profile */
-    if (!author_is_ready(self, pubkey_hex)) {
-      GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
-      if (!p)
-        g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
-    }
+    TimelineBatchEntry entry = {
+      .note_key = note_key,
+      .created_at = created_at,
+      .root_id = root_id,     /* ownership transferred to GArray */
+      .reply_id = reply_id,   /* ownership transferred to GArray */
+      .kind = kind
+    };
+    memcpy(entry.pubkey_hex, pubkey_hex, 65);
+    g_array_append_val(bp->validated, entry);
 
-    /* hq-vvmzu: Persist reply/repost counts to ndb_note_meta */
-    if (reply_id && strlen(reply_id) == 64) {
-      uint8_t parent_id32[32];
-      if (hex_to_bytes32(reply_id, parent_id32)) {
-        if (kind == 1 || kind == 1111)
-          storage_ndb_increment_note_meta(parent_id32, "direct_replies");
-        else if (kind == 6)
-          storage_ndb_increment_note_meta(parent_id32, "reposts");
-      }
+    /* Collect unique pubkeys for profile prefetch */
+    if (!g_hash_table_contains(pk_set, pubkey_hex)) {
+      g_hash_table_add(pk_set, g_strdup(pubkey_hex));
     }
-
-    /* Insert silently (no per-note items_changed) */
-    precache_item_from_note(self, note_key, created_at, note);
-    if (insert_note_silent(self, note_key, created_at, root_id, reply_id, 0))
-      added++;
-    g_free(root_id);
-    g_free(reply_id);
   }
 
   storage_ndb_end_query(txn);
 
-  /* Emit ONE batched items_changed for all insertions */
-  if (added > 0) {
-    guint new_len = self->notes->len;
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+  /* Convert pubkey set to GPtrArray for main-thread callback */
+  guint n_pks = g_hash_table_size(pk_set);
+  if (n_pks > 0) {
+    bp->prefetch_pubkeys = g_ptr_array_new_with_free_func(g_free);
+    GHashTableIter iter;
+    gpointer key;
+    g_hash_table_iter_init(&iter, pk_set);
+    while (g_hash_table_iter_next(&iter, &key, NULL)) {
+      g_ptr_array_add(bp->prefetch_pubkeys, g_strdup(key));
+    }
+  }
+  g_hash_table_destroy(pk_set);
+
+  g_task_return_pointer(task, bp, NULL);
+}
+
+/**
+ * timeline_batch_complete_cb:
+ *
+ * Main-thread callback. Performs dedup (GHashTable), profile caching,
+ * meta count increments, thread info storage, item precaching, and
+ * inserts validated entries into the insertion buffer for frame-synced drain.
+ */
+static void timeline_batch_complete_cb(GObject      *source_object,
+                                        GAsyncResult *res,
+                                        gpointer      user_data) {
+  (void)user_data;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(source_object);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return;
+
+  GTask *task = G_TASK(res);
+  TimelineBatchProcessData *bp = g_task_propagate_pointer(task, NULL);
+  if (!bp || !bp->validated || bp->validated->len == 0) {
+    if (bp) timeline_batch_data_free(bp);
+    return;
   }
 
-  enforce_window(self);
+  /* Open short NDB txn for profile caching and item precaching */
+  void *txn = NULL;
+  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
+
+  guint inserted_count = 0;
+  gint64 arrival_time_us = g_get_monotonic_time();
+
+  for (guint i = 0; i < bp->validated->len; i++) {
+    TimelineBatchEntry *ve = &g_array_index(bp->validated, TimelineBatchEntry, i);
+
+    /* Dedup: skip if already in main array or insertion buffer */
+    if (has_note_key(self, ve->note_key)) continue;
+    if (has_note_key_pending(self, ve->note_key)) continue;
+
+    /* Profile caching (main-thread only — uses GHashTable) */
+    if (have_txn && !author_is_ready(self, ve->pubkey_hex)) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(ve->pubkey_hex, pk32)) {
+        GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, ve->pubkey_hex);
+        if (!p)
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, ve->pubkey_hex);
+      }
+    }
+
+    /* hq-vvmzu: Persist reply/repost counts to ndb_note_meta */
+    if (ve->reply_id && strlen(ve->reply_id) == 64) {
+      uint8_t parent_id32[32];
+      if (hex_to_bytes32(ve->reply_id, parent_id32)) {
+        if (ve->kind == 1 || ve->kind == 1111)
+          storage_ndb_increment_note_meta(parent_id32, "direct_replies");
+        else if (ve->kind == 6)
+          storage_ndb_increment_note_meta(parent_id32, "reposts");
+      }
+    }
+
+    /* Store NIP-10 thread info */
+    if (ve->root_id || ve->reply_id) {
+      if (!g_hash_table_contains(self->thread_info, &ve->note_key)) {
+        ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+        tinfo->root_id = g_strdup(ve->root_id);
+        tinfo->parent_id = g_strdup(ve->reply_id);
+        tinfo->depth = 0;
+        uint64_t *key_copy = g_new(uint64_t, 1);
+        *key_copy = ve->note_key;
+        g_hash_table_insert(self->thread_info, key_copy, tinfo);
+      }
+    }
+
+    /* Precache item data while txn is open */
+    if (have_txn) {
+      storage_ndb_note *note = storage_ndb_get_note_ptr(txn, ve->note_key);
+      if (note)
+        precache_item_from_note(self, ve->note_key, ve->created_at, note);
+    }
+
+    /* Insert into insertion buffer for frame-synced drain */
+    PendingEntry pentry = {
+      .note_key = ve->note_key,
+      .created_at = ve->created_at,
+      .arrival_time_us = arrival_time_us
+    };
+    insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
+    add_note_key_to_insertion_set(self, ve->note_key);
+    inserted_count++;
+  }
+
+  if (have_txn)
+    storage_ndb_end_query(txn);
+
+  if (inserted_count > 0) {
+    if (self->insertion_buffer->len > self->peak_insertion_depth) {
+      self->peak_insertion_depth = self->insertion_buffer->len;
+    }
+
+    g_debug("[INSERT] Inserted %u items into insertion buffer (pending: %u)",
+            inserted_count, self->insertion_buffer->len);
+
+    apply_insertion_backpressure(self);
+
+    if (self->insertion_buffer->len < INSERTION_BUFFER_MAX) {
+      self->backpressure_active = FALSE;
+    }
+
+    ensure_tick_callback(self);
+  }
+
+  /* Background profile prefetch for unique pubkeys */
+  if (bp->prefetch_pubkeys && bp->prefetch_pubkeys->len > 0) {
+    const gchar **pk_array = g_new0(const gchar *, bp->prefetch_pubkeys->len + 1);
+    for (guint i = 0; i < bp->prefetch_pubkeys->len; i++) {
+      pk_array[i] = g_ptr_array_index(bp->prefetch_pubkeys, i);
+    }
+    pk_array[bp->prefetch_pubkeys->len] = NULL;
+    gnostr_profile_provider_prefetch_batch_async(pk_array);
+    g_free(pk_array);
+  }
+
+  timeline_batch_data_free(bp);
+}
+
+/**
+ * on_sub_timeline_batch:
+ *
+ * NDB subscription callback for timeline events (kinds 1/6/1111/9735).
+ * Lightweight dispatcher: copies note keys, snapshots filter params,
+ * dispatches GTask to worker thread for NDB reads.
+ */
+static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+
+  /* Allocate and populate batch data with snapshots of filter params */
+  TimelineBatchProcessData *bp = g_new0(TimelineBatchProcessData, 1);
+  bp->note_keys = g_memdup2(note_keys, n_keys * sizeof(uint64_t));
+  bp->n_keys = n_keys;
+
+  /* Snapshot filter params — worker thread must not touch self->kinds etc. */
+  if (self->n_kinds > 0 && self->kinds) {
+    bp->kinds = g_memdup2(self->kinds, self->n_kinds * sizeof(gint));
+    bp->n_kinds = self->n_kinds;
+  }
+  if (self->n_authors > 0 && self->authors) {
+    bp->authors = g_new0(char *, self->n_authors);
+    for (gsize i = 0; i < self->n_authors; i++)
+      bp->authors[i] = g_strdup(self->authors[i]);
+    bp->n_authors = self->n_authors;
+  }
+  bp->since = self->since;
+  bp->until = self->until;
+
+  GTask *task = g_task_new(self, NULL, timeline_batch_complete_cb, NULL);
+  g_task_set_task_data(task, bp, NULL);  /* bp freed in complete_cb */
+  g_task_run_in_thread(task, timeline_batch_thread_func);
+  g_object_unref(task);
 }
 
 static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
@@ -1430,16 +1831,10 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   /* nostrc-7o7: Clean up animation skip tracking */
   if (self->skip_animation_keys) g_hash_table_unref(self->skip_animation_keys);
 
-  /* nostrc-yi2: Clean up calm timeline fields */
-  if (self->debounce_source_id > 0) {
-    g_source_remove(self->debounce_source_id);
-    self->debounce_source_id = 0;
-  }
-  if (self->enforce_window_idle_id > 0) {
-    g_source_remove(self->enforce_window_idle_id);
-    self->enforce_window_idle_id = 0;
-  }
-  if (self->deferred_notes) g_array_unref(self->deferred_notes);
+  /* Clean up pipeline tick callback and insertion buffer */
+  remove_tick_callback(self);
+  if (self->insertion_buffer) g_array_unref(self->insertion_buffer);
+  if (self->insertion_key_set) g_hash_table_unref(self->insertion_key_set);
 
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
@@ -1524,12 +1919,11 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->visible_end = 10;  /* Default to showing first 10 items as "visible" */
   self->skip_animation_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
-  /* nostrc-yi2: Initialize calm timeline fields
-   * hq-hdq47: Removed last_update_time_ms (rate limiter removed). */
+  /* Scroll position awareness and pipeline */
   self->user_at_top = TRUE;  /* Assume user starts at top */
-  self->deferred_notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
-  self->debounce_source_id = 0;
-  self->pending_new_count = 0;
+  self->unseen_count = 0;
+  self->insertion_buffer = g_array_new(FALSE, FALSE, sizeof(PendingEntry));
+  self->insertion_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
   /* NIP-25/57: Initialize reaction and zap caches */
   self->reaction_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -1847,11 +2241,12 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
 
-  /* ONE batched signal for all insertions */
-  if (added > 0)
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+  /* Evict before signal to avoid nested items_changed */
+  enforce_window_inline(self);
 
-  enforce_window(self);
+  /* ONE batched signal for all insertions (model was cleared above, so old=0) */
+  if (self->notes->len > 0)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
 
   g_debug("[MODEL] Refresh complete: %u total items (%u added)", self->notes->len, added);
 }
@@ -2088,11 +2483,13 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
 
   if (have_txn) storage_ndb_end_query(txn);
 
-  /* ONE batched signal for all insertions */
-  if (added > 0)
+  /* Evict before signal to avoid nested items_changed */
+  enforce_window_inline(self);
+
+  /* ONE batched signal for all insertions (model was cleared, so old=0) */
+  if (self->notes->len > 0)
     g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
 
-  enforce_window(self);
   g_debug("[MODEL] Async refresh complete: %u total items (%u added)", self->notes->len, added);
 
   g_ptr_array_unref(entries);
@@ -2298,6 +2695,15 @@ void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, con
 void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
+  /* Clear insertion buffer pipeline state */
+  if (self->insertion_buffer)
+    g_array_set_size(self->insertion_buffer, 0);
+  if (self->insertion_key_set)
+    g_hash_table_remove_all(self->insertion_key_set);
+  self->backpressure_active = FALSE;
+  self->unseen_count = 0;
+  self->evict_defer_counter = 0;
+
   guint old_size = self->notes->len;
   if (old_size == 0) {
     /* Still clear caches to be safe */
@@ -2399,7 +2805,11 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
   parse_nip10_tags(evt, &root_id, &reply_id);
 
   add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-  enforce_window(self);
+  guint evicted = enforce_window_inline(self);
+  if (evicted > 0) {
+    guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
+    g_list_model_items_changed(G_LIST_MODEL(self), cap, evicted, 0);
+  }
 
   g_free(root_id);
   g_free(reply_id);
@@ -2836,38 +3246,36 @@ void gn_nostr_event_model_set_visible_range(GnNostrEventModel *self, guint start
   self->visible_end = end;
 }
 
-/* nostrc-yi2: Set whether user is at top of scroll (enables auto-insert) */
+/* Set whether user is at top of scroll.
+ * When user scrolls to top, reset unseen_count (items are already inserted
+ * by the tick callback; the count just tracks how many arrived while scrolled down). */
 void gn_nostr_event_model_set_user_at_top(GnNostrEventModel *self, gboolean at_top) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
   gboolean was_at_top = self->user_at_top;
   self->user_at_top = at_top;
 
-  /* If user just scrolled to top, flush any deferred notes */
-  if (at_top && !was_at_top && self->deferred_notes && self->deferred_notes->len > 0) {
-    g_debug("[CALM] User scrolled to top, flushing %u deferred notes", self->deferred_notes->len);
-    flush_deferred_notes_cb(self);
+  if (at_top && !was_at_top && self->unseen_count > 0) {
+    g_debug("[CALM] User scrolled to top, clearing %u unseen count", self->unseen_count);
+    self->unseen_count = 0;
+    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
   }
 }
 
-/* nostrc-yi2: Get the count of pending new items */
+/* Get the count of items added while user was scrolled down */
 guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), 0);
-  return self->pending_new_count;
+  return self->unseen_count;
 }
 
-/* nostrc-yi2: Force flush of deferred notes (e.g., when user clicks indicator).
- * hq-hdq47: Rate limiter removed, so this is just a direct flush now. */
+/* Reset unseen count (e.g., when user clicks "N new notes" indicator).
+ * Items are already in the model — this just clears the notification. */
 void gn_nostr_event_model_flush_pending(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
-  if (self->deferred_notes && self->deferred_notes->len > 0) {
-    g_debug("[CALM] Manually flushing %u deferred notes", self->deferred_notes->len);
-    /* Cancel any pending debounce */
-    if (self->debounce_source_id > 0) {
-      g_source_remove(self->debounce_source_id);
-      self->debounce_source_id = 0;
-    }
-    flush_deferred_notes_cb(self);
+  if (self->unseen_count > 0) {
+    g_debug("[CALM] Flushing unseen count: %u", self->unseen_count);
+    self->unseen_count = 0;
+    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
   }
 }

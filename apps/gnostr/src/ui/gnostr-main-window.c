@@ -6340,6 +6340,10 @@ deferred_heavy_init_cb(gpointer data)
     gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(timeline), selection);
     g_object_unref(selection); /* View takes ownership */
 
+    /* Wire tick callback widget for frame-synced insertion buffer drain */
+    GtkWidget *list_view = gnostr_timeline_view_get_list_view(GNOSTR_TIMELINE_VIEW(timeline));
+    gn_nostr_event_model_set_view_widget(self->event_model, list_view ? list_view : timeline);
+
     /* Connect scroll edge detection for sliding window pagination */
     GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
