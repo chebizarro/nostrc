@@ -738,17 +738,23 @@ static void process_pending_items(GnNostrEventModel *self, guint count) {
   guint to_process = MIN(count, self->insertion_buffer->len);
   guint actually_processed = 0;
 
-  for (guint i = 0; i < to_process; i++) {
-    PendingEntry *pending = &g_array_index(self->insertion_buffer, PendingEntry, i);
+  /* Insert items at position 0 (prepend) to avoid the "replace all" signal
+   * pattern (items_changed(0, old, new)) which causes GTK to dispose many
+   * widgets simultaneously, triggering Pango layout corruption crashes.
+   *
+   * Insertion buffer is sorted newest-first. We process in reverse order
+   * (oldest first) so items end up newest-first at the front of notes.
+   * This matches the old flush_deferred_notes_cb pattern. */
+  for (guint i = to_process; i > 0; i--) {
+    PendingEntry *pending = &g_array_index(self->insertion_buffer, PendingEntry, i - 1);
 
     NoteEntry entry = {
       .note_key = pending->note_key,
       .created_at = pending->created_at
     };
 
-    /* Find correct position in newest-first sorted array */
-    guint pos = find_sorted_position(self, pending->created_at);
-    g_array_insert_val(self->notes, pos, entry);
+    /* Prepend at position 0 — newest items end up at front */
+    g_array_insert_val(self->notes, 0, entry);
 
     /* Move from insertion set to main set */
     remove_note_key_from_insertion_set(self, pending->note_key);
@@ -756,8 +762,8 @@ static void process_pending_items(GnNostrEventModel *self, guint count) {
     *set_key = pending->note_key;
     g_hash_table_add(self->note_key_set, set_key);
 
-    /* Mark items outside visible range to skip animation */
-    if (pos < self->visible_start || pos > self->visible_end) {
+    /* Items prepended at 0 push visible range down — mark for skip animation */
+    {
       uint64_t *anim_key = g_new(uint64_t, 1);
       *anim_key = pending->note_key;
       g_hash_table_insert(self->skip_animation_keys, anim_key, GINT_TO_POINTER(1));
@@ -830,26 +836,30 @@ static gboolean on_tick_callback(GtkWidget     *widget,
       }
     }
 
-    /* Deferred window eviction: avoid expensive replace-all signal every frame.
-     * By deferring eviction to every EVICT_DEFER_FRAMES frames, we can use
-     * the cheaper signal pattern most of the time. */
+    /* Emit safe addition signal: items were prepended at position 0.
+     * This avoids the "replace all" pattern (items_changed(0, old, new)) which
+     * causes mass widget disposal and Pango layout corruption crashes. */
+    if (total_processed > 0) {
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, total_processed);
+      g_debug("[FRAME] Inserted %u items at front, model now %u",
+              total_processed, self->notes->len);
+    }
+
+    /* Deferred window eviction: avoid expensive removal signal every frame. */
     self->evict_defer_counter++;
     gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
                          (self->insertion_buffer->len == 0); /* last batch: clean up */
-    guint evicted = 0;
     if (do_evict) {
-      evicted = enforce_window_inline(self);
+      guint pre_evict = self->notes->len;
+      guint evicted = enforce_window_inline(self);
       self->evict_defer_counter = 0;
-    }
 
-    /* Emit single atomic items_changed signal.
-     * Items are sorted-inserted at various positions, so we use the full
-     * replace-all signal (0, old_count, new_count). This is still far cheaper
-     * than N individual signals. */
-    if (total_processed > 0 || evicted > 0) {
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, self->notes->len);
-      g_debug("[FRAME] Processed %u items, evicted %u, model %u -> %u",
-              total_processed, evicted, old_count, self->notes->len);
+      /* Emit separate removal signal for tail eviction */
+      if (evicted > 0) {
+        g_list_model_items_changed(G_LIST_MODEL(self), self->notes->len, evicted, 0);
+        g_debug("[FRAME] Evicted %u items from tail, model %u -> %u",
+                evicted, pre_evict, self->notes->len);
+      }
     }
 
     /* Track unseen items when user is scrolled down.
@@ -1456,6 +1466,8 @@ static void timeline_batch_complete_cb(GObject      *source_object,
   gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
 
   guint inserted_count = 0;
+  guint direct_inserted = 0;
+  guint old_len = self->notes->len;
   gint64 arrival_time_us = g_get_monotonic_time();
 
   for (guint i = 0; i < bp->validated->len; i++) {
@@ -1506,27 +1518,51 @@ static void timeline_batch_complete_cb(GObject      *source_object,
         precache_item_from_note(self, ve->note_key, ve->created_at, note);
     }
 
-    /* Insert into insertion buffer for frame-synced drain */
-    PendingEntry pentry = {
-      .note_key = ve->note_key,
-      .created_at = ve->created_at,
-      .arrival_time_us = arrival_time_us
-    };
-    insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
-    add_note_key_to_insertion_set(self, ve->note_key);
     inserted_count++;
+
+    /* Decide: buffer for tick drain vs direct insert.
+     * If no tick widget or widget not realized (startup: Loading page visible,
+     * Session page hidden in GtkStack), insert directly like the old sync path.
+     * Otherwise use the frame-synced insertion buffer. */
+    gboolean can_tick = self->tick_widget &&
+                        gtk_widget_get_realized(self->tick_widget);
+    if (can_tick) {
+      PendingEntry pentry = {
+        .note_key = ve->note_key,
+        .created_at = ve->created_at,
+        .arrival_time_us = arrival_time_us
+      };
+      insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
+      add_note_key_to_insertion_set(self, ve->note_key);
+    } else {
+      /* Direct insert (startup fallback): sorted insert + track in note_key_set */
+      if (insert_note_silent(self, ve->note_key, ve->created_at,
+                             ve->root_id, ve->reply_id, 0)) {
+        direct_inserted++;
+      }
+    }
   }
 
   if (have_txn)
     storage_ndb_end_query(txn);
 
-  if (inserted_count > 0) {
+  /* Emit batched signal for direct inserts (startup path) */
+  if (direct_inserted > 0) {
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, self->notes->len);
+    enforce_window_inline(self);
+    g_debug("[INSERT] Direct insert: %u items (startup fallback), model now %u",
+            direct_inserted, self->notes->len);
+  }
+
+  /* Queue pipeline drain for buffered inserts (live events) */
+  if (inserted_count > direct_inserted) {
+    guint buffered = inserted_count - direct_inserted;
     if (self->insertion_buffer->len > self->peak_insertion_depth) {
       self->peak_insertion_depth = self->insertion_buffer->len;
     }
 
-    g_debug("[INSERT] Inserted %u items into insertion buffer (pending: %u)",
-            inserted_count, self->insertion_buffer->len);
+    g_debug("[INSERT] Buffered %u items for tick drain (pending: %u)",
+            buffered, self->insertion_buffer->len);
 
     apply_insertion_backpressure(self);
 
