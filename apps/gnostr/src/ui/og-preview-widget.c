@@ -809,6 +809,8 @@ static void og_preview_widget_init(OgPreviewWidget *self) {
 
   /* Create error label for "Preview Not Available" */
   self->error_label = gtk_label_new("Preview Not Available");
+  gtk_label_set_wrap(GTK_LABEL(self->error_label), TRUE);
+  gtk_label_set_max_width_chars(GTK_LABEL(self->error_label), 50);
   gtk_widget_add_css_class(self->error_label, "dim-label");
   gtk_widget_set_visible(self->error_label, FALSE);
   gtk_widget_set_parent(self->error_label, GTK_WIDGET(self));
@@ -858,9 +860,11 @@ static void og_preview_widget_init(OgPreviewWidget *self) {
   gtk_widget_add_css_class(self->description_label, "og-preview-description");
   gtk_box_append(GTK_BOX(self->text_box), self->description_label);
   
-  /* Create site name */
+  /* Create site name — ellipsize to prevent long domains from expanding window */
   self->site_label = gtk_label_new("");
   gtk_label_set_xalign(GTK_LABEL(self->site_label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(self->site_label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_max_width_chars(GTK_LABEL(self->site_label), 50);
   gtk_widget_add_css_class(self->site_label, "og-preview-site");
   gtk_box_append(GTK_BOX(self->text_box), self->site_label);
   

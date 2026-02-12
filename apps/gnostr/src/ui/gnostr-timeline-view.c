@@ -2397,12 +2397,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     /* Always show row - use fallback display if no profile */
     gtk_widget_set_visible(row, TRUE);
 
-    /* Connect to profile change notification to update author when profile loads */
+    /* Connect to profile change notification to update author when profile loads.
+     * Use plain g_signal_connect (NOT g_signal_connect_object) because unbind
+     * explicitly disconnects via disconnect_by_data. Combining explicit disconnect
+     * with g_signal_connect_object causes double-removal of invalidation notifiers
+     * → "unable to remove uninstalled invalidation notifier" → SIGABRT. */
     if (!display && !handle) {
-      /* Debug logging removed - too verbose */
-      g_signal_connect_object(obj, "notify::profile",
-                              G_CALLBACK(on_event_item_profile_changed),
-                              item, 0);
+      g_signal_connect(obj, "notify::profile",
+                       G_CALLBACK(on_event_item_profile_changed), item);
     }
 
     g_free(display_fallback);
@@ -2417,27 +2419,28 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   g_free(pubkey);
 
   /* Connect reactive updates so that later metadata changes update UI.
-   * Uses g_signal_connect_object so handlers auto-disconnect if row is destroyed.
-   * Additionally, factory_unbind_cb explicitly disconnects these on recycle
-   * (nostrc-sig1) since rows are recycled, not destroyed, between rebinds. */
+   * Use plain g_signal_connect (NOT g_signal_connect_object) because unbind
+   * explicitly disconnects all these via disconnect_by_data(obj, row).
+   * Combining explicit disconnect with g_signal_connect_object causes
+   * double-removal of invalidation notifiers → SIGABRT (nostrc-sig1 fix). */
   if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
-    g_signal_connect_object(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row, 0);
-    g_signal_connect_object(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row, 0);
-    g_signal_connect_object(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row, 0);
+    g_signal_connect(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row);
+    g_signal_connect(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row);
+    g_signal_connect(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row);
 
     /* NIP-25: Connect reaction count/state change handlers */
-    g_signal_connect_object(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row, 0);
-    g_signal_connect_object(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row, 0);
+    g_signal_connect(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row);
+    g_signal_connect(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row);
 
     /* NIP-18: Connect repost count change handler */
-    g_signal_connect_object(obj, "notify::repost-count", G_CALLBACK(on_item_notify_repost_count), row, 0);
+    g_signal_connect(obj, "notify::repost-count", G_CALLBACK(on_item_notify_repost_count), row);
 
     /* NIP-57: Connect zap stats change handlers */
-    g_signal_connect_object(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      row, 0);
-    g_signal_connect_object(obj, "notify::zap-total-msat", G_CALLBACK(on_item_notify_zap_total_msat), row, 0);
+    g_signal_connect(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      row);
+    g_signal_connect(obj, "notify::zap-total-msat", G_CALLBACK(on_item_notify_zap_total_msat), row);
 
     /* hq-vvmzu: Connect reply count change handler */
-    g_signal_connect_object(obj, "notify::reply-count",    G_CALLBACK(on_item_notify_reply_count),    row, 0);
+    g_signal_connect(obj, "notify::reply-count",    G_CALLBACK(on_item_notify_reply_count),    row);
   }
 }
 
