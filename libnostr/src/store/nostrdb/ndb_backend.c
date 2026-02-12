@@ -234,19 +234,22 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
    * This prevents reader slot exhaustion during batch processing where signal
    * handlers trigger nested begin_query calls. */
   if (tls && tls->txn && tls->refcount > 0) {
-    /* Existing active transaction - reuse it */
+    /* Existing active transaction - reuse it.
+     * Do NOT reset last_used here: the original open time must be preserved
+     * so the txn is eventually closed, preventing indefinite LMDB page pinning
+     * that causes MDB_MAP_FULL and cascading backpressure (11 GB queue growth). */
     tls->refcount++;
-    tls->last_used = now;
     *txn_out = tls->txn;
     return LN_OK;
   }
 
   /* Also reuse if transaction is recent (within 2 seconds) even if refcount is 0.
    * This handles rapid successive queries without holding transactions too long
-   * (which would cause MDB_MAP_FULL from page retention). */
+   * (which would cause MDB_MAP_FULL from page retention).
+   * Do NOT reset last_used: preserving the original timestamp ensures the txn
+   * closes within 2 seconds of its creation, not 2 seconds of last query. */
   if (tls && tls->txn && tls->refcount == 0 && (now - tls->last_used) < 2) {
     tls->refcount = 1;
-    tls->last_used = now;
     *txn_out = tls->txn;
     return LN_OK;
   }

@@ -245,6 +245,7 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]);
 static void gnostr_load_settings(GnostrMainWindow *self);
 static unsigned int getenv_uint_default(const char *name, unsigned int defval);
 static gpointer ingest_thread_func(gpointer data);
+static gboolean ingest_queue_push(GnostrMainWindow *self, gchar *json);
 static void start_pool_live(GnostrMainWindow *self);
 static void start_profile_subscription(GnostrMainWindow *self);
 static void start_bg_profile_prefetch(GnostrMainWindow *self);
@@ -530,6 +531,12 @@ static gboolean profile_apply_on_main(gpointer data) {
  * Note: Avatar texture cache has its own LRU limit in gnostr-avatar-cache module. */
 #define SEEN_TEXTS_MAX 10000
 #define LIKED_EVENTS_MAX 5000
+/* Maximum number of queued JSON strings awaiting NDB ingestion.
+ * When the nostrdb pipeline blocks (e.g. MDB_MAP_FULL from stale read txns
+ * pinning pages), the unbounded GAsyncQueue absorbs all backpressure via
+ * g_strdup'd JSON strings (~1-10 KB each).  At 50+ events/sec this grows
+ * to multi-GB in hours.  Cap it: newer events evict nothing, we just drop. */
+#define INGEST_QUEUE_MAX 4096
 
 /* Proper GSourceFunc wrapper for gnostr_profile_provider_log_stats (ABI-safe) */
 static gboolean profile_provider_log_stats_cb(gpointer data) {
@@ -5844,14 +5851,22 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
             g_string_append_len(fixed, evt_json, comma_after_kind - evt_json + 1);
             g_string_append(fixed, "\"tags\":[],");
             g_string_append(fixed, comma_after_kind + 1);
-            g_async_queue_push(ctx->self->ingest_queue, g_string_free(fixed, FALSE));
-            queued++;
+            gchar *fixed_str = g_string_free(fixed, FALSE);
+            if (ingest_queue_push(ctx->self, fixed_str))
+              queued++;
+            else
+              g_free(fixed_str);
             continue;
           }
         }
       }
-      g_async_queue_push(ctx->self->ingest_queue, g_strdup(evt_json));
-      queued++;
+      {
+        gchar *dup = g_strdup(evt_json);
+        if (ingest_queue_push(ctx->self, dup))
+          queued++;
+        else
+          g_free(dup);
+      }
     }
     if (queued > 0) {
       g_debug("[PROFILE] Queued %u events for background ingestion", queued);
@@ -8995,6 +9010,26 @@ static gboolean retry_pool_live(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
+/* Bounded push to ingest_queue.  Returns TRUE if queued, FALSE if dropped.
+ * Takes ownership of `json` on success; caller must g_free on failure. */
+static gboolean
+ingest_queue_push(GnostrMainWindow *self, gchar *json)
+{
+  gint depth = g_async_queue_length(self->ingest_queue);
+  if (depth >= INGEST_QUEUE_MAX) {
+    static gint64 last_warn_us = 0;
+    gint64 now = g_get_monotonic_time();
+    if (now - last_warn_us > 5000000) { /* warn at most every 5s */
+      g_warning("[INGEST] Queue full (%d items, cap %d) — dropping event "
+                "(NDB pipeline backpressure)", depth, INGEST_QUEUE_MAX);
+      last_warn_us = now;
+    }
+    return FALSE;
+  }
+  g_async_queue_push(self->ingest_queue, json);
+  return TRUE;
+}
+
 /* nostrc-mzab: Background NDB ingestion thread.
  * Drains the ingest_queue and calls storage_ndb_ingest_event_json()
  * off the main thread, so ndb_process_event (which can block when the
@@ -9080,7 +9115,9 @@ static void on_pool_sub_event(GNostrSubscription *sub, const gchar *event_json, 
   }
 
   /* Queue for background ingestion (never blocks main thread) */
-  g_async_queue_push(self->ingest_queue, g_strdup(event_json));
+  gchar *copy = g_strdup(event_json);
+  if (!ingest_queue_push(self, copy))
+    g_free(copy);
 }
 
 /* Live subscription EOSE handler */
