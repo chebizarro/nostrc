@@ -880,12 +880,23 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         return NULL;
     }
 
-    /* nostrc-3l6f: Ensure persistent pool is started */
+    /* nostrc-3l6f: Ensure persistent pool is started (thread-safe).
+     * Multiple nip44 decrypt threads can call nip46_rpc_call concurrently.
+     * Use pending_mutex to serialize the pool start and prevent double-start.
+     * Holding mutex during client_start is safe — other RPC calls need the pool
+     * anyway and will wait. No deadlock: pool_mutex is a different lock. */
     if (!s->client_pool_started) {
-        fprintf(stderr, "[nip46] %s: starting persistent pool\n", method);
-        if (nostr_nip46_client_start(s) != 0) {
-            fprintf(stderr, "[nip46] %s: ERROR: failed to start persistent pool\n", method);
-            return NULL;
+        pthread_mutex_lock(&s->pending_mutex);
+        if (!s->client_pool_started) {
+            fprintf(stderr, "[nip46] %s: starting persistent pool\n", method);
+            int rc = nostr_nip46_client_start(s);
+            pthread_mutex_unlock(&s->pending_mutex);
+            if (rc != 0) {
+                fprintf(stderr, "[nip46] %s: ERROR: failed to start persistent pool\n", method);
+                return NULL;
+            }
+        } else {
+            pthread_mutex_unlock(&s->pending_mutex);
         }
     }
 

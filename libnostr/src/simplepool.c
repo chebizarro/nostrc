@@ -829,14 +829,14 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
             }
         }
     }
-    // Replace pool->filters_shared
+    // Replace pool->filters_shared (must hold mutex — concurrent subscribe calls race)
+    GoContext *bg = go_context_background();
+    pthread_mutex_lock(&pool->pool_mutex);
     if (pool->filters_shared) {
         nostr_filters_free(pool->filters_shared);
     }
     pool->filters_shared = owned;
     // Create and fire subscriptions per relay
-    GoContext *bg = go_context_background();
-    pthread_mutex_lock(&pool->pool_mutex);
     for (size_t i = 0; i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
         if (!relay) continue;

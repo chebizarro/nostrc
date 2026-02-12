@@ -6357,7 +6357,11 @@ deferred_heavy_init_cb(gpointer data)
     /* nostrc-7vm: Connect tab filter changed signal for hashtag/author feeds */
     g_signal_connect(timeline, "tab-filter-changed", G_CALLBACK(on_timeline_tab_filter_changed), self);
 
-    /* Do NOT call refresh here; we refresh once in initial_refresh_timeout_cb to avoid duplicate rebuilds. */
+    /* Switch to SESSION page NOW so the user sees cached items immediately.
+     * Relay connections, profile fetches, and full refresh happen progressively
+     * after this point. Don't defer the page switch to a 150ms timeout. */
+    gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_SESSION);
+    g_warning("[STARTUP] page switched to SESSION (cached items visible)");
   }
 
   /* nostrc-mzab: Start background NDB ingestion thread */
@@ -7271,15 +7275,11 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
 static void initial_refresh_timeout_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  g_warning("[STARTUP] initial_refresh_timeout_cb: switching to SESSION page");
+  g_warning("[STARTUP] initial_refresh_timeout_cb: starting async refresh");
 
-  /* Show session page immediately so UI is responsive while NDB query runs */
-  gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_SESSION);
-  g_warning("[STARTUP] initial_refresh_timeout_cb: page switched, starting async refresh");
-
+  /* Page already switched to SESSION in deferred_heavy_init_cb.
+   * Just trigger the full async refresh to populate profiles and metadata. */
   if (self->event_model) {
-    /* Async: NDB query + JSON deserialization run in a worker thread.
-     * Results are applied on the main thread without blocking the UI. */
     gn_nostr_event_model_refresh_async(self->event_model);
   }
 
