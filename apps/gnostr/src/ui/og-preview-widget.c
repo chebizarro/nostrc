@@ -45,7 +45,8 @@ struct _OgPreviewWidget {
   GCancellable *external_cancellable;
 
   /* YouTube inline playback (nostrc-1du) */
-  GtkWidget *play_overlay;        /* Play button overlay on card image */
+  GtkWidget *image_overlay_widget; /* GtkOverlay wrapping image_widget in card_box */
+  GtkWidget *play_overlay;         /* Play button overlay on card image */
 #ifdef HAVE_WEBKITGTK
   GtkWidget *youtube_embed;       /* GnostrYoutubeEmbed widget (lazily created) */
 #endif
@@ -310,6 +311,8 @@ static void on_og_image_decode_done(GObject *source, GAsyncResult *res, gpointer
   if (texture && !self->disposed && self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->image_widget, TRUE);
+    if (self->image_overlay_widget)
+      gtk_widget_set_visible(self->image_overlay_widget, TRUE);
   }
 
   if (texture) g_object_unref(texture);
@@ -442,27 +445,32 @@ static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta) {
     gtk_label_set_text(GTK_LABEL(self->site_label), meta->site_name);
   }
   
-  /* Load image if available */
+  /* Load image if available — control the overlay wrapper visibility so the
+   * play button overlay is also hidden when there is no image. */
   if (meta->image_url && *meta->image_url) {
     load_image_async(self, meta->image_url);
-  } else if (self->image_widget) {
-    gtk_widget_set_visible(self->image_widget, FALSE);
+  } else if (self->image_overlay_widget) {
+    gtk_widget_set_visible(self->image_overlay_widget, FALSE);
   }
 
-  /* Show play button overlay for YouTube URLs (nostrc-1du) */
+  /* Show play button overlay for YouTube URLs (nostrc-1du).
+   * The play button is an overlay child of image_overlay_widget so it appears
+   * on top of the thumbnail.  Clicks pass through (can_target=FALSE) to the
+   * image_widget underneath, which bubbles up to card_box's gesture handler. */
   if (self->current_url && gnostr_youtube_url_is_youtube(self->current_url)) {
-    if (!self->play_overlay) {
+    if (!self->play_overlay && self->image_overlay_widget) {
       self->play_overlay = gtk_button_new_from_icon_name("media-playback-start-symbolic");
       gtk_widget_add_css_class(self->play_overlay, "youtube-play-overlay");
       gtk_widget_add_css_class(self->play_overlay, "osd");
       gtk_widget_add_css_class(self->play_overlay, "circular");
       gtk_widget_set_halign(self->play_overlay, GTK_ALIGN_CENTER);
       gtk_widget_set_valign(self->play_overlay, GTK_ALIGN_CENTER);
-      /* The play button is purely visual — clicks are handled by card_box gesture */
       gtk_widget_set_can_target(self->play_overlay, FALSE);
-      gtk_widget_set_parent(self->play_overlay, GTK_WIDGET(self));
+      gtk_overlay_add_overlay(GTK_OVERLAY(self->image_overlay_widget),
+                              self->play_overlay);
     }
-    gtk_widget_set_visible(self->play_overlay, TRUE);
+    if (self->play_overlay)
+      gtk_widget_set_visible(self->play_overlay, TRUE);
   } else if (self->play_overlay) {
     gtk_widget_set_visible(self->play_overlay, FALSE);
   }
@@ -675,7 +683,9 @@ static void og_preview_widget_dispose(GObject *object) {
     gtk_label_set_text(GTK_LABEL(self->error_label), "");
   }
 
-  g_clear_pointer(&self->play_overlay, gtk_widget_unparent);
+  /* play_overlay is a child of image_overlay_widget (inside card_box) —
+   * it will be disposed when card_box is unparented.  Just clear the pointer. */
+  self->play_overlay = NULL;
 #ifdef HAVE_WEBKITGTK
   g_clear_pointer(&self->youtube_embed, gtk_widget_unparent);
 #endif
@@ -690,6 +700,7 @@ static void og_preview_widget_dispose(GObject *object) {
   self->description_label = NULL;
   self->site_label = NULL;
   self->image_widget = NULL;
+  self->image_overlay_widget = NULL;
   self->text_box = NULL;
 
   G_OBJECT_CLASS(og_preview_widget_parent_class)->dispose(object);
@@ -812,9 +823,15 @@ static void on_card_clicked(GtkGestureClick *gesture, int n_press, double x, dou
 
 static void og_preview_widget_init(OgPreviewWidget *self) {
   /* Uses shared session from gnostr_get_shared_soup_session() */
-  
+
+  /* GtkBoxLayout defaults to HORIZONTAL — set vertical so children stack.
+   * Without this, play_overlay (when created) appears side-by-side with
+   * card_box, causing the note card to expand to full screen width. */
+  GtkLayoutManager *layout = gtk_widget_get_layout_manager(GTK_WIDGET(self));
+  gtk_orientable_set_orientation(GTK_ORIENTABLE(layout), GTK_ORIENTATION_VERTICAL);
+
   self->cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)og_metadata_free);
-  
+
   /* Create spinner */
   self->spinner = gtk_spinner_new();
   gtk_spinner_start(GTK_SPINNER(self->spinner));
@@ -828,14 +845,15 @@ static void og_preview_widget_init(OgPreviewWidget *self) {
   gtk_widget_add_css_class(self->error_label, "dim-label");
   gtk_widget_set_visible(self->error_label, FALSE);
   gtk_widget_set_parent(self->error_label, GTK_WIDGET(self));
-  
+
   /* Create card container */
   self->card_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_widget_add_css_class(self->card_box, "og-preview-card");
   gtk_widget_set_visible(self->card_box, FALSE);
   gtk_widget_set_parent(self->card_box, GTK_WIDGET(self));
-  
-  /* Create image */
+
+  /* Create image wrapped in an overlay so the YouTube play button can be
+   * positioned on top of the thumbnail, not as a separate row. */
   self->image_widget = gtk_picture_new();
   gtk_widget_add_css_class(self->image_widget, "og-preview-image");
   gtk_widget_set_size_request(self->image_widget, -1, 200);
@@ -844,7 +862,11 @@ static void og_preview_widget_init(OgPreviewWidget *self) {
   gtk_picture_set_can_shrink(GTK_PICTURE(self->image_widget), TRUE);
   gtk_widget_set_halign(self->image_widget, GTK_ALIGN_FILL);
   gtk_widget_set_visible(self->image_widget, FALSE);
-  gtk_box_append(GTK_BOX(self->card_box), self->image_widget);
+
+  self->image_overlay_widget = gtk_overlay_new();
+  gtk_overlay_set_child(GTK_OVERLAY(self->image_overlay_widget), self->image_widget);
+  gtk_widget_set_visible(self->image_overlay_widget, FALSE);
+  gtk_box_append(GTK_BOX(self->card_box), self->image_overlay_widget);
   
   /* Create text container */
   self->text_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
