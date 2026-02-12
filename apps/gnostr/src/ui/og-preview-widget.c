@@ -731,10 +731,11 @@ og_preview_widget_measure(GtkWidget      *widget,
       minimum, natural, minimum_baseline, natural_baseline);
 
   if (orientation == GTK_ORIENTATION_HORIZONTAL) {
-    /* Natural = minimum: the widget is happy with whatever width the
-     * parent allocates.  The GtkPicture (can_shrink=TRUE, content_fit=COVER)
-     * scales down to fit the allocation. */
-    *natural = *minimum;
+    /* Clamp both minimum and natural to zero so the OG preview never
+     * forces the timeline to expand.  The GtkPicture (can_shrink=TRUE,
+     * content_fit=COVER) scales down to fit whatever width is allocated. */
+    *minimum = 0;
+    *natural = 0;
   }
 }
 

@@ -148,12 +148,34 @@ static void on_embed_clicked(GtkGestureClick *gesture, int n_press, double x, do
   }
 }
 
+/* Clamp horizontal minimum/natural to zero so embedded notes never force the
+ * timeline to expand beyond its allocated width. */
+static void
+gnostr_note_embed_measure(GtkWidget      *widget,
+                           GtkOrientation  orientation,
+                           int             for_size,
+                           int            *minimum,
+                           int            *natural,
+                           int            *minimum_baseline,
+                           int            *natural_baseline)
+{
+  GTK_WIDGET_CLASS(gnostr_note_embed_parent_class)->measure(
+      widget, orientation, for_size,
+      minimum, natural, minimum_baseline, natural_baseline);
+
+  if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+    *minimum = 0;
+    *natural = 0;
+  }
+}
+
 static void gnostr_note_embed_class_init(GnostrNoteEmbedClass *klass) {
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
 
   gclass->dispose = gnostr_note_embed_dispose;
   gclass->finalize = gnostr_note_embed_finalize;
+  wclass->measure = gnostr_note_embed_measure;
 
   gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);

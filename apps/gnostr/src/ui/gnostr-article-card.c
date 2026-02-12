@@ -344,12 +344,36 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   gtk_popover_popup(GTK_POPOVER(self->menu_popover));
 }
 
+/* Clamp horizontal minimum/natural to zero so article cards never force the
+ * timeline to expand beyond its allocated width. The header GtkPicture
+ * (content-fit: cover) reports its intrinsic pixel dimensions as minimum —
+ * often 1200px for article hero images. */
+static void
+gnostr_article_card_measure(GtkWidget      *widget,
+                             GtkOrientation  orientation,
+                             int             for_size,
+                             int            *minimum,
+                             int            *natural,
+                             int            *minimum_baseline,
+                             int            *natural_baseline)
+{
+  GTK_WIDGET_CLASS(gnostr_article_card_parent_class)->measure(
+      widget, orientation, for_size,
+      minimum, natural, minimum_baseline, natural_baseline);
+
+  if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+    *minimum = 0;
+    *natural = 0;
+  }
+}
+
 static void gnostr_article_card_class_init(GnostrArticleCardClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
 
   gclass->dispose = gnostr_article_card_dispose;
   gclass->finalize = gnostr_article_card_finalize;
+  wclass->measure = gnostr_article_card_measure;
 
   gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);

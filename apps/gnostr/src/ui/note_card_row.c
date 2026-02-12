@@ -1797,10 +1797,15 @@ gnostr_note_card_row_measure(GtkWidget      *widget,
       minimum, natural, minimum_baseline, natural_baseline);
 
   if (orientation == GTK_ORIENTATION_HORIZONTAL) {
-    /* Tell the layout: "I'm happy with minimum width."  The card will
-     * still expand to fill whatever the parent allocates, but it won't
-     * *request* more than the minimum. */
-    *natural = *minimum;
+    /* Clamp BOTH minimum and natural to zero.  The card will expand to
+     * fill whatever the parent allocates, but it won't *request* any
+     * particular width.  Without clamping *minimum*, a single child with
+     * a large intrinsic minimum (e.g., GtkPicture without can_shrink, or
+     * a GtkLabel with a long unbreakable word) propagates through the
+     * GtkListView → GtkScrolledWindow → window chain and forces the
+     * window to expand permanently. */
+    *minimum = 0;
+    *natural = 0;
   }
 }
 
