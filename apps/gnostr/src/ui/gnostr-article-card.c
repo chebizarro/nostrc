@@ -6,6 +6,7 @@
 
 #include "gnostr-article-card.h"
 #include "gnostr-avatar-cache.h"
+#include "gnostr-label-guard.h"
 #include "../util/markdown_pango.h"
 #include "../util/nip05.h"
 #include "../util/nip84_highlights.h"
@@ -118,6 +119,31 @@ static void gnostr_article_card_dispose(GObject *object) {
     gtk_widget_unparent(self->menu_popover);
     self->menu_popover = NULL;
   }
+
+  /* Clear layout manager to prevent measurement during disposal cascade. */
+  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+
+  /* Safe label cleanup: clear text when native is available, ref-leak when
+   * native is gone to prevent pango_layout_clear_lines SEGV. */
+#define ARTICLE_DISPOSE_LABEL(lbl) \
+  do { \
+    if (GNOSTR_LABEL_SAFE(lbl)) { \
+      gtk_label_set_text(GTK_LABEL(lbl), ""); \
+    } else if (GTK_IS_LABEL(lbl)) { \
+      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
+      if (_t && *_t) g_object_ref(lbl); \
+    } \
+  } while (0)
+
+  ARTICLE_DISPOSE_LABEL(self->lbl_author_name);
+  ARTICLE_DISPOSE_LABEL(self->lbl_author_handle);
+  ARTICLE_DISPOSE_LABEL(self->lbl_publish_date);
+  ARTICLE_DISPOSE_LABEL(self->lbl_title);
+  ARTICLE_DISPOSE_LABEL(self->lbl_summary);
+  ARTICLE_DISPOSE_LABEL(self->lbl_zap_count);
+  ARTICLE_DISPOSE_LABEL(self->lbl_reading_time);
+
+#undef ARTICLE_DISPOSE_LABEL
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_ARTICLE_CARD);
   G_OBJECT_CLASS(gnostr_article_card_parent_class)->dispose(object);

@@ -648,15 +648,9 @@ static void og_preview_widget_dispose(GObject *object) {
    * Use g_clear_pointer pattern which safely handles NULL and only unparents
    * if the pointer is still valid. */
 
-  /* CRITICAL FIX (nostrc-14wu): Clear the layout manager BEFORE unparenting
-   * children. The box layout manager may try to measure children during
-   * destruction, causing NULL pointer dereference in pango when labels
-   * have already been partially destroyed. Setting layout manager to NULL
-   * prevents any measurement attempts during the disposal process.
-   *
-   * CRITICAL FIX: Also clear layout managers of nested containers (card_box,
-   * text_box) to prevent them from measuring their children during disposal.
-   * This happens when many list items are disposed at once during bulk removal. */
+  /* CRITICAL FIX (nostrc-14wu): Clear layout managers of ALL containers
+   * BEFORE unparenting children to prevent them from measuring partially-
+   * destroyed children during the disposal cascade. */
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
   if (self->text_box && GTK_IS_WIDGET(self->text_box)) {
     gtk_widget_set_layout_manager(self->text_box, NULL);
@@ -664,24 +658,36 @@ static void og_preview_widget_dispose(GObject *object) {
   if (self->card_box && GTK_IS_WIDGET(self->card_box)) {
     gtk_widget_set_layout_manager(self->card_box, NULL);
   }
+  if (self->image_overlay_widget && GTK_IS_WIDGET(self->image_overlay_widget)) {
+    gtk_widget_set_layout_manager(self->image_overlay_widget, NULL);
+  }
 
-  /* Clear label text BEFORE unparenting to prevent Pango layout crashes.
-   * During cascade disposal, Pango tries to finalize layouts and can crash
-   * if the layout data is corrupted or widgets are disposed in wrong order.
-   * nostrc-pgo5: MUST check gtk_widget_get_native() before gtk_label_set_text.
-   * nostrc-05yz (harden-6): Uses shared GNOSTR_LABEL_SAFE from gnostr-label-guard.h. */
-  if (GNOSTR_LABEL_SAFE(self->title_label)) {
-    gtk_label_set_text(GTK_LABEL(self->title_label), "");
-  }
-  if (GNOSTR_LABEL_SAFE(self->description_label)) {
-    gtk_label_set_text(GTK_LABEL(self->description_label), "");
-  }
-  if (GNOSTR_LABEL_SAFE(self->site_label)) {
-    gtk_label_set_text(GTK_LABEL(self->site_label), "");
-  }
-  if (GNOSTR_LABEL_SAFE(self->error_label)) {
-    gtk_label_set_text(GTK_LABEL(self->error_label), "");
-  }
+  /* Clear label text BEFORE unparenting to reset PangoLayouts.  During the
+   * card_box cascade disposal, label finalization tries to clean up stale
+   * PangoLayouts, causing SEGV in pango_layout_clear_lines.
+   *
+   * When the native surface is valid, gtk_label_set_text("") safely clears
+   * the PangoLayout.  When the native surface is gone (widget already
+   * unrealized), the PangoLayout may reference a freed PangoContext — even
+   * gtk_label_set_text triggers pango_layout_finalize which crashes.
+   * In that case, ref-leak the label (~1KB) to prevent finalization.
+   * Same pattern as note_card_row DISPOSE_LABEL. */
+#define OG_DISPOSE_LABEL(lbl) \
+  do { \
+    if (GNOSTR_LABEL_SAFE(lbl)) { \
+      gtk_label_set_text(GTK_LABEL(lbl), ""); \
+    } else if (GTK_IS_LABEL(lbl)) { \
+      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
+      if (_t && *_t) g_object_ref(lbl); \
+    } \
+  } while (0)
+
+  OG_DISPOSE_LABEL(self->title_label);
+  OG_DISPOSE_LABEL(self->description_label);
+  OG_DISPOSE_LABEL(self->site_label);
+  OG_DISPOSE_LABEL(self->error_label);
+
+#undef OG_DISPOSE_LABEL
 
   /* play_overlay is a child of image_overlay_widget (inside card_box) —
    * it will be disposed when card_box is unparented.  Just clear the pointer. */

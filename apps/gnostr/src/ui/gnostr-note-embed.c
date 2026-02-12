@@ -107,6 +107,8 @@ static GCancellable *get_effective_cancellable(GnostrNoteEmbed *self) {
 static void gnostr_note_embed_dispose(GObject *obj) {
   GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(obj);
 
+  self->disposed = TRUE;
+
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
@@ -115,6 +117,31 @@ static void gnostr_note_embed_dispose(GObject *obj) {
 #ifdef HAVE_SOUP3
   /* Shared session is managed globally - do not clear here */
 #endif
+
+  /* Clear layout manager to prevent measurement during disposal cascade. */
+  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+
+  /* Safe label cleanup: clear text when native is available (resets
+   * PangoLayout), ref-leak when native is gone to prevent finalization
+   * crash in pango_layout_clear_lines.  Same pattern as note_card_row. */
+#define EMBED_DISPOSE_LABEL(lbl) \
+  do { \
+    if (GNOSTR_LABEL_SAFE(lbl)) { \
+      gtk_label_set_text(GTK_LABEL(lbl), ""); \
+    } else if (GTK_IS_LABEL(lbl)) { \
+      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
+      if (_t && *_t) g_object_ref(lbl); \
+    } \
+  } while (0)
+
+  EMBED_DISPOSE_LABEL(self->content_label);
+  EMBED_DISPOSE_LABEL(self->author_label);
+  EMBED_DISPOSE_LABEL(self->handle_label);
+  EMBED_DISPOSE_LABEL(self->timestamp_label);
+  EMBED_DISPOSE_LABEL(self->error_label);
+  EMBED_DISPOSE_LABEL(self->profile_about_label);
+
+#undef EMBED_DISPOSE_LABEL
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_EMBED);
 
