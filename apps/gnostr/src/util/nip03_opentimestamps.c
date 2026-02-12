@@ -11,6 +11,8 @@
 #include <string.h>
 #include <time.h>
 
+#define OTS_CACHE_MAX 500
+
 /* OTS verification result cache */
 static GHashTable *ots_cache = NULL;
 static GMutex cache_mutex;
@@ -349,6 +351,8 @@ void gnostr_nip03_cache_result(const GnostrOtsProof *proof) {
   cache->cache_time = g_get_real_time() / G_USEC_PER_SEC;
 
   g_mutex_lock(&cache_mutex);
+  if (g_hash_table_size(ots_cache) >= OTS_CACHE_MAX)
+    g_hash_table_remove_all(ots_cache);
   g_hash_table_replace(ots_cache, g_strdup(proof->event_id_hex), cache);
   g_mutex_unlock(&cache_mutex);
 }

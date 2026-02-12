@@ -34,6 +34,7 @@ void gnostr_nip96_server_info_free(GnostrNip96ServerInfo *info)
 
 /* ---- Discovery Cache ---- */
 
+#define NIP96_DISCOVERY_CACHE_MAX 50
 static GHashTable *discovery_cache = NULL;  /* server_url -> GnostrNip96ServerInfo* */
 
 static GnostrNip96ServerInfo *cache_lookup(const char *server_url)
@@ -56,6 +57,8 @@ static void cache_store(const char *server_url, GnostrNip96ServerInfo *info)
   copy->content_types = g_strdupv(info->content_types);
   copy->max_byte_size = info->max_byte_size;
   copy->nip98_required = info->nip98_required;
+  if (g_hash_table_size(discovery_cache) >= NIP96_DISCOVERY_CACHE_MAX)
+    g_hash_table_remove_all(discovery_cache);
   g_hash_table_replace(discovery_cache, g_strdup(server_url), copy);
 }
 

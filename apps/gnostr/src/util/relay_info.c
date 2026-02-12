@@ -9,6 +9,7 @@
 
 /* Cache TTL in seconds (1 hour) */
 #define RELAY_INFO_CACHE_TTL_SEC 3600
+#define RELAY_INFO_CACHE_MAX 200
 
 /* Global cache: normalized URL -> GnostrRelayInfo* */
 static GHashTable *relay_info_cache = NULL;
@@ -322,6 +323,8 @@ void gnostr_relay_info_cache_put(GnostrRelayInfo *info) {
   GnostrRelayInfo *copy = gnostr_relay_info_copy(info);
 
   g_mutex_lock(&cache_mutex);
+  if (g_hash_table_size(relay_info_cache) >= RELAY_INFO_CACHE_MAX)
+    g_hash_table_remove_all(relay_info_cache);
   g_hash_table_replace(relay_info_cache, key, copy); /* key ownership transferred */
   g_mutex_unlock(&cache_mutex);
 }

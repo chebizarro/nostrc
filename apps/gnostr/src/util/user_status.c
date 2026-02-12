@@ -180,6 +180,8 @@ GnostrUserStatus *gnostr_user_status_parse_event(const gchar *event_json) {
 
 /* ============== Cache Implementation ============== */
 
+#define USER_STATUS_CACHE_MAX 1000
+
 /* Cache structure: pubkey -> (type -> status) */
 static GHashTable *g_status_cache = NULL;
 static GMutex g_cache_mutex;
@@ -257,6 +259,10 @@ void gnostr_user_status_cache_set(const GnostrUserStatus *status) {
     g_mutex_unlock(&g_cache_mutex);
     return;
   }
+
+  /* Cap cache to prevent unbounded growth */
+  if (g_hash_table_size(g_status_cache) >= USER_STATUS_CACHE_MAX)
+    g_hash_table_remove_all(g_status_cache);
 
   /* Insert (replaces existing with same key) */
   g_hash_table_insert(g_status_cache, key, gnostr_user_status_copy(status));

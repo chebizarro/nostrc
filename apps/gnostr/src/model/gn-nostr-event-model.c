@@ -30,6 +30,8 @@
 #define INSERTION_BUFFER_MAX 100     /* Max items in insertion buffer before backpressure */
 #define EVICT_DEFER_FRAMES 30        /* Only enforce window size every 30 frames (~500ms) */
 #define PENDING_SIGNAL_INTERVAL_US 250000  /* 250ms between new-items-pending emissions */
+#define REACTION_CACHE_MAX 500   /* Cap reaction count cache (keyed by target event_id) */
+#define ZAP_CACHE_MAX 500        /* Cap zap stats cache (keyed by target event_id) */
 
 /* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
 #define FILTER_TIMELINE   "{\"kinds\":[1,6,9735]}"
@@ -719,6 +721,7 @@ static guint enforce_window_inline(GnNostrEventModel *self) {
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
+    g_hash_table_remove(self->skip_animation_keys, &k);
   }
 
   g_array_set_size(self->notes, cap);
@@ -1117,6 +1120,7 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
     cache_lru_remove_key(self, note_key);
     g_hash_table_remove(self->thread_info, &note_key);
     g_hash_table_remove(self->item_cache, &note_key);
+    g_hash_table_remove(self->skip_animation_keys, &note_key);
 
     return TRUE;
   }
@@ -1757,6 +1761,13 @@ static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, gu
 
   storage_ndb_end_query(txn);
 
+  /* Cap reaction cache to prevent unbounded growth */
+  if (g_hash_table_size(self->reaction_cache) > REACTION_CACHE_MAX) {
+    g_debug("[REACTION] Cache overflow (%u > %u), clearing",
+            g_hash_table_size(self->reaction_cache), REACTION_CACHE_MAX);
+    g_hash_table_remove_all(self->reaction_cache);
+  }
+
   /* Update cached items */
   GHashTableIter iter;
   gpointer key;
@@ -1814,6 +1825,13 @@ static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n
   }
 
   storage_ndb_end_query(txn);
+
+  /* Cap zap cache to prevent unbounded growth */
+  if (g_hash_table_size(self->zap_stats_cache) > ZAP_CACHE_MAX) {
+    g_debug("[ZAP] Cache overflow (%u > %u), clearing",
+            g_hash_table_size(self->zap_stats_cache), ZAP_CACHE_MAX);
+    g_hash_table_remove_all(self->zap_stats_cache);
+  }
 
   /* Update cached items */
   GHashTableIter iter;
@@ -2749,6 +2767,9 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
     g_hash_table_remove_all(self->item_cache);
     g_queue_clear(self->cache_lru);
     g_hash_table_remove_all(self->thread_info);
+    if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
+    if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
+    if (self->skip_animation_keys) g_hash_table_remove_all(self->skip_animation_keys);
     return;
   }
 
@@ -2762,6 +2783,9 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
   g_hash_table_remove_all(self->thread_info);
+  if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
+  if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
+  if (self->skip_animation_keys) g_hash_table_remove_all(self->skip_animation_keys);
 
   g_debug("[MODEL] Cleared %u items", old_size);
 }
@@ -2899,6 +2923,7 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
+    g_hash_table_remove(self->skip_animation_keys, &k);
   }
 
   g_free(keys_to_remove);
@@ -3100,6 +3125,7 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
+    g_hash_table_remove(self->skip_animation_keys, &k);
   }
 
   g_free(keys_to_remove);

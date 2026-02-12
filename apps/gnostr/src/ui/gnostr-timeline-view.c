@@ -280,11 +280,30 @@ static void inflight_detach_row(GtkWidget *row) {
 static char *build_key_for_note_hex(const char *idhex) { return g_strdup_printf("id:%s", idhex ? idhex : ""); }
 static char *build_key_for_naddr_fields(int kind, const char *pubkey, const char *identifier) { return g_strdup_printf("a:%d:%s:%s", kind, pubkey ? pubkey : "", identifier ? identifier : ""); }
 
+/* Enforce INFLIGHT_MAX: cancel and remove oldest inflight when at capacity */
+static void inflight_enforce_limit(void) {
+  if (!s_inflight || g_hash_table_size(s_inflight) < INFLIGHT_MAX)
+    return;
+
+  /* Cancel the first entry found (hash table iteration order is arbitrary,
+   * which is acceptable — we just need to shed load) */
+  GHashTableIter it;
+  gpointer k, v;
+  g_hash_table_iter_init(&it, s_inflight);
+  if (g_hash_table_iter_next(&it, &k, &v)) {
+    Inflight *old = (Inflight*)v;
+    if (old && old->canc) g_cancellable_cancel(old->canc);
+    g_hash_table_iter_remove(&it);
+    g_debug("[INFLIGHT] Evicted oldest request (table at %u)", INFLIGHT_MAX);
+  }
+}
+
 /* Start or attach to an inflight request */
 static void start_or_attach_request(const char *key, const char **urls, size_t url_count, NostrFilter *f, GnostrNoteCardRow *row) {
   ensure_inflight();
   Inflight *in = (Inflight*)g_hash_table_lookup(s_inflight, key);
   if (!in) {
+    inflight_enforce_limit();
     in = g_new0(Inflight, 1);
     in->canc = g_cancellable_new();
     in->rows = g_ptr_array_new_with_free_func(rowref_free);
