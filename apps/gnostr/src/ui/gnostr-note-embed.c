@@ -15,6 +15,7 @@
 #include <json.h>
 /* nostr_pool.h provided via utils.h */
 #include "../util/relays.h"
+#include "gnostr-label-guard.h"
 #include <string.h>
 #include <time.h>
 
@@ -159,6 +160,19 @@ gnostr_note_embed_measure(GtkWidget      *widget,
                            int            *minimum_baseline,
                            int            *natural_baseline)
 {
+  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(widget);
+
+  /* Guard: skip parent measure when disposed — child GtkLabels in liminal
+   * state can have NULL PangoLayout, causing SEGV in pango_layout_set_width
+   * during the layout traversal.  Return zeros; the widget is being recycled. */
+  if (self->disposed) {
+    *minimum = 0;
+    *natural = 0;
+    *minimum_baseline = -1;
+    *natural_baseline = -1;
+    return;
+  }
+
   GTK_WIDGET_CLASS(gnostr_note_embed_parent_class)->measure(
       widget, orientation, for_size,
       minimum, natural, minimum_baseline, natural_baseline);
@@ -1374,7 +1388,24 @@ void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self) {
    * See nostrc-ofq crash fix for this pattern. */
   g_return_if_fail(self != NULL);
 
-  /* Mark as disposed FIRST to prevent any async callbacks from running.
+  /* Clear ALL labels BEFORE setting disposed — PangoLayouts must be reset
+   * while the widget still has a native surface.  Without this, a layout pass
+   * between unbind and dispose can reach a child GtkLabel whose PangoLayout is
+   * NULL, causing SEGV in pango_layout_set_width. */
+  if (GNOSTR_LABEL_SAFE(self->content_label))
+    gtk_label_set_text(GTK_LABEL(self->content_label), "");
+  if (GNOSTR_LABEL_SAFE(self->author_label))
+    gtk_label_set_text(GTK_LABEL(self->author_label), "");
+  if (GNOSTR_LABEL_SAFE(self->handle_label))
+    gtk_label_set_text(GTK_LABEL(self->handle_label), "");
+  if (GNOSTR_LABEL_SAFE(self->timestamp_label))
+    gtk_label_set_text(GTK_LABEL(self->timestamp_label), "");
+  if (GNOSTR_LABEL_SAFE(self->error_label))
+    gtk_label_set_text(GTK_LABEL(self->error_label), "");
+  if (GNOSTR_LABEL_SAFE(self->profile_about_label))
+    gtk_label_set_text(GTK_LABEL(self->profile_about_label), "");
+
+  /* Mark as disposed to prevent any async callbacks from running.
    * This is the same pattern as note_card_row_prepare_for_unbind. */
   self->disposed = TRUE;
 

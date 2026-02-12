@@ -71,6 +71,8 @@ struct _GnostrArticleCard {
 #endif
 
   GCancellable *nip05_cancellable;
+
+  gboolean disposed;
 };
 
 G_DEFINE_TYPE(GnostrArticleCard, gnostr_article_card, GTK_TYPE_WIDGET)
@@ -89,6 +91,8 @@ static guint signals[N_SIGNALS];
 
 static void gnostr_article_card_dispose(GObject *object) {
   GnostrArticleCard *self = GNOSTR_ARTICLE_CARD(object);
+
+  self->disposed = TRUE;
 
   if (self->nip05_cancellable) {
     g_cancellable_cancel(self->nip05_cancellable);
@@ -357,6 +361,19 @@ gnostr_article_card_measure(GtkWidget      *widget,
                              int            *minimum_baseline,
                              int            *natural_baseline)
 {
+  GnostrArticleCard *self = GNOSTR_ARTICLE_CARD(widget);
+
+  /* Guard: skip parent measure when disposed — child GtkLabels in liminal
+   * state can have NULL PangoLayout, causing SEGV in pango_layout_set_width
+   * during the layout traversal. */
+  if (self->disposed) {
+    *minimum = 0;
+    *natural = 0;
+    *minimum_baseline = -1;
+    *natural_baseline = -1;
+    return;
+  }
+
   GTK_WIDGET_CLASS(gnostr_article_card_parent_class)->measure(
       widget, orientation, for_size,
       minimum, natural, minimum_baseline, natural_baseline);

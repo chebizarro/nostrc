@@ -726,6 +726,19 @@ og_preview_widget_measure(GtkWidget      *widget,
                           int            *minimum_baseline,
                           int            *natural_baseline)
 {
+  OgPreviewWidget *self = OG_PREVIEW_WIDGET(widget);
+
+  /* Guard: skip parent measure when disposed — child GtkLabels in liminal
+   * state can have NULL PangoLayout, causing SEGV in pango_layout_set_width
+   * during the layout traversal. */
+  if (self->disposed) {
+    *minimum = 0;
+    *natural = 0;
+    *minimum_baseline = -1;
+    *natural_baseline = -1;
+    return;
+  }
+
   GTK_WIDGET_CLASS(og_preview_widget_parent_class)->measure(
       widget, orientation, for_size,
       minimum, natural, minimum_baseline, natural_baseline);
@@ -948,7 +961,18 @@ void og_preview_widget_prepare_for_unbind(OgPreviewWidget *self) {
    * See nostrc-ofq crash fix for this pattern. */
   g_return_if_fail(self != NULL);
 
-  /* Mark as disposed FIRST to prevent any async callbacks from running.
+  /* Clear labels BEFORE setting disposed — prevents SEGV in
+   * pango_layout_set_width if a layout pass runs between unbind and dispose. */
+  if (GNOSTR_LABEL_SAFE(self->title_label))
+    gtk_label_set_text(GTK_LABEL(self->title_label), "");
+  if (GNOSTR_LABEL_SAFE(self->description_label))
+    gtk_label_set_text(GTK_LABEL(self->description_label), "");
+  if (GNOSTR_LABEL_SAFE(self->site_label))
+    gtk_label_set_text(GTK_LABEL(self->site_label), "");
+  if (GNOSTR_LABEL_SAFE(self->error_label))
+    gtk_label_set_text(GTK_LABEL(self->error_label), "");
+
+  /* Mark as disposed to prevent any async callbacks from running.
    * This is the same pattern as note_card_row_prepare_for_unbind. */
   self->disposed = TRUE;
 

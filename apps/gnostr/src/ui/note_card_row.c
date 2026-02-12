@@ -1792,6 +1792,19 @@ gnostr_note_card_row_measure(GtkWidget      *widget,
                              int            *minimum_baseline,
                              int            *natural_baseline)
 {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(widget);
+
+  /* Guard: skip parent measure when disposed — child widgets (NoteEmbed,
+   * OgPreview) may contain GtkLabels with NULL PangoLayout, causing SEGV
+   * in pango_layout_set_width during layout traversal. */
+  if (self->disposed) {
+    *minimum = 0;
+    *natural = 0;
+    *minimum_baseline = -1;
+    *natural_baseline = -1;
+    return;
+  }
+
   GTK_WIDGET_CLASS(gnostr_note_card_row_parent_class)->measure(
       widget, orientation, for_size,
       minimum, natural, minimum_baseline, natural_baseline);
