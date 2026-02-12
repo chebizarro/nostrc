@@ -6308,7 +6308,7 @@ deferred_heavy_init_cb(gpointer data)
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
 
-  g_debug("[STARTUP] deferred_heavy_init_cb: beginning heavy init");
+  g_warning("[STARTUP] deferred_heavy_init_cb: ENTER");
 
   /* Initialize GListModel-based event model */
   self->event_model = gn_nostr_event_model_new();
@@ -6324,6 +6324,7 @@ deferred_heavy_init_cb(gpointer data)
     .limit = 500  /* Match MODEL_MAX_EVENTS to avoid unnecessary work */
   };
   gn_nostr_event_model_set_query(self->event_model, &params);
+  g_warning("[STARTUP] set_query done");
 
   /* REPOMARK:SCOPE: 4 - Wire GnNostrEventModel "need-profile" signal to enqueue_profile_author() and disable legacy thread_roots/prefetch initialization in gnostr_main_window_init */
   g_signal_connect(self->event_model, "need-profile", G_CALLBACK(on_event_model_need_profile), self);
@@ -6383,18 +6384,22 @@ deferred_heavy_init_cb(gpointer data)
   /* CRITICAL: Initialize pool and relays BEFORE timeline prepopulation!
    * Timeline prepopulation triggers profile fetches, which need relays in the pool.
    * If we prepopulate first, profile fetches will skip all relays (not in pool yet). */
+  g_warning("[STARTUP] starting pool...");
   start_pool_live(self);
+  g_warning("[STARTUP] pool started, starting profile sub...");
   /* Also start profile subscription if identity is configured */
   start_profile_subscription(self);
 
   /* nostrc-bkor: Start gift wrap subscription AFTER state init and DM service setup.
    * This sets user_pubkey_hex from saved settings on app restart. */
   start_gift_wrap_subscription(self);
+  g_warning("[STARTUP] gift wrap sub done, scheduling 150ms timeout");
 
   /* Seed initial items so Timeline page isn't empty.
    * 150ms delay allows relay pool setup (started above) to begin connecting.
    * nostrc-b0h: Audited - brief delay for async initialization is appropriate. */
   g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
+  g_warning("[STARTUP] deferred_heavy_init_cb: EXIT (timeout scheduled)");
 
   /* Background profile prefetch disabled (model emits need-profile when required). */
 
@@ -7266,10 +7271,11 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
 static void initial_refresh_timeout_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  g_debug("STARTUP_DEBUG: initial_refresh_timeout_cb ENTER");
+  g_warning("[STARTUP] initial_refresh_timeout_cb: switching to SESSION page");
 
   /* Show session page immediately so UI is responsive while NDB query runs */
   gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_SESSION);
+  g_warning("[STARTUP] initial_refresh_timeout_cb: page switched, starting async refresh");
 
   if (self->event_model) {
     /* Async: NDB query + JSON deserialization run in a worker thread.
@@ -7277,7 +7283,7 @@ static void initial_refresh_timeout_cb(gpointer data) {
     gn_nostr_event_model_refresh_async(self->event_model);
   }
 
-  g_debug("STARTUP_DEBUG: initial_refresh_timeout_cb EXIT");
+  g_warning("[STARTUP] initial_refresh_timeout_cb: EXIT");
 }
 
 static void user_meta_free(gpointer p) { g_free(p); }

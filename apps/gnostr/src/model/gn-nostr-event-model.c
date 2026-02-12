@@ -1546,10 +1546,12 @@ static void timeline_batch_complete_cb(GObject      *source_object,
   if (have_txn)
     storage_ndb_end_query(txn);
 
-  /* Emit batched signal for direct inserts (startup path) */
+  /* Emit batched signal for direct inserts (startup path).
+   * CRITICAL: evict BEFORE signal to keep model consistent — same pattern
+   * as refresh and on_refresh_async_done. */
   if (direct_inserted > 0) {
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, self->notes->len);
     enforce_window_inline(self);
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, self->notes->len);
     g_debug("[INSERT] Direct insert: %u items (startup fallback), model now %u",
             direct_inserted, self->notes->len);
   }
@@ -2083,8 +2085,11 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
    * after subscription creation. Without this initial load, the timeline sits
    * empty until relay connections deliver events — making the app appear stalled.
    *
-   * The cursor API paginates over cached events. We feed results through the
-   * same on_sub_timeline_batch handler that processes live events. */
+   * IMPORTANT: This MUST be synchronous. The cursor results are inserted
+   * directly into the model so the GtkListView has items before the first
+   * frame. The async GTask pipeline is for live events from relays only.
+   * Full data (profiles, NIP-10 thread info, meta counts) is populated by
+   * refresh_async 150ms later. */
   if (self->n_kinds > 0 && self->notes->len == 0) {
     GString *filter = g_string_new("{\"kinds\":[");
     for (gsize i = 0; i < self->n_kinds; i++) {
@@ -2102,14 +2107,10 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
       guint total = 0;
 
       while (storage_ndb_cursor_next(cursor, &entries, &count) == 0 && count > 0) {
-        /* Convert cursor entries to note_key array for batch handler */
-        uint64_t *keys = g_new(uint64_t, count);
-        for (guint i = 0; i < count; i++)
-          keys[i] = entries[i].note_key;
-
-        on_sub_timeline_batch(0, keys, count, self);
-        g_free(keys);
-
+        for (guint i = 0; i < count; i++) {
+          insert_note_silent(self, entries[i].note_key,
+                             (gint64)entries[i].created_at, NULL, NULL, 0);
+        }
         total += count;
         if (total >= self->window_size)
           break;
@@ -2117,8 +2118,10 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
 
       storage_ndb_cursor_free(cursor);
 
-      if (total > 0) {
-        g_debug("[MODEL] Initial load: %u events from nostrdb cache", total);
+      if (self->notes->len > 0) {
+        enforce_window_inline(self);
+        g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+        g_debug("[MODEL] Initial load: %u events from nostrdb cache", self->notes->len);
       }
     }
   }
