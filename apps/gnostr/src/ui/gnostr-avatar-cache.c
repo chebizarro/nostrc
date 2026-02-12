@@ -583,11 +583,11 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
       if (cached) {
         s_avatar_metrics.mem_cache_hits++;
         avatar_lru_touch(url);
-        if (image && GTK_IS_PICTURE(image)) {
+        if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL) {
           gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(cached));
           gtk_widget_set_visible(image, TRUE);
         }
-        if (initials && GTK_IS_WIDGET(initials)) {
+        if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
           gtk_widget_set_visible(initials, FALSE);
         }
         return;
@@ -599,11 +599,11 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
         g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
         avatar_lru_insert(url);
         avatar_lru_evict_if_needed();
-        if (image && GTK_IS_PICTURE(image)) {
+        if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL) {
           gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(disk_tex));
           gtk_widget_set_visible(image, TRUE);
         }
-        if (initials && GTK_IS_WIDGET(initials)) {
+        if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
           gtk_widget_set_visible(initials, FALSE);
         }
         g_object_unref(disk_tex);
@@ -718,12 +718,19 @@ static void on_avatar_decode_done(GObject *source, GAsyncResult *res, gpointer u
   avatar_lru_evict_if_needed();
 
   /* CRITICAL: Use g_weak_ref_get to safely check if widgets still exist.
-   * If widget was recycled/disposed during decode, weak ref returns NULL. */
+   * If widget was recycled/disposed during decode, weak ref returns NULL.
+   *
+   * ALSO check gtk_widget_get_native() — g_weak_ref_get returns non-NULL
+   * for recycled (not finalized) GtkListView row widgets. A widget without
+   * a native surface is in a transitional state; calling set_paintable on
+   * it corrupts GtkPicture's internal GtkImageDefinition, causing:
+   *   Gtk:ERROR:gtkimagedefinition.c:156:gtk_image_definition_unref:
+   *     code should not be reached */
   GtkWidget *image = g_weak_ref_get(&ctx->image_ref);
   GtkWidget *initials = g_weak_ref_get(&ctx->initials_ref);
 
   if (image) {
-    if (GTK_IS_PICTURE(image)) {
+    if (GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL) {
       gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(tex));
       gtk_widget_set_visible(image, TRUE);
     }
@@ -733,7 +740,7 @@ static void on_avatar_decode_done(GObject *source, GAsyncResult *res, gpointer u
   }
 
   if (initials) {
-    if (GTK_IS_WIDGET(initials)) {
+    if (GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
       gtk_widget_set_visible(initials, FALSE);
     }
     g_object_unref(initials);

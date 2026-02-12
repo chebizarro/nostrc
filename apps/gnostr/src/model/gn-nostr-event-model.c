@@ -848,23 +848,6 @@ static gboolean on_tick_callback(GtkWidget     *widget,
               total_processed, self->notes->len);
     }
 
-    /* Deferred window eviction: avoid expensive removal signal every frame. */
-    self->evict_defer_counter++;
-    gboolean do_evict = (self->evict_defer_counter >= EVICT_DEFER_FRAMES) ||
-                         (self->insertion_buffer->len == 0); /* last batch: clean up */
-    if (do_evict) {
-      guint pre_evict = self->notes->len;
-      guint evicted = enforce_window_inline(self);
-      self->evict_defer_counter = 0;
-
-      /* Emit separate removal signal for tail eviction */
-      if (evicted > 0) {
-        g_list_model_items_changed(G_LIST_MODEL(self), self->notes->len, evicted, 0);
-        g_debug("[FRAME] Evicted %u items from tail, model %u -> %u",
-                evicted, pre_evict, self->notes->len);
-      }
-    }
-
     /* Track unseen items when user is scrolled down.
      * Throttle signal emission to avoid per-frame toast label updates. */
     if (!self->user_at_top && total_processed > 0) {
@@ -878,9 +861,33 @@ static gboolean on_tick_callback(GtkWidget     *widget,
     }
   }
 
-  /* Continue while there is work remaining */
-  if (self->insertion_buffer->len > 0) {
-    return G_SOURCE_CONTINUE;
+  /* Phase 2: Window eviction — ONLY when no items were inserted this frame.
+   * CRITICAL: Two items_changed signals in one frame (insert at 0 + evict at
+   * tail) causes a GTK widget recycling storm. During rapid recycle, GtkPicture's
+   * internal GtkImageDefinition can get corrupted, triggering:
+   *   Gtk:ERROR:gtkimagedefinition.c:156:gtk_image_definition_unref:
+   *     code should not be reached
+   * By deferring eviction to a frame with no insertions, we guarantee at most
+   * ONE items_changed signal per frame. */
+  if (total_processed == 0) {
+    guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
+    if (self->notes->len > cap) {
+      guint pre_evict = self->notes->len;
+      guint evicted = enforce_window_inline(self);
+      if (evicted > 0) {
+        g_list_model_items_changed(G_LIST_MODEL(self), self->notes->len, evicted, 0);
+        g_debug("[FRAME] Evicted %u items from tail, model %u -> %u",
+                evicted, pre_evict, self->notes->len);
+      }
+    }
+  }
+
+  /* Continue while there is work remaining OR eviction is needed */
+  {
+    guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
+    if (self->insertion_buffer->len > 0 || self->notes->len > cap) {
+      return G_SOURCE_CONTINUE;
+    }
   }
 
   g_debug("[FRAME] All work complete, removing tick callback");
