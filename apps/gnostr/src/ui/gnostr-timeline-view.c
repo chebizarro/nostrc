@@ -2003,6 +2003,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                      handle, avatar_url);
     gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, ts);
 
+    /* Connect embed request signal EARLY — before content setting, because
+     * the Tier 2 map handler may fire immediately during bind (if row is
+     * already mapped) and emit request-embed before we reach the signal
+     * connection point at the end of bind.  Must be connected before
+     * any code path that creates NoteEmbed widgets.
+     * Disconnected in factory_unbind_cb to prevent accumulation. */
+    g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
+
     /* NIP-92: Use imeta-aware setter if this is a GnNostrEventItem */
     const char *tags_json = NULL;
     gint event_kind = 1;  /* Default to kind 1 text note */
@@ -2127,7 +2135,12 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
        * synchronous NDB queries during bind, blocking the main thread. */
       if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
         const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
-        gnostr_note_card_row_set_content_markup_only(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+        if (cached) {
+          gnostr_note_card_row_set_content_markup_only(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+        } else {
+          /* No cache: fall back to full render (first bind) */
+          gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+        }
         /* Connect Tier 2 map handler for deferred embed/media/OG creation */
         gulong map_id = g_signal_connect(row, "map",
                                           G_CALLBACK(on_tv_row_mapped_tier2), item);
@@ -2393,10 +2406,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
 
     g_free(display_fallback);
-    
-    /* Connect embed request signal.
-     * Disconnected in factory_unbind_cb to prevent accumulation across rebinds. */
-    g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
+    /* request-embed signal connected early (before content setting) — see above. */
   }
 
   /* Debug logging removed - too verbose for per-item binding */
