@@ -312,7 +312,7 @@ endif()
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 
 # GObject wrapper layer (nostr-glib-1.0) — must come after NIP targets
-add_subdirectory(gobject)
+add_subdirectory(nostr-gobject)
 
 # Add test targets from `tests/`.
 add_subdirectory(tests)

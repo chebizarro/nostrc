@@ -1,4 +1,4 @@
-# gobject/CMakeLists.txt — CMake build for the nostr-glib-1.0 GObject layer
+# nostr-gobject/CMakeLists.txt — CMake build for the nostr-glib-1.0 GObject layer
 #
 # Builds libnostr-glib-1.0, optionally generates GIR/typelib via g-ir-scanner,
 # installs headers, pkg-config .pc file, and GIR artifacts.

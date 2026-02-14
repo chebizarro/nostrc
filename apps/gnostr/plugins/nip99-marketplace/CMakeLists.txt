@@ -25,7 +25,7 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
     ${GNOSTR_APP_DIR}/src/util
     ${GNOSTR_APP_DIR}/src/ui
     ${PROJECT_ROOT}/nips/nip46/include
-    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${PROJECT_ROOT}/libgo/include
     ${PROJECT_ROOT}/libjson/include

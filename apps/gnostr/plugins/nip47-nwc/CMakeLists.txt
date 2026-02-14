@@ -21,7 +21,7 @@ add_library(${PLUGIN_NAME} MODULE ${PLUGIN_SOURCES})
 target_include_directories(${PLUGIN_NAME} PRIVATE
     ${GNOSTR_APP_DIR}/src
     ${GNOSTR_APP_DIR}/src/util
-    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${PROJECT_ROOT}/libnostr/generated
     ${PROJECT_ROOT}/nips/nip47/include

@@ -215,7 +215,7 @@ endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
-  ${PROJECT_ROOT}/gobject/include
+  ${PROJECT_ROOT}/nostr-gobject/include
   ${PROJECT_ROOT}/libnostr/include
   ${_NOSTR_CONFIG_DIR}
   ${PROJECT_ROOT}/libgo/include
@@ -242,24 +242,24 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
 # nostrc-kshv: Added nostr_keys for key operations wrapper
 # nostrc-h1ti: Added nostr_store interface and NDB store implementation
 target_sources(${APP_CLIENT_BIN} PRIVATE
-  ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
-  ${PROJECT_ROOT}/gobject/src/nostr_pool.c
-  ${PROJECT_ROOT}/gobject/src/nostr_relay.c
-  ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
-  ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
-  ${PROJECT_ROOT}/gobject/src/nostr_keys.c
-  ${PROJECT_ROOT}/gobject/src/nostr_event.c
-  ${PROJECT_ROOT}/gobject/src/nostr_store.c
-  ${PROJECT_ROOT}/gobject/src/nostr_ndb_store.c
-  ${PROJECT_ROOT}/gobject/src/nostr-enums.c
-  ${PROJECT_ROOT}/gobject/src/nostr-error.c
-  ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
-  ${PROJECT_ROOT}/gobject/src/nostr_nip49.c
-  ${PROJECT_ROOT}/gobject/src/nostr_bip39.c
-  ${PROJECT_ROOT}/gobject/src/nostr_json.c
-  ${PROJECT_ROOT}/gobject/src/nostr_filter.c
-  ${PROJECT_ROOT}/gobject/src/nostr_nip19.c
-  ${PROJECT_ROOT}/gobject/src/nostr_pointer.c)
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_keys.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_event.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_store.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_ndb_store.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_nip49.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_bip39.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_filter.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_nip19.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pointer.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
@@ -501,7 +501,7 @@ add_executable(gnostr-live-log src/cli_live_logger.c)
 target_compile_features(gnostr-live-log PRIVATE c_std_11)
 target_compile_definitions(gnostr-live-log PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
 target_include_directories(gnostr-live-log PRIVATE
-  ${PROJECT_ROOT}/gobject/include
+  ${PROJECT_ROOT}/nostr-gobject/include
   ${PROJECT_ROOT}/libnostr/include
   ${_NOSTR_CONFIG_DIR}
   ${PROJECT_ROOT}/libgo/include
@@ -515,15 +515,15 @@ target_include_directories(gnostr-live-log PRIVATE
 # nostrc-7typ: nostr_simple_pool now depends on nostr_event_bus
 # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by storage_ndb.c
 target_sources(gnostr-live-log PRIVATE
-  ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
-  ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
-  ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
-  ${PROJECT_ROOT}/gobject/src/nostr_json.c
-  ${PROJECT_ROOT}/gobject/src/nostr-error.c
-  ${PROJECT_ROOT}/gobject/src/nostr-enums.c
-  ${PROJECT_ROOT}/gobject/src/nostr_pool.c
-  ${PROJECT_ROOT}/gobject/src/nostr_relay.c
-  ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
@@ -593,7 +593,7 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nips/nip19/include
     ${PROJECT_ROOT}/nips/nip46/include
     ${PROJECT_ROOT}/libgo/include
-    ${PROJECT_ROOT}/gobject/include)
+    ${PROJECT_ROOT}/nostr-gobject/include)
   # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
   target_sources(gnostr-test-blossom PRIVATE
     src/util/blossom.c
@@ -603,14 +603,14 @@ if (BUILD_TESTING)
     src/ipc/signer_ipc.c
     src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
-    ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
-    ${PROJECT_ROOT}/gobject/src/nostr_relay.c
-    ${PROJECT_ROOT}/gobject/src/nostr_pool.c
-    ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
-    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
-    ${PROJECT_ROOT}/gobject/src/nostr-enums.c
-    ${PROJECT_ROOT}/gobject/src/nostr-error.c
-    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c)
   # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
   target_compile_definitions(gnostr-test-blossom PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
@@ -633,7 +633,7 @@ if (BUILD_TESTING)
     ${_NOSTR_CONFIG_DIR}
     ${PROJECT_ROOT}/nips/nip46/include
     ${PROJECT_ROOT}/libgo/include
-    ${PROJECT_ROOT}/gobject/include)
+    ${PROJECT_ROOT}/nostr-gobject/include)
   # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
   target_sources(gnostr-test-blossom-settings PRIVATE
     src/util/blossom_settings.c
@@ -642,14 +642,14 @@ if (BUILD_TESTING)
     src/ipc/signer_ipc.c
     src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
-    ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
-    ${PROJECT_ROOT}/gobject/src/nostr_relay.c
-    ${PROJECT_ROOT}/gobject/src/nostr_pool.c
-    ${PROJECT_ROOT}/gobject/src/nostr_subscription.c
-    ${PROJECT_ROOT}/gobject/src/nostr_query_batcher.c
-    ${PROJECT_ROOT}/gobject/src/nostr-enums.c
-    ${PROJECT_ROOT}/gobject/src/nostr-error.c
-    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c)
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c)
   # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
   target_compile_definitions(gnostr-test-blossom-settings PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
@@ -735,13 +735,13 @@ if (BUILD_TESTING)
     src/model/gnostr-thread-subscription.c
     src/model/gn-ndb-sub-dispatcher.c
     src/storage_ndb.c
-    ${PROJECT_ROOT}/gobject/src/nostr_event_bus.c
-    ${PROJECT_ROOT}/gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
   target_compile_features(gnostr-test-thread-sub PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-sub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${_NOSTR_CONFIG_DIR}
     ${PROJECT_ROOT}/libgo/include
@@ -776,12 +776,12 @@ if (BUILD_TESTING)
   # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by gnostr-thread-graph-model.c
   add_executable(gnostr-test-thread-graph-model tests/test_thread_graph_model.c
     src/model/gnostr-thread-graph-model.c
-    ${PROJECT_ROOT}/gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
   target_compile_features(gnostr-test-thread-graph-model PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-graph-model PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${_NOSTR_CONFIG_DIR}
     ${PROJECT_ROOT}/libgo/include)
@@ -799,12 +799,12 @@ if (BUILD_TESTING)
   # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by gnostr-nip10-thread-manager.c
   add_executable(gnostr-test-nip10-thread-mgr tests/test_nip10_thread_manager.c
     src/model/gnostr-nip10-thread-manager.c
-    ${PROJECT_ROOT}/gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
   target_compile_features(gnostr-test-nip10-thread-mgr PRIVATE c_std_11)
   target_include_directories(gnostr-test-nip10-thread-mgr PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${_NOSTR_CONFIG_DIR}
     ${PROJECT_ROOT}/libgo/include)
@@ -834,7 +834,7 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-nip66-relay-discovery PRIVATE c_std_11)
   target_include_directories(gnostr-test-nip66-relay-discovery PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${PROJECT_ROOT}/libjson/include
     ${PROJECT_ROOT}/libgo/include
@@ -842,8 +842,8 @@ if (BUILD_TESTING)
   # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by nip66_relay_discovery.c
   target_sources(gnostr-test-nip66-relay-discovery PRIVATE
     src/util/nip66_relay_discovery.c
-    ${PROJECT_ROOT}/gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/gobject/src/nostr-error.c)
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
+    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
   # Disable async discovery (avoids nostr_simple_pool and relay dependencies)
   target_compile_definitions(gnostr-test-nip66-relay-discovery PRIVATE GNOSTR_NIP66_TEST_ONLY=1)
   target_link_libraries(gnostr-test-nip66-relay-discovery PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_json libgo)

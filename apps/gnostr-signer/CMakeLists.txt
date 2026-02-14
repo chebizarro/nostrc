@@ -159,12 +159,12 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 # NIP-46 core headers for bunker service
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip46/include)
 # GObject NIP-46 wrappers (GNostrNip46Client, GNostrNip46Bunker)
-target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/include)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nostr-gobject/include)
 target_sources(${APP_SIGNER_BIN} PRIVATE
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip46_client.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip46_bunker.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-enums.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-error.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip46_client.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip46_bunker.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
 )
 # NIP-19 for bech32 encoding
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/include)
@@ -209,16 +209,16 @@ endif()
 # Do NOT link nostr directly here - it causes ODR violation with nostr_json.so
 
 # GObject wrapper headers (GNostrKeys, GNostrNip19, GNostrNip49, GNostrBip39)
-target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/include)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nostr-gobject/include)
 # Compile GObject wrapper sources into the signer (hq-7p5m6)
 target_sources(${APP_SIGNER_BIN} PRIVATE
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip49.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_bip39.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip19.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_keys.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_event.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-error.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr-enums.c)
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip49.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_bip39.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip19.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_keys.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_event.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
+  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c)
 
 # Include project root so we can include gnome/seahorse/secret_store.h from the app
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})

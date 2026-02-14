@@ -29,7 +29,7 @@ set(SIGNER_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/nips/nip06/include
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
     ${CMAKE_SOURCE_DIR}/libnostr/include
-    ${CMAKE_SOURCE_DIR}/gobject/include
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/include
     ${CMAKE_SOURCE_DIR}/libgo/include
     ${NSYNC_INCLUDE_DIR}
     ${SECP256K1_INCLUDE_DIRS}
@@ -239,11 +239,11 @@ add_executable(test-hsm-provider
     test_hsm_provider.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider_mock.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_keys.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip19.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_event.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr-error.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr-enums.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_keys.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip19.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_event.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c
 )
 target_include_directories(test-hsm-provider PRIVATE
     ${SIGNER_INCLUDE_DIRS}
@@ -315,13 +315,13 @@ add_executable(test-social-recovery
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/social-recovery.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/secure-mem.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/backup-recovery.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_keys.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip19.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_nip49.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_bip39.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_event.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr-error.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr-enums.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_keys.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip19.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip49.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_bip39.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_event.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
+    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c
 )
 target_include_directories(test-social-recovery PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-social-recovery PRIVATE ${SIGNER_TEST_LIBS})

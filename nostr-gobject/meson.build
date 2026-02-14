@@ -16,7 +16,7 @@ gobject_dep = dependency('gobject-2.0', version: '>= 2.70')
 gio_dep = dependency('gio-2.0', version: '>= 2.70')
 json_glib_dep = dependency('json-glib-1.0', version: '>= 1.6', required: false)
 
-# ── Sibling project paths (relative to gobject/) ─────────────────────
+# ── Sibling project paths (relative to nostr-gobject/) ─────────────────────
 # CMake build output directory (must be built first)
 cmake_build_dir = meson.current_source_dir() / '..' / 'build'
 

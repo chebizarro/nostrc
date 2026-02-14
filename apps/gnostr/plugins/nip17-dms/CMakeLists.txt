@@ -23,7 +23,7 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
     ${PROJECT_ROOT}/nips/nip17/include
     ${PROJECT_ROOT}/nips/nip44/include
     ${PROJECT_ROOT}/nips/nip46/include
-    ${PROJECT_ROOT}/gobject/include
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${PROJECT_ROOT}/libgo/include
     ${CMAKE_BINARY_DIR}/apps/gnostr/generated
