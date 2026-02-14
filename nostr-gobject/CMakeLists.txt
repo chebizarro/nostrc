@@ -80,6 +80,12 @@ set(NOSTR_GOBJECT_SOURCES
   src/nostr_profile_provider.c
   src/nostr_profile_service.c
   src/storage_ndb.c
+  src/gn-timeline-query.c
+  src/gn-nostr-profile.c
+  src/gn-ndb-sub-dispatcher.c
+  src/gnostr-nip10-thread-manager.c
+  src/gnostr-thread-graph-model.c
+  src/gnostr-thread-subscription.c
   ${SIGNER_PROXY_C}
 )
 
@@ -114,6 +120,12 @@ set(NOSTR_GOBJECT_HEADERS
   include/nostr-gobject-1.0/nostr_utils.h
   include/nostr-gobject-1.0/nostr_profile_provider.h
   include/nostr-gobject-1.0/nostr_profile_service.h
+  include/nostr-gobject-1.0/gn-timeline-query.h
+  include/nostr-gobject-1.0/gn-nostr-profile.h
+  include/nostr-gobject-1.0/gn-ndb-sub-dispatcher.h
+  include/nostr-gobject-1.0/gnostr-nip10-thread-manager.h
+  include/nostr-gobject-1.0/gnostr-thread-graph-model.h
+  include/nostr-gobject-1.0/gnostr-thread-subscription.h
 )
 
 # ── Library target ───────────────────────────────────────────────────

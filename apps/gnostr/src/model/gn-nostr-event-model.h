@@ -4,7 +4,6 @@
 #include "gn-nostr-event-item.h"
 #include "gn-timeline-query.h"
 #include <gio/gio.h>
-#include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
@@ -100,9 +99,10 @@ void gn_nostr_event_model_set_user_at_top(GnNostrEventModel *self, gboolean at_t
 guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self);
 void gn_nostr_event_model_flush_pending(GnNostrEventModel *self);
 
-/* Associate a widget for frame-synced insertion buffer drain (tick callback).
- * Typically the GtkListView or its parent timeline view. */
-void gn_nostr_event_model_set_view_widget(GnNostrEventModel *self, GtkWidget *widget);
+/* Enable frame-rate insertion buffer drain (~60fps g_timeout).
+ * Call with TRUE after the model is attached to a visible view.
+ * Replaces the former GTK tick callback with a GLib-only timer. */
+void gn_nostr_event_model_set_drain_enabled(GnNostrEventModel *self, gboolean enabled);
 
 G_END_DECLS
 

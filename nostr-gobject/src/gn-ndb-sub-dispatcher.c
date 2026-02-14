@@ -1,7 +1,7 @@
 #define G_LOG_DOMAIN "gn-ndb-dispatcher"
 
 #include "gn-ndb-sub-dispatcher.h"
-#include "../storage_ndb.h"
+#include "storage_ndb.h"
 
 #include <glib.h>
 #include <stdint.h>

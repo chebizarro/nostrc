@@ -666,9 +666,7 @@ if (BUILD_TESTING)
     LABELS "thread;graph;unit;gnostr")
 
   # Thread subscription unit tests (nostrc-pp64)
-  add_executable(gnostr-test-thread-sub tests/test_thread_subscription.c
-    src/model/gnostr-thread-subscription.c
-    src/model/gn-ndb-sub-dispatcher.c)
+  add_executable(gnostr-test-thread-sub tests/test_thread_subscription.c)
   target_compile_features(gnostr-test-thread-sub PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-sub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -704,8 +702,7 @@ if (BUILD_TESTING)
     LABELS "thread;subscription;unit;gnostr")
 
   # Thread graph model unit tests (nostrc-pp64 4.2)
-  add_executable(gnostr-test-thread-graph-model tests/test_thread_graph_model.c
-    src/model/gnostr-thread-graph-model.c)
+  add_executable(gnostr-test-thread-graph-model tests/test_thread_graph_model.c)
   target_compile_features(gnostr-test-thread-graph-model PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-graph-model PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -724,8 +721,7 @@ if (BUILD_TESTING)
     LABELS "thread;graph;model;unit;gnostr")
 
   # NIP-10 thread manager unit tests (nostrc-pp64 4.3)
-  add_executable(gnostr-test-nip10-thread-mgr tests/test_nip10_thread_manager.c
-    src/model/gnostr-nip10-thread-manager.c)
+  add_executable(gnostr-test-nip10-thread-mgr tests/test_nip10_thread_manager.c)
   target_compile_features(gnostr-test-nip10-thread-mgr PRIVATE c_std_11)
   target_include_directories(gnostr-test-nip10-thread-mgr PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -744,10 +740,12 @@ if (BUILD_TESTING)
     LABELS "nip10;thread;manager;unit;gnostr")
 
   # Timeline query unit tests (nostrc-whu3)
-  add_executable(gnostr-test-timeline-query tests/test_timeline_query.c src/model/gn-timeline-query.c)
+  add_executable(gnostr-test-timeline-query tests/test_timeline_query.c)
   target_compile_features(gnostr-test-timeline-query PRIVATE c_std_11)
-  target_include_directories(gnostr-test-timeline-query PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(gnostr-test-timeline-query PRIVATE PkgConfig::GLIB)
+  target_include_directories(gnostr-test-timeline-query PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-timeline-query PRIVATE PkgConfig::GLIB nostr_gobject)
   _gnostr_apply_sanitizers(gnostr-test-timeline-query)
   add_test(NAME gnostr-test-timeline-query COMMAND gnostr-test-timeline-query)
   set_tests_properties(gnostr-test-timeline-query PROPERTIES

@@ -11,8 +11,8 @@
 
 #include "gnostr-thread-subscription.h"
 #include "gn-ndb-sub-dispatcher.h"
-#include "../storage_ndb.h"
-#include <nostr-gobject-1.0/nostr_event_bus.h>
+#include "storage_ndb.h"
+#include "nostr_event_bus.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include <string.h>

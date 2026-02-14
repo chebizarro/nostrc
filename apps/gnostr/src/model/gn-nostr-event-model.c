@@ -7,7 +7,6 @@
 #include "../util/mute_list.h"
 #include "../ui/gnostr-profile-provider.h"
 #include <nostr.h>
-#include <gtk/gtk.h>
 #include <string.h>
 
 /* Window sizing and cache sizes */
@@ -18,9 +17,9 @@
 
 /* Frame-aware batching — adaptive drain rate (backported from GnTimelineModel)
  *
- * Instead of debounce timers, the pipeline uses gtk_widget_add_tick_callback
- * for frame-synchronized insertion buffer drain. Batch size adapts dynamically
- * based on insertion buffer depth:
+ * The pipeline uses a ~16ms GLib timeout (g_timeout_add) for frame-rate
+ * insertion buffer drain, replacing the former GTK tick callback.
+ * Batch size adapts dynamically based on insertion buffer depth:
  *   Deep buffer (startup flood) → drain aggressively (up to 50/frame).
  *   Shallow buffer (steady state) → conservative (3/frame) for smooth scroll.
  * An inline frame-time guard yields early if the budget is exceeded. */
@@ -163,8 +162,8 @@ struct _GnNostrEventModel {
    * Backported from GnTimelineModel for frame-synced insertion with adaptive drain. */
   GArray *insertion_buffer;       /* PendingEntry items awaiting frame-synced insertion */
   GHashTable *insertion_key_set;  /* note_key → TRUE for O(1) dedup in insertion buffer */
-  guint tick_callback_id;         /* gtk_widget_add_tick_callback ID, 0 if inactive */
-  GtkWidget *tick_widget;         /* Widget providing frame clock (weak ref) */
+  guint tick_source_id;           /* g_timeout_add source ID, 0 if inactive */
+  gboolean drain_enabled;         /* TRUE when drain timer may run */
   guint peak_insertion_depth;     /* High-water mark for monitoring */
   gboolean backpressure_active;   /* TRUE when backpressure is being applied */
   guint evict_defer_counter;      /* Defer window eviction to avoid replace-all every frame */
@@ -580,9 +579,8 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
 
 /* ============== Insertion Buffer Pipeline (backported from GnTimelineModel) ============== */
 
-/* Forward declarations for pipeline tick callback */
-static gboolean on_tick_callback(GtkWidget *widget, GdkFrameClock *clock, gpointer user_data);
-static void on_tick_widget_destroyed(gpointer data, GObject *where_the_object_was);
+/* Forward declaration for pipeline drain timer */
+static gboolean on_drain_timer(gpointer user_data);
 
 /**
  * has_note_key_pending:
@@ -614,47 +612,33 @@ static void remove_note_key_from_insertion_set(GnNostrEventModel *self, uint64_t
 }
 
 /**
- * ensure_tick_callback:
- * Register a tick callback with the associated view widget for frame-synced drain.
- * No-op if no widget is set or widget is not realized.
+ * ensure_drain_timer:
+ * Start a ~16ms GLib timeout for frame-rate insertion buffer drain.
+ * No-op if timer is already running or drain is disabled.
  */
-static void ensure_tick_callback(GnNostrEventModel *self) {
-  if (self->tick_callback_id != 0)
+static void ensure_drain_timer(GnNostrEventModel *self) {
+  if (self->tick_source_id != 0)
     return;
-  if (!self->tick_widget)
+  if (!self->drain_enabled)
     return;
-  if (!gtk_widget_get_realized(self->tick_widget)) {
-    g_debug("[FRAME] Widget not realized, deferring tick callback");
-    return;
-  }
 
-  self->tick_callback_id = gtk_widget_add_tick_callback(
-    self->tick_widget,
-    on_tick_callback,
-    g_object_ref(self),
-    g_object_unref
-  );
+  self->tick_source_id = g_timeout_add(16, on_drain_timer, g_object_ref(self));
 
-  if (self->tick_callback_id != 0) {
-    g_debug("[FRAME] Tick callback registered (id=%u)", self->tick_callback_id);
+  if (self->tick_source_id != 0) {
+    g_debug("[FRAME] Drain timer started (id=%u)", self->tick_source_id);
   }
 }
 
 /**
- * remove_tick_callback:
- * Remove the tick callback if active and clean up widget weak reference.
+ * remove_drain_timer:
+ * Stop the drain timer if active.
  */
-static void remove_tick_callback(GnNostrEventModel *self) {
-  if (self->tick_callback_id != 0 && self->tick_widget) {
-    gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
+static void remove_drain_timer(GnNostrEventModel *self) {
+  if (self->tick_source_id != 0) {
+    g_source_remove(self->tick_source_id);
+    g_object_unref(self);  /* balance the ref from ensure_drain_timer */
   }
-  self->tick_callback_id = 0;
-
-  if (self->tick_widget) {
-    g_object_weak_unref(G_OBJECT(self->tick_widget),
-                        on_tick_widget_destroyed, self);
-    self->tick_widget = NULL;
-  }
+  self->tick_source_id = 0;
 }
 
 /**
@@ -783,21 +767,16 @@ static void process_pending_items(GnNostrEventModel *self, guint count) {
 }
 
 /**
- * on_tick_callback:
- * Called once per frame by GTK. Processes pending items from insertion buffer
- * using adaptive batch sizing, emits a single batched items_changed signal.
+ * on_drain_timer:
+ * Called ~60 times/sec by GLib timeout. Processes pending items from insertion
+ * buffer using adaptive batch sizing, emits a single batched items_changed signal.
  *
- * Adaptive drain rate: buffer depth controls batch size each frame.
+ * Adaptive drain rate: buffer depth controls batch size each tick.
  * Deep buffer (startup flood) → drain aggressively (up to ITEMS_PER_FRAME_MAX).
  * Shallow buffer (steady state) → conservative (ITEMS_PER_FRAME_FLOOR).
  * Sub-batches of 10 with inline frame-time guard.
  */
-static gboolean on_tick_callback(GtkWidget     *widget,
-                                  GdkFrameClock *clock,
-                                  gpointer       user_data) {
-  (void)widget;
-  (void)clock;
-
+static gboolean on_drain_timer(gpointer user_data) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self)) {
     return G_SOURCE_REMOVE;
@@ -890,60 +869,35 @@ static gboolean on_tick_callback(GtkWidget     *widget,
     }
   }
 
-  g_debug("[FRAME] All work complete, removing tick callback");
-  self->tick_callback_id = 0;
+  g_debug("[FRAME] All work complete, removing drain timer");
+  self->tick_source_id = 0;
+  g_object_unref(self);  /* balance the ref from ensure_drain_timer */
   return G_SOURCE_REMOVE;
 }
 
 /**
- * on_tick_widget_destroyed:
- * Weak notify callback when the tick widget is destroyed.
- */
-static void on_tick_widget_destroyed(gpointer data, GObject *where_the_object_was) {
-  (void)where_the_object_was;
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return;
-
-  g_debug("[FRAME] Tick widget destroyed, disabling frame-aware batching");
-  self->tick_widget = NULL;
-  self->tick_callback_id = 0;
-}
-
-/**
- * gn_nostr_event_model_set_view_widget:
+ * gn_nostr_event_model_set_drain_enabled:
  * @self: The model
- * @widget: A GtkWidget providing the frame clock for tick callbacks, or NULL
+ * @enabled: %TRUE to enable frame-rate drain, %FALSE to disable
  *
- * Associates a widget with the model for frame-synced insertion buffer drain.
- * If there are already pending items in the insertion buffer, the tick callback
- * is started immediately.
+ * Enable or disable the insertion buffer drain timer.
+ * Call with %TRUE after the model is attached to a visible view.
+ * If there are already pending items, the timer starts immediately.
  */
-void gn_nostr_event_model_set_view_widget(GnNostrEventModel *self, GtkWidget *widget) {
+void gn_nostr_event_model_set_drain_enabled(GnNostrEventModel *self, gboolean enabled) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
-  if (self->tick_widget == widget) return;
+  if (self->drain_enabled == enabled) return;
+  self->drain_enabled = enabled;
 
-  /* Clean up old widget */
-  if (self->tick_widget) {
-    if (self->tick_callback_id != 0) {
-      gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
-      self->tick_callback_id = 0;
-    }
-    g_object_weak_unref(G_OBJECT(self->tick_widget),
-                        on_tick_widget_destroyed, self);
-    self->tick_widget = NULL;
-  }
-
-  /* Set up new widget */
-  if (widget) {
-    self->tick_widget = widget;
-    g_object_weak_ref(G_OBJECT(widget), on_tick_widget_destroyed, self);
-
-    g_debug("[FRAME] View widget set, enabling frame-aware batching");
-
+  if (enabled) {
+    g_debug("[FRAME] Drain enabled");
     if (self->insertion_buffer && self->insertion_buffer->len > 0) {
-      ensure_tick_callback(self);
+      ensure_drain_timer(self);
     }
+  } else {
+    g_debug("[FRAME] Drain disabled");
+    remove_drain_timer(self);
   }
 }
 
@@ -1535,8 +1489,7 @@ static void timeline_batch_complete_cb(GObject      *source_object,
      * If no tick widget or widget not realized (startup: Loading page visible,
      * Session page hidden in GtkStack), insert directly like the old sync path.
      * Otherwise use the frame-synced insertion buffer. */
-    gboolean can_tick = self->tick_widget &&
-                        gtk_widget_get_realized(self->tick_widget);
+    gboolean can_tick = self->drain_enabled;
     if (can_tick) {
       PendingEntry pentry = {
         .note_key = ve->note_key,
@@ -1583,7 +1536,7 @@ static void timeline_batch_complete_cb(GObject      *source_object,
       self->backpressure_active = FALSE;
     }
 
-    ensure_tick_callback(self);
+    ensure_drain_timer(self);
   }
 
   /* Background profile prefetch for unique pubkeys */
@@ -1894,8 +1847,8 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   /* nostrc-7o7: Clean up animation skip tracking */
   if (self->skip_animation_keys) g_hash_table_unref(self->skip_animation_keys);
 
-  /* Clean up pipeline tick callback and insertion buffer */
-  remove_tick_callback(self);
+  /* Clean up pipeline drain timer and insertion buffer */
+  remove_drain_timer(self);
   if (self->insertion_buffer) g_array_unref(self->insertion_buffer);
   if (self->insertion_key_set) g_hash_table_unref(self->insertion_key_set);
 
