@@ -1343,43 +1343,64 @@ int nostr_nip46_client_nip04_encrypt(NostrNip46Session *s, const char *peer_pubk
     return 0;
 }
 
-/* nostrc-dbus1: NIP-46 encrypt/decrypt methods delegate to the REMOTE signer
- * via nip46_rpc_call (same as sign_event).  The remote signer holds the user's
- * actual private key; s->secret is only the CLIENT communication key used to
- * encrypt NIP-46 protocol messages, NOT the user's nostr key.
- *
- * NIP-46 RPC method signatures:
- *   nip04_decrypt(peer_pubkey_hex, ciphertext) -> plaintext
- *   nip44_encrypt(peer_pubkey_hex, plaintext)  -> ciphertext
- *   nip44_decrypt(peer_pubkey_hex, ciphertext) -> plaintext
- */
+/* NIP-46 protocol-level encrypt/decrypt using the session's communication key.
+ * These perform LOCAL crypto operations using s->secret (the client communication
+ * key), mirroring nostr_nip46_client_nip04_encrypt above. They are used for
+ * encrypting/decrypting NIP-46 protocol messages between client and bunker. */
 
 int nostr_nip46_client_nip04_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
     if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
     *out_plaintext = NULL;
-    const char *params[2] = { peer_pubkey_hex, ciphertext };
-    char *result = nip46_rpc_call(s, "nip04_decrypt", params, 2, NULL);
-    if (!result) return -1;
-    *out_plaintext = result;
+    if (!s->secret) return -1;
+    char *plain = NULL; char *err = NULL;
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(s->secret, (unsigned char*)sb.ptr) != 0) { if (sb.ptr) secure_free(&sb); return -1; }
+    if (nostr_nip04_decrypt_secure(ciphertext, peer_pubkey_hex, &sb, &plain, &err) != 0 || !plain) {
+        secure_free(&sb);
+        if (err) free(err);
+        return -1;
+    }
+    secure_free(&sb);
+    *out_plaintext = plain;
     return 0;
 }
 
 int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
     if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
     *out_ciphertext = NULL;
-    const char *params[2] = { peer_pubkey_hex, plaintext };
-    char *result = nip46_rpc_call(s, "nip44_encrypt", params, 2, NULL);
-    if (!result) return -1;
-    *out_ciphertext = result;
+    if (!s->secret) return -1;
+    unsigned char sk32[32], pk32[32];
+    if (parse_sk32(s->secret, sk32) != 0) return -1;
+    if (parse_peer_xonly32(peer_pubkey_hex, pk32) != 0) { secure_wipe(sk32, 32); return -1; }
+    char *cipher = NULL;
+    if (nostr_nip44_encrypt_v2(sk32, pk32, (const uint8_t*)plaintext, strlen(plaintext), &cipher) != 0 || !cipher) {
+        secure_wipe(sk32, 32);
+        return -1;
+    }
+    secure_wipe(sk32, 32);
+    *out_ciphertext = cipher;
     return 0;
 }
 
 int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
     if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
     *out_plaintext = NULL;
-    const char *params[2] = { peer_pubkey_hex, ciphertext };
-    char *result = nip46_rpc_call(s, "nip44_decrypt", params, 2, NULL);
-    if (!result) return -1;
+    if (!s->secret) return -1;
+    unsigned char sk32[32], pk32[32];
+    if (parse_sk32(s->secret, sk32) != 0) return -1;
+    if (parse_peer_xonly32(peer_pubkey_hex, pk32) != 0) { secure_wipe(sk32, 32); return -1; }
+    uint8_t *plain = NULL; size_t plain_len = 0;
+    if (nostr_nip44_decrypt_v2(sk32, pk32, ciphertext, &plain, &plain_len) != 0 || !plain) {
+        secure_wipe(sk32, 32);
+        return -1;
+    }
+    secure_wipe(sk32, 32);
+    /* NIP-44 output is raw bytes; null-terminate for string API */
+    char *result = malloc(plain_len + 1);
+    if (!result) { free(plain); return -1; }
+    memcpy(result, plain, plain_len);
+    result[plain_len] = '\0';
+    free(plain);
     *out_plaintext = result;
     return 0;
 }
