@@ -1,0 +1,36 @@
+#pragma once
+
+/**
+ * SECTION:nostr-gtk-version
+ * @short_description: Version information for nostr-gtk
+ *
+ * Version macros for compile-time version checks.
+ */
+
+/**
+ * NOSTR_GTK_MAJOR_VERSION:
+ *
+ * The major version component (e.g. 1 if the version is 1.2.3).
+ */
+#define NOSTR_GTK_MAJOR_VERSION @NOSTR_GTK_MAJOR_VERSION@
+
+/**
+ * NOSTR_GTK_MINOR_VERSION:
+ *
+ * The minor version component (e.g. 2 if the version is 1.2.3).
+ */
+#define NOSTR_GTK_MINOR_VERSION @NOSTR_GTK_MINOR_VERSION@
+
+/**
+ * NOSTR_GTK_MICRO_VERSION:
+ *
+ * The micro version component (e.g. 3 if the version is 1.2.3).
+ */
+#define NOSTR_GTK_MICRO_VERSION @NOSTR_GTK_MICRO_VERSION@
+
+/**
+ * NOSTR_GTK_VERSION:
+ *
+ * The full version string (e.g. "1.2.3").
+ */
+#define NOSTR_GTK_VERSION "@NOSTR_GTK_VERSION@"

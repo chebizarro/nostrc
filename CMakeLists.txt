@@ -327,6 +327,12 @@ include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 # GObject wrapper layer (nostr-gobject-1.0) — must come after NIP targets
 add_subdirectory(nostr-gobject)
 
+# GTK4/libadwaita widget library (nostr-gtk-1.0) — depends on nostr-gobject
+option(BUILD_NOSTR_GTK "Build nostr-gtk widget library (requires GTK4 + libadwaita)" ON)
+if (BUILD_NOSTR_GTK)
+  add_subdirectory(nostr-gtk)
+endif()
+
 # Add test targets from `tests/`.
 add_subdirectory(tests)
 
