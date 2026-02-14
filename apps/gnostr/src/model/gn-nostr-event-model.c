@@ -102,7 +102,7 @@ struct _GnNostrEventModel {
   GObject parent_instance;
 
   /* Query parameters (new API) */
-  GnTimelineQuery *timeline_query;
+  GNostrTimelineQuery *timeline_query;
 
   /* Query parameters (legacy - kept for compatibility) */
   gint *kinds;
@@ -139,8 +139,8 @@ struct _GnNostrEventModel {
   GHashTable *item_cache;  /* key: uint64_t*, value: GnNostrEventItem* */
   GQueue *cache_lru;       /* uint64_t* keys in LRU order */
 
-  /* Profile cache - pubkey -> GnNostrProfile (with LRU eviction) */
-  GHashTable *profile_cache;      /* key: pubkey (string), value: GnNostrProfile* */
+  /* Profile cache - pubkey -> GNostrProfile (with LRU eviction) */
+  GHashTable *profile_cache;      /* key: pubkey (string), value: GNostrProfile* */
   GQueue *profile_cache_lru;      /* char* pubkey in LRU order (head=oldest) */
 
   /* Author readiness (kind 0 exists in DB / loaded) - with LRU eviction */
@@ -234,8 +234,8 @@ enum {
 static guint signals[N_SIGNALS];
 
 /* Forward declarations */
-static GnNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex);
-static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void *txn,
+static GNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex);
+static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void *txn,
                                                     const unsigned char pk32[32],
                                                     const char *pubkey_hex);
 static void profile_cache_update_from_content(GnNostrEventModel *self, const char *pubkey_hex,
@@ -374,20 +374,20 @@ static gboolean db_has_profile_event_for_pubkey(void *txn, const unsigned char p
   return TRUE;
 }
 
-static GnNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex) {
+static GNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex) {
   if (!self || !self->profile_cache || !pubkey_hex) return NULL;
   return g_hash_table_lookup(self->profile_cache, pubkey_hex);
 }
 
 /* Load kind-0 profile from DB (storage_ndb_get_profile_by_pubkey returns *event* JSON), then cache it.
- * Returns a cached GnNostrProfile* on success, NULL if not found.
+ * Returns a cached GNostrProfile* on success, NULL if not found.
  */
-static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void *txn,
+static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void *txn,
                                                     const unsigned char pk32[32],
                                                     const char *pubkey_hex) {
   if (!self || !txn || !pk32 || !pubkey_hex) return NULL;
 
-  GnNostrProfile *existing = profile_cache_get(self, pubkey_hex);
+  GNostrProfile *existing = profile_cache_get(self, pubkey_hex);
   if (existing) return existing;
 
   char *evt_json = NULL;
@@ -404,13 +404,13 @@ static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, voi
     return NULL;
   }
 
-  GnNostrProfile *profile = NULL;
+  GNostrProfile *profile = NULL;
 
   if (nostr_event_deserialize(evt, evt_json) == 0 && nostr_event_get_kind(evt) == 0) {
     const char *content = nostr_event_get_content(evt);
     if (content && *content) {
-      profile = gn_nostr_profile_new(pubkey_hex);
-      gn_nostr_profile_update_from_json(profile, content);
+      profile = gnostr_profile_new(pubkey_hex);
+      gnostr_profile_update_from_json(profile, content);
       g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
       /* Add to LRU queue (new entry) */
       if (self->profile_cache_lru) {
@@ -482,9 +482,9 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
   /* content is kind-0 event content JSON, not necessarily NUL terminated */
   char *tmp = g_strndup(content, content_len);
 
-  GnNostrProfile *profile = profile_cache_get(self, pubkey_hex);
+  GNostrProfile *profile = profile_cache_get(self, pubkey_hex);
   if (!profile) {
-    profile = gn_nostr_profile_new(pubkey_hex);
+    profile = gnostr_profile_new(pubkey_hex);
     g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
     /* Add to LRU queue (new entry) */
     g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
@@ -492,7 +492,7 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
     profile_cache_evict(self);
   }
 
-  gn_nostr_profile_update_from_json(profile, tmp);
+  gnostr_profile_update_from_json(profile, tmp);
   mark_author_ready(self, pubkey_hex);
 
   g_free(tmp);
@@ -504,7 +504,7 @@ static void notify_cached_items_for_pubkey(GnNostrEventModel *self, const char *
   if (!self || !pubkey_hex || !self->item_cache) return;
 
   /* Get the profile from the model's cache */
-  GnNostrProfile *profile = profile_cache_get(self, pubkey_hex);
+  GNostrProfile *profile = profile_cache_get(self, pubkey_hex);
   if (!profile) return; /* No profile to set */
 
   GHashTableIter iter;
@@ -525,7 +525,7 @@ static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char
   if (!self) return FALSE;
 
   /* NIP-51 Mute list filter: check if author is muted */
-  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  GNostrMuteList *mute_list = gnostr_mute_list_get_default();
   if (mute_list && pubkey_hex && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
     return FALSE;
   }
@@ -1198,7 +1198,7 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     if (!gn_nostr_event_item_get_profile(item)) {
       const char *pubkey = gn_nostr_event_item_get_pubkey(item);
       if (pubkey) {
-        GnNostrProfile *profile = profile_cache_get(self, pubkey);
+        GNostrProfile *profile = profile_cache_get(self, pubkey);
         if (profile) {
           gn_nostr_event_item_set_profile(item, profile);
         } else {
@@ -1233,7 +1233,7 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
    * their profiles might still not be loaded. */
   const char *pubkey = gn_nostr_event_item_get_pubkey(item);
   if (pubkey) {
-    GnNostrProfile *profile = profile_cache_get(self, pubkey);
+    GNostrProfile *profile = profile_cache_get(self, pubkey);
     if (profile) {
       gn_nostr_event_item_set_profile(item, profile);
     } else {
@@ -1338,7 +1338,7 @@ static void timeline_batch_thread_func(GTask        *task,
     storage_ndb_hex_encode(pk32, pubkey_hex);
 
     /* Mute check — gnostr_mute_list uses internal GMutex, thread-safe */
-    GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
     if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex))
       continue;
 
@@ -1446,7 +1446,7 @@ static void timeline_batch_complete_cb(GObject      *source_object,
     if (have_txn && !author_is_ready(self, ve->pubkey_hex)) {
       uint8_t pk32[32];
       if (hex_to_bytes32(ve->pubkey_hex, pk32)) {
-        GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, ve->pubkey_hex);
+        GNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, ve->pubkey_hex);
         if (!p)
           g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, ve->pubkey_hex);
       }
@@ -1822,7 +1822,7 @@ static void gn_nostr_event_model_finalize(GObject *object) {
 
   /* Free timeline query */
   if (self->timeline_query) {
-    gn_timeline_query_free(self->timeline_query);
+    gnostr_timeline_query_free(self->timeline_query);
     self->timeline_query = NULL;
   }
 
@@ -1959,7 +1959,7 @@ GnNostrEventModel *gn_nostr_event_model_new(void) {
   return g_object_new(GN_TYPE_NOSTR_EVENT_MODEL, NULL);
 }
 
-GnNostrEventModel *gn_nostr_event_model_new_with_query(GnTimelineQuery *query) {
+GnNostrEventModel *gn_nostr_event_model_new_with_query(GNostrTimelineQuery *query) {
   GnNostrEventModel *self = gn_nostr_event_model_new();
   if (query) {
     gn_nostr_event_model_set_timeline_query(self, query);
@@ -1967,19 +1967,19 @@ GnNostrEventModel *gn_nostr_event_model_new_with_query(GnTimelineQuery *query) {
   return self;
 }
 
-void gn_nostr_event_model_set_timeline_query(GnNostrEventModel *self, GnTimelineQuery *query) {
+void gn_nostr_event_model_set_timeline_query(GnNostrEventModel *self, GNostrTimelineQuery *query) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
   /* Free old query */
   if (self->timeline_query) {
-    gn_timeline_query_free(self->timeline_query);
+    gnostr_timeline_query_free(self->timeline_query);
     self->timeline_query = NULL;
   }
 
   if (!query) return;
 
   /* Store a copy of the query */
-  self->timeline_query = gn_timeline_query_copy(query);
+  self->timeline_query = gnostr_timeline_query_copy(query);
 
   /* Sync to legacy fields for compatibility */
   g_free(self->kinds);
@@ -2014,7 +2014,7 @@ void gn_nostr_event_model_set_timeline_query(GnNostrEventModel *self, GnTimeline
           self->n_kinds, self->n_authors, self->window_size);
 }
 
-GnTimelineQuery *gn_nostr_event_model_get_timeline_query(GnNostrEventModel *self) {
+GNostrTimelineQuery *gn_nostr_event_model_get_timeline_query(GnNostrEventModel *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), NULL);
   return self->timeline_query;
 }
@@ -2476,7 +2476,7 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
     if (!e) continue;
 
     /* Mute list check (must be on main thread) */
-    GnostrMuteList *ml = gnostr_mute_list_get_default();
+    GNostrMuteList *ml = gnostr_mute_list_get_default();
     if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
       continue;
 
@@ -2557,7 +2557,7 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     if (has_note_key(self, e->note_key)) continue;
 
     /* Mute list check (must be on main thread) */
-    GnostrMuteList *ml = gnostr_mute_list_get_default();
+    GNostrMuteList *ml = gnostr_mute_list_get_default();
     if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
       continue;
 

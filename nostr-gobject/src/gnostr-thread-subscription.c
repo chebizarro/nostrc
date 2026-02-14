@@ -20,7 +20,7 @@
 /* Maximum events for the nostrdb subscription filter */
 #define THREAD_SUB_NDB_LIMIT 200
 
-struct _GnostrThreadSubscription {
+struct _GNostrThreadSubscription {
     GObject parent_instance;
 
     /* Thread identification */
@@ -31,9 +31,9 @@ struct _GnostrThreadSubscription {
     GHashTable *seen_events;            /* event_id -> TRUE */
 
     /* EventBus subscriptions */
-    NostrEventBusHandle *bus_handle_kind1;    /* kind:1 notes */
-    NostrEventBusHandle *bus_handle_kind7;    /* kind:7 reactions */
-    NostrEventBusHandle *bus_handle_kind1111; /* kind:1111 NIP-22 comments */
+    GNostrEventBusHandle *bus_handle_kind1;    /* kind:1 notes */
+    GNostrEventBusHandle *bus_handle_kind7;    /* kind:7 reactions */
+    GNostrEventBusHandle *bus_handle_kind1111; /* kind:1111 NIP-22 comments */
 
     /* nostrdb subscription */
     uint64_t ndb_sub_id;
@@ -53,7 +53,7 @@ enum {
 
 static guint signals[N_SIGNALS];
 
-G_DEFINE_TYPE(GnostrThreadSubscription, gnostr_thread_subscription, G_TYPE_OBJECT)
+G_DEFINE_TYPE(GNostrThreadSubscription, gnostr_thread_subscription, G_TYPE_OBJECT)
 
 /* Forward declarations */
 static void on_event_bus_kind1(const gchar *topic, gpointer event_data, gpointer user_data);
@@ -106,7 +106,7 @@ static gboolean event_references_monitored(const NostrEvent *ev, GHashTable *mon
 static gboolean filter_thread_note(const gchar *topic, gpointer event_data,
                                     gpointer user_data) {
     (void)topic;
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
     NostrEvent *ev = (NostrEvent *)event_data;
     if (!ev) return FALSE;
 
@@ -131,7 +131,7 @@ static gboolean filter_thread_note(const gchar *topic, gpointer event_data,
 static gboolean filter_thread_reaction(const gchar *topic, gpointer event_data,
                                         gpointer user_data) {
     (void)topic;
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
     NostrEvent *ev = (NostrEvent *)event_data;
     if (!ev) return FALSE;
 
@@ -151,7 +151,7 @@ static gboolean filter_thread_reaction(const gchar *topic, gpointer event_data,
 static void on_event_bus_kind1(const gchar *topic, gpointer event_data,
                                 gpointer user_data) {
     (void)topic;
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
     NostrEvent *ev = (NostrEvent *)event_data;
     if (self->disposed || !ev) return;
 
@@ -172,7 +172,7 @@ static void on_event_bus_kind1(const gchar *topic, gpointer event_data,
 static void on_event_bus_kind7(const gchar *topic, gpointer event_data,
                                 gpointer user_data) {
     (void)topic;
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
     NostrEvent *ev = (NostrEvent *)event_data;
     if (self->disposed || !ev) return;
 
@@ -192,7 +192,7 @@ static void on_event_bus_kind7(const gchar *topic, gpointer event_data,
 static void on_event_bus_kind1111(const gchar *topic, gpointer event_data,
                                    gpointer user_data) {
     (void)topic;
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
     NostrEvent *ev = (NostrEvent *)event_data;
     if (self->disposed || !ev) return;
 
@@ -214,7 +214,7 @@ static void on_event_bus_kind1111(const gchar *topic, gpointer event_data,
 static void on_ndb_batch(uint64_t subid, const uint64_t *note_keys,
                           guint n_keys, gpointer user_data) {
     (void)subid;
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
     if (!GNOSTR_IS_THREAD_SUBSCRIPTION(self) || !note_keys || n_keys == 0) return;
     if (self->disposed) return;
 
@@ -273,14 +273,14 @@ static void on_ndb_batch(uint64_t subid, const uint64_t *note_keys,
 /* ========== GObject lifecycle ========== */
 
 static void gnostr_thread_subscription_dispose(GObject *object) {
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(object);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(object);
     self->disposed = TRUE;
     gnostr_thread_subscription_stop(self);
     G_OBJECT_CLASS(gnostr_thread_subscription_parent_class)->dispose(object);
 }
 
 static void gnostr_thread_subscription_finalize(GObject *object) {
-    GnostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(object);
+    GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(object);
 
     g_free(self->root_event_id);
     g_clear_pointer(&self->monitored_ids, g_hash_table_unref);
@@ -289,13 +289,13 @@ static void gnostr_thread_subscription_finalize(GObject *object) {
     G_OBJECT_CLASS(gnostr_thread_subscription_parent_class)->finalize(object);
 }
 
-static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass *klass) {
+static void gnostr_thread_subscription_class_init(GNostrThreadSubscriptionClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     object_class->dispose = gnostr_thread_subscription_dispose;
     object_class->finalize = gnostr_thread_subscription_finalize;
 
     /**
-     * GnostrThreadSubscription::reply-received:
+     * GNostrThreadSubscription::reply-received:
      * @self: the subscription
      * @event: (type gpointer): the NostrEvent*
      *
@@ -309,7 +309,7 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
         G_TYPE_NONE, 1, G_TYPE_POINTER);
 
     /**
-     * GnostrThreadSubscription::reaction-received:
+     * GNostrThreadSubscription::reaction-received:
      * @self: the subscription
      * @event: (type gpointer): the NostrEvent*
      *
@@ -323,7 +323,7 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
         G_TYPE_NONE, 1, G_TYPE_POINTER);
 
     /**
-     * GnostrThreadSubscription::comment-received:
+     * GNostrThreadSubscription::comment-received:
      * @self: the subscription
      * @event: (type gpointer): the NostrEvent*
      *
@@ -337,7 +337,7 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
         G_TYPE_NONE, 1, G_TYPE_POINTER);
 
     /**
-     * GnostrThreadSubscription::eose:
+     * GNostrThreadSubscription::eose:
      * @self: the subscription
      *
      * Emitted when the initial batch of stored events has been delivered.
@@ -350,7 +350,7 @@ static void gnostr_thread_subscription_class_init(GnostrThreadSubscriptionClass 
         G_TYPE_NONE, 0);
 }
 
-static void gnostr_thread_subscription_init(GnostrThreadSubscription *self) {
+static void gnostr_thread_subscription_init(GNostrThreadSubscription *self) {
     self->monitored_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->seen_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->active = FALSE;
@@ -359,11 +359,11 @@ static void gnostr_thread_subscription_init(GnostrThreadSubscription *self) {
 
 /* ========== Public API ========== */
 
-GnostrThreadSubscription *gnostr_thread_subscription_new(const char *root_event_id) {
+GNostrThreadSubscription *gnostr_thread_subscription_new(const char *root_event_id) {
     g_return_val_if_fail(root_event_id != NULL, NULL);
     g_return_val_if_fail(strlen(root_event_id) == 64, NULL);
 
-    GnostrThreadSubscription *self = g_object_new(GNOSTR_TYPE_THREAD_SUBSCRIPTION, NULL);
+    GNostrThreadSubscription *self = g_object_new(GNOSTR_TYPE_THREAD_SUBSCRIPTION, NULL);
     self->root_event_id = g_strdup(root_event_id);
 
     /* The root ID is always monitored */
@@ -373,28 +373,28 @@ GnostrThreadSubscription *gnostr_thread_subscription_new(const char *root_event_
     return self;
 }
 
-void gnostr_thread_subscription_start(GnostrThreadSubscription *self) {
+void gnostr_thread_subscription_start(GNostrThreadSubscription *self) {
     g_return_if_fail(GNOSTR_IS_THREAD_SUBSCRIPTION(self));
     if (self->active) return;
 
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
 
     /* Subscribe to kind:1 notes with thread filter */
-    self->bus_handle_kind1 = nostr_event_bus_subscribe_filtered(
+    self->bus_handle_kind1 = gnostr_event_bus_subscribe_filtered(
         bus, "event::kind::1",
         filter_thread_note,
         on_event_bus_kind1,
         self, NULL);
 
     /* Subscribe to kind:7 reactions with thread filter */
-    self->bus_handle_kind7 = nostr_event_bus_subscribe_filtered(
+    self->bus_handle_kind7 = gnostr_event_bus_subscribe_filtered(
         bus, "event::kind::7",
         filter_thread_reaction,
         on_event_bus_kind7,
         self, NULL);
 
     /* Subscribe to kind:1111 NIP-22 comments with thread filter */
-    self->bus_handle_kind1111 = nostr_event_bus_subscribe_filtered(
+    self->bus_handle_kind1111 = gnostr_event_bus_subscribe_filtered(
         bus, "event::kind::1111",
         filter_thread_note,  /* same filter logic as kind:1 */
         on_event_bus_kind1111,
@@ -423,23 +423,23 @@ void gnostr_thread_subscription_start(GnostrThreadSubscription *self) {
             (guint64)self->ndb_sub_id);
 }
 
-void gnostr_thread_subscription_stop(GnostrThreadSubscription *self) {
+void gnostr_thread_subscription_stop(GNostrThreadSubscription *self) {
     g_return_if_fail(GNOSTR_IS_THREAD_SUBSCRIPTION(self));
     if (!self->active) return;
 
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
 
     /* Unsubscribe from EventBus */
     if (self->bus_handle_kind1) {
-        nostr_event_bus_unsubscribe(bus, self->bus_handle_kind1);
+        gnostr_event_bus_unsubscribe(bus, self->bus_handle_kind1);
         self->bus_handle_kind1 = NULL;
     }
     if (self->bus_handle_kind7) {
-        nostr_event_bus_unsubscribe(bus, self->bus_handle_kind7);
+        gnostr_event_bus_unsubscribe(bus, self->bus_handle_kind7);
         self->bus_handle_kind7 = NULL;
     }
     if (self->bus_handle_kind1111) {
-        nostr_event_bus_unsubscribe(bus, self->bus_handle_kind1111);
+        gnostr_event_bus_unsubscribe(bus, self->bus_handle_kind1111);
         self->bus_handle_kind1111 = NULL;
     }
 
@@ -455,7 +455,7 @@ void gnostr_thread_subscription_stop(GnostrThreadSubscription *self) {
             self->root_event_id);
 }
 
-void gnostr_thread_subscription_add_monitored_id(GnostrThreadSubscription *self,
+void gnostr_thread_subscription_add_monitored_id(GNostrThreadSubscription *self,
                                                    const char *event_id) {
     g_return_if_fail(GNOSTR_IS_THREAD_SUBSCRIPTION(self));
     g_return_if_fail(event_id != NULL && strlen(event_id) == 64);
@@ -468,17 +468,17 @@ void gnostr_thread_subscription_add_monitored_id(GnostrThreadSubscription *self,
     }
 }
 
-const char *gnostr_thread_subscription_get_root_id(GnostrThreadSubscription *self) {
+const char *gnostr_thread_subscription_get_root_id(GNostrThreadSubscription *self) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_SUBSCRIPTION(self), NULL);
     return self->root_event_id;
 }
 
-gboolean gnostr_thread_subscription_is_active(GnostrThreadSubscription *self) {
+gboolean gnostr_thread_subscription_is_active(GNostrThreadSubscription *self) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_SUBSCRIPTION(self), FALSE);
     return self->active;
 }
 
-guint gnostr_thread_subscription_get_seen_count(GnostrThreadSubscription *self) {
+guint gnostr_thread_subscription_get_seen_count(GNostrThreadSubscription *self) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_SUBSCRIPTION(self), 0);
     return g_hash_table_size(self->seen_events);
 }

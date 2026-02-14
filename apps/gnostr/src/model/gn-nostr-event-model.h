@@ -36,12 +36,12 @@ typedef struct {
 
 GnNostrEventModel *gn_nostr_event_model_new(void);
 
-/* New API using GnTimelineQuery (preferred) */
-GnNostrEventModel *gn_nostr_event_model_new_with_query(GnTimelineQuery *query);
-void gn_nostr_event_model_set_timeline_query(GnNostrEventModel *self, GnTimelineQuery *query);
-GnTimelineQuery *gn_nostr_event_model_get_timeline_query(GnNostrEventModel *self);
+/* New API using GNostrTimelineQuery (preferred) */
+GnNostrEventModel *gn_nostr_event_model_new_with_query(GNostrTimelineQuery *query);
+void gn_nostr_event_model_set_timeline_query(GnNostrEventModel *self, GNostrTimelineQuery *query);
+GNostrTimelineQuery *gn_nostr_event_model_get_timeline_query(GnNostrEventModel *self);
 
-/* Legacy API using GnNostrQueryParams (deprecated, use GnTimelineQuery instead) */
+/* Legacy API using GnNostrQueryParams (deprecated, use GNostrTimelineQuery instead) */
 void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryParams *params);
 void gn_nostr_event_model_set_thread_root(GnNostrEventModel *self, const char *root_event_id);
 void gn_nostr_event_model_refresh(GnNostrEventModel *self);

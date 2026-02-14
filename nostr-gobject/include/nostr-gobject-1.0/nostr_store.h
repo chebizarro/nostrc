@@ -43,8 +43,8 @@ typedef struct {
 
 /* ============ GNostrStore GInterface ============ */
 
-#define G_NOSTR_TYPE_STORE (g_nostr_store_get_type())
-G_DECLARE_INTERFACE(GNostrStore, g_nostr_store, G_NOSTR, STORE, GObject)
+#define GNOSTR_TYPE_STORE (gnostr_store_get_type())
+G_DECLARE_INTERFACE(GNostrStore, gnostr_store, GNOSTR, STORE, GObject)
 
 /**
  * GNostrStoreInterface:
@@ -106,13 +106,13 @@ struct _GNostrStoreInterface {
 /* ============ Public interface methods ============ */
 
 /* Core CRUD */
-gboolean    g_nostr_store_save_event   (GNostrStore *self, GNostrEvent *event, GError **error);
-GPtrArray  *g_nostr_store_query        (GNostrStore *self, NostrFilter *filter, GError **error);
-gboolean    g_nostr_store_delete_event (GNostrStore *self, const gchar *event_id, GError **error);
-gint        g_nostr_store_count        (GNostrStore *self, NostrFilter *filter, GError **error);
+gboolean    gnostr_store_save_event   (GNostrStore *self, GNostrEvent *event, GError **error);
+GPtrArray  *gnostr_store_query        (GNostrStore *self, NostrFilter *filter, GError **error);
+gboolean    gnostr_store_delete_event (GNostrStore *self, const gchar *event_id, GError **error);
+gint        gnostr_store_count        (GNostrStore *self, NostrFilter *filter, GError **error);
 
 /**
- * g_nostr_store_get_note_by_id:
+ * gnostr_store_get_note_by_id:
  * @self: a #GNostrStore
  * @id_hex: 64-character hex event ID
  * @error: (nullable): return location for a #GError
@@ -121,10 +121,10 @@ gint        g_nostr_store_count        (GNostrStore *self, NostrFilter *filter, 
  *
  * Returns: (transfer full) (nullable): event JSON string, or %NULL on error
  */
-gchar      *g_nostr_store_get_note_by_id (GNostrStore *self, const gchar *id_hex, GError **error);
+gchar      *gnostr_store_get_note_by_id (GNostrStore *self, const gchar *id_hex, GError **error);
 
 /**
- * g_nostr_store_get_note_by_key:
+ * gnostr_store_get_note_by_key:
  * @self: a #GNostrStore
  * @note_key: internal store key for the note
  * @error: (nullable): return location for a #GError
@@ -133,10 +133,10 @@ gchar      *g_nostr_store_get_note_by_id (GNostrStore *self, const gchar *id_hex
  *
  * Returns: (transfer full) (nullable): event JSON string, or %NULL on error
  */
-gchar      *g_nostr_store_get_note_by_key (GNostrStore *self, guint64 note_key, GError **error);
+gchar      *gnostr_store_get_note_by_key (GNostrStore *self, guint64 note_key, GError **error);
 
 /**
- * g_nostr_store_get_profile_by_pubkey:
+ * gnostr_store_get_profile_by_pubkey:
  * @self: a #GNostrStore
  * @pubkey_hex: 64-character hex public key
  * @error: (nullable): return location for a #GError
@@ -145,10 +145,10 @@ gchar      *g_nostr_store_get_note_by_key (GNostrStore *self, guint64 note_key, 
  *
  * Returns: (transfer full) (nullable): profile JSON string, or %NULL on error
  */
-gchar      *g_nostr_store_get_profile_by_pubkey (GNostrStore *self, const gchar *pubkey_hex, GError **error);
+gchar      *gnostr_store_get_profile_by_pubkey (GNostrStore *self, const gchar *pubkey_hex, GError **error);
 
 /**
- * g_nostr_store_text_search:
+ * gnostr_store_text_search:
  * @self: a #GNostrStore
  * @query: search query string
  * @limit: maximum number of results (0 for default)
@@ -159,10 +159,10 @@ gchar      *g_nostr_store_get_profile_by_pubkey (GNostrStore *self, const gchar 
  * Returns: (transfer full) (element-type utf8) (nullable):
  *   a #GPtrArray of JSON strings, or %NULL on error
  */
-GPtrArray  *g_nostr_store_text_search (GNostrStore *self, const gchar *query, gint limit, GError **error);
+GPtrArray  *gnostr_store_text_search (GNostrStore *self, const gchar *query, gint limit, GError **error);
 
 /**
- * g_nostr_store_search_profile:
+ * gnostr_store_search_profile:
  * @self: a #GNostrStore
  * @query: search query string
  * @limit: maximum number of results
@@ -173,10 +173,10 @@ GPtrArray  *g_nostr_store_text_search (GNostrStore *self, const gchar *query, gi
  * Returns: (transfer full) (element-type utf8) (nullable):
  *   a #GPtrArray of JSON strings, or %NULL on error
  */
-GPtrArray  *g_nostr_store_search_profile (GNostrStore *self, const gchar *query, gint limit, GError **error);
+GPtrArray  *gnostr_store_search_profile (GNostrStore *self, const gchar *query, gint limit, GError **error);
 
 /**
- * g_nostr_store_subscribe:
+ * gnostr_store_subscribe:
  * @self: a #GNostrStore
  * @filter_json: NIP-01 filter JSON string
  *
@@ -184,19 +184,19 @@ GPtrArray  *g_nostr_store_search_profile (GNostrStore *self, const gchar *query,
  *
  * Returns: subscription ID (>0) or 0 on failure
  */
-guint64     g_nostr_store_subscribe (GNostrStore *self, const gchar *filter_json);
+guint64     gnostr_store_subscribe (GNostrStore *self, const gchar *filter_json);
 
 /**
- * g_nostr_store_unsubscribe:
+ * gnostr_store_unsubscribe:
  * @self: a #GNostrStore
- * @subid: subscription ID from g_nostr_store_subscribe()
+ * @subid: subscription ID from gnostr_store_subscribe()
  *
  * Cancel a subscription.
  */
-void        g_nostr_store_unsubscribe (GNostrStore *self, guint64 subid);
+void        gnostr_store_unsubscribe (GNostrStore *self, guint64 subid);
 
 /**
- * g_nostr_store_poll_notes:
+ * gnostr_store_poll_notes:
  * @self: a #GNostrStore
  * @subid: subscription ID
  * @note_keys: (out) (array length=capacity): buffer for note keys
@@ -206,10 +206,10 @@ void        g_nostr_store_unsubscribe (GNostrStore *self, guint64 subid);
  *
  * Returns: number of keys written, or 0 if none available
  */
-gint        g_nostr_store_poll_notes (GNostrStore *self, guint64 subid, guint64 *note_keys, gint capacity);
+gint        gnostr_store_poll_notes (GNostrStore *self, guint64 subid, guint64 *note_keys, gint capacity);
 
 /**
- * g_nostr_store_get_note_counts:
+ * gnostr_store_get_note_counts:
  * @self: a #GNostrStore
  * @id_hex: 64-character hex event ID
  * @out: (out): pre-computed count values
@@ -218,10 +218,10 @@ gint        g_nostr_store_poll_notes (GNostrStore *self, guint64 subid, guint64 
  *
  * Returns: %TRUE if counts were found, %FALSE otherwise
  */
-gboolean    g_nostr_store_get_note_counts (GNostrStore *self, const gchar *id_hex, GNostrNoteCounts *out);
+gboolean    gnostr_store_get_note_counts (GNostrStore *self, const gchar *id_hex, GNostrNoteCounts *out);
 
 /**
- * g_nostr_store_write_note_counts:
+ * gnostr_store_write_note_counts:
  * @self: a #GNostrStore
  * @id_hex: 64-character hex event ID
  * @counts: the count values to store
@@ -230,10 +230,10 @@ gboolean    g_nostr_store_get_note_counts (GNostrStore *self, const gchar *id_he
  *
  * Returns: %TRUE on success, %FALSE on failure
  */
-gboolean    g_nostr_store_write_note_counts (GNostrStore *self, const gchar *id_hex, const GNostrNoteCounts *counts);
+gboolean    gnostr_store_write_note_counts (GNostrStore *self, const gchar *id_hex, const GNostrNoteCounts *counts);
 
 /**
- * g_nostr_store_count_reactions_batch:
+ * gnostr_store_count_reactions_batch:
  * @self: a #GNostrStore
  * @event_ids: (array length=n_ids): array of 64-char hex event IDs
  * @n_ids: number of event IDs
@@ -243,10 +243,10 @@ gboolean    g_nostr_store_write_note_counts (GNostrStore *self, const gchar *id_
  * Returns: (transfer full): #GHashTable mapping event_id_hex -> GUINT_TO_POINTER(count).
  *   Only events with count > 0 appear. Caller must g_hash_table_unref().
  */
-GHashTable *g_nostr_store_count_reactions_batch (GNostrStore *self, const gchar * const *event_ids, guint n_ids);
+GHashTable *gnostr_store_count_reactions_batch (GNostrStore *self, const gchar * const *event_ids, guint n_ids);
 
 /**
- * g_nostr_store_get_zap_stats_batch:
+ * gnostr_store_get_zap_stats_batch:
  * @self: a #GNostrStore
  * @event_ids: (array length=n_ids): array of 64-char hex event IDs
  * @n_ids: number of event IDs
@@ -256,15 +256,15 @@ GHashTable *g_nostr_store_count_reactions_batch (GNostrStore *self, const gchar 
  * Returns: (transfer full): #GHashTable mapping event_id_hex -> #GNostrZapStats* (owned).
  *   Only events with zaps appear. Caller must g_hash_table_unref().
  */
-GHashTable *g_nostr_store_get_zap_stats_batch (GNostrStore *self, const gchar * const *event_ids, guint n_ids);
+GHashTable *gnostr_store_get_zap_stats_batch (GNostrStore *self, const gchar * const *event_ids, guint n_ids);
 
 /* ============ GNostrNdbStore Implementation ============ */
 
-#define G_NOSTR_TYPE_NDB_STORE (g_nostr_ndb_store_get_type())
-G_DECLARE_FINAL_TYPE(GNostrNdbStore, g_nostr_ndb_store, G_NOSTR, NDB_STORE, GObject)
+#define GNOSTR_TYPE_NDB_STORE (gnostr_ndb_store_get_type())
+G_DECLARE_FINAL_TYPE(GNostrNdbStore, gnostr_ndb_store, GNOSTR, NDB_STORE, GObject)
 
 /**
- * g_nostr_ndb_store_new:
+ * gnostr_ndb_store_new:
  *
  * Creates a new NDB-backed store instance.
  * The underlying NDB database must already be initialized
@@ -272,7 +272,7 @@ G_DECLARE_FINAL_TYPE(GNostrNdbStore, g_nostr_ndb_store, G_NOSTR, NDB_STORE, GObj
  *
  * Returns: (transfer full): a new #GNostrNdbStore
  */
-GNostrNdbStore *g_nostr_ndb_store_new(void);
+GNostrNdbStore *gnostr_ndb_store_new(void);
 
 G_END_DECLS
 

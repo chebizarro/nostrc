@@ -14,7 +14,7 @@
 G_BEGIN_DECLS
 
 /* Forward declaration - full type in note_card_row.h */
-typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
+typedef struct _NostrGtkNoteCardRow NostrGtkNoteCardRow;
 
 #define NOTE_CARD_TYPE_FACTORY (note_card_factory_get_type())
 
@@ -306,7 +306,7 @@ void note_card_factory_connect_navigate(NoteCardFactory *self,
  * Views with custom data models can use this to handle their own
  * data binding logic instead of relying on the default binding.
  */
-typedef void (*NoteCardBindCallback)(GnostrNoteCardRow *row,
+typedef void (*NoteCardBindCallback)(NostrGtkNoteCardRow *row,
                                      GObject *item,
                                      gpointer user_data);
 

@@ -18,6 +18,6 @@ void
 nostr_gtk_init (void)
 {
   /* Force GType registration for widgets used in UI templates */
-  g_type_ensure (gnostr_profile_pane_get_type ());
-  g_type_ensure (GNOSTR_TYPE_NOTE_CARD_ROW);
+  g_type_ensure (nostr_gtk_profile_pane_get_type ());
+  g_type_ensure (NOSTR_GTK_TYPE_NOTE_CARD_ROW);
 }

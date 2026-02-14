@@ -1,12 +1,12 @@
-#ifndef NOSTR_RELAY_STORE_H
-#define NOSTR_RELAY_STORE_H
+#ifndef GNOSTR_RELAY_STORE_H
+#define GNOSTR_RELAY_STORE_H
 
 #include <glib-object.h>
 #include "nostr-relay-store.h"
 
 /* Define GNostrRelayStore GObject interface (G-prefixed to avoid core conflicts) */
-#define G_NOSTR_TYPE_RELAY_STORE (g_nostr_relay_store_get_type())
-G_DECLARE_INTERFACE(GNostrRelayStore, g_nostr_relay_store, G_NOSTR, RELAY_STORE, GObject)
+#define GNOSTR_TYPE_RELAY_STORE (gnostr_relay_store_get_type())
+G_DECLARE_INTERFACE(GNostrRelayStore, gnostr_relay_store, GNOSTR, RELAY_STORE, GObject)
 
 struct _GNostrRelayStoreInterface {
     GTypeInterface parent_interface;
@@ -16,15 +16,15 @@ struct _GNostrRelayStoreInterface {
 };
 
 /* Define GNostrMultiStore GObject (G-prefixed to avoid core conflicts) */
-#define G_NOSTR_TYPE_MULTI_STORE (g_nostr_multi_store_get_type())
-G_DECLARE_FINAL_TYPE(GNostrMultiStore, g_nostr_multi_store, G_NOSTR, MULTI_STORE, GObject)
+#define GNOSTR_TYPE_MULTI_STORE (gnostr_multi_store_get_type())
+G_DECLARE_FINAL_TYPE(GNostrMultiStore, gnostr_multi_store, GNOSTR, MULTI_STORE, GObject)
 
 struct _GNostrMultiStore {
     GObject parent_instance;
     NostrMultiStore *multi;
 };
 
-GNostrMultiStore *g_nostr_multi_store_new(void);
-void g_nostr_multi_store_add_store(GNostrMultiStore *self, GNostrRelayStore *store);
+GNostrMultiStore *gnostr_multi_store_new(void);
+void gnostr_multi_store_add_store(GNostrMultiStore *self, GNostrRelayStore *store);
 
-#endif // NOSTR_RELAY_STORE_H
+#endif // GNOSTR_RELAY_STORE_H

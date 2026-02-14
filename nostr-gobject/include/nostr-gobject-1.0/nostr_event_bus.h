@@ -2,15 +2,15 @@
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 gnostr contributors
  *
- * nostr_event_bus.h - Central event routing for reactive architecture
+ * gnostr_event_bus.h - Central event routing for reactive architecture
  *
  * The EventBus provides a publish-subscribe mechanism for routing Nostr
  * events throughout the application. Components subscribe to topic patterns
  * and receive events matching those patterns.
  */
 
-#ifndef NOSTR_EVENT_BUS_H
-#define NOSTR_EVENT_BUS_H
+#ifndef GNOSTR_EVENT_BUS_H
+#define GNOSTR_EVENT_BUS_H
 
 #include <glib-object.h>
 
@@ -35,48 +35,48 @@ G_BEGIN_DECLS
 
 /* --- Forward Declarations --- */
 
-typedef struct _NostrEventBus NostrEventBus;
-typedef struct _NostrEventBusClass NostrEventBusClass;
-typedef struct _NostrEventBusHandle NostrEventBusHandle;
+typedef struct _GNostrEventBus GNostrEventBus;
+typedef struct _GNostrEventBusClass GNostrEventBusClass;
+typedef struct _GNostrEventBusHandle GNostrEventBusHandle;
 
 /**
- * NostrEventBusCallback:
+ * GNostrEventBusCallback:
  * @topic: The topic that matched the subscription pattern
  * @event_data: The event payload (type depends on topic; may be NULL)
- * @user_data: User data passed to nostr_event_bus_subscribe()
+ * @user_data: User data passed to gnostr_event_bus_subscribe()
  *
  * Callback signature for event bus subscriptions.
  * For "event::kind::*" topics, @event_data is a NostrEvent*.
  * For other topics, @event_data may be a string or NULL.
  */
-typedef void (*NostrEventBusCallback)(const gchar *topic,
+typedef void (*GNostrEventBusCallback)(const gchar *topic,
                                        gpointer event_data,
                                        gpointer user_data);
 
 /* --- GObject Type Definition --- */
 
-#define NOSTR_TYPE_EVENT_BUS (nostr_event_bus_get_type())
-G_DECLARE_DERIVABLE_TYPE(NostrEventBus, nostr_event_bus, NOSTR, EVENT_BUS, GObject)
+#define GNOSTR_TYPE_EVENT_BUS (gnostr_event_bus_get_type())
+G_DECLARE_DERIVABLE_TYPE(GNostrEventBus, gnostr_event_bus, GNOSTR, EVENT_BUS, GObject)
 
 /**
- * NostrEventBusClass:
+ * GNostrEventBusClass:
  * @parent_class: The parent class
  *
- * Class structure for #NostrEventBus. Can be subclassed for custom
+ * Class structure for #GNostrEventBus. Can be subclassed for custom
  * event routing implementations.
  */
-struct _NostrEventBusClass {
+struct _GNostrEventBusClass {
     GObjectClass parent_class;
 
     /* Virtual methods for subclassing */
-    NostrEventBusHandle *(*subscribe)(NostrEventBus *bus,
+    GNostrEventBusHandle *(*subscribe)(GNostrEventBus *bus,
                                       const gchar *topic_pattern,
-                                      NostrEventBusCallback callback,
+                                      GNostrEventBusCallback callback,
                                       gpointer user_data,
                                       GDestroyNotify destroy_notify);
-    void (*unsubscribe)(NostrEventBus *bus, NostrEventBusHandle *handle);
-    void (*emit)(NostrEventBus *bus, const gchar *topic, gpointer event_data);
-    void (*emit_batch)(NostrEventBus *bus, const gchar *topic,
+    void (*unsubscribe)(GNostrEventBus *bus, GNostrEventBusHandle *handle);
+    void (*emit)(GNostrEventBus *bus, const gchar *topic, gpointer event_data);
+    void (*emit_batch)(GNostrEventBus *bus, const gchar *topic,
                        gpointer const *events_array, gsize count);
 
     /*< private >*/
@@ -86,10 +86,10 @@ struct _NostrEventBusClass {
 /* --- Filter Predicate --- */
 
 /**
- * NostrEventBusFilterFunc:
+ * GNostrEventBusFilterFunc:
  * @topic: The topic being tested
  * @event_data: The event payload (type depends on topic; may be NULL)
- * @user_data: User data passed to nostr_event_bus_subscribe_filtered()
+ * @user_data: User data passed to gnostr_event_bus_subscribe_filtered()
  *
  * Predicate function for fine-grained filtering of events.
  * Called after topic pattern matching succeeds but before
@@ -97,23 +97,23 @@ struct _NostrEventBusClass {
  *
  * Returns: %TRUE if the event should be delivered, %FALSE to skip
  */
-typedef gboolean (*NostrEventBusFilterFunc)(const gchar *topic,
+typedef gboolean (*GNostrEventBusFilterFunc)(const gchar *topic,
                                             gpointer event_data,
                                             gpointer user_data);
 
 /* --- Handle Type --- */
 
 /**
- * NostrEventBusHandle:
+ * GNostrEventBusHandle:
  *
  * Opaque handle representing an active subscription. Used to
  * unsubscribe from the event bus. The handle is valid from the
  * time it is returned by subscribe until unsubscribe is called.
  *
  * Do not free this handle directly; always use
- * nostr_event_bus_unsubscribe().
+ * gnostr_event_bus_unsubscribe().
  */
-struct _NostrEventBusHandle {
+struct _GNostrEventBusHandle {
     /*< private >*/
     guint64 id;
     gpointer _reserved[3];
@@ -122,22 +122,22 @@ struct _NostrEventBusHandle {
 /* --- Singleton Accessor --- */
 
 /**
- * nostr_event_bus_get_default:
+ * gnostr_event_bus_get_default:
  *
  * Gets the default (singleton) event bus instance. The default bus
  * is created on first access and persists for the lifetime of the
  * application. Thread-safe.
  *
- * Returns: (transfer none): The default #NostrEventBus instance.
+ * Returns: (transfer none): The default #GNostrEventBus instance.
  *          Do not unref this instance.
  */
-NostrEventBus *nostr_event_bus_get_default(void);
+GNostrEventBus *gnostr_event_bus_get_default(void);
 
 /* --- Subscription API --- */
 
 /**
- * nostr_event_bus_subscribe:
- * @bus: A #NostrEventBus
+ * gnostr_event_bus_subscribe:
+ * @bus: A #GNostrEventBus
  * @topic_pattern: A topic pattern to subscribe to (supports wildcards)
  * @callback: (scope notified): Function to call when matching events arrive
  * @user_data: (nullable): User data passed to @callback
@@ -152,36 +152,36 @@ NostrEventBus *nostr_event_bus_get_default(void);
  * - "ok::*" - All OK acknowledgments
  *
  * Returns: (transfer none): A handle to the subscription. Use this
- *          with nostr_event_bus_unsubscribe() to cancel the subscription.
+ *          with gnostr_event_bus_unsubscribe() to cancel the subscription.
  *          Returns %NULL on error.
  */
-NostrEventBusHandle *nostr_event_bus_subscribe(NostrEventBus *bus,
+GNostrEventBusHandle *gnostr_event_bus_subscribe(GNostrEventBus *bus,
                                                const gchar *topic_pattern,
-                                               NostrEventBusCallback callback,
+                                               GNostrEventBusCallback callback,
                                                gpointer user_data);
 
 /**
- * nostr_event_bus_subscribe_full:
- * @bus: A #NostrEventBus
+ * gnostr_event_bus_subscribe_full:
+ * @bus: A #GNostrEventBus
  * @topic_pattern: A topic pattern to subscribe to
  * @callback: (scope notified): Function to call when matching events arrive
  * @user_data: (nullable): User data passed to @callback
  * @destroy_notify: (nullable): Function to free @user_data when unsubscribing
  *
- * Like nostr_event_bus_subscribe() but with a destroy notify function
+ * Like gnostr_event_bus_subscribe() but with a destroy notify function
  * for automatic cleanup of user_data.
  *
  * Returns: (transfer none): A subscription handle, or %NULL on error
  */
-NostrEventBusHandle *nostr_event_bus_subscribe_full(NostrEventBus *bus,
+GNostrEventBusHandle *gnostr_event_bus_subscribe_full(GNostrEventBus *bus,
                                                     const gchar *topic_pattern,
-                                                    NostrEventBusCallback callback,
+                                                    GNostrEventBusCallback callback,
                                                     gpointer user_data,
                                                     GDestroyNotify destroy_notify);
 
 /**
- * nostr_event_bus_subscribe_filtered:
- * @bus: A #NostrEventBus
+ * gnostr_event_bus_subscribe_filtered:
+ * @bus: A #GNostrEventBus
  * @topic_pattern: A topic pattern to subscribe to
  * @filter_func: (scope notified): Predicate to filter events
  * @callback: (scope notified): Function to call for matching events
@@ -199,17 +199,17 @@ NostrEventBusHandle *nostr_event_bus_subscribe_full(NostrEventBus *bus,
  *
  * Returns: (transfer none): A subscription handle, or %NULL on error
  */
-NostrEventBusHandle *nostr_event_bus_subscribe_filtered(NostrEventBus *bus,
+GNostrEventBusHandle *gnostr_event_bus_subscribe_filtered(GNostrEventBus *bus,
                                                         const gchar *topic_pattern,
-                                                        NostrEventBusFilterFunc filter_func,
-                                                        NostrEventBusCallback callback,
+                                                        GNostrEventBusFilterFunc filter_func,
+                                                        GNostrEventBusCallback callback,
                                                         gpointer user_data,
                                                         GDestroyNotify destroy_notify);
 
 /**
- * nostr_event_bus_unsubscribe:
- * @bus: A #NostrEventBus
- * @handle: A subscription handle from nostr_event_bus_subscribe()
+ * gnostr_event_bus_unsubscribe:
+ * @bus: A #GNostrEventBus
+ * @handle: A subscription handle from gnostr_event_bus_subscribe()
  *
  * Cancels a subscription. After this call, the callback will no longer
  * be invoked for any events. If a destroy_notify was provided during
@@ -220,14 +220,14 @@ NostrEventBusHandle *nostr_event_bus_subscribe_filtered(NostrEventBus *bus,
  *
  * Passing %NULL for @handle is a no-op.
  */
-void nostr_event_bus_unsubscribe(NostrEventBus *bus,
-                                 NostrEventBusHandle *handle);
+void gnostr_event_bus_unsubscribe(GNostrEventBus *bus,
+                                 GNostrEventBusHandle *handle);
 
 /* --- Emit API --- */
 
 /**
- * nostr_event_bus_emit:
- * @bus: A #NostrEventBus
+ * gnostr_event_bus_emit:
+ * @bus: A #GNostrEventBus
  * @topic: The topic to emit on
  * @event_data: (nullable): The event payload (type depends on topic)
  *
@@ -240,19 +240,19 @@ void nostr_event_bus_unsubscribe(NostrEventBus *bus,
  *
  * Thread-safe. Callbacks are invoked on the calling thread.
  */
-void nostr_event_bus_emit(NostrEventBus *bus,
+void gnostr_event_bus_emit(GNostrEventBus *bus,
                           const gchar *topic,
                           gpointer event_data);
 
 /**
- * nostr_event_bus_emit_batch:
- * @bus: A #NostrEventBus
+ * gnostr_event_bus_emit_batch:
+ * @bus: A #GNostrEventBus
  * @topic: The topic to emit on
  * @events_array: (array length=count): Array of event data pointers
  * @count: Number of events in the array
  *
  * Emits multiple events on the same topic in a single batch. This is
- * more efficient than calling nostr_event_bus_emit() repeatedly when
+ * more efficient than calling gnostr_event_bus_emit() repeatedly when
  * processing a batch of events from a relay.
  *
  * Each subscriber callback is invoked once per event in the batch.
@@ -260,7 +260,7 @@ void nostr_event_bus_emit(NostrEventBus *bus,
  *
  * Thread-safe. Callbacks are invoked on the calling thread.
  */
-void nostr_event_bus_emit_batch(NostrEventBus *bus,
+void gnostr_event_bus_emit_batch(GNostrEventBus *bus,
                                 const gchar *topic,
                                 gpointer const *events_array,
                                 gsize count);
@@ -268,7 +268,7 @@ void nostr_event_bus_emit_batch(NostrEventBus *bus,
 /* --- Utility Functions --- */
 
 /**
- * nostr_event_bus_topic_matches:
+ * gnostr_event_bus_topic_matches:
  * @pattern: A topic pattern (may include wildcards)
  * @topic: A concrete topic to test
  *
@@ -287,11 +287,11 @@ void nostr_event_bus_emit_batch(NostrEventBus *bus,
  *
  * Returns: %TRUE if the topic matches the pattern
  */
-gboolean nostr_event_bus_topic_matches(const gchar *pattern,
+gboolean gnostr_event_bus_topic_matches(const gchar *pattern,
                                        const gchar *topic);
 
 /**
- * nostr_event_bus_format_event_topic:
+ * gnostr_event_bus_format_event_topic:
  * @kind: The Nostr event kind number
  *
  * Formats a topic string for an event kind. Convenience function
@@ -300,10 +300,10 @@ gboolean nostr_event_bus_topic_matches(const gchar *pattern,
  * Returns: (transfer full): A newly allocated topic string like
  *          "event::kind::1". Free with g_free().
  */
-gchar *nostr_event_bus_format_event_topic(gint kind);
+gchar *gnostr_event_bus_format_event_topic(gint kind);
 
 /**
- * nostr_event_bus_format_eose_topic:
+ * gnostr_event_bus_format_eose_topic:
  * @subscription_id: The subscription ID
  *
  * Formats an EOSE topic string for a subscription.
@@ -311,10 +311,10 @@ gchar *nostr_event_bus_format_event_topic(gint kind);
  * Returns: (transfer full): A newly allocated topic string like
  *          "eose::sub123". Free with g_free().
  */
-gchar *nostr_event_bus_format_eose_topic(const gchar *subscription_id);
+gchar *gnostr_event_bus_format_eose_topic(const gchar *subscription_id);
 
 /**
- * nostr_event_bus_format_ok_topic:
+ * gnostr_event_bus_format_ok_topic:
  * @event_id: The event ID
  *
  * Formats an OK topic string for an event acknowledgment.
@@ -322,12 +322,12 @@ gchar *nostr_event_bus_format_eose_topic(const gchar *subscription_id);
  * Returns: (transfer full): A newly allocated topic string like
  *          "ok::abc123...". Free with g_free().
  */
-gchar *nostr_event_bus_format_ok_topic(const gchar *event_id);
+gchar *gnostr_event_bus_format_ok_topic(const gchar *event_id);
 
 /* --- Statistics --- */
 
 /**
- * NostrEventBusStats:
+ * GNostrEventBusStats:
  * @subscription_count: Number of active subscriptions
  * @events_emitted: Total events emitted since creation
  * @callbacks_invoked: Total callback invocations
@@ -360,29 +360,29 @@ typedef struct {
 
     /* Dropped events */
     guint64 events_dropped;
-} NostrEventBusStats;
+} GNostrEventBusStats;
 
 /**
- * nostr_event_bus_get_stats:
- * @bus: A #NostrEventBus
+ * gnostr_event_bus_get_stats:
+ * @bus: A #GNostrEventBus
  * @stats: (out): Output structure for statistics
  *
  * Retrieves current statistics for the event bus. Latency
  * percentiles are computed from an internal histogram with
  * exponential bin boundaries (1 us base, 1.5x growth factor).
  */
-void nostr_event_bus_get_stats(NostrEventBus *bus,
-                               NostrEventBusStats *stats);
+void gnostr_event_bus_get_stats(GNostrEventBus *bus,
+                               GNostrEventBusStats *stats);
 
 /**
- * nostr_event_bus_reset_stats:
- * @bus: A #NostrEventBus
+ * gnostr_event_bus_reset_stats:
+ * @bus: A #GNostrEventBus
  *
  * Resets all counters and the latency histogram to zero.
  * Active subscriptions are not affected.
  */
-void nostr_event_bus_reset_stats(NostrEventBus *bus);
+void gnostr_event_bus_reset_stats(GNostrEventBus *bus);
 
 G_END_DECLS
 
-#endif /* NOSTR_EVENT_BUS_H */
+#endif /* GNOSTR_EVENT_BUS_H */

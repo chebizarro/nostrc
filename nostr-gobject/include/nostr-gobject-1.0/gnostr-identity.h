@@ -20,7 +20,7 @@
 G_BEGIN_DECLS
 
 /**
- * GnostrIdentity:
+ * GNostrIdentity:
  * @npub: The bech32-encoded public key (npub1...)
  * @label: Human-readable label (e.g., NIP-05 name)
  * @has_local_key: Whether nsec is stored in secure storage
@@ -33,7 +33,7 @@ typedef struct {
   char *label;
   gboolean has_local_key;
   char *signer_type;
-} GnostrIdentity;
+} GNostrIdentity;
 
 /**
  * gnostr_identity_init:
@@ -47,21 +47,21 @@ void gnostr_identity_init(const char *schema_id);
 
 /**
  * gnostr_identity_free:
- * @identity: A #GnostrIdentity
+ * @identity: A #GNostrIdentity
  *
  * Free an identity structure.
  */
-void gnostr_identity_free(GnostrIdentity *identity);
+void gnostr_identity_free(GNostrIdentity *identity);
 
 /**
  * gnostr_identity_copy:
- * @identity: A #GnostrIdentity
+ * @identity: A #GNostrIdentity
  *
  * Copy an identity structure.
  *
  * Returns: (transfer full): A copy of the identity.
  */
-GnostrIdentity *gnostr_identity_copy(const GnostrIdentity *identity);
+GNostrIdentity *gnostr_identity_copy(const GNostrIdentity *identity);
 
 /**
  * gnostr_identity_get_current:
@@ -71,7 +71,7 @@ GnostrIdentity *gnostr_identity_copy(const GnostrIdentity *identity);
  *
  * Returns: (transfer full) (nullable): The current identity, or %NULL if not logged in.
  */
-GnostrIdentity *gnostr_identity_get_current(void);
+GNostrIdentity *gnostr_identity_get_current(void);
 
 /**
  * gnostr_identity_set_current:
@@ -88,7 +88,7 @@ void gnostr_identity_set_current(const char *npub);
  *
  * List all identities with keys stored in secure storage.
  *
- * Returns: (transfer full) (element-type GnostrIdentity): List of identities.
+ * Returns: (transfer full) (element-type GNostrIdentity): List of identities.
  */
 GList *gnostr_identity_list_stored(GError **error);
 

@@ -11,7 +11,7 @@
 
 #define UI_RESOURCE "/org/nostr/gtk/ui/gnostr-composer.ui"
 
-struct _GnostrComposer {
+struct _NostrGtkComposer {
   GtkWidget parent_instance;
   GtkWidget *root;
   GtkWidget *text_view; /* bound as widget; cast to GtkTextView when used */
@@ -38,7 +38,7 @@ struct _GnostrComposer {
   GCancellable *upload_cancellable;   /* cancellable for ongoing upload */
   gboolean upload_in_progress;        /* TRUE while uploading */
   /* Uploaded media metadata for NIP-92 imeta tags */
-  GPtrArray *uploaded_media;          /* array of GnostrComposerMedia* */
+  GPtrArray *uploaded_media;          /* array of NostrGtkComposerMedia* */
   /* NIP-40: Expiration timestamp */
   gint64 expiration;                  /* Unix timestamp for expiration (0 = no expiration) */
   /* NIP-36 Content Warning */
@@ -57,11 +57,11 @@ struct _GnostrComposer {
   char *current_draft_d_tag;          /* d-tag of currently loaded draft (for updates) */
 };
 
-G_DEFINE_TYPE(GnostrComposer, gnostr_composer, GTK_TYPE_WIDGET)
+G_DEFINE_TYPE(NostrGtkComposer, nostr_gtk_composer, GTK_TYPE_WIDGET)
 
-/* Helper to free a GnostrComposerMedia struct */
+/* Helper to free a NostrGtkComposerMedia struct */
 static void composer_media_free(gpointer p) {
-  GnostrComposerMedia *m = (GnostrComposerMedia *)p;
+  NostrGtkComposerMedia *m = (NostrGtkComposerMedia *)p;
   if (!m) return;
   g_free(m->url);
   g_free(m->sha256);
@@ -86,14 +86,14 @@ enum {
 static guint signals[N_SIGNALS] = {0};
 
 /* Emit toast-requested signal instead of calling app-specific toast */
-static void composer_show_toast(GnostrComposer *self, const char *message) {
-  if (!GNOSTR_IS_COMPOSER(self) || !message) return;
+static void composer_show_toast(NostrGtkComposer *self, const char *message) {
+  if (!NOSTR_GTK_IS_COMPOSER(self) || !message) return;
   g_signal_emit(self, signals[SIGNAL_TOAST_REQUESTED], 0, message);
 }
 
-static void gnostr_composer_dispose(GObject *obj) {
-  gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_COMPOSER);
-  GnostrComposer *self = GNOSTR_COMPOSER(obj);
+static void nostr_gtk_composer_dispose(GObject *obj) {
+  gtk_widget_dispose_template(GTK_WIDGET(obj), NOSTR_GTK_TYPE_COMPOSER);
+  NostrGtkComposer *self = NOSTR_GTK_COMPOSER(obj);
   self->root = NULL;
   self->text_view = NULL;
   self->btn_post = NULL;
@@ -112,11 +112,11 @@ static void gnostr_composer_dispose(GObject *obj) {
   self->drafts_list = NULL;
   self->drafts_empty_label = NULL;
   self->btn_save_draft = NULL;
-  G_OBJECT_CLASS(gnostr_composer_parent_class)->dispose(obj);
+  G_OBJECT_CLASS(nostr_gtk_composer_parent_class)->dispose(obj);
 }
 
-static void gnostr_composer_finalize(GObject *obj) {
-  GnostrComposer *self = GNOSTR_COMPOSER(obj);
+static void nostr_gtk_composer_finalize(GObject *obj) {
+  NostrGtkComposer *self = NOSTR_GTK_COMPOSER(obj);
   g_clear_pointer(&self->reply_to_id, g_free);
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->reply_to_pubkey, g_free);
@@ -135,10 +135,10 @@ static void gnostr_composer_finalize(GObject *obj) {
     g_ptr_array_free(self->uploaded_media, TRUE);
     self->uploaded_media = NULL;
   }
-  G_OBJECT_CLASS(gnostr_composer_parent_class)->finalize(obj);
+  G_OBJECT_CLASS(nostr_gtk_composer_parent_class)->finalize(obj);
 }
 
-static void on_post_clicked(GnostrComposer *self, GtkButton *button) {
+static void on_post_clicked(NostrGtkComposer *self, GtkButton *button) {
   (void)button;
   if (!self || !GTK_IS_WIDGET(self)) return;
   if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return;
@@ -151,10 +151,10 @@ static void on_post_clicked(GnostrComposer *self, GtkButton *button) {
   g_free(text);
 }
 
-static void on_cancel_reply_clicked(GnostrComposer *self, GtkButton *button) {
+static void on_cancel_reply_clicked(NostrGtkComposer *self, GtkButton *button) {
   (void)button;
-  if (!GNOSTR_IS_COMPOSER(self)) return;
-  gnostr_composer_clear_reply_context(self);
+  if (!NOSTR_GTK_IS_COMPOSER(self)) return;
+  nostr_gtk_composer_clear_reply_context(self);
 }
 
 /* File chooser response callback — emits upload-requested signal */
@@ -179,8 +179,8 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
     g_object_unref(file);
     return;
   }
-  GnostrComposer *self = (GnostrComposer*)user_data;
-  if (!GNOSTR_IS_COMPOSER(self)) {
+  NostrGtkComposer *self = (NostrGtkComposer*)user_data;
+  if (!NOSTR_GTK_IS_COMPOSER(self)) {
     g_object_unref(file);
     return;
   }
@@ -221,9 +221,9 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
 }
 
 /* Attach button clicked - open file chooser */
-static void on_attach_clicked(GnostrComposer *self, GtkButton *button) {
+static void on_attach_clicked(NostrGtkComposer *self, GtkButton *button) {
   (void)button;
-  if (!GNOSTR_IS_COMPOSER(self)) return;
+  if (!NOSTR_GTK_IS_COMPOSER(self)) return;
 
   if (self->upload_in_progress) {
     g_message("composer: upload already in progress");
@@ -289,9 +289,9 @@ static void on_attach_clicked(GnostrComposer *self, GtkButton *button) {
 }
 
 /* NIP-36: Callback when sensitive toggle button is toggled */
-static void on_sensitive_toggled(GnostrComposer *self, GtkToggleButton *button) {
+static void on_sensitive_toggled(NostrGtkComposer *self, GtkToggleButton *button) {
   (void)button;
-  if (!GNOSTR_IS_COMPOSER(self)) return;
+  if (!NOSTR_GTK_IS_COMPOSER(self)) return;
 
   gboolean active = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_sensitive));
   self->is_sensitive = active;
@@ -312,15 +312,15 @@ static void on_draft_row_delete_clicked(GtkButton *btn, gpointer user_data);
 /* Callback when drafts popover is shown — emit signal for app to populate */
 static void on_drafts_popover_show(GtkPopover *popover, gpointer user_data) {
   (void)popover;
-  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
-  if (!GNOSTR_IS_COMPOSER(self)) return;
+  NostrGtkComposer *self = NOSTR_GTK_COMPOSER(user_data);
+  if (!NOSTR_GTK_IS_COMPOSER(self)) return;
   g_signal_emit(self, signals[SIGNAL_LOAD_DRAFTS_REQUESTED], 0);
 }
 
 /* NIP-37: Save draft button clicked — emit signal */
-static void on_save_draft_clicked(GnostrComposer *self, GtkButton *button) {
+static void on_save_draft_clicked(NostrGtkComposer *self, GtkButton *button) {
   (void)button;
-  if (!GNOSTR_IS_COMPOSER(self)) return;
+  if (!NOSTR_GTK_IS_COMPOSER(self)) return;
   if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return;
 
   /* Check for empty text */
@@ -342,8 +342,8 @@ static void on_save_draft_clicked(GnostrComposer *self, GtkButton *button) {
 
 /* Load draft row clicked — emit signal with d-tag */
 static void on_draft_row_load_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
-  if (!GNOSTR_IS_COMPOSER(self)) return;
+  NostrGtkComposer *self = NOSTR_GTK_COMPOSER(user_data);
+  if (!NOSTR_GTK_IS_COMPOSER(self)) return;
 
   const char *d_tag = g_object_get_data(G_OBJECT(btn), "draft-d-tag");
   if (!d_tag) return;
@@ -358,8 +358,8 @@ static void on_draft_row_load_clicked(GtkButton *btn, gpointer user_data) {
 
 /* Delete draft row clicked — emit signal with d-tag */
 static void on_draft_row_delete_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
-  if (!GNOSTR_IS_COMPOSER(self)) return;
+  NostrGtkComposer *self = NOSTR_GTK_COMPOSER(user_data);
+  if (!NOSTR_GTK_IS_COMPOSER(self)) return;
 
   const char *d_tag = g_object_get_data(G_OBJECT(btn), "draft-d-tag");
   if (!d_tag) return;
@@ -373,31 +373,31 @@ static void on_draft_row_delete_clicked(GtkButton *btn, gpointer user_data) {
   g_signal_emit(self, signals[SIGNAL_DRAFT_DELETE_REQUESTED], 0, d_tag);
 }
 
-static void gnostr_composer_class_init(GnostrComposerClass *klass) {
+static void nostr_gtk_composer_class_init(NostrGtkComposerClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
-  gobj_class->dispose = gnostr_composer_dispose;
-  gobj_class->finalize = gnostr_composer_finalize;
+  gobj_class->dispose = nostr_gtk_composer_dispose;
+  gobj_class->finalize = nostr_gtk_composer_finalize;
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, root);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, text_view);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_post);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_attach);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, reply_indicator_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, reply_indicator);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_cancel_reply);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_progress_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_spinner);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_status_label);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, subject_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, subject_entry);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_sensitive);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_drafts);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, drafts_popover);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, drafts_list);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, drafts_empty_label);
-  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_save_draft);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, root);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, text_view);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_post);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_attach);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, reply_indicator_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, reply_indicator);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_cancel_reply);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, upload_progress_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, upload_spinner);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, upload_status_label);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, subject_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, subject_entry);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_sensitive);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_drafts);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, drafts_popover);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, drafts_list);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, drafts_empty_label);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_save_draft);
   gtk_widget_class_bind_template_callback(widget_class, on_post_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_cancel_reply_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_attach_clicked);
@@ -485,7 +485,7 @@ static void gnostr_composer_class_init(GnostrComposerClass *klass) {
                    G_TYPE_NONE, 0);
 }
 
-static void gnostr_composer_init(GnostrComposer *self) {
+static void nostr_gtk_composer_init(NostrGtkComposer *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->text_view),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer", -1);
@@ -520,23 +520,23 @@ static void gnostr_composer_init(GnostrComposer *self) {
   }
 }
 
-GtkWidget *gnostr_composer_new(void) {
-  return g_object_new(GNOSTR_TYPE_COMPOSER, NULL);
+GtkWidget *nostr_gtk_composer_new(void) {
+  return g_object_new(NOSTR_GTK_TYPE_COMPOSER, NULL);
 }
 
-void gnostr_composer_clear(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return;
   GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
   gtk_text_buffer_set_text(buf, "", 0);
   if (self->subject_entry && GTK_IS_ENTRY(self->subject_entry)) {
     gtk_editable_set_text(GTK_EDITABLE(self->subject_entry), "");
   }
-  gnostr_composer_clear_reply_context(self);
-  gnostr_composer_clear_quote_context(self);
-  gnostr_composer_clear_comment_context(self);
-  gnostr_composer_clear_uploaded_media(self);
-  gnostr_composer_clear_expiration(self);
+  nostr_gtk_composer_clear_reply_context(self);
+  nostr_gtk_composer_clear_quote_context(self);
+  nostr_gtk_composer_clear_comment_context(self);
+  nostr_gtk_composer_clear_uploaded_media(self);
+  nostr_gtk_composer_clear_expiration(self);
   self->is_sensitive = FALSE;
   if (GTK_IS_TOGGLE_BUTTON(self->btn_sensitive)) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_sensitive), FALSE);
@@ -544,12 +544,12 @@ void gnostr_composer_clear(GnostrComposer *self) {
   }
 }
 
-void gnostr_composer_set_reply_context(GnostrComposer *self,
+void nostr_gtk_composer_set_reply_context(NostrGtkComposer *self,
                                        const char *reply_to_id,
                                        const char *root_id,
                                        const char *reply_to_pubkey,
                                        const char *reply_to_display_name) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
   g_free(self->reply_to_id);
   g_free(self->root_id);
@@ -573,8 +573,8 @@ void gnostr_composer_set_reply_context(GnostrComposer *self,
   }
 }
 
-void gnostr_composer_clear_reply_context(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear_reply_context(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
   g_clear_pointer(&self->reply_to_id, g_free);
   g_clear_pointer(&self->root_id, g_free);
@@ -588,34 +588,34 @@ void gnostr_composer_clear_reply_context(GnostrComposer *self) {
   }
 }
 
-gboolean gnostr_composer_is_reply(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+gboolean nostr_gtk_composer_is_reply(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), FALSE);
   return self->reply_to_id != NULL;
 }
 
-const char *gnostr_composer_get_reply_to_id(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_reply_to_id(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->reply_to_id;
 }
 
-const char *gnostr_composer_get_root_id(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_root_id(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->root_id;
 }
 
-const char *gnostr_composer_get_reply_to_pubkey(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_reply_to_pubkey(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->reply_to_pubkey;
 }
 
-void gnostr_composer_set_quote_context(GnostrComposer *self,
+void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
                                        const char *quote_id,
                                        const char *quote_pubkey,
                                        const char *nostr_uri,
                                        const char *quoted_author_display_name) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
-  gnostr_composer_clear_reply_context(self);
+  nostr_gtk_composer_clear_reply_context(self);
 
   g_free(self->quote_id);
   g_free(self->quote_pubkey);
@@ -649,8 +649,8 @@ void gnostr_composer_set_quote_context(GnostrComposer *self,
   }
 }
 
-void gnostr_composer_clear_quote_context(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear_quote_context(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
   g_clear_pointer(&self->quote_id, g_free);
   g_clear_pointer(&self->quote_pubkey, g_free);
@@ -666,33 +666,33 @@ void gnostr_composer_clear_quote_context(GnostrComposer *self) {
   }
 }
 
-gboolean gnostr_composer_is_quote(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+gboolean nostr_gtk_composer_is_quote(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), FALSE);
   return self->quote_id != NULL;
 }
 
-const char *gnostr_composer_get_quote_id(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_quote_id(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->quote_id;
 }
 
-const char *gnostr_composer_get_quote_pubkey(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_quote_pubkey(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->quote_pubkey;
 }
 
-const char *gnostr_composer_get_quote_nostr_uri(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_quote_nostr_uri(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->quote_nostr_uri;
 }
 
-gboolean gnostr_composer_is_uploading(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+gboolean nostr_gtk_composer_is_uploading(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), FALSE);
   return self->upload_in_progress;
 }
 
-void gnostr_composer_cancel_upload(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_cancel_upload(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
   if (!self->upload_in_progress) return;
 
@@ -713,62 +713,62 @@ void gnostr_composer_cancel_upload(GnostrComposer *self) {
   }
 }
 
-GnostrComposerMedia **gnostr_composer_get_uploaded_media(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+NostrGtkComposerMedia **nostr_gtk_composer_get_uploaded_media(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   if (!self->uploaded_media || self->uploaded_media->len == 0) {
     return NULL;
   }
-  return (GnostrComposerMedia **)self->uploaded_media->pdata;
+  return (NostrGtkComposerMedia **)self->uploaded_media->pdata;
 }
 
-gsize gnostr_composer_get_uploaded_media_count(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), 0);
+gsize nostr_gtk_composer_get_uploaded_media_count(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), 0);
   if (!self->uploaded_media) return 0;
   return self->uploaded_media->len;
 }
 
-void gnostr_composer_clear_uploaded_media(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear_uploaded_media(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   if (self->uploaded_media) {
     g_ptr_array_set_size(self->uploaded_media, 0);
   }
 }
 
-const char *gnostr_composer_get_subject(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_subject(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   if (!self->subject_entry || !GTK_IS_ENTRY(self->subject_entry)) return NULL;
   const char *text = gtk_editable_get_text(GTK_EDITABLE(self->subject_entry));
   if (!text || !*text) return NULL;
   return text;
 }
 
-void gnostr_composer_set_expiration(GnostrComposer *self, gint64 expiration_secs) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_set_expiration(NostrGtkComposer *self, gint64 expiration_secs) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   self->expiration = expiration_secs;
 }
 
-gint64 gnostr_composer_get_expiration(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), 0);
+gint64 nostr_gtk_composer_get_expiration(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), 0);
   return self->expiration;
 }
 
-void gnostr_composer_clear_expiration(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear_expiration(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   self->expiration = 0;
 }
 
-gboolean gnostr_composer_has_expiration(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+gboolean nostr_gtk_composer_has_expiration(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), FALSE);
   return self->expiration > 0;
 }
 
-gboolean gnostr_composer_is_sensitive(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+gboolean nostr_gtk_composer_is_sensitive(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), FALSE);
   return self->is_sensitive;
 }
 
-void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_set_sensitive(NostrGtkComposer *self, gboolean sensitive) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   self->is_sensitive = sensitive;
   if (GTK_IS_TOGGLE_BUTTON(self->btn_sensitive)) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_sensitive), sensitive);
@@ -781,15 +781,15 @@ void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive) {
 }
 
 /* NIP-22: Comment context */
-void gnostr_composer_set_comment_context(GnostrComposer *self,
+void nostr_gtk_composer_set_comment_context(NostrGtkComposer *self,
                                          const char *root_id,
                                          int root_kind,
                                          const char *root_pubkey,
                                          const char *display_name) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
-  gnostr_composer_clear_reply_context(self);
-  gnostr_composer_clear_quote_context(self);
+  nostr_gtk_composer_clear_reply_context(self);
+  nostr_gtk_composer_clear_quote_context(self);
 
   g_free(self->comment_root_id);
   g_free(self->comment_root_pubkey);
@@ -812,8 +812,8 @@ void gnostr_composer_set_comment_context(GnostrComposer *self,
   }
 }
 
-void gnostr_composer_clear_comment_context(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear_comment_context(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
   g_clear_pointer(&self->comment_root_id, g_free);
   g_clear_pointer(&self->comment_root_pubkey, g_free);
@@ -829,34 +829,34 @@ void gnostr_composer_clear_comment_context(GnostrComposer *self) {
   }
 }
 
-gboolean gnostr_composer_is_comment(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+gboolean nostr_gtk_composer_is_comment(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), FALSE);
   return self->comment_root_id != NULL;
 }
 
-const char *gnostr_composer_get_comment_root_id(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_comment_root_id(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->comment_root_id;
 }
 
-int gnostr_composer_get_comment_root_kind(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), 0);
+int nostr_gtk_composer_get_comment_root_kind(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), 0);
   return self->comment_root_kind;
 }
 
-const char *gnostr_composer_get_comment_root_pubkey(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_comment_root_pubkey(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->comment_root_pubkey;
 }
 
 /* ---- Media upload completion (called by signal handler) ---- */
 
-void gnostr_composer_upload_complete(GnostrComposer *self,
+void nostr_gtk_composer_upload_complete(NostrGtkComposer *self,
                                      const char *url,
                                      const char *sha256,
                                      const char *mime_type,
                                      gint64 size) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   g_return_if_fail(url != NULL);
 
   self->upload_in_progress = FALSE;
@@ -875,7 +875,7 @@ void gnostr_composer_upload_complete(GnostrComposer *self,
   if (!self->uploaded_media) {
     self->uploaded_media = g_ptr_array_new_with_free_func(composer_media_free);
   }
-  GnostrComposerMedia *media = g_new0(GnostrComposerMedia, 1);
+  NostrGtkComposerMedia *media = g_new0(NostrGtkComposerMedia, 1);
   media->url = g_strdup(url);
   media->sha256 = g_strdup(sha256);
   media->mime_type = g_strdup(mime_type);
@@ -903,9 +903,9 @@ void gnostr_composer_upload_complete(GnostrComposer *self,
   }
 }
 
-void gnostr_composer_upload_failed(GnostrComposer *self,
+void nostr_gtk_composer_upload_failed(NostrGtkComposer *self,
                                    const char *message) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
   self->upload_in_progress = FALSE;
 
@@ -926,12 +926,12 @@ void gnostr_composer_upload_failed(GnostrComposer *self,
 
 /* ---- NIP-37: Draft management ---- */
 
-void gnostr_composer_load_draft(GnostrComposer *self,
-                                const GnostrComposerDraftInfo *info) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_load_draft(NostrGtkComposer *self,
+                                const NostrGtkComposerDraftInfo *info) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   g_return_if_fail(info != NULL);
 
-  gnostr_composer_clear(self);
+  nostr_gtk_composer_clear(self);
 
   g_free(self->current_draft_d_tag);
   self->current_draft_d_tag = g_strdup(info->d_tag);
@@ -991,7 +991,7 @@ void gnostr_composer_load_draft(GnostrComposer *self,
     }
   }
 
-  gnostr_composer_set_sensitive(self, info->is_sensitive);
+  nostr_gtk_composer_set_sensitive(self, info->is_sensitive);
 
   g_message("composer: loaded draft d_tag=%s kind=%d",
             info->d_tag ? info->d_tag : "(null)",
@@ -1001,26 +1001,26 @@ void gnostr_composer_load_draft(GnostrComposer *self,
   g_signal_emit(self, signals[SIGNAL_DRAFT_LOADED], 0);
 }
 
-const char *gnostr_composer_get_current_draft_d_tag(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+const char *nostr_gtk_composer_get_current_draft_d_tag(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   return self->current_draft_d_tag;
 }
 
-void gnostr_composer_clear_draft_context(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear_draft_context(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   g_clear_pointer(&self->current_draft_d_tag, g_free);
 }
 
-gboolean gnostr_composer_has_draft_loaded(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+gboolean nostr_gtk_composer_has_draft_loaded(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), FALSE);
   return self->current_draft_d_tag != NULL;
 }
 
-void gnostr_composer_add_draft_row(GnostrComposer *self,
+void nostr_gtk_composer_add_draft_row(NostrGtkComposer *self,
                                    const char *d_tag,
                                    const char *preview_text,
                                    gint64 updated_at) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   if (!self->drafts_list || !GTK_IS_LIST_BOX(self->drafts_list)) return;
 
   /* Hide empty label */
@@ -1083,8 +1083,8 @@ void gnostr_composer_add_draft_row(GnostrComposer *self,
   gtk_list_box_append(GTK_LIST_BOX(self->drafts_list), row);
 }
 
-void gnostr_composer_clear_draft_rows(GnostrComposer *self) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+void nostr_gtk_composer_clear_draft_rows(NostrGtkComposer *self) {
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   if (!self->drafts_list || !GTK_IS_LIST_BOX(self->drafts_list)) return;
 
   GtkWidget *child;
@@ -1098,11 +1098,11 @@ void gnostr_composer_clear_draft_rows(GnostrComposer *self) {
   }
 }
 
-void gnostr_composer_draft_save_complete(GnostrComposer *self,
+void nostr_gtk_composer_draft_save_complete(NostrGtkComposer *self,
                                          gboolean success,
                                          const char *error_message,
                                          const char *d_tag) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
 
   if (success) {
     if (d_tag) {
@@ -1119,10 +1119,10 @@ void gnostr_composer_draft_save_complete(GnostrComposer *self,
   }
 }
 
-void gnostr_composer_draft_delete_complete(GnostrComposer *self,
+void nostr_gtk_composer_draft_delete_complete(NostrGtkComposer *self,
                                            const char *d_tag,
                                            gboolean success) {
-  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(NOSTR_GTK_IS_COMPOSER(self));
   (void)d_tag;
 
   if (success) {
@@ -1133,8 +1133,8 @@ void gnostr_composer_draft_delete_complete(GnostrComposer *self,
   }
 }
 
-char *gnostr_composer_get_text(GnostrComposer *self) {
-  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+char *nostr_gtk_composer_get_text(NostrGtkComposer *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_COMPOSER(self), NULL);
   if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return NULL;
 
   GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));

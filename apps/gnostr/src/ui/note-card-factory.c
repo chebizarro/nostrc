@@ -63,20 +63,20 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
 static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
 
 /* Signal relay handlers - relay signals from NoteCardRow to custom callbacks */
-static void on_open_profile_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_data);
-static void on_view_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data);
-static void on_reply_requested_relay(GnostrNoteCardRow *row, const char *id, const char *root, const char *pubkey, gpointer user_data);
-static void on_search_hashtag_relay(GnostrNoteCardRow *row, const char *hashtag, gpointer user_data);
-static void on_repost_relay(GnostrNoteCardRow *row, const char *id, const char *json, gpointer user_data);
-static void on_quote_relay(GnostrNoteCardRow *row, const char *id, const char *content, gpointer user_data);
-static void on_like_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gint kind, const char *reaction, gpointer user_data);
-static void on_zap_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, const char *lud16, gpointer user_data);
-static void on_mute_user_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_data);
-static void on_mute_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data);
-static void on_bookmark_relay(GnostrNoteCardRow *row, const char *id, gboolean bookmarked, gpointer user_data);
-static void on_pin_relay(GnostrNoteCardRow *row, const char *id, gboolean pinned, gpointer user_data);
-static void on_delete_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gpointer user_data);
-static void on_navigate_relay(GnostrNoteCardRow *row, const char *note_id, gpointer user_data);
+static void on_open_profile_relay(NostrGtkNoteCardRow *row, const char *pubkey, gpointer user_data);
+static void on_view_thread_relay(NostrGtkNoteCardRow *row, const char *root_id, gpointer user_data);
+static void on_reply_requested_relay(NostrGtkNoteCardRow *row, const char *id, const char *root, const char *pubkey, gpointer user_data);
+static void on_search_hashtag_relay(NostrGtkNoteCardRow *row, const char *hashtag, gpointer user_data);
+static void on_repost_relay(NostrGtkNoteCardRow *row, const char *id, const char *json, gpointer user_data);
+static void on_quote_relay(NostrGtkNoteCardRow *row, const char *id, const char *content, gpointer user_data);
+static void on_like_relay(NostrGtkNoteCardRow *row, const char *id, const char *pubkey, gint kind, const char *reaction, gpointer user_data);
+static void on_zap_relay(NostrGtkNoteCardRow *row, const char *id, const char *pubkey, const char *lud16, gpointer user_data);
+static void on_mute_user_relay(NostrGtkNoteCardRow *row, const char *pubkey, gpointer user_data);
+static void on_mute_thread_relay(NostrGtkNoteCardRow *row, const char *root_id, gpointer user_data);
+static void on_bookmark_relay(NostrGtkNoteCardRow *row, const char *id, gboolean bookmarked, gpointer user_data);
+static void on_pin_relay(NostrGtkNoteCardRow *row, const char *id, gboolean pinned, gpointer user_data);
+static void on_delete_relay(NostrGtkNoteCardRow *row, const char *id, const char *pubkey, gpointer user_data);
+static void on_navigate_relay(NostrGtkNoteCardRow *row, const char *note_id, gpointer user_data);
 
 static void
 note_card_factory_dispose(GObject *object)
@@ -292,7 +292,7 @@ factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 {
   (void)f;
   NoteCardFactory *self = NOTE_CARD_FACTORY(data);
-  GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
+  GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
 
   /* Connect signals based on signal_flags */
   if (self->signal_flags & NOTE_CARD_SIGNAL_OPEN_PROFILE) {
@@ -348,8 +348,8 @@ on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
 
-  if (!GNOSTR_IS_NOTE_CARD_ROW(row)) return;
-  if (gnostr_note_card_row_is_disposed(GNOSTR_NOTE_CARD_ROW(row))) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row)) return;
+  if (nostr_gtk_note_card_row_is_disposed(NOSTR_GTK_NOTE_CARD_ROW(row))) return;
 
   /* Get updated profile from model item */
   GObject *profile = NULL;
@@ -366,7 +366,7 @@ on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
     g_object_unref(profile);
 
     /* Update card with new profile data */
-    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
                                      display_name, handle, avatar_url);
 
     /* Update NIP-05 if available */
@@ -374,7 +374,7 @@ on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
       gchar *pubkey = NULL;
       g_object_get(obj, "pubkey", &pubkey, NULL);
       if (pubkey) {
-        gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
+        nostr_gtk_note_card_row_set_nip05(NOSTR_GTK_NOTE_CARD_ROW(row), nip05, pubkey);
         g_free(pubkey);
       }
     }
@@ -399,16 +399,16 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
   if (!GTK_IS_LIST_ITEM(list_item)) return;
 
   GtkWidget *row = gtk_list_item_get_child(list_item);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || row != widget) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row) || row != widget) return;
 
-  GnostrNoteCardRow *card = GNOSTR_NOTE_CARD_ROW(row);
-  if (gnostr_note_card_row_is_disposed(card) || !gnostr_note_card_row_is_bound(card)) return;
+  NostrGtkNoteCardRow *card = NOSTR_GTK_NOTE_CARD_ROW(row);
+  if (nostr_gtk_note_card_row_is_disposed(card) || !nostr_gtk_note_card_row_is_bound(card)) return;
 
   GObject *obj = g_object_get_data(G_OBJECT(row), "bound-item");
   if (!obj || !G_IS_OBJECT(obj)) return;
 
   /* Validate the row still matches the item by checking event ID */
-  const gchar *stored_id = gnostr_note_card_row_get_event_id(card);
+  const gchar *stored_id = nostr_gtk_note_card_row_get_event_id(card);
   if (GN_IS_NOSTR_EVENT_ITEM(obj)) {
     const gchar *item_id = gn_nostr_event_item_get_event_id(GN_NOSTR_EVENT_ITEM(obj));
     if (!stored_id || !item_id || g_strcmp0(stored_id, item_id) != 0) return;
@@ -425,35 +425,35 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
     guint depth = gn_nostr_event_item_get_reply_depth(event_item);
 
     /* Avatar loading */
-    GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+    GNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
     if (profile) {
-      const gchar *avatar_url = gn_nostr_profile_get_picture_url(profile);
-      gnostr_note_card_row_set_avatar(card, avatar_url);
+      const gchar *avatar_url = gnostr_profile_get_picture_url(profile);
+      nostr_gtk_note_card_row_set_avatar(card, avatar_url);
 
-      const gchar *nip05 = gn_nostr_profile_get_nip05(profile);
+      const gchar *nip05 = gnostr_profile_get_nip05(profile);
       if (nip05 && pubkey) {
-        gnostr_note_card_row_set_nip05(card, nip05, pubkey);
+        nostr_gtk_note_card_row_set_nip05(card, nip05, pubkey);
       }
     }
 
     /* Thread depth */
-    gnostr_note_card_row_set_depth(card, depth);
+    nostr_gtk_note_card_row_set_depth(card, depth);
 
     /* Thread info (if enabled) */
     if (self && (self->bind_flags & NOTE_CARD_BIND_THREAD_INFO)) {
       gboolean is_reply = (parent_id != NULL);
-      gnostr_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
+      nostr_gtk_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
     }
 
     /* Deferred content (media, OG, embeds) */
     const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
     if (cached) {
-      gnostr_note_card_row_apply_deferred_content(card, cached);
+      nostr_gtk_note_card_row_apply_deferred_content(card, cached);
     }
 
     /* hq-ys1vk: Relay provenance (Tier 2 - requires txn) */
     const char * const *relay_urls = gn_nostr_event_item_get_relay_urls(event_item);
-    gnostr_note_card_row_set_relay_info(card, relay_urls);
+    nostr_gtk_note_card_row_set_relay_info(card, relay_urls);
   }
 
   /* Profile signal connection (deferred from Tier 1) */
@@ -475,11 +475,11 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   if (!obj) return;
 
   GtkWidget *row = gtk_list_item_get_child(item);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(row)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row)) return;
 
   /* CRITICAL: Prepare row for binding - resets disposed flag, assigns binding_id,
    * and creates fresh cancellable. Must be called BEFORE populating the row. */
-  gnostr_note_card_row_prepare_for_bind(GNOSTR_NOTE_CARD_ROW(row));
+  nostr_gtk_note_card_row_prepare_for_bind(NOSTR_GTK_NOTE_CARD_ROW(row));
 
   /* Store item reference for Tier 2 and profile handler cleanup */
   g_object_set_data(G_OBJECT(row), "bound-item", obj);
@@ -490,7 +490,7 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   /* If custom bind callback is set, use it instead of default binding.
    * Custom callbacks handle their own tiering (or do full bind). */
   if (self->bind_cb) {
-    self->bind_cb(GNOSTR_NOTE_CARD_ROW(row), obj, self->bind_cb_data);
+    self->bind_cb(NOSTR_GTK_NOTE_CARD_ROW(row), obj, self->bind_cb_data);
     gtk_widget_set_visible(row, TRUE);
     return;
   }
@@ -510,35 +510,35 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     const gchar *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
 
     /* Tier 1: Author name + handle (NO avatar) */
-    GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+    GNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
     const gchar *display_name = NULL, *handle = NULL;
     if (profile) {
-      display_name = gn_nostr_profile_get_display_name(profile);
-      handle = gn_nostr_profile_get_name(profile);
+      display_name = gnostr_profile_get_display_name(profile);
+      handle = gnostr_profile_get_name(profile);
     }
     gchar *display_fallback = NULL;
     if (!display_name && !handle && pubkey && strlen(pubkey) >= 8) {
       display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
-    gnostr_note_card_row_set_author_name_only(GNOSTR_NOTE_CARD_ROW(row),
+    nostr_gtk_note_card_row_set_author_name_only(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                display_name ? display_name : display_fallback,
                                                handle);
     g_free(display_fallback);
 
     /* Tier 1: Timestamp */
-    gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, NULL);
+    nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, NULL);
 
     /* Tier 1: Content markup (from cached render — no media/OG/embed) */
     const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
     if (cached) {
-      gnostr_note_card_row_set_content_markup_only(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+      nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, cached);
     } else {
       /* No cache: fall back to full render (first bind) */
-      gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+      nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
     }
 
     /* Tier 1: IDs (needed for click handling + Tier 2 validation) */
-    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
+    nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
 
   } else {
     /* Non-GnNostrEventItem: use generic g_object_get path (full bind, no tiering) */
@@ -567,12 +567,12 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
       display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
 
-    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
                                      display_name ? display_name : display_fallback,
                                      handle, avatar_url);
-    gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, NULL);
-    gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
-    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, NULL, pubkey);
+    nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, NULL);
+    nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+    nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row), id_hex, NULL, pubkey);
 
     g_free(id_hex);
     g_free(pubkey);
@@ -626,8 +626,8 @@ factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   /* CRITICAL: Prepare row for unbinding BEFORE GTK disposes it.
    * This cancels all async operations, clears binding_id, and sets disposed flag
    * to prevent callbacks from corrupting Pango state. nostrc-534d */
-  if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
-    gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(row));
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+    nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
   }
 }
 
@@ -641,8 +641,8 @@ factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer dat
    * But if teardown fires without a prior unbind (edge case during rapid
    * model changes), this prevents Pango SEGV from uncleaned PangoLayouts. */
   GtkWidget *row = gtk_list_item_get_child(item);
-  if (row && GNOSTR_IS_NOTE_CARD_ROW(row)) {
-    gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(row));
+  if (row && NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+    nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
   }
 }
 
@@ -651,7 +651,7 @@ factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer dat
  * ============================================================================ */
 
 static void
-on_open_profile_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_data)
+on_open_profile_relay(NostrGtkNoteCardRow *row, const char *pubkey, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -661,7 +661,7 @@ on_open_profile_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_
 }
 
 static void
-on_view_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data)
+on_view_thread_relay(NostrGtkNoteCardRow *row, const char *root_id, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -671,7 +671,7 @@ on_view_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_
 }
 
 static void
-on_reply_requested_relay(GnostrNoteCardRow *row, const char *id, const char *root, const char *pubkey, gpointer user_data)
+on_reply_requested_relay(NostrGtkNoteCardRow *row, const char *id, const char *root, const char *pubkey, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -681,7 +681,7 @@ on_reply_requested_relay(GnostrNoteCardRow *row, const char *id, const char *roo
 }
 
 static void
-on_search_hashtag_relay(GnostrNoteCardRow *row, const char *hashtag, gpointer user_data)
+on_search_hashtag_relay(NostrGtkNoteCardRow *row, const char *hashtag, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -691,7 +691,7 @@ on_search_hashtag_relay(GnostrNoteCardRow *row, const char *hashtag, gpointer us
 }
 
 static void
-on_repost_relay(GnostrNoteCardRow *row, const char *id, const char *json, gpointer user_data)
+on_repost_relay(NostrGtkNoteCardRow *row, const char *id, const char *json, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -701,7 +701,7 @@ on_repost_relay(GnostrNoteCardRow *row, const char *id, const char *json, gpoint
 }
 
 static void
-on_quote_relay(GnostrNoteCardRow *row, const char *id, const char *content, gpointer user_data)
+on_quote_relay(NostrGtkNoteCardRow *row, const char *id, const char *content, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -711,7 +711,7 @@ on_quote_relay(GnostrNoteCardRow *row, const char *id, const char *content, gpoi
 }
 
 static void
-on_like_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gint kind, const char *reaction, gpointer user_data)
+on_like_relay(NostrGtkNoteCardRow *row, const char *id, const char *pubkey, gint kind, const char *reaction, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -721,7 +721,7 @@ on_like_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gint k
 }
 
 static void
-on_zap_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, const char *lud16, gpointer user_data)
+on_zap_relay(NostrGtkNoteCardRow *row, const char *id, const char *pubkey, const char *lud16, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -731,7 +731,7 @@ on_zap_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, const c
 }
 
 static void
-on_mute_user_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_data)
+on_mute_user_relay(NostrGtkNoteCardRow *row, const char *pubkey, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -741,7 +741,7 @@ on_mute_user_relay(GnostrNoteCardRow *row, const char *pubkey, gpointer user_dat
 }
 
 static void
-on_mute_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_data)
+on_mute_thread_relay(NostrGtkNoteCardRow *row, const char *root_id, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -751,7 +751,7 @@ on_mute_thread_relay(GnostrNoteCardRow *row, const char *root_id, gpointer user_
 }
 
 static void
-on_bookmark_relay(GnostrNoteCardRow *row, const char *id, gboolean bookmarked, gpointer user_data)
+on_bookmark_relay(NostrGtkNoteCardRow *row, const char *id, gboolean bookmarked, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -761,7 +761,7 @@ on_bookmark_relay(GnostrNoteCardRow *row, const char *id, gboolean bookmarked, g
 }
 
 static void
-on_pin_relay(GnostrNoteCardRow *row, const char *id, gboolean pinned, gpointer user_data)
+on_pin_relay(NostrGtkNoteCardRow *row, const char *id, gboolean pinned, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -771,7 +771,7 @@ on_pin_relay(GnostrNoteCardRow *row, const char *id, gboolean pinned, gpointer u
 }
 
 static void
-on_delete_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gpointer user_data)
+on_delete_relay(NostrGtkNoteCardRow *row, const char *id, const char *pubkey, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);
@@ -781,7 +781,7 @@ on_delete_relay(GnostrNoteCardRow *row, const char *id, const char *pubkey, gpoi
 }
 
 static void
-on_navigate_relay(GnostrNoteCardRow *row, const char *note_id, gpointer user_data)
+on_navigate_relay(NostrGtkNoteCardRow *row, const char *note_id, gpointer user_data)
 {
   (void)row;
   NoteCardFactory *self = NOTE_CARD_FACTORY(user_data);

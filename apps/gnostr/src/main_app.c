@@ -36,7 +36,7 @@ static void
 on_relay_changed_for_sync(gpointer user_data)
 {
   (void)user_data;
-  GnostrSyncService *svc = gnostr_sync_service_get_default();
+  GNostrSyncService *svc = gnostr_sync_service_get_default();
   if (svc && gnostr_sync_service_is_running(svc)) {
     g_debug("[APP] Relay config changed, triggering sync");
     gnostr_sync_service_sync_now(svc);

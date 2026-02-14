@@ -38,16 +38,16 @@
 static void event_bus_emit_event(NostrEvent *ev) {
     if (!ev) return;
 
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
     if (!bus) return;
 
     /* Get event kind to build topic */
     int kind = nostr_event_get_kind(ev);
-    gchar *topic = nostr_event_bus_format_event_topic(kind);
+    gchar *topic = gnostr_event_bus_format_event_topic(kind);
     if (!topic) return;
 
     /* Pass NostrEvent* directly — no serialization on hot path */
-    nostr_event_bus_emit(bus, topic, ev);
+    gnostr_event_bus_emit(bus, topic, ev);
 
     g_free(topic);
 }
@@ -61,12 +61,12 @@ static void event_bus_emit_event(NostrEvent *ev) {
 static void event_bus_emit_eose(const char *subscription_id) {
     if (!subscription_id) return;
 
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
     if (!bus) return;
 
-    gchar *topic = nostr_event_bus_format_eose_topic(subscription_id);
+    gchar *topic = gnostr_event_bus_format_eose_topic(subscription_id);
     if (topic) {
-        nostr_event_bus_emit(bus, topic, NULL);
+        gnostr_event_bus_emit(bus, topic, NULL);
         g_free(topic);
     }
 }
@@ -84,16 +84,16 @@ static void event_bus_emit_eose(const char *subscription_id) {
 static void G_GNUC_UNUSED event_bus_emit_ok(const char *event_id, gboolean success, const char *message) {
     if (!event_id) return;
 
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
     if (!bus) return;
 
-    gchar *topic = nostr_event_bus_format_ok_topic(event_id);
+    gchar *topic = gnostr_event_bus_format_ok_topic(event_id);
     if (topic) {
         /* Build simple JSON payload for OK response */
         gchar *payload = g_strdup_printf("{\"success\":%s,\"message\":\"%s\"}",
                                           success ? "true" : "false",
                                           message ? message : "");
-        nostr_event_bus_emit(bus, topic, (gpointer)payload);
+        gnostr_event_bus_emit(bus, topic, (gpointer)payload);
         g_free(payload);
         g_free(topic);
     }
@@ -111,12 +111,12 @@ static void G_GNUC_UNUSED event_bus_emit_ok(const char *event_id, gboolean succe
 static void G_GNUC_UNUSED event_bus_emit_notice(const char *relay_url, const char *message) {
     if (!relay_url) return;
 
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
     if (!bus) return;
 
     gchar *topic = g_strdup_printf("notice::%s", relay_url);
     if (topic) {
-        nostr_event_bus_emit(bus, topic, (gpointer)message);
+        gnostr_event_bus_emit(bus, topic, (gpointer)message);
         g_free(topic);
     }
 }
@@ -133,7 +133,7 @@ static void G_GNUC_UNUSED event_bus_emit_notice(const char *relay_url, const cha
 static void event_bus_emit_closed(const char *relay_url, const char *subscription_id, const char *reason) {
     if (!relay_url) return;
 
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
     if (!bus) return;
 
     /* Build message for CLOSED notification */
@@ -142,7 +142,7 @@ static void event_bus_emit_closed(const char *relay_url, const char *subscriptio
                                       reason ? reason : "");
     gchar *topic = g_strdup_printf("notice::%s", relay_url);
     if (topic) {
-        nostr_event_bus_emit(bus, topic, (gpointer)message);
+        gnostr_event_bus_emit(bus, topic, (gpointer)message);
         g_free(topic);
     }
     g_free(message);
@@ -221,8 +221,8 @@ static void spawn_worker_thread(const char *name,
     }
 }
 
-/* GnostrSimplePool GObject implementation */
-G_DEFINE_TYPE(GnostrSimplePool, gnostr_simple_pool, G_TYPE_OBJECT)
+/* GNostrSimplePool GObject implementation */
+G_DEFINE_TYPE(GNostrSimplePool, gnostr_simple_pool, G_TYPE_OBJECT)
 
 enum {
     SIGNAL_EVENTS,
@@ -237,7 +237,7 @@ static void free_urls(char **urls, size_t count);
  
 
 static void nostr_simple_pool_finalize(GObject *object) {
-    GnostrSimplePool *self = GNOSTR_SIMPLE_POOL(object);
+    GNostrSimplePool *self = GNOSTR_SIMPLE_POOL(object);
 
     /* nostrc-ozlp: Free query batcher first (it may have refs to pool) */
     if (self->batcher) {
@@ -257,7 +257,7 @@ static void nostr_simple_pool_finalize(GObject *object) {
 
 /* paginator code moved below after dedup helpers */
 
-static void gnostr_simple_pool_class_init(GnostrSimplePoolClass *klass) {
+static void gnostr_simple_pool_class_init(GNostrSimplePoolClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     object_class->finalize = nostr_simple_pool_finalize;
 
@@ -274,23 +274,23 @@ static void gnostr_simple_pool_class_init(GnostrSimplePoolClass *klass) {
         G_TYPE_POINTER /* GPtrArray* */);
 }
 
-static void gnostr_simple_pool_init(GnostrSimplePool *self) {
+static void gnostr_simple_pool_init(GNostrSimplePool *self) {
     /* Force robust JSON backend to avoid inline compact parser issues */
     nostr_json_force_fallback(true);
     self->pool = nostr_simple_pool_new();
 }
 
-GnostrSimplePool *gnostr_simple_pool_new(void) {
+GNostrSimplePool *gnostr_simple_pool_new(void) {
     return g_object_new(GNOSTR_TYPE_SIMPLE_POOL, NULL);
 }
 
-void gnostr_simple_pool_add_relay(GnostrSimplePool *self, NostrRelay *relay) {
+void gnostr_simple_pool_add_relay(GNostrSimplePool *self, NostrRelay *relay) {
     if (!self || !self->pool || !relay) return;
     const char *url = nostr_relay_get_url_const(relay);
     if (url) nostr_simple_pool_ensure_relay(self->pool, url);
 }
 
-GPtrArray *gnostr_simple_pool_query_sync(GnostrSimplePool *self, NostrFilter *filter, GError **error) {
+GPtrArray *gnostr_simple_pool_query_sync(GNostrSimplePool *self, NostrFilter *filter, GError **error) {
     (void)self; (void)filter;
     if (error) *error = g_error_new_literal(g_quark_from_static_string("nostr-simple-pool"), 1, "gnostr_simple_pool_query_sync is not implemented in this wrapper");
     return NULL;
@@ -308,7 +308,7 @@ static void subscribe_ctx_free(SubscribeCtx *c) {
 }
 
 typedef struct {
-    GObject *self_obj; /* GnostrSimplePool* as GObject */
+    GObject *self_obj; /* GNostrSimplePool* as GObject */
     char **urls;       /* owned deep copy */
     size_t url_count;
     NostrFilters *filters;    /* owned deep copy for thread lifetime */
@@ -459,7 +459,7 @@ static gboolean dedup_set_seen(DedupSet *d, const char *id) {
 
 /* Background paginator with interval */
 typedef struct {
-    GObject *self_obj;      /* GnostrSimplePool* as GObject */
+    GObject *self_obj;      /* GNostrSimplePool* as GObject */
     char **urls;            /* owned deep copy */
     size_t url_count;
     NostrFilter *base_filter; /* owned copy */
@@ -635,7 +635,7 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
     return NULL;
 }
 
-void gnostr_simple_pool_paginate_with_interval_async(GnostrSimplePool *self,
+void gnostr_simple_pool_paginate_with_interval_async(GNostrSimplePool *self,
                                                      const char **urls,
                                                      size_t url_count,
                                                      const NostrFilter *filter,
@@ -666,7 +666,7 @@ void gnostr_simple_pool_paginate_with_interval_async(GnostrSimplePool *self,
     ctx->task = NULL;
 }
 
-gboolean gnostr_simple_pool_paginate_with_interval_finish(GnostrSimplePool *self,
+gboolean gnostr_simple_pool_paginate_with_interval_finish(GNostrSimplePool *self,
                                                           GAsyncResult *res,
                                                           GError **error) {
     (void)self;
@@ -683,7 +683,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
 
     GoContext *bg = go_context_background();
-    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    GNostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
     
     for (size_t i = 0; i < ctx->url_count; i++) {
         if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) break;
@@ -907,7 +907,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     return NULL;
 }
 
-void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
+void gnostr_simple_pool_subscribe_many_async(GNostrSimplePool *self,
                                              const char **urls,
                                              size_t url_count,
                                              NostrFilters *filters,
@@ -945,7 +945,7 @@ void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
     g_object_unref(task);
 }
 
-gboolean gnostr_simple_pool_subscribe_many_finish(GnostrSimplePool *self,
+gboolean gnostr_simple_pool_subscribe_many_finish(GNostrSimplePool *self,
                                                   GAsyncResult *res,
                                                   GError **error) {
     (void)self;
@@ -953,7 +953,7 @@ gboolean gnostr_simple_pool_subscribe_many_finish(GnostrSimplePool *self,
 }
 
 typedef struct {
-    GObject *self_obj;  /* GnostrSimplePool* as GObject */
+    GObject *self_obj;  /* GNostrSimplePool* as GObject */
     char **urls;        /* owned deep copy */
     size_t url_count;
     NostrFilter *filter; /* owned copy of filter */
@@ -989,7 +989,7 @@ static gboolean query_single_complete_ok(gpointer data) {
 
 static gpointer query_single_thread(gpointer user_data) {
     QuerySingleCtx *ctx = (QuerySingleCtx *)user_data;
-    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    GNostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
 
     g_debug("query_single_thread: starting, will query %zu relays", ctx->url_count);
 
@@ -1233,7 +1233,7 @@ static gpointer query_single_thread(gpointer user_data) {
     return NULL;
 }
 
-void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
+void gnostr_simple_pool_query_single_async(GNostrSimplePool *self,
                                           const char **urls,
                                           size_t url_count,
                                           const NostrFilter *filter,
@@ -1278,7 +1278,7 @@ void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
 
 /**
  * gnostr_simple_pool_query_single_streaming_async:
- * @self: a #GnostrSimplePool
+ * @self: a #GNostrSimplePool
  * @urls: array of relay URLs to query
  * @url_count: number of URLs
  * @filter: the filter to apply
@@ -1299,7 +1299,7 @@ void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
  * Connect to the "events" signal before calling this to receive batches
  * of NostrEvent* as they arrive from each relay.
  */
-void gnostr_simple_pool_query_single_streaming_async(GnostrSimplePool *self,
+void gnostr_simple_pool_query_single_streaming_async(GNostrSimplePool *self,
                                                       const char **urls,
                                                       size_t url_count,
                                                       const NostrFilter *filter,
@@ -1330,7 +1330,7 @@ void gnostr_simple_pool_query_single_streaming_async(GnostrSimplePool *self,
     spawn_worker_thread("nostr-query-streaming", query_single_thread, g_steal_pointer(&ctx));
 }
 
-GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
+GPtrArray *gnostr_simple_pool_query_single_finish(GNostrSimplePool *self,
                                                  GAsyncResult *res,
                                                  GError **error) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), NULL);
@@ -1385,7 +1385,7 @@ static void count_ctx_free(CountCtx *ctx) {
 
 static void *count_thread_func(void *arg) {
     CountCtx *ctx = (CountCtx *)arg;
-    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    GNostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
     NostrSimplePool *pool = gobj_pool->pool;
 
     g_debug("[COUNT] Starting count query on %zu relays", ctx->url_count);
@@ -1459,7 +1459,7 @@ static void *count_thread_func(void *arg) {
     return NULL;
 }
 
-void gnostr_simple_pool_count_async(GnostrSimplePool *self,
+void gnostr_simple_pool_count_async(GNostrSimplePool *self,
                                     const char **urls,
                                     size_t url_count,
                                     const NostrFilter *filter,
@@ -1488,7 +1488,7 @@ void gnostr_simple_pool_count_async(GnostrSimplePool *self,
     spawn_worker_thread("count-query", count_thread_func, ctx);
 }
 
-gint64 gnostr_simple_pool_count_finish(GnostrSimplePool *self,
+gint64 gnostr_simple_pool_count_finish(GNostrSimplePool *self,
                                        GAsyncResult *res,
                                        GError **error) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), -1);
@@ -1515,7 +1515,7 @@ gint64 gnostr_simple_pool_count_finish(GnostrSimplePool *self,
 
 /* ================= Batch fetch profiles by authors (kind 0) ================= */
 typedef struct {
-    GObject *self_obj;      /* GnostrSimplePool* as GObject */
+    GObject *self_obj;      /* GNostrSimplePool* as GObject */
     char **urls;            /* deep copy */
     size_t url_count;
     char **authors;         /* deep copy */
@@ -1743,7 +1743,7 @@ static void *fetch_profiles_goroutine(void *arg) {
     /* First pass: Ensure all relays exist and are connected.
      * This is CRITICAL - the goroutine was previously just looking for existing relays
      * but not ensuring they were added to the pool first! */
-    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    GNostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
     if (!gobj_pool || !gobj_pool->pool) {
         g_critical("[GOROUTINE] Pool GObject or underlying pool is NULL!");
         goto cleanup_and_exit;
@@ -2108,7 +2108,7 @@ void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx) {
 }
 
 
-void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
+void gnostr_simple_pool_fetch_profiles_by_authors_async(GNostrSimplePool *self,
                                                         const char **urls,
                                                         size_t url_count,
                                                         const char *const *authors,
@@ -2125,7 +2125,7 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
         return;
     }
     if (!GNOSTR_IS_SIMPLE_POOL(self)) {
-        g_critical("PROFILE_FETCH_GOROUTINE: self is NOT a valid GnostrSimplePool! (type check failed)");
+        g_critical("PROFILE_FETCH_GOROUTINE: self is NOT a valid GNostrSimplePool! (type check failed)");
         return;
     }
     
@@ -2155,7 +2155,7 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
     fetch_profiles_goroutine_start(ctx);
 }
 
-GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool *self,
+GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GNostrSimplePool *self,
                                                                GAsyncResult *res,
                                                                GError **error) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), NULL);
@@ -2181,7 +2181,7 @@ GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool 
 }
 
 /* Check if a relay is connected */
-gboolean gnostr_simple_pool_is_relay_connected(GnostrSimplePool *self, const char *url) {
+gboolean gnostr_simple_pool_is_relay_connected(GNostrSimplePool *self, const char *url) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), FALSE);
     g_return_val_if_fail(url != NULL, FALSE);
     
@@ -2206,7 +2206,7 @@ gboolean gnostr_simple_pool_is_relay_connected(GnostrSimplePool *self, const cha
 }
 
 /* Get list of relay URLs currently in the pool */
-GPtrArray *gnostr_simple_pool_get_relay_urls(GnostrSimplePool *self) {
+GPtrArray *gnostr_simple_pool_get_relay_urls(GNostrSimplePool *self) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), NULL);
 
     GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
@@ -2230,7 +2230,7 @@ GPtrArray *gnostr_simple_pool_get_relay_urls(GnostrSimplePool *self) {
 
 /* --- Live Relay Switching Implementation (nostrc-36y.4) --- */
 
-gboolean gnostr_simple_pool_remove_relay(GnostrSimplePool *self, const char *url) {
+gboolean gnostr_simple_pool_remove_relay(GNostrSimplePool *self, const char *url) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), FALSE);
     g_return_val_if_fail(url != NULL, FALSE);
 
@@ -2239,7 +2239,7 @@ gboolean gnostr_simple_pool_remove_relay(GnostrSimplePool *self, const char *url
     return nostr_simple_pool_remove_relay(self->pool, url);
 }
 
-void gnostr_simple_pool_disconnect_all_relays(GnostrSimplePool *self) {
+void gnostr_simple_pool_disconnect_all_relays(GNostrSimplePool *self) {
     g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
 
     if (!self->pool) return;
@@ -2247,7 +2247,7 @@ void gnostr_simple_pool_disconnect_all_relays(GnostrSimplePool *self) {
     nostr_simple_pool_disconnect_all(self->pool);
 }
 
-void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, size_t url_count) {
+void gnostr_simple_pool_sync_relays(GNostrSimplePool *self, const char **urls, size_t url_count) {
     g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
 
     if (!self->pool) return;
@@ -2346,7 +2346,7 @@ static bool metrics_agg_callback(HashKey *key, void *value) {
 /* Thread-local storage for metrics aggregation context */
 __thread MetricsAggCtx *g_metrics_agg_ctx = NULL;
 
-void gnostr_simple_pool_get_queue_metrics(GnostrSimplePool *self, GnostrQueueMetrics *out) {
+void gnostr_simple_pool_get_queue_metrics(GNostrSimplePool *self, GnostrQueueMetrics *out) {
     g_return_if_fail(out != NULL);
     memset(out, 0, sizeof(*out));
 
@@ -2400,7 +2400,7 @@ void gnostr_simple_pool_get_queue_metrics(GnostrSimplePool *self, GnostrQueueMet
 
 /* --- Query Batching API (nostrc-ozlp) --- */
 
-void gnostr_simple_pool_set_batching_enabled(GnostrSimplePool *self, gboolean enabled) {
+void gnostr_simple_pool_set_batching_enabled(GNostrSimplePool *self, gboolean enabled) {
     g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
 
     if (enabled && !self->batcher) {
@@ -2418,12 +2418,12 @@ void gnostr_simple_pool_set_batching_enabled(GnostrSimplePool *self, gboolean en
     }
 }
 
-gboolean gnostr_simple_pool_get_batching_enabled(GnostrSimplePool *self) {
+gboolean gnostr_simple_pool_get_batching_enabled(GNostrSimplePool *self) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), FALSE);
     return self->batching_enabled;
 }
 
-void gnostr_simple_pool_set_batch_window_ms(GnostrSimplePool *self, guint window_ms) {
+void gnostr_simple_pool_set_batch_window_ms(GNostrSimplePool *self, guint window_ms) {
     g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
 
     if (!self->batcher) {
@@ -2434,7 +2434,7 @@ void gnostr_simple_pool_set_batch_window_ms(GnostrSimplePool *self, guint window
     nostr_query_batcher_set_window_ms(self->batcher, window_ms);
 }
 
-guint gnostr_simple_pool_get_batch_window_ms(GnostrSimplePool *self) {
+guint gnostr_simple_pool_get_batch_window_ms(GNostrSimplePool *self) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), 0);
 
     if (!self->batcher) {

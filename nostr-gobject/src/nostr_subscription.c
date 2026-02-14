@@ -678,9 +678,9 @@ gnostr_subscription_fire(GNostrSubscription *self, GError **error)
             }
             if (lim->max_subscriptions > 0) {
                 const gchar *url = gnostr_relay_get_url(self->relay);
-                NostrSubscriptionRegistry *reg =
-                    nostr_subscription_registry_get_default();
-                guint current = nostr_subscription_registry_get_relay_subscription_count(reg, url);
+                GNostrSubscriptionRegistry *reg =
+                    gnostr_subscription_registry_get_default();
+                guint current = gnostr_subscription_registry_get_relay_subscription_count(reg, url);
                 if ((int)current >= lim->max_subscriptions) {
                     g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_SUBSCRIPTION_LIMIT,
                                 "relay %s max_subscriptions (%d) reached",

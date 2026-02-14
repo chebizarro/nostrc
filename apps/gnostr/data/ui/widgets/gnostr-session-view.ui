@@ -480,7 +480,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="title" translatable="yes">Timeline</property>
                                     <property name="icon-name">view-list-symbolic</property>
                                     <property name="child">
-                                      <object class="GnostrTimelineView" id="timeline">
+                                      <object class="NostrGtkTimelineView" id="timeline">
                                         <property name="vexpand">true</property>
                                       </object>
                                     </property>
@@ -639,14 +639,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="orientation">1</property>
                             <property name="hexpand">true</property>
                             <child>
-                              <object class="GnostrProfilePane" id="profile_pane">
+                              <object class="NostrGtkProfilePane" id="profile_pane">
                                 <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
                                 <property name="visible">false</property>
                               </object>
                             </child>
                             <child>
-                              <object class="GnostrThreadView" id="thread_view">
+                              <object class="NostrGtkThreadView" id="thread_view">
                                 <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
                                 <property name="visible">false</property>

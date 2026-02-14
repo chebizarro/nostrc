@@ -22,7 +22,7 @@
 #define GN_NDB_DEDUP_SET_CAP 4096
 
 typedef struct {
-  GnNdbSubBatchFn cb;
+  GNostrNdbSubBatchFn cb;
   gpointer user_data;
   GDestroyNotify destroy;
   GHashTable *recent_keys; /* nostrc-sbqe: per-subid dedup set (main thread only) */
@@ -254,7 +254,7 @@ static gboolean dispatch_subid_on_main(gpointer data) {
 
 uint64_t gn_ndb_subscribe(
   const char *filter_json,
-  GnNdbSubBatchFn cb,
+  GNostrNdbSubBatchFn cb,
   gpointer user_data,
   GDestroyNotify destroy
 ) {

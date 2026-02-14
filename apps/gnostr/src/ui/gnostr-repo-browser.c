@@ -123,7 +123,7 @@ on_refresh_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
 
 /* Handler for open-profile signal from note card rows */
 static void
-on_note_card_open_profile(GnostrNoteCardRow *card G_GNUC_UNUSED,
+on_note_card_open_profile(NostrGtkNoteCardRow *card G_GNUC_UNUSED,
                           const char        *pubkey_hex,
                           gpointer           user_data)
 {
@@ -136,12 +136,12 @@ static GtkWidget *
 create_repo_row(GnostrRepoBrowser *self, RepoData *data)
 {
   /* Create note card for consistent display with timeline */
-  GnostrNoteCardRow *card = gnostr_note_card_row_new();
+  NostrGtkNoteCardRow *card = nostr_gtk_note_card_row_new();
 
   /* CRITICAL: Call prepare_for_bind before populating the card.
    * nostrc-NEW: This was missing, causing blank cards because the
    * disposed flag and binding_id weren't properly initialized. */
-  gnostr_note_card_row_prepare_for_bind(card);
+  nostr_gtk_note_card_row_prepare_for_bind(card);
 
   /* Fetch maintainer profile for author display */
   const char *display_name = NULL;
@@ -175,9 +175,9 @@ create_repo_row(GnostrRepoBrowser *self, RepoData *data)
     }
 
   /* Set author info (maintainer profile) */
-  gnostr_note_card_row_set_author(card, display_name, handle, avatar_url);
-  gnostr_note_card_row_set_ids(card, data->id, NULL, data->maintainer_pubkey);
-  gnostr_note_card_row_set_timestamp(card, data->updated_at, NULL);
+  nostr_gtk_note_card_row_set_author(card, display_name, handle, avatar_url);
+  nostr_gtk_note_card_row_set_ids(card, data->id, NULL, data->maintainer_pubkey);
+  nostr_gtk_note_card_row_set_timestamp(card, data->updated_at, NULL);
 
   /* Build content: repo name (bold) + description + clone URL */
   GString *content = g_string_new(NULL);
@@ -194,7 +194,7 @@ create_repo_row(GnostrRepoBrowser *self, RepoData *data)
   if (data->clone_url)
     g_string_append_printf(content, "\n\n🔗 %s", data->clone_url);
 
-  gnostr_note_card_row_set_content(card, content->str);
+  nostr_gtk_note_card_row_set_content(card, content->str);
   g_string_free(content, TRUE);
 
   /* Free profile after we're done with it */
@@ -299,8 +299,8 @@ rebuild_list(GnostrRepoBrowser *self)
     GtkWidget *container = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(child));
     if (container && GTK_IS_BOX(container)) {
       GtkWidget *first = gtk_widget_get_first_child(container);
-      if (first && GNOSTR_IS_NOTE_CARD_ROW(first))
-        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(first));
+      if (first && NOSTR_GTK_IS_NOTE_CARD_ROW(first))
+        nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(first));
     }
     gtk_list_box_remove(self->repo_list, child);
   }
@@ -348,8 +348,8 @@ gnostr_repo_browser_dispose(GObject *object)
         GtkWidget *container = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(row));
         if (container && GTK_IS_BOX(container)) {
           GtkWidget *first = gtk_widget_get_first_child(container);
-          if (first && GNOSTR_IS_NOTE_CARD_ROW(first))
-            gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(first));
+          if (first && NOSTR_GTK_IS_NOTE_CARD_ROW(first))
+            nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(first));
         }
       }
       row = next;

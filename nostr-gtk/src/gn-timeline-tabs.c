@@ -1,5 +1,5 @@
 /**
- * GnTimelineTabs - Tab bar for switching between timeline views
+ * NostrGtkTimelineTabs - Tab bar for switching between timeline views
  *
  * Part of nostr-gtk widget library.
  *
@@ -20,7 +20,7 @@ typedef struct {
   gboolean closable;
 } TabInfo;
 
-struct _GnTimelineTabs {
+struct _NostrGtkTimelineTabs {
   GtkWidget parent_instance;
 
   GtkWidget *scrolled;
@@ -30,7 +30,7 @@ struct _GnTimelineTabs {
   guint selected;
 };
 
-G_DEFINE_TYPE(GnTimelineTabs, gn_timeline_tabs, GTK_TYPE_WIDGET)
+G_DEFINE_TYPE(NostrGtkTimelineTabs, nostr_gtk_timeline_tabs, GTK_TYPE_WIDGET)
 
 enum {
   PROP_0,
@@ -58,19 +58,19 @@ static void tab_info_free(gpointer data) {
 
 static void on_tab_clicked(GtkButton *button, gpointer user_data);
 static void on_close_gesture_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data);
-static void update_tab_styles(GnTimelineTabs *self);
+static void update_tab_styles(NostrGtkTimelineTabs *self);
 
 /* ============== Public API ============== */
 
-GnTimelineTabs *gn_timeline_tabs_new(void) {
-  return g_object_new(GN_TYPE_TIMELINE_TABS, NULL);
+NostrGtkTimelineTabs *nostr_gtk_timeline_tabs_new(void) {
+  return g_object_new(NOSTR_GTK_TYPE_TIMELINE_TABS, NULL);
 }
 
-guint gn_timeline_tabs_add_tab(GnTimelineTabs *self,
+guint nostr_gtk_timeline_tabs_add_tab(NostrGtkTimelineTabs *self,
                                 GnTimelineTabType type,
                                 const char *label,
                                 const char *filter_value) {
-  g_return_val_if_fail(GN_IS_TIMELINE_TABS(self), 0);
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self), 0);
   g_return_val_if_fail(label != NULL, 0);
 
   TabInfo *info = g_new0(TabInfo, 1);
@@ -144,8 +144,8 @@ guint gn_timeline_tabs_add_tab(GnTimelineTabs *self,
   return index;
 }
 
-void gn_timeline_tabs_remove_tab(GnTimelineTabs *self, guint index) {
-  g_return_if_fail(GN_IS_TIMELINE_TABS(self));
+void nostr_gtk_timeline_tabs_remove_tab(NostrGtkTimelineTabs *self, guint index) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self));
   g_return_if_fail(index < self->tabs->len);
 
   TabInfo *info = g_ptr_array_index(self->tabs, index);
@@ -170,13 +170,13 @@ void gn_timeline_tabs_remove_tab(GnTimelineTabs *self, guint index) {
   }
 }
 
-guint gn_timeline_tabs_get_selected(GnTimelineTabs *self) {
-  g_return_val_if_fail(GN_IS_TIMELINE_TABS(self), 0);
+guint nostr_gtk_timeline_tabs_get_selected(NostrGtkTimelineTabs *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self), 0);
   return self->selected;
 }
 
-void gn_timeline_tabs_set_selected(GnTimelineTabs *self, guint index) {
-  g_return_if_fail(GN_IS_TIMELINE_TABS(self));
+void nostr_gtk_timeline_tabs_set_selected(NostrGtkTimelineTabs *self, guint index) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self));
   g_return_if_fail(index < self->tabs->len);
 
   if (self->selected == index) return;
@@ -187,29 +187,29 @@ void gn_timeline_tabs_set_selected(GnTimelineTabs *self, guint index) {
   g_signal_emit(self, signals[SIGNAL_TAB_SELECTED], 0, index);
 }
 
-GnTimelineTabType gn_timeline_tabs_get_tab_type(GnTimelineTabs *self, guint index) {
-  g_return_val_if_fail(GN_IS_TIMELINE_TABS(self), GN_TIMELINE_TAB_GLOBAL);
+GnTimelineTabType nostr_gtk_timeline_tabs_get_tab_type(NostrGtkTimelineTabs *self, guint index) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self), GN_TIMELINE_TAB_GLOBAL);
   g_return_val_if_fail(index < self->tabs->len, GN_TIMELINE_TAB_GLOBAL);
 
   TabInfo *info = g_ptr_array_index(self->tabs, index);
   return info->type;
 }
 
-const char *gn_timeline_tabs_get_tab_filter_value(GnTimelineTabs *self, guint index) {
-  g_return_val_if_fail(GN_IS_TIMELINE_TABS(self), NULL);
+const char *nostr_gtk_timeline_tabs_get_tab_filter_value(NostrGtkTimelineTabs *self, guint index) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self), NULL);
   g_return_val_if_fail(index < self->tabs->len, NULL);
 
   TabInfo *info = g_ptr_array_index(self->tabs, index);
   return info->filter_value;
 }
 
-guint gn_timeline_tabs_get_n_tabs(GnTimelineTabs *self) {
-  g_return_val_if_fail(GN_IS_TIMELINE_TABS(self), 0);
+guint nostr_gtk_timeline_tabs_get_n_tabs(NostrGtkTimelineTabs *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self), 0);
   return self->tabs->len;
 }
 
-void gn_timeline_tabs_set_closable(GnTimelineTabs *self, guint index, gboolean closable) {
-  g_return_if_fail(GN_IS_TIMELINE_TABS(self));
+void nostr_gtk_timeline_tabs_set_closable(NostrGtkTimelineTabs *self, guint index, gboolean closable) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self));
   g_return_if_fail(index < self->tabs->len);
 
   TabInfo *info = g_ptr_array_index(self->tabs, index);
@@ -223,12 +223,12 @@ void gn_timeline_tabs_set_closable(GnTimelineTabs *self, guint index, gboolean c
 /* ============== Signal Handlers ============== */
 
 static void on_tab_clicked(GtkButton *button, gpointer user_data) {
-  GnTimelineTabs *self = GN_TIMELINE_TABS(user_data);
+  NostrGtkTimelineTabs *self = NOSTR_GTK_TIMELINE_TABS(user_data);
 
   for (guint i = 0; i < self->tabs->len; i++) {
     TabInfo *info = g_ptr_array_index(self->tabs, i);
     if (info->button == GTK_WIDGET(button)) {
-      gn_timeline_tabs_set_selected(self, i);
+      nostr_gtk_timeline_tabs_set_selected(self, i);
       return;
     }
   }
@@ -236,20 +236,20 @@ static void on_tab_clicked(GtkButton *button, gpointer user_data) {
 
 static void on_close_gesture_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
   (void)n_press; (void)x; (void)y;
-  GnTimelineTabs *self = GN_TIMELINE_TABS(user_data);
+  NostrGtkTimelineTabs *self = NOSTR_GTK_TIMELINE_TABS(user_data);
   GtkWidget *close_btn = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 
   for (guint i = 0; i < self->tabs->len; i++) {
     TabInfo *info = g_ptr_array_index(self->tabs, i);
     if (info->close_button == close_btn) {
       gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
-      gn_timeline_tabs_remove_tab(self, i);
+      nostr_gtk_timeline_tabs_remove_tab(self, i);
       return;
     }
   }
 }
 
-static void update_tab_styles(GnTimelineTabs *self) {
+static void update_tab_styles(NostrGtkTimelineTabs *self) {
   for (guint i = 0; i < self->tabs->len; i++) {
     TabInfo *info = g_ptr_array_index(self->tabs, i);
     if (i == self->selected) {
@@ -264,24 +264,24 @@ static void update_tab_styles(GnTimelineTabs *self) {
 
 /* ============== GObject Lifecycle ============== */
 
-static void gn_timeline_tabs_dispose(GObject *object) {
-  GnTimelineTabs *self = GN_TIMELINE_TABS(object);
+static void nostr_gtk_timeline_tabs_dispose(GObject *object) {
+  NostrGtkTimelineTabs *self = NOSTR_GTK_TIMELINE_TABS(object);
 
   g_clear_pointer(&self->scrolled, gtk_widget_unparent);
 
-  G_OBJECT_CLASS(gn_timeline_tabs_parent_class)->dispose(object);
+  G_OBJECT_CLASS(nostr_gtk_timeline_tabs_parent_class)->dispose(object);
 }
 
-static void gn_timeline_tabs_finalize(GObject *object) {
-  GnTimelineTabs *self = GN_TIMELINE_TABS(object);
+static void nostr_gtk_timeline_tabs_finalize(GObject *object) {
+  NostrGtkTimelineTabs *self = NOSTR_GTK_TIMELINE_TABS(object);
 
   g_ptr_array_unref(self->tabs);
 
-  G_OBJECT_CLASS(gn_timeline_tabs_parent_class)->finalize(object);
+  G_OBJECT_CLASS(nostr_gtk_timeline_tabs_parent_class)->finalize(object);
 }
 
-static void gn_timeline_tabs_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
-  GnTimelineTabs *self = GN_TIMELINE_TABS(object);
+static void nostr_gtk_timeline_tabs_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+  NostrGtkTimelineTabs *self = NOSTR_GTK_TIMELINE_TABS(object);
 
   switch (prop_id) {
     case PROP_SELECTED:
@@ -292,26 +292,26 @@ static void gn_timeline_tabs_get_property(GObject *object, guint prop_id, GValue
   }
 }
 
-static void gn_timeline_tabs_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
-  GnTimelineTabs *self = GN_TIMELINE_TABS(object);
+static void nostr_gtk_timeline_tabs_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+  NostrGtkTimelineTabs *self = NOSTR_GTK_TIMELINE_TABS(object);
 
   switch (prop_id) {
     case PROP_SELECTED:
-      gn_timeline_tabs_set_selected(self, g_value_get_uint(value));
+      nostr_gtk_timeline_tabs_set_selected(self, g_value_get_uint(value));
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
   }
 }
 
-static void gn_timeline_tabs_class_init(GnTimelineTabsClass *klass) {
+static void nostr_gtk_timeline_tabs_class_init(NostrGtkTimelineTabsClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 
-  object_class->dispose = gn_timeline_tabs_dispose;
-  object_class->finalize = gn_timeline_tabs_finalize;
-  object_class->get_property = gn_timeline_tabs_get_property;
-  object_class->set_property = gn_timeline_tabs_set_property;
+  object_class->dispose = nostr_gtk_timeline_tabs_dispose;
+  object_class->finalize = nostr_gtk_timeline_tabs_finalize;
+  object_class->get_property = nostr_gtk_timeline_tabs_get_property;
+  object_class->set_property = nostr_gtk_timeline_tabs_set_property;
 
   properties[PROP_SELECTED] =
     g_param_spec_uint("selected", "Selected", "Selected tab index",
@@ -338,7 +338,7 @@ static void gn_timeline_tabs_class_init(GnTimelineTabsClass *klass) {
   gtk_widget_class_set_css_name(widget_class, "timeline-tabs");
 }
 
-static void gn_timeline_tabs_init(GnTimelineTabs *self) {
+static void nostr_gtk_timeline_tabs_init(NostrGtkTimelineTabs *self) {
   self->tabs = g_ptr_array_new_with_free_func(tab_info_free);
   self->selected = 0;
 
@@ -355,5 +355,5 @@ static void gn_timeline_tabs_init(GnTimelineTabs *self) {
   gtk_widget_set_margin_bottom(self->box, 4);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(self->scrolled), self->box);
 
-  gn_timeline_tabs_add_tab(self, GN_TIMELINE_TAB_GLOBAL, "Global", NULL);
+  nostr_gtk_timeline_tabs_add_tab(self, GN_TIMELINE_TAB_GLOBAL, "Global", NULL);
 }

@@ -21,7 +21,7 @@
 
 /* Profile entry for internal storage */
 typedef struct {
-    GnNostrProfile *profile;
+    GNostrProfile *profile;
     gint64 created_at;       /* Timestamp of kind:0 event */
     gboolean is_following;   /* Whether current user follows this profile */
     gboolean is_muted;       /* Whether this profile is muted (NIP-51) */
@@ -73,7 +73,7 @@ static GType
 gn_profile_list_model_get_item_type(GListModel *model)
 {
     (void)model;
-    return GN_TYPE_NOSTR_PROFILE;
+    return GNOSTR_TYPE_PROFILE;
 }
 
 static guint
@@ -124,20 +124,20 @@ compare_by_alphabetical(gconstpointer a, gconstpointer b)
     const ProfileEntry *eb = *(const ProfileEntry **)b;
 
     /* Sort by display_name first, then name, then pubkey as fallback */
-    const char *name_a = gn_nostr_profile_get_display_name(ea->profile);
-    const char *name_b = gn_nostr_profile_get_display_name(eb->profile);
+    const char *name_a = gnostr_profile_get_display_name(ea->profile);
+    const char *name_b = gnostr_profile_get_display_name(eb->profile);
 
     /* Fall back to name if display_name is empty or null */
     if (!name_a || *name_a == '\0')
-        name_a = gn_nostr_profile_get_name(ea->profile);
+        name_a = gnostr_profile_get_name(ea->profile);
     if (!name_b || *name_b == '\0')
-        name_b = gn_nostr_profile_get_name(eb->profile);
+        name_b = gnostr_profile_get_name(eb->profile);
 
     /* Fall back to pubkey if both display_name and name are empty */
     if (!name_a || *name_a == '\0')
-        name_a = gn_nostr_profile_get_pubkey(ea->profile);
+        name_a = gnostr_profile_get_pubkey(ea->profile);
     if (!name_b || *name_b == '\0')
-        name_b = gn_nostr_profile_get_pubkey(eb->profile);
+        name_b = gnostr_profile_get_pubkey(eb->profile);
 
     return g_utf8_collate(name_a ? name_a : "", name_b ? name_b : "");
 }
@@ -183,14 +183,14 @@ profile_matches_filter(ProfileEntry *entry, const char *filter_text)
     if (!filter_text || !*filter_text)
         return TRUE;
 
-    GnNostrProfile *profile = entry->profile;
+    GNostrProfile *profile = entry->profile;
 
     /* Case-insensitive search in name, display_name, nip05, about */
-    const char *name = gn_nostr_profile_get_name(profile);
-    const char *display_name = gn_nostr_profile_get_display_name(profile);
-    const char *nip05 = gn_nostr_profile_get_nip05(profile);
-    const char *about = gn_nostr_profile_get_about(profile);
-    const char *pubkey = gn_nostr_profile_get_pubkey(profile);
+    const char *name = gnostr_profile_get_name(profile);
+    const char *display_name = gnostr_profile_get_display_name(profile);
+    const char *nip05 = gnostr_profile_get_nip05(profile);
+    const char *about = gnostr_profile_get_about(profile);
+    const char *pubkey = gnostr_profile_get_pubkey(profile);
 
     char *filter_lower = g_utf8_strdown(filter_text, -1);
     gboolean matches = FALSE;
@@ -243,7 +243,7 @@ rebuild_filtered_list(GnProfileListModel *self)
     /* Build filtered list - exclude blocked profiles */
     for (guint i = 0; i < self->all_profiles->len; i++) {
         ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
-        const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
+        const char *pubkey = gnostr_profile_get_pubkey(entry->profile);
 
         /* Skip blocked profiles entirely */
         if (pubkey && g_hash_table_contains(self->blocked_set, pubkey)) {
@@ -382,9 +382,9 @@ parse_profile_from_event_json(const char *json_str, int json_len)
     content = gnostr_json_get_string(json_copy, "content", NULL);
 
     /* Create profile */
-    GnNostrProfile *profile = gn_nostr_profile_new(pubkey);
+    GNostrProfile *profile = gnostr_profile_new(pubkey);
     if (content && *content) {
-        gn_nostr_profile_update_from_json(profile, content);
+        gnostr_profile_update_from_json(profile, content);
     }
 
     ProfileEntry *entry = g_new0(ProfileEntry, 1);
@@ -500,7 +500,7 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
             ProfileEntry *entry = g_ptr_array_index(data->loaded_profiles, i);
 
             /* Update following and muted status */
-            const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
+            const char *pubkey = gnostr_profile_get_pubkey(entry->profile);
 
             /* Skip duplicate pubkeys - keep the first (most recent) one */
             if (pubkey && g_hash_table_contains(seen_pubkeys, pubkey)) {
@@ -606,7 +606,7 @@ has_profile_for_pubkey(GnProfileListModel *self, const char *pubkey)
     if (!pubkey) return FALSE;
     for (guint i = 0; i < self->all_profiles->len; i++) {
         ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
-        const char *pk = gn_nostr_profile_get_pubkey(entry->profile);
+        const char *pk = gnostr_profile_get_pubkey(entry->profile);
         if (pk && g_strcmp0(pk, pubkey) == 0) {
             return TRUE;
         }
@@ -695,8 +695,8 @@ on_missing_profile_fetched(const char *pubkey_hex,
     g_string_append_c(json, '}');
 
     /* Create a profile entry from the fetched metadata */
-    GnNostrProfile *profile = gn_nostr_profile_new(pubkey_hex);
-    gn_nostr_profile_update_from_json(profile, json->str);
+    GNostrProfile *profile = gnostr_profile_new(pubkey_hex);
+    gnostr_profile_update_from_json(profile, json->str);
     g_string_free(json, TRUE);
 
     ProfileEntry *entry = g_new0(ProfileEntry, 1);
@@ -736,7 +736,7 @@ gn_profile_list_model_set_following_set(GnProfileListModel *self, const char **p
     /* Update following status on all entries */
     for (guint i = 0; i < self->all_profiles->len; i++) {
         ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
-        const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
+        const char *pubkey = gnostr_profile_get_pubkey(entry->profile);
         entry->is_following = pubkey && g_hash_table_contains(self->following_set, pubkey);
     }
 
@@ -793,7 +793,7 @@ gn_profile_list_model_set_muted_set(GnProfileListModel *self, const char **pubke
     /* Update muted status on all entries */
     for (guint i = 0; i < self->all_profiles->len; i++) {
         ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
-        const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
+        const char *pubkey = gnostr_profile_get_pubkey(entry->profile);
         entry->is_muted = pubkey && g_hash_table_contains(self->muted_set, pubkey);
     }
 

@@ -33,7 +33,7 @@
 static const int SYNC_KINDS[] = { 0, 3, 10000, 10001, 10002 };
 static const size_t SYNC_KIND_COUNT = 5;
 
-struct _GnostrSyncService
+struct _GNostrSyncService
 {
   GObject parent_instance;
 
@@ -56,13 +56,13 @@ struct _GnostrSyncService
   gpointer relay_provider_data;
 };
 
-G_DEFINE_TYPE(GnostrSyncService, gnostr_sync_service, G_TYPE_OBJECT)
+G_DEFINE_TYPE(GNostrSyncService, gnostr_sync_service, G_TYPE_OBJECT)
 
 /* Forward declarations */
 static gboolean on_sync_timer(gpointer user_data);
 static void on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void schedule_next_sync(GnostrSyncService *self);
-static void do_sync(GnostrSyncService *self);
+static void schedule_next_sync(GNostrSyncService *self);
+static void do_sync(GNostrSyncService *self);
 
 /* ============================================================================
  * GObject lifecycle
@@ -71,7 +71,7 @@ static void do_sync(GnostrSyncService *self);
 static void
 gnostr_sync_service_dispose(GObject *object)
 {
-  GnostrSyncService *self = GNOSTR_SYNC_SERVICE(object);
+  GNostrSyncService *self = GNOSTR_SYNC_SERVICE(object);
 
   /* Stop timer */
   if (self->timer_id > 0) {
@@ -89,14 +89,14 @@ gnostr_sync_service_dispose(GObject *object)
 }
 
 static void
-gnostr_sync_service_class_init(GnostrSyncServiceClass *klass)
+gnostr_sync_service_class_init(GNostrSyncServiceClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   object_class->dispose = gnostr_sync_service_dispose;
 }
 
 static void
-gnostr_sync_service_init(GnostrSyncService *self)
+gnostr_sync_service_init(GNostrSyncService *self)
 {
   self->timer_id = 0;
   self->current_interval_sec = SYNC_INTERVAL_BASE_SEC;
@@ -114,9 +114,9 @@ gnostr_sync_service_init(GnostrSyncService *self)
  * Singleton
  * ============================================================================ */
 
-static GnostrSyncService *default_instance = NULL;
+static GNostrSyncService *default_instance = NULL;
 
-GnostrSyncService *
+GNostrSyncService *
 gnostr_sync_service_new(GnostrSyncRelayProvider relay_provider,
                          gpointer user_data)
 {
@@ -129,14 +129,14 @@ gnostr_sync_service_new(GnostrSyncRelayProvider relay_provider,
     return default_instance;
   }
 
-  GnostrSyncService *instance = g_object_new(GNOSTR_TYPE_SYNC_SERVICE, NULL);
+  GNostrSyncService *instance = g_object_new(GNOSTR_TYPE_SYNC_SERVICE, NULL);
   instance->relay_provider = relay_provider;
   instance->relay_provider_data = user_data;
   default_instance = instance;
   return instance;
 }
 
-GnostrSyncService *
+GNostrSyncService *
 gnostr_sync_service_get_default(void)
 {
   return default_instance;
@@ -159,13 +159,13 @@ gnostr_sync_service_shutdown(void)
 static void
 emit_bus_event(const char *topic, const char *json)
 {
-  NostrEventBus *bus = nostr_event_bus_get_default();
+  GNostrEventBus *bus = gnostr_event_bus_get_default();
   if (bus)
-    nostr_event_bus_emit(bus, topic, (gpointer)json);
+    gnostr_event_bus_emit(bus, topic, (gpointer)json);
 }
 
 static void
-adjust_interval(GnostrSyncService *self, gboolean in_sync)
+adjust_interval(GNostrSyncService *self, gboolean in_sync)
 {
   if (in_sync) {
     self->consecutive_in_sync++;
@@ -191,7 +191,7 @@ adjust_interval(GnostrSyncService *self, gboolean in_sync)
 }
 
 static void
-schedule_next_sync(GnostrSyncService *self)
+schedule_next_sync(GNostrSyncService *self)
 {
   /* Remove existing timer */
   if (self->timer_id > 0) {
@@ -211,7 +211,7 @@ schedule_next_sync(GnostrSyncService *self)
  * ============================================================================ */
 
 static gchar *
-get_first_relay_url(GnostrSyncService *self)
+get_first_relay_url(GNostrSyncService *self)
 {
   if (!self->relay_provider) {
     g_debug("[SYNC] No relay provider configured");
@@ -230,7 +230,7 @@ get_first_relay_url(GnostrSyncService *self)
 }
 
 static void
-do_sync(GnostrSyncService *self)
+do_sync(GNostrSyncService *self)
 {
   if (self->state == GNOSTR_SYNC_RUNNING) {
     g_debug("[SYNC] Sync already in progress, skipping");
@@ -265,7 +265,7 @@ static void
 on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   (void)source;
-  GnostrSyncService *self = GNOSTR_SYNC_SERVICE(user_data);
+  GNostrSyncService *self = GNOSTR_SYNC_SERVICE(user_data);
 
   GError *error = NULL;
   GnostrNegSyncStats stats = {0};
@@ -336,7 +336,7 @@ on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data)
 static gboolean
 on_sync_timer(gpointer user_data)
 {
-  GnostrSyncService *self = GNOSTR_SYNC_SERVICE(user_data);
+  GNostrSyncService *self = GNOSTR_SYNC_SERVICE(user_data);
   self->timer_id = 0;  /* one-shot: will be rescheduled in on_sync_done */
   do_sync(self);
   return G_SOURCE_REMOVE;
@@ -347,7 +347,7 @@ on_sync_timer(gpointer user_data)
  * ============================================================================ */
 
 void
-gnostr_sync_service_start(GnostrSyncService *self)
+gnostr_sync_service_start(GNostrSyncService *self)
 {
   g_return_if_fail(GNOSTR_IS_SYNC_SERVICE(self));
 
@@ -365,7 +365,7 @@ gnostr_sync_service_start(GnostrSyncService *self)
 }
 
 void
-gnostr_sync_service_stop(GnostrSyncService *self)
+gnostr_sync_service_stop(GNostrSyncService *self)
 {
   g_return_if_fail(GNOSTR_IS_SYNC_SERVICE(self));
 
@@ -392,7 +392,7 @@ gnostr_sync_service_stop(GnostrSyncService *self)
 }
 
 void
-gnostr_sync_service_sync_now(GnostrSyncService *self)
+gnostr_sync_service_sync_now(GNostrSyncService *self)
 {
   g_return_if_fail(GNOSTR_IS_SYNC_SERVICE(self));
 
@@ -404,28 +404,28 @@ gnostr_sync_service_sync_now(GnostrSyncService *self)
 }
 
 GnostrSyncState
-gnostr_sync_service_get_state(GnostrSyncService *self)
+gnostr_sync_service_get_state(GNostrSyncService *self)
 {
   g_return_val_if_fail(GNOSTR_IS_SYNC_SERVICE(self), GNOSTR_SYNC_IDLE);
   return self->state;
 }
 
 gint64
-gnostr_sync_service_get_last_sync_time(GnostrSyncService *self)
+gnostr_sync_service_get_last_sync_time(GNostrSyncService *self)
 {
   g_return_val_if_fail(GNOSTR_IS_SYNC_SERVICE(self), 0);
   return self->last_sync_time;
 }
 
 guint
-gnostr_sync_service_get_consecutive_in_sync(GnostrSyncService *self)
+gnostr_sync_service_get_consecutive_in_sync(GNostrSyncService *self)
 {
   g_return_val_if_fail(GNOSTR_IS_SYNC_SERVICE(self), 0);
   return self->consecutive_in_sync;
 }
 
 gboolean
-gnostr_sync_service_is_running(GnostrSyncService *self)
+gnostr_sync_service_is_running(GNostrSyncService *self)
 {
   g_return_val_if_fail(GNOSTR_IS_SYNC_SERVICE(self), FALSE);
   return self->running;

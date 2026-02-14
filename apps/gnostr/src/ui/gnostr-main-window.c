@@ -266,13 +266,13 @@ static char *get_current_user_pubkey_hex(void);
 static void on_event_model_need_profile(GnNostrEventModel *model, const char *pubkey_hex, gpointer user_data);
 static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_data);
 static void on_event_model_new_items_pending(GnNostrEventModel *model, guint count, gpointer user_data);
-static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type, const char *filter_value, gpointer user_data);
+static void on_timeline_tab_filter_changed(NostrGtkTimelineView *view, guint type, const char *filter_value, gpointer user_data);
 static void on_new_notes_clicked(GtkButton *btn, gpointer user_data);
 typedef struct UiEventRow UiEventRow;
 static void ui_event_row_free(gpointer p);
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
 static gboolean periodic_backfill_cb(gpointer data);
-static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data);
+static void on_composer_post_requested(NostrGtkComposer *composer, const char *text, gpointer user_data);
 static void on_compose_requested(GnostrSessionView *session_view, gpointer user_data);
 static void on_relays_clicked(GtkButton *btn, gpointer user_data);
 static void on_reconnect_requested(GnostrSessionView *view, gpointer user_data);
@@ -284,11 +284,11 @@ static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data);
 static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data);
 static void on_signer_state_changed(GnostrSignerService *signer, guint old_state, guint new_state, gpointer user_data);
-static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
-static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
-static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data);
-static void on_profile_pane_follow_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data);
-static void on_profile_pane_message_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data);
+static void on_note_card_open_profile(NostrGtkNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
+static void on_profile_pane_close_requested(NostrGtkProfilePane *pane, gpointer user_data);
+static void on_profile_pane_mute_user_requested(NostrGtkProfilePane *pane, const char *pubkey_hex, gpointer user_data);
+static void on_profile_pane_follow_requested(NostrGtkProfilePane *pane, const char *pubkey_hex, gpointer user_data);
+static void on_profile_pane_message_requested(NostrGtkProfilePane *pane, const char *pubkey_hex, gpointer user_data);
 static void navigate_to_dm_conversation(GnostrMainWindow *self, const char *peer_pubkey);
 /* Forward declarations for discover page signal handlers */
 static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
@@ -324,9 +324,9 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data);
 static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data);
 static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data);
 /* Forward declarations for repost/quote/like signal handlers */
-static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
-static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
-static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data);
+static void on_note_card_repost_requested(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
+static void on_note_card_quote_requested(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
+static void on_note_card_like_requested(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data);
 /* Forward declarations for publish context (needed by repost function) */
 typedef struct _PublishContext PublishContext;
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
@@ -339,7 +339,7 @@ static void on_like_publish_done(GObject *source, GAsyncResult *res, gpointer us
 /* Forward declarations for public repost/quote/like functions (defined after PublishContext) */
 void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
-void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, GnostrNoteCardRow *row);
+void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, NostrGtkNoteCardRow *row);
 
 /* nostrc-c0mp: Forward declarations for compose dialog with context */
 typedef enum {
@@ -563,9 +563,9 @@ static gboolean memory_stats_cb(gpointer data) {
 
   /* Get external cache stats */
   extern guint gnostr_avatar_cache_size(void);
-  extern guint gnostr_media_image_cache_size(void);
+  extern guint nostr_gtk_media_image_cache_size(void);
   guint avatar_tex = gnostr_avatar_cache_size(); /* in-memory GdkTexture cache */
-  guint media_cache = gnostr_media_image_cache_size();
+  guint media_cache = nostr_gtk_media_image_cache_size();
 
   /* Get profile provider stats */
   GnostrProfileProviderStats pstats = {0};
@@ -683,8 +683,8 @@ static void show_thread_panel(GnostrMainWindow *self) {
    * Profiles may have arrived from relays while the panel was hidden
    * or while viewing the profile pane. */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-    gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
+  if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
+    nostr_gtk_thread_view_update_profiles(NOSTR_GTK_THREAD_VIEW(thread_view));
   }
 }
 
@@ -2469,7 +2469,7 @@ static void on_negentropy_sync_changed(GtkSwitch *sw, GParamSpec *pspec, gpointe
   g_settings_set_boolean(client, "negentropy-auto-sync", enabled);
   g_object_unref(client);
 
-  GnostrSyncService *svc = gnostr_sync_service_get_default();
+  GNostrSyncService *svc = gnostr_sync_service_get_default();
   if (enabled)
     gnostr_sync_service_start(svc);
   else
@@ -4181,8 +4181,8 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
    * "Edit Profile" button when viewing own profile */
   if (self->user_pubkey_hex && self->session_view) {
     GtkWidget *pp = gnostr_session_view_get_profile_pane(self->session_view);
-    if (pp && GNOSTR_IS_PROFILE_PANE(pp)) {
-      gnostr_profile_pane_set_own_pubkey(GNOSTR_PROFILE_PANE(pp), self->user_pubkey_hex);
+    if (pp && NOSTR_GTK_IS_PROFILE_PANE(pp)) {
+      nostr_gtk_profile_pane_set_own_pubkey(NOSTR_GTK_PROFILE_PANE(pp), self->user_pubkey_hex);
     }
   }
 
@@ -4241,7 +4241,7 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     {
       GSettings *client = g_settings_new("org.gnostr.Client");
       if (g_settings_get_boolean(client, "negentropy-auto-sync")) {
-        GnostrSyncService *svc = gnostr_sync_service_get_default();
+        GNostrSyncService *svc = gnostr_sync_service_get_default();
         if (svc) gnostr_sync_service_start(svc);
       }
       g_object_unref(client);
@@ -4384,16 +4384,16 @@ static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data)
   /* Resolve profile pane widget directly */
   GtkWidget *pane_w = self->session_view
     ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
-  if (!pane_w || !GNOSTR_IS_PROFILE_PANE(pane_w)) {
+  if (!pane_w || !NOSTR_GTK_IS_PROFILE_PANE(pane_w)) {
     show_toast(self, _("Profile unavailable"));
     return;
   }
-  GnostrProfilePane *pane = GNOSTR_PROFILE_PANE(pane_w);
+  NostrGtkProfilePane *pane = NOSTR_GTK_PROFILE_PANE(pane_w);
 
   /* Toggle: if already showing our own profile in the sidebar, close it */
   gboolean sidebar_up = is_panel_visible(self)
     && gnostr_session_view_is_showing_profile(self->session_view);
-  const char *cur = gnostr_profile_pane_get_current_pubkey(pane);
+  const char *cur = nostr_gtk_profile_pane_get_current_pubkey(pane);
   if (sidebar_up && cur && strcmp(cur, hex) == 0) {
     hide_panel(self);
     return;
@@ -4401,7 +4401,7 @@ static void on_view_profile_requested(GnostrSessionView *sv, gpointer user_data)
 
   /* Open sidebar and load (or reload) the profile */
   show_profile_panel(self);
-  gnostr_profile_pane_set_pubkey(pane, hex);
+  nostr_gtk_profile_pane_set_pubkey(pane, hex);
 }
 
 /* Handler for account switch request from session view */
@@ -4474,29 +4474,29 @@ static void update_login_ui_state(GnostrMainWindow *self) {
 
 /* Profile pane signal handlers — shared path for clicking any user's profile
  * (from timeline note cards, DM conversations, etc.) */
-static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_open_profile(NostrGtkNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
   (void)row;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
   GtkWidget *profile_pane = self->session_view
     ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
-  if (!profile_pane || !GNOSTR_IS_PROFILE_PANE(profile_pane)) return;
+  if (!profile_pane || !NOSTR_GTK_IS_PROFILE_PANE(profile_pane)) return;
 
   /* Toggle: if sidebar is already showing this exact profile, close it */
   gboolean sidebar_visible = is_panel_visible(self)
     && gnostr_session_view_is_showing_profile(self->session_view);
-  const char *current = gnostr_profile_pane_get_current_pubkey(GNOSTR_PROFILE_PANE(profile_pane));
+  const char *current = nostr_gtk_profile_pane_get_current_pubkey(NOSTR_GTK_PROFILE_PANE(profile_pane));
   if (sidebar_visible && current && strcmp(current, pubkey_hex) == 0) {
     hide_panel(self);
     return;
   }
 
   show_profile_panel(self);
-  gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(profile_pane), pubkey_hex);
+  nostr_gtk_profile_pane_set_pubkey(NOSTR_GTK_PROFILE_PANE(profile_pane), pubkey_hex);
 }
 
-static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data) {
+static void on_profile_pane_close_requested(NostrGtkProfilePane *pane, gpointer user_data) {
   (void)pane;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -4504,7 +4504,7 @@ static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer us
 }
 
 /* nostrc-ch2v: Handle mute user from profile pane */
-static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
+static void on_profile_pane_mute_user_requested(NostrGtkProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
   (void)pane;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -4516,7 +4516,7 @@ static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const c
 
   g_debug("[MUTE] Mute user from profile pane for pubkey=%.16s...", pubkey_hex);
 
-  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  GNostrMuteList *mute_list = gnostr_mute_list_get_default();
   gnostr_mute_list_add_pubkey(mute_list, pubkey_hex, FALSE);
 
   if (self->event_model) {
@@ -4529,7 +4529,7 @@ static void on_profile_pane_mute_user_requested(GnostrProfilePane *pane, const c
 /* nostrc-s0e0: Follow/unfollow context for async save */
 typedef struct {
   GnostrMainWindow *self;
-  GnostrProfilePane *pane;
+  NostrGtkProfilePane *pane;
   char *pubkey_hex;
   gboolean was_following;
 } FollowContext;
@@ -4548,8 +4548,8 @@ static void on_follow_save_complete(GnostrContactList *cl, gboolean success,
     else
       gnostr_contact_list_remove(cl, ctx->pubkey_hex);
 
-    if (GNOSTR_IS_PROFILE_PANE(ctx->pane))
-      gnostr_profile_pane_set_following(ctx->pane, ctx->was_following);
+    if (NOSTR_GTK_IS_PROFILE_PANE(ctx->pane))
+      nostr_gtk_profile_pane_set_following(ctx->pane, ctx->was_following);
 
     show_toast(ctx->self, error_msg ? error_msg : "Follow action failed");
   }
@@ -4559,7 +4559,7 @@ static void on_follow_save_complete(GnostrContactList *cl, gboolean success,
 }
 
 /* nostrc-s0e0: Handle follow/unfollow from profile pane */
-static void on_profile_pane_follow_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
+static void on_profile_pane_follow_requested(NostrGtkProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return;
@@ -4587,7 +4587,7 @@ static void on_profile_pane_follow_requested(GnostrProfilePane *pane, const char
     gnostr_contact_list_add(cl, pubkey_hex, NULL);
 
   /* Optimistic UI update */
-  gnostr_profile_pane_set_following(pane, !was_following);
+  nostr_gtk_profile_pane_set_following(pane, !was_following);
 
   /* Save to relays */
   FollowContext *ctx = g_new0(FollowContext, 1);
@@ -4600,7 +4600,7 @@ static void on_profile_pane_follow_requested(GnostrProfilePane *pane, const char
 }
 
 /* nostrc-qvba: Handle message from profile pane */
-static void on_profile_pane_message_requested(GnostrProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
+static void on_profile_pane_message_requested(NostrGtkProfilePane *pane, const char *pubkey_hex, gpointer user_data) {
   (void)pane;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -4716,8 +4716,8 @@ static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const ch
 
   /* Show listing details in thread view */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(thread_view), event_id);
+  if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
+    nostr_gtk_thread_view_set_focus_event(NOSTR_GTK_THREAD_VIEW(thread_view), event_id);
     show_thread_panel(self);
   }
 }
@@ -5077,8 +5077,8 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
       if (!gnostr_session_view_is_showing_profile(self->session_view)) {
         g_debug("[UI] ESC pressed: closing thread view");
         GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-        if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-          gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(thread_view));
+        if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
+          nostr_gtk_thread_view_clear(NOSTR_GTK_THREAD_VIEW(thread_view));
         }
       } else {
         g_debug("[UI] ESC pressed: closing profile sidebar");
@@ -5274,28 +5274,28 @@ void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, i
   open_compose_dialog_with_context(self, ctx);
 }
 
-static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_repost_requested(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   (void)row;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   gnostr_main_window_request_repost(GTK_WIDGET(self), id_hex, pubkey_hex);
 }
 
 /* Signal handler for quote-requested from note card */
-static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_quote_requested(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   (void)row;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   gnostr_main_window_request_quote(GTK_WIDGET(self), id_hex, pubkey_hex);
 }
 
 /* Signal handler for like-requested from note card (NIP-25) */
-static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data) {
+static void on_note_card_like_requested(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   gnostr_main_window_request_like(GTK_WIDGET(self), id_hex, pubkey_hex, event_kind, reaction_content, row);
 }
 
 /* Signal handler for comment-requested from note card (NIP-22) */
-static void on_note_card_comment_requested(GnostrNoteCardRow *row, const char *id_hex, int kind, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_comment_requested(NostrGtkNoteCardRow *row, const char *id_hex, int kind, const char *pubkey_hex, gpointer user_data) {
   (void)row;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -5303,8 +5303,8 @@ static void on_note_card_comment_requested(GnostrNoteCardRow *row, const char *i
 }
 
 /* Forward declaration for thread view close handler */
-static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user_data);
-static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubkey_hex, gpointer user_data);
+static void on_thread_view_close_requested(NostrGtkThreadView *view, gpointer user_data);
+static void on_thread_view_open_profile(NostrGtkThreadView *view, const char *pubkey_hex, gpointer user_data);
 
 /* Forward declaration */
 void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *root_event_id, const char *event_json);
@@ -5330,7 +5330,7 @@ void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *roo
 
   /* Show thread view panel */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (!thread_view || !GNOSTR_IS_THREAD_VIEW(thread_view)) {
+  if (!thread_view || !NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
     g_warning("[THREAD] Thread view widget not available");
     show_toast(self, "Thread view not available");
     return;
@@ -5338,14 +5338,14 @@ void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *roo
 
   /* Set the thread root and load the thread.
    * If event_json is provided, the event is pre-populated to avoid nostrdb lookup. */
-  gnostr_thread_view_set_thread_root_with_json(GNOSTR_THREAD_VIEW(thread_view), root_event_id, event_json);
+  nostr_gtk_thread_view_set_thread_root_with_json(NOSTR_GTK_THREAD_VIEW(thread_view), root_event_id, event_json);
 
   /* Show the thread panel */
   show_thread_panel(self);
 }
 
 /* Handler for thread view close button */
-static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user_data) {
+static void on_thread_view_close_requested(NostrGtkThreadView *view, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   (void)view;
 
@@ -5356,8 +5356,8 @@ static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user
 
   /* Clear thread view to free resources */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-    gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(thread_view));
+  if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
+    nostr_gtk_thread_view_clear(NOSTR_GTK_THREAD_VIEW(thread_view));
   }
 }
 
@@ -5415,7 +5415,7 @@ static void on_article_reader_zap(GnostrArticleReader *reader,
 }
 
 /* Handler for open profile from thread view */
-static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubkey_hex, gpointer user_data) {
+static void on_thread_view_open_profile(NostrGtkThreadView *view, const char *pubkey_hex, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   (void)view;
 
@@ -5423,8 +5423,8 @@ static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubk
 
   /* Close thread view first */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-    on_thread_view_close_requested(GNOSTR_THREAD_VIEW(thread_view), self);
+  if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
+    on_thread_view_close_requested(NOSTR_GTK_THREAD_VIEW(thread_view), self);
   }
 
   /* Open profile pane */
@@ -5432,7 +5432,7 @@ static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubk
 }
 
 /* Handler for need-profile signal from thread view - fetches profile from relays */
-static void on_thread_view_need_profile(GnostrThreadView *view, const char *pubkey_hex, gpointer user_data) {
+static void on_thread_view_need_profile(NostrGtkThreadView *view, const char *pubkey_hex, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   (void)view;
 
@@ -5559,7 +5559,7 @@ void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex) {
   g_debug("[MUTE] Mute user requested for pubkey=%.16s...", pubkey_hex);
 
   /* Add to mute list */
-  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  GNostrMuteList *mute_list = gnostr_mute_list_get_default();
   gnostr_mute_list_add_pubkey(mute_list, pubkey_hex, FALSE);
 
   /* Refresh the timeline to filter out the muted user */
@@ -5584,7 +5584,7 @@ void gnostr_main_window_mute_thread(GtkWidget *window, const char *event_id_hex)
   g_debug("[MUTE] Mute thread requested for event=%.16s...", event_id_hex);
 
   /* Add to mute list (events) */
-  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  GNostrMuteList *mute_list = gnostr_mute_list_get_default();
   gnostr_mute_list_add_event(mute_list, event_id_hex, FALSE);
 
   /* Refresh the timeline to filter out the muted thread */
@@ -6100,7 +6100,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Connect profile pane and thread view close signals */
   {
     GtkWidget *profile_pane = self->session_view ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
-    if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
+    if (profile_pane && NOSTR_GTK_IS_PROFILE_PANE(profile_pane)) {
       g_signal_connect(profile_pane, "close-requested",
                        G_CALLBACK(on_profile_pane_close_requested), self);
       /* nostrc-ch2v: Handle mute from profile pane */
@@ -6114,7 +6114,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     }
     
     GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-    if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+    if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
       g_signal_connect(thread_view, "close-requested",
                        G_CALLBACK(on_thread_view_close_requested), self);
       /* nostrc-oz5: Connect need-profile and open-profile signals to enable
@@ -6353,19 +6353,19 @@ deferred_heavy_init_cb(gpointer data)
 
   /* Attach model to timeline view (accessed via session view) */
   GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
-  if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+  if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, NOSTR_GTK_TYPE_TIMELINE_VIEW)) {
     /* Wrap GListModel in a selection model */
     GtkSelectionModel *selection = GTK_SELECTION_MODEL(
       gtk_single_selection_new(G_LIST_MODEL(self->event_model))
     );
-    gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(timeline), selection);
+    nostr_gtk_timeline_view_set_model(NOSTR_GTK_TIMELINE_VIEW(timeline), selection);
     g_object_unref(selection); /* View takes ownership */
 
     /* Enable frame-rate insertion buffer drain (~60fps GLib timer) */
     gn_nostr_event_model_set_drain_enabled(self->event_model, TRUE);
 
     /* Connect scroll edge detection for sliding window pagination */
-    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(timeline));
+    GtkWidget *scroller = nostr_gtk_timeline_view_get_scrolled_window(NOSTR_GTK_TIMELINE_VIEW(timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
       GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
       if (vadj) {
@@ -6570,8 +6570,8 @@ deferred_heavy_init_cb(gpointer data)
       /* Tell profile pane the current user's pubkey */
       GtkWidget *pp = self->session_view
         ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
-      if (pp && GNOSTR_IS_PROFILE_PANE(pp)) {
-        gnostr_profile_pane_set_own_pubkey(GNOSTR_PROFILE_PANE(pp), self->user_pubkey_hex);
+      if (pp && NOSTR_GTK_IS_PROFILE_PANE(pp)) {
+        nostr_gtk_profile_pane_set_own_pubkey(NOSTR_GTK_PROFILE_PANE(pp), self->user_pubkey_hex);
       }
 
       g_debug("[AUTH] Restored session services for user %.16s...", self->user_pubkey_hex);
@@ -6656,7 +6656,7 @@ static void on_event_model_new_items_pending(GnNostrEventModel *model, guint cou
 }
 
 /* nostrc-7vm: Handle timeline tab filter changes (hashtag/author tabs) */
-static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type, const char *filter_value, gpointer user_data) {
+static void on_timeline_tab_filter_changed(NostrGtkTimelineView *view, guint type, const char *filter_value, gpointer user_data) {
   (void)view;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -6664,12 +6664,12 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
 
   g_debug("[TAB_FILTER] type=%u filter='%s'", type, filter_value ? filter_value : "(null)");
 
-  GnTimelineQuery *query = NULL;
+  GNostrTimelineQuery *query = NULL;
 
   switch ((GnTimelineTabType)type) {
     case GN_TIMELINE_TAB_GLOBAL:
       /* Global timeline - kinds 1 and 6, no filter */
-      query = gn_timeline_query_new_global();
+      query = gnostr_timeline_query_new_global();
       break;
 
     case GN_TIMELINE_TAB_FOLLOWING:
@@ -6682,7 +6682,7 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
           for (char **p = followed; *p; p++) n_followed++;
 
           if (n_followed > 0) {
-            query = gn_timeline_query_new_for_authors((const char **)followed, n_followed);
+            query = gnostr_timeline_query_new_for_authors((const char **)followed, n_followed);
             g_debug("[TAB_FILTER] Following tab: %zu followed pubkeys", n_followed);
           }
           g_strfreev(followed);
@@ -6690,7 +6690,7 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
       }
       if (!query) {
         /* Fallback: not logged in or no follows yet */
-        query = gn_timeline_query_new_global();
+        query = gnostr_timeline_query_new_global();
         g_debug("[TAB_FILTER] Following tab: no contact list, showing global");
       }
       break;
@@ -6698,26 +6698,26 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
     case GN_TIMELINE_TAB_HASHTAG:
       /* Hashtag filter */
       if (filter_value && *filter_value) {
-        query = gn_timeline_query_new_for_hashtag(filter_value);
+        query = gnostr_timeline_query_new_for_hashtag(filter_value);
         g_debug("[TAB_FILTER] Created hashtag query for #%s", filter_value);
       } else {
-        query = gn_timeline_query_new_global();
+        query = gnostr_timeline_query_new_global();
       }
       break;
 
     case GN_TIMELINE_TAB_AUTHOR:
       /* Author filter */
       if (filter_value && *filter_value) {
-        query = gn_timeline_query_new_for_author(filter_value);
+        query = gnostr_timeline_query_new_for_author(filter_value);
         g_debug("[TAB_FILTER] Created author query for %s", filter_value);
       } else {
-        query = gn_timeline_query_new_global();
+        query = gnostr_timeline_query_new_global();
       }
       break;
 
     case GN_TIMELINE_TAB_CUSTOM:
       /* Custom filter - fallback to global for now */
-      query = gn_timeline_query_new_global();
+      query = gnostr_timeline_query_new_global();
       break;
   }
 
@@ -6725,7 +6725,7 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
     /* Apply the new query to the model */
     gn_nostr_event_model_set_timeline_query(self->event_model, query);
     gn_nostr_event_model_refresh_async(self->event_model);
-    gn_timeline_query_free(query);
+    gnostr_timeline_query_free(query);
   }
 }
 
@@ -6739,12 +6739,12 @@ static gboolean scroll_to_top_idle(gpointer user_data) {
   }
 
   GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
-  if (timeline && GNOSTR_IS_TIMELINE_VIEW(timeline)) {
+  if (timeline && NOSTR_GTK_IS_TIMELINE_VIEW(timeline)) {
     /* Get the internal GtkListView from the timeline and use gtk_list_view_scroll_to
      * which is the GTK4-recommended way to scroll to a specific item.
      * Using adjustment directly doesn't work reliably with ListView because
      * the adjustment bounds may not be updated yet after model changes. */
-    GtkWidget *list_view = gnostr_timeline_view_get_list_view(GNOSTR_TIMELINE_VIEW(timeline));
+    GtkWidget *list_view = nostr_gtk_timeline_view_get_list_view(NOSTR_GTK_TIMELINE_VIEW(timeline));
     if (list_view && GTK_IS_LIST_VIEW(list_view)) {
       gtk_list_view_scroll_to(GTK_LIST_VIEW(list_view), 0, GTK_LIST_SCROLL_FOCUS, NULL);
     }
@@ -6792,7 +6792,7 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
 /* ---- Composer signal handlers (nostr-gtk decoupled signals) ---- */
 
 /* Toast signal: show toast in main window */
-static void on_composer_toast_requested(GnostrComposer *composer,
+static void on_composer_toast_requested(NostrGtkComposer *composer,
                                         const char *message,
                                         gpointer user_data) {
   (void)composer;
@@ -6803,32 +6803,32 @@ static void on_composer_toast_requested(GnostrComposer *composer,
 
 /* Upload signal: perform Blossom upload and inject result back */
 static void on_composer_upload_blossom_done(GnostrBlossomBlob *blob, GError *error, gpointer user_data) {
-  GnostrComposer *composer = GNOSTR_COMPOSER(user_data);
-  if (!GNOSTR_IS_COMPOSER(composer)) {
+  NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(user_data);
+  if (!NOSTR_GTK_IS_COMPOSER(composer)) {
     if (blob) gnostr_blossom_blob_free(blob);
     return;
   }
 
   if (error) {
-    gnostr_composer_upload_failed(composer, error->message);
+    nostr_gtk_composer_upload_failed(composer, error->message);
     return;
   }
 
   if (!blob || !blob->url) {
-    gnostr_composer_upload_failed(composer, "Server returned no URL");
+    nostr_gtk_composer_upload_failed(composer, "Server returned no URL");
     return;
   }
 
-  gnostr_composer_upload_complete(composer, blob->url, blob->sha256,
+  nostr_gtk_composer_upload_complete(composer, blob->url, blob->sha256,
                                   blob->mime_type, blob->size);
   gnostr_blossom_blob_free(blob);
 }
 
-static void on_composer_upload_requested(GnostrComposer *composer,
+static void on_composer_upload_requested(NostrGtkComposer *composer,
                                          const char *file_path,
                                          gpointer user_data) {
   (void)user_data;
-  if (!GNOSTR_IS_COMPOSER(composer) || !file_path) return;
+  if (!NOSTR_GTK_IS_COMPOSER(composer) || !file_path) return;
 
   g_message("main-window: handling upload request for %s", file_path);
   gnostr_media_upload_async(file_path, NULL,
@@ -6840,49 +6840,49 @@ static void on_composer_upload_requested(GnostrComposer *composer,
 static void on_draft_save_done(GnostrDrafts *drafts, gboolean success,
                                const char *error_message, gpointer user_data) {
   (void)drafts;
-  GnostrComposer *composer = GNOSTR_COMPOSER(user_data);
-  if (!GNOSTR_IS_COMPOSER(composer)) return;
-  const char *d_tag = gnostr_composer_get_current_draft_d_tag(composer);
-  gnostr_composer_draft_save_complete(composer, success, error_message, d_tag);
+  NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(user_data);
+  if (!NOSTR_GTK_IS_COMPOSER(composer)) return;
+  const char *d_tag = nostr_gtk_composer_get_current_draft_d_tag(composer);
+  nostr_gtk_composer_draft_save_complete(composer, success, error_message, d_tag);
 }
 
-static void on_composer_save_draft_requested(GnostrComposer *composer,
+static void on_composer_save_draft_requested(NostrGtkComposer *composer,
                                               gpointer user_data) {
   (void)user_data;
-  if (!GNOSTR_IS_COMPOSER(composer)) return;
+  if (!NOSTR_GTK_IS_COMPOSER(composer)) return;
 
-  g_autofree char *text = gnostr_composer_get_text(composer);
+  g_autofree char *text = nostr_gtk_composer_get_text(composer);
   if (!text || !*text) return;
 
   GnostrDraft *draft = gnostr_draft_new();
   draft->content = g_strdup(text);
   draft->target_kind = 1;
 
-  const char *current_d = gnostr_composer_get_current_draft_d_tag(composer);
+  const char *current_d = nostr_gtk_composer_get_current_draft_d_tag(composer);
   if (current_d) draft->d_tag = g_strdup(current_d);
 
-  const char *subject = gnostr_composer_get_subject(composer);
+  const char *subject = nostr_gtk_composer_get_subject(composer);
   if (subject) draft->subject = g_strdup(subject);
 
-  const char *reply_id = gnostr_composer_get_reply_to_id(composer);
+  const char *reply_id = nostr_gtk_composer_get_reply_to_id(composer);
   if (reply_id) draft->reply_to_id = g_strdup(reply_id);
 
-  const char *root_id = gnostr_composer_get_root_id(composer);
+  const char *root_id = nostr_gtk_composer_get_root_id(composer);
   if (root_id) draft->root_id = g_strdup(root_id);
 
-  const char *reply_pk = gnostr_composer_get_reply_to_pubkey(composer);
+  const char *reply_pk = nostr_gtk_composer_get_reply_to_pubkey(composer);
   if (reply_pk) draft->reply_to_pubkey = g_strdup(reply_pk);
 
-  const char *quote_id = gnostr_composer_get_quote_id(composer);
+  const char *quote_id = nostr_gtk_composer_get_quote_id(composer);
   if (quote_id) draft->quote_id = g_strdup(quote_id);
 
-  const char *quote_pk = gnostr_composer_get_quote_pubkey(composer);
+  const char *quote_pk = nostr_gtk_composer_get_quote_pubkey(composer);
   if (quote_pk) draft->quote_pubkey = g_strdup(quote_pk);
 
-  const char *quote_uri = gnostr_composer_get_quote_nostr_uri(composer);
+  const char *quote_uri = nostr_gtk_composer_get_quote_nostr_uri(composer);
   if (quote_uri) draft->quote_nostr_uri = g_strdup(quote_uri);
 
-  draft->is_sensitive = gnostr_composer_is_sensitive(composer);
+  draft->is_sensitive = nostr_gtk_composer_is_sensitive(composer);
 
   GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
   gnostr_drafts_save_async(drafts_mgr, draft, on_draft_save_done, composer);
@@ -6891,12 +6891,12 @@ static void on_composer_save_draft_requested(GnostrComposer *composer,
 }
 
 /* Draft list signal: load drafts and populate composer list */
-static void on_composer_load_drafts_requested(GnostrComposer *composer,
+static void on_composer_load_drafts_requested(NostrGtkComposer *composer,
                                                gpointer user_data) {
   (void)user_data;
-  if (!GNOSTR_IS_COMPOSER(composer)) return;
+  if (!NOSTR_GTK_IS_COMPOSER(composer)) return;
 
-  gnostr_composer_clear_draft_rows(composer);
+  nostr_gtk_composer_clear_draft_rows(composer);
 
   GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
   GPtrArray *drafts = gnostr_drafts_load_local(drafts_mgr);
@@ -6917,7 +6917,7 @@ static void on_composer_load_drafts_requested(GnostrComposer *composer,
       g_free(preview);
       preview = tmp;
     }
-    gnostr_composer_add_draft_row(composer, d->d_tag, preview, d->updated_at);
+    nostr_gtk_composer_add_draft_row(composer, d->d_tag, preview, d->updated_at);
     g_free(preview);
   }
 
@@ -6925,11 +6925,11 @@ static void on_composer_load_drafts_requested(GnostrComposer *composer,
 }
 
 /* Draft load signal: load specific draft by d-tag */
-static void on_composer_draft_load_requested(GnostrComposer *composer,
+static void on_composer_draft_load_requested(NostrGtkComposer *composer,
                                               const char *d_tag,
                                               gpointer user_data) {
   (void)user_data;
-  if (!GNOSTR_IS_COMPOSER(composer) || !d_tag) return;
+  if (!NOSTR_GTK_IS_COMPOSER(composer) || !d_tag) return;
 
   GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
   GPtrArray *drafts = gnostr_drafts_load_local(drafts_mgr);
@@ -6938,7 +6938,7 @@ static void on_composer_draft_load_requested(GnostrComposer *composer,
   for (guint i = 0; i < drafts->len; i++) {
     GnostrDraft *d = (GnostrDraft *)g_ptr_array_index(drafts, i);
     if (d->d_tag && strcmp(d->d_tag, d_tag) == 0) {
-      GnostrComposerDraftInfo info = {
+      NostrGtkComposerDraftInfo info = {
         .d_tag = d->d_tag,
         .content = d->content,
         .subject = d->subject,
@@ -6952,7 +6952,7 @@ static void on_composer_draft_load_requested(GnostrComposer *composer,
         .target_kind = d->target_kind,
         .updated_at = d->updated_at,
       };
-      gnostr_composer_load_draft(composer, &info);
+      nostr_gtk_composer_load_draft(composer, &info);
       break;
     }
   }
@@ -6965,23 +6965,23 @@ static void on_draft_delete_done(GnostrDrafts *drafts, gboolean success,
                                   const char *error_message, gpointer user_data) {
   (void)drafts;
   (void)error_message;
-  GnostrComposer *composer = GNOSTR_COMPOSER(user_data);
-  if (!GNOSTR_IS_COMPOSER(composer)) return;
-  gnostr_composer_draft_delete_complete(composer, NULL, success);
+  NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(user_data);
+  if (!NOSTR_GTK_IS_COMPOSER(composer)) return;
+  nostr_gtk_composer_draft_delete_complete(composer, NULL, success);
 }
 
-static void on_composer_draft_delete_requested(GnostrComposer *composer,
+static void on_composer_draft_delete_requested(NostrGtkComposer *composer,
                                                 const char *d_tag,
                                                 gpointer user_data) {
   (void)user_data;
-  if (!GNOSTR_IS_COMPOSER(composer) || !d_tag) return;
+  if (!NOSTR_GTK_IS_COMPOSER(composer) || !d_tag) return;
 
   GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
   gnostr_drafts_delete_async(drafts_mgr, d_tag, on_draft_delete_done, composer);
 }
 
 /* Connect all decoupled composer signals to app service implementations */
-static void connect_composer_signals(GnostrComposer *composer, GnostrMainWindow *self) {
+static void connect_composer_signals(NostrGtkComposer *composer, GnostrMainWindow *self) {
   g_signal_connect(composer, "toast-requested",
                    G_CALLBACK(on_composer_toast_requested), self);
   g_signal_connect(composer, "upload-requested",
@@ -7016,14 +7016,14 @@ static void on_compose_requested(GnostrSessionView *session_view, gpointer user_
   adw_toolbar_view_add_top_bar(toolbar, GTK_WIDGET(header));
 
   /* Create the composer widget */
-  GtkWidget *composer = gnostr_composer_new();
+  GtkWidget *composer = nostr_gtk_composer_new();
 
   /* Connect the post signal to our existing handler */
   g_signal_connect(composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
 
   /* Connect decoupled service signals (upload, drafts, toast) */
-  connect_composer_signals(GNOSTR_COMPOSER(composer), self);
+  connect_composer_signals(NOSTR_GTK_COMPOSER(composer), self);
 
   /* Store dialog reference on composer so we can close it after post */
   g_object_set_data(G_OBJECT(composer), "compose-dialog", dialog);
@@ -7148,14 +7148,14 @@ static void open_compose_dialog_with_context(GnostrMainWindow *self, ComposeCont
   adw_toolbar_view_add_top_bar(toolbar, GTK_WIDGET(header));
 
   /* Create the composer widget */
-  GtkWidget *composer = gnostr_composer_new();
+  GtkWidget *composer = nostr_gtk_composer_new();
 
   /* Connect the post signal to our existing handler */
   g_signal_connect(composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
 
   /* Connect decoupled service signals (upload, drafts, toast) */
-  connect_composer_signals(GNOSTR_COMPOSER(composer), self);
+  connect_composer_signals(NOSTR_GTK_COMPOSER(composer), self);
 
   /* Store dialog reference on composer so we can close it after post */
   g_object_set_data(G_OBJECT(composer), "compose-dialog", dialog);
@@ -7164,21 +7164,21 @@ static void open_compose_dialog_with_context(GnostrMainWindow *self, ComposeCont
   if (context) {
     switch (context->type) {
       case COMPOSE_CONTEXT_REPLY:
-        gnostr_composer_set_reply_context(GNOSTR_COMPOSER(composer),
+        nostr_gtk_composer_set_reply_context(NOSTR_GTK_COMPOSER(composer),
                                           context->reply_to_id,
                                           context->root_id,
                                           context->reply_to_pubkey,
                                           context->display_name);
         break;
       case COMPOSE_CONTEXT_QUOTE:
-        gnostr_composer_set_quote_context(GNOSTR_COMPOSER(composer),
+        nostr_gtk_composer_set_quote_context(NOSTR_GTK_COMPOSER(composer),
                                           context->quote_id,
                                           context->quote_pubkey,
                                           context->nostr_uri,
                                           context->display_name);
         break;
       case COMPOSE_CONTEXT_COMMENT:
-        gnostr_composer_set_comment_context(GNOSTR_COMPOSER(composer),
+        nostr_gtk_composer_set_comment_context(NOSTR_GTK_COMPOSER(composer),
                                             context->comment_root_id,
                                             context->comment_root_kind,
                                             context->comment_root_pubkey,
@@ -7557,7 +7557,7 @@ static void gnostr_load_settings(GnostrMainWindow *self) {
 struct _PublishContext {
   GnostrMainWindow *self;  /* weak ref */
   char *text;              /* owned; original note content */
-  GnostrComposer *composer; /* weak ref; for clearing/closing dialog on success */
+  NostrGtkComposer *composer; /* weak ref; for clearing/closing dialog on success */
 };
 
 static void publish_context_free(PublishContext *ctx) {
@@ -7761,12 +7761,12 @@ static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpoin
     show_toast(self, msg);
     g_free(msg);
 
-    if (ctx->composer && GNOSTR_IS_COMPOSER(ctx->composer)) {
+    if (ctx->composer && NOSTR_GTK_IS_COMPOSER(ctx->composer)) {
       AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(ctx->composer), "compose-dialog"));
       if (dialog && ADW_IS_DIALOG(dialog)) {
         adw_dialog_force_close(dialog);
       }
-      gnostr_composer_clear(ctx->composer);
+      nostr_gtk_composer_clear(ctx->composer);
     }
 
     if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
@@ -8129,7 +8129,7 @@ void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex
 struct _LikeContext {
   GnostrMainWindow *self;       /* weak ref */
   char *event_id_hex;           /* owned; event being liked */
-  GnostrNoteCardRow *row;       /* weak ref; row to update on success */
+  NostrGtkNoteCardRow *row;       /* weak ref; row to update on success */
 };
 
 static void like_context_free(LikeContext *ctx) {
@@ -8216,8 +8216,8 @@ static void on_like_publish_done(GObject *source, GAsyncResult *res, gpointer us
     }
 
     /* Update note card row to show liked state */
-    if (ctx->row && GNOSTR_IS_NOTE_CARD_ROW(ctx->row)) {
-      gnostr_note_card_row_set_liked(ctx->row, TRUE);
+    if (ctx->row && NOSTR_GTK_IS_NOTE_CARD_ROW(ctx->row)) {
+      nostr_gtk_note_card_row_set_liked(ctx->row, TRUE);
     }
 
     /* Store reaction in local NostrdB cache (background) */
@@ -8237,7 +8237,7 @@ static void on_like_publish_done(GObject *source, GAsyncResult *res, gpointer us
 /* Public function to request a like/reaction (kind 7) - NIP-25
  * @event_kind: the kind of the event being reacted to (for k-tag)
  * @reaction_content: the reaction content ("+" for like, "-" for dislike, or emoji) */
-void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, GnostrNoteCardRow *row) {
+void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, NostrGtkNoteCardRow *row) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -8351,7 +8351,7 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
   g_free(event_json);
 }
 
-static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data) {
+static void on_composer_post_requested(NostrGtkComposer *composer, const char *text, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
@@ -8375,13 +8375,13 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   gnostr_json_builder_begin_object(builder);
 
   /* NIP-22: Check if this is a comment (kind 1111) - takes precedence over reply/quote */
-  gboolean is_comment = (composer && GNOSTR_IS_COMPOSER(composer) &&
-                         gnostr_composer_is_comment(GNOSTR_COMPOSER(composer)));
+  gboolean is_comment = (composer && NOSTR_GTK_IS_COMPOSER(composer) &&
+                         nostr_gtk_composer_is_comment(NOSTR_GTK_COMPOSER(composer)));
 
   if (is_comment) {
-    const char *comment_root_id = gnostr_composer_get_comment_root_id(GNOSTR_COMPOSER(composer));
-    int comment_root_kind = gnostr_composer_get_comment_root_kind(GNOSTR_COMPOSER(composer));
-    const char *comment_root_pubkey = gnostr_composer_get_comment_root_pubkey(GNOSTR_COMPOSER(composer));
+    const char *comment_root_id = nostr_gtk_composer_get_comment_root_id(NOSTR_GTK_COMPOSER(composer));
+    int comment_root_kind = nostr_gtk_composer_get_comment_root_kind(NOSTR_GTK_COMPOSER(composer));
+    const char *comment_root_pubkey = nostr_gtk_composer_get_comment_root_pubkey(NOSTR_GTK_COMPOSER(composer));
 
     g_debug("[PUBLISH] Building NIP-22 comment event: root_id=%s root_kind=%d pubkey=%.8s...",
             comment_root_id ? comment_root_id : "(null)",
@@ -8479,10 +8479,10 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   gnostr_json_builder_begin_array(builder);
 
   /* Check if this is a reply - add NIP-10 threading tags (only for kind 1, not comments) */
-  if (!is_comment && composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_reply(GNOSTR_COMPOSER(composer))) {
-    const char *reply_to_id = gnostr_composer_get_reply_to_id(GNOSTR_COMPOSER(composer));
-    const char *root_id = gnostr_composer_get_root_id(GNOSTR_COMPOSER(composer));
-    const char *reply_to_pubkey = gnostr_composer_get_reply_to_pubkey(GNOSTR_COMPOSER(composer));
+  if (!is_comment && composer && NOSTR_GTK_IS_COMPOSER(composer) && nostr_gtk_composer_is_reply(NOSTR_GTK_COMPOSER(composer))) {
+    const char *reply_to_id = nostr_gtk_composer_get_reply_to_id(NOSTR_GTK_COMPOSER(composer));
+    const char *root_id = nostr_gtk_composer_get_root_id(NOSTR_GTK_COMPOSER(composer));
+    const char *reply_to_pubkey = nostr_gtk_composer_get_reply_to_pubkey(NOSTR_GTK_COMPOSER(composer));
 
     g_debug("[PUBLISH] Building reply event: reply_to=%s root=%s pubkey=%.8s...",
             reply_to_id ? reply_to_id : "(null)",
@@ -8526,9 +8526,9 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   }
 
   /* Check if this is a quote post - add q-tag and p-tag per NIP-18 (only for kind 1, not comments) */
-  if (!is_comment && composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_quote(GNOSTR_COMPOSER(composer))) {
-    const char *quote_id = gnostr_composer_get_quote_id(GNOSTR_COMPOSER(composer));
-    const char *quote_pubkey = gnostr_composer_get_quote_pubkey(GNOSTR_COMPOSER(composer));
+  if (!is_comment && composer && NOSTR_GTK_IS_COMPOSER(composer) && nostr_gtk_composer_is_quote(NOSTR_GTK_COMPOSER(composer))) {
+    const char *quote_id = nostr_gtk_composer_get_quote_id(NOSTR_GTK_COMPOSER(composer));
+    const char *quote_pubkey = nostr_gtk_composer_get_quote_pubkey(NOSTR_GTK_COMPOSER(composer));
 
     g_debug("[PUBLISH] Building quote post: quote_id=%s pubkey=%.8s...",
             quote_id ? quote_id : "(null)",
@@ -8553,8 +8553,8 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   }
 
   /* NIP-14: Add subject tag if present */
-  if (composer && GNOSTR_IS_COMPOSER(composer)) {
-    const char *subject = gnostr_composer_get_subject(GNOSTR_COMPOSER(composer));
+  if (composer && NOSTR_GTK_IS_COMPOSER(composer)) {
+    const char *subject = nostr_gtk_composer_get_subject(NOSTR_GTK_COMPOSER(composer));
     if (subject && *subject) {
       gnostr_json_builder_begin_array(builder);
       gnostr_json_builder_add_string(builder, "subject");
@@ -8565,12 +8565,12 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   }
 
   /* NIP-92: Add imeta tags for uploaded media */
-  if (composer && GNOSTR_IS_COMPOSER(composer)) {
-    gsize media_count = gnostr_composer_get_uploaded_media_count(GNOSTR_COMPOSER(composer));
+  if (composer && NOSTR_GTK_IS_COMPOSER(composer)) {
+    gsize media_count = nostr_gtk_composer_get_uploaded_media_count(NOSTR_GTK_COMPOSER(composer));
     if (media_count > 0) {
-      GnostrComposerMedia **media_list = gnostr_composer_get_uploaded_media(GNOSTR_COMPOSER(composer));
+      NostrGtkComposerMedia **media_list = nostr_gtk_composer_get_uploaded_media(NOSTR_GTK_COMPOSER(composer));
       for (gsize i = 0; i < media_count && media_list && media_list[i]; i++) {
-        GnostrComposerMedia *m = media_list[i];
+        NostrGtkComposerMedia *m = media_list[i];
         if (!m->url) continue;
 
         /* Build imeta tag: ["imeta", "url <url>", "m <mime>", "x <sha256>", "size <bytes>"] */
@@ -8612,8 +8612,8 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   }
 
   /* NIP-40: Add expiration tag if set */
-  if (composer && GNOSTR_IS_COMPOSER(composer)) {
-    gint64 expiration = gnostr_composer_get_expiration(GNOSTR_COMPOSER(composer));
+  if (composer && NOSTR_GTK_IS_COMPOSER(composer)) {
+    gint64 expiration = nostr_gtk_composer_get_expiration(NOSTR_GTK_COMPOSER(composer));
     if (expiration > 0) {
       gnostr_json_builder_begin_array(builder);
       gnostr_json_builder_add_string(builder, "expiration");
@@ -8626,8 +8626,8 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   }
 
   /* NIP-36: Add content-warning tag if note is marked as sensitive */
-  if (composer && GNOSTR_IS_COMPOSER(composer)) {
-    if (gnostr_composer_is_sensitive(GNOSTR_COMPOSER(composer))) {
+  if (composer && NOSTR_GTK_IS_COMPOSER(composer)) {
+    if (nostr_gtk_composer_is_sensitive(NOSTR_GTK_COMPOSER(composer))) {
       gnostr_json_builder_begin_array(builder);
       gnostr_json_builder_add_string(builder, "content-warning");
       /* Empty reason - users can customize in future */
@@ -9565,9 +9565,9 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
 static void refresh_thread_view_profiles_if_visible(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
-  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+  if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
     if (is_panel_visible(self) && !gnostr_session_view_is_showing_profile(self->session_view)) {
-      gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
+      nostr_gtk_thread_view_update_profiles(NOSTR_GTK_THREAD_VIEW(thread_view));
     }
   }
 }

@@ -25,7 +25,7 @@ struct _GnNostrEventItem {
   gboolean relay_urls_loaded; /* TRUE after relay URL lookup attempted */
 
   /* Profile object */
-  GnNostrProfile *profile;
+  GNostrProfile *profile;
 
   /* Thread info (stored, not fetched from nostrdb) */
   char *thread_root_id;
@@ -421,7 +421,7 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
                                                   G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
   properties[PROP_KIND] = g_param_spec_int("kind", "Kind", "Event kind", 0, G_MAXINT, 1,
                                             G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
-  properties[PROP_PROFILE] = g_param_spec_object("profile", "Profile", "Author profile", GN_TYPE_NOSTR_PROFILE,
+  properties[PROP_PROFILE] = g_param_spec_object("profile", "Profile", "Author profile", GNOSTR_TYPE_PROFILE,
                                                   G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
   properties[PROP_THREAD_ROOT_ID] = g_param_spec_string("thread-root-id", "Thread Root ID", "Root event ID", NULL,
                                                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
@@ -555,7 +555,7 @@ gint gn_nostr_event_item_get_kind(GnNostrEventItem *self) {
   return self->kind;
 }
 
-GnNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self) {
+GNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
   return self->profile;
 }
@@ -596,7 +596,7 @@ gboolean gn_nostr_event_item_get_is_muted(GnNostrEventItem *self) {
   return self->is_muted;
 }
 
-void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GnNostrProfile *profile) {
+void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GNostrProfile *profile) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
 
   /* Always notify when setting profile, even if it's the same object pointer.

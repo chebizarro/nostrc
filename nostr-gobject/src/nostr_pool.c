@@ -3,7 +3,7 @@
  *
  * GNostrPool: GObject wrapper for managing multiple Nostr relay connections.
  *
- * Replaces GnostrSimplePool with a proper GObject implementation:
+ * Replaces GNostrSimplePool with a proper GObject implementation:
  * - Properties with notify signals (relays)
  * - Signals for relay lifecycle (relay-added, relay-removed, relay-state-changed)
  * - Async query methods with GCancellable support

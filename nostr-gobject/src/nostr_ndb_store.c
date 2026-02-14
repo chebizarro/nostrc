@@ -28,10 +28,10 @@ struct _GNostrNdbStore {
     GObject parent_instance;
 };
 
-static void g_nostr_ndb_store_iface_init(GNostrStoreInterface *iface);
+static void gnostr_ndb_store_iface_init(GNostrStoreInterface *iface);
 
-G_DEFINE_TYPE_WITH_CODE(GNostrNdbStore, g_nostr_ndb_store, G_TYPE_OBJECT,
-    G_IMPLEMENT_INTERFACE(G_NOSTR_TYPE_STORE, g_nostr_ndb_store_iface_init))
+G_DEFINE_TYPE_WITH_CODE(GNostrNdbStore, gnostr_ndb_store, G_TYPE_OBJECT,
+    G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_STORE, gnostr_ndb_store_iface_init))
 
 /* ---- Core CRUD ---- */
 
@@ -462,7 +462,7 @@ ndb_store_get_zap_stats_batch(GNostrStore *store, const gchar * const *event_ids
 /* ============ Interface wiring ============ */
 
 static void
-g_nostr_ndb_store_iface_init(GNostrStoreInterface *iface)
+gnostr_ndb_store_iface_init(GNostrStoreInterface *iface)
 {
     iface->save_event            = ndb_store_save_event;
     iface->query                 = ndb_store_query;
@@ -483,19 +483,19 @@ g_nostr_ndb_store_iface_init(GNostrStoreInterface *iface)
 }
 
 static void
-g_nostr_ndb_store_class_init(GNostrNdbStoreClass *klass)
+gnostr_ndb_store_class_init(GNostrNdbStoreClass *klass)
 {
     (void)klass;
 }
 
 static void
-g_nostr_ndb_store_init(GNostrNdbStore *self)
+gnostr_ndb_store_init(GNostrNdbStore *self)
 {
     (void)self;
 }
 
 GNostrNdbStore *
-g_nostr_ndb_store_new(void)
+gnostr_ndb_store_new(void)
 {
-    return g_object_new(G_NOSTR_TYPE_NDB_STORE, NULL);
+    return g_object_new(GNOSTR_TYPE_NDB_STORE, NULL);
 }

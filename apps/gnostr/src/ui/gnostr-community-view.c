@@ -380,21 +380,21 @@ format_relative_time(gint64 timestamp)
 
 /* Signal handlers for note cards */
 static void
-on_note_open_profile(GnostrNoteCardRow *row, const char *pubkey, GnostrCommunityView *self)
+on_note_open_profile(NostrGtkNoteCardRow *row, const char *pubkey, GnostrCommunityView *self)
 {
     (void)row;
     g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey);
 }
 
 static void
-on_note_open_thread(GnostrNoteCardRow *row, const char *event_id, GnostrCommunityView *self)
+on_note_open_thread(NostrGtkNoteCardRow *row, const char *event_id, GnostrCommunityView *self)
 {
     (void)row;
     g_signal_emit(self, signals[SIGNAL_OPEN_NOTE], 0, event_id);
 }
 
 static void
-on_note_zap_requested(GnostrNoteCardRow *row, const char *event_id, const char *pubkey, const char *lud16, GnostrCommunityView *self)
+on_note_zap_requested(NostrGtkNoteCardRow *row, const char *event_id, const char *pubkey, const char *lud16, GnostrCommunityView *self)
 {
     (void)row;
     g_signal_emit(self, signals[SIGNAL_ZAP_REQUESTED], 0, event_id, pubkey, lud16);
@@ -433,7 +433,7 @@ setup_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer use
     (void)factory;
     (void)user_data;
 
-    GnostrNoteCardRow *row = gnostr_note_card_row_new();
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
     gtk_list_item_set_child(list_item, GTK_WIDGET(row));
 }
 
@@ -446,19 +446,19 @@ bind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user
     CommunityPostItem *item = gtk_list_item_get_item(list_item);
     if (!item || !item->post) return;
 
-    GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
+    NostrGtkNoteCardRow *row = NOSTR_GTK_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
     if (!row) return;
 
     GnostrCommunityPost *post = item->post;
 
     /* Set content */
-    gnostr_note_card_row_set_content(row, post->content);
+    nostr_gtk_note_card_row_set_content(row, post->content);
 
     /* Set IDs */
-    gnostr_note_card_row_set_ids(row, post->event_id, NULL, post->author_pubkey);
+    nostr_gtk_note_card_row_set_ids(row, post->event_id, NULL, post->author_pubkey);
 
     /* Set timestamp */
-    gnostr_note_card_row_set_timestamp(row, post->created_at, NULL);
+    nostr_gtk_note_card_row_set_timestamp(row, post->created_at, NULL);
 
     /* Set author info from cache */
     const char *author_name = item->author_name;
@@ -472,18 +472,18 @@ bind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user
     }
 
     if (author_name) {
-        gnostr_note_card_row_set_author(row, author_name, NULL, author_avatar);
+        nostr_gtk_note_card_row_set_author(row, author_name, NULL, author_avatar);
     } else {
         /* Fallback to truncated pubkey */
         char *short_pubkey = g_strndup(post->author_pubkey, 8);
         char *handle = g_strdup_printf("@%s...", short_pubkey);
-        gnostr_note_card_row_set_author(row, _("Anonymous"), handle, NULL);
+        nostr_gtk_note_card_row_set_author(row, _("Anonymous"), handle, NULL);
         g_free(short_pubkey);
         g_free(handle);
     }
 
     /* Set login state */
-    gnostr_note_card_row_set_logged_in(row, self->user_pubkey != NULL);
+    nostr_gtk_note_card_row_set_logged_in(row, self->user_pubkey != NULL);
 
     /* Connect signals (store handler IDs for unbind cleanup) */
     gulong h1 = g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
@@ -502,12 +502,12 @@ unbind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
     (void)factory;
     (void)user_data;
 
-    GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
+    NostrGtkNoteCardRow *row = NOSTR_GTK_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
     if (!row) return;
 
     /* nostrc-b3b0: Cancel async ops and clear labels before dispose to prevent
      * Pango SEGV when g_list_store_remove_all triggers unbind without teardown. */
-    gnostr_note_card_row_prepare_for_unbind(row);
+    nostr_gtk_note_card_row_prepare_for_unbind(row);
 
     /* Disconnect signal handlers */
     gulong h1 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
@@ -532,7 +532,7 @@ setup_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer 
     /* Pending posts have approve/reject buttons */
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
 
-    GnostrNoteCardRow *row = gnostr_note_card_row_new();
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
     gtk_box_append(GTK_BOX(box), GTK_WIDGET(row));
 
     /* Action buttons */
@@ -566,7 +566,7 @@ bind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     if (!item || !item->post) return;
 
     GtkWidget *box = gtk_list_item_get_child(list_item);
-    GnostrNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
+    NostrGtkNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
     GtkWidget *btn_approve = g_object_get_data(G_OBJECT(box), "btn_approve");
     GtkWidget *btn_reject = g_object_get_data(G_OBJECT(box), "btn_reject");
 
@@ -575,13 +575,13 @@ bind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     GnostrCommunityPost *post = item->post;
 
     /* Set content */
-    gnostr_note_card_row_set_content(row, post->content);
+    nostr_gtk_note_card_row_set_content(row, post->content);
 
     /* Set IDs */
-    gnostr_note_card_row_set_ids(row, post->event_id, NULL, post->author_pubkey);
+    nostr_gtk_note_card_row_set_ids(row, post->event_id, NULL, post->author_pubkey);
 
     /* Set timestamp */
-    gnostr_note_card_row_set_timestamp(row, post->created_at, NULL);
+    nostr_gtk_note_card_row_set_timestamp(row, post->created_at, NULL);
 
     /* Set author info from item cache first, then hash table fallback */
     const char *author_name = item->author_name;
@@ -595,11 +595,11 @@ bind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     }
 
     if (author_name) {
-        gnostr_note_card_row_set_author(row, author_name, NULL, author_avatar);
+        nostr_gtk_note_card_row_set_author(row, author_name, NULL, author_avatar);
     } else {
         char *short_pubkey = g_strndup(post->author_pubkey, 8);
         char *handle = g_strdup_printf("@%s...", short_pubkey);
-        gnostr_note_card_row_set_author(row, _("Anonymous"), handle, NULL);
+        nostr_gtk_note_card_row_set_author(row, _("Anonymous"), handle, NULL);
         g_free(short_pubkey);
         g_free(handle);
     }
@@ -634,14 +634,14 @@ unbind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer
     GtkWidget *box = gtk_list_item_get_child(list_item);
     if (!box) return;
 
-    GnostrNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
+    NostrGtkNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
     GtkWidget *btn_approve = g_object_get_data(G_OBJECT(box), "btn_approve");
     GtkWidget *btn_reject = g_object_get_data(G_OBJECT(box), "btn_reject");
 
     /* nostrc-b3b0: Cancel async ops and clear labels before dispose to prevent
      * Pango SEGV when g_list_store_remove_all triggers unbind without teardown. */
     if (row)
-        gnostr_note_card_row_prepare_for_unbind(row);
+        nostr_gtk_note_card_row_prepare_for_unbind(row);
 
     /* Disconnect signal handlers */
     gulong h_profile = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
@@ -668,8 +668,8 @@ teardown_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer 
     (void)user_data;
 
     GtkWidget *child = gtk_list_item_get_child(list_item);
-    if (child && GNOSTR_IS_NOTE_CARD_ROW(child)) {
-        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(child));
+    if (child && NOSTR_GTK_IS_NOTE_CARD_ROW(child)) {
+        nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(child));
     }
 }
 
@@ -682,9 +682,9 @@ teardown_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpoint
     GtkWidget *box = gtk_list_item_get_child(list_item);
     if (!box) return;
 
-    GnostrNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
+    NostrGtkNoteCardRow *row = g_object_get_data(G_OBJECT(box), "note_row");
     if (row) {
-        gnostr_note_card_row_prepare_for_unbind(row);
+        nostr_gtk_note_card_row_prepare_for_unbind(row);
     }
 }
 

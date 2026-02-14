@@ -1,5 +1,5 @@
-#ifndef __NOSTR_RELAY_STORE_H__
-#define __NOSTR_RELAY_STORE_H__
+#ifndef __GNOSTR_RELAY_STORE_H__
+#define __GNOSTR_RELAY_STORE_H__
 
 /* Public header exposing GI-friendly names for NostrRelayStore/NostrMultiStore (canonical). */
 
@@ -52,4 +52,4 @@ NostrRelayStore *nostr_multi_store_get_nth(const NostrMultiStore *multi, size_t 
 }
 #endif
 
-#endif /* __NOSTR_RELAY_STORE_H__ */
+#endif /* __GNOSTR_RELAY_STORE_H__ */

@@ -1,5 +1,5 @@
 /**
- * GnostrMuteList - Mute List Editor Dialog Implementation
+ * GNostrMuteList - Mute List Editor Dialog Implementation
  *
  * Provides a tabbed interface for managing muted users, words, and hashtags.
  * Integrates with the mute_list service for persistence.
@@ -14,7 +14,7 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-mute-list.ui"
 
-struct _GnostrMuteListDialog {
+struct _GNostrMuteListDialog {
     GtkWindow parent_instance;
 
     /* Template children */
@@ -38,7 +38,7 @@ struct _GnostrMuteListDialog {
     gboolean saving;
 };
 
-G_DEFINE_TYPE(GnostrMuteListDialog, gnostr_mute_list_dialog, GTK_TYPE_WINDOW)
+G_DEFINE_TYPE(GNostrMuteListDialog, gnostr_mute_list_dialog, GTK_TYPE_WINDOW)
 
 /* Forward declarations */
 static void on_close_clicked(GtkButton *btn, gpointer user_data);
@@ -46,12 +46,12 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data);
 static void on_add_user_clicked(GtkButton *btn, gpointer user_data);
 static void on_add_word_clicked(GtkButton *btn, gpointer user_data);
 static void on_add_hashtag_clicked(GtkButton *btn, gpointer user_data);
-static void refresh_all_lists(GnostrMuteListDialog *self);
-static void show_toast(GnostrMuteListDialog *self, const char *msg);
-static void update_save_button(GnostrMuteListDialog *self);
+static void refresh_all_lists(GNostrMuteListDialog *self);
+static void show_toast(GNostrMuteListDialog *self, const char *msg);
+static void update_save_button(GNostrMuteListDialog *self);
 
 static void gnostr_mute_list_dialog_dispose(GObject *obj) {
-    GnostrMuteListDialog *self = GNOSTR_MUTE_LIST(obj);
+    GNostrMuteListDialog *self = GNOSTR_MUTE_LIST(obj);
     gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_MUTE_LIST);
     G_OBJECT_CLASS(gnostr_mute_list_dialog_parent_class)->dispose(obj);
 }
@@ -60,7 +60,7 @@ static void gnostr_mute_list_dialog_finalize(GObject *obj) {
     G_OBJECT_CLASS(gnostr_mute_list_dialog_parent_class)->finalize(obj);
 }
 
-static void gnostr_mute_list_dialog_class_init(GnostrMuteListDialogClass *klass) {
+static void gnostr_mute_list_dialog_class_init(GNostrMuteListDialogClass *klass) {
     GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
     GObjectClass *gclass = G_OBJECT_CLASS(klass);
 
@@ -69,21 +69,21 @@ static void gnostr_mute_list_dialog_class_init(GnostrMuteListDialogClass *klass)
 
     gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);
 
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, btn_close);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, btn_save);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, spinner);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, toast_revealer);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, toast_label);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, notebook);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, entry_add_user);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, btn_add_user);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, list_users);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, entry_add_word);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, btn_add_word);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, list_words);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, entry_add_hashtag);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, btn_add_hashtag);
-    gtk_widget_class_bind_template_child(wclass, GnostrMuteListDialog, list_hashtags);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, btn_close);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, btn_save);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, spinner);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, toast_revealer);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, toast_label);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, notebook);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, entry_add_user);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, btn_add_user);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, list_users);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, entry_add_word);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, btn_add_word);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, list_words);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, entry_add_hashtag);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, btn_add_hashtag);
+    gtk_widget_class_bind_template_child(wclass, GNostrMuteListDialog, list_hashtags);
 
     gtk_widget_class_bind_template_callback(wclass, on_close_clicked);
     gtk_widget_class_bind_template_callback(wclass, on_save_clicked);
@@ -92,7 +92,7 @@ static void gnostr_mute_list_dialog_class_init(GnostrMuteListDialogClass *klass)
     gtk_widget_class_bind_template_callback(wclass, on_add_hashtag_clicked);
 }
 
-static void gnostr_mute_list_dialog_init(GnostrMuteListDialog *self) {
+static void gnostr_mute_list_dialog_init(GNostrMuteListDialog *self) {
     gtk_widget_init_template(GTK_WIDGET(self));
     self->saving = FALSE;
 
@@ -107,8 +107,8 @@ static void gnostr_mute_list_dialog_init(GnostrMuteListDialog *self) {
     refresh_all_lists(self);
 }
 
-GnostrMuteListDialog *gnostr_mute_list_dialog_new(GtkWindow *parent) {
-    GnostrMuteListDialog *self = g_object_new(GNOSTR_TYPE_MUTE_LIST,
+GNostrMuteListDialog *gnostr_mute_list_dialog_new(GtkWindow *parent) {
+    GNostrMuteListDialog *self = g_object_new(GNOSTR_TYPE_MUTE_LIST,
                                                "transient-for", parent,
                                                "modal", TRUE,
                                                NULL);
@@ -122,7 +122,7 @@ static gboolean hide_toast_timeout_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
 }
 
-static void show_toast(GnostrMuteListDialog *self, const char *msg) {
+static void show_toast(GNostrMuteListDialog *self, const char *msg) {
     if (!self->toast_label || !self->toast_revealer) return;
     gtk_label_set_text(GTK_LABEL(self->toast_label), msg);
     gtk_revealer_set_reveal_child(GTK_REVEALER(self->toast_revealer), TRUE);
@@ -131,7 +131,7 @@ static void show_toast(GnostrMuteListDialog *self, const char *msg) {
                        g_object_ref(self->toast_revealer), g_object_unref);
 }
 
-static void set_ui_sensitive(GnostrMuteListDialog *self, gboolean sensitive) {
+static void set_ui_sensitive(GNostrMuteListDialog *self, gboolean sensitive) {
     gtk_widget_set_sensitive(self->entry_add_user, sensitive);
     gtk_widget_set_sensitive(self->btn_add_user, sensitive);
     gtk_widget_set_sensitive(self->entry_add_word, sensitive);
@@ -151,7 +151,7 @@ static void set_ui_sensitive(GnostrMuteListDialog *self, gboolean sensitive) {
     }
 }
 
-static void update_save_button(GnostrMuteListDialog *self) {
+static void update_save_button(GNostrMuteListDialog *self) {
     gboolean dirty = gnostr_mute_list_is_dirty(gnostr_mute_list_get_default());
     gtk_widget_set_sensitive(self->btn_save, dirty);
 }
@@ -159,7 +159,7 @@ static void update_save_button(GnostrMuteListDialog *self) {
 /* ---- List Row Creation ---- */
 
 typedef struct {
-    GnostrMuteListDialog *dialog;
+    GNostrMuteListDialog *dialog;
     char *value;
     int type; /* 0=user, 1=word, 2=hashtag */
 } RowData;
@@ -176,7 +176,7 @@ static void on_remove_row_clicked(GtkButton *btn, gpointer user_data) {
     RowData *rd = (RowData *)user_data;
     if (!rd || !rd->dialog) return;
 
-    GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
 
     switch (rd->type) {
         case 0: /* User */
@@ -195,7 +195,7 @@ static void on_remove_row_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
 }
 
-static GtkWidget *create_list_row(GnostrMuteListDialog *self,
+static GtkWidget *create_list_row(GNostrMuteListDialog *self,
                                    const char *value,
                                    int type) {
     GtkWidget *row = gtk_list_box_row_new();
@@ -243,10 +243,10 @@ static void clear_list_box(GtkListBox *list_box) {
     }
 }
 
-static void refresh_users_list(GnostrMuteListDialog *self) {
+static void refresh_users_list(GNostrMuteListDialog *self) {
     clear_list_box(GTK_LIST_BOX(self->list_users));
 
-    GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
     size_t count = 0;
     const char **pubkeys = gnostr_mute_list_get_pubkeys(mute_list, &count);
 
@@ -273,10 +273,10 @@ static void refresh_users_list(GnostrMuteListDialog *self) {
     g_free((void *)pubkeys);
 }
 
-static void refresh_words_list(GnostrMuteListDialog *self) {
+static void refresh_words_list(GNostrMuteListDialog *self) {
     clear_list_box(GTK_LIST_BOX(self->list_words));
 
-    GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
     size_t count = 0;
     const char **words = gnostr_mute_list_get_words(mute_list, &count);
 
@@ -288,10 +288,10 @@ static void refresh_words_list(GnostrMuteListDialog *self) {
     g_free((void *)words);
 }
 
-static void refresh_hashtags_list(GnostrMuteListDialog *self) {
+static void refresh_hashtags_list(GNostrMuteListDialog *self) {
     clear_list_box(GTK_LIST_BOX(self->list_hashtags));
 
-    GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
     size_t count = 0;
     const char **hashtags = gnostr_mute_list_get_hashtags(mute_list, &count);
 
@@ -306,14 +306,14 @@ static void refresh_hashtags_list(GnostrMuteListDialog *self) {
     g_free((void *)hashtags);
 }
 
-static void refresh_all_lists(GnostrMuteListDialog *self) {
+static void refresh_all_lists(GNostrMuteListDialog *self) {
     refresh_users_list(self);
     refresh_words_list(self);
     refresh_hashtags_list(self);
     update_save_button(self);
 }
 
-void gnostr_mute_list_dialog_refresh(GnostrMuteListDialog *self) {
+void gnostr_mute_list_dialog_refresh(GNostrMuteListDialog *self) {
     g_return_if_fail(GNOSTR_IS_MUTE_LIST(self));
     refresh_all_lists(self);
 }
@@ -322,16 +322,16 @@ void gnostr_mute_list_dialog_refresh(GnostrMuteListDialog *self) {
 
 static void on_close_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
-    GnostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
+    GNostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
     gtk_window_close(GTK_WINDOW(self));
 }
 
-static void on_save_complete(GnostrMuteList *mute_list,
+static void on_save_complete(GNostrMuteList *mute_list,
                               gboolean success,
                               const char *error_msg,
                               gpointer user_data) {
     (void)mute_list;
-    GnostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
+    GNostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
     if (!GNOSTR_IS_MUTE_LIST(self)) return;
 
     self->saving = FALSE;
@@ -350,7 +350,7 @@ static void on_save_complete(GnostrMuteList *mute_list,
 
 static void on_save_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
-    GnostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
+    GNostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
 
     if (self->saving) return;
 
@@ -365,7 +365,7 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_add_user_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
-    GnostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
+    GNostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
 
     const char *input = gtk_editable_get_text(GTK_EDITABLE(self->entry_add_user));
     if (!input || !*input) return;
@@ -406,7 +406,7 @@ static void on_add_user_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_add_word_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
-    GnostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
+    GNostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
 
     const char *word = gtk_editable_get_text(GTK_EDITABLE(self->entry_add_word));
     if (!word || !*word) return;
@@ -419,7 +419,7 @@ static void on_add_word_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_add_hashtag_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
-    GnostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
+    GNostrMuteListDialog *self = GNOSTR_MUTE_LIST(user_data);
 
     const char *hashtag = gtk_editable_get_text(GTK_EDITABLE(self->entry_add_hashtag));
     if (!hashtag || !*hashtag) return;
@@ -432,7 +432,7 @@ static void on_add_hashtag_clicked(GtkButton *btn, gpointer user_data) {
 
 /* ---- Public API ---- */
 
-void gnostr_mute_list_dialog_add_pubkey(GnostrMuteListDialog *self,
+void gnostr_mute_list_dialog_add_pubkey(GNostrMuteListDialog *self,
                                          const char *pubkey_hex) {
     g_return_if_fail(GNOSTR_IS_MUTE_LIST(self));
     if (!pubkey_hex || strlen(pubkey_hex) != 64) return;

@@ -23,7 +23,7 @@ G_DECLARE_FINAL_TYPE(GNostrPool, gnostr_pool, GNOSTR, POOL, GObject)
  * GNostrPool:
  *
  * A GObject wrapper for managing multiple Nostr relay connections.
- * Replaces GnostrSimplePool with proper GObject properties, signals,
+ * Replaces GNostrSimplePool with proper GObject properties, signals,
  * and async methods suitable for GIR/language bindings.
  *
  * ## Properties

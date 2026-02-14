@@ -3,7 +3,7 @@
 #include <json.h>
 #include <string.h>
 
-struct _GnNostrProfile {
+struct _GNostrProfile {
   GObject parent_instance;
   
   char *pubkey;
@@ -15,7 +15,7 @@ struct _GnNostrProfile {
   char *lud16;
 };
 
-G_DEFINE_TYPE(GnNostrProfile, gn_nostr_profile, G_TYPE_OBJECT)
+G_DEFINE_TYPE(GNostrProfile, gnostr_profile, G_TYPE_OBJECT)
 
 enum {
   PROP_0,
@@ -31,8 +31,8 @@ enum {
 
 static GParamSpec *properties[N_PROPS];
 
-static void gn_nostr_profile_finalize(GObject *object) {
-  GnNostrProfile *self = GN_NOSTR_PROFILE(object);
+static void gnostr_profile_finalize(GObject *object) {
+  GNostrProfile *self = GNOSTR_PROFILE(object);
 
   g_clear_pointer(&self->pubkey, g_free);
   g_clear_pointer(&self->display_name, g_free);
@@ -42,11 +42,11 @@ static void gn_nostr_profile_finalize(GObject *object) {
   g_clear_pointer(&self->nip05, g_free);
   g_clear_pointer(&self->lud16, g_free);
 
-  G_OBJECT_CLASS(gn_nostr_profile_parent_class)->finalize(object);
+  G_OBJECT_CLASS(gnostr_profile_parent_class)->finalize(object);
 }
 
-static void gn_nostr_profile_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
-  GnNostrProfile *self = GN_NOSTR_PROFILE(object);
+static void gnostr_profile_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+  GNostrProfile *self = GNOSTR_PROFILE(object);
   
   switch (prop_id) {
     case PROP_PUBKEY:
@@ -75,8 +75,8 @@ static void gn_nostr_profile_get_property(GObject *object, guint prop_id, GValue
   }
 }
 
-static void gn_nostr_profile_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
-  GnNostrProfile *self = GN_NOSTR_PROFILE(object);
+static void gnostr_profile_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+  GNostrProfile *self = GNOSTR_PROFILE(object);
   
   switch (prop_id) {
     case PROP_PUBKEY:
@@ -88,12 +88,12 @@ static void gn_nostr_profile_set_property(GObject *object, guint prop_id, const 
   }
 }
 
-static void gn_nostr_profile_class_init(GnNostrProfileClass *klass) {
+static void gnostr_profile_class_init(GNostrProfileClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   
-  object_class->finalize = gn_nostr_profile_finalize;
-  object_class->get_property = gn_nostr_profile_get_property;
-  object_class->set_property = gn_nostr_profile_set_property;
+  object_class->finalize = gnostr_profile_finalize;
+  object_class->get_property = gnostr_profile_get_property;
+  object_class->set_property = gnostr_profile_set_property;
   
   properties[PROP_PUBKEY] = g_param_spec_string("pubkey", "Pubkey", "Public key hex", NULL,
                                                  G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
@@ -113,50 +113,50 @@ static void gn_nostr_profile_class_init(GnNostrProfileClass *klass) {
   g_object_class_install_properties(object_class, N_PROPS, properties);
 }
 
-static void gn_nostr_profile_init(GnNostrProfile *self) {
+static void gnostr_profile_init(GNostrProfile *self) {
 }
 
-GnNostrProfile *gn_nostr_profile_new(const char *pubkey) {
-  return g_object_new(GN_TYPE_NOSTR_PROFILE, "pubkey", pubkey, NULL);
+GNostrProfile *gnostr_profile_new(const char *pubkey) {
+  return g_object_new(GNOSTR_TYPE_PROFILE, "pubkey", pubkey, NULL);
 }
 
-const char *gn_nostr_profile_get_pubkey(GnNostrProfile *self) {
-  g_return_val_if_fail(GN_IS_NOSTR_PROFILE(self), NULL);
+const char *gnostr_profile_get_pubkey(GNostrProfile *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE(self), NULL);
   return self->pubkey;
 }
 
-const char *gn_nostr_profile_get_display_name(GnNostrProfile *self) {
-  g_return_val_if_fail(GN_IS_NOSTR_PROFILE(self), NULL);
+const char *gnostr_profile_get_display_name(GNostrProfile *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE(self), NULL);
   return self->display_name ? self->display_name : self->name;
 }
 
-const char *gn_nostr_profile_get_name(GnNostrProfile *self) {
-  g_return_val_if_fail(GN_IS_NOSTR_PROFILE(self), NULL);
+const char *gnostr_profile_get_name(GNostrProfile *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE(self), NULL);
   return self->name;
 }
 
-const char *gn_nostr_profile_get_about(GnNostrProfile *self) {
-  g_return_val_if_fail(GN_IS_NOSTR_PROFILE(self), NULL);
+const char *gnostr_profile_get_about(GNostrProfile *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE(self), NULL);
   return self->about;
 }
 
-const char *gn_nostr_profile_get_picture_url(GnNostrProfile *self) {
-  g_return_val_if_fail(GN_IS_NOSTR_PROFILE(self), NULL);
+const char *gnostr_profile_get_picture_url(GNostrProfile *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE(self), NULL);
   return self->picture_url;
 }
 
-const char *gn_nostr_profile_get_nip05(GnNostrProfile *self) {
-  g_return_val_if_fail(GN_IS_NOSTR_PROFILE(self), NULL);
+const char *gnostr_profile_get_nip05(GNostrProfile *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE(self), NULL);
   return self->nip05;
 }
 
-const char *gn_nostr_profile_get_lud16(GnNostrProfile *self) {
-  g_return_val_if_fail(GN_IS_NOSTR_PROFILE(self), NULL);
+const char *gnostr_profile_get_lud16(GNostrProfile *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE(self), NULL);
   return self->lud16;
 }
 
-void gn_nostr_profile_set_display_name(GnNostrProfile *self, const char *display_name) {
-  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+void gnostr_profile_set_display_name(GNostrProfile *self, const char *display_name) {
+  g_return_if_fail(GNOSTR_IS_PROFILE(self));
   if (g_strcmp0(self->display_name, display_name) != 0) {
     g_free(self->display_name);
     self->display_name = g_strdup(display_name);
@@ -164,8 +164,8 @@ void gn_nostr_profile_set_display_name(GnNostrProfile *self, const char *display
   }
 }
 
-void gn_nostr_profile_set_name(GnNostrProfile *self, const char *name) {
-  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+void gnostr_profile_set_name(GNostrProfile *self, const char *name) {
+  g_return_if_fail(GNOSTR_IS_PROFILE(self));
   if (g_strcmp0(self->name, name) != 0) {
     g_free(self->name);
     self->name = g_strdup(name);
@@ -173,8 +173,8 @@ void gn_nostr_profile_set_name(GnNostrProfile *self, const char *name) {
   }
 }
 
-void gn_nostr_profile_set_picture_url(GnNostrProfile *self, const char *picture_url) {
-  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+void gnostr_profile_set_picture_url(GNostrProfile *self, const char *picture_url) {
+  g_return_if_fail(GNOSTR_IS_PROFILE(self));
   if (g_strcmp0(self->picture_url, picture_url) != 0) {
     g_free(self->picture_url);
     self->picture_url = g_strdup(picture_url);
@@ -182,8 +182,8 @@ void gn_nostr_profile_set_picture_url(GnNostrProfile *self, const char *picture_
   }
 }
 
-void gn_nostr_profile_set_nip05(GnNostrProfile *self, const char *nip05) {
-  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+void gnostr_profile_set_nip05(GNostrProfile *self, const char *nip05) {
+  g_return_if_fail(GNOSTR_IS_PROFILE(self));
   if (g_strcmp0(self->nip05, nip05) != 0) {
     g_free(self->nip05);
     self->nip05 = g_strdup(nip05);
@@ -191,8 +191,8 @@ void gn_nostr_profile_set_nip05(GnNostrProfile *self, const char *nip05) {
   }
 }
 
-void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_str) {
-  g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
+void gnostr_profile_update_from_json(GNostrProfile *self, const char *json_str) {
+  g_return_if_fail(GNOSTR_IS_PROFILE(self));
   g_return_if_fail(json_str != NULL);
 
   /* nostrc-3nj: Use NostrJsonInterface helpers instead of json-glib */

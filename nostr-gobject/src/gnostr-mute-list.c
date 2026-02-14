@@ -51,7 +51,7 @@ static MuteEntry *mute_entry_new(const char *value, gboolean is_private) {
     return e;
 }
 
-struct _GnostrMuteList {
+struct _GNostrMuteList {
     /* Hash tables for O(1) lookup: key = value, value = MuteEntry */
     GHashTable *muted_pubkeys;   /* "p" tags */
     GHashTable *muted_events;    /* "e" tags */
@@ -68,12 +68,12 @@ struct _GnostrMuteList {
 };
 
 /* Singleton instance */
-static GnostrMuteList *s_default_instance = NULL;
+static GNostrMuteList *s_default_instance = NULL;
 static GMutex s_init_lock;
 
 /* ---- Internal Helpers ---- */
 
-static void mute_list_clear(GnostrMuteList *self) {
+static void mute_list_clear(GNostrMuteList *self) {
     g_hash_table_remove_all(self->muted_pubkeys);
     g_hash_table_remove_all(self->muted_events);
     g_hash_table_remove_all(self->muted_hashtags);
@@ -104,10 +104,10 @@ static gboolean content_contains_word(const char *content, const char *word) {
 
 /* ---- Public API Implementation ---- */
 
-GnostrMuteList *gnostr_mute_list_get_default(void) {
+GNostrMuteList *gnostr_mute_list_get_default(void) {
     g_mutex_lock(&s_init_lock);
     if (!s_default_instance) {
-        s_default_instance = g_new0(GnostrMuteList, 1);
+        s_default_instance = g_new0(GNostrMuteList, 1);
         g_mutex_init(&s_default_instance->lock);
         s_default_instance->muted_pubkeys = g_hash_table_new_full(
             g_str_hash, g_str_equal, NULL, mute_entry_free);
@@ -142,7 +142,7 @@ void gnostr_mute_list_shutdown(void) {
     g_mutex_unlock(&s_init_lock);
 }
 
-gboolean gnostr_mute_list_load_from_json(GnostrMuteList *self,
+gboolean gnostr_mute_list_load_from_json(GNostrMuteList *self,
                                           const char *event_json) {
     if (!self || !event_json) return FALSE;
 
@@ -230,7 +230,7 @@ gboolean gnostr_mute_list_load_from_json(GnostrMuteList *self,
 }
 
 /* Merge entries from JSON without clearing existing data (for UNION strategy) */
-static gboolean mute_list_merge_from_json(GnostrMuteList *self,
+static gboolean mute_list_merge_from_json(GNostrMuteList *self,
                                            const char *event_json,
                                            gint64 *out_event_time) {
     if (!self || !event_json) return FALSE;
@@ -304,7 +304,7 @@ static gboolean mute_list_merge_from_json(GnostrMuteList *self,
     return TRUE;
 }
 
-gint64 gnostr_mute_list_get_last_event_time(GnostrMuteList *self) {
+gint64 gnostr_mute_list_get_last_event_time(GNostrMuteList *self) {
     if (!self) return 0;
     g_mutex_lock(&self->lock);
     gint64 time = self->last_event_time;
@@ -315,11 +315,11 @@ gint64 gnostr_mute_list_get_last_event_time(GnostrMuteList *self) {
 /* ---- Async Fetch Implementation ---- */
 
 typedef struct {
-    GnostrMuteList *mute_list;
-    GnostrMuteListFetchCallback callback;
+    GNostrMuteList *mute_list;
+    GNostrMuteListFetchCallback callback;
     gpointer user_data;
     char *pubkey_hex;
-    GnostrMuteListMergeStrategy strategy;
+    GNostrMuteListMergeStrategy strategy;
 } FetchContext;
 
 static void fetch_context_free(FetchContext *ctx) {
@@ -333,7 +333,7 @@ static void fetch_context_free(FetchContext *ctx) {
 
 /* Context for private entry decryption */
 typedef struct {
-    GnostrMuteList *mute_list;
+    GNostrMuteList *mute_list;
     char *encrypted_content;
     char *user_pubkey;
 } DecryptPrivateContext;
@@ -348,14 +348,14 @@ static void decrypt_private_ctx_free(DecryptPrivateContext *ctx) {
 
 /* Callback context for parsing private entries */
 typedef struct {
-    GnostrMuteList *self;
+    GNostrMuteList *self;
 } PrivateEntriesCtx;
 
 /* Callback for iterating private entry tags */
 static gboolean parse_private_entry_cb(gsize idx, const gchar *element_json, gpointer user_data) {
     (void)idx;
     PrivateEntriesCtx *ctx = (PrivateEntriesCtx *)user_data;
-    GnostrMuteList *self = ctx->self;
+    GNostrMuteList *self = ctx->self;
 
     /* Each element is a tag array like ["p", "pubkey"] */
     if (!gnostr_json_is_array_str(element_json)) return true;
@@ -423,7 +423,7 @@ static gboolean parse_private_entry_cb(gsize idx, const gchar *element_json, gpo
 }
 
 /* Parse decrypted private entries (JSON array of tags) */
-static void parse_private_entries(GnostrMuteList *self, const char *decrypted_json) {
+static void parse_private_entries(GNostrMuteList *self, const char *decrypted_json) {
     if (!self || !decrypted_json || !*decrypted_json) return;
 
     /* Validate that it's an array */
@@ -472,7 +472,7 @@ static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpo
 }
 
 /* Decrypt private mute entries from event content */
-static void decrypt_private_entries_async(GnostrMuteList *self,
+static void decrypt_private_entries_async(GNostrMuteList *self,
                                            const char *encrypted_content,
                                            const char *user_pubkey) {
     if (!self || !encrypted_content || !*encrypted_content || !user_pubkey) return;
@@ -628,10 +628,10 @@ static GNostrPool *s_mute_list_pool = NULL;
 
 #endif /* GNOSTR_MUTE_LIST_TEST_ONLY */
 
-void gnostr_mute_list_fetch_async(GnostrMuteList *self,
+void gnostr_mute_list_fetch_async(GNostrMuteList *self,
                                    const char *pubkey_hex,
                                    const char * const *relays,
-                                   GnostrMuteListFetchCallback callback,
+                                   GNostrMuteListFetchCallback callback,
                                    gpointer user_data) {
     if (!self || !pubkey_hex) {
         if (callback) callback(self, FALSE, user_data);
@@ -703,11 +703,11 @@ void gnostr_mute_list_fetch_async(GnostrMuteList *self,
 #endif
 }
 
-void gnostr_mute_list_fetch_with_strategy_async(GnostrMuteList *self,
+void gnostr_mute_list_fetch_with_strategy_async(GNostrMuteList *self,
                                                  const char *pubkey_hex,
                                                  const char * const *relays,
-                                                 GnostrMuteListMergeStrategy strategy,
-                                                 GnostrMuteListFetchCallback callback,
+                                                 GNostrMuteListMergeStrategy strategy,
+                                                 GNostrMuteListFetchCallback callback,
                                                  gpointer user_data) {
     if (!self || !pubkey_hex) {
         if (callback) callback(self, FALSE, user_data);
@@ -778,7 +778,7 @@ void gnostr_mute_list_fetch_with_strategy_async(GnostrMuteList *self,
 
 /* ---- Query Functions ---- */
 
-gboolean gnostr_mute_list_is_pubkey_muted(GnostrMuteList *self,
+gboolean gnostr_mute_list_is_pubkey_muted(GNostrMuteList *self,
                                            const char *pubkey_hex) {
     if (!self || !pubkey_hex) return FALSE;
     /* nostrc-akyz: defensively normalize npub/nprofile to hex */
@@ -790,7 +790,7 @@ gboolean gnostr_mute_list_is_pubkey_muted(GnostrMuteList *self,
     return result;
 }
 
-gboolean gnostr_mute_list_is_event_muted(GnostrMuteList *self,
+gboolean gnostr_mute_list_is_event_muted(GNostrMuteList *self,
                                           const char *event_id_hex) {
     if (!self || !event_id_hex) return FALSE;
     g_mutex_lock(&self->lock);
@@ -799,7 +799,7 @@ gboolean gnostr_mute_list_is_event_muted(GnostrMuteList *self,
     return result;
 }
 
-gboolean gnostr_mute_list_is_hashtag_muted(GnostrMuteList *self,
+gboolean gnostr_mute_list_is_hashtag_muted(GNostrMuteList *self,
                                             const char *hashtag) {
     if (!self || !hashtag) return FALSE;
     g_mutex_lock(&self->lock);
@@ -811,7 +811,7 @@ gboolean gnostr_mute_list_is_hashtag_muted(GnostrMuteList *self,
     return result;
 }
 
-gboolean gnostr_mute_list_contains_muted_word(GnostrMuteList *self,
+gboolean gnostr_mute_list_contains_muted_word(GNostrMuteList *self,
                                                const char *content) {
     if (!self || !content) return FALSE;
 
@@ -833,7 +833,7 @@ gboolean gnostr_mute_list_contains_muted_word(GnostrMuteList *self,
     return found;
 }
 
-gboolean gnostr_mute_list_should_hide_event(GnostrMuteList *self,
+gboolean gnostr_mute_list_should_hide_event(GNostrMuteList *self,
                                              const char *event_json) {
     if (!self || !event_json) return FALSE;
 
@@ -895,7 +895,7 @@ done:
 
 /* ---- Modification Functions ---- */
 
-void gnostr_mute_list_add_pubkey(GnostrMuteList *self,
+void gnostr_mute_list_add_pubkey(GNostrMuteList *self,
                                   const char *pubkey_hex,
                                   gboolean is_private) {
     /* nostrc-akyz: defensively normalize npub/nprofile to hex */
@@ -916,7 +916,7 @@ void gnostr_mute_list_add_pubkey(GnostrMuteList *self,
     g_mutex_unlock(&self->lock);
 }
 
-void gnostr_mute_list_remove_pubkey(GnostrMuteList *self,
+void gnostr_mute_list_remove_pubkey(GNostrMuteList *self,
                                      const char *pubkey_hex) {
     if (!self || !pubkey_hex) return;
     /* nostrc-akyz: defensively normalize npub/nprofile to hex */
@@ -932,7 +932,7 @@ void gnostr_mute_list_remove_pubkey(GnostrMuteList *self,
     g_mutex_unlock(&self->lock);
 }
 
-void gnostr_mute_list_add_word(GnostrMuteList *self,
+void gnostr_mute_list_add_word(GNostrMuteList *self,
                                 const char *word,
                                 gboolean is_private) {
     if (!self || !word || !*word) return;
@@ -951,7 +951,7 @@ void gnostr_mute_list_add_word(GnostrMuteList *self,
     g_free(lower_word);
 }
 
-void gnostr_mute_list_remove_word(GnostrMuteList *self,
+void gnostr_mute_list_remove_word(GNostrMuteList *self,
                                    const char *word) {
     if (!self || !word) return;
 
@@ -967,7 +967,7 @@ void gnostr_mute_list_remove_word(GnostrMuteList *self,
     g_free(lower_word);
 }
 
-void gnostr_mute_list_add_hashtag(GnostrMuteList *self,
+void gnostr_mute_list_add_hashtag(GNostrMuteList *self,
                                    const char *hashtag,
                                    gboolean is_private) {
     if (!self || !hashtag || !*hashtag) return;
@@ -990,7 +990,7 @@ void gnostr_mute_list_add_hashtag(GnostrMuteList *self,
     g_free(lower_tag);
 }
 
-void gnostr_mute_list_remove_hashtag(GnostrMuteList *self,
+void gnostr_mute_list_remove_hashtag(GNostrMuteList *self,
                                       const char *hashtag) {
     if (!self || !hashtag) return;
 
@@ -1009,7 +1009,7 @@ void gnostr_mute_list_remove_hashtag(GnostrMuteList *self,
     g_free(lower_tag);
 }
 
-void gnostr_mute_list_add_event(GnostrMuteList *self,
+void gnostr_mute_list_add_event(GNostrMuteList *self,
                                  const char *event_id_hex,
                                  gboolean is_private) {
     if (!self || !event_id_hex || strlen(event_id_hex) != 64) return;
@@ -1024,7 +1024,7 @@ void gnostr_mute_list_add_event(GnostrMuteList *self,
     g_mutex_unlock(&self->lock);
 }
 
-void gnostr_mute_list_remove_event(GnostrMuteList *self,
+void gnostr_mute_list_remove_event(GNostrMuteList *self,
                                     const char *event_id_hex) {
     if (!self || !event_id_hex) return;
 
@@ -1039,8 +1039,8 @@ void gnostr_mute_list_remove_event(GnostrMuteList *self,
 /* ---- Save Implementation ---- */
 
 typedef struct {
-    GnostrMuteList *mute_list;
-    GnostrMuteListSaveCallback callback;
+    GNostrMuteList *mute_list;
+    GNostrMuteListSaveCallback callback;
     gpointer user_data;
     char *event_json;
     char *private_tags_json;  /* JSON array of private tags for encryption */
@@ -1154,7 +1154,7 @@ static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpoin
 }
 
 /* Helper to build JSON array of private tags using GNostrJsonBuilder */
-static char *build_private_tags_json(GnostrMuteList *self) {
+static char *build_private_tags_json(GNostrMuteList *self) {
     GNostrJsonBuilder *builder = gnostr_json_builder_new();
     GHashTableIter iter;
     gpointer key, value;
@@ -1346,8 +1346,8 @@ static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
     );
 }
 
-void gnostr_mute_list_save_async(GnostrMuteList *self,
-                                  GnostrMuteListSaveCallback callback,
+void gnostr_mute_list_save_async(GNostrMuteList *self,
+                                  GNostrMuteListSaveCallback callback,
                                   gpointer user_data) {
     if (!self) {
         if (callback) callback(self, FALSE, "Invalid mute list", user_data);
@@ -1402,7 +1402,7 @@ void gnostr_mute_list_save_async(GnostrMuteList *self,
 
 /* ---- Accessors ---- */
 
-const char **gnostr_mute_list_get_pubkeys(GnostrMuteList *self, size_t *count) {
+const char **gnostr_mute_list_get_pubkeys(GNostrMuteList *self, size_t *count) {
     if (!self || !count) {
         if (count) *count = 0;
         return NULL;
@@ -1425,7 +1425,7 @@ const char **gnostr_mute_list_get_pubkeys(GnostrMuteList *self, size_t *count) {
     return result;
 }
 
-const char **gnostr_mute_list_get_words(GnostrMuteList *self, size_t *count) {
+const char **gnostr_mute_list_get_words(GNostrMuteList *self, size_t *count) {
     if (!self || !count) {
         if (count) *count = 0;
         return NULL;
@@ -1448,7 +1448,7 @@ const char **gnostr_mute_list_get_words(GnostrMuteList *self, size_t *count) {
     return result;
 }
 
-const char **gnostr_mute_list_get_hashtags(GnostrMuteList *self, size_t *count) {
+const char **gnostr_mute_list_get_hashtags(GNostrMuteList *self, size_t *count) {
     if (!self || !count) {
         if (count) *count = 0;
         return NULL;
@@ -1471,7 +1471,7 @@ const char **gnostr_mute_list_get_hashtags(GnostrMuteList *self, size_t *count) 
     return result;
 }
 
-const char **gnostr_mute_list_get_events(GnostrMuteList *self, size_t *count) {
+const char **gnostr_mute_list_get_events(GNostrMuteList *self, size_t *count) {
     if (!self || !count) {
         if (count) *count = 0;
         return NULL;
@@ -1494,7 +1494,7 @@ const char **gnostr_mute_list_get_events(GnostrMuteList *self, size_t *count) {
     return result;
 }
 
-gboolean gnostr_mute_list_is_dirty(GnostrMuteList *self) {
+gboolean gnostr_mute_list_is_dirty(GNostrMuteList *self) {
     if (!self) return FALSE;
     g_mutex_lock(&self->lock);
     gboolean result = self->dirty;

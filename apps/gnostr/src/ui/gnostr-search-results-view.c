@@ -228,7 +228,7 @@ setup_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     (void)factory;
     (void)user_data;
 
-    GnostrNoteCardRow *row = gnostr_note_card_row_new();
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
     gtk_list_item_set_child(list_item, GTK_WIDGET(row));
 }
 
@@ -240,7 +240,7 @@ bind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
     GnostrSearchResultsView *view = GNOSTR_SEARCH_RESULTS_VIEW(user_data);
     (void)view;
 
-    GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
+    NostrGtkNoteCardRow *row = NOSTR_GTK_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
     SearchResultItem *item = g_object_ref(gtk_list_item_get_item(list_item));
 
     if (!row || !item) {
@@ -255,19 +255,19 @@ bind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
     const char *handle = item->author_handle && *item->author_handle
         ? item->author_handle
         : (item->pubkey_hex ? item->pubkey_hex : "");
-    gnostr_note_card_row_set_author(row, display, handle, item->avatar_url);
+    nostr_gtk_note_card_row_set_author(row, display, handle, item->avatar_url);
 
     /* Set timestamp */
-    gnostr_note_card_row_set_timestamp(row, item->created_at, NULL);
+    nostr_gtk_note_card_row_set_timestamp(row, item->created_at, NULL);
 
     /* Set content */
-    gnostr_note_card_row_set_content(row, item->content);
+    nostr_gtk_note_card_row_set_content(row, item->content);
 
     /* Set IDs */
-    gnostr_note_card_row_set_ids(row, item->event_id_hex, NULL, item->pubkey_hex);
+    nostr_gtk_note_card_row_set_ids(row, item->event_id_hex, NULL, item->pubkey_hex);
 
     /* Set login state for authentication-required buttons */
-    gnostr_note_card_row_set_logged_in(row, is_user_logged_in());
+    nostr_gtk_note_card_row_set_logged_in(row, is_user_logged_in());
 
     g_object_unref(item);
 }
@@ -282,8 +282,8 @@ unbind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer 
     (void)user_data;
 
     GtkWidget *child = gtk_list_item_get_child(list_item);
-    if (child && GNOSTR_IS_NOTE_CARD_ROW(child)) {
-        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(child));
+    if (child && NOSTR_GTK_IS_NOTE_CARD_ROW(child)) {
+        nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(child));
     }
 }
 
@@ -299,8 +299,8 @@ teardown_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointe
     (void)user_data;
 
     GtkWidget *child = gtk_list_item_get_child(list_item);
-    if (child && GNOSTR_IS_NOTE_CARD_ROW(child)) {
-        gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(child));
+    if (child && NOSTR_GTK_IS_NOTE_CARD_ROW(child)) {
+        nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(child));
     }
 }
 

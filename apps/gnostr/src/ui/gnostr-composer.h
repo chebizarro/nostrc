@@ -1,46 +1,46 @@
-#ifndef GNOSTR_COMPOSER_H
-#define GNOSTR_COMPOSER_H
+#ifndef NOSTR_GTK_COMPOSER_H
+#define NOSTR_GTK_COMPOSER_H
 
 #include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
-#define GNOSTR_TYPE_COMPOSER (gnostr_composer_get_type())
+#define NOSTR_GTK_TYPE_COMPOSER (nostr_gtk_composer_get_type())
 
-G_DECLARE_FINAL_TYPE(GnostrComposer, gnostr_composer, GNOSTR, COMPOSER, GtkWidget)
+G_DECLARE_FINAL_TYPE(NostrGtkComposer, nostr_gtk_composer, NOSTR_GTK, COMPOSER, GtkWidget)
 
-GtkWidget *gnostr_composer_new(void);
+GtkWidget *nostr_gtk_composer_new(void);
 
 /* Clear the composer text */
-void gnostr_composer_clear(GnostrComposer *self);
+void nostr_gtk_composer_clear(NostrGtkComposer *self);
 
 /* Reply context for NIP-10 threading */
-void gnostr_composer_set_reply_context(GnostrComposer *self,
+void nostr_gtk_composer_set_reply_context(NostrGtkComposer *self,
                                        const char *reply_to_id,
                                        const char *root_id,
                                        const char *reply_to_pubkey,
                                        const char *reply_to_display_name);
-void gnostr_composer_clear_reply_context(GnostrComposer *self);
-gboolean gnostr_composer_is_reply(GnostrComposer *self);
-const char *gnostr_composer_get_reply_to_id(GnostrComposer *self);
-const char *gnostr_composer_get_root_id(GnostrComposer *self);
-const char *gnostr_composer_get_reply_to_pubkey(GnostrComposer *self);
+void nostr_gtk_composer_clear_reply_context(NostrGtkComposer *self);
+gboolean nostr_gtk_composer_is_reply(NostrGtkComposer *self);
+const char *nostr_gtk_composer_get_reply_to_id(NostrGtkComposer *self);
+const char *nostr_gtk_composer_get_root_id(NostrGtkComposer *self);
+const char *nostr_gtk_composer_get_reply_to_pubkey(NostrGtkComposer *self);
 
 /* Quote context for NIP-18 quote posts (kind 1 with q-tag) */
-void gnostr_composer_set_quote_context(GnostrComposer *self,
+void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
                                        const char *quote_id,
                                        const char *quote_pubkey,
                                        const char *nostr_uri,
                                        const char *quoted_author_display_name);
-void gnostr_composer_clear_quote_context(GnostrComposer *self);
-gboolean gnostr_composer_is_quote(GnostrComposer *self);
-const char *gnostr_composer_get_quote_id(GnostrComposer *self);
-const char *gnostr_composer_get_quote_pubkey(GnostrComposer *self);
-const char *gnostr_composer_get_quote_nostr_uri(GnostrComposer *self);
+void nostr_gtk_composer_clear_quote_context(NostrGtkComposer *self);
+gboolean nostr_gtk_composer_is_quote(NostrGtkComposer *self);
+const char *nostr_gtk_composer_get_quote_id(NostrGtkComposer *self);
+const char *nostr_gtk_composer_get_quote_pubkey(NostrGtkComposer *self);
+const char *nostr_gtk_composer_get_quote_nostr_uri(NostrGtkComposer *self);
 
 /* Media upload state (Blossom) */
-gboolean gnostr_composer_is_uploading(GnostrComposer *self);
-void gnostr_composer_cancel_upload(GnostrComposer *self);
+gboolean nostr_gtk_composer_is_uploading(NostrGtkComposer *self);
+void nostr_gtk_composer_cancel_upload(NostrGtkComposer *self);
 
 /* Media metadata for NIP-92 imeta tags */
 typedef struct {
@@ -48,25 +48,25 @@ typedef struct {
   char *sha256;     /* SHA-256 hash (hex) */
   char *mime_type;  /* MIME type */
   gint64 size;      /* File size in bytes */
-} GnostrComposerMedia;
+} NostrGtkComposerMedia;
 
 /**
  * Get the list of uploaded media for this composer session.
- * Returns a NULL-terminated array of GnostrComposerMedia pointers.
+ * Returns a NULL-terminated array of NostrGtkComposerMedia pointers.
  * The array and its contents are owned by the composer; do not free.
  */
-GnostrComposerMedia **gnostr_composer_get_uploaded_media(GnostrComposer *self);
+NostrGtkComposerMedia **nostr_gtk_composer_get_uploaded_media(NostrGtkComposer *self);
 
 /**
  * Get the count of uploaded media items.
  */
-gsize gnostr_composer_get_uploaded_media_count(GnostrComposer *self);
+gsize nostr_gtk_composer_get_uploaded_media_count(NostrGtkComposer *self);
 
 /**
  * Clear all uploaded media metadata.
  * Called when composer is cleared after successful post.
  */
-void gnostr_composer_clear_uploaded_media(GnostrComposer *self);
+void nostr_gtk_composer_clear_uploaded_media(NostrGtkComposer *self);
 
 /* NIP-14: Subject tag support */
 /**
@@ -74,41 +74,41 @@ void gnostr_composer_clear_uploaded_media(GnostrComposer *self);
  * Returns the subject text or NULL if empty.
  * The returned string is owned by the entry widget; do not free.
  */
-const char *gnostr_composer_get_subject(GnostrComposer *self);
+const char *nostr_gtk_composer_get_subject(NostrGtkComposer *self);
 
 /* NIP-40: Expiration timestamp support */
 /**
  * Set expiration timestamp for the next post.
  * @param expiration_secs: Unix timestamp when the note should expire, or 0 for no expiration.
  */
-void gnostr_composer_set_expiration(GnostrComposer *self, gint64 expiration_secs);
+void nostr_gtk_composer_set_expiration(NostrGtkComposer *self, gint64 expiration_secs);
 
 /**
  * Get the currently set expiration timestamp.
  * Returns 0 if no expiration is set.
  */
-gint64 gnostr_composer_get_expiration(GnostrComposer *self);
+gint64 nostr_gtk_composer_get_expiration(NostrGtkComposer *self);
 
 /**
  * Clear the expiration setting.
  */
-void gnostr_composer_clear_expiration(GnostrComposer *self);
+void nostr_gtk_composer_clear_expiration(NostrGtkComposer *self);
 
 /**
  * Check if an expiration is set.
  */
-gboolean gnostr_composer_has_expiration(GnostrComposer *self);
+gboolean nostr_gtk_composer_has_expiration(NostrGtkComposer *self);
 
 /* NIP-36: Content warning / sensitive content support */
 /**
  * Check if the note is marked as sensitive (content-warning).
  */
-gboolean gnostr_composer_is_sensitive(GnostrComposer *self);
+gboolean nostr_gtk_composer_is_sensitive(NostrGtkComposer *self);
 
 /**
  * Set whether the note should be marked as sensitive.
  */
-void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive);
+void nostr_gtk_composer_set_sensitive(NostrGtkComposer *self, gboolean sensitive);
 
 /* NIP-22: Comment context for kind 1111 events */
 /**
@@ -119,7 +119,7 @@ void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive);
  * @param root_pubkey: The pubkey of the root event author (hex)
  * @param display_name: Display name of root event author for UI indicator
  */
-void gnostr_composer_set_comment_context(GnostrComposer *self,
+void nostr_gtk_composer_set_comment_context(NostrGtkComposer *self,
                                          const char *root_id,
                                          int root_kind,
                                          const char *root_pubkey,
@@ -128,27 +128,27 @@ void gnostr_composer_set_comment_context(GnostrComposer *self,
 /**
  * Clear the comment context.
  */
-void gnostr_composer_clear_comment_context(GnostrComposer *self);
+void nostr_gtk_composer_clear_comment_context(NostrGtkComposer *self);
 
 /**
  * Check if the composer is in comment mode (NIP-22).
  */
-gboolean gnostr_composer_is_comment(GnostrComposer *self);
+gboolean nostr_gtk_composer_is_comment(NostrGtkComposer *self);
 
 /**
  * Get the comment root event ID.
  */
-const char *gnostr_composer_get_comment_root_id(GnostrComposer *self);
+const char *nostr_gtk_composer_get_comment_root_id(NostrGtkComposer *self);
 
 /**
  * Get the comment root event kind.
  */
-int gnostr_composer_get_comment_root_kind(GnostrComposer *self);
+int nostr_gtk_composer_get_comment_root_kind(NostrGtkComposer *self);
 
 /**
  * Get the comment root event pubkey.
  */
-const char *gnostr_composer_get_comment_root_pubkey(GnostrComposer *self);
+const char *nostr_gtk_composer_get_comment_root_pubkey(NostrGtkComposer *self);
 
 /* NIP-37: Draft support */
 
@@ -160,30 +160,30 @@ typedef struct _GnostrDraft GnostrDraft;
  * Clears any existing content and restores the draft state.
  * @param draft: The draft to load (will be copied, caller retains ownership)
  */
-void gnostr_composer_load_draft(GnostrComposer *self, const GnostrDraft *draft);
+void nostr_gtk_composer_load_draft(NostrGtkComposer *self, const GnostrDraft *draft);
 
 /**
  * Get the d-tag of the currently loaded draft (for updates).
  * Returns NULL if no draft is loaded.
  */
-const char *gnostr_composer_get_current_draft_d_tag(GnostrComposer *self);
+const char *nostr_gtk_composer_get_current_draft_d_tag(NostrGtkComposer *self);
 
 /**
  * Clear the draft context (called after publishing to clean up).
  */
-void gnostr_composer_clear_draft_context(GnostrComposer *self);
+void nostr_gtk_composer_clear_draft_context(NostrGtkComposer *self);
 
 /**
  * Check if a draft is currently loaded in the composer.
  */
-gboolean gnostr_composer_has_draft_loaded(GnostrComposer *self);
+gboolean nostr_gtk_composer_has_draft_loaded(NostrGtkComposer *self);
 
 /**
  * Get the current text content from the composer.
  * Returns a newly allocated string that must be freed with g_free().
  */
-char *gnostr_composer_get_text(GnostrComposer *self);
+char *nostr_gtk_composer_get_text(NostrGtkComposer *self);
 
 G_END_DECLS
 
-#endif /* GNOSTR_COMPOSER_H */
+#endif /* NOSTR_GTK_COMPOSER_H */

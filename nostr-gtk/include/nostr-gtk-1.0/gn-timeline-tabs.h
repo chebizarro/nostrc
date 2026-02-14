@@ -1,5 +1,5 @@
 /**
- * GnTimelineTabs - Tab bar for switching between timeline views
+ * NostrGtkTimelineTabs - Tab bar for switching between timeline views
  *
  * A horizontal tab bar that allows switching between different filtered
  * timeline views (Global, Following, Hashtags, etc.).
@@ -7,15 +7,15 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#ifndef GN_TIMELINE_TABS_H
-#define GN_TIMELINE_TABS_H
+#ifndef NOSTR_GTK_TIMELINE_TABS_H
+#define NOSTR_GTK_TIMELINE_TABS_H
 
 #include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
-#define GN_TYPE_TIMELINE_TABS (gn_timeline_tabs_get_type())
-G_DECLARE_FINAL_TYPE(GnTimelineTabs, gn_timeline_tabs, GN, TIMELINE_TABS, GtkWidget)
+#define NOSTR_GTK_TYPE_TIMELINE_TABS (nostr_gtk_timeline_tabs_get_type())
+G_DECLARE_FINAL_TYPE(NostrGtkTimelineTabs, nostr_gtk_timeline_tabs, NOSTR_GTK, TIMELINE_TABS, GtkWidget)
 
 /**
  * GnTimelineTabType:
@@ -33,27 +33,27 @@ typedef enum {
   GN_TIMELINE_TAB_CUSTOM,
 } GnTimelineTabType;
 
-GnTimelineTabs *gn_timeline_tabs_new(void);
+NostrGtkTimelineTabs *nostr_gtk_timeline_tabs_new(void);
 
-guint gn_timeline_tabs_add_tab(GnTimelineTabs *self,
+guint nostr_gtk_timeline_tabs_add_tab(NostrGtkTimelineTabs *self,
                                 GnTimelineTabType type,
                                 const char *label,
                                 const char *filter_value);
 
-void gn_timeline_tabs_remove_tab(GnTimelineTabs *self, guint index);
+void nostr_gtk_timeline_tabs_remove_tab(NostrGtkTimelineTabs *self, guint index);
 
-guint gn_timeline_tabs_get_selected(GnTimelineTabs *self);
+guint nostr_gtk_timeline_tabs_get_selected(NostrGtkTimelineTabs *self);
 
-void gn_timeline_tabs_set_selected(GnTimelineTabs *self, guint index);
+void nostr_gtk_timeline_tabs_set_selected(NostrGtkTimelineTabs *self, guint index);
 
-GnTimelineTabType gn_timeline_tabs_get_tab_type(GnTimelineTabs *self, guint index);
+GnTimelineTabType nostr_gtk_timeline_tabs_get_tab_type(NostrGtkTimelineTabs *self, guint index);
 
-const char *gn_timeline_tabs_get_tab_filter_value(GnTimelineTabs *self, guint index);
+const char *nostr_gtk_timeline_tabs_get_tab_filter_value(NostrGtkTimelineTabs *self, guint index);
 
-guint gn_timeline_tabs_get_n_tabs(GnTimelineTabs *self);
+guint nostr_gtk_timeline_tabs_get_n_tabs(NostrGtkTimelineTabs *self);
 
-void gn_timeline_tabs_set_closable(GnTimelineTabs *self, guint index, gboolean closable);
+void nostr_gtk_timeline_tabs_set_closable(NostrGtkTimelineTabs *self, guint index, gboolean closable);
 
 G_END_DECLS
 
-#endif /* GN_TIMELINE_TABS_H */
+#endif /* NOSTR_GTK_TIMELINE_TABS_H */

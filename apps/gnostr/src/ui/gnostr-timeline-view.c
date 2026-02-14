@@ -39,7 +39,7 @@
 #define INFLIGHT_MAX 100
 
 /* Forward decl: NoteCardRow embed handler */
-static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpointer user_data);
+static void on_row_request_embed(NostrGtkNoteCardRow *row, const char *target, gpointer user_data);
 
 /* Weak ref wrapper used by async completions */
 typedef struct { GWeakRef ref; } RowRef;
@@ -215,13 +215,13 @@ static void on_query_single_done_multi(GObject *source, GAsyncResult *res, gpoin
       if (!rr) continue;
       /* Get the weak ref as GObject first, then validate before casting */
       GObject *obj = g_weak_ref_get(&rr->ref);
-      if (!obj || !GNOSTR_IS_NOTE_CARD_ROW(obj)) { 
+      if (!obj || !NOSTR_GTK_IS_NOTE_CARD_ROW(obj)) { 
         if (obj) g_object_unref(obj); 
         continue; 
       }
-      GnostrNoteCardRow *r = GNOSTR_NOTE_CARD_ROW(obj);
-      if (have) gnostr_note_card_row_set_embed_rich(r, title, meta, snipbuf);
-      else gnostr_note_card_row_set_embed(r, "Note", "Not found on selected relays");
+      NostrGtkNoteCardRow *r = NOSTR_GTK_NOTE_CARD_ROW(obj);
+      if (have) nostr_gtk_note_card_row_set_embed_rich(r, title, meta, snipbuf);
+      else nostr_gtk_note_card_row_set_embed(r, "Note", "Not found on selected relays");
       g_object_unref(r);
     }
   }
@@ -265,7 +265,7 @@ static void inflight_detach_row(GtkWidget *row) {
       /* Get weak ref as GObject first, validate before casting */
       GObject *obj = g_weak_ref_get(&rr->ref);
       gboolean keep = TRUE;
-      if (!obj || !GNOSTR_IS_NOTE_CARD_ROW(obj) || GTK_WIDGET(obj) == row) keep = FALSE;
+      if (!obj || !NOSTR_GTK_IS_NOTE_CARD_ROW(obj) || GTK_WIDGET(obj) == row) keep = FALSE;
       if (obj) g_object_unref(obj);
       if (keep) {
         g_ptr_array_index(in->rows, write++) = rr;
@@ -300,7 +300,7 @@ static void inflight_enforce_limit(void) {
 }
 
 /* Start or attach to an inflight request */
-static void start_or_attach_request(const char *key, const char **urls, size_t url_count, NostrFilter *f, GnostrNoteCardRow *row) {
+static void start_or_attach_request(const char *key, const char **urls, size_t url_count, NostrFilter *f, NostrGtkNoteCardRow *row) {
   ensure_inflight();
   Inflight *in = (Inflight*)g_hash_table_lookup(s_inflight, key);
   if (!in) {
@@ -324,9 +324,9 @@ static void start_or_attach_request(const char *key, const char **urls, size_t u
   g_ptr_array_add(in->rows, rr);
 }
 
-static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpointer user_data) {
+static void on_row_request_embed(NostrGtkNoteCardRow *row, const char *target, gpointer user_data) {
   (void)user_data;
-  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || !target || !*target) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row) || !target || !*target) return;
   /* Normalize nostr: URIs */
   const char *ref = target;
   if (g_str_has_prefix(ref, "nostr:")) ref = target + 6;
@@ -334,7 +334,7 @@ static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpo
   /* Decode bech32 reference using GNostrNip19 */
   g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(ref, NULL);
   if (!n19) {
-    gnostr_note_card_row_set_embed(row, "Reference", ref);
+    nostr_gtk_note_card_row_set_embed(row, "Reference", ref);
     return;
   }
 
@@ -343,9 +343,9 @@ static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpo
   /* Handle bare note1 */
   if (btype == GNOSTR_BECH32_NOTE) {
     const char *event_id_hex = gnostr_nip19_get_event_id(n19);
-    if (!event_id_hex) { gnostr_note_card_row_set_embed(row, "Reference", ref); return; }
+    if (!event_id_hex) { nostr_gtk_note_card_row_set_embed(row, "Reference", ref); return; }
     unsigned char id32[32];
-    if (!hex32_from_string(event_id_hex, id32)) { gnostr_note_card_row_set_embed(row, "Reference", ref); return; }
+    if (!hex32_from_string(event_id_hex, id32)) { nostr_gtk_note_card_row_set_embed(row, "Reference", ref); return; }
     /* Query local store */
     void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
       char *json = NULL; int jlen = 0;
@@ -356,15 +356,15 @@ static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpo
           if (content && *content) {
             /* Simple title/snippet */
             char title[64]; g_strlcpy(title, content, sizeof(title));
-            gnostr_note_card_row_set_embed(row, title, content);
+            nostr_gtk_note_card_row_set_embed(row, title, content);
           } else {
-            gnostr_note_card_row_set_embed(row, "Note", "(empty)");
+            nostr_gtk_note_card_row_set_embed(row, "Note", "(empty)");
           }
         }
         if (evt) nostr_event_free(evt);
         g_free(json);
       } else {
-        gnostr_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
+        nostr_gtk_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
       }
       storage_ndb_end_query(txn);
     }
@@ -391,13 +391,13 @@ static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpo
             else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
             else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
             char snipbuf[281]; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
-            gnostr_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
+            nostr_gtk_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
           }
           if (evt) nostr_event_free(evt);
           nostr_filter_free(f);
           goto done_note_fetch;
         } else {
-          gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
+          nostr_gtk_note_card_row_set_embed(row, "Note", "Not found on selected relays");
           nostr_filter_free(f);
           goto done_note_fetch;
         }
@@ -419,7 +419,7 @@ done_note_fetch:
   /* Handle nevent */
   if (btype == GNOSTR_BECH32_NEVENT) {
     const char *event_id_hex = gnostr_nip19_get_event_id(n19);
-    if (!event_id_hex) { gnostr_note_card_row_set_embed(row, "Reference", ref); return; }
+    if (!event_id_hex) { nostr_gtk_note_card_row_set_embed(row, "Reference", ref); return; }
     unsigned char id32[32];
     if (hex32_from_string(event_id_hex, id32)) {
       void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
@@ -430,15 +430,15 @@ done_note_fetch:
             const char *content = nostr_event_get_content(evt);
             if (content && *content) {
               char title[64]; g_strlcpy(title, content, sizeof(title));
-              gnostr_note_card_row_set_embed(row, title, content);
+              nostr_gtk_note_card_row_set_embed(row, title, content);
             } else {
-              gnostr_note_card_row_set_embed(row, "Note", "(empty)");
+              nostr_gtk_note_card_row_set_embed(row, "Note", "(empty)");
             }
           }
           if (evt) nostr_event_free(evt);
           g_free(json);
         } else {
-          gnostr_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
+          nostr_gtk_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
         }
         storage_ndb_end_query(txn);
       }
@@ -464,13 +464,13 @@ done_note_fetch:
               else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
               else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
               char snipbuf[281]; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
-              gnostr_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
+              nostr_gtk_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
             }
             if (evt) nostr_event_free(evt);
             nostr_filter_free(f);
             goto done_nevent_fetch;
           } else {
-            gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
+            nostr_gtk_note_card_row_set_embed(row, "Note", "Not found on selected relays");
             nostr_filter_free(f);
             goto done_nevent_fetch;
           }
@@ -490,11 +490,11 @@ done_nevent_fetch:
         ;
       }
     } else {
-      gnostr_note_card_row_set_embed(row, "Reference", event_id_hex);
+      nostr_gtk_note_card_row_set_embed(row, "Reference", event_id_hex);
     }
   } else if (btype == GNOSTR_BECH32_NADDR) {
     /* Addressable entity: build filter (kind+author+tag d) and fetch */
-    gnostr_note_card_row_set_embed(row, "Addressable entity", ref);
+    nostr_gtk_note_card_row_set_embed(row, "Addressable entity", ref);
     const char *naddr_identifier = gnostr_nip19_get_identifier(n19);
     const char *naddr_pubkey = gnostr_nip19_get_pubkey(n19);
     gint naddr_kind = gnostr_nip19_get_kind(n19);
@@ -522,13 +522,13 @@ done_nevent_fetch:
               else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
               else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
               char snipbuf[281]; const char *title = "Note"; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
-              gnostr_note_card_row_set_embed_rich(row, title, meta, snipbuf);
+              nostr_gtk_note_card_row_set_embed_rich(row, title, meta, snipbuf);
             }
             if (evt) nostr_event_free(evt);
             nostr_filter_free(f);
             goto done_naddr_fetch;
           } else {
-            gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
+            nostr_gtk_note_card_row_set_embed(row, "Note", "Not found on selected relays");
             nostr_filter_free(f);
             goto done_naddr_fetch;
           }
@@ -549,9 +549,9 @@ done_naddr_fetch:
       ;
     }
   } else if (btype == GNOSTR_BECH32_NPROFILE) {
-    gnostr_note_card_row_set_embed(row, "Profile", ref);
+    nostr_gtk_note_card_row_set_embed(row, "Profile", ref);
   } else {
-    gnostr_note_card_row_set_embed(row, "Reference", ref);
+    nostr_gtk_note_card_row_set_embed(row, "Reference", ref);
   }
 }
 
@@ -624,11 +624,11 @@ static void timeline_item_add_child(TimelineItem *parent, TimelineItem *child) {
 
 /* Public wrappers now in nostr-gtk library */
 
-/* GnostrTimelineView type, struct, signals, dispose/finalize, and tab handler
+/* NostrGtkTimelineView type, struct, signals, dispose/finalize, and tab handler
  * all defined in nostr-gtk library (gnostr-timeline-view.c). */
 
 /* Setup: load row UI from resource and set as child. Cache subwidgets on the row. */
-static void on_note_card_open_profile_relay(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_open_profile_relay(NostrGtkNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -644,7 +644,7 @@ static void on_note_card_open_profile_relay(GnostrNoteCardRow *row, const char *
 }
 
 /* Handler for reply button - relay to main window */
-static void on_note_card_reply_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *root_id, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_reply_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *root_id, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -660,7 +660,7 @@ static void on_note_card_reply_requested_relay(GnostrNoteCardRow *row, const cha
 }
 
 /* Handler for repost button - relay to main window */
-static void on_note_card_repost_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_repost_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -676,7 +676,7 @@ static void on_note_card_repost_requested_relay(GnostrNoteCardRow *row, const ch
 }
 
 /* Handler for quote button - relay to main window */
-static void on_note_card_quote_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_quote_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -692,7 +692,7 @@ static void on_note_card_quote_requested_relay(GnostrNoteCardRow *row, const cha
 }
 
 /* Handler for like button - relay to main window */
-static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data) {
+static void on_note_card_like_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -707,7 +707,7 @@ static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char
 }
 
 /* Handler for comment button (NIP-22) - relay to main window */
-static void on_note_card_comment_requested_relay(GnostrNoteCardRow *row, const char *id_hex, int kind, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_comment_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, int kind, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -723,7 +723,7 @@ static void on_note_card_comment_requested_relay(GnostrNoteCardRow *row, const c
 }
 
 /* Handler for zap button - show zap dialog */
-static void on_note_card_zap_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, const char *lud16, gpointer user_data) {
+static void on_note_card_zap_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, const char *lud16, gpointer user_data) {
   (void)user_data;
 
   if (!id_hex || !pubkey_hex) {
@@ -797,7 +797,7 @@ static void on_note_card_zap_requested_relay(GnostrNoteCardRow *row, const char 
 }
 
 /* Handler for view-thread button - relay to main window */
-static void on_note_card_view_thread_requested_relay(GnostrNoteCardRow *row, const char *root_event_id, gpointer user_data) {
+static void on_note_card_view_thread_requested_relay(NostrGtkNoteCardRow *row, const char *root_event_id, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -820,7 +820,7 @@ static void on_note_card_view_thread_requested_relay(GnostrNoteCardRow *row, con
 }
 
 /* Handler for navigate-to-note signal - opens thread view focused on target note */
-static void on_note_card_navigate_to_note_relay(GnostrNoteCardRow *row, const char *event_id, gpointer user_data) {
+static void on_note_card_navigate_to_note_relay(NostrGtkNoteCardRow *row, const char *event_id, gpointer user_data) {
   /* Relay the signal up to the main window - opens thread view focused on the target note */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -842,7 +842,7 @@ static void on_note_card_navigate_to_note_relay(GnostrNoteCardRow *row, const ch
 }
 
 /* Handler for mute-user button - relay to main window */
-static void on_note_card_mute_user_requested_relay(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_mute_user_requested_relay(NostrGtkNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -858,7 +858,7 @@ static void on_note_card_mute_user_requested_relay(GnostrNoteCardRow *row, const
 }
 
 /* Handler for mute-thread button - relay to main window */
-static void on_note_card_mute_thread_requested_relay(GnostrNoteCardRow *row, const char *event_id_hex, gpointer user_data) {
+static void on_note_card_mute_thread_requested_relay(NostrGtkNoteCardRow *row, const char *event_id_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -874,7 +874,7 @@ static void on_note_card_mute_thread_requested_relay(GnostrNoteCardRow *row, con
 }
 
 /* Handler for show-toast signal - relay to main window */
-static void on_note_card_show_toast_relay(GnostrNoteCardRow *row, const char *message, gpointer user_data) {
+static void on_note_card_show_toast_relay(NostrGtkNoteCardRow *row, const char *message, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -890,7 +890,7 @@ static void on_note_card_show_toast_relay(GnostrNoteCardRow *row, const char *me
 }
 
 /* nostrc-ch2v: Handler for pin-toggled signal - update NIP-51 pin list */
-static void on_note_card_pin_toggled_cb(GnostrNoteCardRow *row, const char *event_id, gboolean is_pinned, gpointer user_data) {
+static void on_note_card_pin_toggled_cb(NostrGtkNoteCardRow *row, const char *event_id, gboolean is_pinned, gpointer user_data) {
   (void)user_data;
   (void)row;
 
@@ -917,7 +917,7 @@ static void on_note_card_pin_toggled_cb(GnostrNoteCardRow *row, const char *even
 }
 
 /* Handler for bookmark-toggled signal - update NIP-51 bookmark list */
-static void on_note_card_bookmark_toggled_cb(GnostrNoteCardRow *row, const char *event_id, gboolean is_bookmarked, gpointer user_data) {
+static void on_note_card_bookmark_toggled_cb(NostrGtkNoteCardRow *row, const char *event_id, gboolean is_bookmarked, gpointer user_data) {
   (void)user_data;
   (void)row;
 
@@ -946,7 +946,7 @@ static void on_note_card_bookmark_toggled_cb(GnostrNoteCardRow *row, const char 
 }
 
 /* NIP-09: Handler for delete-note-requested signal - relay to main window */
-static void on_note_card_delete_note_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_delete_note_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -962,7 +962,7 @@ static void on_note_card_delete_note_requested_relay(GnostrNoteCardRow *row, con
 }
 
 /* NIP-56: Handler for report-note-requested signal - relay to main window */
-static void on_note_card_report_note_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_report_note_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -978,7 +978,7 @@ static void on_note_card_report_note_requested_relay(GnostrNoteCardRow *row, con
 }
 
 /* NIP-32: Handler for label-note-requested signal - relay to main window */
-static void on_note_card_label_note_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *namespace, const char *label, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_label_note_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *namespace, const char *label, const char *pubkey_hex, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
@@ -1005,9 +1005,9 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
   /* CRITICAL: Check if row is being disposed before updating.
    * Profile updates can be queued via idle callbacks and may arrive while
    * the row is being disposed, causing Pango layout corruption (nostrc-ipp). */
-  if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
-    GnostrNoteCardRow *card_row = GNOSTR_NOTE_CARD_ROW(row);
-    if (gnostr_note_card_row_is_disposed(card_row)) return;
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+    NostrGtkNoteCardRow *card_row = NOSTR_GTK_NOTE_CARD_ROW(row);
+    if (nostr_gtk_note_card_row_is_disposed(card_row)) return;
   }
 
   /* Check if profile is now available */
@@ -1024,8 +1024,8 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
                  "nip05",        &nip05,
                  NULL);
 
-    if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
-      gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+    if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+      nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, avatar_url);
       gtk_widget_set_visible(row, TRUE);
 
       /* NIP-05: Set verification identifier if available */
@@ -1033,7 +1033,7 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
         gchar *pubkey = NULL;
         g_object_get(event_item, "pubkey", &pubkey, NULL);
         if (pubkey && strlen(pubkey) == 64) {
-          gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
+          nostr_gtk_note_card_row_set_nip05(NOSTR_GTK_NOTE_CARD_ROW(row), nip05, pubkey);
         }
         g_free(pubkey);
       }
@@ -1048,21 +1048,21 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
 }
 
 /* Handler for search-hashtag signal from note card rows */
-static void on_note_card_search_hashtag(GnostrNoteCardRow *row, const char *hashtag, gpointer user_data) {
+static void on_note_card_search_hashtag(NostrGtkNoteCardRow *row, const char *hashtag, gpointer user_data) {
   (void)row;
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(user_data);
   if (!self || !hashtag || !*hashtag) return;
 
   g_debug("timeline_view: search-hashtag signal received for #%s", hashtag);
 
   /* Add a new hashtag tab */
-  gnostr_timeline_view_add_hashtag_tab(self, hashtag);
+  nostr_gtk_timeline_view_add_hashtag_tab(self, hashtag);
 }
 
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f;
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(data);
-  GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
+  GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
 
   /* Connect the open-profile signal */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_card_open_profile_relay), NULL);
@@ -1149,8 +1149,8 @@ static void on_item_notify_display_name(GObject *obj, GParamSpec *pspec, gpointe
   if (!obj || !G_IS_OBJECT(obj)) return;
   gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
   g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, avatar_url);
   g_free(display); g_free(handle); g_free(avatar_url);
 }
 
@@ -1161,8 +1161,8 @@ static void on_item_notify_handle(GObject *obj, GParamSpec *pspec, gpointer user
   if (!obj || !G_IS_OBJECT(obj)) return;
   gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
   g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, avatar_url);
   g_free(display); g_free(handle); g_free(avatar_url);
 }
 
@@ -1173,8 +1173,8 @@ static void on_item_notify_avatar_url(GObject *obj, GParamSpec *pspec, gpointer 
   if (!obj || !G_IS_OBJECT(obj)) return;
   gchar *url = NULL, *display = NULL, *handle = NULL;
   g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, url);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, url);
   g_free(url); g_free(display); g_free(handle);
 }
 
@@ -1186,8 +1186,8 @@ static void on_item_notify_like_count(GObject *obj, GParamSpec *pspec, gpointer 
   if (!obj || !G_IS_OBJECT(obj)) return;
   guint like_count = 0;
   g_object_get(obj, "like-count", &like_count, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_like_count(NOSTR_GTK_NOTE_CARD_ROW(row), like_count);
 }
 
 /* NIP-18: Notify handler for repost count changes */
@@ -1198,8 +1198,8 @@ static void on_item_notify_repost_count(GObject *obj, GParamSpec *pspec, gpointe
   if (!obj || !G_IS_OBJECT(obj)) return;
   guint repost_count = 0;
   g_object_get(obj, "repost-count", &repost_count, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_repost_count(GNOSTR_NOTE_CARD_ROW(row), repost_count);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_repost_count(NOSTR_GTK_NOTE_CARD_ROW(row), repost_count);
 }
 
 /* NIP-25: Notify handler for is_liked changes */
@@ -1210,8 +1210,8 @@ static void on_item_notify_is_liked(GObject *obj, GParamSpec *pspec, gpointer us
   if (!obj || !G_IS_OBJECT(obj)) return;
   gboolean is_liked = FALSE;
   g_object_get(obj, "is-liked", &is_liked, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_liked(NOSTR_GTK_NOTE_CARD_ROW(row), is_liked);
 }
 
 /* NIP-57: Notify handler for zap count changes */
@@ -1223,8 +1223,8 @@ static void on_item_notify_zap_count(GObject *obj, GParamSpec *pspec, gpointer u
   guint zap_count = 0;
   gint64 total_msat = 0;
   g_object_get(obj, "zap-count", &zap_count, "zap-total-msat", &total_msat, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, total_msat);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, total_msat);
 }
 
 /* hq-vvmzu: Notify handler for reply count changes */
@@ -1235,8 +1235,8 @@ static void on_item_notify_reply_count(GObject *obj, GParamSpec *pspec, gpointer
   if (!obj || !G_IS_OBJECT(obj)) return;
   guint reply_count = 0;
   g_object_get(obj, "reply-count", &reply_count, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_reply_count(GNOSTR_NOTE_CARD_ROW(row), reply_count);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_reply_count(NOSTR_GTK_NOTE_CARD_ROW(row), reply_count);
 }
 
 /* NIP-57: Notify handler for zap total changes */
@@ -1248,8 +1248,8 @@ static void on_item_notify_zap_total_msat(GObject *obj, GParamSpec *pspec, gpoin
   guint zap_count = 0;
   gint64 total_msat = 0;
   g_object_get(obj, "zap-count", &zap_count, "zap-total-msat", &total_msat, NULL);
-  if (GNOSTR_IS_NOTE_CARD_ROW(row))
-    gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, total_msat);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, total_msat);
 }
 
 /* Unbind cleanup: disconnect signal handlers and detach inflight operations.
@@ -1300,8 +1300,8 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
     /* CRITICAL: Prepare the row for unbinding BEFORE GTK disposes it.
      * This cancels all async operations and sets the disposed flag to prevent
      * callbacks from corrupting Pango state during the unbind/dispose process. */
-    if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
-      gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(row));
+    if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+      nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
     }
   }
 }
@@ -1514,8 +1514,8 @@ static void
 on_metadata_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   (void)user_data;
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(source);
-  if (!GNOSTR_IS_TIMELINE_VIEW(self)) return;
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(source);
+  if (!NOSTR_GTK_IS_TIMELINE_VIEW(self)) return;
 
   MetadataBatchResult *r = g_task_propagate_pointer(G_TASK(res), NULL);
   if (!r || !r->items) {
@@ -1584,7 +1584,7 @@ on_metadata_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
  * blocking the UI — storage_ndb_begin_query_retry can usleep up to 512ms. */
 static gboolean metadata_batch_idle_cb(gpointer user_data)
 {
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(user_data);
   self->metadata_batch_idle_id = 0;
 
   if (!self->pending_metadata_items || self->pending_metadata_items->len == 0)
@@ -1608,7 +1608,7 @@ static gboolean metadata_batch_idle_cb(gpointer user_data)
 
 /* nostrc-qff: Schedule a batch metadata load for items that need it.
  * Adds the item to the pending list and schedules an idle callback. */
-static void schedule_metadata_batch(GnostrTimelineView *self, GObject *item)
+static void schedule_metadata_batch(NostrGtkTimelineView *self, GObject *item)
 {
   if (!self->pending_metadata_items) {
     self->pending_metadata_items = g_ptr_array_new_with_free_func(g_object_unref);
@@ -1641,9 +1641,9 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
   if (!GTK_IS_LIST_ITEM(list_item)) return;
 
   GtkWidget *row = gtk_list_item_get_child(list_item);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || row != widget) return;
-  if (gnostr_note_card_row_is_disposed(GNOSTR_NOTE_CARD_ROW(row))) return;
-  if (!gnostr_note_card_row_is_bound(GNOSTR_NOTE_CARD_ROW(row))) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row) || row != widget) return;
+  if (nostr_gtk_note_card_row_is_disposed(NOSTR_GTK_NOTE_CARD_ROW(row))) return;
+  if (!nostr_gtk_note_card_row_is_bound(NOSTR_GTK_NOTE_CARD_ROW(row))) return;
 
   GObject *obj = gtk_list_item_get_item(list_item);
   if (!obj) return;
@@ -1654,7 +1654,7 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
   const GnContentRenderResult *cached =
       gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
   if (cached) {
-    gnostr_note_card_row_apply_deferred_content(GNOSTR_NOTE_CARD_ROW(row), cached);
+    nostr_gtk_note_card_row_apply_deferred_content(NOSTR_GTK_NOTE_CARD_ROW(row), cached);
   }
 
   /* One-shot: disconnect after first run */
@@ -1667,7 +1667,7 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
 
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f;
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(data);
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
   GObject *obj = gtk_list_item_get_item(item);
   
   if (!obj) {
@@ -1737,11 +1737,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
   GtkWidget *row = gtk_list_item_get_child(item);
   if (!GTK_IS_WIDGET(row)) return;
-  if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
     /* CRITICAL: Prepare row for binding - resets disposed flag and creates fresh
      * cancellable. Must be called BEFORE populating the row with data.
      * nostrc-o7pp: Matches NoteCardFactory pattern. */
-    gnostr_note_card_row_prepare_for_bind(GNOSTR_NOTE_CARD_ROW(row));
+    nostr_gtk_note_card_row_prepare_for_bind(NOSTR_GTK_NOTE_CARD_ROW(row));
 
     /* Use pubkey prefix as fallback if no profile info available */
     gchar *display_fallback = NULL;
@@ -1749,10 +1749,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
 
-    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
                                      display ? display : display_fallback,
                                      handle, avatar_url);
-    gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, ts);
+    nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, ts);
 
     /* Connect embed request signal EARLY — before content setting, because
      * the Tier 2 map handler may fire immediately during bind (if row is
@@ -1781,7 +1781,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
           summary = content;
         }
 
-        gnostr_note_card_row_set_article_mode(GNOSTR_NOTE_CARD_ROW(row),
+        nostr_gtk_note_card_row_set_article_mode(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                article_meta->title,
                                                summary,
                                                article_meta->image,
@@ -1793,14 +1793,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         /* Debug logging removed - too verbose */
       } else {
         /* Fallback to regular note display if parsing fails */
-        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+        nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
     }
     /* NIP-71: Handle video events (kind 34235/34236) */
     else if (gnostr_video_is_video(event_kind) && tags_json) {
       GnostrVideoMeta *video_meta = gnostr_video_parse_tags(tags_json, event_kind);
       if (video_meta) {
-        gnostr_note_card_row_set_video_mode(GNOSTR_NOTE_CARD_ROW(row),
+        nostr_gtk_note_card_row_set_video_mode(NOSTR_GTK_NOTE_CARD_ROW(row),
                                              video_meta->url,
                                              video_meta->thumb_url,
                                              video_meta->title,
@@ -1814,14 +1814,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         /* Debug logging removed - too verbose */
       } else {
         /* Fallback to regular note display if parsing fails */
-        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+        nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
     }
     /* NIP-34: Handle git repository events (kind 30617) */
     else if (gnostr_nip34_is_repo(event_kind) && tags_json) {
       GnostrRepoMeta *repo_meta = gnostr_repo_parse_tags(tags_json);
       if (repo_meta) {
-        gnostr_note_card_row_set_git_repo_mode(GNOSTR_NOTE_CARD_ROW(row),
+        nostr_gtk_note_card_row_set_git_repo_mode(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                 repo_meta->name,
                                                 repo_meta->description,
                                                 (const char *const *)repo_meta->clone_urls,
@@ -1831,7 +1831,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                                 repo_meta->license);
         gnostr_repo_meta_free(repo_meta);
       } else {
-        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+        nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
     }
     /* NIP-34: Handle git patch events (kind 1617) */
@@ -1839,14 +1839,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       GnostrPatchMeta *patch_meta = gnostr_patch_parse_tags(tags_json, content);
       if (patch_meta) {
         gchar *repo_name = gnostr_nip34_get_repo_identifier(patch_meta->repo_a_tag);
-        gnostr_note_card_row_set_git_patch_mode(GNOSTR_NOTE_CARD_ROW(row),
+        nostr_gtk_note_card_row_set_git_patch_mode(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                  patch_meta->title,
                                                  repo_name,
                                                  patch_meta->commit_id);
         g_free(repo_name);
         gnostr_patch_meta_free(patch_meta);
       } else {
-        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+        nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
     }
     /* NIP-34: Handle git issue events (kind 1621) */
@@ -1854,7 +1854,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       GnostrIssueMeta *issue_meta = gnostr_issue_parse_tags(tags_json, content);
       if (issue_meta) {
         gchar *repo_name = gnostr_nip34_get_repo_identifier(issue_meta->repo_a_tag);
-        gnostr_note_card_row_set_git_issue_mode(GNOSTR_NOTE_CARD_ROW(row),
+        nostr_gtk_note_card_row_set_git_issue_mode(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                  issue_meta->title,
                                                  repo_name,
                                                  issue_meta->is_open,
@@ -1862,22 +1862,22 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         g_free(repo_name);
         gnostr_issue_meta_free(issue_meta);
       } else {
-        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+        nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
     } else if (tags_json) {
-      gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+      nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
 
       /* NIP-36: Check for content-warning tag */
       gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
       if (content_warning) {
-        gnostr_note_card_row_set_content_warning(GNOSTR_NOTE_CARD_ROW(row), content_warning);
+        nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning);
         g_free(content_warning);
       }
 
       /* Extract and set hashtags from "t" tags for regular notes */
       gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
       if (hashtags) {
-        gnostr_note_card_row_set_hashtags(GNOSTR_NOTE_CARD_ROW(row), (const char * const *)hashtags);
+        nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), (const char * const *)hashtags);
         g_strfreev(hashtags);
       }
     } else {
@@ -1887,10 +1887,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
         const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
         if (cached) {
-          gnostr_note_card_row_set_content_markup_only(GNOSTR_NOTE_CARD_ROW(row), content, cached);
+          nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, cached);
         } else {
           /* No cache: fall back to full render (first bind) */
-          gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+          nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
         }
         /* Connect Tier 2 map handler for deferred embed/media/OG creation */
         gulong map_id = g_signal_connect(row, "map",
@@ -1900,7 +1900,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
           on_tv_row_mapped_tier2(row, item);
         }
       } else {
-        gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+        nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
       }
     }
 
@@ -1908,14 +1908,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       const char * const *item_hashtags = gn_nostr_event_item_get_hashtags(GN_NOSTR_EVENT_ITEM(obj));
       if (item_hashtags && item_hashtags[0]) {
-        gnostr_note_card_row_set_hashtags(GNOSTR_NOTE_CARD_ROW(row), item_hashtags);
+        nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), item_hashtags);
       }
     }
-    gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
-    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
+    nostr_gtk_note_card_row_set_depth(NOSTR_GTK_NOTE_CARD_ROW(row), depth);
+    nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
 
     /* Set NIP-10 thread info (reply indicator, view thread button) */
-    gnostr_note_card_row_set_thread_info(GNOSTR_NOTE_CARD_ROW(row),
+    nostr_gtk_note_card_row_set_thread_info(NOSTR_GTK_NOTE_CARD_ROW(row),
                                           root_id,
                                           parent_id,
                                           NULL, /* parent_author_name - will be resolved asynchronously if needed */
@@ -1925,15 +1925,15 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     if (G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
       TimelineItem *ti = (TimelineItem *)obj;
       if (ti->is_repost) {
-        gnostr_note_card_row_set_is_repost(GNOSTR_NOTE_CARD_ROW(row), TRUE);
-        gnostr_note_card_row_set_repost_info(GNOSTR_NOTE_CARD_ROW(row),
+        nostr_gtk_note_card_row_set_is_repost(NOSTR_GTK_NOTE_CARD_ROW(row), TRUE);
+        nostr_gtk_note_card_row_set_repost_info(NOSTR_GTK_NOTE_CARD_ROW(row),
                                               ti->reposter_pubkey,
                                               ti->reposter_display_name,
                                               ti->repost_created_at);
       }
       /* NIP-18: Set quote info if this item has a quote */
       if (ti->has_quote && ti->quoted_event_id) {
-        gnostr_note_card_row_set_quote_info(GNOSTR_NOTE_CARD_ROW(row),
+        nostr_gtk_note_card_row_set_quote_info(NOSTR_GTK_NOTE_CARD_ROW(row),
                                              ti->quoted_event_id,
                                              ti->quoted_content,
                                              ti->quoted_author);
@@ -1947,8 +1947,8 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         char *reposted_id = gn_nostr_event_item_get_reposted_event_id(GN_NOSTR_EVENT_ITEM(obj));
         if (reposted_id) {
           /* Mark this as a repost and set reposter info */
-          gnostr_note_card_row_set_is_repost(GNOSTR_NOTE_CARD_ROW(row), TRUE);
-          gnostr_note_card_row_set_repost_info(GNOSTR_NOTE_CARD_ROW(row),
+          nostr_gtk_note_card_row_set_is_repost(NOSTR_GTK_NOTE_CARD_ROW(row), TRUE);
+          nostr_gtk_note_card_row_set_repost_info(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                 pubkey,   /* reposter pubkey */
                                                 display ? display : (handle ? handle : NULL), /* reposter name */
                                                 created_at); /* repost timestamp */
@@ -1966,7 +1966,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
               /* Update the card with original note's content */
               if (orig_content) {
-                gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), orig_content);
+                nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), orig_content);
               }
 
               /* Update timestamp to original note's time */
@@ -1975,7 +1975,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                 struct tm *tm_info = localtime(&t);
                 char orig_ts_buf[64];
                 strftime(orig_ts_buf, sizeof(orig_ts_buf), "%Y-%m-%d %H:%M", tm_info);
-                gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), orig_created_at, orig_ts_buf);
+                nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), orig_created_at, orig_ts_buf);
               }
 
               /* Try to get original author's profile */
@@ -2005,18 +2005,18 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                             orig_nip05_str = gnostr_json_get_string(profile_content, "nip05", NULL);
 
                             /* Update author display with original author */
-                            gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+                            nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                              orig_display && *orig_display ? orig_display : orig_name,
                                                              orig_name,
                                                              orig_avatar);
 
                             /* Update IDs to use original note's pubkey for actions */
-                            gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row),
+                            nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                           reposted_id, root_id, (char*)orig_pubkey);
 
                             /* Update NIP-05 if available */
                             if (orig_nip05_str && *orig_nip05_str) {
-                              gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row),
+                              nostr_gtk_note_card_row_set_nip05(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                               orig_nip05_str, orig_pubkey);
                             }
 
@@ -2049,13 +2049,13 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     /* NIP-57: Handle zap receipt events (kind 9735) */
     if (event_kind == 9735 && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       /* For zap receipts, mark them as such and set up the indicator */
-      gnostr_note_card_row_set_is_zap_receipt(GNOSTR_NOTE_CARD_ROW(row), TRUE);
+      nostr_gtk_note_card_row_set_is_zap_receipt(NOSTR_GTK_NOTE_CARD_ROW(row), TRUE);
 
       /* Get zap stats from the event item if available */
       gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
 
       /* Simple zap display - show "⚡ Zap" with amount if available */
-      gnostr_note_card_row_set_zap_receipt_info(GNOSTR_NOTE_CARD_ROW(row),
+      nostr_gtk_note_card_row_set_zap_receipt_info(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                  pubkey,    /* sender is the event pubkey for now */
                                                  display,   /* sender name */
                                                  NULL,      /* recipient - parsed from tags if needed */
@@ -2066,7 +2066,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
     /* NIP-05: Set verification identifier for async verification badge */
     if (nip05 && *nip05 && pubkey && strlen(pubkey) == 64) {
-      gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
+      nostr_gtk_note_card_row_set_nip05(NOSTR_GTK_NOTE_CARD_ROW(row), nip05, pubkey);
     }
 
     /* NIP-51: Set bookmark and pin state from local cache */
@@ -2074,12 +2074,12 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
       if (bookmarks) {
         gboolean is_bookmarked = gnostr_bookmarks_is_bookmarked(bookmarks, id_hex);
-        gnostr_note_card_row_set_bookmarked(GNOSTR_NOTE_CARD_ROW(row), is_bookmarked);
+        nostr_gtk_note_card_row_set_bookmarked(NOSTR_GTK_NOTE_CARD_ROW(row), is_bookmarked);
       }
       GnostrPinList *pin_list = gnostr_pin_list_get_default();
       if (pin_list) {
         gboolean is_pinned = gnostr_pin_list_is_pinned(pin_list, id_hex);
-        gnostr_note_card_row_set_pinned(GNOSTR_NOTE_CARD_ROW(row), is_pinned);
+        nostr_gtk_note_card_row_set_pinned(NOSTR_GTK_NOTE_CARD_ROW(row), is_pinned);
       }
     }
 
@@ -2087,12 +2087,12 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     /* Also set login state for authentication-required buttons */
     gchar *user_pubkey = get_current_user_pubkey_hex();
     gboolean is_logged_in = (user_pubkey != NULL);
-    gnostr_note_card_row_set_logged_in(GNOSTR_NOTE_CARD_ROW(row), is_logged_in);
+    nostr_gtk_note_card_row_set_logged_in(NOSTR_GTK_NOTE_CARD_ROW(row), is_logged_in);
     if (pubkey && strlen(pubkey) == 64 && user_pubkey) {
       gboolean is_own = (g_ascii_strcasecmp(pubkey, user_pubkey) == 0);
-      gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), is_own);
+      nostr_gtk_note_card_row_set_is_own_note(NOSTR_GTK_NOTE_CARD_ROW(row), is_own);
     } else {
-      gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), FALSE);
+      nostr_gtk_note_card_row_set_is_own_note(NOSTR_GTK_NOTE_CARD_ROW(row), FALSE);
     }
 
     /* nostrc-7o7: Apply no-animation class if item was added outside visible viewport */
@@ -2115,8 +2115,8 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       /* nostrc-nke8: Skip expensive DB lookups and network fetches for off-screen items
        * Defer if: (1) fast scrolling OR (2) item position is outside visible range */
       guint item_position = gtk_list_item_get_position(item);
-      gboolean is_visible = gnostr_timeline_view_is_item_visible(self, item_position);
-      gboolean defer_metadata = self && (gnostr_timeline_view_is_fast_scrolling(self) || !is_visible);
+      gboolean is_visible = nostr_gtk_timeline_view_is_item_visible(self, item_position);
+      gboolean defer_metadata = self && (nostr_gtk_timeline_view_is_fast_scrolling(self) || !is_visible);
 
       /* nostrc-qff: Batch metadata loading. Instead of 3 individual DB queries
        * per item (N+1 pattern), schedule for batch processing. The idle callback
@@ -2132,15 +2132,15 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         gtk_widget_add_css_class(row, "needs-metadata-refresh");
         g_debug("[SCROLL] Deferring metadata load for item position=%u (fast=%s visible=%s)",
                 item_position,
-                gnostr_timeline_view_is_fast_scrolling(self) ? "Y" : "N",
+                nostr_gtk_timeline_view_is_fast_scrolling(self) ? "Y" : "N",
                 is_visible ? "Y" : "N");
       }
 
-      gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
-      gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
-      gnostr_note_card_row_set_repost_count(GNOSTR_NOTE_CARD_ROW(row), repost_count);
-      gnostr_note_card_row_set_reply_count(GNOSTR_NOTE_CARD_ROW(row), reply_count);
-      gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, zap_total);
+      nostr_gtk_note_card_row_set_like_count(NOSTR_GTK_NOTE_CARD_ROW(row), like_count);
+      nostr_gtk_note_card_row_set_liked(NOSTR_GTK_NOTE_CARD_ROW(row), is_liked);
+      nostr_gtk_note_card_row_set_repost_count(NOSTR_GTK_NOTE_CARD_ROW(row), repost_count);
+      nostr_gtk_note_card_row_set_reply_count(NOSTR_GTK_NOTE_CARD_ROW(row), reply_count);
+      nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, zap_total);
     }
 
     g_free(user_pubkey);
@@ -2195,14 +2195,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
 }
 
-void gnostr_timeline_view_setup_app_factory(GnostrTimelineView *self) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
 
   GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
   g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), self);
   g_signal_connect(factory, "bind", G_CALLBACK(factory_bind_cb), self);
   g_signal_connect(factory, "unbind", G_CALLBACK(factory_unbind_cb), self);
-  gnostr_timeline_view_set_factory(self, factory);
+  nostr_gtk_timeline_view_set_factory(self, factory);
   g_object_unref(factory);
 
   /* Load app stylesheet for note cards */
@@ -2212,7 +2212,7 @@ void gnostr_timeline_view_setup_app_factory(GnostrTimelineView *self) {
       GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_object_unref(prov);
 
-  g_debug("gnostr_timeline_view_setup_app_factory: list_view=%p", (void*)self->list_view);
+  g_debug("nostr_gtk_timeline_view_setup_app_factory: list_view=%p", (void*)self->list_view);
 }
 
 /* Child model function for GtkTreeListModel (passthrough) */
@@ -2235,5 +2235,5 @@ static GListModel *timeline_child_model_func(gpointer item, gpointer user_data) 
 
 /* ensure_list_model, scroll tracking, class_init, init, new, and all public API
  * functions are now defined in the nostr-gtk library. Only the factory setup
- * (gnostr_timeline_view_setup_app_factory) remains in the app. */
+ * (nostr_gtk_timeline_view_setup_app_factory) remains in the app. */
 

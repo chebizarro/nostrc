@@ -13,7 +13,7 @@
 #include "nostr_json.h"
 #include <string.h>
 
-struct _GnostrThreadGraphModel {
+struct _GNostrThreadGraphModel {
     GObject parent_instance;
 
     char *root_event_id;
@@ -30,7 +30,7 @@ enum {
 
 static guint signals[N_SIGNALS];
 
-G_DEFINE_TYPE(GnostrThreadGraphModel, gnostr_thread_graph_model, G_TYPE_OBJECT)
+G_DEFINE_TYPE(GNostrThreadGraphModel, gnostr_thread_graph_model, G_TYPE_OBJECT)
 
 /* ========== Node lifecycle ========== */
 
@@ -164,7 +164,7 @@ static char *parse_reaction_target(const char *json) {
 
 /* ========== Depth recalculation ========== */
 
-static void recalculate_depth(GnostrThreadGraphModel *self,
+static void recalculate_depth(GNostrThreadGraphModel *self,
                                GnostrThreadGraphNode *node, guint depth) {
     node->depth = depth;
     for (guint i = 0; i < node->child_ids->len; i++) {
@@ -177,18 +177,18 @@ static void recalculate_depth(GnostrThreadGraphModel *self,
 /* ========== GObject lifecycle ========== */
 
 static void gnostr_thread_graph_model_finalize(GObject *object) {
-    GnostrThreadGraphModel *self = GNOSTR_THREAD_GRAPH_MODEL(object);
+    GNostrThreadGraphModel *self = GNOSTR_THREAD_GRAPH_MODEL(object);
     g_free(self->root_event_id);
     g_clear_pointer(&self->nodes, g_hash_table_unref);
     G_OBJECT_CLASS(gnostr_thread_graph_model_parent_class)->finalize(object);
 }
 
-static void gnostr_thread_graph_model_class_init(GnostrThreadGraphModelClass *klass) {
+static void gnostr_thread_graph_model_class_init(GNostrThreadGraphModelClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     object_class->finalize = gnostr_thread_graph_model_finalize;
 
     /**
-     * GnostrThreadGraphModel::reply-added:
+     * GNostrThreadGraphModel::reply-added:
      * @self: the model
      * @event_id: the new reply's event ID
      * @parent_id: (nullable): the parent event ID
@@ -201,7 +201,7 @@ static void gnostr_thread_graph_model_class_init(GnostrThreadGraphModelClass *kl
         G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
 
     /**
-     * GnostrThreadGraphModel::reaction-added:
+     * GNostrThreadGraphModel::reaction-added:
      * @self: the model
      * @event_id: the reaction event ID
      * @target_id: the event being reacted to
@@ -214,7 +214,7 @@ static void gnostr_thread_graph_model_class_init(GnostrThreadGraphModelClass *kl
         G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
 
     /**
-     * GnostrThreadGraphModel::event-updated:
+     * GNostrThreadGraphModel::event-updated:
      * @self: the model
      * @event_id: the updated event ID
      */
@@ -226,22 +226,22 @@ static void gnostr_thread_graph_model_class_init(GnostrThreadGraphModelClass *kl
         G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
-static void gnostr_thread_graph_model_init(GnostrThreadGraphModel *self) {
+static void gnostr_thread_graph_model_init(GNostrThreadGraphModel *self) {
     self->nodes = g_hash_table_new_full(g_str_hash, g_str_equal, NULL,
                                          (GDestroyNotify)graph_node_free);
 }
 
 /* ========== Public API ========== */
 
-GnostrThreadGraphModel *gnostr_thread_graph_model_new(const char *root_event_id) {
+GNostrThreadGraphModel *gnostr_thread_graph_model_new(const char *root_event_id) {
     g_return_val_if_fail(root_event_id != NULL && strlen(root_event_id) == 64, NULL);
 
-    GnostrThreadGraphModel *self = g_object_new(GNOSTR_TYPE_THREAD_GRAPH_MODEL, NULL);
+    GNostrThreadGraphModel *self = g_object_new(GNOSTR_TYPE_THREAD_GRAPH_MODEL, NULL);
     self->root_event_id = g_strdup(root_event_id);
     return self;
 }
 
-gboolean gnostr_thread_graph_model_add_event_json(GnostrThreadGraphModel *self,
+gboolean gnostr_thread_graph_model_add_event_json(GNostrThreadGraphModel *self,
                                                     const char *event_json) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self), FALSE);
     g_return_val_if_fail(event_json != NULL, FALSE);
@@ -365,28 +365,28 @@ gboolean gnostr_thread_graph_model_add_event_json(GnostrThreadGraphModel *self,
 }
 
 const GnostrThreadGraphNode *gnostr_thread_graph_model_get_node(
-    GnostrThreadGraphModel *self, const char *event_id) {
+    GNostrThreadGraphModel *self, const char *event_id) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self), NULL);
     g_return_val_if_fail(event_id != NULL, NULL);
     return g_hash_table_lookup(self->nodes, event_id);
 }
 
-const char *gnostr_thread_graph_model_get_root_id(GnostrThreadGraphModel *self) {
+const char *gnostr_thread_graph_model_get_root_id(GNostrThreadGraphModel *self) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self), NULL);
     return self->root_event_id;
 }
 
-guint gnostr_thread_graph_model_get_node_count(GnostrThreadGraphModel *self) {
+guint gnostr_thread_graph_model_get_node_count(GNostrThreadGraphModel *self) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self), 0);
     return g_hash_table_size(self->nodes);
 }
 
-guint gnostr_thread_graph_model_get_reply_count(GnostrThreadGraphModel *self) {
+guint gnostr_thread_graph_model_get_reply_count(GNostrThreadGraphModel *self) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self), 0);
     return self->reply_count;
 }
 
-GPtrArray *gnostr_thread_graph_model_get_children(GnostrThreadGraphModel *self,
+GPtrArray *gnostr_thread_graph_model_get_children(GNostrThreadGraphModel *self,
                                                    const char *event_id) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self), NULL);
     GnostrThreadGraphNode *node = g_hash_table_lookup(self->nodes, event_id);
@@ -394,7 +394,7 @@ GPtrArray *gnostr_thread_graph_model_get_children(GnostrThreadGraphModel *self,
 }
 
 /* DFS traversal helper for render order */
-static void dfs_collect(GnostrThreadGraphModel *self, const char *event_id,
+static void dfs_collect(GNostrThreadGraphModel *self, const char *event_id,
                          GPtrArray *result) {
     GnostrThreadGraphNode *node = g_hash_table_lookup(self->nodes, event_id);
     if (!node) return;
@@ -428,7 +428,7 @@ static void dfs_collect(GnostrThreadGraphModel *self, const char *event_id,
     }
 }
 
-GPtrArray *gnostr_thread_graph_model_get_render_order(GnostrThreadGraphModel *self) {
+GPtrArray *gnostr_thread_graph_model_get_render_order(GNostrThreadGraphModel *self) {
     g_return_val_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self), NULL);
 
     GPtrArray *result = g_ptr_array_new_with_free_func(g_free);
@@ -461,7 +461,7 @@ GPtrArray *gnostr_thread_graph_model_get_render_order(GnostrThreadGraphModel *se
     return result;
 }
 
-void gnostr_thread_graph_model_clear(GnostrThreadGraphModel *self) {
+void gnostr_thread_graph_model_clear(GNostrThreadGraphModel *self) {
     g_return_if_fail(GNOSTR_IS_THREAD_GRAPH_MODEL(self));
     g_hash_table_remove_all(self->nodes);
     self->reply_count = 0;

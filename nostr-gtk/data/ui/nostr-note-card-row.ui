@@ -6,7 +6,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GnostrNoteCardRow" parent="GtkWidget">
+  <template class="NostrGtkNoteCardRow" parent="GtkWidget">
     <property name="hexpand">true</property>
     <child>
       <object class="GtkBox" id="root">

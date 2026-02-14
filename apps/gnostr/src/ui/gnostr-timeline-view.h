@@ -17,7 +17,7 @@
 G_BEGIN_DECLS
 
 /**
- * gnostr_timeline_view_setup_app_factory:
+ * nostr_gtk_timeline_view_setup_app_factory:
  * @view: The timeline view widget
  *
  * Creates and installs the app-specific GtkListItemFactory on the timeline view.
@@ -26,7 +26,7 @@ G_BEGIN_DECLS
  *
  * Must be called after creating the timeline view and before displaying items.
  */
-void gnostr_timeline_view_setup_app_factory(GnostrTimelineView *view);
+void nostr_gtk_timeline_view_setup_app_factory(NostrGtkTimelineView *view);
 
 G_END_DECLS
 

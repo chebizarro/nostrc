@@ -1,11 +1,11 @@
 /**
- * GnostrTimelineView - Core scrollable timeline widget
+ * NostrGtkTimelineView - Core scrollable timeline widget
  *
  * Provides a scrollable GtkListView with optional tab filtering,
  * scroll position tracking, and tree model support.
  *
  * This is the library version: no factory is created internally.
- * Consumers must call gnostr_timeline_view_set_factory() to provide
+ * Consumers must call nostr_gtk_timeline_view_set_factory() to provide
  * a GtkListItemFactory for rendering items.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -141,18 +141,18 @@ static void timeline_item_add_child_internal(TimelineItem *parent, TimelineItem 
 }
 
 /* Public wrappers */
-void gnostr_timeline_item_add_child(TimelineItem *parent, TimelineItem *child) {
+void nostr_gtk_timeline_item_add_child(TimelineItem *parent, TimelineItem *child) {
   timeline_item_add_child_internal(parent, child);
 }
 
-GListModel *gnostr_timeline_item_get_children(TimelineItem *item) {
+GListModel *nostr_gtk_timeline_item_get_children(TimelineItem *item) {
   return timeline_item_get_children_model(item);
 }
 
-/* ============== GnostrTimelineView ============== */
-/* struct _GnostrTimelineView defined in gnostr-timeline-view-private.h */
+/* ============== NostrGtkTimelineView ============== */
+/* struct _NostrGtkTimelineView defined in gnostr-timeline-view-private.h */
 
-G_DEFINE_TYPE(GnostrTimelineView, gnostr_timeline_view, GTK_TYPE_WIDGET)
+G_DEFINE_TYPE(NostrGtkTimelineView, nostr_gtk_timeline_view, GTK_TYPE_WIDGET)
 
 enum {
   SIGNAL_TAB_FILTER_CHANGED,
@@ -161,13 +161,13 @@ enum {
 
 static guint timeline_view_signals[N_SIGNALS];
 
-/* Handler for tab-selected signal from GnTimelineTabs */
-static void on_tabs_tab_selected(GnTimelineTabs *tabs_widget, guint index, gpointer user_data) {
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+/* Handler for tab-selected signal from NostrGtkTimelineTabs */
+static void on_tabs_tab_selected(NostrGtkTimelineTabs *tabs_widget, guint index, gpointer user_data) {
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(user_data);
   if (!self || !tabs_widget) return;
 
-  GnTimelineTabType type = gn_timeline_tabs_get_tab_type(tabs_widget, index);
-  const char *filter_value = gn_timeline_tabs_get_tab_filter_value(tabs_widget, index);
+  GnTimelineTabType type = nostr_gtk_timeline_tabs_get_tab_type(tabs_widget, index);
+  const char *filter_value = nostr_gtk_timeline_tabs_get_tab_filter_value(tabs_widget, index);
 
   g_debug("timeline_view: tab selected index=%u type=%d filter='%s'",
           index, type, filter_value ? filter_value : "(null)");
@@ -176,8 +176,8 @@ static void on_tabs_tab_selected(GnTimelineTabs *tabs_widget, guint index, gpoin
                 (guint)type, filter_value);
 }
 
-static void gnostr_timeline_view_dispose(GObject *obj) {
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(obj);
+static void nostr_gtk_timeline_view_dispose(GObject *obj) {
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(obj);
 
   if (self->scroll_idle_id > 0) {
     g_source_remove(self->scroll_idle_id);
@@ -203,14 +203,14 @@ static void gnostr_timeline_view_dispose(GObject *obj) {
     self->pending_metadata_items = NULL;
   }
 
-  gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_TIMELINE_VIEW);
+  gtk_widget_dispose_template(GTK_WIDGET(obj), NOSTR_GTK_TYPE_TIMELINE_VIEW);
   self->root_scroller = NULL;
   self->list_view = NULL;
-  G_OBJECT_CLASS(gnostr_timeline_view_parent_class)->dispose(obj);
+  G_OBJECT_CLASS(nostr_gtk_timeline_view_parent_class)->dispose(obj);
 }
 
-static void gnostr_timeline_view_finalize(GObject *obj) {
-  G_OBJECT_CLASS(gnostr_timeline_view_parent_class)->finalize(obj);
+static void nostr_gtk_timeline_view_finalize(GObject *obj) {
+  G_OBJECT_CLASS(nostr_gtk_timeline_view_parent_class)->finalize(obj);
 }
 
 /* Scroll tracking */
@@ -218,7 +218,7 @@ static void gnostr_timeline_view_finalize(GObject *obj) {
 #define SCROLL_IDLE_TIMEOUT_MS 150
 
 static gboolean on_scroll_idle_timeout(gpointer user_data) {
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(user_data);
   self->scroll_idle_id = 0;
   self->is_fast_scrolling = FALSE;
   self->scroll_velocity = 0.0;
@@ -226,7 +226,7 @@ static gboolean on_scroll_idle_timeout(gpointer user_data) {
 }
 
 static void on_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
-  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(user_data);
   gdouble value = gtk_adjustment_get_value(adj);
   gint64 now = g_get_monotonic_time() / 1000;
 
@@ -267,7 +267,7 @@ static void on_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
   self->scroll_idle_id = g_timeout_add(SCROLL_IDLE_TIMEOUT_MS, on_scroll_idle_timeout, self);
 }
 
-static void ensure_list_model(GnostrTimelineView *self) {
+static void ensure_list_model(NostrGtkTimelineView *self) {
   if (self->list_model) return;
   self->list_model = g_list_store_new(timeline_item_get_type());
   self->selection_model = GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(self->list_model)));
@@ -276,18 +276,18 @@ static void ensure_list_model(GnostrTimelineView *self) {
 
 /* ============== GObject Class ============== */
 
-static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
+static void nostr_gtk_timeline_view_class_init(NostrGtkTimelineViewClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
-  gobj_class->dispose = gnostr_timeline_view_dispose;
-  gobj_class->finalize = gnostr_timeline_view_finalize;
+  gobj_class->dispose = nostr_gtk_timeline_view_dispose;
+  gobj_class->finalize = nostr_gtk_timeline_view_finalize;
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BOX_LAYOUT);
-  g_type_ensure(GN_TYPE_TIMELINE_TABS);
+  g_type_ensure(NOSTR_GTK_TYPE_TIMELINE_TABS);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
-  gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, root_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, tabs);
-  gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, root_scroller);
-  gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, list_view);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkTimelineView, root_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkTimelineView, tabs);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkTimelineView, root_scroller);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkTimelineView, list_view);
 
   timeline_view_signals[SIGNAL_TAB_FILTER_CHANGED] =
     g_signal_new("tab-filter-changed",
@@ -297,7 +297,7 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
                  G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_STRING);
 }
 
-static void gnostr_timeline_view_init(GnostrTimelineView *self) {
+static void nostr_gtk_timeline_view_init(NostrGtkTimelineView *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->list_view),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Timeline List", -1);
@@ -307,7 +307,7 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   /* No factory created here - consumer must call set_factory() */
 
   /* Connect to tabs signals */
-  if (self->tabs && GN_IS_TIMELINE_TABS(self->tabs)) {
+  if (self->tabs && NOSTR_GTK_IS_TIMELINE_TABS(self->tabs)) {
     g_signal_connect(self->tabs, "tab-selected", G_CALLBACK(on_tabs_tab_selected), self);
   }
 
@@ -343,18 +343,18 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
 
 /* ============== Public API ============== */
 
-GtkWidget *gnostr_timeline_view_new(void) {
-  return g_object_new(GNOSTR_TYPE_TIMELINE_VIEW, NULL);
+GtkWidget *nostr_gtk_timeline_view_new(void) {
+  return g_object_new(NOSTR_GTK_TYPE_TIMELINE_VIEW, NULL);
 }
 
-void gnostr_timeline_view_set_factory(GnostrTimelineView *self, GtkListItemFactory *factory) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_set_factory(NostrGtkTimelineView *self, GtkListItemFactory *factory) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   g_return_if_fail(factory == NULL || GTK_IS_LIST_ITEM_FACTORY(factory));
   gtk_list_view_set_factory(GTK_LIST_VIEW(self->list_view), factory);
 }
 
-void gnostr_timeline_view_set_model(GnostrTimelineView *self, GtkSelectionModel *model) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_set_model(NostrGtkTimelineView *self, GtkSelectionModel *model) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   if (self->selection_model == model) return;
   if (self->selection_model) g_clear_object(&self->selection_model);
   if (self->list_model) g_clear_object(&self->list_model);
@@ -364,10 +364,10 @@ void gnostr_timeline_view_set_model(GnostrTimelineView *self, GtkSelectionModel 
 }
 
 /* Forward declaration */
-static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots);
+static void populate_flattened_model(NostrGtkTimelineView *self, GListModel *roots);
 
 static void on_root_items_changed(GListModel *list, guint position, guint removed, guint added, gpointer user_data) {
-  GnostrTimelineView *self = (GnostrTimelineView *)user_data;
+  NostrGtkTimelineView *self = (NostrGtkTimelineView *)user_data;
   (void)position; (void)removed; (void)added;
   g_debug("[TREE] Root items changed: position=%u removed=%u added=%u total=%u",
            position, removed, added, g_list_model_get_n_items(list));
@@ -377,7 +377,7 @@ static void on_root_items_changed(GListModel *list, guint position, guint remove
   }
 }
 
-static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots) {
+static void populate_flattened_model(NostrGtkTimelineView *self, GListModel *roots) {
   if (!self || !self->flattened_model || !roots) return;
 
   g_list_store_remove_all(self->flattened_model);
@@ -403,8 +403,8 @@ static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots
   }
 }
 
-void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *roots) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
 
   if (roots) {
     g_signal_connect(roots, "items-changed", G_CALLBACK(on_root_items_changed), self);
@@ -435,8 +435,8 @@ void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *r
   gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), self->selection_model);
 }
 
-void gnostr_timeline_view_prepend_text(GnostrTimelineView *self, const char *text) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_prepend_text(NostrGtkTimelineView *self, const char *text) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   ensure_list_model(self);
   TimelineItem *item = timeline_item_new(NULL, NULL, NULL, text, 0);
   g_list_store_insert(self->list_model, 0, item);
@@ -449,13 +449,13 @@ void gnostr_timeline_view_prepend_text(GnostrTimelineView *self, const char *tex
   }
 }
 
-void gnostr_timeline_view_prepend(GnostrTimelineView *self,
+void nostr_gtk_timeline_view_prepend(NostrGtkTimelineView *self,
                                    const char *display,
                                    const char *handle,
                                    const char *ts,
                                    const char *content,
                                    guint depth) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   ensure_list_model(self);
   TimelineItem *item = timeline_item_new(display, handle, ts, content, depth);
   g_list_store_insert(self->list_model, 0, item);
@@ -466,32 +466,32 @@ void gnostr_timeline_view_prepend(GnostrTimelineView *self,
   }
 }
 
-GtkWidget *gnostr_timeline_view_get_scrolled_window(GnostrTimelineView *self) {
-  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), NULL);
+GtkWidget *nostr_gtk_timeline_view_get_scrolled_window(NostrGtkTimelineView *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), NULL);
   return self->root_scroller;
 }
 
-GtkWidget *gnostr_timeline_view_get_list_view(GnostrTimelineView *self) {
-  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), NULL);
+GtkWidget *nostr_gtk_timeline_view_get_list_view(NostrGtkTimelineView *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), NULL);
   return self->list_view;
 }
 
 /* ============== Timeline Tabs Support ============== */
 
-GnTimelineTabs *gnostr_timeline_view_get_tabs(GnostrTimelineView *self) {
-  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), NULL);
-  return GN_TIMELINE_TABS(self->tabs);
+NostrGtkTimelineTabs *nostr_gtk_timeline_view_get_tabs(NostrGtkTimelineView *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), NULL);
+  return NOSTR_GTK_TIMELINE_TABS(self->tabs);
 }
 
-void gnostr_timeline_view_set_tabs_visible(GnostrTimelineView *self, gboolean visible) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_set_tabs_visible(NostrGtkTimelineView *self, gboolean visible) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   if (self->tabs) {
     gtk_widget_set_visible(self->tabs, visible);
   }
 }
 
-void gnostr_timeline_view_add_hashtag_tab(GnostrTimelineView *self, const char *hashtag) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_add_hashtag_tab(NostrGtkTimelineView *self, const char *hashtag) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   g_return_if_fail(hashtag != NULL);
 
   if (!self->tabs) return;
@@ -499,17 +499,17 @@ void gnostr_timeline_view_add_hashtag_tab(GnostrTimelineView *self, const char *
   gtk_widget_set_visible(self->tabs, TRUE);
 
   char *label = g_strdup_printf("#%s", hashtag);
-  guint index = gn_timeline_tabs_add_tab(GN_TIMELINE_TABS(self->tabs),
+  guint index = nostr_gtk_timeline_tabs_add_tab(NOSTR_GTK_TIMELINE_TABS(self->tabs),
                                           GN_TIMELINE_TAB_HASHTAG,
                                           label,
                                           hashtag);
   g_free(label);
 
-  gn_timeline_tabs_set_selected(GN_TIMELINE_TABS(self->tabs), index);
+  nostr_gtk_timeline_tabs_set_selected(NOSTR_GTK_TIMELINE_TABS(self->tabs), index);
 }
 
-void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *pubkey_hex, const char *display_name) {
-  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+void nostr_gtk_timeline_view_add_author_tab(NostrGtkTimelineView *self, const char *pubkey_hex, const char *display_name) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   g_return_if_fail(pubkey_hex != NULL);
 
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
@@ -526,21 +526,21 @@ void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *p
     label = g_strndup(hex, 8);
   }
 
-  guint index = gn_timeline_tabs_add_tab(GN_TIMELINE_TABS(self->tabs),
+  guint index = nostr_gtk_timeline_tabs_add_tab(NOSTR_GTK_TIMELINE_TABS(self->tabs),
                                           GN_TIMELINE_TAB_AUTHOR,
                                           label,
                                           hex);
   g_free(label);
 
-  gn_timeline_tabs_set_selected(GN_TIMELINE_TABS(self->tabs), index);
+  nostr_gtk_timeline_tabs_set_selected(NOSTR_GTK_TIMELINE_TABS(self->tabs), index);
 }
 
 /* ============== Scroll Position Tracking API ============== */
 
-gboolean gnostr_timeline_view_get_visible_range(GnostrTimelineView *self,
+gboolean nostr_gtk_timeline_view_get_visible_range(NostrGtkTimelineView *self,
                                                   guint *start,
                                                   guint *end) {
-  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), FALSE);
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), FALSE);
 
   if (start) *start = self->visible_range_start;
   if (end) *end = self->visible_range_end;
@@ -548,20 +548,20 @@ gboolean gnostr_timeline_view_get_visible_range(GnostrTimelineView *self,
   return (self->visible_range_end > self->visible_range_start);
 }
 
-gboolean gnostr_timeline_view_is_item_visible(GnostrTimelineView *self, guint index) {
-  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), FALSE);
+gboolean nostr_gtk_timeline_view_is_item_visible(NostrGtkTimelineView *self, guint index) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), FALSE);
 
   return (index >= self->visible_range_start && index < self->visible_range_end);
 }
 
-gboolean gnostr_timeline_view_is_fast_scrolling(GnostrTimelineView *self) {
-  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), FALSE);
+gboolean nostr_gtk_timeline_view_is_fast_scrolling(NostrGtkTimelineView *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), FALSE);
 
   return self->is_fast_scrolling;
 }
 
-gdouble gnostr_timeline_view_get_scroll_velocity(GnostrTimelineView *self) {
-  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), 0.0);
+gdouble nostr_gtk_timeline_view_get_scroll_velocity(NostrGtkTimelineView *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), 0.0);
 
   return self->scroll_velocity;
 }

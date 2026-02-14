@@ -156,9 +156,9 @@ add_custom_command(
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
-# GnostrComposer is now provided by nostr-gtk library (nostrc-lx35)
+# NostrGtkComposer is now provided by nostr-gtk library (nostrc-lx35)
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-composer.c)
-# GnTimelineTabs moved to nostr-gtk library (nostrc-lx32) - exclude app copy to avoid duplicate symbols
+# NostrGtkTimelineTabs moved to nostr-gtk library (nostrc-lx32) - exclude app copy to avoid duplicate symbols
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gn-timeline-tabs.c)
 # Platform-specific files: on macOS, exclude the Linux C implementations
 # (the macOS Objective-C implementations are added later via target_sources)
@@ -231,7 +231,7 @@ if(NOT NSYNC_INCLUDE_DIR)
 endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Link nostr-gobject library (GObject wrappers compiled once in nostr-gobject/)
-# nostrc-lx32: Link nostr-gtk widget library (GnostrTimelineView, GnTimelineTabs)
+# nostrc-lx32: Link nostr-gtk widget library (NostrGtkTimelineView, NostrGtkTimelineTabs)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject)
 # Link nostr-gtk widget library (GTK4/libadwaita widgets moved from app)

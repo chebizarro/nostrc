@@ -18,7 +18,7 @@ void gnostr_identity_init(const char *schema_id) {
   s_identity_schema_id = schema_id;
 }
 
-void gnostr_identity_free(GnostrIdentity *identity) {
+void gnostr_identity_free(GNostrIdentity *identity) {
   if (!identity) return;
   g_free(identity->npub);
   g_free(identity->label);
@@ -26,9 +26,9 @@ void gnostr_identity_free(GnostrIdentity *identity) {
   g_free(identity);
 }
 
-GnostrIdentity *gnostr_identity_copy(const GnostrIdentity *identity) {
+GNostrIdentity *gnostr_identity_copy(const GNostrIdentity *identity) {
   if (!identity) return NULL;
-  GnostrIdentity *copy = g_new0(GnostrIdentity, 1);
+  GNostrIdentity *copy = g_new0(GNostrIdentity, 1);
   copy->npub = g_strdup(identity->npub);
   copy->label = g_strdup(identity->label);
   copy->has_local_key = identity->has_local_key;
@@ -36,7 +36,7 @@ GnostrIdentity *gnostr_identity_copy(const GnostrIdentity *identity) {
   return copy;
 }
 
-GnostrIdentity *gnostr_identity_get_current(void) {
+GNostrIdentity *gnostr_identity_get_current(void) {
   if (!s_identity_schema_id) {
     g_warning("gnostr_identity_get_current: schema not set, call gnostr_identity_init() first");
     return NULL;
@@ -53,7 +53,7 @@ GnostrIdentity *gnostr_identity_get_current(void) {
     return NULL;
   }
 
-  GnostrIdentity *identity = g_new0(GnostrIdentity, 1);
+  GNostrIdentity *identity = g_new0(GNostrIdentity, 1);
   identity->npub = npub;
   identity->has_local_key = gnostr_keystore_has_key(npub);
 
@@ -88,7 +88,7 @@ GList *gnostr_identity_list_stored(GError **error) {
   for (GList *l = keys; l != NULL; l = l->next) {
     GnostrKeyInfo *key_info = (GnostrKeyInfo *)l->data;
 
-    GnostrIdentity *identity = g_new0(GnostrIdentity, 1);
+    GNostrIdentity *identity = g_new0(GNostrIdentity, 1);
     identity->npub = g_strdup(key_info->npub);
     identity->label = g_strdup(key_info->label);
     identity->has_local_key = TRUE;

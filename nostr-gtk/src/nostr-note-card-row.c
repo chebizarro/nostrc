@@ -148,11 +148,11 @@ static void media_image_cache_put(const char *url, GdkTexture *tex) {
 }
 
 /* Public: Get current cache size for memory stats */
-guint gnostr_media_image_cache_size(void) {
+guint nostr_gtk_media_image_cache_size(void) {
   return s_media_image_cache ? g_hash_table_size(s_media_image_cache) : 0;
 }
 
-struct _GnostrNoteCardRow {
+struct _NostrGtkNoteCardRow {
   GtkWidget parent_instance;
   // template children
   GtkWidget *root;
@@ -347,7 +347,7 @@ struct _GnostrNoteCardRow {
   GCancellable *async_cancellable;
 };
 
-G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
+G_DEFINE_TYPE(NostrGtkNoteCardRow, nostr_gtk_note_card_row, GTK_TYPE_WIDGET)
 
 /* Static counter for generating unique binding IDs (nostrc-534d).
  * Starts at 1 so that 0 can represent "unbound" state. */
@@ -382,8 +382,8 @@ enum {
 };
 static guint signals[N_SIGNALS];
 
-static void gnostr_note_card_row_dispose(GObject *obj) {
-  GnostrNoteCardRow *self = (GnostrNoteCardRow*)obj;
+static void nostr_gtk_note_card_row_dispose(GObject *obj) {
+  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
 
   /* If already disposed (e.g., by prepare_for_unbind), skip cleanup that was already done.
    * We still need to call parent dispose and dispose_template though. */
@@ -578,7 +578,7 @@ do_template_dispose:
    * measure remaining children while others are being disposed. */
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
-  gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
+  gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_relay = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
   self->lbl_timestamp_separator = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
@@ -618,11 +618,11 @@ do_template_dispose:
     g_ptr_array_unref(self->external_ids);
     self->external_ids = NULL;
   }
-  G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
+  G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->dispose(obj);
 }
 
-static void gnostr_note_card_row_finalize(GObject *obj) {
-  GnostrNoteCardRow *self = (GnostrNoteCardRow*)obj;
+static void nostr_gtk_note_card_row_finalize(GObject *obj) {
+  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
   g_clear_pointer(&self->avatar_url, g_free);
   g_clear_pointer(&self->id_hex, g_free);
   g_clear_pointer(&self->root_id, g_free);
@@ -656,11 +656,11 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->video_title, g_free);
   /* nostrc-dqwq.2: deferred media cleanup */
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
-  G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
+  G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->finalize(obj);
 }
 
 static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->pubkey_hex) {
     g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, self->pubkey_hex);
@@ -668,7 +668,7 @@ static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_display_name_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->pubkey_hex) {
     g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, self->pubkey_hex);
@@ -677,7 +677,7 @@ static void on_display_name_clicked(GtkButton *btn, gpointer user_data) {
 
 /* Callback for embedded profile click (NIP-21) */
 static void on_embed_profile_clicked(GnostrNoteEmbed *embed, const char *pubkey_hex, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)embed;
   if (self && pubkey_hex && *pubkey_hex) {
     g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
@@ -685,7 +685,7 @@ static void on_embed_profile_clicked(GnostrNoteEmbed *embed, const char *pubkey_
 }
 
 static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)label;
   if (!self || !uri) return FALSE;
   /* Hashtag links - emit search signal */
@@ -757,7 +757,7 @@ static char *pretty_print_json(const char *json_str) {
   return result;
 }
 
-static void show_json_viewer(GnostrNoteCardRow *self) {
+static void show_json_viewer(NostrGtkNoteCardRow *self) {
   if (!self || !self->id_hex) {
     g_warning("No event ID available to fetch JSON");
     return;
@@ -819,7 +819,7 @@ static void show_json_viewer(GnostrNoteCardRow *self) {
 }
 
 static void on_view_json_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   /* Hide popover first */
   if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
@@ -829,7 +829,7 @@ static void on_view_json_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_mute_user_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->pubkey_hex) return;
 
@@ -843,7 +843,7 @@ static void on_mute_user_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_mute_thread_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self) return;
 
@@ -859,7 +859,7 @@ static void on_mute_thread_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
-static void copy_to_clipboard(GnostrNoteCardRow *self, const char *text) {
+static void copy_to_clipboard(NostrGtkNoteCardRow *self, const char *text) {
   if (!text || !*text) return;
 
   GtkWidget *widget = GTK_WIDGET(self);
@@ -874,7 +874,7 @@ static void copy_to_clipboard(GnostrNoteCardRow *self, const char *text) {
 }
 
 static void on_copy_note_id_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->id_hex || strlen(self->id_hex) != 64) return;
 
@@ -909,7 +909,7 @@ static void on_copy_note_id_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_copy_pubkey_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->pubkey_hex || strlen(self->pubkey_hex) != 64) return;
 
@@ -929,7 +929,7 @@ static void on_copy_pubkey_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_copy_note_text_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->content_text) return;
 
@@ -942,7 +942,7 @@ static void on_copy_note_text_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_report_note_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->id_hex || !self->pubkey_hex) return;
 
@@ -956,7 +956,7 @@ static void on_report_note_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_share_note_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->id_hex) return;
 
@@ -1001,7 +1001,7 @@ static void on_share_note_clicked(GtkButton *btn, gpointer user_data) {
 
 /* NIP-09: Delete note (only shown for own notes) */
 static void on_delete_note_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->id_hex || !self->pubkey_hex) return;
 
@@ -1019,7 +1019,7 @@ static void on_label_preset_clicked(GtkButton *btn, gpointer user_data);
 
 /* NIP-32: Show label selection dialog */
 static void on_add_label_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->id_hex) return;
 
@@ -1134,8 +1134,8 @@ static void on_add_label_clicked(GtkButton *btn, gpointer user_data) {
 
 /* Callback for preset label button click */
 static void on_label_preset_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   GtkWidget *dialog = GTK_WIDGET(g_object_get_data(G_OBJECT(btn), "label-dialog"));
   if (!GTK_IS_WINDOW(dialog)) return;
@@ -1180,7 +1180,7 @@ static void on_label_preset_clicked(GtkButton *btn, gpointer user_data) {
                   self->id_hex, namespace, label, self->pubkey_hex);
 
     /* Also add label to display immediately (optimistic update) */
-    gnostr_note_card_row_add_label(self, namespace, label);
+    nostr_gtk_note_card_row_add_label(self, namespace, label);
 
     g_signal_emit(self, signals[SIGNAL_SHOW_TOAST], 0, "Label added");
   }
@@ -1190,7 +1190,7 @@ static void on_label_preset_clicked(GtkButton *btn, gpointer user_data) {
 
 /* NIP-22 Comment menu item handler */
 static void on_comment_menu_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->id_hex || !self->pubkey_hex) return;
 
@@ -1206,7 +1206,7 @@ static void on_comment_menu_clicked(GtkButton *btn, gpointer user_data) {
 
 /* NIP-84: Highlight selected text menu item handler */
 static void on_highlight_text_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self || !self->id_hex || !self->pubkey_hex || !self->content_text) return;
 
@@ -1256,7 +1256,7 @@ static void on_highlight_text_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self) return;
 
@@ -1454,7 +1454,7 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
  * on the note card. The 3-dot menu button is the only way to access the menu now. */
 
 static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex && self->pubkey_hex) {
     g_signal_emit(self, signals[SIGNAL_REPLY_REQUESTED], 0,
@@ -1464,7 +1464,7 @@ static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
 
 /* NIP-22: Comment button handler - emits comment-requested signal */
 static void on_comment_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex && self->pubkey_hex) {
     /* For kind 1 text notes, emit comment signal with kind=1 */
@@ -1474,7 +1474,7 @@ static void on_comment_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_repost_action_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex && self->pubkey_hex) {
     /* Hide popover first */
@@ -1487,7 +1487,7 @@ static void on_repost_action_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_quote_action_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex && self->pubkey_hex) {
     /* Hide popover first */
@@ -1500,7 +1500,7 @@ static void on_quote_action_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_repost_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self) return;
 
@@ -1549,7 +1549,7 @@ static void on_repost_clicked(GtkButton *btn, gpointer user_data) {
 
 /* NIP-25: Callback for emoji picker selection */
 static void on_emoji_selected(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   if (!self || !self->id_hex || !self->pubkey_hex) return;
 
   const char *emoji = g_object_get_data(G_OBJECT(btn), "emoji");
@@ -1566,7 +1566,7 @@ static void on_emoji_selected(GtkButton *btn, gpointer user_data) {
 }
 
 /* NIP-25: Create emoji picker popover with common reactions */
-static void ensure_emoji_picker_popover(GnostrNoteCardRow *self) {
+static void ensure_emoji_picker_popover(NostrGtkNoteCardRow *self) {
   if (self->emoji_picker_popover) return;
 
   self->emoji_picker_popover = gtk_popover_new();
@@ -1598,7 +1598,7 @@ static void ensure_emoji_picker_popover(GnostrNoteCardRow *self) {
 }
 
 static void on_like_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex && self->pubkey_hex) {
     /* Default like: emit signal with "+" content */
@@ -1609,7 +1609,7 @@ static void on_like_clicked(GtkButton *btn, gpointer user_data) {
 
 /* NIP-25: Long press/right-click to show emoji picker */
 static void on_like_long_press(GtkGestureLongPress *gesture, gdouble x, gdouble y, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)gesture; (void)x; (void)y;
   if (!self) return;
 
@@ -1619,7 +1619,7 @@ static void on_like_long_press(GtkGestureLongPress *gesture, gdouble x, gdouble 
 
 /* NIP-25: Show reaction details popover (who reacted) */
 static void on_like_count_clicked(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)gesture; (void)n_press; (void)x; (void)y;
   if (!self || !self->reaction_breakdown) return;
 
@@ -1663,7 +1663,7 @@ static void on_like_count_clicked(GtkGestureClick *gesture, gint n_press, gdoubl
 }
 
 static void on_zap_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex && self->pubkey_hex) {
     /* Emit zap requested signal with event_id, pubkey, and lud16 if available */
@@ -1674,7 +1674,7 @@ static void on_zap_clicked(GtkButton *btn, gpointer user_data) {
 
 /* nostrc-ch2v: Pin toggle handler */
 static void on_pin_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex) {
     self->is_pinned = !self->is_pinned;
@@ -1695,7 +1695,7 @@ static void on_pin_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_bookmark_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex) {
     /* Toggle bookmark state */
@@ -1714,7 +1714,7 @@ static void on_bookmark_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_thread_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self) {
     /* Use root_id if available, otherwise use the note's own id as thread root */
@@ -1727,7 +1727,7 @@ static void on_thread_clicked(GtkButton *btn, gpointer user_data) {
 
 /* Callback when reply indicator is clicked - navigate to parent note */
 static void on_reply_indicator_clicked(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)gesture;
   (void)n_press;
   (void)x;
@@ -1744,7 +1744,7 @@ static void on_reply_indicator_clicked(GtkGestureClick *gesture, gint n_press, g
 
 /* Callback when reply count badge is clicked - open thread view */
 static void on_reply_count_clicked(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)gesture;
   (void)n_press;
   (void)x;
@@ -1758,7 +1758,7 @@ static void on_reply_count_clicked(GtkGestureClick *gesture, gint n_press, gdoub
 
 /* NIP-36: Callback when user clicks "Show Content" button for sensitive content */
 static void on_show_sensitive_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (!self) return;
 
@@ -1793,7 +1793,7 @@ static void on_show_sensitive_clicked(GtkButton *btn, gpointer user_data) {
  * width, making the timeline fill the entire screen.  Same pattern as
  * og_preview_widget_measure (nostrc-14wu). */
 static void
-gnostr_note_card_row_measure(GtkWidget      *widget,
+nostr_gtk_note_card_row_measure(GtkWidget      *widget,
                              GtkOrientation  orientation,
                              int             for_size,
                              int            *minimum,
@@ -1801,7 +1801,7 @@ gnostr_note_card_row_measure(GtkWidget      *widget,
                              int            *minimum_baseline,
                              int            *natural_baseline)
 {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(widget);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(widget);
 
   /* Guard: skip parent measure when disposed — child widgets (NoteEmbed,
    * OgPreview) may contain GtkLabels with NULL PangoLayout, causing SEGV
@@ -1814,7 +1814,7 @@ gnostr_note_card_row_measure(GtkWidget      *widget,
     return;
   }
 
-  GTK_WIDGET_CLASS(gnostr_note_card_row_parent_class)->measure(
+  GTK_WIDGET_CLASS(nostr_gtk_note_card_row_parent_class)->measure(
       widget, orientation, for_size,
       minimum, natural, minimum_baseline, natural_baseline);
 
@@ -1831,61 +1831,61 @@ gnostr_note_card_row_measure(GtkWidget      *widget,
   }
 }
 
-static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
+static void nostr_gtk_note_card_row_class_init(NostrGtkNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
-  gclass->dispose = gnostr_note_card_row_dispose;
-  gclass->finalize = gnostr_note_card_row_finalize;
-  wclass->measure = gnostr_note_card_row_measure;
+  gclass->dispose = nostr_gtk_note_card_row_dispose;
+  gclass->finalize = nostr_gtk_note_card_row_finalize;
+  wclass->measure = nostr_gtk_note_card_row_measure;
 
   gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, root);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_avatar);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_display_name);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_menu);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_repost);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_repost_count);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_like);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_like_count);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_zap);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_zap_count);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_pin);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_bookmark);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_thread);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_label);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_count_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_count_label);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_initials);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_display);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_handle);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_relay);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_nip05_separator);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_nip05);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_timestamp_separator);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_timestamp);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, content_label);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, media_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, embed_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, og_preview_container);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, actions_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, root);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_avatar);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_display_name);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_menu);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_reply);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_repost);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_repost_count);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_like);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_like_count);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_zap);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_zap_count);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_pin);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_bookmark);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_thread);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, reply_indicator_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, reply_indicator_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, reply_count_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, reply_count_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, avatar_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, avatar_initials);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, avatar_image);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_display);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_handle);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_relay);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_nip05_separator);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_nip05);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_timestamp_separator);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, lbl_timestamp);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, content_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, media_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, embed_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, og_preview_container);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, actions_box);
   /* NIP-14 subject label */
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, subject_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, subject_label);
   /* NIP-36 sensitive content widgets */
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_content_overlay);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_label);
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_show_sensitive);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, sensitive_content_overlay);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, sensitive_warning_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, sensitive_warning_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_show_sensitive);
   /* Hashtags container */
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, hashtags_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, hashtags_box);
   /* NIP-32 labels container */
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, labels_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, labels_box);
   /* NIP-73 external content IDs container */
-  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, external_ids_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, external_ids_box);
 
   signals[SIGNAL_OPEN_NOSTR_TARGET] = g_signal_new("open-nostr-target",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
@@ -1968,7 +1968,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
     G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
-static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
+static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
   /* Explicitly initialize embedded widget pointers to NULL before template init.
    * These may be accessed in prepare_for_unbind during GTK widget recycling.
    * GObject should zero-initialize, but be explicit to prevent garbage pointer
@@ -2102,11 +2102,11 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
 #endif
 }
 
-GnostrNoteCardRow *gnostr_note_card_row_new(void) {
-  return g_object_new(GNOSTR_TYPE_NOTE_CARD_ROW, NULL);
+NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void) {
+  return g_object_new(NOSTR_GTK_TYPE_NOTE_CARD_ROW, NULL);
 }
 
-static void set_avatar_initials(GnostrNoteCardRow *self, const char *display, const char *handle) {
+static void set_avatar_initials(NostrGtkNoteCardRow *self, const char *display, const char *handle) {
   if (!self || !GTK_IS_LABEL(self->avatar_initials)) return;
   const char *src = (display && *display) ? display : (handle && *handle ? handle : "AN");
   char initials[3] = {0}; int i = 0;
@@ -2123,11 +2123,11 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
    * the pointer which crashes if widget was recycled during HTTP fetch.
    * nostrc-ofq: Fix crash during fast scrolling in timeline. */
   if (user_data == NULL) return;
-  GnostrNoteCardRow *self = (GnostrNoteCardRow *)user_data;
+  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)user_data;
   /* Check disposed flag BEFORE type-check macro */
   if (self->disposed) return;
   /* Now safe to use type-check since disposed==FALSE means widget is valid */
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (!bytes) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
@@ -2281,7 +2281,7 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
 /* Load media image asynchronously - internal function that starts the actual fetch.
  * CRITICAL: Uses GWeakRef for the picture widget to prevent use-after-free
  * crash when GtkListView recycles rows during scrolling. */
-static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
+static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url, GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
 
   /* Check cache first */
@@ -2336,7 +2336,7 @@ static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, 
 
 /* Lazy loading context for deferred media loading */
 typedef struct {
-  GnostrNoteCardRow *self;
+  NostrGtkNoteCardRow *self;
   GtkPicture *picture;
   char *url;
   guint timeout_id;
@@ -2371,7 +2371,7 @@ static gboolean on_lazy_load_timeout(gpointer user_data) {
   if (!ctx || ctx->loaded) return G_SOURCE_REMOVE;
 
   /* CRITICAL: Check for stale pointer BEFORE using type-check macros.
-   * Type-check macros (GNOSTR_IS_NOTE_CARD_ROW) dereference the pointer,
+   * Type-check macros (NOSTR_GTK_IS_NOTE_CARD_ROW) dereference the pointer,
    * which crashes if the widget was recycled and ctx->self points to freed memory.
    * nostrc-ofq: Fix crash during fast scrolling in timeline. */
   if (ctx->self == NULL) {
@@ -2380,14 +2380,14 @@ static gboolean on_lazy_load_timeout(gpointer user_data) {
   }
 
   /* Check disposed flag before type-check - if disposed, widget is being torn down */
-  GnostrNoteCardRow *self = ctx->self;
+  NostrGtkNoteCardRow *self = ctx->self;
   if (self->disposed) {
     ctx->timeout_id = 0;
     return G_SOURCE_REMOVE;
   }
 
   /* Now safe to use type-check since disposed==FALSE means widget is valid */
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_PICTURE(ctx->picture)) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_PICTURE(ctx->picture)) {
     ctx->timeout_id = 0;
     return G_SOURCE_REMOVE;
   }
@@ -2459,7 +2459,7 @@ static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_th
 }
 
 /* Load media image with lazy loading - defers actual loading until widget is visible */
-static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
+static void load_media_image(NostrGtkNoteCardRow *self, const char *url, GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
 
   /* Create lazy loading context */
@@ -2486,8 +2486,8 @@ static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPictur
 
 /* Use centralized avatar cache API (avatar_cache.h) */
 
-void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   /* nostrc-8456: Don't touch labels during/after disposal - causes Pango layout corruption */
   if (self->disposed) return;
   /* nostrc-534d: Don't modify unbound row (defensive check) */
@@ -2529,16 +2529,16 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
 }
 
 /**
- * gnostr_note_card_row_set_author_name_only:
+ * nostr_gtk_note_card_row_set_author_name_only:
  *
  * nostrc-sbqe.3: Tier 1 bind helper. Sets ONLY display name and handle labels.
  * Avatar loading is skipped entirely -- deferred to Tier 2 via set_avatar().
  * This is the minimum author info needed for the card to display during fast scroll.
  */
-void gnostr_note_card_row_set_author_name_only(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_author_name_only(NostrGtkNoteCardRow *self,
                                                 const char *display_name,
                                                 const char *handle) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;
   if (self->binding_id == 0) return;
 
@@ -2555,15 +2555,15 @@ void gnostr_note_card_row_set_author_name_only(GnostrNoteCardRow *self,
 }
 
 /**
- * gnostr_note_card_row_set_avatar:
+ * nostr_gtk_note_card_row_set_avatar:
  *
  * nostrc-sbqe.3: Tier 2 deferred avatar loading. Stores the URL and loads
  * the avatar from cache or triggers an async download. Called from the map
  * signal handler when the row actually becomes visible.
  */
-void gnostr_note_card_row_set_avatar(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
                                       const char *avatar_url) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;
   if (self->binding_id == 0) return;
 
@@ -2602,7 +2602,7 @@ static gboolean update_timestamp_tick(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  GnostrNoteCardRow *self = (GnostrNoteCardRow *)user_data;
+  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)user_data;
 
   /* Check disposed flag - if set, the widget is being torn down.
    * Also verify the timer ID is still valid (non-zero means we're still active).
@@ -2649,8 +2649,8 @@ static gboolean update_timestamp_tick(gpointer user_data) {
   return G_SOURCE_CONTINUE;
 }
 
-void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
+void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
   if (self->disposed) return;  /* nostrc-8456 */
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -3010,7 +3010,7 @@ static gchar *extract_subject_from_tags_json(const char *tags_json) {
 /* nostrc-dqwq.2: Create actual media widgets from the pending list.
  * Called either from the map signal handler (deferred path) or directly
  * if the media_box is already mapped when URLs are stored. */
-static void realize_pending_media_widgets(GnostrNoteCardRow *self) {
+static void realize_pending_media_widgets(NostrGtkNoteCardRow *self) {
   if (!self || self->disposed || self->binding_id == 0) return;
   if (!self->pending_media_items || self->pending_media_items->len == 0) return;
   if (self->media_widgets_created) return;
@@ -3058,7 +3058,7 @@ static void realize_pending_media_widgets(GnostrNoteCardRow *self) {
  * Fired when the media_box becomes visible (scrolled into viewport). */
 static void on_media_box_mapped(GtkWidget *widget, gpointer user_data) {
   (void)widget;
-  GnostrNoteCardRow *self = (GnostrNoteCardRow *)user_data;
+  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)user_data;
   if (!self || self->disposed || self->binding_id == 0) return;
 
   g_debug("nostrc-dqwq.2: media_box mapped, creating %u deferred media widgets",
@@ -3068,7 +3068,7 @@ static void on_media_box_mapped(GtkWidget *widget, gpointer user_data) {
 
 /* nostrc-dqwq.2: Store media URLs for deferred creation and connect map handler.
  * Clears any existing media widgets and pending items first. */
-static void defer_media_widget_creation(GnostrNoteCardRow *self) {
+static void defer_media_widget_creation(NostrGtkNoteCardRow *self) {
   if (!self->media_box || !GTK_IS_BOX(self->media_box)) return;
   if (!self->pending_media_items || self->pending_media_items->len == 0) return;
 
@@ -3091,10 +3091,10 @@ static void defer_media_widget_creation(GnostrNoteCardRow *self) {
 
 /* nostrc-dqwq.1: Apply a pre-rendered content result to the row widgets.
  * The render result is borrowed (not freed by this function). */
-void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
                                                 const char *content,
                                                 const GnContentRenderResult *render) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
   if (self->disposed) return;
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -3181,17 +3181,17 @@ void gnostr_note_card_row_set_content_rendered(GnostrNoteCardRow *self,
 }
 
 /**
- * gnostr_note_card_row_set_content_markup_only:
+ * nostr_gtk_note_card_row_set_content_markup_only:
  *
  * nostrc-sbqe.3: Tier 1 bind helper. Sets ONLY the Pango markup label from
  * a cached render result. Media widgets, OG previews, and note embeds are
  * NOT created -- those are deferred to Tier 2 via apply_deferred_content().
  * This avoids heavyweight widget creation for items in GTK's buffer zone.
  */
-void gnostr_note_card_row_set_content_markup_only(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
                                                    const char *content,
                                                    const GnContentRenderResult *render) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
   if (self->disposed) return;
   if (self->binding_id == 0) return;
 
@@ -3207,15 +3207,15 @@ void gnostr_note_card_row_set_content_markup_only(GnostrNoteCardRow *self,
 }
 
 /**
- * gnostr_note_card_row_apply_deferred_content:
+ * nostr_gtk_note_card_row_apply_deferred_content:
  *
  * nostrc-sbqe.3: Tier 2 deferred content. Creates media widgets, OG previews,
  * and note embeds from a cached render result. The Pango markup label should
  * already be set via set_content_markup_only(). Call from map signal handler.
  */
-void gnostr_note_card_row_apply_deferred_content(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
                                                   const GnContentRenderResult *render) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;
   if (self->binding_id == 0) return;
   if (!render) return;
@@ -3289,20 +3289,20 @@ void gnostr_note_card_row_apply_deferred_content(GnostrNoteCardRow *self,
   }
 }
 
-void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *content) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
   if (self->disposed) return;
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
   /* Render content (no cache available in this path) */
   GnContentRenderResult *render = gnostr_render_content(content, -1);
-  gnostr_note_card_row_set_content_rendered(self, content, render);
+  nostr_gtk_note_card_row_set_content_rendered(self, content, render);
   gnostr_content_render_result_free(render);
 }
 
 /* NIP-92 imeta-aware content setter */
-void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const char *content, const char *tags_json) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, const char *content, const char *tags_json) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
   /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying label */
   if (self->disposed) return;
 
@@ -3629,8 +3629,8 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
   }
 }
 
-void gnostr_note_card_row_set_depth(GnostrNoteCardRow *self, guint depth) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_depth(NostrGtkNoteCardRow *self, guint depth) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   self->depth = depth;
   gtk_widget_set_margin_start(GTK_WIDGET(self), depth * 16);
 
@@ -3659,8 +3659,8 @@ void gnostr_note_card_row_set_depth(GnostrNoteCardRow *self, guint depth) {
   }
 }
 
-void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, const char *root_id, const char *pubkey_hex) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_ids(NostrGtkNoteCardRow *self, const char *id_hex, const char *root_id, const char *pubkey_hex) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   g_free(self->id_hex); self->id_hex = g_strdup(id_hex);
   g_free(self->root_id); self->root_id = g_strdup(root_id);
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
@@ -3668,12 +3668,12 @@ void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, c
   g_free(self->pubkey_hex); self->pubkey_hex = hex ? g_strdup(hex) : NULL;
 }
 
-void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_thread_info(NostrGtkNoteCardRow *self,
                                            const char *root_id,
                                            const char *parent_id,
                                            const char *parent_author_name,
                                            gboolean is_reply) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   g_free(self->root_id);
   self->root_id = g_strdup(root_id);
@@ -3705,8 +3705,8 @@ void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
 }
 
 /* Public helper to set the embed mini-card content */
-void gnostr_note_card_row_set_embed(GnostrNoteCardRow *self, const char *title, const char *snippet) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_FRAME(self->embed_box)) return;
+void nostr_gtk_note_card_row_set_embed(NostrGtkNoteCardRow *self, const char *title, const char *snippet) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_FRAME(self->embed_box)) return;
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
   GtkWidget *lbl_title = gtk_label_new(title ? title : "");
   GtkWidget *lbl_snip = gtk_label_new(snippet ? snippet : "");
@@ -3721,8 +3721,8 @@ void gnostr_note_card_row_set_embed(GnostrNoteCardRow *self, const char *title, 
 }
 
 /* Rich embed variant: adds meta line between title and snippet */
-void gnostr_note_card_row_set_embed_rich(GnostrNoteCardRow *self, const char *title, const char *meta, const char *snippet) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_FRAME(self->embed_box)) return;
+void nostr_gtk_note_card_row_set_embed_rich(NostrGtkNoteCardRow *self, const char *title, const char *meta, const char *snippet) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_FRAME(self->embed_box)) return;
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
   GtkWidget *lbl_title = gtk_label_new(title ? title : "");
   GtkWidget *lbl_meta  = gtk_label_new(meta ? meta : "");
@@ -3744,11 +3744,11 @@ void gnostr_note_card_row_set_embed_rich(GnostrNoteCardRow *self, const char *ti
  * user_data is a weak ref pointer that will be NULL if widget was destroyed. */
 static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
   GObject **weak_ref = (GObject **)user_data;
-  GnostrNoteCardRow *self = NULL;
+  NostrGtkNoteCardRow *self = NULL;
 
   /* Check weak reference - if NULL, widget was destroyed */
   if (weak_ref && *weak_ref) {
-    self = GNOSTR_NOTE_CARD_ROW(*weak_ref);
+    self = NOSTR_GTK_NOTE_CARD_ROW(*weak_ref);
   }
 
   /* Clean up weak ref container */
@@ -3760,7 +3760,7 @@ static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data
   }
 
   /* Double-check widget is still valid and not disposed */
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || self->disposed) {
     gnostr_nip05_result_free(result);
     return;
   }
@@ -3778,8 +3778,8 @@ static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data
 }
 
 /* Set NIP-05 and trigger async verification */
-void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, const char *pubkey_hex) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_nip05(NostrGtkNoteCardRow *self, const char *nip05, const char *pubkey_hex) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -3867,8 +3867,8 @@ void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, 
 
 /* Set bookmark state and update button icon */
 /* nostrc-ch2v: Set pin state and update button */
-void gnostr_note_card_row_set_pinned(GnostrNoteCardRow *self, gboolean is_pinned) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_pinned(NostrGtkNoteCardRow *self, gboolean is_pinned) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   self->is_pinned = is_pinned;
 
@@ -3883,8 +3883,8 @@ void gnostr_note_card_row_set_pinned(GnostrNoteCardRow *self, gboolean is_pinned
   }
 }
 
-void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_bookmarked(NostrGtkNoteCardRow *self, gboolean is_bookmarked) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   self->is_bookmarked = is_bookmarked;
 
@@ -3896,8 +3896,8 @@ void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bo
 }
 
 /* Set like state and update button icon (NIP-25 reactions) */
-void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_liked(NostrGtkNoteCardRow *self, gboolean is_liked) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   self->is_liked = is_liked;
 
@@ -3914,8 +3914,8 @@ void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked) 
 }
 
 /* Set like count and update display (NIP-25 reactions) */
-void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_like_count(NostrGtkNoteCardRow *self, guint count) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -3935,15 +3935,15 @@ void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count) {
 }
 
 /* NIP-25: Set event kind for proper reaction k-tag */
-void gnostr_note_card_row_set_event_kind(GnostrNoteCardRow *self, gint kind) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_event_kind(NostrGtkNoteCardRow *self, gint kind) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   self->event_kind = kind;
 }
 
 /* NIP-25: Set reaction breakdown with emoji counts for display
  * @breakdown: GHashTable of emoji (string) -> count (guint via GPOINTER_TO_UINT) */
-void gnostr_note_card_row_set_reaction_breakdown(GnostrNoteCardRow *self, GHashTable *breakdown) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_reaction_breakdown(NostrGtkNoteCardRow *self, GHashTable *breakdown) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   /* Clear existing breakdown */
   if (self->reaction_breakdown) {
@@ -3967,7 +3967,7 @@ void gnostr_note_card_row_set_reaction_breakdown(GnostrNoteCardRow *self, GHashT
   }
 
   /* Update total count display */
-  gnostr_note_card_row_set_like_count(self, total);
+  nostr_gtk_note_card_row_set_like_count(self, total);
 
   /* Update tooltip with breakdown summary */
   if (GTK_IS_BUTTON(self->btn_like)) {
@@ -3988,8 +3988,8 @@ void gnostr_note_card_row_set_reaction_breakdown(GnostrNoteCardRow *self, GHashT
 }
 
 /* NIP-25: Add a single reaction to the breakdown */
-void gnostr_note_card_row_add_reaction(GnostrNoteCardRow *self, const char *emoji, const char *reactor_pubkey) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !emoji) return;
+void nostr_gtk_note_card_row_add_reaction(NostrGtkNoteCardRow *self, const char *emoji, const char *reactor_pubkey) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !emoji) return;
 
   /* Initialize breakdown table if needed */
   if (!self->reaction_breakdown) {
@@ -4011,12 +4011,12 @@ void gnostr_note_card_row_add_reaction(GnostrNoteCardRow *self, const char *emoj
 
   /* Update total count */
   self->like_count++;
-  gnostr_note_card_row_set_like_count(self, self->like_count);
+  nostr_gtk_note_card_row_set_like_count(self, self->like_count);
 }
 
 /* Set author's lightning address for NIP-57 zaps */
-void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *lud16) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_author_lud16(NostrGtkNoteCardRow *self, const char *lud16) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   g_clear_pointer(&self->author_lud16, g_free);
   self->author_lud16 = g_strdup(lud16);
@@ -4034,8 +4034,8 @@ void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *
 }
 
 /* Update zap statistics display */
-void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count, gint64 total_msat) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_zap_stats(NostrGtkNoteCardRow *self, guint zap_count, gint64 total_msat) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -4082,8 +4082,8 @@ void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count
 }
 
 /* Set the reply count for thread root indicator */
-void gnostr_note_card_row_set_reply_count(GnostrNoteCardRow *self, guint count) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_reply_count(NostrGtkNoteCardRow *self, guint count) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -4113,8 +4113,8 @@ void gnostr_note_card_row_set_reply_count(GnostrNoteCardRow *self, guint count) 
 }
 
 /* NIP-09: Set whether this is the current user's own note (enables delete option) */
-void gnostr_note_card_row_set_is_own_note(GnostrNoteCardRow *self, gboolean is_own) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_is_own_note(NostrGtkNoteCardRow *self, gboolean is_own) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   self->is_own_note = is_own;
 
@@ -4130,8 +4130,8 @@ void gnostr_note_card_row_set_is_own_note(GnostrNoteCardRow *self, gboolean is_o
 }
 
 /* Set login state: disables authentication-required buttons when logged out */
-void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged_in) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_logged_in(NostrGtkNoteCardRow *self, gboolean logged_in) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   self->is_logged_in = logged_in;
 
@@ -4174,11 +4174,11 @@ void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged
 }
 
 /* NIP-18: Set repost information to display "reposted by X" attribution */
-void gnostr_note_card_row_set_repost_info(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_repost_info(NostrGtkNoteCardRow *self,
                                            const char *reposter_pubkey_hex,
                                            const char *reposter_display_name,
                                            gint64 repost_created_at) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -4230,8 +4230,8 @@ void gnostr_note_card_row_set_repost_info(GnostrNoteCardRow *self,
 }
 
 /* NIP-18: Set whether this card represents a repost (kind 6/16) */
-void gnostr_note_card_row_set_is_repost(GnostrNoteCardRow *self, gboolean is_repost) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_is_repost(NostrGtkNoteCardRow *self, gboolean is_repost) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   self->is_repost = is_repost;
 
@@ -4248,8 +4248,8 @@ void gnostr_note_card_row_set_is_repost(GnostrNoteCardRow *self, gboolean is_rep
 }
 
 /* NIP-18: Update the repost count display */
-void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_repost_count(NostrGtkNoteCardRow *self, guint count) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;  /* nostrc-8456 */
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
@@ -4269,14 +4269,14 @@ void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count)
 }
 
 /* NIP-57: Set zap receipt info to display "⚡ X zapped Y Z sats" header */
-void gnostr_note_card_row_set_zap_receipt_info(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_zap_receipt_info(NostrGtkNoteCardRow *self,
                                                 const char *sender_pubkey,
                                                 const char *sender_display_name,
                                                 const char *recipient_pubkey,
                                                 const char *recipient_display_name,
                                                 const char *target_event_id,
                                                 gint64 amount_msat) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   /* Store zap info */
   g_clear_pointer(&self->zap_sender_pubkey, g_free);
@@ -4356,8 +4356,8 @@ void gnostr_note_card_row_set_zap_receipt_info(GnostrNoteCardRow *self,
 }
 
 /* NIP-57: Set whether this card represents a zap receipt (kind 9735) */
-void gnostr_note_card_row_set_is_zap_receipt(GnostrNoteCardRow *self, gboolean is_zap) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_is_zap_receipt(NostrGtkNoteCardRow *self, gboolean is_zap) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   self->is_zap_receipt = is_zap;
 
@@ -4372,11 +4372,11 @@ void gnostr_note_card_row_set_is_zap_receipt(GnostrNoteCardRow *self, gboolean i
 }
 
 /* NIP-18 Quote Reposts: Set quote post info to display the quoted note inline */
-void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_quote_info(NostrGtkNoteCardRow *self,
                                           const char *quoted_event_id_hex,
                                           const char *quoted_content,
                                           const char *quoted_author_name) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   g_clear_pointer(&self->quoted_event_id, g_free);
   self->quoted_event_id = g_strdup(quoted_event_id_hex);
@@ -4440,9 +4440,9 @@ void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
 }
 
 /* NIP-36: Set content-warning for sensitive/NSFW content */
-void gnostr_note_card_row_set_content_warning(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_content_warning(NostrGtkNoteCardRow *self,
                                                const char *content_warning_reason) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   /* Store the content warning state and reason */
   g_clear_pointer(&self->content_warning_reason, g_free);
@@ -4513,14 +4513,14 @@ void gnostr_note_card_row_set_content_warning(GnostrNoteCardRow *self,
 }
 
 /* NIP-36: Check if content is currently blurred (sensitive content hidden) */
-gboolean gnostr_note_card_row_is_content_blurred(GnostrNoteCardRow *self) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return FALSE;
+gboolean nostr_gtk_note_card_row_is_content_blurred(NostrGtkNoteCardRow *self) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return FALSE;
   return self->is_sensitive && !self->sensitive_content_revealed;
 }
 
 /* NIP-36: Reveal sensitive content (show hidden content) */
-void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_reveal_sensitive_content(NostrGtkNoteCardRow *self) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   /* Mark as revealed and trigger the same logic as clicking the button */
   self->sensitive_content_revealed = TRUE;
@@ -4578,12 +4578,12 @@ static GtkWidget *create_label_chip(const char *namespace, const char *label) {
 }
 
 /* NIP-32: Set labels to display on this note */
-void gnostr_note_card_row_set_labels(GnostrNoteCardRow *self, GPtrArray *labels) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_labels(NostrGtkNoteCardRow *self, GPtrArray *labels) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!GTK_IS_FLOW_BOX(self->labels_box)) return;
 
   /* Clear existing labels */
-  gnostr_note_card_row_clear_labels(self);
+  nostr_gtk_note_card_row_clear_labels(self);
 
   if (!labels || labels->len == 0) {
     gtk_widget_set_visible(self->labels_box, FALSE);
@@ -4611,8 +4611,8 @@ void gnostr_note_card_row_set_labels(GnostrNoteCardRow *self, GPtrArray *labels)
 }
 
 /* NIP-32: Add a single label to this note's display */
-void gnostr_note_card_row_add_label(GnostrNoteCardRow *self, const char *namespace, const char *label) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_add_label(NostrGtkNoteCardRow *self, const char *namespace, const char *label) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!GTK_IS_FLOW_BOX(self->labels_box)) return;
   if (!label || !*label) return;
 
@@ -4624,8 +4624,8 @@ void gnostr_note_card_row_add_label(GnostrNoteCardRow *self, const char *namespa
 }
 
 /* NIP-32: Clear all displayed labels */
-void gnostr_note_card_row_clear_labels(GnostrNoteCardRow *self) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_clear_labels(NostrGtkNoteCardRow *self) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!GTK_IS_FLOW_BOX(self->labels_box)) return;
 
   /* Remove all children from the flow box */
@@ -4646,7 +4646,7 @@ void gnostr_note_card_row_clear_labels(GnostrNoteCardRow *self) {
 /* Callback for hashtag chip clicks */
 static void on_hashtag_chip_clicked(GtkButton *btn, gpointer user_data) {
   const char *tag = g_object_get_data(G_OBJECT(btn), "hashtag");
-  if (tag && GNOSTR_IS_NOTE_CARD_ROW(user_data)) {
+  if (tag && NOSTR_GTK_IS_NOTE_CARD_ROW(user_data)) {
     g_signal_emit(user_data, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
   }
 }
@@ -4671,8 +4671,8 @@ static GtkWidget *create_hashtag_chip(const char *hashtag) {
 }
 
 /* Set hashtags from "t" tags to display on this note */
-void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char * const *hashtags) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_hashtags(NostrGtkNoteCardRow *self, const char * const *hashtags) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!GTK_IS_FLOW_BOX(self->hashtags_box)) return;
 
   /* Clear existing hashtags */
@@ -4708,10 +4708,10 @@ void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char * con
 /* hq-ys1vk: Set relay provenance info on the note card.
  * Extracts a short display name from the first relay URL and shows it
  * in the header_bottom row. Full relay list is available via tooltip. */
-void gnostr_note_card_row_set_relay_info(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_relay_info(NostrGtkNoteCardRow *self,
                                           const char *const *relay_urls)
 {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!GTK_IS_LABEL(self->lbl_relay)) return;
 
   if (!relay_urls || !relay_urls[0]) {
@@ -4805,9 +4805,9 @@ static gchar *format_article_date(gint64 timestamp) {
 #ifdef HAVE_SOUP3
 /* Callback for article header image loading */
 static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
 
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || self->disposed) return;
 
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
@@ -4846,7 +4846,7 @@ static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer
 }
 
 /* Load article header image asynchronously */
-static void load_article_header_image(GnostrNoteCardRow *self, const char *url) {
+static void load_article_header_image(NostrGtkNoteCardRow *self, const char *url) {
   if (!url || !*url) return;
 
   /* Cancel any previous image fetch */
@@ -4897,20 +4897,20 @@ static GtkWidget *create_article_hashtag_chip(const char *hashtag) {
 /* Callback for article hashtag chip clicks */
 static void on_article_hashtag_clicked(GtkButton *btn, gpointer user_data) {
   const char *tag = g_object_get_data(G_OBJECT(btn), "hashtag");
-  if (tag && GNOSTR_IS_NOTE_CARD_ROW(user_data)) {
+  if (tag && NOSTR_GTK_IS_NOTE_CARD_ROW(user_data)) {
     g_signal_emit(user_data, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
   }
 }
 
 /* NIP-23: Set article mode for this note card */
-void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
                                             const char *title,
                                             const char *summary,
                                             const char *image_url,
                                             gint64 published_at,
                                             const char *d_tag,
                                             const char * const *hashtags) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying labels */
   if (self->disposed) return;
 
@@ -5071,20 +5071,20 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
 }
 
 /* NIP-23: Check if this card is displaying an article */
-gboolean gnostr_note_card_row_is_article(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+gboolean nostr_gtk_note_card_row_is_article(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
   return self->is_article;
 }
 
 /* NIP-23: Get the article's d-tag identifier */
-const char *gnostr_note_card_row_get_article_d_tag(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_article_d_tag(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->article_d_tag;
 }
 
 /* NIP-71: Helper to show video player and hide thumbnail overlay */
-static void video_show_player(GnostrNoteCardRow *self) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+static void video_show_player(NostrGtkNoteCardRow *self) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!self->video_player || !self->video_url) return;
 
   /* Hide thumbnail overlay */
@@ -5103,7 +5103,7 @@ static void video_show_player(GnostrNoteCardRow *self) {
 /* NIP-71: Play button clicked callback */
 static void on_video_play_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
   video_show_player(self);
 }
 
@@ -5172,7 +5172,7 @@ static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gp
   video_thumb_ctx_free(ctx);
 }
 
-static void load_video_thumbnail(GnostrNoteCardRow *self, const char *thumb_url) {
+static void load_video_thumbnail(NostrGtkNoteCardRow *self, const char *thumb_url) {
   if (!self || !thumb_url || !*thumb_url) return;
   if (!GTK_IS_PICTURE(self->video_thumb_picture)) return;
 
@@ -5227,7 +5227,7 @@ static GtkWidget *create_video_hashtag_chip(const char *hashtag) {
 }
 
 /* NIP-71: Set video mode for this note card */
-void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_video_mode(NostrGtkNoteCardRow *self,
                                           const char *video_url,
                                           const char *thumb_url,
                                           const char *title,
@@ -5236,7 +5236,7 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
                                           gboolean is_vertical,
                                           const char *d_tag,
                                           const char * const *hashtags) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!video_url || !*video_url) return;
 
   self->is_video = TRUE;
@@ -5452,25 +5452,25 @@ void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
 }
 
 /* NIP-71: Check if this card is displaying a video */
-gboolean gnostr_note_card_row_is_video(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+gboolean nostr_gtk_note_card_row_is_video(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
   return self->is_video;
 }
 
 /* NIP-71: Get the video's d-tag identifier */
-const char *gnostr_note_card_row_get_video_d_tag(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_video_d_tag(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->video_d_tag;
 }
 
 /* NIP-71: Get the video URL */
-const char *gnostr_note_card_row_get_video_url(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_video_url(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->video_url;
 }
 
 /* NIP-34: Transform card into git repository display mode */
-void gnostr_note_card_row_set_git_repo_mode(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_git_repo_mode(NostrGtkNoteCardRow *self,
                                              const char *name,
                                              const char *description,
                                              const char *const *clone_urls,
@@ -5478,7 +5478,7 @@ void gnostr_note_card_row_set_git_repo_mode(GnostrNoteCardRow *self,
                                              const char *const *topics,
                                              gsize maintainer_count,
                                              const char *license) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;
 
   /* Add repo CSS class */
@@ -5570,11 +5570,11 @@ void gnostr_note_card_row_set_git_repo_mode(GnostrNoteCardRow *self,
 }
 
 /* NIP-34: Transform card into git patch display mode */
-void gnostr_note_card_row_set_git_patch_mode(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_git_patch_mode(NostrGtkNoteCardRow *self,
                                               const char *title,
                                               const char *repo_name,
                                               const char *commit_id) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;
 
   if (GTK_IS_WIDGET(self->root)) {
@@ -5610,12 +5610,12 @@ void gnostr_note_card_row_set_git_patch_mode(GnostrNoteCardRow *self,
 }
 
 /* NIP-34: Transform card into git issue display mode */
-void gnostr_note_card_row_set_git_issue_mode(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_git_issue_mode(NostrGtkNoteCardRow *self,
                                               const char *title,
                                               const char *repo_name,
                                               gboolean is_open,
                                               const char *const *labels) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;
 
   if (GTK_IS_WIDGET(self->root)) {
@@ -5669,8 +5669,8 @@ void gnostr_note_card_row_set_git_issue_mode(GnostrNoteCardRow *self,
 }
 
 /* NIP-34: Check if this card is displaying a git event */
-gboolean gnostr_note_card_row_is_git_event(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+gboolean nostr_gtk_note_card_row_is_git_event(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
   if (!GTK_IS_WIDGET(self->root)) return FALSE;
   return gtk_widget_has_css_class(self->root, "git-repo-card") ||
          gtk_widget_has_css_class(self->root, "git-patch-card") ||
@@ -5678,8 +5678,8 @@ gboolean gnostr_note_card_row_is_git_event(GnostrNoteCardRow *self) {
 }
 
 /* NIP-84: Enable text selection mode for highlighting */
-void gnostr_note_card_row_enable_text_selection(GnostrNoteCardRow *self, gboolean enable) {
-  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+void nostr_gtk_note_card_row_enable_text_selection(NostrGtkNoteCardRow *self, gboolean enable) {
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
 
   if (GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_selectable(GTK_LABEL(self->content_label), enable);
@@ -5692,20 +5692,20 @@ void gnostr_note_card_row_enable_text_selection(GnostrNoteCardRow *self, gboolea
 }
 
 /* NIP-84: Get the note's content text (for context extraction) */
-const char *gnostr_note_card_row_get_content_text(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_content_text(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->content_text;
 }
 
 /* NIP-84: Get the note's event ID */
-const char *gnostr_note_card_row_get_event_id(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_event_id(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->id_hex;
 }
 
 /* NIP-84: Get the note author's pubkey */
-const char *gnostr_note_card_row_get_pubkey(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_pubkey(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->pubkey_hex;
 }
 
@@ -5765,8 +5765,8 @@ static GtkWidget *create_ots_badge(GnostrOtsStatus status, gint64 verified_times
 }
 
 /* NIP-03: Set OTS proof from event tags */
-void gnostr_note_card_row_set_ots_proof(GnostrNoteCardRow *self, const char *tags_json) {
-  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+void nostr_gtk_note_card_row_set_ots_proof(NostrGtkNoteCardRow *self, const char *tags_json) {
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
 
   if (!tags_json || !*tags_json) return;
 
@@ -5816,11 +5816,11 @@ void gnostr_note_card_row_set_ots_proof(GnostrNoteCardRow *self, const char *tag
 }
 
 /* NIP-03: Set OTS status directly */
-void gnostr_note_card_row_set_ots_status(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_ots_status(NostrGtkNoteCardRow *self,
                                           gint status,
                                           gint64 verified_timestamp,
                                           guint block_height) {
-  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
 
   self->has_ots_proof = TRUE;
   self->ots_status = status;
@@ -5848,14 +5848,14 @@ void gnostr_note_card_row_set_ots_status(GnostrNoteCardRow *self,
 }
 
 /* NIP-03: Check if note has OTS proof */
-gboolean gnostr_note_card_row_has_ots_proof(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+gboolean nostr_gtk_note_card_row_has_ots_proof(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
   return self->has_ots_proof;
 }
 
 /* NIP-03: Get the verification timestamp */
-gint64 gnostr_note_card_row_get_ots_timestamp(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), 0);
+gint64 nostr_gtk_note_card_row_get_ots_timestamp(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), 0);
   return self->ots_verified_timestamp;
 }
 
@@ -5864,10 +5864,10 @@ gint64 gnostr_note_card_row_get_ots_timestamp(GnostrNoteCardRow *self) {
  * ============================================================================ */
 
 /* NIP-48: Set proxy information for bridged content */
-void gnostr_note_card_row_set_proxy_info(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_proxy_info(NostrGtkNoteCardRow *self,
                                           const char *proxy_id,
                                           const char *protocol) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   /* Clear existing proxy state */
   g_clear_pointer(&self->proxy_id, g_free);
@@ -5957,9 +5957,9 @@ void gnostr_note_card_row_set_proxy_info(GnostrNoteCardRow *self,
 }
 
 /* NIP-48: Set proxy information from event tags JSON */
-void gnostr_note_card_row_set_proxy_from_tags(GnostrNoteCardRow *self,
+void nostr_gtk_note_card_row_set_proxy_from_tags(NostrGtkNoteCardRow *self,
                                                const char *tags_json) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
 
   if (!tags_json || !*tags_json) {
     /* No tags, hide proxy indicator */
@@ -5972,7 +5972,7 @@ void gnostr_note_card_row_set_proxy_from_tags(GnostrNoteCardRow *self,
   /* Parse proxy tag from JSON */
   GnostrProxyInfo *info = gnostr_proxy_parse_tags_json(tags_json);
   if (info) {
-    gnostr_note_card_row_set_proxy_info(self, info->id, info->protocol_str);
+    nostr_gtk_note_card_row_set_proxy_info(self, info->id, info->protocol_str);
     gnostr_proxy_info_free(info);
   } else {
     /* No proxy tag found, hide indicator */
@@ -5983,20 +5983,20 @@ void gnostr_note_card_row_set_proxy_from_tags(GnostrNoteCardRow *self,
 }
 
 /* NIP-48: Check if this note is bridged from another protocol */
-gboolean gnostr_note_card_row_is_proxied(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+gboolean nostr_gtk_note_card_row_is_proxied(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
   return self->proxy_protocol != NULL && self->proxy_id != NULL;
 }
 
 /* NIP-48: Get the proxy source protocol */
-const char *gnostr_note_card_row_get_proxy_protocol(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_proxy_protocol(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->proxy_protocol;
 }
 
 /* NIP-48: Get the proxy source ID/URL */
-const char *gnostr_note_card_row_get_proxy_id(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+const char *nostr_gtk_note_card_row_get_proxy_id(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->proxy_id;
 }
 
@@ -6005,12 +6005,12 @@ const char *gnostr_note_card_row_get_proxy_id(GnostrNoteCardRow *self) {
    ============================================ */
 
 /* NIP-73: Set external content IDs from event tags */
-void gnostr_note_card_row_set_external_ids(GnostrNoteCardRow *self, const char *tags_json) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_set_external_ids(NostrGtkNoteCardRow *self, const char *tags_json) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!GTK_IS_FLOW_BOX(self->external_ids_box)) return;
 
   /* Clear existing external IDs */
-  gnostr_note_card_row_clear_external_ids(self);
+  nostr_gtk_note_card_row_clear_external_ids(self);
 
   if (!tags_json || !*tags_json) {
     return;
@@ -6042,14 +6042,14 @@ void gnostr_note_card_row_set_external_ids(GnostrNoteCardRow *self, const char *
 }
 
 /* NIP-73: Check if note has external content IDs */
-gboolean gnostr_note_card_row_has_external_ids(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+gboolean nostr_gtk_note_card_row_has_external_ids(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
   return self->external_ids != NULL && self->external_ids->len > 0;
 }
 
 /* NIP-73: Clear all external ID badges */
-void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+void nostr_gtk_note_card_row_clear_external_ids(NostrGtkNoteCardRow *self) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (!GTK_IS_FLOW_BOX(self->external_ids_box)) return;
 
   /* Remove all children from the flow box */
@@ -6070,17 +6070,17 @@ void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self) {
 }
 
 /**
- * gnostr_note_card_row_get_cancellable:
+ * nostr_gtk_note_card_row_get_cancellable:
  *
  * Returns the shared cancellable for all async operations on this note card.
  */
-GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+GCancellable *nostr_gtk_note_card_row_get_cancellable(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->async_cancellable;
 }
 
 /**
- * gnostr_note_card_row_prepare_for_bind:
+ * nostr_gtk_note_card_row_prepare_for_bind:
  *
  * Prepares the row for binding to a new list item. This resets the disposed
  * flag and reinitializes async state so the row can be safely reused.
@@ -6089,8 +6089,8 @@ GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self) {
  * After prepare_for_unbind cancelled the cancellables, we need fresh ones for
  * the new binding.
  */
-void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
-  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
 
   /* Reset disposed flag - widget is being reused */
   self->disposed = FALSE;
@@ -6156,7 +6156,7 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
 }
 
 /**
- * gnostr_note_card_row_prepare_for_unbind:
+ * nostr_gtk_note_card_row_prepare_for_unbind:
  *
  * Prepares the row for unbinding from a list item. This cancels all async
  * operations and marks the row as disposed to prevent callbacks from
@@ -6165,8 +6165,8 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
  * CRITICAL: Also clears the avatar image's paintable to prevent
  * gtk_image_definition_unref crashes during rapid widget recycling.
  */
-void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
-  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
 
   /* nostrc-pgo6: Clear ALL labels that might contain relay-sourced content
    * WHILE the widget still has a native surface. This resets PangoLayouts
@@ -6290,38 +6290,38 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
 }
 
 /**
- * gnostr_note_card_row_is_disposed:
+ * nostr_gtk_note_card_row_is_disposed:
  *
  * Returns TRUE if the row is being disposed or has been prepared for unbind.
  * Use this to check before updating the row from async callbacks.
  * nostrc-ipp: Prevent Pango crash during profile updates.
  */
-gboolean gnostr_note_card_row_is_disposed(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), TRUE);
+gboolean nostr_gtk_note_card_row_is_disposed(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), TRUE);
   return self->disposed;
 }
 
 /**
- * gnostr_note_card_row_is_bound:
+ * nostr_gtk_note_card_row_is_bound:
  *
  * Returns TRUE if the row is currently bound to a list item.
  * A row is bound between prepare_for_bind() and prepare_for_unbind() calls.
  * nostrc-534d: Binding lifecycle tracking.
  */
-gboolean gnostr_note_card_row_is_bound(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+gboolean nostr_gtk_note_card_row_is_bound(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
   return self->binding_id != 0;
 }
 
 /**
- * gnostr_note_card_row_get_binding_id:
+ * nostr_gtk_note_card_row_get_binding_id:
  *
  * Returns the current binding ID, or 0 if unbound.
  * Async callbacks should capture this ID at creation time and compare it
  * before modifying the widget - if IDs don't match, the row was recycled.
  * nostrc-534d: Binding lifecycle tracking.
  */
-guint64 gnostr_note_card_row_get_binding_id(GnostrNoteCardRow *self) {
-  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), 0);
+guint64 nostr_gtk_note_card_row_get_binding_id(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), 0);
   return self->binding_id;
 }

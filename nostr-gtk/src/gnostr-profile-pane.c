@@ -1,4 +1,4 @@
-/* nostrc-lx36: GnostrProfilePane — moved from apps/gnostr/src/ui/ to nostr-gtk */
+/* nostrc-lx36: NostrGtkProfilePane — moved from apps/gnostr/src/ui/ to nostr-gtk */
 #include <nostr-gtk-1.0/gnostr-profile-pane.h>
 
 /* App-specific UI widgets — temporary cross-includes until fully decoupled */
@@ -287,7 +287,7 @@ static ProfileMediaItem *profile_media_item_new(const char *url, const char *thu
 /* Maximum media items to fetch per page */
 #define MEDIA_PAGE_SIZE 30
 
-struct _GnostrProfilePane {
+struct _NostrGtkProfilePane {
   GtkWidget parent_instance;
 
   /* Template children */
@@ -435,7 +435,7 @@ struct _GnostrProfilePane {
   GtkWidget *identities_box;          /* Container for identity display */
 };
 
-G_DEFINE_TYPE(GnostrProfilePane, gnostr_profile_pane, GTK_TYPE_WIDGET)
+G_DEFINE_TYPE(NostrGtkProfilePane, nostr_gtk_profile_pane, GTK_TYPE_WIDGET)
 
 enum {
   SIGNAL_CLOSE_REQUESTED,
@@ -449,21 +449,21 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 #ifdef HAVE_SOUP3
-static void load_image_async(GnostrProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot);
-static void load_banner_async(GnostrProfilePane *self, const char *url);
+static void load_image_async(NostrGtkProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot);
+static void load_banner_async(NostrGtkProfilePane *self, const char *url);
 #endif
-static void update_profile_ui(GnostrProfilePane *self, const char *profile_json);
-static void load_posts(GnostrProfilePane *self);
-static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_urls);
-static void load_media(GnostrProfilePane *self);
+static void update_profile_ui(NostrGtkProfilePane *self, const char *profile_json);
+static void load_posts(NostrGtkProfilePane *self);
+static void load_posts_with_relays(NostrGtkProfilePane *self, GPtrArray *relay_urls);
+static void load_media(NostrGtkProfilePane *self);
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data);
-static void fetch_profile_from_cache_or_network(GnostrProfilePane *self);
-static void load_badges(GnostrProfilePane *self);
+static void fetch_profile_from_cache_or_network(NostrGtkProfilePane *self);
+static void load_badges(NostrGtkProfilePane *self);
 static void on_badges_fetched(GPtrArray *badges, gpointer user_data);
-static void fetch_user_status(GnostrProfilePane *self);
+static void fetch_user_status(NostrGtkProfilePane *self);
 
-static void gnostr_profile_pane_dispose(GObject *obj) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(obj);
+static void nostr_gtk_profile_pane_dispose(GObject *obj) {
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(obj);
   /* nostrc-lx36: Cancel profile service callbacks for this widget */
   gpointer _svc = gnostr_profile_service_get_default();
   gnostr_profile_service_cancel_for_user_data(_svc, self);
@@ -564,12 +564,12 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   g_clear_pointer(&self->current_general_status, gnostr_user_status_free);
   g_clear_pointer(&self->current_music_status, gnostr_user_status_free);
 
-  gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_PROFILE_PANE);
-  G_OBJECT_CLASS(gnostr_profile_pane_parent_class)->dispose(obj);
+  gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_PROFILE_PANE);
+  G_OBJECT_CLASS(nostr_gtk_profile_pane_parent_class)->dispose(obj);
 }
 
-static void gnostr_profile_pane_finalize(GObject *obj) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(obj);
+static void nostr_gtk_profile_pane_finalize(GObject *obj) {
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(obj);
   g_clear_pointer(&self->current_pubkey, g_free);
   g_clear_pointer(&self->own_pubkey, g_free);
   g_clear_pointer(&self->current_profile_json, g_free);
@@ -579,7 +579,7 @@ static void gnostr_profile_pane_finalize(GObject *obj) {
   g_clear_pointer(&self->current_handle, g_free);
   g_clear_pointer(&self->current_avatar_url, g_free);
   g_clear_pointer(&self->external_identities, g_ptr_array_unref);
-  G_OBJECT_CLASS(gnostr_profile_pane_parent_class)->finalize(obj);
+  G_OBJECT_CLASS(nostr_gtk_profile_pane_parent_class)->finalize(obj);
 }
 
 /* nostrc-qvba: Open URLs clicked in bio or metadata labels */
@@ -595,16 +595,16 @@ static gboolean on_label_activate_link(GtkLabel *label, const char *uri, gpointe
 }
 
 static void on_close_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
   g_signal_emit(self, signals[SIGNAL_CLOSE_REQUESTED], 0);
 }
 
 /* nostrc-ch2v: Mute user from profile pane */
 static void on_mute_user_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
   if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
 
   g_signal_emit(self, signals[SIGNAL_MUTE_USER_REQUESTED], 0, self->current_pubkey);
@@ -612,17 +612,17 @@ static void on_mute_user_clicked(GtkButton *btn, gpointer user_data) {
 
 /* nostrc-qvba: Follow button handler */
 static void on_follow_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
   if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
 
   g_signal_emit(self, signals[SIGNAL_FOLLOW_REQUESTED], 0, self->current_pubkey);
 }
 
 /* nostrc-s0e0: Update follow button state */
-void gnostr_profile_pane_set_following(GnostrProfilePane *self, gboolean is_following) {
-  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+void nostr_gtk_profile_pane_set_following(NostrGtkProfilePane *self, gboolean is_following) {
+  g_return_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self));
   self->is_following = is_following;
   if (!self->btn_follow) return;
 
@@ -640,9 +640,9 @@ void gnostr_profile_pane_set_following(GnostrProfilePane *self, gboolean is_foll
 
 /* nostrc-qvba: Message button handler */
 static void on_message_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
   if (!self->current_pubkey || strlen(self->current_pubkey) != 64) return;
 
   g_signal_emit(self, signals[SIGNAL_MESSAGE_REQUESTED], 0, self->current_pubkey);
@@ -650,9 +650,9 @@ static void on_message_clicked(GtkButton *btn, gpointer user_data) {
 
 /* View profile kind:0 event JSON (same pattern as note_card_row.c show_json_viewer) */
 static void on_inspect_json_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   const char *json = self->current_event_json;
   if (!json || !*json) {
@@ -698,10 +698,10 @@ static void on_inspect_json_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
 
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
   if (!self->current_avatar_url || !*self->current_avatar_url) return;
 
   /* Open avatar image in image viewer */
@@ -714,22 +714,22 @@ static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
 
 /* Callback when profile is saved from edit dialog */
 static void on_profile_saved(GnostrProfileEdit *edit_dialog, const char *profile_json, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)edit_dialog;
 
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* Update the profile pane with new data */
   if (profile_json && *profile_json) {
-    gnostr_profile_pane_update_from_json(self, profile_json);
+    nostr_gtk_profile_pane_update_from_json(self, profile_json);
   }
 }
 
 static void on_edit_profile_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
 
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* Find the parent window */
   GtkWidget *parent_widget = GTK_WIDGET(self);
@@ -764,20 +764,20 @@ static void on_edit_profile_clicked(GtkButton *btn, gpointer user_data) {
 
 /* Callback when status dialog updates status */
 static void on_status_dialog_status_updated(GnostrStatusDialog *dialog, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)dialog;
 
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* Refresh user status display */
   fetch_user_status(self);
 }
 
 static void on_set_status_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
 
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* Create status dialog */
   GnostrStatusDialog *status_dialog = gnostr_status_dialog_new();
@@ -795,14 +795,14 @@ static void on_set_status_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_load_more_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
   load_posts(self);
 }
 
 /* hq-jtbk4: Load More handler for media tab */
 static void on_media_load_more_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
   load_media(self);
 }
@@ -995,67 +995,67 @@ static void pp_on_navigate(const char *note_id, gpointer user_data) {
 
 /* nostrc-o7pp: Custom bind callback for profile posts using NoteCardFactory.
  * This callback is called by NoteCardFactory after prepare_for_bind. */
-static void posts_bind_callback(GnostrNoteCardRow *row, GObject *obj, gpointer user_data) {
+static void posts_bind_callback(NostrGtkNoteCardRow *row, GObject *obj, gpointer user_data) {
   (void)user_data;
 
   ProfilePostItem *post = (ProfilePostItem*)obj;
 
   /* Set author info from stored profile data */
-  gnostr_note_card_row_set_author(row,
+  nostr_gtk_note_card_row_set_author(row,
                                    post->display_name,
                                    post->handle,
                                    post->avatar_url);
 
   /* Set timestamp */
-  gnostr_note_card_row_set_timestamp(row, post->created_at, NULL);
+  nostr_gtk_note_card_row_set_timestamp(row, post->created_at, NULL);
 
   /* nostrc-mizr: Use imeta-aware content setter when tags are available.
    * This enables inline images (NIP-92) in profile posts. */
   if (post->tags_json) {
-    gnostr_note_card_row_set_content_with_imeta(row, post->content, post->tags_json);
+    nostr_gtk_note_card_row_set_content_with_imeta(row, post->content, post->tags_json);
 
     /* NIP-36: Content warning */
     gchar *cw = pp_parse_content_warning(post->tags_json);
     if (cw) {
-      gnostr_note_card_row_set_content_warning(row, cw);
+      nostr_gtk_note_card_row_set_content_warning(row, cw);
       g_free(cw);
     }
 
     /* Hashtags from "t" tags */
     gchar **hashtags = pp_parse_hashtags(post->tags_json);
     if (hashtags) {
-      gnostr_note_card_row_set_hashtags(row, (const char * const *)hashtags);
+      nostr_gtk_note_card_row_set_hashtags(row, (const char * const *)hashtags);
       g_strfreev(hashtags);
     }
   } else {
-    gnostr_note_card_row_set_content(row, post->content);
+    nostr_gtk_note_card_row_set_content(row, post->content);
   }
 
   /* Set IDs */
-  gnostr_note_card_row_set_ids(row, post->id_hex, NULL, post->pubkey_hex);
+  nostr_gtk_note_card_row_set_ids(row, post->id_hex, NULL, post->pubkey_hex);
 
   /* Set depth to 0 (top-level posts) */
-  gnostr_note_card_row_set_depth(row, 0);
+  nostr_gtk_note_card_row_set_depth(row, 0);
 
   /* Set login state for authentication-required buttons */
   gboolean logged_in = is_user_logged_in();
-  gnostr_note_card_row_set_logged_in(row, logged_in);
+  nostr_gtk_note_card_row_set_logged_in(row, logged_in);
 
   /* NIP-51: Set bookmark and pin state from local cache */
   if (post->id_hex && strlen(post->id_hex) == 64) {
     GnostrBookmarks *bm = gnostr_bookmarks_get_default();
     if (bm)
-      gnostr_note_card_row_set_bookmarked(row, gnostr_bookmarks_is_bookmarked(bm, post->id_hex));
+      nostr_gtk_note_card_row_set_bookmarked(row, gnostr_bookmarks_is_bookmarked(bm, post->id_hex));
     GnostrPinList *pl = gnostr_pin_list_get_default();
     if (pl)
-      gnostr_note_card_row_set_pinned(row, gnostr_pin_list_is_pinned(pl, post->id_hex));
+      nostr_gtk_note_card_row_set_pinned(row, gnostr_pin_list_is_pinned(pl, post->id_hex));
   }
 
   /* NIP-09: Set own-note state so delete button shows for user's own posts */
   if (logged_in && post->pubkey_hex && strlen(post->pubkey_hex) == 64) {
     gchar *user_pk = pp_get_current_user_pubkey_hex();
     if (user_pk) {
-      gnostr_note_card_row_set_is_own_note(row, g_ascii_strcasecmp(post->pubkey_hex, user_pk) == 0);
+      nostr_gtk_note_card_row_set_is_own_note(row, g_ascii_strcasecmp(post->pubkey_hex, user_pk) == 0);
       g_free(user_pk);
     }
   }
@@ -1063,7 +1063,7 @@ static void posts_bind_callback(GnostrNoteCardRow *row, GObject *obj, gpointer u
 
 /* Handle post activation (click) */
 static void on_posts_list_activate(GtkListView *list_view, guint position, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)list_view;
 
   if (!self->posts_model) return;
@@ -1202,7 +1202,7 @@ static void follows_factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *
 
 /* nostrc-7447: Handle follows list item activation (click to view profile) */
 static void on_follows_list_activate(GtkListView *list_view, guint position, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)list_view;
 
   if (!self->follows_model) return;
@@ -1212,7 +1212,7 @@ static void on_follows_list_activate(GtkListView *list_view, guint position, gpo
     const char *pubkey = gn_follow_list_item_get_pubkey(item);
     if (pubkey && *pubkey) {
       /* Switch to viewing this profile */
-      gnostr_profile_pane_set_pubkey(self, pubkey);
+      nostr_gtk_profile_pane_set_pubkey(self, pubkey);
     }
     g_object_unref(item);
   }
@@ -1222,7 +1222,7 @@ static void on_follows_list_activate(GtkListView *list_view, guint position, gpo
 #define FOLLOWS_ROW_HEIGHT_ESTIMATE 72
 
 /* nostrc-1mzg: Update visible range for viewport-aware profile loading */
-static void update_follows_visible_range(GnostrProfilePane *self) {
+static void update_follows_visible_range(NostrGtkProfilePane *self) {
   if (!self->follows_scroll || !GTK_IS_SCROLLED_WINDOW(self->follows_scroll))
     return;
   if (!self->follows_model || !GN_IS_FOLLOW_LIST_MODEL(self->follows_model))
@@ -1252,7 +1252,7 @@ static void update_follows_visible_range(GnostrProfilePane *self) {
 
 /* nostrc-1mzg: Scroll handler for viewport-aware profile loading */
 static void on_follows_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)adj;
   update_follows_visible_range(self);
 }
@@ -1261,8 +1261,8 @@ static void on_follows_scroll_value_changed(GtkAdjustment *adj, gpointer user_da
  * This replaces the previous hacky 500ms timeout with proper signal-based notification. */
 static void on_follows_model_loading_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   GnFollowListModel *model = GN_FOLLOW_LIST_MODEL(object);
   gboolean is_loading = gn_follow_list_model_is_loading(model);
@@ -1298,7 +1298,7 @@ static void on_follows_model_loading_changed(GObject *object, GParamSpec *pspec,
 }
 
 /* nostrc-7447: Setup the follows list view */
-static void setup_follows_list(GnostrProfilePane *self) {
+static void setup_follows_list(NostrGtkProfilePane *self) {
   if (!self->follows_list || !GTK_IS_LIST_VIEW(self->follows_list)) return;
 
   /* Create model if not exists */
@@ -1346,8 +1346,8 @@ static void setup_follows_list(GnostrProfilePane *self) {
 }
 
 /* nostrc-7447: Load follows for the current profile */
-static void load_follows(GnostrProfilePane *self) {
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+static void load_follows(NostrGtkProfilePane *self) {
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
   if (!self->current_pubkey) return;
   if (self->follows_loaded) return;
 
@@ -1391,7 +1391,7 @@ static void load_follows(GnostrProfilePane *self) {
   self->follows_loaded = TRUE;
 }
 
-static void setup_posts_list(GnostrProfilePane *self) {
+static void setup_posts_list(NostrGtkProfilePane *self) {
   if (!self->posts_list || !GTK_IS_LIST_VIEW(self->posts_list)) return;
 
   /* Create model if not exists */
@@ -1453,82 +1453,82 @@ static void setup_posts_list(GnostrProfilePane *self) {
   g_signal_connect(self->posts_list, "activate", G_CALLBACK(on_posts_list_activate), self);
 }
 
-static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
+static void nostr_gtk_profile_pane_class_init(NostrGtkProfilePaneClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
   
-  gclass->dispose = gnostr_profile_pane_dispose;
-  gclass->finalize = gnostr_profile_pane_finalize;
+  gclass->dispose = nostr_gtk_profile_pane_dispose;
+  gclass->finalize = nostr_gtk_profile_pane_finalize;
   
   gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);
   
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, root);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_close);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_avatar);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, banner_image);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, avatar_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, avatar_image);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, avatar_initials);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_display_name);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, bot_badge);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_handle);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_bio);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, metadata_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, stats_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_notes_count);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_followers_count);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_following_count);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_follow);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_message);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_mute_user);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, other_profile_actions);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, own_profile_actions);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_edit_profile);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_set_status);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_inspect_json);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, root);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_close);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_avatar);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, banner_image);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, avatar_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, avatar_image);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, avatar_initials);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, lbl_display_name);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, bot_badge);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, lbl_handle);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, lbl_bio);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, metadata_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, stats_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, lbl_notes_count);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, lbl_followers_count);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, lbl_following_count);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_follow);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_message);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_mute_user);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, other_profile_actions);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, own_profile_actions);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_edit_profile);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_set_status);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_inspect_json);
 
   /* Tab widgets */
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, tab_switcher);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, content_stack);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, about_scroll);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, about_content);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, tab_switcher);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, content_stack);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, about_scroll);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, about_content);
 
   /* Posts tab widgets */
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_container);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_scroll);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_list);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_loading_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_spinner);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_empty_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_empty_label);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_load_more);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, posts_container);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, posts_scroll);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, posts_list);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, posts_loading_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, posts_spinner);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, posts_empty_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, posts_empty_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_load_more);
 
   /* Media tab widgets */
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_container);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_scroll);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_grid);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_loading_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_spinner);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_empty_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_empty_label);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_media_load_more);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, media_container);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, media_scroll);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, media_grid);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, media_loading_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, media_spinner);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, media_empty_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, media_empty_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_media_load_more);
   /* NIP-84 Highlights tab */
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_container);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_scroll);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_list);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_loading_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_spinner);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_empty_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_empty_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, highlights_container);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, highlights_scroll);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, highlights_list);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, highlights_loading_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, highlights_spinner);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, highlights_empty_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, highlights_empty_label);
   /* nostrc-7447: Follows tab */
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_container);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_scroll);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_list);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_loading_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_spinner);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_empty_box);
-  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, follows_empty_label);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, follows_container);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, follows_scroll);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, follows_list);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, follows_loading_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, follows_spinner);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, follows_empty_box);
+  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, follows_empty_label);
 
   gtk_widget_class_bind_template_callback(wclass, on_close_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_edit_profile_clicked);
@@ -1573,7 +1573,7 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
     G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
-static void gnostr_profile_pane_init(GnostrProfilePane *self) {
+static void nostr_gtk_profile_pane_init(NostrGtkProfilePane *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_close),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Close Profile", -1);
@@ -1651,8 +1651,8 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
 }
 
 /* Helper to update action button visibility based on whether viewing own profile */
-static void update_action_buttons_visibility(GnostrProfilePane *self) {
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+static void update_action_buttons_visibility(NostrGtkProfilePane *self) {
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   gboolean is_own_profile = FALSE;
   if (self->current_pubkey && self->own_pubkey) {
@@ -1681,7 +1681,7 @@ static void update_action_buttons_visibility(GnostrProfilePane *self) {
     if (can_interact && self->current_pubkey) {
       GnostrContactList *cl = gnostr_contact_list_get_default();
       gboolean following = gnostr_contact_list_is_following(cl, self->current_pubkey);
-      gnostr_profile_pane_set_following(self, following);
+      nostr_gtk_profile_pane_set_following(self, following);
     }
   }
   if (self->btn_message) {
@@ -1689,12 +1689,12 @@ static void update_action_buttons_visibility(GnostrProfilePane *self) {
   }
 }
 
-GnostrProfilePane *gnostr_profile_pane_new(void) {
-  return g_object_new(GNOSTR_TYPE_PROFILE_PANE, NULL);
+NostrGtkProfilePane *nostr_gtk_profile_pane_new(void) {
+  return g_object_new(NOSTR_GTK_TYPE_PROFILE_PANE, NULL);
 }
 
-void gnostr_profile_pane_clear(GnostrProfilePane *self) {
-  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+void nostr_gtk_profile_pane_clear(NostrGtkProfilePane *self) {
+  g_return_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self));
   g_debug("profile_pane: clear() ENTRY");
 
   /* nostrc-myp3: Reset content stack to About tab */
@@ -1942,7 +1942,7 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
 }
 
 /* Helper to add a metadata row */
-static void add_metadata_row(GnostrProfilePane *self, const char *icon_name, const char *label, const char *value, gboolean is_link) {
+static void add_metadata_row(NostrGtkProfilePane *self, const char *icon_name, const char *label, const char *value, gboolean is_link) {
   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_set_margin_top(row, 4);
   gtk_widget_set_margin_bottom(row, 4);
@@ -2026,7 +2026,7 @@ static GtkWidget *create_status_row(const char *icon_name, const char *label,
 }
 
 /* Ensure status_box exists and is added to the about_content */
-static void ensure_status_box(GnostrProfilePane *self) {
+static void ensure_status_box(NostrGtkProfilePane *self) {
   if (self->status_box) return;
 
   self->status_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -2052,8 +2052,8 @@ static void ensure_status_box(GnostrProfilePane *self) {
 }
 
 /* Update the status display with current status data */
-static void update_status_display(GnostrProfilePane *self) {
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+static void update_status_display(NostrGtkProfilePane *self) {
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* Check if we have any status to display */
   gboolean has_general = self->current_general_status &&
@@ -2109,9 +2109,9 @@ static void update_status_display(GnostrProfilePane *self) {
 
 /* Callback when user status is fetched */
 static void on_user_status_fetched(GPtrArray *statuses, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
 
-  if (!GNOSTR_IS_PROFILE_PANE(self)) {
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) {
     if (statuses) g_ptr_array_unref(statuses);
     return;
   }
@@ -2167,7 +2167,7 @@ static void on_user_status_fetched(GPtrArray *statuses, gpointer user_data) {
 }
 
 /* Fetch user status for the current profile */
-static void fetch_user_status(GnostrProfilePane *self) {
+static void fetch_user_status(NostrGtkProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot fetch status");
     return;
@@ -2191,9 +2191,9 @@ static void fetch_user_status(GnostrProfilePane *self) {
 
 /* NIP-05 verification callback */
 static void on_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
 
-  if (!GNOSTR_IS_PROFILE_PANE(self) || !result) {
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self) || !result) {
     if (result) gnostr_nip05_result_free(result);
     return;
   }
@@ -2211,7 +2211,7 @@ static void on_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
 }
 
 /* Helper to add NIP-05 row with verification badge */
-static void add_nip05_row(GnostrProfilePane *self, const char *nip05, const char *pubkey_hex) {
+static void add_nip05_row(NostrGtkProfilePane *self, const char *nip05, const char *pubkey_hex) {
   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_set_margin_top(row, 4);
   gtk_widget_set_margin_bottom(row, 4);
@@ -2282,7 +2282,7 @@ static void add_nip05_row(GnostrProfilePane *self, const char *nip05, const char
 /* ============== NIP-39 External Identity Display ============== */
 
 /* Display external identities from "i" tags */
-static void display_external_identities(GnostrProfilePane *self) {
+static void display_external_identities(NostrGtkProfilePane *self) {
   if (!self->external_identities || self->external_identities->len == 0) {
     g_debug("profile_pane: no external identities to display");
     return;
@@ -2331,7 +2331,7 @@ static void display_external_identities(GnostrProfilePane *self) {
 }
 
 /* Parse external identities from the current event JSON */
-static void parse_external_identities(GnostrProfilePane *self) {
+static void parse_external_identities(NostrGtkProfilePane *self) {
   /* Clear existing identities */
   g_clear_pointer(&self->external_identities, g_ptr_array_unref);
 
@@ -2351,7 +2351,7 @@ static void parse_external_identities(GnostrProfilePane *self) {
 
 #ifdef HAVE_SOUP3
 /* Helper: Insert into image_cache with LRU eviction */
-static void image_cache_insert(GnostrProfilePane *self, const char *url, GdkTexture *texture) {
+static void image_cache_insert(NostrGtkProfilePane *self, const char *url, GdkTexture *texture) {
   if (!self || !url || !texture) return;
   if (!self->image_cache || !self->image_cache_lru) return;
 
@@ -2380,7 +2380,7 @@ static void image_cache_insert(GnostrProfilePane *self, const char *url, GdkText
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   SoupSession *session = SOUP_SESSION(source);
   GTask *task = G_TASK(user_data);
-  GnostrProfilePane *self = g_task_get_source_object(task);
+  NostrGtkProfilePane *self = g_task_get_source_object(task);
   GtkPicture *picture = g_task_get_task_data(task);
   GError *error = NULL;
   
@@ -2413,7 +2413,7 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   }
   
   /* Update UI on main thread */
-  if (GNOSTR_IS_PROFILE_PANE(self) && GTK_IS_PICTURE(picture)) {
+  if (NOSTR_GTK_IS_PROFILE_PANE(self) && GTK_IS_PICTURE(picture)) {
     gtk_picture_set_paintable(picture, GDK_PAINTABLE(texture));
     gtk_widget_set_visible(GTK_WIDGET(picture), TRUE);
     
@@ -2435,7 +2435,7 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 
 /* Use centralized avatar cache API (avatar_cache.h) */
 
-static void load_image_async(GnostrProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot) {
+static void load_image_async(NostrGtkProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot) {
   if (!url || !*url) return;
   
   /* OPTIMIZATION: Use global cache system (memory + disk) instead of local cache */
@@ -2474,7 +2474,7 @@ static void load_image_async(GnostrProfilePane *self, const char *url, GtkPictur
 
 /* Context for banner async loading */
 typedef struct _BannerLoadCtx {
-  GnostrProfilePane *self;  /* raw pointer — only dereference after GNOSTR_IS_PROFILE_PANE check */
+  NostrGtkProfilePane *self;  /* raw pointer — only dereference after NOSTR_GTK_IS_PROFILE_PANE check */
   char *url;                /* owned */
   SoupMessage *msg;         /* owned ref — needed for HTTP status check in callback */
   gboolean cancelled;       /* set TRUE on cancellation to avoid accessing self */
@@ -2498,7 +2498,7 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
       g_warning("profile_pane: banner fetch FAILED for url=%s: %s", ctx->url, error->message);
       /* nostrc-g92j: Only access self when NOT cancelled — on cancellation the
        * pane may already be finalized, making ctx->self a dangling pointer. */
-      if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+      if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self))
         g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     }
     g_clear_error(&error);
@@ -2515,7 +2515,7 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
     if (status < 200 || status >= 300) {
       g_debug("profile_pane: banner HTTP %u for url=%s", status, ctx->url);
       if (bytes) g_bytes_unref(bytes);
-      if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+      if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self))
         g_clear_pointer(&ctx->self->loading_banner_url, g_free);
       banner_load_ctx_free(ctx);
       return;
@@ -2525,7 +2525,7 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     g_debug("profile_pane: empty banner response for url=%s", ctx->url);
     if (bytes) g_bytes_unref(bytes);
-    if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+    if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self))
       g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     banner_load_ctx_free(ctx);
     return;
@@ -2544,14 +2544,14 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
     g_warning("profile_pane: failed to create banner texture for url=%s: %s",
               ctx->url, error->message);
     g_clear_error(&error);
-    if (GNOSTR_IS_PROFILE_PANE(ctx->self))
+    if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self))
       g_clear_pointer(&ctx->self->loading_banner_url, g_free);
     banner_load_ctx_free(ctx);
     return;
   }
 
   /* Update UI - banner uses full resolution for crisp display */
-  if (GNOSTR_IS_PROFILE_PANE(ctx->self) && GTK_IS_PICTURE(ctx->self->banner_image)) {
+  if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self) && GTK_IS_PICTURE(ctx->self->banner_image)) {
     gtk_picture_set_paintable(GTK_PICTURE(ctx->self->banner_image), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(ctx->self->banner_image, TRUE);
     g_debug("profile_pane: banner loaded at full resolution for url=%s", ctx->url);
@@ -2567,7 +2567,7 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
 }
 
 /* Load banner image at full resolution (not using avatar cache which downscales to 96px) */
-static void load_banner_async(GnostrProfilePane *self, const char *url) {
+static void load_banner_async(NostrGtkProfilePane *self, const char *url) {
   if (!url || !*url) return;
 
   /* Check local cache first */
@@ -2633,7 +2633,7 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
 
 /* Callback context for iterating extra profile fields */
 typedef struct {
-  GnostrProfilePane *self;
+  NostrGtkProfilePane *self;
 } ProfileExtraFieldsCtx;
 
 /* Callback for iterating extra profile fields */
@@ -2672,7 +2672,7 @@ static bool profile_extra_fields_cb(const char *key, const char *value_json, voi
   return true; /* continue iteration */
 }
 
-static void update_profile_ui(GnostrProfilePane *self, const char *profile_json) {
+static void update_profile_ui(NostrGtkProfilePane *self, const char *profile_json) {
   g_debug("profile_pane: update_profile_ui ENTRY json_len=%zu is_object=%d",
             profile_json ? strlen(profile_json) : 0,
             profile_json ? (int)gnostr_json_is_object_str(profile_json) : -1);
@@ -2881,14 +2881,14 @@ static void update_profile_ui(GnostrProfilePane *self, const char *profile_json)
 /* hq-kwou5: O(1) dedup check using hash set instead of O(n) linear scan.
  * The old implementation iterated the entire GListModel for each new post,
  * causing O(n*m) behavior that blocked the main thread during cache loads. */
-static gboolean post_exists_in_model(GnostrProfilePane *self, const char *id_hex) {
+static gboolean post_exists_in_model(NostrGtkProfilePane *self, const char *id_hex) {
   if (!id_hex) return FALSE;
   if (!self->posts_seen_ids) return FALSE;
   return g_hash_table_contains(self->posts_seen_ids, id_hex);
 }
 
 /* hq-kwou5: Track a post ID in the dedup set */
-static void post_track_id(GnostrProfilePane *self, const char *id_hex) {
+static void post_track_id(NostrGtkProfilePane *self, const char *id_hex) {
   if (!id_hex) return;
   if (!self->posts_seen_ids) {
     self->posts_seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -2898,7 +2898,7 @@ static void post_track_id(GnostrProfilePane *self, const char *id_hex) {
 
 /* Load posts from local nostrdb cache.
  * Returns number of posts loaded from cache. */
-static guint load_posts_from_cache(GnostrProfilePane *self) {
+static guint load_posts_from_cache(NostrGtkProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot load from cache");
     return 0;
@@ -3025,8 +3025,8 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
 
   /* Now safe to access user_data */
   if (!user_data) return;
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* Hide loading indicator */
   if (self->posts_loading_box)
@@ -3113,7 +3113,7 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
 }
 
 /* Actually load posts using the given relay URLs */
-static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_urls) {
+static void load_posts_with_relays(NostrGtkProfilePane *self, GPtrArray *relay_urls) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot load posts");
     return;
@@ -3163,7 +3163,7 @@ static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_url
 
 /* Callback when NIP-65 relays are fetched */
 static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
 
   /* Mark as fetched */
   self->nip65_fetched = TRUE;
@@ -3204,7 +3204,7 @@ static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
 /* Load posts for the current profile.
  * nostrc-76x: First query nostrdb cache for existing posts, display immediately,
  * then optionally fetch newer posts from relays in background. */
-static void load_posts(GnostrProfilePane *self) {
+static void load_posts(NostrGtkProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot load posts");
     return;
@@ -3647,7 +3647,7 @@ static gboolean on_video_window_key(GtkEventControllerKey *controller,
 
 /* nostrc-7x61: Handle media grid item activation (click) to open viewer */
 static void on_media_item_activated(GtkGridView *grid_view, guint position, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)grid_view;
 
   if (!self || !self->media_model) return;
@@ -3740,8 +3740,8 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
 
   /* Now safe to access user_data */
   if (!user_data) return;
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   self->media_loaded = TRUE;
 
@@ -3887,7 +3887,7 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
 
 /* Load media from local nostrdb cache.
  * Returns number of media items loaded from cache. */
-static guint load_media_from_cache(GnostrProfilePane *self) {
+static guint load_media_from_cache(NostrGtkProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot load media from cache");
     return 0;
@@ -4053,7 +4053,7 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
 }
 
 /* Load media for the current profile */
-static void load_media(GnostrProfilePane *self) {
+static void load_media(NostrGtkProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot load media");
     return;
@@ -4180,8 +4180,8 @@ static void load_media(GnostrProfilePane *self) {
 static void on_profile_service_result(const char *pubkey_hex,
                                        const GnostrProfileMeta *meta,
                                        gpointer user_data) {
-  GnostrProfilePane *self = (GnostrProfilePane*)user_data;
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  NostrGtkProfilePane *self = (NostrGtkProfilePane*)user_data;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* Stale callback guard: ignore if user navigated to a different profile */
   if (!self->current_pubkey || g_strcmp0(pubkey_hex, self->current_pubkey) != 0) {
@@ -4231,7 +4231,7 @@ static void on_profile_service_result(const char *pubkey_hex,
   g_object_unref(jb);
 
   if (json && *json) {
-    gnostr_profile_pane_update_from_json(self, json);
+    nostr_gtk_profile_pane_update_from_json(self, json);
     self->profile_loaded_from_cache = TRUE;
   }
   g_free(json);
@@ -4240,7 +4240,7 @@ static void on_profile_service_result(const char *pubkey_hex,
 /* nostrc-lx36: Fetch profile via nostr-gobject profile service.
  * The service handles nostrdb cache, request batching/dedup, and network fetch.
  * User status (kind:30315) is fetched separately via fetch_user_status(). */
-static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
+static void fetch_profile_from_cache_or_network(NostrGtkProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_warning("profile_pane: fetch ABORT - no pubkey set");
     return;
@@ -4353,8 +4353,8 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
     g_error_free(err);
     if (results) g_ptr_array_unref(results);
     /* nostrc-38wc: Still clean up UI on error — spinner must stop */
-    if (user_data && GNOSTR_IS_PROFILE_PANE(user_data)) {
-      GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+    if (user_data && NOSTR_GTK_IS_PROFILE_PANE(user_data)) {
+      NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
       if (GTK_IS_SPINNER(self->highlights_spinner))
         gtk_spinner_stop(GTK_SPINNER(self->highlights_spinner));
       if (GTK_IS_WIDGET(self->highlights_loading_box))
@@ -4367,8 +4367,8 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
 
   /* Now safe to access user_data since operation wasn't cancelled */
   if (!user_data) return;
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return;
 
   /* nostrc-38wc: Cancel the safety timeout since query completed */
   if (self->highlights_timeout_id) {
@@ -4476,8 +4476,8 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
 #define HIGHLIGHTS_TIMEOUT_SECS 15
 
 static gboolean on_highlights_timeout(gpointer user_data) {
-  GnostrProfilePane *self = (GnostrProfilePane *)user_data;
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
+  NostrGtkProfilePane *self = (NostrGtkProfilePane *)user_data;
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
 
   self->highlights_timeout_id = 0;
   g_debug("profile_pane: highlights query timed out after %ds", HIGHLIGHTS_TIMEOUT_SECS);
@@ -4489,7 +4489,7 @@ static gboolean on_highlights_timeout(gpointer user_data) {
 }
 
 /* NIP-84: Load highlights for the current user */
-static void load_highlights(GnostrProfilePane *self) {
+static void load_highlights(NostrGtkProfilePane *self) {
   if (!self || !self->current_pubkey || self->highlights_loaded) return;
 
   g_debug("profile_pane: load_highlights START for %.8s", self->current_pubkey);
@@ -4572,7 +4572,7 @@ static void load_highlights(GnostrProfilePane *self) {
 /* Handle tab switch */
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
 
   const char *visible = gtk_stack_get_visible_child_name(stack);
   if (!visible) return;
@@ -4592,8 +4592,8 @@ static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, g
   }
 }
 
-const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *self) {
-  g_return_val_if_fail(GNOSTR_IS_PROFILE_PANE(self), NULL);
+const char* nostr_gtk_profile_pane_get_current_pubkey(NostrGtkProfilePane *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self), NULL);
   return self->current_pubkey;
 }
 
@@ -4601,16 +4601,16 @@ const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *self) {
  * has had a chance to paint its "Loading..." placeholder, preventing the
  * LMDB reads + JSON parsing from blocking the initial slide-in animation. */
 static gboolean deferred_fetch_profile_idle(gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
   if (!self->current_pubkey || !*self->current_pubkey) return G_SOURCE_REMOVE;
 
   fetch_profile_from_cache_or_network(self);
   return G_SOURCE_REMOVE;
 }
 
-void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_hex) {
-  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+void nostr_gtk_profile_pane_set_pubkey(NostrGtkProfilePane *self, const char *pubkey_hex) {
+  g_return_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self));
   g_return_if_fail(pubkey_hex != NULL);
 
   g_debug("profile_pane: set_pubkey ENTRY pubkey_hex=%.16s...", pubkey_hex);
@@ -4631,7 +4631,7 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
   }
 
   /* Clear previous profile */
-  gnostr_profile_pane_clear(self);
+  nostr_gtk_profile_pane_clear(self);
 
   /* Store new pubkey */
   self->current_pubkey = g_strdup(hex);
@@ -4693,8 +4693,8 @@ void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_
 }
 
 /* Public API to update profile from JSON (called by main window) */
-void gnostr_profile_pane_update_from_json(GnostrProfilePane *self, const char *profile_json_str) {
-  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+void nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self, const char *profile_json_str) {
+  g_return_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self));
 
   if (!profile_json_str || !*profile_json_str) {
     g_debug("ProfilePane: empty profile JSON");
@@ -4716,8 +4716,8 @@ void gnostr_profile_pane_update_from_json(GnostrProfilePane *self, const char *p
   }
 }
 
-void gnostr_profile_pane_set_own_pubkey(GnostrProfilePane *self, const char *own_pubkey_hex) {
-  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+void nostr_gtk_profile_pane_set_own_pubkey(NostrGtkProfilePane *self, const char *own_pubkey_hex) {
+  g_return_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self));
 
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = own_pubkey_hex ? gnostr_ensure_hex_pubkey(own_pubkey_hex) : NULL;
@@ -4728,13 +4728,13 @@ void gnostr_profile_pane_set_own_pubkey(GnostrProfilePane *self, const char *own
   update_action_buttons_visibility(self);
 }
 
-const char* gnostr_profile_pane_get_profile_json(GnostrProfilePane *self) {
-  g_return_val_if_fail(GNOSTR_IS_PROFILE_PANE(self), NULL);
+const char* nostr_gtk_profile_pane_get_profile_json(NostrGtkProfilePane *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self), NULL);
   return self->current_profile_json;
 }
 
-void gnostr_profile_pane_refresh(GnostrProfilePane *self) {
-  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+void nostr_gtk_profile_pane_refresh(NostrGtkProfilePane *self) {
+  g_return_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self));
 
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot refresh");
@@ -4747,8 +4747,8 @@ void gnostr_profile_pane_refresh(GnostrProfilePane *self) {
   fetch_profile_from_cache_or_network(self);
 }
 
-gboolean gnostr_profile_pane_is_profile_cached(GnostrProfilePane *self) {
-  g_return_val_if_fail(GNOSTR_IS_PROFILE_PANE(self), FALSE);
+gboolean nostr_gtk_profile_pane_is_profile_cached(NostrGtkProfilePane *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self), FALSE);
   return self->profile_loaded_from_cache;
 }
 
@@ -4762,7 +4762,7 @@ gboolean gnostr_profile_pane_is_profile_cached(GnostrProfilePane *self) {
 
 /* Create a badge icon widget with click handler for popover */
 static GtkWidget *
-create_badge_icon(GnostrProfilePane *self, GnostrProfileBadge *badge)
+create_badge_icon(NostrGtkProfilePane *self, GnostrProfileBadge *badge)
 {
   (void)self; /* May be used for popover parent in future */
 
@@ -4824,7 +4824,7 @@ create_badge_icon(GnostrProfilePane *self, GnostrProfileBadge *badge)
 
 /* Build the badges display box */
 static void
-build_badges_display(GnostrProfilePane *self)
+build_badges_display(NostrGtkProfilePane *self)
 {
   if (!self->profile_badges || self->profile_badges->len == 0) {
     g_debug("profile_pane: no badges to display");
@@ -4908,9 +4908,9 @@ build_badges_display(GnostrProfilePane *self)
 static void
 on_badges_fetched(GPtrArray *badges, gpointer user_data)
 {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
 
-  if (!GNOSTR_IS_PROFILE_PANE(self)) {
+  if (!NOSTR_GTK_IS_PROFILE_PANE(self)) {
     if (badges) g_ptr_array_unref(badges);
     return;
   }
@@ -4937,7 +4937,7 @@ on_badges_fetched(GPtrArray *badges, gpointer user_data)
 
 /* Fetch badges for the current profile */
 static void
-load_badges(GnostrProfilePane *self)
+load_badges(NostrGtkProfilePane *self)
 {
   if (!self->current_pubkey || strlen(self->current_pubkey) != 64) {
     g_debug("profile_pane: no valid pubkey for badge fetch");

@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 gnostr contributors
  *
- * nostr_event_bus.c - Central event routing for reactive architecture
+ * gnostr_event_bus.c - Central event routing for reactive architecture
  *
- * Implementation of the NostrEventBus, providing a thread-safe
+ * Implementation of the GNostrEventBus, providing a thread-safe
  * publish-subscribe mechanism for routing Nostr events throughout
  * the application.
  */
@@ -62,8 +62,8 @@ static inline guint64 monotonic_ns(void) {
 typedef struct _Subscription {
     guint64 id;                          /* Unique subscription ID */
     gchar *pattern;                      /* Topic pattern (owned) */
-    NostrEventBusCallback callback;      /* User callback */
-    NostrEventBusFilterFunc filter_func; /* Optional filter predicate */
+    GNostrEventBusCallback callback;      /* User callback */
+    GNostrEventBusFilterFunc filter_func; /* Optional filter predicate */
     gpointer user_data;                  /* User data for callback */
     GDestroyNotify destroy_notify;       /* Cleanup function for user_data */
     volatile gint ref_count;             /* Reference count */
@@ -71,11 +71,11 @@ typedef struct _Subscription {
 } Subscription;
 
 /**
- * NostrEventBusPrivate:
+ * GNostrEventBusPrivate:
  *
- * Private data for the NostrEventBus instance.
+ * Private data for the GNostrEventBus instance.
  */
-typedef struct _NostrEventBusPrivate {
+typedef struct _GNostrEventBusPrivate {
     GMutex mutex;                    /* Protects all mutable state */
     GHashTable *subscriptions;       /* id -> Subscription* */
     GHashTable *pattern_cache;       /* "pattern::topic" -> gboolean */
@@ -97,16 +97,16 @@ typedef struct _NostrEventBusPrivate {
 
     /* Dropped events counter */
     guint64 events_dropped;
-} NostrEventBusPrivate;
+} GNostrEventBusPrivate;
 
-G_DEFINE_TYPE_WITH_PRIVATE(NostrEventBus, nostr_event_bus, G_TYPE_OBJECT)
+G_DEFINE_TYPE_WITH_PRIVATE(GNostrEventBus, gnostr_event_bus, G_TYPE_OBJECT)
 
 /* --- Subscription Lifecycle --- */
 
 static Subscription *subscription_new(guint64 id,
                                        const gchar *pattern,
-                                       NostrEventBusCallback callback,
-                                       NostrEventBusFilterFunc filter_func,
+                                       GNostrEventBusCallback callback,
+                                       GNostrEventBusFilterFunc filter_func,
                                        gpointer user_data,
                                        GDestroyNotify destroy_notify) {
     Subscription *sub = g_new0(Subscription, 1);
@@ -235,11 +235,11 @@ static gboolean topic_matches_recursive(gchar **pattern_segs,
 }
 
 /**
- * nostr_event_bus_topic_matches:
+ * gnostr_event_bus_topic_matches:
  *
  * Public function to test if a topic matches a pattern.
  */
-gboolean nostr_event_bus_topic_matches(const gchar *pattern,
+gboolean gnostr_event_bus_topic_matches(const gchar *pattern,
                                         const gchar *topic) {
     if (!pattern || !topic) {
         return FALSE;
@@ -280,7 +280,7 @@ gboolean nostr_event_bus_topic_matches(const gchar *pattern,
  *
  * Returns: %TRUE if pattern matches topic
  */
-static gboolean check_pattern_cached(NostrEventBusPrivate *priv,
+static gboolean check_pattern_cached(GNostrEventBusPrivate *priv,
                                       const gchar *pattern,
                                       const gchar *topic) {
     /* Build cache key */
@@ -298,7 +298,7 @@ static gboolean check_pattern_cached(NostrEventBusPrivate *priv,
     priv->pattern_cache_misses++;
 
     /* Compute match */
-    gboolean result = nostr_event_bus_topic_matches(pattern, topic);
+    gboolean result = gnostr_event_bus_topic_matches(pattern, topic);
 
     /* Cache result (limit cache size to prevent unbounded growth) */
     if (g_hash_table_size(priv->pattern_cache) < 10000) {
@@ -339,7 +339,7 @@ static inline gint hist_bin_index(guint64 ns) {
  *
  * Records a latency sample into the histogram.
  */
-static void hist_record(NostrEventBusPrivate *priv, guint64 ns) {
+static void hist_record(GNostrEventBusPrivate *priv, guint64 ns) {
     gint idx = hist_bin_index(ns);
     priv->latency_bins[idx]++;
     priv->latency_count++;
@@ -357,7 +357,7 @@ static void hist_record(NostrEventBusPrivate *priv, guint64 ns) {
  *
  * Returns: Estimated latency in nanoseconds
  */
-static guint64 hist_percentile(const NostrEventBusPrivate *priv, gdouble p) {
+static guint64 hist_percentile(const GNostrEventBusPrivate *priv, gdouble p) {
     if (priv->latency_count == 0) return 0;
 
     guint64 target = (guint64)((gdouble)priv->latency_count * p);
@@ -375,16 +375,16 @@ static guint64 hist_percentile(const NostrEventBusPrivate *priv, gdouble p) {
 
 /* --- Virtual Method Implementations --- */
 
-static NostrEventBusHandle *nostr_event_bus_real_subscribe(NostrEventBus *bus,
+static GNostrEventBusHandle *gnostr_event_bus_real_subscribe(GNostrEventBus *bus,
                                                             const gchar *topic_pattern,
-                                                            NostrEventBusCallback callback,
+                                                            GNostrEventBusCallback callback,
                                                             gpointer user_data,
                                                             GDestroyNotify destroy_notify) {
-    g_return_val_if_fail(NOSTR_IS_EVENT_BUS(bus), NULL);
+    g_return_val_if_fail(GNOSTR_IS_EVENT_BUS(bus), NULL);
     g_return_val_if_fail(topic_pattern != NULL, NULL);
     g_return_val_if_fail(callback != NULL, NULL);
 
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     g_mutex_lock(&priv->mutex);
 
@@ -397,7 +397,7 @@ static NostrEventBusHandle *nostr_event_bus_real_subscribe(NostrEventBus *bus,
     priv->subscription_count++;
 
     /* Allocate handle - it stores the subscription ID */
-    NostrEventBusHandle *handle = g_new0(NostrEventBusHandle, 1);
+    GNostrEventBusHandle *handle = g_new0(GNostrEventBusHandle, 1);
     handle->id = id;
 
     g_mutex_unlock(&priv->mutex);
@@ -405,12 +405,12 @@ static NostrEventBusHandle *nostr_event_bus_real_subscribe(NostrEventBus *bus,
     return handle;
 }
 
-static void nostr_event_bus_real_unsubscribe(NostrEventBus *bus,
-                                              NostrEventBusHandle *handle) {
+static void gnostr_event_bus_real_unsubscribe(GNostrEventBus *bus,
+                                              GNostrEventBusHandle *handle) {
     if (!handle) return;
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
 
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     g_mutex_lock(&priv->mutex);
 
@@ -430,17 +430,17 @@ static void nostr_event_bus_real_unsubscribe(NostrEventBus *bus,
     g_free(handle);
 }
 
-static void nostr_event_bus_real_emit(NostrEventBus *bus,
+static void gnostr_event_bus_real_emit(GNostrEventBus *bus,
                                        const gchar *topic,
                                        gpointer event_data) {
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
     g_return_if_fail(topic != NULL);
 
     hist_ensure_bounds();
 
     guint64 t0 = monotonic_ns();
 
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     /* Build list of matching subscriptions with refs */
     GPtrArray *matching = g_ptr_array_new_with_free_func(
@@ -507,11 +507,11 @@ static void nostr_event_bus_real_emit(NostrEventBus *bus,
     g_ptr_array_unref(matching);
 }
 
-static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
+static void gnostr_event_bus_real_emit_batch(GNostrEventBus *bus,
                                              const gchar *topic,
                                              gpointer const *events_array,
                                              gsize count) {
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
     g_return_if_fail(topic != NULL);
 
     if (!events_array || count == 0) {
@@ -522,7 +522,7 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
 
     guint64 t0 = monotonic_ns();
 
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     /* Build list of matching subscriptions with refs */
     GPtrArray *matching = g_ptr_array_new_with_free_func(
@@ -590,31 +590,31 @@ static void nostr_event_bus_real_emit_batch(NostrEventBus *bus,
 
 /* --- GObject Lifecycle --- */
 
-static void nostr_event_bus_finalize(GObject *object) {
-    NostrEventBus *bus = NOSTR_EVENT_BUS(object);
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+static void gnostr_event_bus_finalize(GObject *object) {
+    GNostrEventBus *bus = GNOSTR_EVENT_BUS(object);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     g_hash_table_destroy(priv->subscriptions);
     g_hash_table_destroy(priv->pattern_cache);
     g_mutex_clear(&priv->mutex);
 
-    G_OBJECT_CLASS(nostr_event_bus_parent_class)->finalize(object);
+    G_OBJECT_CLASS(gnostr_event_bus_parent_class)->finalize(object);
 }
 
-static void nostr_event_bus_class_init(NostrEventBusClass *klass) {
+static void gnostr_event_bus_class_init(GNostrEventBusClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
 
-    object_class->finalize = nostr_event_bus_finalize;
+    object_class->finalize = gnostr_event_bus_finalize;
 
     /* Set up virtual methods */
-    klass->subscribe = nostr_event_bus_real_subscribe;
-    klass->unsubscribe = nostr_event_bus_real_unsubscribe;
-    klass->emit = nostr_event_bus_real_emit;
-    klass->emit_batch = nostr_event_bus_real_emit_batch;
+    klass->subscribe = gnostr_event_bus_real_subscribe;
+    klass->unsubscribe = gnostr_event_bus_real_unsubscribe;
+    klass->emit = gnostr_event_bus_real_emit;
+    klass->emit_batch = gnostr_event_bus_real_emit_batch;
 }
 
-static void nostr_event_bus_init(NostrEventBus *bus) {
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+static void gnostr_event_bus_init(GNostrEventBus *bus) {
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     g_mutex_init(&priv->mutex);
 
@@ -641,21 +641,21 @@ static void nostr_event_bus_init(NostrEventBus *bus) {
 
 /* --- Singleton --- */
 
-static NostrEventBus *default_bus = NULL;
+static GNostrEventBus *default_bus = NULL;
 static GMutex default_bus_mutex;
 
 /**
- * nostr_event_bus_get_default:
+ * gnostr_event_bus_get_default:
  *
  * Gets the default singleton event bus instance.
  *
  * Returns: (transfer none): The default event bus
  */
-NostrEventBus *nostr_event_bus_get_default(void) {
+GNostrEventBus *gnostr_event_bus_get_default(void) {
     g_mutex_lock(&default_bus_mutex);
 
     if (default_bus == NULL) {
-        default_bus = g_object_new(NOSTR_TYPE_EVENT_BUS, NULL);
+        default_bus = g_object_new(GNOSTR_TYPE_EVENT_BUS, NULL);
         /* Keep a reference so it lives for the application lifetime */
     }
 
@@ -666,36 +666,36 @@ NostrEventBus *nostr_event_bus_get_default(void) {
 
 /* --- Public API Implementation --- */
 
-NostrEventBusHandle *nostr_event_bus_subscribe(NostrEventBus *bus,
+GNostrEventBusHandle *gnostr_event_bus_subscribe(GNostrEventBus *bus,
                                                 const gchar *topic_pattern,
-                                                NostrEventBusCallback callback,
+                                                GNostrEventBusCallback callback,
                                                 gpointer user_data) {
-    return nostr_event_bus_subscribe_full(bus, topic_pattern, callback,
+    return gnostr_event_bus_subscribe_full(bus, topic_pattern, callback,
                                            user_data, NULL);
 }
 
-NostrEventBusHandle *nostr_event_bus_subscribe_full(NostrEventBus *bus,
+GNostrEventBusHandle *gnostr_event_bus_subscribe_full(GNostrEventBus *bus,
                                                      const gchar *topic_pattern,
-                                                     NostrEventBusCallback callback,
+                                                     GNostrEventBusCallback callback,
                                                      gpointer user_data,
                                                      GDestroyNotify destroy_notify) {
-    g_return_val_if_fail(NOSTR_IS_EVENT_BUS(bus), NULL);
+    g_return_val_if_fail(GNOSTR_IS_EVENT_BUS(bus), NULL);
 
-    NostrEventBusClass *klass = NOSTR_EVENT_BUS_GET_CLASS(bus);
+    GNostrEventBusClass *klass = GNOSTR_EVENT_BUS_GET_CLASS(bus);
     return klass->subscribe(bus, topic_pattern, callback, user_data, destroy_notify);
 }
 
-NostrEventBusHandle *nostr_event_bus_subscribe_filtered(NostrEventBus *bus,
+GNostrEventBusHandle *gnostr_event_bus_subscribe_filtered(GNostrEventBus *bus,
                                                          const gchar *topic_pattern,
-                                                         NostrEventBusFilterFunc filter_func,
-                                                         NostrEventBusCallback callback,
+                                                         GNostrEventBusFilterFunc filter_func,
+                                                         GNostrEventBusCallback callback,
                                                          gpointer user_data,
                                                          GDestroyNotify destroy_notify) {
-    g_return_val_if_fail(NOSTR_IS_EVENT_BUS(bus), NULL);
+    g_return_val_if_fail(GNOSTR_IS_EVENT_BUS(bus), NULL);
     g_return_val_if_fail(topic_pattern != NULL, NULL);
     g_return_val_if_fail(callback != NULL, NULL);
 
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     g_mutex_lock(&priv->mutex);
 
@@ -707,7 +707,7 @@ NostrEventBusHandle *nostr_event_bus_subscribe_filtered(NostrEventBus *bus,
     g_hash_table_insert(priv->subscriptions, GUINT_TO_POINTER(id), sub);
     priv->subscription_count++;
 
-    NostrEventBusHandle *handle = g_new0(NostrEventBusHandle, 1);
+    GNostrEventBusHandle *handle = g_new0(GNostrEventBusHandle, 1);
     handle->id = id;
 
     g_mutex_unlock(&priv->mutex);
@@ -715,60 +715,60 @@ NostrEventBusHandle *nostr_event_bus_subscribe_filtered(NostrEventBus *bus,
     return handle;
 }
 
-void nostr_event_bus_unsubscribe(NostrEventBus *bus,
-                                  NostrEventBusHandle *handle) {
+void gnostr_event_bus_unsubscribe(GNostrEventBus *bus,
+                                  GNostrEventBusHandle *handle) {
     if (!handle) return;
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
 
-    NostrEventBusClass *klass = NOSTR_EVENT_BUS_GET_CLASS(bus);
+    GNostrEventBusClass *klass = GNOSTR_EVENT_BUS_GET_CLASS(bus);
     klass->unsubscribe(bus, handle);
 }
 
-void nostr_event_bus_emit(NostrEventBus *bus,
+void gnostr_event_bus_emit(GNostrEventBus *bus,
                            const gchar *topic,
                            gpointer event_data) {
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
 
-    NostrEventBusClass *klass = NOSTR_EVENT_BUS_GET_CLASS(bus);
+    GNostrEventBusClass *klass = GNOSTR_EVENT_BUS_GET_CLASS(bus);
     klass->emit(bus, topic, event_data);
 }
 
-void nostr_event_bus_emit_batch(NostrEventBus *bus,
+void gnostr_event_bus_emit_batch(GNostrEventBus *bus,
                                  const gchar *topic,
                                  gpointer const *events_array,
                                  gsize count) {
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
 
-    NostrEventBusClass *klass = NOSTR_EVENT_BUS_GET_CLASS(bus);
+    GNostrEventBusClass *klass = GNOSTR_EVENT_BUS_GET_CLASS(bus);
     klass->emit_batch(bus, topic, events_array, count);
 }
 
 /* --- Utility Functions --- */
 
-gchar *nostr_event_bus_format_event_topic(gint kind) {
+gchar *gnostr_event_bus_format_event_topic(gint kind) {
     return g_strdup_printf("event::kind::%d", kind);
 }
 
-gchar *nostr_event_bus_format_eose_topic(const gchar *subscription_id) {
+gchar *gnostr_event_bus_format_eose_topic(const gchar *subscription_id) {
     g_return_val_if_fail(subscription_id != NULL, NULL);
     return g_strdup_printf("eose::%s", subscription_id);
 }
 
-gchar *nostr_event_bus_format_ok_topic(const gchar *event_id) {
+gchar *gnostr_event_bus_format_ok_topic(const gchar *event_id) {
     g_return_val_if_fail(event_id != NULL, NULL);
     return g_strdup_printf("ok::%s", event_id);
 }
 
 /* --- Statistics --- */
 
-void nostr_event_bus_get_stats(NostrEventBus *bus,
-                                NostrEventBusStats *stats) {
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+void gnostr_event_bus_get_stats(GNostrEventBus *bus,
+                                GNostrEventBusStats *stats) {
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
     g_return_if_fail(stats != NULL);
 
     hist_ensure_bounds();
 
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     g_mutex_lock(&priv->mutex);
 
@@ -792,10 +792,10 @@ void nostr_event_bus_get_stats(NostrEventBus *bus,
     g_mutex_unlock(&priv->mutex);
 }
 
-void nostr_event_bus_reset_stats(NostrEventBus *bus) {
-    g_return_if_fail(NOSTR_IS_EVENT_BUS(bus));
+void gnostr_event_bus_reset_stats(GNostrEventBus *bus) {
+    g_return_if_fail(GNOSTR_IS_EVENT_BUS(bus));
 
-    NostrEventBusPrivate *priv = nostr_event_bus_get_instance_private(bus);
+    GNostrEventBusPrivate *priv = gnostr_event_bus_get_instance_private(bus);
 
     g_mutex_lock(&priv->mutex);
 

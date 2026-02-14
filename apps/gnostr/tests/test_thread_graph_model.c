@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 gnostr contributors
  *
- * test_thread_graph_model.c - Unit tests for GnostrThreadGraphModel
+ * test_thread_graph_model.c - Unit tests for GNostrThreadGraphModel
  *
  * nostrc-pp64 (Epic 4.2): Tests incremental thread graph updates,
  * NIP-10 parsing, parent-child relationships, and signal emission.
@@ -53,7 +53,7 @@ typedef struct {
     char *last_reaction_target;
 } SigCtx;
 
-static void on_reply_added(GnostrThreadGraphModel *m, const char *id,
+static void on_reply_added(GNostrThreadGraphModel *m, const char *id,
                             const char *parent, SigCtx *ctx) {
     (void)m;
     ctx->reply_added++;
@@ -63,7 +63,7 @@ static void on_reply_added(GnostrThreadGraphModel *m, const char *id,
     ctx->last_reply_parent = g_strdup(parent);
 }
 
-static void on_reaction_added(GnostrThreadGraphModel *m, const char *id,
+static void on_reaction_added(GNostrThreadGraphModel *m, const char *id,
                                const char *target, SigCtx *ctx) {
     (void)m; (void)id;
     ctx->reaction_added++;
@@ -71,7 +71,7 @@ static void on_reaction_added(GnostrThreadGraphModel *m, const char *id,
     ctx->last_reaction_target = g_strdup(target);
 }
 
-static void on_event_updated(GnostrThreadGraphModel *m, const char *id, SigCtx *ctx) {
+static void on_event_updated(GNostrThreadGraphModel *m, const char *id, SigCtx *ctx) {
     (void)m; (void)id;
     ctx->event_updated++;
 }
@@ -86,7 +86,7 @@ static void sigctx_clear(SigCtx *ctx) {
 /* ========== Tests ========== */
 
 static void test_new_model(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
     g_assert_nonnull(model);
     g_assert_cmpstr(gnostr_thread_graph_model_get_root_id(model), ==, ROOT_ID);
     g_assert_cmpuint(gnostr_thread_graph_model_get_node_count(model), ==, 0);
@@ -95,7 +95,7 @@ static void test_new_model(void) {
 }
 
 static void test_add_root_event(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
     char *json = make_note(ROOT_ID, 1, NULL, NULL);
 
     gboolean added = gnostr_thread_graph_model_add_event_json(model, json);
@@ -116,7 +116,7 @@ static void test_add_root_event(void) {
 }
 
 static void test_reply_links_to_parent(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
     SigCtx ctx = {0};
     g_signal_connect(model, "reply-added", G_CALLBACK(on_reply_added), &ctx);
 
@@ -149,7 +149,7 @@ static void test_reply_links_to_parent(void) {
 }
 
 static void test_nested_reply_depth(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
 
     char *root_json = make_note(ROOT_ID, 1, NULL, NULL);
     char *r1_json = make_note(REPLY1_ID, 1, ROOT_ID, NULL);
@@ -176,7 +176,7 @@ static void test_nested_reply_depth(void) {
 }
 
 static void test_reaction_increments_count(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
     SigCtx ctx = {0};
     g_signal_connect(model, "reaction-added", G_CALLBACK(on_reaction_added), &ctx);
     g_signal_connect(model, "event-updated", G_CALLBACK(on_event_updated), &ctx);
@@ -201,7 +201,7 @@ static void test_reaction_increments_count(void) {
 }
 
 static void test_orphan_relinks_when_parent_arrives(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
 
     /* Add child before parent (out-of-order arrival) */
     char *reply_json = make_note(REPLY1_ID, 1, ROOT_ID, NULL);
@@ -230,7 +230,7 @@ static void test_orphan_relinks_when_parent_arrives(void) {
 }
 
 static void test_render_order(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
 
     char *root_json = make_note(ROOT_ID, 1, NULL, NULL);
     char *r1_json = make_note(REPLY1_ID, 1, ROOT_ID, NULL);
@@ -255,7 +255,7 @@ static void test_render_order(void) {
 }
 
 static void test_clear(void) {
-    GnostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
 
     char *json = make_note(ROOT_ID, 1, NULL, NULL);
     gnostr_thread_graph_model_add_event_json(model, json);

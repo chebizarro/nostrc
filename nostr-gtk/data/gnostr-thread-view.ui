@@ -6,7 +6,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GnostrThreadView" parent="GtkWidget">
+  <template class="NostrGtkThreadView" parent="GtkWidget">
     <child>
       <object class="GtkBox" id="root_box">
         <property name="orientation">1</property>

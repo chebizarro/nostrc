@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 gnostr contributors
  *
- * test_thread_subscription.c - Unit tests for GnostrThreadSubscription
+ * test_thread_subscription.c - Unit tests for GNostrThreadSubscription
  *
  * nostrc-pp64: Tests for the reactive thread subscription manager.
  * Validates EventBus integration, deduplication, and signal emission.
@@ -84,21 +84,21 @@ typedef struct {
     NostrEvent *last_comment_event;
 } SignalCtx;
 
-static void on_reply(GnostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
+static void on_reply(GNostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
     (void)sub;
     SignalCtx *ctx = data;
     ctx->reply_count++;
     ctx->last_reply_event = ev;
 }
 
-static void on_reaction(GnostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
+static void on_reaction(GNostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
     (void)sub;
     SignalCtx *ctx = data;
     ctx->reaction_count++;
     ctx->last_reaction_event = ev;
 }
 
-static void on_comment(GnostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
+static void on_comment(GNostrThreadSubscription *sub, NostrEvent *ev, gpointer data) {
     (void)sub;
     SignalCtx *ctx = data;
     ctx->comment_count++;
@@ -113,7 +113,7 @@ static void signal_ctx_clear(SignalCtx *ctx) {
 /* ========== Tests ========== */
 
 static void test_new_and_properties(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
     g_assert_nonnull(sub);
     g_assert_cmpstr(gnostr_thread_subscription_get_root_id(sub), ==, ROOT_ID);
     g_assert_false(gnostr_thread_subscription_is_active(sub));
@@ -122,7 +122,7 @@ static void test_new_and_properties(void) {
 }
 
 static void test_start_stop(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
 
     gnostr_thread_subscription_start(sub);
     g_assert_true(gnostr_thread_subscription_is_active(sub));
@@ -142,7 +142,7 @@ static void test_start_stop(void) {
 }
 
 static void test_reply_signal_via_eventbus(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -150,14 +150,14 @@ static void test_reply_signal_via_eventbus(void) {
 
     /* Emit a kind:1 event that references our root */
     NostrEvent *ev = make_reply_event(REPLY_ID, ROOT_ID);
-    NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1", ev);
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
+    gnostr_event_bus_emit(bus, "event::kind::1", ev);
 
     g_assert_cmpuint(ctx.reply_count, ==, 1);
     g_assert_nonnull(ctx.last_reply_event);
 
     /* Verify deduplication: same event again should not fire */
-    nostr_event_bus_emit(bus, "event::kind::1", ev);
+    gnostr_event_bus_emit(bus, "event::kind::1", ev);
     g_assert_cmpuint(ctx.reply_count, ==, 1);
 
     g_assert_cmpuint(gnostr_thread_subscription_get_seen_count(sub), ==, 1);
@@ -168,15 +168,15 @@ static void test_reply_signal_via_eventbus(void) {
 }
 
 static void test_reaction_signal_via_eventbus(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reaction-received", G_CALLBACK(on_reaction), &ctx);
     gnostr_thread_subscription_start(sub);
 
     NostrEvent *ev = make_reaction_event(REACT_ID, ROOT_ID);
-    NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::7", ev);
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
+    gnostr_event_bus_emit(bus, "event::kind::7", ev);
 
     g_assert_cmpuint(ctx.reaction_count, ==, 1);
     g_assert_nonnull(ctx.last_reaction_event);
@@ -187,7 +187,7 @@ static void test_reaction_signal_via_eventbus(void) {
 }
 
 static void test_comment_signal_via_eventbus(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "comment-received", G_CALLBACK(on_comment), &ctx);
@@ -197,8 +197,8 @@ static void test_comment_signal_via_eventbus(void) {
     NostrEvent *ev = make_comment_event(
         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         ROOT_ID);
-    NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1111", ev);
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
+    gnostr_event_bus_emit(bus, "event::kind::1111", ev);
 
     g_assert_cmpuint(ctx.comment_count, ==, 1);
 
@@ -208,7 +208,7 @@ static void test_comment_signal_via_eventbus(void) {
 }
 
 static void test_unrelated_event_filtered(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -216,8 +216,8 @@ static void test_unrelated_event_filtered(void) {
 
     /* Event referencing a different root - should be filtered */
     NostrEvent *ev = make_reply_event(REPLY_ID, OTHER_ID);
-    NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1", ev);
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
+    gnostr_event_bus_emit(bus, "event::kind::1", ev);
 
     g_assert_cmpuint(ctx.reply_count, ==, 0);
 
@@ -227,7 +227,7 @@ static void test_unrelated_event_filtered(void) {
 }
 
 static void test_add_monitored_id(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -236,10 +236,10 @@ static void test_add_monitored_id(void) {
     /* Event referencing a mid-thread ID (not root) */
     char *mid_id = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
     NostrEvent *ev = make_reply_event(REPLY_ID, mid_id);
-    NostrEventBus *bus = nostr_event_bus_get_default();
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
 
     /* Should be filtered initially */
-    nostr_event_bus_emit(bus, "event::kind::1", ev);
+    gnostr_event_bus_emit(bus, "event::kind::1", ev);
     g_assert_cmpuint(ctx.reply_count, ==, 0);
 
     /* Add the mid-thread ID to monitored set */
@@ -251,7 +251,7 @@ static void test_add_monitored_id(void) {
     ev = make_reply_event(
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
         mid_id);
-    nostr_event_bus_emit(bus, "event::kind::1", ev);
+    gnostr_event_bus_emit(bus, "event::kind::1", ev);
     g_assert_cmpuint(ctx.reply_count, ==, 1);
 
     nostr_event_free(ev);
@@ -260,7 +260,7 @@ static void test_add_monitored_id(void) {
 }
 
 static void test_no_signals_after_stop(void) {
-    GnostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -269,8 +269,8 @@ static void test_no_signals_after_stop(void) {
 
     /* After stop, events should not trigger signals */
     NostrEvent *ev = make_reply_event(REPLY_ID, ROOT_ID);
-    NostrEventBus *bus = nostr_event_bus_get_default();
-    nostr_event_bus_emit(bus, "event::kind::1", ev);
+    GNostrEventBus *bus = gnostr_event_bus_get_default();
+    gnostr_event_bus_emit(bus, "event::kind::1", ev);
 
     g_assert_cmpuint(ctx.reply_count, ==, 0);
 

@@ -1002,14 +1002,14 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       0);
 
   /* Ensure custom widget types used in the template are registered */
-  g_type_ensure(GNOSTR_TYPE_TIMELINE_VIEW);
+  g_type_ensure(NOSTR_GTK_TYPE_TIMELINE_VIEW);
   g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
   g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
   g_type_ensure(GNOSTR_TYPE_PAGE_DISCOVER);
   g_type_ensure(GNOSTR_TYPE_CLASSIFIEDS_VIEW);
   g_type_ensure(GNOSTR_TYPE_REPO_BROWSER);
-  g_type_ensure(GNOSTR_TYPE_PROFILE_PANE);
-  g_type_ensure(GNOSTR_TYPE_THREAD_VIEW);
+  g_type_ensure(NOSTR_GTK_TYPE_PROFILE_PANE);
+  g_type_ensure(NOSTR_GTK_TYPE_THREAD_VIEW);
   g_type_ensure(GNOSTR_TYPE_ARTICLE_READER);
 
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
@@ -1100,8 +1100,8 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
   /* nostrc-lx32: Install app-specific factory on the library timeline widget */
-  if (self->timeline && GNOSTR_IS_TIMELINE_VIEW(GNOSTR_TIMELINE_VIEW(self->timeline))) {
-    gnostr_timeline_view_setup_app_factory(GNOSTR_TIMELINE_VIEW(self->timeline));
+  if (self->timeline && NOSTR_GTK_IS_TIMELINE_VIEW(NOSTR_GTK_TIMELINE_VIEW(self->timeline))) {
+    nostr_gtk_timeline_view_setup_app_factory(NOSTR_GTK_TIMELINE_VIEW(self->timeline));
   }
 
   /* Replace header avatar button icon with avatar overlay */

@@ -6,7 +6,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GnostrMuteListDialog" parent="GtkWindow">
+  <template class="GNostrMuteListDialog" parent="GtkWindow">
     <property name="modal">true</property>
     <property name="title">Mute List</property>
     <property name="default-width">500</property>

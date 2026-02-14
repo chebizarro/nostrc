@@ -133,7 +133,7 @@ static void thread_event_item_free(ThreadEventItem *item) {
   g_free(item);
 }
 
-struct _GnostrThreadView {
+struct _NostrGtkThreadView {
   GtkWidget parent_instance;
 
   /* Template children */
@@ -192,7 +192,7 @@ struct _GnostrThreadView {
   gboolean disposed;
 };
 
-G_DEFINE_TYPE(GnostrThreadView, gnostr_thread_view, GTK_TYPE_WIDGET)
+G_DEFINE_TYPE(NostrGtkThreadView, nostr_gtk_thread_view, GTK_TYPE_WIDGET)
 
 enum {
   SIGNAL_CLOSE_REQUESTED,
@@ -204,18 +204,18 @@ enum {
 static guint signals[N_SIGNALS];
 
 /* Forward declarations */
-static void load_thread(GnostrThreadView *self);
-static void rebuild_thread_ui(GnostrThreadView *self);
-static void set_loading_state(GnostrThreadView *self, gboolean loading);
-static void fetch_thread_from_relays(GnostrThreadView *self);
-static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *json_str);
+static void load_thread(NostrGtkThreadView *self);
+static void rebuild_thread_ui(NostrGtkThreadView *self);
+static void set_loading_state(NostrGtkThreadView *self, gboolean loading);
+static void fetch_thread_from_relays(NostrGtkThreadView *self);
+static ThreadEventItem *add_event_from_json(NostrGtkThreadView *self, const char *json_str);
 static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void setup_thread_subscription(GnostrThreadView *self);
-static void teardown_thread_subscription(GnostrThreadView *self);
-static void fetch_children_from_relays(GnostrThreadView *self);
-static void build_thread_graph(GnostrThreadView *self);
-static void mark_focus_path(GnostrThreadView *self);
-static guint count_descendants(GnostrThreadView *self, const char *event_id);
+static void setup_thread_subscription(NostrGtkThreadView *self);
+static void teardown_thread_subscription(NostrGtkThreadView *self);
+static void fetch_children_from_relays(NostrGtkThreadView *self);
+static void build_thread_graph(NostrGtkThreadView *self);
+static void mark_focus_path(NostrGtkThreadView *self);
+static guint count_descendants(NostrGtkThreadView *self, const char *event_id);
 /* nostrc-evz1: GtkListView factory callbacks */
 static void thread_factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
 static void thread_factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
@@ -462,8 +462,8 @@ static GPtrArray *extract_ptags_from_json(const char *json_str) {
 }
 
 /* Dispose */
-static void gnostr_thread_view_dispose(GObject *obj) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(obj);
+static void nostr_gtk_thread_view_dispose(GObject *obj) {
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(obj);
 
   /* nostrc-59nk: Mark as disposed FIRST to prevent async callbacks from modifying widgets */
   self->disposed = TRUE;
@@ -508,41 +508,41 @@ static void gnostr_thread_view_dispose(GObject *obj) {
 
   /* Shared query pool is managed globally - do not clear here */
 
-  gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_THREAD_VIEW);
-  G_OBJECT_CLASS(gnostr_thread_view_parent_class)->dispose(obj);
+  gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_THREAD_VIEW);
+  G_OBJECT_CLASS(nostr_gtk_thread_view_parent_class)->dispose(obj);
 }
 
 /* Finalize */
-static void gnostr_thread_view_finalize(GObject *obj) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(obj);
+static void nostr_gtk_thread_view_finalize(GObject *obj) {
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(obj);
   g_clear_pointer(&self->focus_event_id, g_free);
   g_clear_pointer(&self->thread_root_id, g_free);
-  G_OBJECT_CLASS(gnostr_thread_view_parent_class)->finalize(obj);
+  G_OBJECT_CLASS(nostr_gtk_thread_view_parent_class)->finalize(obj);
 }
 
 /* Signal handlers */
 static void on_close_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
   (void)btn;
   g_signal_emit(self, signals[SIGNAL_CLOSE_REQUESTED], 0);
 }
 
 /* Note card signal handlers */
-static void on_note_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+static void on_note_open_profile(NostrGtkNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
   (void)row;
   g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
 }
 
-static void on_note_view_thread(GnostrNoteCardRow *row, const char *root_event_id, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+static void on_note_view_thread(NostrGtkNoteCardRow *row, const char *root_event_id, gpointer user_data) {
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
   (void)row;
   /* Navigate to the new thread root */
-  gnostr_thread_view_set_thread_root(self, root_event_id);
+  nostr_gtk_thread_view_set_thread_root(self, root_event_id);
 }
 
 /* NIP-56: Handler for report-note-requested signal - relay to main window */
-static void on_note_report_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_report_requested(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   (void)user_data;
   /* Walk up the widget tree to find the main window */
   GtkWidget *widget = GTK_WIDGET(row);
@@ -558,32 +558,32 @@ static void on_note_report_requested(GnostrNoteCardRow *row, const char *id_hex,
 }
 
 /* Class init */
-static void gnostr_thread_view_class_init(GnostrThreadViewClass *klass) {
+static void nostr_gtk_thread_view_class_init(NostrGtkThreadViewClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *obj_class = G_OBJECT_CLASS(klass);
 
-  obj_class->dispose = gnostr_thread_view_dispose;
-  obj_class->finalize = gnostr_thread_view_finalize;
+  obj_class->dispose = nostr_gtk_thread_view_dispose;
+  obj_class->finalize = nostr_gtk_thread_view_finalize;
 
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
 
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, root_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, header_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, btn_close);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, title_label);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, scroll_window);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, thread_list_view);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, loading_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, loading_spinner);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, empty_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, empty_label);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, root_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, header_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, btn_close);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, title_label);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, scroll_window);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, thread_list_view);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, loading_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, loading_spinner);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, empty_box);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, empty_label);
   /* nostrc-x3b: missing events banner */
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_banner);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_stack);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_spinner);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_icon);
-  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_label);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, missing_events_banner);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, missing_events_stack);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, missing_events_spinner);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, missing_events_icon);
+  gtk_widget_class_bind_template_child(widget_class, NostrGtkThreadView, missing_events_label);
 
   signals[SIGNAL_CLOSE_REQUESTED] = g_signal_new(
     "close-requested",
@@ -615,7 +615,7 @@ static void gnostr_thread_view_class_init(GnostrThreadViewClass *klass) {
 }
 
 /* Instance init */
-static void gnostr_thread_view_init(GnostrThreadView *self) {
+static void nostr_gtk_thread_view_init(NostrGtkThreadView *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
   /* Initialize state */
@@ -660,18 +660,18 @@ static void gnostr_thread_view_init(GnostrThreadView *self) {
 }
 
 /* Public API */
-GtkWidget *gnostr_thread_view_new(void) {
-  return g_object_new(GNOSTR_TYPE_THREAD_VIEW, NULL);
+GtkWidget *nostr_gtk_thread_view_new(void) {
+  return g_object_new(NOSTR_GTK_TYPE_THREAD_VIEW, NULL);
 }
 
-void gnostr_thread_view_set_focus_event(GnostrThreadView *self, const char *event_id_hex) {
-  gnostr_thread_view_set_focus_event_with_json(self, event_id_hex, NULL);
+void nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView *self, const char *event_id_hex) {
+  nostr_gtk_thread_view_set_focus_event_with_json(self, event_id_hex, NULL);
 }
 
-void gnostr_thread_view_set_focus_event_with_json(GnostrThreadView *self,
+void nostr_gtk_thread_view_set_focus_event_with_json(NostrGtkThreadView *self,
                                                    const char *event_id_hex,
                                                    const char *event_json) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
 
   if (!event_id_hex || strlen(event_id_hex) != 64) {
     g_warning("[THREAD_VIEW] Invalid event ID");
@@ -702,14 +702,14 @@ void gnostr_thread_view_set_focus_event_with_json(GnostrThreadView *self,
   load_thread(self);
 }
 
-void gnostr_thread_view_set_thread_root(GnostrThreadView *self, const char *root_event_id_hex) {
-  gnostr_thread_view_set_thread_root_with_json(self, root_event_id_hex, NULL);
+void nostr_gtk_thread_view_set_thread_root(NostrGtkThreadView *self, const char *root_event_id_hex) {
+  nostr_gtk_thread_view_set_thread_root_with_json(self, root_event_id_hex, NULL);
 }
 
-void gnostr_thread_view_set_thread_root_with_json(GnostrThreadView *self,
+void nostr_gtk_thread_view_set_thread_root_with_json(NostrGtkThreadView *self,
                                                    const char *root_event_id_hex,
                                                    const char *event_json) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
 
   if (!root_event_id_hex || strlen(root_event_id_hex) != 64) {
     g_warning("[THREAD_VIEW] Invalid root event ID");
@@ -717,7 +717,7 @@ void gnostr_thread_view_set_thread_root_with_json(GnostrThreadView *self,
   }
 
   /* Clear existing data */
-  gnostr_thread_view_clear(self);
+  nostr_gtk_thread_view_clear(self);
 
   /* Store root ID */
   g_free(self->thread_root_id);
@@ -747,8 +747,8 @@ void gnostr_thread_view_set_thread_root_with_json(GnostrThreadView *self,
   load_thread(self);
 }
 
-void gnostr_thread_view_clear(GnostrThreadView *self) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+void nostr_gtk_thread_view_clear(NostrGtkThreadView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
 
   /* nostrc-50t: Teardown nostrdb subscription when clearing */
   teardown_thread_subscription(self);
@@ -805,26 +805,26 @@ void gnostr_thread_view_clear(GnostrThreadView *self) {
   set_loading_state(self, FALSE);
 }
 
-void gnostr_thread_view_refresh(GnostrThreadView *self) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+void nostr_gtk_thread_view_refresh(NostrGtkThreadView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
 
   if (self->focus_event_id || self->thread_root_id) {
     load_thread(self);
   }
 }
 
-const char *gnostr_thread_view_get_focus_event_id(GnostrThreadView *self) {
-  g_return_val_if_fail(GNOSTR_IS_THREAD_VIEW(self), NULL);
+const char *nostr_gtk_thread_view_get_focus_event_id(NostrGtkThreadView *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self), NULL);
   return self->focus_event_id;
 }
 
-const char *gnostr_thread_view_get_thread_root_id(GnostrThreadView *self) {
-  g_return_val_if_fail(GNOSTR_IS_THREAD_VIEW(self), NULL);
+const char *nostr_gtk_thread_view_get_thread_root_id(NostrGtkThreadView *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self), NULL);
   return self->thread_root_id;
 }
 
 /* Internal: set loading state */
-static void set_loading_state(GnostrThreadView *self, gboolean loading) {
+static void set_loading_state(NostrGtkThreadView *self, gboolean loading) {
   self->is_loading = loading;
 
   if (self->loading_box) {
@@ -848,7 +848,7 @@ static void set_loading_state(GnostrThreadView *self, gboolean loading) {
 /* Internal: update missing events banner state
  * When fetching=TRUE, shows spinner with "Fetching missing messages..."
  * When fetching=FALSE, checks for missing events and shows warning or hides banner */
-static void update_missing_events_banner(GnostrThreadView *self, gboolean fetching) {
+static void update_missing_events_banner(NostrGtkThreadView *self, gboolean fetching) {
   if (!self->missing_events_banner) return;
 
   self->is_fetching_missing = fetching;
@@ -921,7 +921,7 @@ static void update_missing_events_banner(GnostrThreadView *self, gboolean fetchi
 }
 
 /* Internal: show empty state */
-static void show_empty_state(GnostrThreadView *self, const char *message) {
+static void show_empty_state(NostrGtkThreadView *self, const char *message) {
   set_loading_state(self, FALSE);
 
   if (self->scroll_window) {
@@ -936,7 +936,7 @@ static void show_empty_state(GnostrThreadView *self, const char *message) {
 }
 
 /* Internal: add event to hash table */
-static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *json_str) {
+static ThreadEventItem *add_event_from_json(NostrGtkThreadView *self, const char *json_str) {
   if (!json_str || !*json_str) return NULL;
 
   GNostrEvent *evt = gnostr_event_new_from_json(json_str, NULL);
@@ -987,7 +987,7 @@ static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *
  * nostrc-oz5: Always populate profile fields on the item, even if we've already requested
  * the profile for another item from the same author. The profiles_requested hash only
  * prevents duplicate relay fetch requests, not duplicate cache lookups. */
-static void fetch_profile_for_event(GnostrThreadView *self, ThreadEventItem *item) {
+static void fetch_profile_for_event(NostrGtkThreadView *self, ThreadEventItem *item) {
   if (!item || !item->pubkey_hex) return;
 
   /* Check if we've already requested this profile from relays */
@@ -1040,7 +1040,7 @@ static gint compare_events_by_time(gconstpointer a, gconstpointer b) {
 }
 
 /* Calculate depth for each event in the thread */
-static void calculate_thread_depths(GnostrThreadView *self) {
+static void calculate_thread_depths(NostrGtkThreadView *self) {
   /* Find root (no parent or self-referencing root) */
   const char *root_id = self->thread_root_id;
 
@@ -1116,7 +1116,7 @@ static void calculate_thread_depths(GnostrThreadView *self) {
 }
 
 /* Internal: rebuild sorted events array */
-static void rebuild_sorted_events(GnostrThreadView *self) {
+static void rebuild_sorted_events(NostrGtkThreadView *self) {
   g_ptr_array_set_size(self->sorted_events, 0);
 
   /* Calculate depths first */
@@ -1135,8 +1135,8 @@ static void rebuild_sorted_events(GnostrThreadView *self) {
 }
 
 /* Internal: create note card for an event */
-static GtkWidget *create_note_card_for_item(GnostrThreadView *self, ThreadEventItem *item) {
-  GnostrNoteCardRow *row = gnostr_note_card_row_new();
+static GtkWidget *create_note_card_for_item(NostrGtkThreadView *self, ThreadEventItem *item) {
+  NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
 
   /* Fetch profile if not already done */
   fetch_profile_for_event(self, item);
@@ -1148,34 +1148,34 @@ static GtkWidget *create_note_card_for_item(GnostrThreadView *self, ThreadEventI
     /* Fallback to truncated pubkey */
     char fallback[20];
     snprintf(fallback, sizeof(fallback), "%.8s...", item->pubkey_hex);
-    gnostr_note_card_row_set_author(row, fallback, NULL, item->avatar_url);
+    nostr_gtk_note_card_row_set_author(row, fallback, NULL, item->avatar_url);
   } else {
-    gnostr_note_card_row_set_author(row, display, handle, item->avatar_url);
+    nostr_gtk_note_card_row_set_author(row, display, handle, item->avatar_url);
   }
 
   /* Set timestamp */
-  gnostr_note_card_row_set_timestamp(row, item->created_at, NULL);
+  nostr_gtk_note_card_row_set_timestamp(row, item->created_at, NULL);
 
   /* Set content */
-  gnostr_note_card_row_set_content(row, item->content);
+  nostr_gtk_note_card_row_set_content(row, item->content);
 
   /* Set depth */
-  gnostr_note_card_row_set_depth(row, item->depth);
+  nostr_gtk_note_card_row_set_depth(row, item->depth);
 
   /* Set IDs */
-  gnostr_note_card_row_set_ids(row, item->id_hex, item->root_id, item->pubkey_hex);
+  nostr_gtk_note_card_row_set_ids(row, item->id_hex, item->root_id, item->pubkey_hex);
 
   /* Set thread info */
   gboolean is_reply = (item->parent_id != NULL);
-  gnostr_note_card_row_set_thread_info(row, item->root_id, item->parent_id, NULL, is_reply);
+  nostr_gtk_note_card_row_set_thread_info(row, item->root_id, item->parent_id, NULL, is_reply);
 
   /* Set NIP-05 if available */
   if (item->nip05 && item->pubkey_hex) {
-    gnostr_note_card_row_set_nip05(row, item->nip05, item->pubkey_hex);
+    nostr_gtk_note_card_row_set_nip05(row, item->nip05, item->pubkey_hex);
   }
 
   /* Set login state for authentication-required buttons */
-  gnostr_note_card_row_set_logged_in(row, is_user_logged_in());
+  nostr_gtk_note_card_row_set_logged_in(row, is_user_logged_in());
 
   /* Connect signals */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
@@ -1193,7 +1193,7 @@ static GtkWidget *create_note_card_for_item(GnostrThreadView *self, ThreadEventI
 /* Internal: count all descendants of an event recursively and set child_count.
  * This is a post-order traversal that sets child_count on each visited node,
  * so it only needs to be called once per root (O(n) total instead of O(n²)). */
-static guint count_descendants(GnostrThreadView *self, const char *event_id) {
+static guint count_descendants(NostrGtkThreadView *self, const char *event_id) {
   if (!self->thread_graph || !event_id) return 0;
 
   ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id);
@@ -1222,7 +1222,7 @@ static gint compare_nodes_by_time(gconstpointer a, gconstpointer b) {
 }
 
 /* Internal: mark events on the path from focus to root */
-static void mark_focus_path(GnostrThreadView *self) {
+static void mark_focus_path(NostrGtkThreadView *self) {
   if (!self->thread_graph || !self->focus_event_id) return;
 
   /* Walk from focus event up to root, marking each node */
@@ -1239,7 +1239,7 @@ static void mark_focus_path(GnostrThreadView *self) {
 }
 
 /* Internal: recursive helper to build render order (DFS tree traversal) */
-static void add_subtree_to_render_order(GnostrThreadView *self, const char *event_id) {
+static void add_subtree_to_render_order(NostrGtkThreadView *self, const char *event_id) {
   if (!self->thread_graph || !event_id) return;
 
   ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id);
@@ -1279,7 +1279,7 @@ static void add_subtree_to_render_order(GnostrThreadView *self, const char *even
 }
 
 /* Internal: build thread graph from flat event list */
-static void build_thread_graph(GnostrThreadView *self) {
+static void build_thread_graph(NostrGtkThreadView *self) {
   if (g_hash_table_size(self->events_by_id) == 0) return;
 
   /* Free existing graph */
@@ -1488,7 +1488,7 @@ static void build_thread_graph(GnostrThreadView *self) {
 }
 
 /* Internal: create collapse indicator showing hidden reply count */
-static GtkWidget *create_collapse_indicator(GnostrThreadView *self, ThreadNode *node) {
+static GtkWidget *create_collapse_indicator(NostrGtkThreadView *self, ThreadNode *node) {
   GtkWidget *btn = gtk_button_new();
   gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
   gtk_widget_add_css_class(btn, "thread-collapsed-indicator");
@@ -1517,25 +1517,25 @@ static GtkWidget *create_collapse_indicator(GnostrThreadView *self, ThreadNode *
 
 /* Callback for collapse indicator click */
 static void on_collapse_indicator_clicked(GtkButton *btn, gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
   const char *event_id = g_object_get_data(G_OBJECT(btn), "event-id");
 
   if (event_id) {
-    gnostr_thread_view_toggle_branch(self, event_id);
+    nostr_gtk_thread_view_toggle_branch(self, event_id);
   }
 }
 
-/* nostrc-evz1: Factory setup callback - creates GnostrNoteCardRow widgets */
+/* nostrc-evz1: Factory setup callback - creates NostrGtkNoteCardRow widgets */
 static void thread_factory_setup_cb(GtkSignalListItemFactory *factory,
                                      GtkListItem *item,
                                      gpointer user_data) {
   (void)factory;
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
   (void)self;
 
-  GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
+  GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
 
-  /* Connect signals - these relay through GnostrThreadView */
+  /* Connect signals - these relay through NostrGtkThreadView */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), user_data);
   g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_view_thread), user_data);
   g_signal_connect(row, "report-note-requested", G_CALLBACK(on_note_report_requested), user_data);
@@ -1543,7 +1543,7 @@ static void thread_factory_setup_cb(GtkSignalListItemFactory *factory,
   gtk_list_item_set_child(item, row);
 }
 
-/* nostrc-evz1: Factory bind callback - binds GnNostrEventItem to GnostrNoteCardRow */
+/* nostrc-evz1: Factory bind callback - binds GnNostrEventItem to NostrGtkNoteCardRow */
 /*
  * nostrc-sbqe.3: Tier 2 map handler for thread view.
  * Fired when the NoteCardRow becomes visible. Performs deferred work:
@@ -1555,19 +1555,19 @@ static void on_thread_row_mapped_tier2(GtkWidget *widget, gpointer user_data) {
   if (!GTK_IS_LIST_ITEM(list_item)) return;
 
   GtkWidget *row = gtk_list_item_get_child(list_item);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || row != widget) return;
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row) || row != widget) return;
 
-  GnostrNoteCardRow *card = GNOSTR_NOTE_CARD_ROW(row);
-  if (gnostr_note_card_row_is_disposed(card) || !gnostr_note_card_row_is_bound(card)) return;
+  NostrGtkNoteCardRow *card = NOSTR_GTK_NOTE_CARD_ROW(row);
+  if (nostr_gtk_note_card_row_is_disposed(card) || !nostr_gtk_note_card_row_is_bound(card)) return;
 
   gpointer item_ptr = g_object_get_data(G_OBJECT(list_item), "bound-item");
   if (!item_ptr || !GN_IS_NOSTR_EVENT_ITEM(item_ptr)) return;
 
   GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(item_ptr);
-  GnostrThreadView *self = g_object_get_data(G_OBJECT(list_item), "thread-view");
+  NostrGtkThreadView *self = g_object_get_data(G_OBJECT(list_item), "thread-view");
 
   /* Validate event ID matches */
-  const char *stored_id = gnostr_note_card_row_get_event_id(card);
+  const char *stored_id = nostr_gtk_note_card_row_get_event_id(card);
   const char *event_id = gn_nostr_event_item_get_event_id(event_item);
   if (!stored_id || !event_id || g_strcmp0(stored_id, event_id) != 0) return;
 
@@ -1577,29 +1577,29 @@ static void on_thread_row_mapped_tier2(GtkWidget *widget, gpointer user_data) {
   guint depth = gn_nostr_event_item_get_reply_depth(event_item);
 
   /* Avatar + NIP-05 */
-  GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+  GNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
   if (profile) {
-    const char *avatar_url = gn_nostr_profile_get_picture_url(profile);
-    gnostr_note_card_row_set_avatar(card, avatar_url);
+    const char *avatar_url = gnostr_profile_get_picture_url(profile);
+    nostr_gtk_note_card_row_set_avatar(card, avatar_url);
 
-    const char *nip05 = gn_nostr_profile_get_nip05(profile);
+    const char *nip05 = gnostr_profile_get_nip05(profile);
     if (nip05 && pubkey) {
-      gnostr_note_card_row_set_nip05(card, nip05, pubkey);
+      nostr_gtk_note_card_row_set_nip05(card, nip05, pubkey);
     }
   }
 
   /* Depth + thread info */
-  gnostr_note_card_row_set_depth(card, depth);
+  nostr_gtk_note_card_row_set_depth(card, depth);
   gboolean is_reply = (parent_id != NULL);
-  gnostr_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
+  nostr_gtk_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
 
   /* Login state */
-  gnostr_note_card_row_set_logged_in(card, is_user_logged_in());
+  nostr_gtk_note_card_row_set_logged_in(card, is_user_logged_in());
 
   /* Deferred content (media, OG, embeds) */
   const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
   if (cached) {
-    gnostr_note_card_row_apply_deferred_content(card, cached);
+    nostr_gtk_note_card_row_apply_deferred_content(card, cached);
   }
 
   /* Apply depth-based CSS class */
@@ -1629,21 +1629,21 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
                                     GtkListItem *item,
                                     gpointer user_data) {
   (void)factory;
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
   GObject *obj = gtk_list_item_get_item(item);
   GtkWidget *row = gtk_list_item_get_child(item);
 
-  if (!obj || !GN_IS_NOSTR_EVENT_ITEM(obj) || !GNOSTR_IS_NOTE_CARD_ROW(row)) {
+  if (!obj || !GN_IS_NOSTR_EVENT_ITEM(obj) || !NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
     return;
   }
 
   GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(obj);
-  GnostrNoteCardRow *card = GNOSTR_NOTE_CARD_ROW(row);
+  NostrGtkNoteCardRow *card = NOSTR_GTK_NOTE_CARD_ROW(row);
 
   /* nostrc-7t5x: CRITICAL - Prepare row for binding. Sets binding_id which gates
    * all setter functions. Without this, set_content/set_author/etc return early
    * and the card displays no content. Matches timeline-view pattern (nostrc-o7pp). */
-  gnostr_note_card_row_prepare_for_bind(card);
+  nostr_gtk_note_card_row_prepare_for_bind(card);
 
   /* ============================================================
    * nostrc-sbqe.3: TIER 1 (immediate) — Minimal bind.
@@ -1656,35 +1656,35 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
   const char *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
 
   /* Tier 1: Author name + handle (NO avatar) */
-  GnNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+  GNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
   const char *display_name = NULL, *handle = NULL;
   if (profile) {
-    display_name = gn_nostr_profile_get_display_name(profile);
-    handle = gn_nostr_profile_get_name(profile);
+    display_name = gnostr_profile_get_display_name(profile);
+    handle = gnostr_profile_get_name(profile);
   }
   if (!display_name && !handle && pubkey) {
     char fallback[20];
     snprintf(fallback, sizeof(fallback), "%.8s...", pubkey);
-    gnostr_note_card_row_set_author_name_only(card, fallback, NULL);
+    nostr_gtk_note_card_row_set_author_name_only(card, fallback, NULL);
   } else {
-    gnostr_note_card_row_set_author_name_only(card, display_name, handle);
+    nostr_gtk_note_card_row_set_author_name_only(card, display_name, handle);
   }
 
   /* Tier 1: Timestamp */
-  gnostr_note_card_row_set_timestamp(card, created_at, NULL);
+  nostr_gtk_note_card_row_set_timestamp(card, created_at, NULL);
 
   /* Tier 1: Content markup (from cached render) */
   {
     const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
     if (cached) {
-      gnostr_note_card_row_set_content_markup_only(card, content, cached);
+      nostr_gtk_note_card_row_set_content_markup_only(card, content, cached);
     } else {
-      gnostr_note_card_row_set_content(card, content);
+      nostr_gtk_note_card_row_set_content(card, content);
     }
   }
 
   /* Tier 1: IDs (needed for click handling + Tier 2 validation) */
-  gnostr_note_card_row_set_ids(card, event_id, root_id, pubkey);
+  nostr_gtk_note_card_row_set_ids(card, event_id, root_id, pubkey);
 
   /* Store references for Tier 2 map handler */
   g_object_set_data(G_OBJECT(item), "bound-item", (gpointer)event_item);
@@ -1728,8 +1728,8 @@ static void thread_factory_unbind_cb(GtkSignalListItemFactory *factory,
   /* nostrc-7t5x: CRITICAL - Prepare row for unbinding. Cancels async operations
    * and clears binding_id to prevent stale callbacks from corrupting widget state.
    * Must be called BEFORE CSS class cleanup. Matches timeline-view pattern. */
-  if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
-    gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(row));
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+    nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
   }
 
   /* Remove dynamic CSS classes */
@@ -1746,7 +1746,7 @@ static void thread_factory_unbind_cb(GtkSignalListItemFactory *factory,
 }
 
 /* Internal: rebuild UI from sorted events */
-static void rebuild_thread_ui(GnostrThreadView *self) {
+static void rebuild_thread_ui(NostrGtkThreadView *self) {
   if (!self->thread_model) return;
 
   /* Clear existing model items */
@@ -1804,18 +1804,18 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
 
     /* Create and set profile if we have profile data */
     if (item->display_name || item->handle || item->avatar_url || item->nip05) {
-      GnNostrProfile *profile = gn_nostr_profile_new(item->pubkey_hex);
+      GNostrProfile *profile = gnostr_profile_new(item->pubkey_hex);
       if (item->display_name) {
-        gn_nostr_profile_set_display_name(profile, item->display_name);
+        gnostr_profile_set_display_name(profile, item->display_name);
       }
       if (item->handle) {
-        gn_nostr_profile_set_name(profile, item->handle);
+        gnostr_profile_set_name(profile, item->handle);
       }
       if (item->avatar_url) {
-        gn_nostr_profile_set_picture_url(profile, item->avatar_url);
+        gnostr_profile_set_picture_url(profile, item->avatar_url);
       }
       if (item->nip05) {
-        gn_nostr_profile_set_nip05(profile, item->nip05);
+        gnostr_profile_set_nip05(profile, item->nip05);
       }
       gn_nostr_event_item_set_profile(event_item, profile);
       g_object_unref(profile);
@@ -1859,12 +1859,12 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
 }
 
 /* Forward declarations */
-static void fetch_missing_ancestors(GnostrThreadView *self);
-static void fetch_nip65_for_missing_authors(GnostrThreadView *self);
+static void fetch_missing_ancestors(NostrGtkThreadView *self);
+static void fetch_nip65_for_missing_authors(NostrGtkThreadView *self);
 
 /* nostrc-hl6: Context for NIP-65 relay fetch callback */
 typedef struct {
-  GnostrThreadView *self;
+  NostrGtkThreadView *self;
   gchar *pubkey_hex;
 } Nip65FetchContext;
 
@@ -1877,12 +1877,12 @@ static void nip65_fetch_ctx_free(Nip65FetchContext *ctx) {
 /* nostrc-hl6: Callback when NIP-65 relay list is fetched */
 static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
   Nip65FetchContext *ctx = (Nip65FetchContext *)user_data;
-  if (!ctx || !GNOSTR_IS_THREAD_VIEW(ctx->self)) {
+  if (!ctx || !NOSTR_GTK_IS_THREAD_VIEW(ctx->self)) {
     nip65_fetch_ctx_free(ctx);
     return;
   }
 
-  GnostrThreadView *self = ctx->self;
+  NostrGtkThreadView *self = ctx->self;
   /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
   if (self->disposed) {
     nip65_fetch_ctx_free(ctx);
@@ -1920,7 +1920,7 @@ static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
  * When root/parent events are not found, we extract p-tags from reply events
  * to find the pubkeys of authors we're replying to, then fetch their NIP-65
  * relay lists (kind 10002) and query their write relays for missing events. */
-static void fetch_nip65_for_missing_authors(GnostrThreadView *self) {
+static void fetch_nip65_for_missing_authors(NostrGtkThreadView *self) {
   if (!self || !self->events_by_id) return;
 
   /* Collect pubkeys of authors we should query for NIP-65 relay lists.
@@ -2014,8 +2014,8 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
 
   /* Now safe to access user_data */
   if (!user_data) return;
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
+  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
 
   if (!results || results->len == 0) {
     g_debug("[THREAD_VIEW] No events found from relays");
@@ -2070,8 +2070,8 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
 
   /* Now safe to access user_data */
   if (!user_data) return;
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
+  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
 
   g_message("[THREAD_VIEW] on_root_fetch_done: callback fired");
 
@@ -2123,8 +2123,8 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
 
   /* Now safe to access user_data */
   if (!user_data) return;
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
+  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
 
   gboolean found_new_events = FALSE;
 
@@ -2189,7 +2189,7 @@ static void add_relay_hint_if_unique(GPtrArray *relay_arr, const char *hint) {
  * nostrc-46g: Improved to track already-fetched ancestors and properly traverse
  * the full chain to the root event.
  * nostrc-7r5: Now uses NIP-10 relay hints from e-tags to query hinted relays. */
-static void fetch_missing_ancestors(GnostrThreadView *self) {
+static void fetch_missing_ancestors(NostrGtkThreadView *self) {
   if (!self || g_hash_table_size(self->events_by_id) == 0) return;
 
   /* nostrc-46g: Check depth limit to prevent infinite traversal */
@@ -2362,7 +2362,7 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
 }
 
 /* Internal: fetch thread from relays */
-static void fetch_thread_from_relays(GnostrThreadView *self) {
+static void fetch_thread_from_relays(NostrGtkThreadView *self) {
   if (!self->thread_root_id && !self->focus_event_id) return;
 
   /* Cancel previous fetch */
@@ -2563,8 +2563,8 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
 
   /* Now safe to access user_data */
   if (!user_data) return;
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-  if (!GNOSTR_IS_THREAD_VIEW(self) || self->disposed) return;
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
+  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
 
   gboolean found_new = FALSE;
 
@@ -2602,7 +2602,7 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
 
 /* Internal: fetch children (replies) of events we have, but haven't queried yet.
  * This implements iterative child discovery for complete graph building. */
-static void fetch_children_from_relays(GnostrThreadView *self) {
+static void fetch_children_from_relays(NostrGtkThreadView *self) {
   if (!self || g_hash_table_size(self->events_by_id) == 0) return;
 
   /* Check iteration limit to prevent infinite loops */
@@ -2683,7 +2683,7 @@ static void fetch_children_from_relays(GnostrThreadView *self) {
 
 /* Internal: load a single event by ID from nostrdb and add to collection.
  * Returns the ThreadEventItem if found, NULL otherwise. */
-static ThreadEventItem *load_event_by_id(GnostrThreadView *self, const char *id_hex) {
+static ThreadEventItem *load_event_by_id(NostrGtkThreadView *self, const char *id_hex) {
   if (!id_hex || strlen(id_hex) != 64) return NULL;
 
   /* Check if already loaded */
@@ -2709,7 +2709,7 @@ static ThreadEventItem *load_event_by_id(GnostrThreadView *self, const char *id_
 
 /* Internal: recursively load parent chain from nostrdb (NIP-10).
  * Walks up parent_id or root_id references to load all ancestor events. */
-static void load_parent_chain(GnostrThreadView *self, ThreadEventItem *item, int depth) {
+static void load_parent_chain(NostrGtkThreadView *self, ThreadEventItem *item, int depth) {
   if (!item || depth > MAX_THREAD_DEPTH) return;
 
   /* Load parent event (reply marker takes precedence) */
@@ -2728,7 +2728,7 @@ static void load_parent_chain(GnostrThreadView *self, ThreadEventItem *item, int
 }
 
 /* Internal: load thread from nostrdb and relays */
-static void load_thread(GnostrThreadView *self) {
+static void load_thread(NostrGtkThreadView *self) {
   const char *focus_id = self->focus_event_id;
   const char *root_id = self->thread_root_id;
 
@@ -2882,7 +2882,7 @@ static void update_item_profile_from_cache(ThreadEventItem *item) {
 }
 
 /* Internal: update a single note card widget with profile info */
-static void update_note_card_profile(GnostrNoteCardRow *row, ThreadEventItem *item) {
+static void update_note_card_profile(NostrGtkNoteCardRow *row, ThreadEventItem *item) {
   if (!row || !item) return;
 
   const char *display = item->display_name;
@@ -2892,18 +2892,18 @@ static void update_note_card_profile(GnostrNoteCardRow *row, ThreadEventItem *it
     /* Fallback to truncated pubkey */
     char fallback[20];
     snprintf(fallback, sizeof(fallback), "%.8s...", item->pubkey_hex);
-    gnostr_note_card_row_set_author(row, fallback, NULL, item->avatar_url);
+    nostr_gtk_note_card_row_set_author(row, fallback, NULL, item->avatar_url);
   } else {
-    gnostr_note_card_row_set_author(row, display, handle, item->avatar_url);
+    nostr_gtk_note_card_row_set_author(row, display, handle, item->avatar_url);
   }
 
   if (item->nip05 && item->pubkey_hex) {
-    gnostr_note_card_row_set_nip05(row, item->nip05, item->pubkey_hex);
+    nostr_gtk_note_card_row_set_nip05(row, item->nip05, item->pubkey_hex);
   }
 }
 
-void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+void nostr_gtk_thread_view_update_profiles(NostrGtkThreadView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
 
   if (!self->thread_model || !self->sorted_events) return;
 
@@ -2930,11 +2930,11 @@ void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
 
       /* Update the GnNostrEventItem's profile */
       if (item->display_name || item->handle || item->avatar_url || item->nip05) {
-        GnNostrProfile *profile = gn_nostr_profile_new(item->pubkey_hex);
-        if (item->display_name) gn_nostr_profile_set_display_name(profile, item->display_name);
-        if (item->handle) gn_nostr_profile_set_name(profile, item->handle);
-        if (item->avatar_url) gn_nostr_profile_set_picture_url(profile, item->avatar_url);
-        if (item->nip05) gn_nostr_profile_set_nip05(profile, item->nip05);
+        GNostrProfile *profile = gnostr_profile_new(item->pubkey_hex);
+        if (item->display_name) gnostr_profile_set_display_name(profile, item->display_name);
+        if (item->handle) gnostr_profile_set_name(profile, item->handle);
+        if (item->avatar_url) gnostr_profile_set_picture_url(profile, item->avatar_url);
+        if (item->nip05) gnostr_profile_set_nip05(profile, item->nip05);
         gn_nostr_event_item_set_profile(event_item, profile);
         g_object_unref(profile);
       }
@@ -2954,8 +2954,8 @@ void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
 
 /* Timeout callback to rebuild the UI after receiving new events */
 static gboolean on_rebuild_debounce_timeout(gpointer user_data) {
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-  if (!GNOSTR_IS_THREAD_VIEW(self)) return G_SOURCE_REMOVE;
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
+  if (!NOSTR_GTK_IS_THREAD_VIEW(self)) return G_SOURCE_REMOVE;
   /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
   if (self->disposed) return G_SOURCE_REMOVE;
 
@@ -2973,7 +2973,7 @@ static gboolean on_rebuild_debounce_timeout(gpointer user_data) {
 /* Schedule a debounced UI rebuild */
 /* LEGITIMATE TIMEOUT - Debounce thread rebuild to batch rapid updates.
  * nostrc-b0h: Audited - debouncing expensive UI rebuilds is appropriate. */
-static void schedule_thread_rebuild(GnostrThreadView *self) {
+static void schedule_thread_rebuild(NostrGtkThreadView *self) {
   if (self->rebuild_pending_id > 0) {
     /* Already scheduled, don't reschedule */
     return;
@@ -2987,8 +2987,8 @@ static void schedule_thread_rebuild(GnostrThreadView *self) {
 static void on_ndb_thread_batch(uint64_t subid, const uint64_t *note_keys,
                                  guint n_keys, gpointer user_data) {
   (void)subid;
-  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
-  if (!GNOSTR_IS_THREAD_VIEW(self) || !note_keys || n_keys == 0) return;
+  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
+  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || !note_keys || n_keys == 0) return;
   /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
   if (self->disposed) return;
 
@@ -3064,7 +3064,7 @@ static void on_ndb_thread_batch(uint64_t subid, const uint64_t *note_keys,
 }
 
 /* Setup nostrdb subscription for thread events */
-static void setup_thread_subscription(GnostrThreadView *self) {
+static void setup_thread_subscription(NostrGtkThreadView *self) {
   if (!self) return;
 
   /* Teardown any existing subscription */
@@ -3092,7 +3092,7 @@ static void setup_thread_subscription(GnostrThreadView *self) {
 }
 
 /* Teardown nostrdb subscription */
-static void teardown_thread_subscription(GnostrThreadView *self) {
+static void teardown_thread_subscription(NostrGtkThreadView *self) {
   if (!self) return;
 
   if (self->ndb_sub_thread > 0) {
@@ -3105,8 +3105,8 @@ static void teardown_thread_subscription(GnostrThreadView *self) {
 
 /* ========== Public API for branch collapse/expand ========== */
 
-void gnostr_thread_view_toggle_branch(GnostrThreadView *self, const char *event_id_hex) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+void nostr_gtk_thread_view_toggle_branch(NostrGtkThreadView *self, const char *event_id_hex) {
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
   g_return_if_fail(event_id_hex != NULL);
 
   if (!self->thread_graph) return;
@@ -3121,8 +3121,8 @@ void gnostr_thread_view_toggle_branch(GnostrThreadView *self, const char *event_
   rebuild_thread_ui(self);
 }
 
-void gnostr_thread_view_expand_all(GnostrThreadView *self) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+void nostr_gtk_thread_view_expand_all(NostrGtkThreadView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
 
   if (!self->thread_graph) return;
 
@@ -3139,8 +3139,8 @@ void gnostr_thread_view_expand_all(GnostrThreadView *self) {
   rebuild_thread_ui(self);
 }
 
-void gnostr_thread_view_collapse_non_focus(GnostrThreadView *self) {
-  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+void nostr_gtk_thread_view_collapse_non_focus(NostrGtkThreadView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self));
 
   if (!self->thread_graph) return;
 

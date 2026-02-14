@@ -23,18 +23,18 @@
 
 /* Bridge state */
 static gchar *bridge_user_pubkey = NULL;
-static NostrEventBusHandle *handle_kind0 = NULL;
-static NostrEventBusHandle *handle_kind3 = NULL;
-static NostrEventBusHandle *handle_kind10000 = NULL;
-static NostrEventBusHandle *handle_kind10001 = NULL;
-static NostrEventBusHandle *handle_kind10002 = NULL;
-static NostrEventBusHandle *handle_sync_complete = NULL;
+static GNostrEventBusHandle *handle_kind0 = NULL;
+static GNostrEventBusHandle *handle_kind3 = NULL;
+static GNostrEventBusHandle *handle_kind10000 = NULL;
+static GNostrEventBusHandle *handle_kind10001 = NULL;
+static GNostrEventBusHandle *handle_kind10002 = NULL;
+static GNostrEventBusHandle *handle_sync_complete = NULL;
 static gboolean bridge_initialized = FALSE;
 
 /* ============================================================================
  * EventBus callbacks
  *
- * These run on the thread that calls nostr_event_bus_emit().
+ * These run on the thread that calls gnostr_event_bus_emit().
  * The sync service emits from the main thread (GTask callback),
  * so these are main-thread safe.
  * ============================================================================ */
@@ -99,7 +99,7 @@ on_kind10000_changed(const gchar *topic, gpointer event_data, gpointer user_data
 
   /* Reload mute list from NDB cache. The singleton mute list
    * service will pick up any new events ingested by the sync. */
-  GnostrMuteList *mute = gnostr_mute_list_get_default();
+  GNostrMuteList *mute = gnostr_mute_list_get_default();
   if (mute) {
     /* Trigger async fetch which reloads from relays/cache.
      * Pass NULL relays to force NDB-only reload. */
@@ -161,30 +161,30 @@ gnostr_sync_bridge_init(const char *user_pubkey_hex)
 
   bridge_user_pubkey = user_pubkey_hex ? g_strdup(user_pubkey_hex) : NULL;
 
-  NostrEventBus *bus = nostr_event_bus_get_default();
+  GNostrEventBus *bus = gnostr_event_bus_get_default();
   if (!bus) {
     g_debug("[SYNC-BRIDGE] EventBus not available, bridge disabled");
     return;
   }
 
   /* Subscribe to kind-specific sync events */
-  handle_kind0 = nostr_event_bus_subscribe(bus,
+  handle_kind0 = gnostr_event_bus_subscribe(bus,
     "negentropy::kind::0", on_kind0_changed, NULL);
 
-  handle_kind3 = nostr_event_bus_subscribe(bus,
+  handle_kind3 = gnostr_event_bus_subscribe(bus,
     "negentropy::kind::3", on_kind3_changed, NULL);
 
-  handle_kind10000 = nostr_event_bus_subscribe(bus,
+  handle_kind10000 = gnostr_event_bus_subscribe(bus,
     "negentropy::kind::10000", on_kind10000_changed, NULL);
 
-  handle_kind10001 = nostr_event_bus_subscribe(bus,
+  handle_kind10001 = gnostr_event_bus_subscribe(bus,
     "negentropy::kind::10001", on_kind10001_changed, NULL);
 
-  handle_kind10002 = nostr_event_bus_subscribe(bus,
+  handle_kind10002 = gnostr_event_bus_subscribe(bus,
     "negentropy::kind::10002", on_kind10002_changed, NULL);
 
   /* Subscribe to overall sync completion for logging */
-  handle_sync_complete = nostr_event_bus_subscribe(bus,
+  handle_sync_complete = gnostr_event_bus_subscribe(bus,
     GNOSTR_NEG_TOPIC_SYNC_COMPLETE, on_sync_complete, NULL);
 
   bridge_initialized = TRUE;
@@ -210,20 +210,20 @@ gnostr_sync_bridge_shutdown(void)
   if (!bridge_initialized)
     return;
 
-  NostrEventBus *bus = nostr_event_bus_get_default();
+  GNostrEventBus *bus = gnostr_event_bus_get_default();
   if (bus) {
     if (handle_kind0)
-      nostr_event_bus_unsubscribe(bus, handle_kind0);
+      gnostr_event_bus_unsubscribe(bus, handle_kind0);
     if (handle_kind3)
-      nostr_event_bus_unsubscribe(bus, handle_kind3);
+      gnostr_event_bus_unsubscribe(bus, handle_kind3);
     if (handle_kind10000)
-      nostr_event_bus_unsubscribe(bus, handle_kind10000);
+      gnostr_event_bus_unsubscribe(bus, handle_kind10000);
     if (handle_kind10001)
-      nostr_event_bus_unsubscribe(bus, handle_kind10001);
+      gnostr_event_bus_unsubscribe(bus, handle_kind10001);
     if (handle_kind10002)
-      nostr_event_bus_unsubscribe(bus, handle_kind10002);
+      gnostr_event_bus_unsubscribe(bus, handle_kind10002);
     if (handle_sync_complete)
-      nostr_event_bus_unsubscribe(bus, handle_sync_complete);
+      gnostr_event_bus_unsubscribe(bus, handle_sync_complete);
   }
 
   handle_kind0 = NULL;

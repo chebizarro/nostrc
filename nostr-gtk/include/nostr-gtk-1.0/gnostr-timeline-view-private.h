@@ -1,7 +1,7 @@
 /**
  * gnostr-timeline-view-private.h — Internal struct definitions
  *
- * Exposes GnostrTimelineView and TimelineItem struct layouts for use
+ * Exposes NostrGtkTimelineView and TimelineItem struct layouts for use
  * by app-level factory code that needs direct field access.
  *
  * NOT installed as a public header. Only include from within the
@@ -10,8 +10,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#ifndef GNOSTR_TIMELINE_VIEW_PRIVATE_H
-#define GNOSTR_TIMELINE_VIEW_PRIVATE_H
+#ifndef NOSTR_GTK_TIMELINE_VIEW_PRIVATE_H
+#define NOSTR_GTK_TIMELINE_VIEW_PRIVATE_H
 
 #include "gnostr-timeline-view.h"
 #include <gtk/gtk.h>
@@ -50,9 +50,9 @@ typedef struct _TimelineItemClass {
   GObjectClass parent_class;
 } TimelineItemClass;
 
-/* ============== GnostrTimelineView ============== */
+/* ============== NostrGtkTimelineView ============== */
 
-struct _GnostrTimelineView {
+struct _NostrGtkTimelineView {
   GtkWidget parent_instance;
   GtkWidget *root_box;
   GtkWidget *tabs;
@@ -80,4 +80,4 @@ struct _GnostrTimelineView {
 
 G_END_DECLS
 
-#endif /* GNOSTR_TIMELINE_VIEW_PRIVATE_H */
+#endif /* NOSTR_GTK_TIMELINE_VIEW_PRIVATE_H */

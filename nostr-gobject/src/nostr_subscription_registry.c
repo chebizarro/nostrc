@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 gnostr contributors
  *
- * nostr_subscription_registry.c - Central subscription tracking and management
+ * gnostr_subscription_registry.c - Central subscription tracking and management
  */
 
 #include "nostr_subscription_registry.h"
@@ -111,7 +111,7 @@ typedef struct {
     guint64 eose_latency_count;     /* Number of EOSE latency measurements */
 
     GMutex mutex;                   /* Thread safety */
-} NostrSubscriptionRegistryPrivate;
+} GNostrSubscriptionRegistryPrivate;
 
 typedef struct {
     guint id;
@@ -120,19 +120,19 @@ typedef struct {
     GDestroyNotify destroy_notify;
 } StateCallbackEntry;
 
-G_DEFINE_TYPE_WITH_PRIVATE(NostrSubscriptionRegistry, nostr_subscription_registry, G_TYPE_OBJECT)
+G_DEFINE_TYPE_WITH_PRIVATE(GNostrSubscriptionRegistry, gnostr_subscription_registry, G_TYPE_OBJECT)
 
 /* --- Singleton --- */
 
-static NostrSubscriptionRegistry *default_registry = NULL;
+static GNostrSubscriptionRegistry *default_registry = NULL;
 G_LOCK_DEFINE_STATIC(default_registry_lock);
 
-NostrSubscriptionRegistry *
-nostr_subscription_registry_get_default(void)
+GNostrSubscriptionRegistry *
+gnostr_subscription_registry_get_default(void)
 {
     G_LOCK(default_registry_lock);
     if (default_registry == NULL) {
-        default_registry = g_object_new(NOSTR_TYPE_SUBSCRIPTION_REGISTRY, NULL);
+        default_registry = g_object_new(GNOSTR_TYPE_SUBSCRIPTION_REGISTRY, NULL);
         /* prevent destruction */
         g_object_add_weak_pointer(G_OBJECT(default_registry),
                                   (gpointer *)&default_registry);
@@ -166,20 +166,20 @@ subscription_group_free(NostrSubscriptionGroup *group)
 /* --- Internal Helpers --- */
 
 static gchar *
-generate_subscription_id(NostrSubscriptionRegistryPrivate *priv)
+generate_subscription_id(GNostrSubscriptionRegistryPrivate *priv)
 {
     guint64 id = priv->next_sub_id++;
     return g_strdup_printf("sub_%016" G_GUINT64_FORMAT "x", id);
 }
 
 static void
-notify_state_change(NostrSubscriptionRegistry *registry,
+notify_state_change(GNostrSubscriptionRegistry *registry,
                     const gchar *sub_id,
                     NostrSubscriptionState old_state,
                     NostrSubscriptionState new_state)
 {
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     for (guint i = 0; i < priv->state_callbacks->len; i++) {
         StateCallbackEntry *entry = &g_array_index(priv->state_callbacks,
@@ -191,7 +191,7 @@ notify_state_change(NostrSubscriptionRegistry *registry,
 }
 
 static void
-increment_relay_count(NostrSubscriptionRegistryPrivate *priv, const gchar *relay_url)
+increment_relay_count(GNostrSubscriptionRegistryPrivate *priv, const gchar *relay_url)
 {
     if (!relay_url)
         return;
@@ -204,7 +204,7 @@ increment_relay_count(NostrSubscriptionRegistryPrivate *priv, const gchar *relay
 }
 
 static void
-decrement_relay_count(NostrSubscriptionRegistryPrivate *priv, const gchar *relay_url)
+decrement_relay_count(GNostrSubscriptionRegistryPrivate *priv, const gchar *relay_url)
 {
     if (!relay_url)
         return;
@@ -226,14 +226,14 @@ decrement_relay_count(NostrSubscriptionRegistryPrivate *priv, const gchar *relay
 /* --- GObject Implementation --- */
 
 static void
-nostr_subscription_registry_dispose(GObject *object)
+gnostr_subscription_registry_dispose(GObject *object)
 {
-    NostrSubscriptionRegistry *self = NOSTR_SUBSCRIPTION_REGISTRY(object);
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(self);
+    GNostrSubscriptionRegistry *self = GNOSTR_SUBSCRIPTION_REGISTRY(object);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(self);
 
     /* Stop health monitor before taking lock */
-    nostr_subscription_registry_stop_health_monitor(self);
+    gnostr_subscription_registry_stop_health_monitor(self);
 
     g_mutex_lock(&priv->mutex);
 
@@ -266,15 +266,15 @@ nostr_subscription_registry_dispose(GObject *object)
 
     g_mutex_unlock(&priv->mutex);
 
-    G_OBJECT_CLASS(nostr_subscription_registry_parent_class)->dispose(object);
+    G_OBJECT_CLASS(gnostr_subscription_registry_parent_class)->dispose(object);
 }
 
 static void
-nostr_subscription_registry_finalize(GObject *object)
+gnostr_subscription_registry_finalize(GObject *object)
 {
-    NostrSubscriptionRegistry *self = NOSTR_SUBSCRIPTION_REGISTRY(object);
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(self);
+    GNostrSubscriptionRegistry *self = GNOSTR_SUBSCRIPTION_REGISTRY(object);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(self);
 
     g_hash_table_unref(priv->subscriptions);
     g_hash_table_unref(priv->groups);
@@ -284,23 +284,23 @@ nostr_subscription_registry_finalize(GObject *object)
     g_array_unref(priv->state_callbacks);
     g_mutex_clear(&priv->mutex);
 
-    G_OBJECT_CLASS(nostr_subscription_registry_parent_class)->finalize(object);
+    G_OBJECT_CLASS(gnostr_subscription_registry_parent_class)->finalize(object);
 }
 
 static void
-nostr_subscription_registry_class_init(NostrSubscriptionRegistryClass *klass)
+gnostr_subscription_registry_class_init(GNostrSubscriptionRegistryClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
 
-    object_class->dispose = nostr_subscription_registry_dispose;
-    object_class->finalize = nostr_subscription_registry_finalize;
+    object_class->dispose = gnostr_subscription_registry_dispose;
+    object_class->finalize = gnostr_subscription_registry_finalize;
 }
 
 static void
-nostr_subscription_registry_init(NostrSubscriptionRegistry *self)
+gnostr_subscription_registry_init(GNostrSubscriptionRegistry *self)
 {
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(self);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(self);
 
     g_mutex_init(&priv->mutex);
 
@@ -335,22 +335,22 @@ nostr_subscription_registry_init(NostrSubscriptionRegistry *self)
 /* --- Registration API --- */
 
 gchar *
-nostr_subscription_registry_register(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_register(GNostrSubscriptionRegistry *registry,
                                       GNostrSubscription *subscription)
 {
-    return nostr_subscription_registry_register_with_group(registry, subscription, NULL);
+    return gnostr_subscription_registry_register_with_group(registry, subscription, NULL);
 }
 
 gchar *
-nostr_subscription_registry_register_with_group(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_register_with_group(GNostrSubscriptionRegistry *registry,
                                                  GNostrSubscription *subscription,
                                                  const gchar *group_name)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
     g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION(subscription), NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -403,14 +403,14 @@ nostr_subscription_registry_register_with_group(NostrSubscriptionRegistry *regis
 }
 
 gboolean
-nostr_subscription_registry_unregister(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_unregister(GNostrSubscriptionRegistry *registry,
                                         const gchar *sub_id)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), FALSE);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), FALSE);
     g_return_val_if_fail(sub_id != NULL, FALSE);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -455,14 +455,14 @@ nostr_subscription_registry_unregister(NostrSubscriptionRegistry *registry,
 /* --- Lookup API --- */
 
 GNostrSubscription *
-nostr_subscription_registry_get_by_id(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_get_by_id(GNostrSubscriptionRegistry *registry,
                                        const gchar *sub_id)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
     g_return_val_if_fail(sub_id != NULL, NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
     GNostrSubscription *sub = g_hash_table_lookup(priv->subscriptions, sub_id);
@@ -472,12 +472,12 @@ nostr_subscription_registry_get_by_id(NostrSubscriptionRegistry *registry,
 }
 
 guint
-nostr_subscription_registry_get_active_count(NostrSubscriptionRegistry *registry)
+gnostr_subscription_registry_get_active_count(GNostrSubscriptionRegistry *registry)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -499,12 +499,12 @@ nostr_subscription_registry_get_active_count(NostrSubscriptionRegistry *registry
 }
 
 guint
-nostr_subscription_registry_get_total_count(NostrSubscriptionRegistry *registry)
+gnostr_subscription_registry_get_total_count(GNostrSubscriptionRegistry *registry)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
     guint count = g_hash_table_size(priv->subscriptions);
@@ -516,14 +516,14 @@ nostr_subscription_registry_get_total_count(NostrSubscriptionRegistry *registry)
 /* --- EOSE Handling --- */
 
 void
-nostr_subscription_registry_notify_eose(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_notify_eose(GNostrSubscriptionRegistry *registry,
                                          const gchar *sub_id)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
     g_return_if_fail(sub_id != NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -562,24 +562,24 @@ nostr_subscription_registry_notify_eose(NostrSubscriptionRegistry *registry,
         g_mutex_unlock(&priv->mutex);
 
         /* Unsubscribe and unregister */
-        GNostrSubscription *sub_to_close = nostr_subscription_registry_get_by_id(registry, sub_id);
+        GNostrSubscription *sub_to_close = gnostr_subscription_registry_get_by_id(registry, sub_id);
         if (sub_to_close) {
             gnostr_subscription_unsubscribe(sub_to_close);
         }
-        nostr_subscription_registry_unregister(registry, sub_id);
+        gnostr_subscription_registry_unregister(registry, sub_id);
     }
 }
 
 /* --- Relay Limits --- */
 
 void
-nostr_subscription_registry_set_max_per_relay(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_set_max_per_relay(GNostrSubscriptionRegistry *registry,
                                                guint max_subscriptions)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
     priv->max_per_relay = max_subscriptions;
@@ -587,12 +587,12 @@ nostr_subscription_registry_set_max_per_relay(NostrSubscriptionRegistry *registr
 }
 
 guint
-nostr_subscription_registry_get_max_per_relay(NostrSubscriptionRegistry *registry)
+gnostr_subscription_registry_get_max_per_relay(GNostrSubscriptionRegistry *registry)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
     guint max = priv->max_per_relay;
@@ -602,14 +602,14 @@ nostr_subscription_registry_get_max_per_relay(NostrSubscriptionRegistry *registr
 }
 
 guint
-nostr_subscription_registry_get_relay_subscription_count(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_get_relay_subscription_count(GNostrSubscriptionRegistry *registry,
                                                           const gchar *relay_url)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
     g_return_val_if_fail(relay_url != NULL, 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
     gpointer count_ptr = g_hash_table_lookup(priv->relay_counts, relay_url);
@@ -622,16 +622,16 @@ nostr_subscription_registry_get_relay_subscription_count(NostrSubscriptionRegist
 /* --- State Change Notifications --- */
 
 guint
-nostr_subscription_registry_add_state_callback(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_add_state_callback(GNostrSubscriptionRegistry *registry,
                                                 NostrSubscriptionStateCallback callback,
                                                 gpointer user_data,
                                                 GDestroyNotify destroy_notify)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
     g_return_val_if_fail(callback != NULL, 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -651,13 +651,13 @@ nostr_subscription_registry_add_state_callback(NostrSubscriptionRegistry *regist
 }
 
 void
-nostr_subscription_registry_remove_state_callback(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_remove_state_callback(GNostrSubscriptionRegistry *registry,
                                                    guint callback_id)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -679,14 +679,14 @@ nostr_subscription_registry_remove_state_callback(NostrSubscriptionRegistry *reg
 /* --- Group Operations --- */
 
 NostrSubscriptionGroup *
-nostr_subscription_registry_create_group(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_create_group(GNostrSubscriptionRegistry *registry,
                                           const gchar *group_name)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
     g_return_val_if_fail(group_name != NULL, NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -703,14 +703,14 @@ nostr_subscription_registry_create_group(NostrSubscriptionRegistry *registry,
 }
 
 NostrSubscriptionGroup *
-nostr_subscription_registry_get_group(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_get_group(GNostrSubscriptionRegistry *registry,
                                        const gchar *group_name)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), NULL);
     g_return_val_if_fail(group_name != NULL, NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
     NostrSubscriptionGroup *group = g_hash_table_lookup(priv->groups, group_name);
@@ -720,14 +720,14 @@ nostr_subscription_registry_get_group(NostrSubscriptionRegistry *registry,
 }
 
 guint
-nostr_subscription_registry_close_group(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_close_group(GNostrSubscriptionRegistry *registry,
                                          const gchar *group_name)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
     g_return_val_if_fail(group_name != NULL, 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -753,11 +753,11 @@ nostr_subscription_registry_close_group(NostrSubscriptionRegistry *registry,
     /* Close each subscription outside of lock */
     for (guint i = 0; i < sub_ids->len; i++) {
         const gchar *sub_id = g_ptr_array_index(sub_ids, i);
-        GNostrSubscription *sub = nostr_subscription_registry_get_by_id(registry, sub_id);
+        GNostrSubscription *sub = gnostr_subscription_registry_get_by_id(registry, sub_id);
         if (sub) {
             gnostr_subscription_unsubscribe(sub);
         }
-        nostr_subscription_registry_unregister(registry, sub_id);
+        gnostr_subscription_registry_unregister(registry, sub_id);
     }
 
     g_ptr_array_unref(sub_ids);
@@ -771,16 +771,16 @@ nostr_subscription_registry_close_group(NostrSubscriptionRegistry *registry,
 }
 
 gboolean
-nostr_subscription_registry_add_to_group(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_add_to_group(GNostrSubscriptionRegistry *registry,
                                           const gchar *sub_id,
                                           const gchar *group_name)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), FALSE);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), FALSE);
     g_return_val_if_fail(sub_id != NULL, FALSE);
     g_return_val_if_fail(group_name != NULL, FALSE);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -803,16 +803,16 @@ nostr_subscription_registry_add_to_group(NostrSubscriptionRegistry *registry,
 }
 
 gboolean
-nostr_subscription_registry_remove_from_group(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_remove_from_group(GNostrSubscriptionRegistry *registry,
                                                const gchar *sub_id,
                                                const gchar *group_name)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), FALSE);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), FALSE);
     g_return_val_if_fail(sub_id != NULL, FALSE);
     g_return_val_if_fail(group_name != NULL, FALSE);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -831,15 +831,15 @@ nostr_subscription_registry_remove_from_group(NostrSubscriptionRegistry *registr
 /* --- Iteration --- */
 
 void
-nostr_subscription_registry_foreach(NostrSubscriptionRegistry *registry,
-                                     NostrSubscriptionRegistryForeachFunc func,
+gnostr_subscription_registry_foreach(GNostrSubscriptionRegistry *registry,
+                                     GNostrSubscriptionRegistryForeachFunc func,
                                      gpointer user_data)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
     g_return_if_fail(func != NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -868,15 +868,15 @@ nostr_subscription_registry_foreach(NostrSubscriptionRegistry *registry,
 }
 
 void
-nostr_subscription_registry_foreach_active(NostrSubscriptionRegistry *registry,
-                                            NostrSubscriptionRegistryForeachFunc func,
+gnostr_subscription_registry_foreach_active(GNostrSubscriptionRegistry *registry,
+                                            GNostrSubscriptionRegistryForeachFunc func,
                                             gpointer user_data)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
     g_return_if_fail(func != NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -912,19 +912,19 @@ nostr_subscription_registry_foreach_active(NostrSubscriptionRegistry *registry,
 /* --- Statistics --- */
 
 void
-nostr_subscription_registry_get_stats(NostrSubscriptionRegistry *registry,
-                                       NostrSubscriptionRegistryStats *stats)
+gnostr_subscription_registry_get_stats(GNostrSubscriptionRegistry *registry,
+                                       GNostrSubscriptionRegistryStats *stats)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
     g_return_if_fail(stats != NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
     stats->total_registered = priv->total_registered;
-    stats->current_active = nostr_subscription_registry_get_active_count(registry);
+    stats->current_active = gnostr_subscription_registry_get_active_count(registry);
     stats->ephemeral_closed = priv->ephemeral_closed;
     stats->groups_count = g_hash_table_size(priv->groups);
 
@@ -961,14 +961,14 @@ nostr_subscription_registry_get_stats(NostrSubscriptionRegistry *registry,
 /* --- Health Monitoring --- */
 
 void
-nostr_subscription_registry_notify_event(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_notify_event(GNostrSubscriptionRegistry *registry,
                                           const gchar *sub_id)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
     g_return_if_fail(sub_id != NULL);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -988,9 +988,9 @@ nostr_subscription_registry_notify_event(NostrSubscriptionRegistry *registry,
 static gboolean
 health_check_tick(gpointer user_data)
 {
-    NostrSubscriptionRegistry *registry = NOSTR_SUBSCRIPTION_REGISTRY(user_data);
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistry *registry = GNOSTR_SUBSCRIPTION_REGISTRY(user_data);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     gint64 now = g_get_monotonic_time();
     gint64 threshold_us = (gint64)priv->stuck_timeout_ms * 1000;
@@ -1033,7 +1033,7 @@ health_check_tick(gpointer user_data)
     /* Auto-reconnect persistent subscriptions in ERROR state */
     for (guint i = 0; i < error_ids->len; i++) {
         const gchar *sub_id = g_ptr_array_index(error_ids, i);
-        GNostrSubscription *sub = nostr_subscription_registry_get_by_id(registry, sub_id);
+        GNostrSubscription *sub = gnostr_subscription_registry_get_by_id(registry, sub_id);
         if (sub) {
             g_info("[REGISTRY] Auto-reconnecting persistent subscription %s", sub_id);
 
@@ -1068,18 +1068,18 @@ health_check_tick(gpointer user_data)
 }
 
 void
-nostr_subscription_registry_start_health_monitor(NostrSubscriptionRegistry *registry,
+gnostr_subscription_registry_start_health_monitor(GNostrSubscriptionRegistry *registry,
                                                    guint check_interval_ms,
                                                    guint stuck_timeout_ms)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
     g_return_if_fail(check_interval_ms > 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     /* Stop existing monitor if running */
-    nostr_subscription_registry_stop_health_monitor(registry);
+    gnostr_subscription_registry_stop_health_monitor(registry);
 
     priv->stuck_timeout_ms = stuck_timeout_ms;
     priv->health_timer_id = g_timeout_add(check_interval_ms,
@@ -1088,12 +1088,12 @@ nostr_subscription_registry_start_health_monitor(NostrSubscriptionRegistry *regi
 }
 
 void
-nostr_subscription_registry_stop_health_monitor(NostrSubscriptionRegistry *registry)
+gnostr_subscription_registry_stop_health_monitor(GNostrSubscriptionRegistry *registry)
 {
-    g_return_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry));
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     if (priv->health_timer_id != 0) {
         g_source_remove(priv->health_timer_id);
@@ -1104,12 +1104,12 @@ nostr_subscription_registry_stop_health_monitor(NostrSubscriptionRegistry *regis
 /* --- Cleanup --- */
 
 guint
-nostr_subscription_registry_close_all(NostrSubscriptionRegistry *registry)
+gnostr_subscription_registry_close_all(GNostrSubscriptionRegistry *registry)
 {
-    g_return_val_if_fail(NOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION_REGISTRY(registry), 0);
 
-    NostrSubscriptionRegistryPrivate *priv =
-        nostr_subscription_registry_get_instance_private(registry);
+    GNostrSubscriptionRegistryPrivate *priv =
+        gnostr_subscription_registry_get_instance_private(registry);
 
     g_mutex_lock(&priv->mutex);
 
@@ -1129,11 +1129,11 @@ nostr_subscription_registry_close_all(NostrSubscriptionRegistry *registry)
     /* Close each subscription outside of lock */
     for (guint i = 0; i < sub_ids->len; i++) {
         const gchar *sub_id = g_ptr_array_index(sub_ids, i);
-        GNostrSubscription *sub = nostr_subscription_registry_get_by_id(registry, sub_id);
+        GNostrSubscription *sub = gnostr_subscription_registry_get_by_id(registry, sub_id);
         if (sub) {
             gnostr_subscription_unsubscribe(sub);
         }
-        nostr_subscription_registry_unregister(registry, sub_id);
+        gnostr_subscription_registry_unregister(registry, sub_id);
     }
 
     g_ptr_array_unref(sub_ids);

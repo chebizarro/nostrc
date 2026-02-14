@@ -238,17 +238,17 @@ bind_local_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer use
     GnostrPageDiscover *self = GNOSTR_PAGE_DISCOVER(user_data);
 
     GnostrProfileRow *row = GNOSTR_PROFILE_ROW(gtk_list_item_get_child(list_item));
-    GnNostrProfile *profile = gtk_list_item_get_item(list_item);
+    GNostrProfile *profile = gtk_list_item_get_item(list_item);
 
     if (!profile)
         return;
 
-    const char *pubkey = gn_nostr_profile_get_pubkey(profile);
-    const char *display_name = gn_nostr_profile_get_display_name(profile);
-    const char *name = gn_nostr_profile_get_name(profile);
-    const char *nip05 = gn_nostr_profile_get_nip05(profile);
-    const char *about = gn_nostr_profile_get_about(profile);
-    const char *picture = gn_nostr_profile_get_picture_url(profile);
+    const char *pubkey = gnostr_profile_get_pubkey(profile);
+    const char *display_name = gnostr_profile_get_display_name(profile);
+    const char *name = gnostr_profile_get_name(profile);
+    const char *nip05 = gnostr_profile_get_nip05(profile);
+    const char *about = gnostr_profile_get_about(profile);
+    const char *picture = gnostr_profile_get_picture_url(profile);
 
     gnostr_profile_row_set_profile(row, pubkey, display_name, name, nip05, about, picture);
 

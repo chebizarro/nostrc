@@ -21,7 +21,7 @@
 G_BEGIN_DECLS
 
 /* Forward declarations */
-typedef struct _GnostrSimplePool GnostrSimplePool;
+typedef struct _GNostrSimplePool GNostrSimplePool;
 typedef struct _NostrQueryBatcher NostrQueryBatcher;
 
 /*
@@ -59,14 +59,14 @@ typedef struct {
 
 /*
  * NostrQueryBatcher:
- * The main batcher component. Attached to a GnostrSimplePool.
+ * The main batcher component. Attached to a GNostrSimplePool.
  */
 struct _NostrQueryBatcher {
     GHashTable *pending_batches;    /* relay_url (char*) -> RelayBatch* */
     GMutex mutex;                   /* Protects all state */
     guint flush_timeout_id;         /* GSource ID for batch flush timer */
     guint batch_window_ms;          /* Batching window in milliseconds (default: 75) */
-    GnostrSimplePool *pool;         /* Owning pool (weak ref, do not unref) */
+    GNostrSimplePool *pool;         /* Owning pool (weak ref, do not unref) */
     gboolean disposing;             /* TRUE during shutdown */
 
     /* Metrics */
@@ -77,13 +77,13 @@ struct _NostrQueryBatcher {
 
 /*
  * nostr_query_batcher_new:
- * @pool: The GnostrSimplePool that owns this batcher
+ * @pool: The GNostrSimplePool that owns this batcher
  *
  * Creates a new query batcher. The batcher does not own the pool reference.
  *
  * Returns: (transfer full): A new NostrQueryBatcher, free with nostr_query_batcher_free()
  */
-NostrQueryBatcher *nostr_query_batcher_new(GnostrSimplePool *pool);
+NostrQueryBatcher *nostr_query_batcher_new(GNostrSimplePool *pool);
 
 /*
  * nostr_query_batcher_free:

@@ -6,7 +6,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GnostrTimelineView" parent="GtkWidget">
+  <template class="NostrGtkTimelineView" parent="GtkWidget">
     <property name="hexpand">true</property>
     <property name="vexpand">true</property>
     <child>
@@ -15,7 +15,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <property name="hexpand">true</property>
         <property name="vexpand">true</property>
         <child>
-          <object class="GnTimelineTabs" id="tabs">
+          <object class="NostrGtkTimelineTabs" id="tabs">
             <property name="visible">false</property>
           </object>
         </child>

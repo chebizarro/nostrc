@@ -488,7 +488,7 @@ static void on_request_cancelled(GCancellable *cancellable, gpointer user_data) 
  * Public API
  */
 
-NostrQueryBatcher *nostr_query_batcher_new(GnostrSimplePool *pool) {
+NostrQueryBatcher *nostr_query_batcher_new(GNostrSimplePool *pool) {
     g_return_val_if_fail(pool != NULL, NULL);
 
     NostrQueryBatcher *batcher = g_new0(NostrQueryBatcher, 1);

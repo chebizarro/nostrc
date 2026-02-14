@@ -52,7 +52,7 @@ static int mock_is_bound(MockNoteCard *card) {
   return card && card->binding_id != 0;
 }
 
-/* Mimics the guard logic in gnostr_note_card_row_set_content */
+/* Mimics the guard logic in nostr_gtk_note_card_row_set_content */
 static void mock_set_content(MockNoteCard *card, const char *content) {
   if (!card) return;
   if (card->disposed) return;

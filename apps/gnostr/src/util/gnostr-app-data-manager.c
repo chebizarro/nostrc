@@ -639,7 +639,7 @@ void gnostr_app_data_manager_sync_on_login(const char *pubkey_hex) {
 /* ---- Individual Data Type Sync ---- */
 
 /* Helper: convert app-data merge strategy to mute-list merge strategy */
-static GnostrMuteListMergeStrategy
+static GNostrMuteListMergeStrategy
 app_strategy_to_mute_strategy(GnostrAppDataMergeStrategy strategy) {
     switch (strategy) {
     case GNOSTR_APP_DATA_MERGE_LOCAL_WINS:
@@ -661,7 +661,7 @@ typedef struct {
     gpointer user_data;
 } MuteSyncContext;
 
-static void on_mute_sync_done(GnostrMuteList *mute_list,
+static void on_mute_sync_done(GNostrMuteList *mute_list,
                                gboolean success,
                                gpointer user_data) {
     (void)mute_list;

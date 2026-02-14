@@ -22,7 +22,7 @@ G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_SYNC_SERVICE (gnostr_sync_service_get_type())
 
-G_DECLARE_FINAL_TYPE(GnostrSyncService, gnostr_sync_service,
+G_DECLARE_FINAL_TYPE(GNostrSyncService, gnostr_sync_service,
                      GNOSTR, SYNC_SERVICE, GObject)
 
 /**
@@ -67,7 +67,7 @@ typedef void (*GnostrSyncRelayProvider)(GPtrArray *out, gpointer user_data);
  *
  * Returns: (transfer none): The sync service singleton. Do not unref.
  */
-GnostrSyncService *gnostr_sync_service_new(GnostrSyncRelayProvider relay_provider,
+GNostrSyncService *gnostr_sync_service_new(GnostrSyncRelayProvider relay_provider,
                                             gpointer user_data);
 
 /**
@@ -79,7 +79,7 @@ GnostrSyncService *gnostr_sync_service_new(GnostrSyncRelayProvider relay_provide
  * Returns: (transfer none) (nullable): The default sync service, or
  *   %NULL if gnostr_sync_service_new() has not been called yet.
  */
-GnostrSyncService *gnostr_sync_service_get_default(void);
+GNostrSyncService *gnostr_sync_service_get_default(void);
 
 /**
  * gnostr_sync_service_shutdown:
@@ -99,7 +99,7 @@ void gnostr_sync_service_shutdown(void);
  * then schedules periodic syncs at the adaptive interval.
  * No-op if already started.
  */
-void gnostr_sync_service_start(GnostrSyncService *self);
+void gnostr_sync_service_start(GNostrSyncService *self);
 
 /**
  * gnostr_sync_service_stop:
@@ -107,7 +107,7 @@ void gnostr_sync_service_start(GnostrSyncService *self);
  *
  * Stops the periodic sync timer and cancels any pending sync.
  */
-void gnostr_sync_service_stop(GnostrSyncService *self);
+void gnostr_sync_service_stop(GNostrSyncService *self);
 
 /**
  * gnostr_sync_service_sync_now:
@@ -116,7 +116,7 @@ void gnostr_sync_service_stop(GnostrSyncService *self);
  * Triggers an immediate sync, resetting the periodic timer.
  * Use for reconnection events or user-requested sync.
  */
-void gnostr_sync_service_sync_now(GnostrSyncService *self);
+void gnostr_sync_service_sync_now(GNostrSyncService *self);
 
 /* --- Status --- */
 
@@ -126,7 +126,7 @@ void gnostr_sync_service_sync_now(GnostrSyncService *self);
  *
  * Returns: The current sync state.
  */
-GnostrSyncState gnostr_sync_service_get_state(GnostrSyncService *self);
+GnostrSyncState gnostr_sync_service_get_state(GNostrSyncService *self);
 
 /**
  * gnostr_sync_service_get_last_sync_time:
@@ -134,7 +134,7 @@ GnostrSyncState gnostr_sync_service_get_state(GnostrSyncService *self);
  *
  * Returns: Monotonic time (microseconds) of last completed sync, or 0.
  */
-gint64 gnostr_sync_service_get_last_sync_time(GnostrSyncService *self);
+gint64 gnostr_sync_service_get_last_sync_time(GNostrSyncService *self);
 
 /**
  * gnostr_sync_service_get_consecutive_in_sync:
@@ -142,7 +142,7 @@ gint64 gnostr_sync_service_get_last_sync_time(GnostrSyncService *self);
  *
  * Returns: Number of consecutive syncs that found no changes.
  */
-guint gnostr_sync_service_get_consecutive_in_sync(GnostrSyncService *self);
+guint gnostr_sync_service_get_consecutive_in_sync(GNostrSyncService *self);
 
 /**
  * gnostr_sync_service_is_running:
@@ -150,7 +150,7 @@ guint gnostr_sync_service_get_consecutive_in_sync(GnostrSyncService *self);
  *
  * Returns: %TRUE if the periodic timer is active.
  */
-gboolean gnostr_sync_service_is_running(GnostrSyncService *self);
+gboolean gnostr_sync_service_is_running(GNostrSyncService *self);
 
 /* --- EventBus Topics --- */
 

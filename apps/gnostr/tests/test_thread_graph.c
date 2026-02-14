@@ -9,10 +9,10 @@
 #include <glib.h>
 #include <string.h>
 
-/* We need the ThreadGraph types but not the full GnostrThreadView.
+/* We need the ThreadGraph types but not the full NostrGtkThreadView.
  * Define minimal stubs for GTK types used in the header. */
 typedef struct _GtkWidget GtkWidget;
-typedef struct _GnostrThreadView GnostrThreadView;
+typedef struct _NostrGtkThreadView NostrGtkThreadView;
 
 /* Define the types we're testing (copied from gnostr-thread-view.c) */
 
