@@ -1,26 +1,24 @@
 #include "gnostr-thread-view.h"
 #include "note_card_row.h"
-#include "gnostr-avatar-cache.h"
-#include "gnostr-profile-provider.h"
-#include "../storage_ndb.h"
-#include "../model/gn-ndb-sub-dispatcher.h"
-#include "../model/gn-nostr-event-item.h"
-#include "../model/gn-nostr-profile.h"
-#include "../util/relays.h"
-#include "../util/utils.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
+#include "gn-nostr-event-item.h"
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
+#include <nostr-gobject-1.0/gnostr-relays.h>
+#include "utils.h"
 #include <nostr-gobject-1.0/nostr_event.h>
-#include "nostr-json.h"
 #include <nostr-gobject-1.0/nostr_filter.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_json.h>
+#include <nostr-filter.h>
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <string.h>
 #include <time.h>
-#include <nostr-gobject-1.0/nostr_json.h>
-#include <json.h>
 
-#define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-thread-view.ui"
+#define UI_RESOURCE "/org/nostr/gtk/gnostr-thread-view.ui"
 
 /* Check if user is logged in by checking GSettings current-npub.
  * Returns TRUE if logged in, FALSE otherwise. */

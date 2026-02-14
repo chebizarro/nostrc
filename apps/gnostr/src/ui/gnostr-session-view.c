@@ -11,7 +11,7 @@
 #include "gnostr-avatar-cache.h"
 #include "gnostr-repo-browser.h"
 #include "gnostr-search-results-view.h"
-#include "gnostr-thread-view.h"
+#include <nostr-gtk-1.0/gnostr-thread-view.h>
 #include "gnostr-article-reader.h"
 #include "gnostr-timeline-view.h"
 #include "page-discover.h"

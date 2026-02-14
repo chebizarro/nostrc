@@ -13,7 +13,6 @@
     <file>ui/widgets/gnostr-notifications-view.ui</file>
     <file>ui/widgets/gnostr-notification-row.ui</file>
     <file>ui/widgets/gnostr-profile-pane.ui</file>
-    <file>ui/widgets/gnostr-thread-view.ui</file>
     <file>ui/widgets/gnostr-note-embed.ui</file>
     <file>ui/widgets/page-discover.ui</file>
     <file>ui/widgets/gnostr-profile-row.ui</file>

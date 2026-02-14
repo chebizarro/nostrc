@@ -36,7 +36,6 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.blp
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-thread-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.blp
@@ -105,7 +104,6 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-thread-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.ui
@@ -203,6 +201,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
   ${PROJECT_ROOT}/nostr-gobject/include
+  ${PROJECT_ROOT}/nostr-gtk/include
   ${PROJECT_ROOT}/libnostr/include
   ${_NOSTR_CONFIG_DIR}
   ${PROJECT_ROOT}/libgo/include
@@ -228,6 +227,8 @@ endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Link nostr-gobject library (GObject wrappers compiled once in nostr-gobject/)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject)
+# Link nostr-gtk widget library (GTK4/libadwaita widgets moved from app)
+target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)

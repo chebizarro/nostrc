@@ -41,17 +41,20 @@ add_custom_command(
           --target=${GRESOURCE_C}
           ${GRESOURCE_XML}
   DEPENDS ${GRESOURCE_XML}
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/gnostr-thread-view.ui
   COMMENT "Compiling nostr-gtk GResources"
   VERBATIM)
 
 # ── Source files ─────────────────────────────────────────────────────
 set(NOSTR_GTK_SOURCES
   src/nostr-gtk-init.c
+  src/gnostr-thread-view.c
   ${GRESOURCE_C}
 )
 
 set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/nostr-gtk.h
+  include/nostr-gtk-1.0/gnostr-thread-view.h
 )
 
 # ── Library target ───────────────────────────────────────────────────
@@ -70,6 +73,13 @@ target_include_directories(nostr_gtk
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0
+    # Transitional: app-specific headers not yet moved to nostr-gobject/nostr-gtk
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/ui
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/model
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/util
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/libgo/include
 )
 
 # Public dependencies (propagated to consumers)

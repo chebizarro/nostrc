@@ -23,7 +23,7 @@ G_BEGIN_DECLS
  */
 void nostr_gtk_init (void);
 
-/* Widget headers will be added here as they are moved from the app */
+#include "gnostr-thread-view.h"
 
 G_END_DECLS
 
