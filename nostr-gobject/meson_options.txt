@@ -1,5 +1,7 @@
 option('introspection', type: 'boolean', value: false,
   description: 'Generate GObject Introspection data (requires consistent GNostr naming)')
+option('vapi', type: 'boolean', value: true,
+  description: 'Generate Vala VAPI bindings (requires introspection)')
 option('tests', type: 'boolean', value: true,
   description: 'Build tests')
 option('examples', type: 'boolean', value: true,

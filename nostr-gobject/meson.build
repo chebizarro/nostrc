@@ -204,6 +204,7 @@ nostr_gobject_headers = files(
   'include/nostr_nip46_bunker.h',
   'include/nostr_nip49.h',
   'include/nostr_bip39.h',
+  'include/storage_ndb.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
@@ -265,6 +266,14 @@ if get_option('introspection')
     identifier_prefix: 'GNostr',
     includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0'],
     install: true)
+
+  # ── VAPI generation (Vala bindings) ──────────────────────────────────
+  if get_option('vapi')
+    gnome.generate_vapi('nostr-gobject-1.0',
+      sources: nostr_gobject_gir[0],
+      packages: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
+      install: true)
+  endif
 endif
 
 # ── pkg-config ───────────────────────────────────────────────────────
