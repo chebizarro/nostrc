@@ -15,8 +15,8 @@
 #include "../ui/gnostr-avatar-cache.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
-#include "nostr_json.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_json.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
 #include <json.h>
 #include <string.h>
 

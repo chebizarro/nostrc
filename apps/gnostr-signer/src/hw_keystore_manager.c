@@ -8,7 +8,7 @@
 #include <stdio.h>
 
 /* libnostr for crypto operations */
-#include <nostr_keys.h>
+#include <nostr-gobject-1.0/nostr_keys.h>
 
 /* GSettings keys */
 #define GSETTINGS_HW_KEYSTORE_ENABLED "hardware-keystore-enabled"

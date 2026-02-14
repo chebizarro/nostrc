@@ -5,7 +5,7 @@
 
 #include "nip68_picture.h"
 #include <json-glib/json-glib.h>
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>

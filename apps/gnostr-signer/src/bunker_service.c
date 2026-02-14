@@ -16,9 +16,9 @@
 #include "client_session.h"
 #include "event_history.h"
 
-#include "nostr_nip46_bunker.h"
+#include <nostr-gobject-1.0/nostr_nip46_bunker.h>
 #include <nostr/nip46/nip46_uri.h>
-#include <nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
 #include <time.h>
 

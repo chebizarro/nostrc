@@ -16,8 +16,8 @@
 #include <nostr-kinds.h>
 #include "nostr-event.h"
 /* GObject relay wrapper for publishing (includes nostr-relay.h internally) */
-#include "nostr_relay.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_relay.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
 /* GObject simple pool wrapper for fetching */
 #include "nostr-filter.h"
 

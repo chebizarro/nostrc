@@ -4,7 +4,7 @@
 #include "ui/gnostr-main-window.h"
 #include "ui/gnostr-tray-icon.h"
 #include "model/gn-ndb-sub-dispatcher.h"
-#include "storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "util/gnostr_paths.h"
 #include "util/gnostr_e2e.h"
 #include "util/cache_prune.h"

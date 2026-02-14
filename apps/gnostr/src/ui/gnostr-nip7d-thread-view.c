@@ -11,7 +11,7 @@
 #include "../util/utils.h"
 #include "../storage_ndb.h"
 #include "../util/relays.h"
-#include "nostr_filter.h"
+#include <nostr-gobject-1.0/nostr_filter.h>
 #include "nostr-filter.h"
 #include <glib/gi18n.h>
 #include <string.h>

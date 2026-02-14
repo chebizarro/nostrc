@@ -8,8 +8,8 @@
  */
 #include "secret-storage.h"
 #include "secure-memory.h"
-#include <nostr_nip19.h>
-#include <nostr_keys.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_keys.h>
 /* Core nsec decode still needed (GObject NIP-19 doesn't expose decoded secret key) */
 #include <nostr/nip19/nip19.h>
 #include <stdio.h>

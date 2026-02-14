@@ -8,7 +8,7 @@
 #define G_LOG_DOMAIN "nip61-nutzaps"
 
 #include "nip61_nutzaps.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 #include <time.h>
 

@@ -4,10 +4,10 @@
 #include <string.h>
 
 /* Storage (app-local header path) */
-#include "storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 /* GObject pool wrapper */
-#include "nostr_pool.h"
-#include "nostr_subscription.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_subscription.h>
 /* Canonical nostr headers used in the app */
 #include "nostr-event.h"
 #include "nostr-filter.h"

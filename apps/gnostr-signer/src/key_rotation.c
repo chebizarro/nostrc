@@ -15,8 +15,8 @@
 #include "relay_store.h"
 #include "secure-memory.h"
 #include <json-glib/json-glib.h>
-#include <nostr_nip19.h>
-#include <nostr_keys.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_keys.h>
 /* Core key generation still needed (GObject wrapper doesn't expose private key hex) */
 #include <keys.h>
 #include <string.h>

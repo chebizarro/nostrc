@@ -141,7 +141,7 @@ version_conf.set('NOSTR_GOBJECT_MICRO_VERSION', version_parts[2])
 version_conf.set('NOSTR_GOBJECT_VERSION', meson.project_version())
 
 nostr_gobject_version_h = configure_file(
-  input: 'include/nostr-gobject-version.h.in',
+  input: 'include/nostr-gobject-1.0/nostr-gobject-version.h.in',
   output: 'nostr-gobject-version.h',
   configuration: version_conf,
   install: true,
@@ -185,37 +185,40 @@ nostr_gobject_sources = files(
 
 # Header files (public API)
 nostr_gobject_headers = files(
-  'include/nostr-gobject.h',
-  'include/nostr-error.h',
-  'include/nostr-types.h',
-  'include/nostr-enums.h',
-  'include/nostr_event.h',
-  'include/nostr_event_bus.h',
-  'include/nostr_keys.h',
-  'include/nostr_relay.h',
-  'include/nostr_subscription.h',
-  'include/nostr_simple_pool.h',
-  'include/nostr_pool.h',
-  'include/nostr_relay_store.h',
-  'include/nostr_store.h',
-  'include/crypto_utils_gobject.h',
-  'include/nostr_async.h',
-  'include/nostr_query_batcher.h',
-  'include/nostr_subscription_registry.h',
-  'include/nostr_filter.h',
-  'include/nostr_json.h',
-  'include/nostr_pointer.h',
-  'include/nostr_nip19.h',
-  'include/nostr_tag_list.h',
-  'include/nostr_nip46_client.h',
-  'include/nostr_nip46_bunker.h',
-  'include/nostr_nip49.h',
-  'include/nostr_bip39.h',
-  'include/storage_ndb.h',
+  'include/nostr-gobject-1.0/nostr-gobject.h',
+  'include/nostr-gobject-1.0/nostr-error.h',
+  'include/nostr-gobject-1.0/nostr-types.h',
+  'include/nostr-gobject-1.0/nostr-enums.h',
+  'include/nostr-gobject-1.0/nostr_event.h',
+  'include/nostr-gobject-1.0/nostr_event_bus.h',
+  'include/nostr-gobject-1.0/nostr_keys.h',
+  'include/nostr-gobject-1.0/nostr_relay.h',
+  'include/nostr-gobject-1.0/nostr_subscription.h',
+  'include/nostr-gobject-1.0/nostr_simple_pool.h',
+  'include/nostr-gobject-1.0/nostr_pool.h',
+  'include/nostr-gobject-1.0/nostr_relay_store.h',
+  'include/nostr-gobject-1.0/nostr_store.h',
+  'include/nostr-gobject-1.0/crypto_utils_gobject.h',
+  'include/nostr-gobject-1.0/nostr_async.h',
+  'include/nostr-gobject-1.0/nostr_query_batcher.h',
+  'include/nostr-gobject-1.0/nostr_subscription_registry.h',
+  'include/nostr-gobject-1.0/nostr_filter.h',
+  'include/nostr-gobject-1.0/nostr_json.h',
+  'include/nostr-gobject-1.0/nostr_pointer.h',
+  'include/nostr-gobject-1.0/nostr_nip19.h',
+  'include/nostr-gobject-1.0/nostr_tag_list.h',
+  'include/nostr-gobject-1.0/nostr_nip46_client.h',
+  'include/nostr-gobject-1.0/nostr_nip46_bunker.h',
+  'include/nostr-gobject-1.0/nostr_nip49.h',
+  'include/nostr-gobject-1.0/nostr_bip39.h',
+  'include/nostr-gobject-1.0/storage_ndb.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
-nostr_gobject_inc = include_directories('include')
+# Internal: library sources use #include "nostr_event.h" (flat)
+nostr_gobject_inc = include_directories('include/nostr-gobject-1.0')
+# External: consumers use #include <nostr-gobject-1.0/nostr_event.h>
+nostr_gobject_pub_inc = include_directories('include')
 
 # Collect all dependencies
 nostr_gobject_deps = [
@@ -258,7 +261,7 @@ nostr_gobject_lib = library('nostr-gobject-1.0',
 # ── Declare dependency for use as subproject ─────────────────────────
 nostr_gobject_dep = declare_dependency(
   link_with: nostr_gobject_lib,
-  include_directories: nostr_gobject_inc,
+  include_directories: nostr_gobject_pub_inc,
   dependencies: [glib_dep, gobject_dep, gio_dep])
 
 # ── GObject Introspection ────────────────────────────────────────────

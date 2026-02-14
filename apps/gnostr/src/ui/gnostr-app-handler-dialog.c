@@ -7,7 +7,7 @@
 #include "gnostr-app-handler-dialog.h"
 #include "gnostr-avatar-cache.h"
 #include "../util/nip89_handlers.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-app-handler-dialog.ui"
 

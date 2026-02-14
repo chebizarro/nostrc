@@ -14,7 +14,7 @@
 #include "gnostr-sync-service.h"
 #include "neg-client.h"
 #include "../util/relays.h"
-#include <nostr_event_bus.h>
+#include <nostr-gobject-1.0/nostr_event_bus.h>
 #include <string.h>
 
 /* Adaptive interval bounds (seconds) */

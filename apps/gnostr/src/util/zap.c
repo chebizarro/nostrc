@@ -6,7 +6,7 @@
 
 #include "zap.h"
 #include "relays.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include "utils.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"

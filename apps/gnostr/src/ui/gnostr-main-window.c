@@ -38,19 +38,19 @@
 #include <gdk/gdkkeysyms.h>
 #include <time.h>
 /* JSON helpers - GObject wrappers and core interface */
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"
 /* NIP-19 bech32 encoding (GObject wrapper) */
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 /* nostr_pool.h already included below; simple pool removed */
 #include "nostr-event.h"
 #include "nostr-filter.h"
 /* Canonical JSON helpers (for nostr_event_from_json, etc.) */
 #include "nostr-json.h"
 /* GObject wrappers for profile-related code */
-#include "nostr_event.h"
-#include "nostr_pool.h"
-#include "nostr_subscription.h"
+#include <nostr-gobject-1.0/nostr_event.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_subscription.h>
 /* NostrdB storage */
 #include "../storage_ndb.h"
 #include "../model/gn-ndb-sub-dispatcher.h"

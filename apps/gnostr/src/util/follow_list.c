@@ -12,7 +12,7 @@
 #include "../storage_ndb.h"
 #include <nostr-filter.h>
 #include <nostr-json.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 
 /* Free a follow entry */

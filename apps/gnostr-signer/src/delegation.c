@@ -10,7 +10,7 @@
  */
 #include "delegation.h"
 #include "secret_store.h"
-#include <nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <json-glib/json-glib.h>
 #include <string.h>
 #include <time.h>

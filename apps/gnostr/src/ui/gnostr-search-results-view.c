@@ -14,7 +14,7 @@
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
 #include "../util/relays.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-json.h"

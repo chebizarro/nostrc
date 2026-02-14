@@ -28,7 +28,7 @@ find_path(NSYNC_INCLUDE_DIR NAMES nsync.h REQUIRED)
 
 # ── Version header (configure from template) ─────────────────────────
 configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-version.h.in
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-1.0/nostr-gobject-version.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h
   @ONLY)
 
@@ -81,33 +81,33 @@ set(NOSTR_GOBJECT_SOURCES
 )
 
 set(NOSTR_GOBJECT_HEADERS
-  include/nostr-gobject.h
-  include/nostr-error.h
-  include/nostr-types.h
-  include/nostr-enums.h
-  include/nostr_event.h
-  include/nostr_event_bus.h
-  include/nostr_keys.h
-  include/nostr_relay.h
-  include/nostr_subscription.h
-  include/nostr_simple_pool.h
-  include/nostr_pool.h
-  include/nostr_relay_store.h
-  include/nostr_store.h
-  include/crypto_utils_gobject.h
-  include/nostr_async.h
-  include/nostr_query_batcher.h
-  include/nostr_subscription_registry.h
-  include/nostr_filter.h
-  include/nostr_json.h
-  include/nostr_pointer.h
-  include/nostr_nip19.h
-  include/nostr_tag_list.h
-  include/nostr_nip46_client.h
-  include/nostr_nip46_bunker.h
-  include/nostr_nip49.h
-  include/nostr_bip39.h
-  include/storage_ndb.h
+  include/nostr-gobject-1.0/nostr-gobject.h
+  include/nostr-gobject-1.0/nostr-error.h
+  include/nostr-gobject-1.0/nostr-types.h
+  include/nostr-gobject-1.0/nostr-enums.h
+  include/nostr-gobject-1.0/nostr_event.h
+  include/nostr-gobject-1.0/nostr_event_bus.h
+  include/nostr-gobject-1.0/nostr_keys.h
+  include/nostr-gobject-1.0/nostr_relay.h
+  include/nostr-gobject-1.0/nostr_subscription.h
+  include/nostr-gobject-1.0/nostr_simple_pool.h
+  include/nostr-gobject-1.0/nostr_pool.h
+  include/nostr-gobject-1.0/nostr_relay_store.h
+  include/nostr-gobject-1.0/nostr_store.h
+  include/nostr-gobject-1.0/crypto_utils_gobject.h
+  include/nostr-gobject-1.0/nostr_async.h
+  include/nostr-gobject-1.0/nostr_query_batcher.h
+  include/nostr-gobject-1.0/nostr_subscription_registry.h
+  include/nostr-gobject-1.0/nostr_filter.h
+  include/nostr-gobject-1.0/nostr_json.h
+  include/nostr-gobject-1.0/nostr_pointer.h
+  include/nostr-gobject-1.0/nostr_nip19.h
+  include/nostr-gobject-1.0/nostr_tag_list.h
+  include/nostr-gobject-1.0/nostr_nip46_client.h
+  include/nostr-gobject-1.0/nostr_nip46_bunker.h
+  include/nostr-gobject-1.0/nostr_nip49.h
+  include/nostr-gobject-1.0/nostr_bip39.h
+  include/nostr-gobject-1.0/storage_ndb.h
 )
 
 # ── Library target ───────────────────────────────────────────────────
@@ -121,10 +121,13 @@ set_target_properties(nostr_gobject PROPERTIES
 
 target_include_directories(nostr_gobject
   PUBLIC
+    # Consumers: #include <nostr-gobject-1.0/nostr_event.h>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
+    # Library sources: #include "nostr_event.h" (flat)
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-1.0
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
     ${CMAKE_SOURCE_DIR}/nips/nip06/include
     $<$<BOOL:${ENABLE_NIP11}>:${CMAKE_SOURCE_DIR}/nips/nip11/include>
@@ -248,7 +251,7 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           --library-path ${CMAKE_BINARY_DIR}/libnostr
           --library-path ${CMAKE_BINARY_DIR}/libjson
           --pkg glib-2.0 --pkg gobject-2.0 --pkg gio-2.0
-          -I ${CMAKE_CURRENT_SOURCE_DIR}/include
+          -I ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-1.0
           -I ${CMAKE_CURRENT_BINARY_DIR}
           -I ${CMAKE_SOURCE_DIR}/libnostr/include
           -I ${CMAKE_BINARY_DIR}/libnostr/generated

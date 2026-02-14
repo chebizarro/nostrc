@@ -1,3 +1,3 @@
-/* Shim: storage_ndb.h moved to nostr-gobject/include/ (nostrc-lx03) */
+/* Shim: storage_ndb.h moved to nostr-gobject library (nostrc-lx03) */
 #pragma once
-#include "../../../nostr-gobject/include/storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>

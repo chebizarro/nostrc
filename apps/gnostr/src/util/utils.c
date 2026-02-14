@@ -1,6 +1,6 @@
 #include "utils.h"
-#include "nostr_nip19.h"
-#include "nostr_relay.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_relay.h>
 #include "../storage_ndb.h"
 #include "nostr-filter.h"
 #include "json.h"

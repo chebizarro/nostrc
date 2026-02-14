@@ -10,7 +10,7 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib/gi18n.h>
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 
 /* QR code generation - using qrencode if available */
 #ifdef HAVE_QRENCODE

@@ -2,7 +2,7 @@
 #define GNOSTR_NIP42_AUTH_H
 
 #include <glib.h>
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
 
 /**
  * gnostr_nip42_setup_pool_auth:

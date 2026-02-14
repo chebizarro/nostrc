@@ -7,7 +7,7 @@
  */
 
 #include "nip21_uri.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
 #include <ctype.h>
 

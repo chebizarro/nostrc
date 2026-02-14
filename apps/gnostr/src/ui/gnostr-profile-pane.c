@@ -24,14 +24,14 @@
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-json.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"
 #include "../util/bookmarks.h"
 #include "../util/pin_list.h"
 #include "../util/nip02_contacts.h"
 #include "gnostr-main-window.h"
 #include "gnostr-profile-provider.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif

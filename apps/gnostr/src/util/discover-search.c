@@ -15,13 +15,13 @@
 #include "nip05.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
 #include "../storage_ndb.h"
 
 #include <string.h>
 #include <ctype.h>
 #include <json-glib/json-glib.h>
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 
 /* Default search limit */
 #define DEFAULT_SEARCH_LIMIT 50

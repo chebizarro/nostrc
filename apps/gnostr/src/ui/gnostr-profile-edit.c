@@ -4,7 +4,7 @@
 #include "../util/nip39_identity.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <glib.h>
 #include <glib/gi18n.h>

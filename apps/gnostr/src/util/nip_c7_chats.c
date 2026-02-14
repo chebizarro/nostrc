@@ -9,7 +9,7 @@
 #define G_LOG_DOMAIN "nip-c7-chats"
 
 #include "nip_c7_chats.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"

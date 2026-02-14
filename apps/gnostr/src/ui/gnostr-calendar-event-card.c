@@ -9,7 +9,7 @@
 #include "../util/nip05.h"
 #include "../util/utils.h"
 #include <glib/gi18n.h>
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>

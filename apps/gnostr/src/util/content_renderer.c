@@ -9,7 +9,7 @@
 #include "content_renderer.h"
 #include "../storage_ndb.h"
 #include "../ui/gnostr-profile-provider.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
 
 /* nostrdb headers (with diagnostic suppression for zero-length arrays) */

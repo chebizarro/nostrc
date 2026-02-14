@@ -4,7 +4,7 @@
 
 #include "nip72_communities.h"
 #include <string.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 
 /* ===== GnostrCommunityModerator functions ===== */
 

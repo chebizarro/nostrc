@@ -12,7 +12,7 @@
 
 /* App-internal includes - only needed when building the main app */
 #ifndef GNOSTR_PLUGIN_BUILD
-#include "storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "util/relays.h"
 #include "ipc/gnostr-signer-service.h"
 #include "util/utils.h"

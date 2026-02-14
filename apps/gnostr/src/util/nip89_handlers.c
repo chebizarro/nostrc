@@ -8,12 +8,12 @@
 #include "../storage_ndb.h"
 #include "relays.h"
 #include <string.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-filter.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
 
 /* ============== Cache Configuration ============== */
 

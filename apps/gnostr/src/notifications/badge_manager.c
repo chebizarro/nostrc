@@ -12,7 +12,7 @@
 #include "../storage_ndb.h"
 #include "../util/zap.h"
 #include "../ui/gnostr-notifications-view.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 
 #include <stdio.h>
 #include <string.h>

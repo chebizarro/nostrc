@@ -7,7 +7,7 @@
 #define G_LOG_DOMAIN "nip37-drafts"
 
 #include "nip37_drafts.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 #include <time.h>
 

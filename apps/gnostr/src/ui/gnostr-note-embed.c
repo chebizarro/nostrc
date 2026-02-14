@@ -8,10 +8,10 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
 #include "../storage_ndb.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-event.h>
 #include <nostr-filter.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 /* nostr_pool.h provided via utils.h */
 #include "../util/relays.h"

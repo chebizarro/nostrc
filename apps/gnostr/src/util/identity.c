@@ -4,7 +4,7 @@
 
 #include "identity.h"
 #include "keystore.h"
-#include "nostr_keys.h"
+#include <nostr-gobject-1.0/nostr_keys.h>
 #include <string.h>
 
 /* GSettings schema and key names */

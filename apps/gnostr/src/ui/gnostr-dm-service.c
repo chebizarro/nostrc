@@ -13,9 +13,9 @@
 #include "../ipc/gnostr-signer-service.h"
 #include "../util/relays.h"
 #include "../util/dm_files.h"
-#include "nostr_pool.h"
-#include "nostr_subscription.h"
-#include "nostr_relay.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_subscription.h>
+#include <nostr-gobject-1.0/nostr_relay.h>
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-kinds.h"

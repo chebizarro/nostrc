@@ -3,7 +3,7 @@
 #include "../util/utils.h"
 #include "../util/follow_list.h"
 #include <json.h>          /* nostr_json_is_object_str (no GObject wrapper yet) */
-#include "nostr_json.h"    /* GObject JSON utilities */
+#include <nostr-gobject-1.0/nostr_json.h>    /* GObject JSON utilities */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

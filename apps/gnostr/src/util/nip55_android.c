@@ -7,7 +7,7 @@
 
 #include "nip55_android.h"
 #include <string.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 
 /* Intent URI components */

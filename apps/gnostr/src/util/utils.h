@@ -31,7 +31,7 @@ void gnostr_cleanup_shared_soup_session(void);
 
 #endif /* HAVE_SOUP3 */
 
-#include <nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
 
 /**
  * gnostr_get_shared_query_pool:

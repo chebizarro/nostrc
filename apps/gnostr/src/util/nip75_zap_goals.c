@@ -6,7 +6,7 @@
 
 #include "nip75_zap_goals.h"
 #include "zap.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 #include <time.h>
 

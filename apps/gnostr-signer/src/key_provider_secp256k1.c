@@ -9,7 +9,7 @@
 #include "key_provider_secp256k1.h"
 #include "secure-mem.h"
 #include "secure-memory.h"
-#include <nostr_keys.h>
+#include <nostr-gobject-1.0/nostr_keys.h>
 #include <keys.h>       /* nostr_key_generate_private() - no GObject equivalent */
 #include <string.h>
 

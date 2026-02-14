@@ -4,7 +4,7 @@
  */
 
 #include "nip22_comments.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <string.h>
 

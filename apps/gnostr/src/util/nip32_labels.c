@@ -7,7 +7,7 @@
 
 #include "nip32_labels.h"
 #include "../storage_ndb.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <string.h>
 #include <time.h>

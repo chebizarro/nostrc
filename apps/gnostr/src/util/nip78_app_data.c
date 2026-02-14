@@ -7,7 +7,7 @@
 #include "nip78_app_data.h"
 #include "relays.h"
 #include "../ipc/gnostr-signer-service.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"
 #include <string.h>
 #include <time.h>
@@ -16,7 +16,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-relay.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
 #endif
 
 /* ---- Memory Management ---- */

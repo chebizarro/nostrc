@@ -12,7 +12,7 @@
 #include "bunker_service.h"
 #include "secure-memory.h"
 #include "secure-mem.h"
-#include <nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr/nip46/nip46_client.h>
 #include <stdlib.h>
 #include <string.h>

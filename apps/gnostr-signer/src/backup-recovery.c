@@ -8,10 +8,10 @@
 #include "secure-mem.h"
 
 #include <json-glib/json-glib.h>
-#include <nostr_nip49.h>
-#include <nostr_nip19.h>
-#include <nostr_bip39.h>
-#include <nostr_keys.h>
+#include <nostr-gobject-1.0/nostr_nip49.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_bip39.h>
+#include <nostr-gobject-1.0/nostr_keys.h>
 
 #include <string.h>
 #include <stdlib.h>

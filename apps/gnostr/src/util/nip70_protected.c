@@ -7,7 +7,7 @@
  */
 
 #include "nip70_protected.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 #include <stdlib.h>
 

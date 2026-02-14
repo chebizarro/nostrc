@@ -8,7 +8,7 @@
 #include "../storage_ndb.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include "../util/relays.h"
 #include "../util/utils.h"
 #include "../util/bookmarks.h"
@@ -24,7 +24,7 @@
 #include <sys/stat.h>
 #include <gio/gio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <json-glib/json-glib.h>
 #ifdef HAVE_SOUP3

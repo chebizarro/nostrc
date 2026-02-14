@@ -6,7 +6,7 @@
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 
 /* Cache configuration */
 #define NIP05_CACHE_TTL_SECONDS (60 * 60)  /* 1 hour cache validity */

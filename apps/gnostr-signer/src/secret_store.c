@@ -14,8 +14,8 @@
 #include "secure-delete.h"
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip55l/error.h>
-#include <nostr_nip19.h>
-#include <nostr_keys.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_keys.h>
 /* Core APIs still needed: nsec decode (GObject NIP-19 doesn't expose secret key hex),
  * key generation (GNostrKeys doesn't expose private key hex) */
 #include <nostr/nip19/nip19.h>

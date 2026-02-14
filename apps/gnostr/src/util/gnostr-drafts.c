@@ -7,7 +7,7 @@
 #define G_LOG_DOMAIN "gnostr-drafts"
 
 #include "gnostr-drafts.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <glib/gstdio.h>
 #include <time.h>
 #include <string.h>

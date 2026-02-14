@@ -16,7 +16,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
 #include "../ipc/gnostr-signer-service.h"
 #include "utils.h"
 #endif

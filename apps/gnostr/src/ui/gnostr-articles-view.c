@@ -18,7 +18,7 @@
 #include "nostr-json.h"
 #include "nostr-filter.h"
 #include <glib/gi18n.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <string.h>
 #include "../util/debounce.h"

@@ -6,8 +6,8 @@
 #include <gio/gio.h>
 #include <string.h>
 #ifndef GNOSTR_RELAY_TEST_ONLY
-#include "nostr_pool.h"
-#include "nostr_relay.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_relay.h>
 #include "utils.h"
 #endif
 

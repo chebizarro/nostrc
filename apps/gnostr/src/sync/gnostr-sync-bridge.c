@@ -19,7 +19,7 @@
 #include "../util/mute_list.h"
 #include "../util/pin_list.h"
 #include "../util/relays.h"
-#include <nostr_event_bus.h>
+#include <nostr-gobject-1.0/nostr_event_bus.h>
 
 /* Bridge state */
 static gchar *bridge_user_pubkey = NULL;

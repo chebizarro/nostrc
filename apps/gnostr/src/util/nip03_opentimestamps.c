@@ -7,7 +7,7 @@
 
 #include "nip03_opentimestamps.h"
 #include "../storage_ndb.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 #include <time.h>
 

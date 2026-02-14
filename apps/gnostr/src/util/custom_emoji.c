@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #include <glib/gstdio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>

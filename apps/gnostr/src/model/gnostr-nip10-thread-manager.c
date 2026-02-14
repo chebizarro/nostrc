@@ -10,7 +10,7 @@
  */
 
 #include "gnostr-nip10-thread-manager.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 
 /* Maximum cache entries before eviction */

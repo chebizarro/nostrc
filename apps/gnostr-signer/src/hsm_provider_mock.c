@@ -10,8 +10,8 @@
 #include <time.h>
 
 /* Include libnostr for crypto operations */
-#include <nostr_nip19.h>
-#include <nostr_keys.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_keys.h>
 #include <keys.h>       /* nostr_key_generate_private() - no GObject equivalent */
 #include <nostr-event.h>
 

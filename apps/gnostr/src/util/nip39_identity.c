@@ -1,6 +1,6 @@
 #include "nip39_identity.h"
 #include <string.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 
 /* Platform string mappings */
 static const struct {

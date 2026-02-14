@@ -10,7 +10,7 @@
 #include "../storage_ndb.h"
 #include "../util/follow_list.h"
 #include "../util/gnostr-profile-service.h"
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <string.h>
 

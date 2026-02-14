@@ -18,7 +18,7 @@
 #include <nostr-relay.h>
 #include <nostr-subscription.h>
 #include <nostr-simple-pool.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <channel.h>
 #include <select.h>

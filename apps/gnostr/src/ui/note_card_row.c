@@ -7,7 +7,7 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
@@ -24,7 +24,7 @@
 #include "../util/markdown_pango.h"
 #include "../util/nip21_uri.h"
 #include "../storage_ndb.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include "../util/content_renderer.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>

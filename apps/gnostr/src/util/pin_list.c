@@ -13,7 +13,7 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -24,7 +24,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-relay.h"
-#include "nostr_pool.h"
+#include <nostr-gobject-1.0/nostr_pool.h>
 #include "utils.h"
 #endif
 

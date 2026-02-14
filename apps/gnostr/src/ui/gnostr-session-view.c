@@ -19,7 +19,7 @@
 #include <gdk/gdkkeysyms.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include "../util/utils.h"
 
 /* This must match the compiled resource path for the blueprint template */

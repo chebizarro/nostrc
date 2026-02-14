@@ -8,16 +8,16 @@
 #include "../model/gn-nostr-profile.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
-#include "nostr_event.h"
+#include <nostr-gobject-1.0/nostr_event.h>
 #include "nostr-json.h"
-#include "nostr_filter.h"
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_filter.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <string.h>
 #include <time.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-thread-view.ui"

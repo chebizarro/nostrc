@@ -2,7 +2,7 @@
 #include "../storage_ndb.h"
 #include "../util/content_renderer.h"
 #include <string.h>
-#include "nostr_json.h"
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 
 struct _GnNostrEventItem {

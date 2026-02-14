@@ -21,7 +21,7 @@
 #include "secure-memory.h"
 #include "key_provider.h"
 #include "key_provider_secp256k1.h"
-#include <nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
