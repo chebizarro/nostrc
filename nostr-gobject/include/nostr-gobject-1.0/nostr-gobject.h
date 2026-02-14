@@ -37,6 +37,12 @@
 #include "nostr_profile_provider.h"
 #include "nostr_profile_service.h"
 
+/* Services (moved from app, nostrc-lx23) */
+#include "gnostr-identity.h"
+#include "gnostr-relays.h"
+#include "gnostr-mute-list.h"
+#include "gnostr-sync-service.h"
+
 #undef NOSTR_GOBJECT_INSIDE
 
 /*

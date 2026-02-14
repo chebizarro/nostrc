@@ -86,6 +86,10 @@ set(NOSTR_GOBJECT_SOURCES
   src/gnostr-nip10-thread-manager.c
   src/gnostr-thread-graph-model.c
   src/gnostr-thread-subscription.c
+  src/gnostr-identity.c
+  src/gnostr-relays.c
+  src/gnostr-mute-list.c
+  src/gnostr-sync-service.c
   ${SIGNER_PROXY_C}
 )
 
@@ -126,6 +130,10 @@ set(NOSTR_GOBJECT_HEADERS
   include/nostr-gobject-1.0/gnostr-nip10-thread-manager.h
   include/nostr-gobject-1.0/gnostr-thread-graph-model.h
   include/nostr-gobject-1.0/gnostr-thread-subscription.h
+  include/nostr-gobject-1.0/gnostr-identity.h
+  include/nostr-gobject-1.0/gnostr-relays.h
+  include/nostr-gobject-1.0/gnostr-mute-list.h
+  include/nostr-gobject-1.0/gnostr-sync-service.h
 )
 
 # ── Library target ───────────────────────────────────────────────────
@@ -151,6 +159,11 @@ target_include_directories(nostr_gobject
     $<$<BOOL:${ENABLE_NIP11}>:${CMAKE_SOURCE_DIR}/nips/nip11/include>
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
     ${NSYNC_INCLUDE_DIR}
+    # App dirs for moved services (resolved at final link time)
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/util
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/ipc
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/sync
+    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/ui
 )
 
 # Public dependencies (propagated to consumers)
