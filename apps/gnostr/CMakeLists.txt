@@ -206,7 +206,6 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
   ${PROJECT_ROOT}/nostr-gtk/include
   ${PROJECT_ROOT}/nostr-gobject/include
-  ${PROJECT_ROOT}/nostr-gtk/include
   ${PROJECT_ROOT}/libnostr/include
   ${_NOSTR_CONFIG_DIR}
   ${PROJECT_ROOT}/libgo/include
@@ -231,10 +230,8 @@ if(NOT NSYNC_INCLUDE_DIR)
 endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Link nostr-gobject library (GObject wrappers compiled once in nostr-gobject/)
-# nostrc-lx32: Link nostr-gtk widget library (NostrGtkTimelineView, NostrGtkTimelineTabs)
-target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
+# Link nostr-gobject (GObject wrappers) and nostr-gtk (GTK4 widgets)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject)
-# Link nostr-gtk widget library (GTK4/libadwaita widgets moved from app)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)

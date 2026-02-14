@@ -247,12 +247,17 @@ if(NOSTR_GTK_ENABLE_GIR)
       COMMAND ${G_IR_COMPILER}
           --includedir ${CMAKE_BINARY_DIR}/nostr-gobject/gir
           ${_gir_file} -o ${_typelib}
-      DEPENDS ${_gir_lib_dep} nostr-gobject-gir
+      DEPENDS ${_gir_lib_dep}
       COMMENT "Generating GNostrGtk-1.0 GIR and typelib"
       VERBATIM
     )
 
     add_custom_target(nostr-gtk-gir ALL DEPENDS ${_typelib})
+
+    # Ensure nostr-gobject GIR is built first if it exists (GNostrGtk depends on GNostr-1.0)
+    if(TARGET nostr-gobject-gir)
+      add_dependencies(nostr-gtk-gir nostr-gobject-gir)
+    endif()
 
     install(FILES ${_gir_file}
             DESTINATION ${CMAKE_INSTALL_DATADIR}/gir-1.0)

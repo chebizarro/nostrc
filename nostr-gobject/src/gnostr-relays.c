@@ -12,10 +12,11 @@
 #endif
 
 /* Constructor-injected GSettings schema ID */
-static const char *s_relays_schema_id = NULL;
+static char *s_relays_schema_id = NULL;
 
 void gnostr_relays_init(const char *schema_id) {
-  s_relays_schema_id = schema_id;
+  g_free(s_relays_schema_id);
+  s_relays_schema_id = g_strdup(schema_id);
 }
 
 /* Helper: create GSettings for the injected schema, or NULL if unavailable */
@@ -446,17 +447,19 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
     urls[i] = g_ptr_array_index(relay_arr, i);
   }
 
-  /* Use static pool */
+  /* Use static pool (thread-safe one-time init) */
   static GNostrPool *nip65_pool = NULL;
-  if (!nip65_pool) nip65_pool = gnostr_pool_new();
-
-    gnostr_pool_sync_relays(nip65_pool, (const gchar **)urls, relay_arr->len);
-  {
-    NostrFilters *_qf = nostr_filters_new();
-    nostr_filters_add(_qf, filter);
-    /* nostrc-uaf3: task takes ownership of _qf — do NOT stash on pool */
-    gnostr_pool_query_async(nip65_pool, _qf, ctx->cancellable, on_nip65_query_done, ctx);
+  if (g_once_init_enter((gsize *)&nip65_pool)) {
+    GNostrPool *p = gnostr_pool_new();
+    g_once_init_leave((gsize *)&nip65_pool, (gsize)p);
   }
+
+  gnostr_pool_sync_relays(nip65_pool, (const gchar **)urls, relay_arr->len);
+
+  NostrFilters *_qf = nostr_filters_new();
+  nostr_filters_add(_qf, filter);
+  /* nostrc-uaf3: task takes ownership of _qf — do NOT stash on pool */
+  gnostr_pool_query_async(nip65_pool, _qf, ctx->cancellable, on_nip65_query_done, ctx);
 
   g_free(urls);
   g_ptr_array_unref(relay_arr);

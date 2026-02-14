@@ -124,13 +124,19 @@ openssl_dep = dependency('openssl')
 libsodium_dep = dependency('libsodium', required: false)
 libwebsockets_dep = dependency('libwebsockets', required: true)
 
-# nsync (no pkg-config — use find_library with explicit dirs)
-nsync_lib = cc.find_library('nsync',
-  dirs: ['/opt/homebrew/lib'],
-  required: true)
+# nsync (no pkg-config — use find_library + find headers dynamically)
+nsync_lib = cc.find_library('nsync', required: true)
+nsync_inc = include_directories()
+# Try common locations for nsync.h
+foreach _dir : ['/opt/homebrew/include', '/usr/local/include', '/usr/include']
+  if cc.has_header('nsync.h', args: '-I' + _dir)
+    nsync_inc = include_directories(_dir, is_system: true)
+    break
+  endif
+endforeach
 nsync_dep = declare_dependency(
   dependencies: nsync_lib,
-  include_directories: include_directories('/opt/homebrew/include', is_system: true))
+  include_directories: nsync_inc)
 
 # ── Version header ───────────────────────────────────────────────────
 version_parts = meson.project_version().split('.')
@@ -187,6 +193,18 @@ nostr_gobject_sources = files(
   'src/nostr_utils.c',
   'src/nostr_profile_provider.c',
   'src/nostr_profile_service.c',
+  # Moved from app (Phase 1-3 library extraction)
+  'src/storage_ndb.c',
+  'src/gn-timeline-query.c',
+  'src/gn-nostr-profile.c',
+  'src/gn-ndb-sub-dispatcher.c',
+  'src/gnostr-nip10-thread-manager.c',
+  'src/gnostr-thread-graph-model.c',
+  'src/gnostr-thread-subscription.c',
+  'src/gnostr-identity.c',
+  'src/gnostr-relays.c',
+  'src/gnostr-mute-list.c',
+  'src/gnostr-sync-service.c',
 )
 
 # Header files (public API)
@@ -221,6 +239,17 @@ nostr_gobject_headers = files(
   'include/nostr-gobject-1.0/nostr_utils.h',
   'include/nostr-gobject-1.0/nostr_profile_provider.h',
   'include/nostr-gobject-1.0/nostr_profile_service.h',
+  # Moved from app (Phase 1-3 library extraction)
+  'include/nostr-gobject-1.0/gn-timeline-query.h',
+  'include/nostr-gobject-1.0/gn-nostr-profile.h',
+  'include/nostr-gobject-1.0/gn-ndb-sub-dispatcher.h',
+  'include/nostr-gobject-1.0/gnostr-nip10-thread-manager.h',
+  'include/nostr-gobject-1.0/gnostr-thread-graph-model.h',
+  'include/nostr-gobject-1.0/gnostr-thread-subscription.h',
+  'include/nostr-gobject-1.0/gnostr-identity.h',
+  'include/nostr-gobject-1.0/gnostr-relays.h',
+  'include/nostr-gobject-1.0/gnostr-mute-list.h',
+  'include/nostr-gobject-1.0/gnostr-sync-service.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
@@ -228,6 +257,21 @@ nostr_gobject_headers = files(
 nostr_gobject_inc = include_directories('include/nostr-gobject-1.0')
 # External: consumers use #include <nostr-gobject-1.0/nostr_event.h>
 nostr_gobject_pub_inc = include_directories('include')
+
+# Transitional: app-specific headers not yet fully extracted
+nostr_gobject_app_inc = include_directories(
+  '../apps/gnostr/src/util',
+  '../apps/gnostr/src/ipc',
+  '../apps/gnostr/src/sync',
+  '../apps/gnostr/src/ui',
+)
+
+# nostrdb headers (required by storage_ndb.c and ndb store)
+nostr_gobject_ndb_inc = include_directories(
+  '../third_party/nostrdb/src',
+  '../third_party/nostrdb/ccan',
+  '../third_party/nostrdb/deps/flatcc/include',
+)
 
 # Collect all dependencies
 nostr_gobject_deps = [
@@ -263,7 +307,7 @@ nip46_inc = include_directories('../nips/nip46/include')
 
 nostr_gobject_lib = library('nostr-gobject-1.0',
   nostr_gobject_sources + signer_proxy,
-  include_directories: [nostr_gobject_inc, nip46_inc],
+  include_directories: [nostr_gobject_inc, nip46_inc, nostr_gobject_app_inc, nostr_gobject_ndb_inc],
   dependencies: nostr_gobject_deps,
   install: true)
 

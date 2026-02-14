@@ -166,7 +166,16 @@ target_include_directories(nostr_gobject
     ${CMAKE_SOURCE_DIR}/apps/gnostr/src/ui
 )
 
-# Public dependencies (propagated to consumers)
+# Determine link visibility: PUBLIC for static builds (deps must propagate),
+# PRIVATE for shared builds (library handles its own linking).
+get_target_property(_gobject_lib_type nostr_gobject TYPE)
+if(_gobject_lib_type STREQUAL "STATIC_LIBRARY")
+  set(_LINK_VIS PUBLIC)
+else()
+  set(_LINK_VIS PRIVATE)
+endif()
+
+# Core GLib/GObject/GIO always PUBLIC (consumers need these headers)
 target_link_libraries(nostr_gobject
   PUBLIC
     PkgConfig::GLIB2
@@ -174,9 +183,9 @@ target_link_libraries(nostr_gobject
     PkgConfig::GIO2
 )
 
-# Private dependencies (implementation only)
+# Implementation dependencies: PUBLIC for static, PRIVATE for shared
 target_link_libraries(nostr_gobject
-  PRIVATE
+  ${_LINK_VIS}
     libnostr
     nostr_json
     libgo
@@ -192,7 +201,7 @@ foreach(_nip nip04 nip06 nip11 nip19
              nostr_nip44_core nostr_nip46_core
              nostr_nip49_core nostr_nip49_glib)
   if(TARGET ${_nip})
-    target_link_libraries(nostr_gobject PRIVATE ${_nip})
+    target_link_libraries(nostr_gobject ${_LINK_VIS} ${_nip})
   endif()
 endforeach()
 
@@ -203,14 +212,14 @@ target_include_directories(nostr_gobject PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/nostrdb/deps/flatcc/include
 )
 if(TARGET nostrdb_storage)
-  target_link_libraries(nostr_gobject PRIVATE nostrdb_storage)
+  target_link_libraries(nostr_gobject ${_LINK_VIS} nostrdb_storage)
 endif()
 
 if(JSON_GLIB_FOUND)
-  target_link_libraries(nostr_gobject PRIVATE PkgConfig::JSON_GLIB)
+  target_link_libraries(nostr_gobject ${_LINK_VIS} PkgConfig::JSON_GLIB)
 endif()
 if(LIBSODIUM_FOUND)
-  target_link_libraries(nostr_gobject PRIVATE PkgConfig::LIBSODIUM)
+  target_link_libraries(nostr_gobject ${_LINK_VIS} PkgConfig::LIBSODIUM)
 endif()
 if(ENABLE_NIP11)
   target_compile_definitions(nostr_gobject PRIVATE ENABLE_NIP11)

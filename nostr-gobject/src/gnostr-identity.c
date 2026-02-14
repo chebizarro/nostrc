@@ -11,11 +11,29 @@
 #include <string.h>
 
 /* Constructor-injected GSettings schema ID and key */
-static const char *s_identity_schema_id = NULL;
+static char *s_identity_schema_id = NULL;
 #define SETTINGS_KEY_CURRENT_NPUB "current-npub"
 
+/* Helper: create GSettings for the injected schema, or NULL if unavailable.
+ * Mirrors the safe pattern from gnostr-relays.c to avoid g_settings_new()
+ * aborting when the schema is not installed. */
+static GSettings *identity_settings_new(void) {
+  if (!s_identity_schema_id) return NULL;
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  if (!src) return NULL;
+  GSettingsSchema *schema = g_settings_schema_source_lookup(src, s_identity_schema_id, TRUE);
+  if (!schema) {
+    g_warning("gnostr-identity: schema '%s' not found", s_identity_schema_id);
+    return NULL;
+  }
+  GSettings *settings = g_settings_new(s_identity_schema_id);
+  g_settings_schema_unref(schema);
+  return settings;
+}
+
 void gnostr_identity_init(const char *schema_id) {
-  s_identity_schema_id = schema_id;
+  g_free(s_identity_schema_id);
+  s_identity_schema_id = g_strdup(schema_id);
 }
 
 void gnostr_identity_free(GNostrIdentity *identity) {
@@ -42,7 +60,7 @@ GNostrIdentity *gnostr_identity_get_current(void) {
     return NULL;
   }
 
-  GSettings *settings = g_settings_new(s_identity_schema_id);
+  GSettings *settings = identity_settings_new();
   if (!settings) return NULL;
 
   char *npub = g_settings_get_string(settings, SETTINGS_KEY_CURRENT_NPUB);
@@ -73,7 +91,7 @@ void gnostr_identity_set_current(const char *npub) {
     return;
   }
 
-  GSettings *settings = g_settings_new(s_identity_schema_id);
+  GSettings *settings = identity_settings_new();
   if (!settings) return;
 
   g_settings_set_string(settings, SETTINGS_KEY_CURRENT_NPUB, npub ? npub : "");

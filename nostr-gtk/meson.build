@@ -22,7 +22,7 @@ cmake_build_dir = meson.current_source_dir() / '..' / 'build'
 
 nostr_gobject_lib = cc.find_library('nostr-gobject-1.0',
   dirs: [cmake_build_dir / 'nostr-gobject'],
-  required: false)
+  required: true)
 nostr_gobject_inc = include_directories('../nostr-gobject/include')
 nostr_gobject_dep = declare_dependency(
   dependencies: nostr_gobject_lib,
@@ -53,22 +53,32 @@ nostr_gtk_resources = gnome.compile_resources(
   source_dir: 'data',
   c_name: 'nostr_gtk')
 
-# ── Blueprint support ────────────────────────────────────────────────
+# ── Blueprint support ─────────────────────────────────────────────────────────
 blueprint_compiler = find_program('blueprint-compiler', required: false)
-nostr_gtk_blueprints = []
+nostr_gtk_blueprint_deps = []
 if blueprint_compiler.found()
-  nostr_gtk_blueprints = custom_target('nostr-gtk-blueprints',
-    input: files('data/ui/nostr-note-card-row.blp'),
-    output: ['nostr-note-card-row.ui'],
-    command: [blueprint_compiler, 'compile',
-              '--output', '@OUTPUT0@', '@INPUT0@'])
-endif()
+  # Compile all blueprint files into the source data/ tree so GResource can find them
+  _blp_sources = [
+    ['data/ui/nostr-note-card-row.blp', 'data/ui/nostr-note-card-row.ui'],
+    ['data/ui/gnostr-composer.blp',     'data/ui/gnostr-composer.ui'],
+  ]
+  foreach _blp : _blp_sources
+    _compiled = custom_target('blp-' + _blp[0].underscorify(),
+      input: files(_blp[0]),
+      output: _blp[1].split('/')[-1],
+      command: [blueprint_compiler, 'compile',
+                '--output', meson.current_source_dir() / _blp[1],
+                '@INPUT@'])
+    nostr_gtk_blueprint_deps += _compiled
+  endforeach
+endif
 
 # ── Source files ─────────────────────────────────────────────────────
 nostr_gtk_sources = files(
   'src/nostr-gtk-init.c',
   'src/gnostr-thread-view.c',
   'src/gnostr-composer.c',
+  'src/gnostr-profile-pane.c',
   'src/nostr-note-card-row.c',
   'src/gn-timeline-tabs.c',
   'src/gnostr-timeline-view.c',
@@ -79,16 +89,32 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/nostr-gtk.h',
   'include/nostr-gtk-1.0/gnostr-thread-view.h',
   'include/nostr-gtk-1.0/gnostr-composer.h',
+  'include/nostr-gtk-1.0/gnostr-profile-pane.h',
   'include/nostr-gtk-1.0/nostr-note-card-row.h',
   'include/nostr-gtk-1.0/gn-timeline-tabs.h',
   'include/nostr-gtk-1.0/gnostr-timeline-view.h',
 )
 
-# ── Include directories ─────────────────────────────────────────────
+# ── Include directories ───────────────────────────────────────────────────────
 # Internal: library sources use #include "nostr-gtk.h" (flat)
 nostr_gtk_inc = include_directories('include/nostr-gtk-1.0')
 # External: consumers use #include <nostr-gtk-1.0/nostr-gtk.h>
 nostr_gtk_pub_inc = include_directories('include')
+
+# Transitional: app-specific headers not yet moved to nostr-gobject/nostr-gtk
+nostr_gtk_app_inc = include_directories(
+  '../apps/gnostr/src',
+  '../apps/gnostr/src/ui',
+  '../apps/gnostr/src/model',
+  '../apps/gnostr/src/util',
+  '../libnostr/include',
+  '../libgo/include',
+  '../third_party/nostrdb/src',
+  '../third_party/nostrdb/ccan',
+  '../nips/nip19/include',
+  '../nips/nip10/include',
+  '../nips/nip25/include',
+)
 
 # ── Collect all dependencies ─────────────────────────────────────────
 nostr_gtk_deps = [
@@ -103,8 +129,8 @@ nostr_gtk_deps = [
 # ── Build the library ────────────────────────────────────────────────
 nostr_gtk_lib = library('nostr-gtk-1.0',
   nostr_gtk_sources + nostr_gtk_resources,
-  include_directories: [nostr_gtk_inc],
-  dependencies: nostr_gtk_deps,
+  include_directories: [nostr_gtk_inc, nostr_gtk_app_inc],
+  dependencies: nostr_gtk_deps + nostr_gtk_blueprint_deps,
   install: true)
 
 # ── Declare dependency for use as subproject ─────────────────────────

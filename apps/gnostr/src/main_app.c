@@ -14,6 +14,7 @@
 #include <nostr-gobject-1.0/gnostr-sync-service.h>
 #include "sync/gnostr-sync-bridge.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
+#include <nostr-gobject-1.0/gnostr-identity.h>
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -237,6 +238,12 @@ int main(int argc, char **argv) {
 
   /* Initialize libadwaita - required for adaptive/responsive features */
   AdwApplication *app = adw_application_new("org.gnostr.Client", G_APPLICATION_DEFAULT_FLAGS);
+
+  /* Initialize nostr-gobject service schemas before any GSettings access.
+   * These must be called after gnostr_ensure_gsettings_schemas() and before
+   * any identity/relay helpers touch GSettings. */
+  gnostr_relays_init("org.gnostr.Client");
+  gnostr_identity_init("org.gnostr.Client");
 
   /* Initialize nostr-gtk widget library (nostrc-lx33) */
   nostr_gtk_init();
