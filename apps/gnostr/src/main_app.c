@@ -242,7 +242,7 @@ int main(int argc, char **argv) {
   /* Initialize nostr-gobject service schemas before any GSettings access.
    * These must be called after gnostr_ensure_gsettings_schemas() and before
    * any identity/relay helpers touch GSettings. */
-  gnostr_relays_init("org.gnostr.Client");
+  gnostr_relays_init("org.gnostr.gnostr");
   gnostr_identity_init("org.gnostr.Client");
 
   /* Initialize nostr-gtk widget library (nostrc-lx33) */
