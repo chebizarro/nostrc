@@ -5,13 +5,12 @@
  * nostrdb cache integration, and callback management.
  */
 
-#include "gnostr-profile-service.h"
-#include "../storage_ndb.h"
-#include "../ui/gnostr-profile-provider.h"
-#include <nostr-gobject-1.0/nostr_pool.h>
-#include <nostr-gobject-1.0/nostr_event.h>
+#include "nostr_profile_service.h"
+#include "storage_ndb.h"
+#include "nostr_profile_provider.h"
+#include "nostr_pool.h"
+#include "nostr_event.h"
 #include "nostr-filter.h"
-#include "relays.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -50,6 +49,9 @@ typedef struct {
   char **relay_urls;
   size_t relay_url_count;
 
+  /* Relay URL provider callback (set by app layer) */
+  GnostrRelayUrlProvider relay_provider;
+
   /* Network fetch */
   GNostrPool *pool;
   gboolean owns_pool;
@@ -67,6 +69,9 @@ typedef struct {
 /* Singleton instance */
 static GnostrProfileService *s_service = NULL;
 G_LOCK_DEFINE_STATIC(service_singleton);
+
+/* Global relay provider */
+static GnostrRelayUrlProvider s_relay_provider = NULL;
 
 /* ============== Internal Helpers ============== */
 
@@ -122,7 +127,7 @@ static GnostrProfileMeta *check_ndb_cache(const char *pubkey_hex) {
     return meta;
   }
 
-  /* Fall back to nostrdb — profiles may be persisted there from prior
+  /* Fall back to nostrdb -- profiles may be persisted there from prior
    * sessions or negentropy sync but not yet loaded into the LRU cache. */
   unsigned char pk32[32];
   if (!hex_to_pk32(pubkey_hex, pk32)) return NULL;
@@ -196,7 +201,7 @@ static gboolean debounce_timeout_cb(gpointer user_data);
 typedef struct {
   GnostrProfileService *svc;
   GPtrArray *batch;      /* owned; char* pubkeys */
-  NostrFilters *filters; /* NOT owned — GTask owns via destroy notify */
+  NostrFilters *filters; /* NOT owned -- GTask owns via destroy notify */
 } BatchFetchCtx;
 
 static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -220,7 +225,7 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
     svc->stats.profiles_fetched += jsons->len;
     g_mutex_unlock(&svc->mutex);
 
-    /* nostrc-mzab: Collect JSONs for background NDB ingestion.
+    /* Collect JSONs for background NDB ingestion.
      * Provider cache updates + callbacks stay on main thread (fast). */
     GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
 
@@ -240,7 +245,7 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
           /* Update the profile provider cache */
           gnostr_profile_provider_update(pubkey_hex, evt_json);
 
-          /* hq-xxnm5: Record fetch timestamp so we can skip re-fetching
+          /* Record fetch timestamp so we can skip re-fetching
            * this profile until it becomes stale. */
           unsigned char pk32[32];
           if (hex_to_bytes32(pubkey_hex, pk32)) {
@@ -278,7 +283,7 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
     }
   }
 
-  /* Cleanup — filters are owned by the GTask (via g_object_set_data_full
+  /* Cleanup -- filters are owned by the GTask (via g_object_set_data_full
    * with nostr_filters_free destroy notify in gnostr_pool_query_async),
    * so do NOT free them here. */
   if (batch) g_ptr_array_free(batch, TRUE);
@@ -326,17 +331,17 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     return;
   }
 
-  /* Auto-configure relays from user settings if not set */
-  if (!svc->relay_urls || svc->relay_url_count == 0) {
+  /* Auto-configure relays via registered provider if not set */
+  if ((!svc->relay_urls || svc->relay_url_count == 0) && svc->relay_provider) {
     GPtrArray *configured = g_ptr_array_new_with_free_func(g_free);
-    gnostr_load_relays_into(configured);
+    svc->relay_provider(configured);
     if (configured->len > 0) {
       svc->relay_urls = g_new0(char*, configured->len);
       svc->relay_url_count = configured->len;
       for (guint i = 0; i < configured->len; i++) {
         svc->relay_urls[i] = g_strdup(g_ptr_array_index(configured, i));
       }
-      g_debug("[PROFILE_SERVICE] Auto-configured %zu relays from settings",
+      g_debug("[PROFILE_SERVICE] Auto-configured %zu relays from provider",
               svc->relay_url_count);
     }
     g_ptr_array_unref(configured);
@@ -472,7 +477,7 @@ static gboolean debounce_timeout_cb(gpointer user_data) {
       fire_callbacks(svc, pubkey, meta);
       gnostr_profile_meta_free(meta);
     } else {
-      /* hq-xxnm5: Skip network fetch if we recently fetched this profile.
+      /* Skip network fetch if we recently fetched this profile.
        * Avoids redundant relay queries for profiles not in memory cache
        * but already fetched within the staleness window. */
       if (!storage_ndb_is_profile_stale(pubkey, 0)) {
@@ -529,6 +534,17 @@ static gboolean debounce_timeout_cb(gpointer user_data) {
 
 /* ============== Public API ============== */
 
+void gnostr_profile_service_set_relay_provider(GnostrRelayUrlProvider provider) {
+  G_LOCK(service_singleton);
+  s_relay_provider = provider;
+  if (s_service) {
+    g_mutex_lock(&s_service->mutex);
+    s_service->relay_provider = provider;
+    g_mutex_unlock(&s_service->mutex);
+  }
+  G_UNLOCK(service_singleton);
+}
+
 gpointer gnostr_profile_service_get_default(void) {
   G_LOCK(service_singleton);
 
@@ -548,6 +564,7 @@ gpointer gnostr_profile_service_get_default(void) {
   svc->debounce_source_id = 0;
   svc->relay_urls = NULL;
   svc->relay_url_count = 0;
+  svc->relay_provider = s_relay_provider;
   svc->pool = NULL;
   svc->owns_pool = FALSE;
   svc->cancellable = NULL;
@@ -597,8 +614,7 @@ void gnostr_profile_service_request(gpointer service,
   svc->stats.pending_requests = g_hash_table_size(svc->pending_requests);
   svc->stats.pending_callbacks++;
 
-  /* LEGITIMATE TIMEOUT - Debounce profile fetching to batch requests.
-   * nostrc-b0h: Audited - batching network requests is appropriate. */
+  /* LEGITIMATE TIMEOUT - Debounce profile fetching to batch requests. */
   if (!svc->debounce_source_id && !req->in_flight) {
     svc->debounce_source_id = g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
   }

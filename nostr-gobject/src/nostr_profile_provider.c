@@ -1,9 +1,9 @@
-#include "gnostr-profile-provider.h"
-#include "../storage_ndb.h"
-#include "../util/utils.h"
-#include "../util/follow_list.h"
+#include "nostr_profile_provider.h"
+#include "nostr_utils.h"
+#include "storage_ndb.h"
+#include <gio/gio.h>
 #include <json.h>          /* nostr_json_is_object_str (no GObject wrapper yet) */
-#include <nostr-gobject-1.0/nostr_json.h>    /* GObject JSON utilities */
+#include "nostr_json.h"    /* GObject JSON utilities */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -19,6 +19,9 @@ static GHashTable *s_lru_nodes = NULL;
 static guint s_cap = 0;
 static gboolean s_init = FALSE;
 static GnostrProfileProviderStats s_stats = {0};
+
+/* Follow-list provider callback (set by app layer) */
+static GnostrFollowListProvider s_follow_list_provider = NULL;
 
 /* Profile update watchers */
 typedef struct {
@@ -195,7 +198,7 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   return m;
 }
 
-/* Query DB -- hq-cgnhh: read profile fields directly from NdbProfile FlatBuffer,
+/* Query DB -- read profile fields directly from NdbProfile FlatBuffer,
  * skipping the wasteful FlatBuffer -> JSON -> struct round-trip. */
 static GnostrProfileMeta *meta_from_db(const char *pk) {
   if (!pk || strlen(pk) != 64) return NULL;
@@ -257,7 +260,7 @@ static GnostrProfileMeta *meta_copy(const GnostrProfileMeta *src) {
 }
 
 GnostrProfileMeta *gnostr_profile_provider_get(const char *pk) {
-  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  /* Defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex_pk = NULL;
   if (pk && strlen(pk) != 64) {
     hex_pk = gnostr_ensure_hex_pubkey(pk);
@@ -317,7 +320,7 @@ static gboolean watch_dispatch_idle(gpointer data) {
 
 int gnostr_profile_provider_update(const char *pk, const char *json) {
   if (!pk || !json) return -1;
-  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  /* Defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex_pk = NULL;
   if (strlen(pk) != 64) {
     hex_pk = gnostr_ensure_hex_pubkey(pk);
@@ -378,7 +381,7 @@ guint gnostr_profile_provider_watch(const char *pubkey_hex,
                                     GnostrProfileWatchCallback callback,
                                     gpointer user_data) {
   if (!pubkey_hex || !callback) return 0;
-  /* nostrc-akyz: defensively normalize npub/nprofile to hex */
+  /* Defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
   if (!hex) return 0;
 
@@ -436,6 +439,12 @@ void gnostr_profile_provider_log_stats(void) {
             cache_size, cap, hits, misses, db_hits, db_misses);
 }
 
+void gnostr_profile_provider_set_follow_list_provider(GnostrFollowListProvider provider) {
+  G_LOCK(profile_provider);
+  s_follow_list_provider = provider;
+  G_UNLOCK(profile_provider);
+}
+
 /* Check if a pubkey is already in the LRU cache (lock must NOT be held). */
 static gboolean
 is_pubkey_cached(const char *pk)
@@ -447,11 +456,9 @@ is_pubkey_cached(const char *pk)
   return cached;
 }
 
-/* nostrc-perf: Background task to prefetch a batch of profiles into cache.
+/* Background task to prefetch a batch of profiles into cache.
  * This runs gnostr_profile_provider_get() for each pubkey, which populates
- * the LRU cache from NDB on a worker thread. By the time GtkListView binds
- * visible items, profiles are already cached and the bind path is allocation-
- * free (no blocking NDB transaction on the main thread). */
+ * the LRU cache from NDB on a worker thread. */
 static void
 prefetch_batch_task_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
                          gpointer task_data, GCancellable *cancellable G_GNUC_UNUSED)
@@ -509,7 +516,7 @@ gnostr_profile_provider_prefetch_batch_async(const char **pubkeys_hex)
   g_debug("[PROFILE_PROVIDER] Prefetch batch started for %u pubkeys", count);
 }
 
-/* hq-yrqwk: Pre-warm LRU cache from NDB for user + follow list profiles.
+/* Pre-warm LRU cache from NDB for user + follow list profiles.
  * Runs in a GTask worker thread to avoid blocking startup or UI. */
 static void
 prewarm_task_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
@@ -525,17 +532,23 @@ prewarm_task_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
     gnostr_profile_meta_free(m);
   }
 
-  /* 2. Get follow list pubkeys and pre-warm each */
-  gchar **follow_pks = gnostr_follow_list_get_pubkeys_cached(user_pk);
-  if (follow_pks) {
-    for (guint i = 0; follow_pks[i]; i++) {
-      m = gnostr_profile_provider_get(follow_pks[i]);
-      if (m) {
-        warmed++;
-        gnostr_profile_meta_free(m);
+  /* 2. Get follow list pubkeys via registered provider and pre-warm each */
+  G_LOCK(profile_provider);
+  GnostrFollowListProvider provider = s_follow_list_provider;
+  G_UNLOCK(profile_provider);
+
+  if (provider) {
+    gchar **follow_pks = provider(user_pk);
+    if (follow_pks) {
+      for (guint i = 0; follow_pks[i]; i++) {
+        m = gnostr_profile_provider_get(follow_pks[i]);
+        if (m) {
+          warmed++;
+          gnostr_profile_meta_free(m);
+        }
       }
+      g_strfreev(follow_pks);
     }
-    g_strfreev(follow_pks);
   }
 
   g_task_return_int(task, (gssize)warmed);

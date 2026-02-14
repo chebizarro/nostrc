@@ -147,10 +147,13 @@ nostr_gobject_version_h = configure_file(
   install: true,
   install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 
+# ── gnome module (needed for gdbus-codegen and GIR) ──────────────────
+gnome = import('gnome')
+
 # ── D-Bus signer proxy (gdbus-codegen) ──────────────────────────────
 signer_proxy = gnome.gdbus_codegen('signer_proxy',
   sources: 'dbus/org.nostr.Signer.xml',
-  c_namespace: 'Nostr',
+  namespace: 'Nostr',
   install_header: true,
   install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 
@@ -181,6 +184,9 @@ nostr_gobject_sources = files(
   'src/nostr_nip46_bunker.c',
   'src/nostr_nip49.c',
   'src/nostr_bip39.c',
+  'src/nostr_utils.c',
+  'src/nostr_profile_provider.c',
+  'src/nostr_profile_service.c',
 )
 
 # Header files (public API)
@@ -212,6 +218,9 @@ nostr_gobject_headers = files(
   'include/nostr-gobject-1.0/nostr_nip49.h',
   'include/nostr-gobject-1.0/nostr_bip39.h',
   'include/nostr-gobject-1.0/storage_ndb.h',
+  'include/nostr-gobject-1.0/nostr_utils.h',
+  'include/nostr-gobject-1.0/nostr_profile_provider.h',
+  'include/nostr-gobject-1.0/nostr_profile_service.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
@@ -265,8 +274,6 @@ nostr_gobject_dep = declare_dependency(
   dependencies: [glib_dep, gobject_dep, gio_dep])
 
 # ── GObject Introspection ────────────────────────────────────────────
-gnome = import('gnome')
-
 if get_option('introspection')
   nostr_gobject_gir = gnome.generate_gir(nostr_gobject_lib,
     sources: nostr_gobject_sources + nostr_gobject_headers,

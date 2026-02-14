@@ -76,6 +76,9 @@ set(NOSTR_GOBJECT_SOURCES
   src/nostr_nip46_bunker.c
   src/nostr_nip49.c
   src/nostr_bip39.c
+  src/nostr_utils.c
+  src/nostr_profile_provider.c
+  src/nostr_profile_service.c
   src/storage_ndb.c
   ${SIGNER_PROXY_C}
 )
@@ -108,6 +111,9 @@ set(NOSTR_GOBJECT_HEADERS
   include/nostr-gobject-1.0/nostr_nip49.h
   include/nostr-gobject-1.0/nostr_bip39.h
   include/nostr-gobject-1.0/storage_ndb.h
+  include/nostr-gobject-1.0/nostr_utils.h
+  include/nostr-gobject-1.0/nostr_profile_provider.h
+  include/nostr-gobject-1.0/nostr_profile_service.h
 )
 
 # ── Library target ───────────────────────────────────────────────────

@@ -97,16 +97,7 @@ void gnostr_publish_to_relays_async(NostrEvent *event,
                                      GnostrRelayPublishDoneCallback callback,
                                      gpointer user_data);
 
-/**
- * gnostr_ensure_hex_pubkey:
- * @input: a pubkey in any format: 64-char hex, npub1..., or nprofile1...
- *
- * Defensive normalizer for pubkey strings. Accepts hex passthrough,
- * or decodes NIP-19 bech32 (npub1/nprofile1) to 64-char hex.
- *
- * Returns: (transfer full) (nullable): newly-allocated 64-char hex string,
- *   or %NULL if @input is invalid. Caller must g_free().
- */
-gchar *gnostr_ensure_hex_pubkey(const char *input);
+/* gnostr_ensure_hex_pubkey moved to nostr-gobject */
+#include <nostr-gobject-1.0/nostr_utils.h>
 
 #endif /* GNOSTR_UTIL_H */

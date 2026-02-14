@@ -11,6 +11,7 @@
 #include "gnostr-article-reader.h"
 #include "gnostr-article-composer.h"
 #include "gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/nostr_profile_service.h>
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-conversation-view.h"
 #include "gnostr-dm-row.h"
@@ -65,6 +66,8 @@
 #include "../util/mute_list.h"
 /* NIP-02 contact list */
 #include "../util/nip02_contacts.h"
+/* Follow list (for profile provider pre-warm callback) */
+#include "../util/follow_list.h"
 /* NIP-77 negentropy sync */
 #include "../sync/gnostr-sync-service.h"
 /* NIP-32 labeling */
@@ -6385,6 +6388,8 @@ deferred_heavy_init_cb(gpointer data)
   self->ingest_thread = g_thread_new("ndb-ingest", ingest_thread_func, self);
   /* Initialize profile provider */
   gnostr_profile_provider_init(0); /* Use env/default cap */
+  gnostr_profile_provider_set_follow_list_provider(gnostr_follow_list_get_pubkeys_cached);
+  gnostr_profile_service_set_relay_provider(gnostr_load_relays_into);
   /* NIP-47: Load saved NWC connection from GSettings */
   gnostr_nwc_service_load_from_settings(gnostr_nwc_service_get_default());
   /* LEGITIMATE TIMEOUTS - Periodic stats logging (60s intervals).

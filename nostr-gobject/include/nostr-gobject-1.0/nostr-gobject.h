@@ -33,6 +33,9 @@
 #include "nostr_bip39.h"
 #include "nostr_async.h"
 #include "crypto_utils_gobject.h"
+#include "nostr_utils.h"
+#include "nostr_profile_provider.h"
+#include "nostr_profile_service.h"
 
 #undef NOSTR_GOBJECT_INSIDE
 
