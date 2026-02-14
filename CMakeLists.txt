@@ -3,43 +3,56 @@ project(nostrc C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # =============================================================================
-# macOS: Configure OpenSSL paths for Homebrew installations
+# macOS: Configure OpenSSL paths for package manager installations
 # =============================================================================
-# On macOS, OpenSSL is typically installed via Homebrew and is not in the
-# default CMake search paths. We need to set OPENSSL_ROOT_DIR before any
-# find_package(OpenSSL) calls in subdirectories.
+# On macOS, OpenSSL is typically installed via Homebrew or MacPorts and is not
+# in the default CMake search paths. We detect the package manager prefix
+# dynamically to avoid hard-coded paths.
 if(APPLE)
-  # Check for Homebrew OpenSSL in standard locations
-  # Apple Silicon (arm64): /opt/homebrew/opt/openssl@3
-  # Intel (x86_64): /usr/local/opt/openssl@3
+  # Detect Homebrew prefix dynamically (works for ARM and Intel)
+  set(_brew_prefix "")
+  find_program(_brew_exe brew)
+  if(_brew_exe)
+    execute_process(
+      COMMAND ${_brew_exe} --prefix
+      OUTPUT_VARIABLE _brew_prefix
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET)
+  endif()
+
   set(_openssl_found FALSE)
-  foreach(_openssl_path
-      "/opt/homebrew/opt/openssl@3"
-      "/usr/local/opt/openssl@3"
-      "/opt/homebrew/opt/openssl@1.1"
-      "/usr/local/opt/openssl@1.1"
-      "/opt/homebrew/opt/openssl"
-      "/usr/local/opt/openssl")
-    if(EXISTS "${_openssl_path}" AND NOT _openssl_found)
+
+  # Build candidate list from Homebrew (dynamic prefix) and MacPorts
+  set(_openssl_candidates "")
+  if(_brew_prefix)
+    list(APPEND _openssl_candidates
+      "${_brew_prefix}/opt/openssl@3"
+      "${_brew_prefix}/opt/openssl@1.1"
+      "${_brew_prefix}/opt/openssl")
+  endif()
+  # MacPorts
+  list(APPEND _openssl_candidates "/opt/local")
+
+  foreach(_openssl_path ${_openssl_candidates})
+    if(EXISTS "${_openssl_path}/include/openssl/ssl.h" AND NOT _openssl_found)
       set(OPENSSL_ROOT_DIR "${_openssl_path}" CACHE PATH "OpenSSL root directory" FORCE)
-      # Explicitly set library paths to help CMake's FindOpenSSL
-      set(OPENSSL_CRYPTO_LIBRARY "${_openssl_path}/lib/libcrypto.dylib" CACHE FILEPATH "OpenSSL Crypto library" FORCE)
-      set(OPENSSL_SSL_LIBRARY "${_openssl_path}/lib/libssl.dylib" CACHE FILEPATH "OpenSSL SSL library" FORCE)
       set(OPENSSL_INCLUDE_DIR "${_openssl_path}/include" CACHE PATH "OpenSSL include directory" FORCE)
       set(_openssl_found TRUE)
     endif()
   endforeach()
   unset(_openssl_path)
+  unset(_openssl_candidates)
 
   if(_openssl_found)
     message(STATUS "macOS: Using OpenSSL from ${OPENSSL_ROOT_DIR}")
-    # Also add to PKG_CONFIG_PATH for pkg-config based detection
     set(ENV{PKG_CONFIG_PATH} "${OPENSSL_ROOT_DIR}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
   else()
-    message(WARNING "macOS: OpenSSL not found in Homebrew locations. "
-                    "Install with: brew install openssl@3")
+    message(WARNING "macOS: OpenSSL not found. "
+                    "Install with: brew install openssl@3  (or: sudo port install openssl)")
   endif()
   unset(_openssl_found)
+  unset(_brew_prefix)
+  unset(_brew_exe)
 endif()
 
 # =============================================================================
@@ -64,7 +77,7 @@ endif()
 if(APPLE)
   find_package(PkgConfig QUIET)
   if(PKG_CONFIG_FOUND)
-    # Check for common problematic packages
+    # Match any Homebrew Cellar path (ARM: /opt/homebrew, Intel: /usr/local)
     foreach(_pkg libadwaita-1 libsoup-3.0 glib-2.0)
       execute_process(
         COMMAND ${PKG_CONFIG_EXECUTABLE} --cflags ${_pkg}
@@ -72,8 +85,8 @@ if(APPLE)
         ERROR_QUIET
         OUTPUT_STRIP_TRAILING_WHITESPACE
       )
-      if(_pkg_cflags MATCHES "/opt/homebrew/Cellar/[^/]+/[0-9]+\\.[0-9]+\\.[0-9]+")
-        string(REGEX MATCH "/opt/homebrew/Cellar/[^/]+/[0-9]+\\.[0-9]+\\.[0-9]+" _cellar_path "${_pkg_cflags}")
+      if(_pkg_cflags MATCHES "(/opt/homebrew|/usr/local)/Cellar/[^/]+/[0-9]+\\.[0-9]+\\.[0-9]+")
+        string(REGEX MATCH "(/opt/homebrew|/usr/local)/Cellar/[^/]+/[0-9]+\\.[0-9]+\\.[0-9]+" _cellar_path "${_pkg_cflags}")
         if(NOT EXISTS "${_cellar_path}")
           message(WARNING
             "pkg-config for ${_pkg} references non-existent path: ${_cellar_path}\n"

@@ -233,9 +233,12 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/nips/nip77/include
   ${SECP256K1_INCLUDE_DIRS}
   ${PROJECT_ROOT}/third_party/nostrdb/src
-  ${PROJECT_ROOT}/third_party/nostrdb/ccan
-  /opt/homebrew/opt/nsync/include
-  /opt/homebrew/include)
+  ${PROJECT_ROOT}/third_party/nostrdb/ccan)
+# nsync headers (already a cache var from libnostr, but ensure it's available)
+if(NOT NSYNC_INCLUDE_DIR)
+  find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
+endif()
+target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
