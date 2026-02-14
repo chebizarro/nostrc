@@ -253,6 +253,7 @@ static GnostrProfileMeta *meta_copy(const GnostrProfileMeta *src) {
   c->display_name = src->display_name ? g_strdup(src->display_name) : NULL;
   c->name = src->name ? g_strdup(src->name) : NULL;
   c->picture = src->picture ? g_strdup(src->picture) : NULL;
+  c->banner = src->banner ? g_strdup(src->banner) : NULL;
   c->nip05 = src->nip05 ? g_strdup(src->nip05) : NULL;
   c->lud16 = src->lud16 ? g_strdup(src->lud16) : NULL;
   c->created_at = src->created_at;

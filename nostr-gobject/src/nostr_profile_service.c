@@ -477,17 +477,11 @@ static gboolean debounce_timeout_cb(gpointer user_data) {
       fire_callbacks(svc, pubkey, meta);
       gnostr_profile_meta_free(meta);
     } else {
-      /* Skip network fetch if we recently fetched this profile.
-       * Avoids redundant relay queries for profiles not in memory cache
-       * but already fetched within the staleness window. */
-      if (!storage_ndb_is_profile_stale(pubkey, 0)) {
-        g_debug("[PROFILE_SERVICE] Skipping %.8s: recently fetched (not stale)", pubkey);
-        /* Fire callbacks with NULL - profile exists in NDB but was evicted
-         * from memory. The caller will get a cache miss but won't spam relays. */
-        fire_callbacks(svc, pubkey, NULL);
-        continue;
-      }
-      /* Need to fetch from network */
+      /* Profile not in cache - need to fetch from network.
+       * Note: We previously checked staleness here to avoid redundant fetches,
+       * but that caused profiles to never load when the staleness timestamp
+       * existed but the actual profile data didn't (e.g., after cache eviction
+       * or failed prior fetch). Always try network fetch when cache misses. */
       g_ptr_array_add(need_fetch, g_strdup(pubkey));
     }
   }
