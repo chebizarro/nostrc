@@ -4,7 +4,7 @@
  * Demonstrates GNostrRelay async connection and GNostrEvent creation.
  */
 #include <glib.h>
-#include "nostr-gobject.h"
+#include <nostr-gobject-1.0/nostr-gobject.h>
 
 static void
 on_connect(GObject *source_object, GAsyncResult *result, gpointer user_data)

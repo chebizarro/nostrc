@@ -310,7 +310,7 @@ if get_option('tests')
     'tests/test_nostr_event.c',
     dependencies: [glib_dep, gobject_dep],
     link_with: nostr_gobject_lib,
-    include_directories: nostr_gobject_inc)
+    include_directories: nostr_gobject_pub_inc)
 
   test('nostr_event', test_nostr_event)
 
@@ -318,7 +318,7 @@ if get_option('tests')
     'tests/test_nip19.c',
     dependencies: [glib_dep, gobject_dep],
     link_with: nostr_gobject_lib,
-    include_directories: nostr_gobject_inc)
+    include_directories: nostr_gobject_pub_inc)
 
   test('nip19', test_nip19)
 endif
@@ -329,5 +329,5 @@ if get_option('examples')
     'examples/connect_publish.c',
     dependencies: [glib_dep, gobject_dep],
     link_with: nostr_gobject_lib,
-    include_directories: nostr_gobject_inc)
+    include_directories: nostr_gobject_pub_inc)
 endif

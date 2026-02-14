@@ -3,7 +3,7 @@
  */
 
 #include <glib.h>
-#include "nostr_event.h"
+#include <nostr-gobject-1.0/nostr_event.h>
 
 static void test_gnostr_event_properties(void) {
     g_autoptr(GNostrEvent) event = gnostr_event_new();

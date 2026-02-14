@@ -3,7 +3,7 @@
  */
 
 #include <glib.h>
-#include "nostr_nip19.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 
 /* Known test vector: a 32-byte zero key as hex */
 static const gchar *TEST_PUBKEY_HEX =
