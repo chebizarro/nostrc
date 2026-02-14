@@ -1,4 +1,5 @@
 #include <adwaita.h>
+#include <nostr-gtk-1.0/nostr-gtk.h>
 #include <glib/gstdio.h>
 #include <errno.h>
 #include "ui/gnostr-main-window.h"
@@ -236,6 +237,9 @@ int main(int argc, char **argv) {
 
   /* Initialize libadwaita - required for adaptive/responsive features */
   AdwApplication *app = adw_application_new("org.gnostr.Client", G_APPLICATION_DEFAULT_FLAGS);
+
+  /* Initialize nostr-gtk widget library (nostrc-lx33) */
+  nostr_gtk_init();
 
   /* Install app actions */
   static const GActionEntry app_entries[] = {

@@ -15,7 +15,7 @@
  * Unified result from a single-pass content render.  Collects Pango markup,
  * media URLs, nostr references, and OG-preview URLs in one block iteration.
  */
-typedef struct {
+typedef struct GnContentRenderResult {
   gchar     *markup;          /* Pango markup (transfer full, non-NULL) */
   GPtrArray *media_urls;      /* image/video URLs by extension (nullable, element: gchar*) */
   GPtrArray *all_urls;        /* ALL http(s) URLs in document order (nullable, element: gchar*) */

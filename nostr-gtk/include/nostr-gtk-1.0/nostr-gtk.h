@@ -27,6 +27,7 @@ void nostr_gtk_init (void);
 #include "gnostr-thread-view.h"
 #include "gnostr-composer.h"
 #include "gnostr-profile-pane.h"
+#include "nostr-note-card-row.h"
 
 G_END_DECLS
 

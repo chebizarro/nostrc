@@ -5,7 +5,7 @@
     <file>ui/widgets/gnostr-session-view.ui</file>
     <file>ui/widgets/gnostr-timeline-view.ui</file>
     <file>ui/widgets/gnostr-timeline-row.ui</file>
-    <file>ui/widgets/note-card-row.ui</file>
+    <!-- note-card-row.ui moved to nostr-gtk (nostrc-lx33) -->
     <file>ui/widgets/gnostr-dm-inbox-view.ui</file>
     <file>ui/widgets/gnostr-dm-conversation-view.ui</file>
     <file>ui/widgets/gnostr-dm-row.ui</file>

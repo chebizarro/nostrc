@@ -33,7 +33,7 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.blp
+  # note-card-row.blp moved to nostr-gtk (nostrc-lx33)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.blp
@@ -100,7 +100,7 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
+  # note-card-row.ui moved to nostr-gtk (nostrc-lx33)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.ui

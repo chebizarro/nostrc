@@ -54,29 +54,30 @@ nostr_gtk_resources = gnome.compile_resources(
   c_name: 'nostr_gtk')
 
 # ── Blueprint support ────────────────────────────────────────────────
-# Blueprint files (.blp) are compiled to .ui via blueprint-compiler.
-# Widget .blp files will be added here as widgets move into this library.
 blueprint_compiler = find_program('blueprint-compiler', required: false)
 nostr_gtk_blueprints = []
-# Example (uncomment when adding widgets):
-# if blueprint_compiler.found()
-#   nostr_gtk_blueprints = custom_target('nostr-gtk-blueprints',
-#     input: files('data/ui/widget-name.blp'),
-#     output: ['widget-name.ui'],
-#     command: [blueprint_compiler, 'compile',
-#               '--output', '@OUTPUT0@', '@INPUT0@'])
-# endif()
+if blueprint_compiler.found()
+  nostr_gtk_blueprints = custom_target('nostr-gtk-blueprints',
+    input: files('data/ui/nostr-note-card-row.blp'),
+    output: ['nostr-note-card-row.ui'],
+    command: [blueprint_compiler, 'compile',
+              '--output', '@OUTPUT0@', '@INPUT0@'])
+endif()
 
 # ── Source files ─────────────────────────────────────────────────────
 nostr_gtk_sources = files(
   'src/nostr-gtk-init.c',
+  'src/gnostr-thread-view.c',
   'src/gnostr-composer.c',
+  'src/nostr-note-card-row.c',
 )
 
 # ── Header files (public API) ───────────────────────────────────────
 nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/nostr-gtk.h',
+  'include/nostr-gtk-1.0/gnostr-thread-view.h',
   'include/nostr-gtk-1.0/gnostr-composer.h',
+  'include/nostr-gtk-1.0/nostr-note-card-row.h',
 )
 
 # ── Include directories ─────────────────────────────────────────────

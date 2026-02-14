@@ -23,6 +23,7 @@ pkg_check_modules(ADW      REQUIRED IMPORTED_TARGET libadwaita-1>=1.2)
 pkg_check_modules(GLIB2    REQUIRED IMPORTED_TARGET glib-2.0>=2.70)
 pkg_check_modules(GOBJECT2 REQUIRED IMPORTED_TARGET gobject-2.0>=2.70)
 pkg_check_modules(GIO2     REQUIRED IMPORTED_TARGET gio-2.0>=2.70)
+pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(SOUP3    QUIET    IMPORTED_TARGET libsoup-3.0)
 
 # ── Version header (configure from template) ─────────────────────────
@@ -30,6 +31,33 @@ configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0/nostr-gtk-version.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-version.h
   @ONLY)
+
+# ── Blueprint compilation ────────────────────────────────────────────
+find_program(BLUEPRINT_COMPILER blueprint-compiler)
+
+set(NOSTR_GTK_BLUEPRINT_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/nostr-note-card-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.blp
+)
+
+set(NOSTR_GTK_COMPILED_UI_FILES)
+if(BLUEPRINT_COMPILER)
+  foreach(BLP_FILE ${NOSTR_GTK_BLUEPRINT_SOURCES})
+    file(RELATIVE_PATH BLP_REL ${CMAKE_CURRENT_SOURCE_DIR}/data ${BLP_FILE})
+    string(REGEX REPLACE "\\.blp$" ".ui" UI_REL ${BLP_REL})
+    set(UI_FILE ${CMAKE_CURRENT_SOURCE_DIR}/data/${UI_REL})
+
+    add_custom_command(
+      OUTPUT ${UI_FILE}
+      COMMAND ${BLUEPRINT_COMPILER} compile --output ${UI_FILE} ${BLP_FILE}
+      DEPENDS ${BLP_FILE}
+      COMMENT "Compiling nostr-gtk Blueprint: ${BLP_REL}"
+      VERBATIM)
+    list(APPEND NOSTR_GTK_COMPILED_UI_FILES ${UI_FILE})
+  endforeach()
+
+  add_custom_target(nostr_gtk_blueprints ALL DEPENDS ${NOSTR_GTK_COMPILED_UI_FILES})
+endif()
 
 # ── GResource compilation ────────────────────────────────────────────
 find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
@@ -58,6 +86,7 @@ set(NOSTR_GTK_SOURCES
   src/gnostr-thread-view.c
   src/gnostr-composer.c
   src/gnostr-profile-pane.c
+  src/nostr-note-card-row.c
   ${GRESOURCE_C}
 )
 
@@ -66,6 +95,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gnostr-thread-view.h
   include/nostr-gtk-1.0/gnostr-composer.h
   include/nostr-gtk-1.0/gnostr-profile-pane.h
+  include/nostr-gtk-1.0/nostr-note-card-row.h
 )
 
 # ── Library target ───────────────────────────────────────────────────
@@ -76,6 +106,9 @@ set_target_properties(nostr_gtk PROPERTIES
   VERSION     ${NOSTR_GTK_VERSION}
   SOVERSION   ${NOSTR_GTK_MAJOR_VERSION}
 )
+
+# Project root for resolving app-layer include paths (transitional)
+get_filename_component(_NOSTR_GTK_PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
 target_include_directories(nostr_gtk
   PUBLIC
@@ -116,9 +149,10 @@ target_link_libraries(nostr_gtk
 target_link_libraries(nostr_gtk
   PRIVATE
     nostr_gobject
+    PkgConfig::JSON_GLIB
 )
 
-# Optional: libsoup for async image loading in profile pane
+# Optional: libsoup for async image loading
 if(SOUP3_FOUND)
   target_link_libraries(nostr_gtk PRIVATE PkgConfig::SOUP3)
   target_compile_definitions(nostr_gtk PRIVATE HAVE_SOUP3=1)
@@ -126,6 +160,11 @@ endif()
 
 # Inherit sanitizer flags from root CMakeLists.txt
 apply_sanitizers(nostr_gtk)
+
+# Ensure blueprints are compiled before the library
+if(BLUEPRINT_COMPILER)
+  add_dependencies(nostr_gtk nostr_gtk_blueprints)
+endif()
 
 # ── GObject Introspection ────────────────────────────────────────────
 option(NOSTR_GTK_ENABLE_GIR "Generate GNostrGtk-1.0 GIR and typelib" OFF)

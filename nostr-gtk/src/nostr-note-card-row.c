@@ -1,36 +1,45 @@
-#include "note_card_row.h"
+/* nostr-gtk: NoteCardRow widget — moved from apps/gnostr/src/ui/ (nostrc-lx33) */
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
+
+/* Child widgets (implementations provided by app at link time) */
 #include "og-preview-widget.h"
 #include "gnostr-label-guard.h"
 #include "gnostr-image-viewer.h"
 #include "gnostr-video-player.h"
 #include "gnostr-note-embed.h"
+#include "gnostr-avatar-cache.h"
+
+/* Standard/system libraries */
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+
+/* nostr-gobject library */
 #include <nostr-gobject-1.0/nostr_json.h>
-#include <json.h>
-#include "gnostr-avatar-cache.h"
-#include "../util/utils.h"
-#include "../util/nip05.h"
-#include "../util/imeta.h"
-#include "../util/zap.h"
-#include "../util/custom_emoji.h"
-#include "../util/nip32_labels.h"
-#include "../util/nip71.h"
-#include "../util/nip84_highlights.h"
-#include "../util/nip48_proxy.h"
-#include "../util/nip03_opentimestamps.h"
-#include "../util/nip73_external_ids.h"
-#include "../util/markdown_pango.h"
-#include "../util/nip21_uri.h"
-#include "../storage_ndb.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
-#include "../util/content_renderer.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
+
+/* App utilities (resolved via private include paths, transitional) */
+#include "utils.h"
+#include "nip05.h"
+#include "imeta.h"
+#include "zap.h"
+#include "custom_emoji.h"
+#include "nip32_labels.h"
+#include "nip71.h"
+#include "nip84_highlights.h"
+#include "nip48_proxy.h"
+#include "nip03_opentimestamps.h"
+#include "nip73_external_ids.h"
+#include "markdown_pango.h"
+#include "nip21_uri.h"
+#include "content_renderer.h"
+
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
 
-#define UI_RESOURCE "/org/gnostr/ui/ui/widgets/note-card-row.ui"
+#define UI_RESOURCE "/org/nostr/gtk/ui/nostr-note-card-row.ui"
 
 /* nostrc-05yz (harden-6): Label guard macro moved to gnostr-label-guard.h
  * as GNOSTR_LABEL_SAFE (was LABEL_SAFE_TO_UPDATE). See that header for docs. */
