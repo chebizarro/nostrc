@@ -1,15 +1,15 @@
 #pragma once
 
 /**
- * SECTION:nostr-glib
- * @short_description: Master include for nostr-glib
+ * SECTION:nostr-gobject
+ * @short_description: Master include for nostr-gobject
  *
  * Include this header for the core GObject wrapper API.
  * Headers that directly include core libnostr types are excluded
  * to prevent typedef conflicts — include them individually when needed.
  */
 
-#define NOSTR_GLIB_INSIDE
+#define NOSTR_GOBJECT_INSIDE
 
 /* Foundation */
 #include "nostr-error.h"
@@ -34,7 +34,7 @@
 #include "nostr_async.h"
 #include "crypto_utils_gobject.h"
 
-#undef NOSTR_GLIB_INSIDE
+#undef NOSTR_GOBJECT_INSIDE
 
 /*
  * The following headers are NOT included here because they pull in

@@ -1,4 +1,4 @@
-project('nostr-glib', 'c',
+project('nostr-gobject', 'c',
   version: '1.0.0',
   license: 'MIT',
   meson_version: '>= 0.59.0',
@@ -135,20 +135,20 @@ nsync_dep = declare_dependency(
 # ── Version header ───────────────────────────────────────────────────
 version_parts = meson.project_version().split('.')
 version_conf = configuration_data()
-version_conf.set('NOSTR_GLIB_MAJOR_VERSION', version_parts[0])
-version_conf.set('NOSTR_GLIB_MINOR_VERSION', version_parts[1])
-version_conf.set('NOSTR_GLIB_MICRO_VERSION', version_parts[2])
-version_conf.set('NOSTR_GLIB_VERSION', meson.project_version())
+version_conf.set('NOSTR_GOBJECT_MAJOR_VERSION', version_parts[0])
+version_conf.set('NOSTR_GOBJECT_MINOR_VERSION', version_parts[1])
+version_conf.set('NOSTR_GOBJECT_MICRO_VERSION', version_parts[2])
+version_conf.set('NOSTR_GOBJECT_VERSION', meson.project_version())
 
-nostr_glib_version_h = configure_file(
-  input: 'include/nostr-glib-version.h.in',
-  output: 'nostr-glib-version.h',
+nostr_gobject_version_h = configure_file(
+  input: 'include/nostr-gobject-version.h.in',
+  output: 'nostr-gobject-version.h',
   configuration: version_conf,
   install: true,
-  install_dir: get_option('includedir') / 'nostr-glib-1.0')
+  install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 
 # ── Source files ─────────────────────────────────────────────────────
-nostr_glib_sources = files(
+nostr_gobject_sources = files(
   'src/nostr-error.c',
   'src/nostr-enums.c',
   'src/nostr_event.c',
@@ -178,8 +178,8 @@ nostr_glib_sources = files(
 # nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
 
 # Header files (public API)
-nostr_glib_headers = files(
-  'include/nostr-glib.h',
+nostr_gobject_headers = files(
+  'include/nostr-gobject.h',
   'include/nostr-error.h',
   'include/nostr-types.h',
   'include/nostr-enums.h',
@@ -208,10 +208,10 @@ nostr_glib_headers = files(
 )
 
 # ── All include directories for compilation ──────────────────────────
-nostr_glib_inc = include_directories('include')
+nostr_gobject_inc = include_directories('include')
 
 # Collect all dependencies
-nostr_glib_deps = [
+nostr_gobject_deps = [
   glib_dep,
   gobject_dep,
   gio_dep,
@@ -231,35 +231,35 @@ nostr_glib_deps = [
 ]
 
 if json_glib_dep.found()
-  nostr_glib_deps += json_glib_dep
+  nostr_gobject_deps += json_glib_dep
 endif
 
 if libsodium_dep.found()
-  nostr_glib_deps += libsodium_dep
+  nostr_gobject_deps += libsodium_dep
 endif
 
 # ── Build the library ────────────────────────────────────────────────
 # NIP-46 headers use `#include "nostr/nip46/..."` path style
 nip46_inc = include_directories('../nips/nip46/include')
 
-nostr_glib_lib = library('nostr-glib-1.0',
-  nostr_glib_sources,
-  include_directories: [nostr_glib_inc, nip46_inc],
-  dependencies: nostr_glib_deps,
+nostr_gobject_lib = library('nostr-gobject-1.0',
+  nostr_gobject_sources,
+  include_directories: [nostr_gobject_inc, nip46_inc],
+  dependencies: nostr_gobject_deps,
   install: true)
 
 # ── Declare dependency for use as subproject ─────────────────────────
-nostr_glib_dep = declare_dependency(
-  link_with: nostr_glib_lib,
-  include_directories: nostr_glib_inc,
+nostr_gobject_dep = declare_dependency(
+  link_with: nostr_gobject_lib,
+  include_directories: nostr_gobject_inc,
   dependencies: [glib_dep, gobject_dep, gio_dep])
 
 # ── GObject Introspection ────────────────────────────────────────────
 gnome = import('gnome')
 
 if get_option('introspection')
-  nostr_glib_gir = gnome.generate_gir(nostr_glib_lib,
-    sources: nostr_glib_sources + nostr_glib_headers,
+  nostr_gobject_gir = gnome.generate_gir(nostr_gobject_lib,
+    sources: nostr_gobject_sources + nostr_gobject_headers,
     namespace: 'GNostr',
     nsversion: '1.0',
     symbol_prefix: 'gnostr',
@@ -270,30 +270,30 @@ endif
 
 # ── pkg-config ───────────────────────────────────────────────────────
 pkg = import('pkgconfig')
-pkg.generate(nostr_glib_lib,
-  name: 'nostr-glib-1.0',
+pkg.generate(nostr_gobject_lib,
+  name: 'nostr-gobject-1.0',
   description: 'GObject wrapper for libnostr — Nostr protocol library',
   requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
   requires_private: ['openssl', 'libsecp256k1'])
 
 # ── Header installation ──────────────────────────────────────────────
-install_headers(nostr_glib_headers, subdir: 'nostr-glib-1.0')
+install_headers(nostr_gobject_headers, subdir: 'nostr-gobject-1.0')
 
 # ── Tests ─────────────────────────────────────────────────────────────
 if get_option('tests')
   test_nostr_event = executable('test_nostr_event',
     'tests/test_nostr_event.c',
     dependencies: [glib_dep, gobject_dep],
-    link_with: nostr_glib_lib,
-    include_directories: nostr_glib_inc)
+    link_with: nostr_gobject_lib,
+    include_directories: nostr_gobject_inc)
 
   test('nostr_event', test_nostr_event)
 
   test_nip19 = executable('test_nip19',
     'tests/test_nip19.c',
     dependencies: [glib_dep, gobject_dep],
-    link_with: nostr_glib_lib,
-    include_directories: nostr_glib_inc)
+    link_with: nostr_gobject_lib,
+    include_directories: nostr_gobject_inc)
 
   test('nip19', test_nip19)
 endif
@@ -303,6 +303,6 @@ if get_option('examples')
   connect_publish = executable('connect_publish',
     'examples/connect_publish.c',
     dependencies: [glib_dep, gobject_dep],
-    link_with: nostr_glib_lib,
-    include_directories: nostr_glib_inc)
+    link_with: nostr_gobject_lib,
+    include_directories: nostr_gobject_inc)
 endif

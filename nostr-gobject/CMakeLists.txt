@@ -1,6 +1,6 @@
-# nostr-gobject/CMakeLists.txt — CMake build for the nostr-glib-1.0 GObject layer
+# nostr-gobject/CMakeLists.txt — CMake build for the nostr-gobject-1.0 GObject layer
 #
-# Builds libnostr-glib-1.0, optionally generates GIR/typelib via g-ir-scanner,
+# Builds libnostr-gobject-1.0, optionally generates GIR/typelib via g-ir-scanner,
 # installs headers, pkg-config .pc file, and GIR artifacts.
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -8,10 +8,10 @@
 include(GNUInstallDirs)
 
 # ── Version metadata ─────────────────────────────────────────────────
-set(NOSTR_GLIB_MAJOR_VERSION 1)
-set(NOSTR_GLIB_MINOR_VERSION 0)
-set(NOSTR_GLIB_MICRO_VERSION 0)
-set(NOSTR_GLIB_VERSION "${NOSTR_GLIB_MAJOR_VERSION}.${NOSTR_GLIB_MINOR_VERSION}.${NOSTR_GLIB_MICRO_VERSION}")
+set(NOSTR_GOBJECT_MAJOR_VERSION 1)
+set(NOSTR_GOBJECT_MINOR_VERSION 0)
+set(NOSTR_GOBJECT_MICRO_VERSION 0)
+set(NOSTR_GOBJECT_VERSION "${NOSTR_GOBJECT_MAJOR_VERSION}.${NOSTR_GOBJECT_MINOR_VERSION}.${NOSTR_GOBJECT_MICRO_VERSION}")
 
 # ── Find dependencies ────────────────────────────────────────────────
 find_package(PkgConfig REQUIRED)
@@ -28,13 +28,13 @@ find_path(NSYNC_INCLUDE_DIR NAMES nsync.h REQUIRED)
 
 # ── Version header (configure from template) ─────────────────────────
 configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-glib-version.h.in
-  ${CMAKE_CURRENT_BINARY_DIR}/nostr-glib-version.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-version.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h
   @ONLY)
 
 # ── Source files ─────────────────────────────────────────────────────
 # Note: nostr_ndb_store.c is excluded — it depends on app-level storage_ndb.c
-set(NOSTR_GLIB_SOURCES
+set(NOSTR_GOBJECT_SOURCES
   src/nostr-error.c
   src/nostr-enums.c
   src/nostr_event.c
@@ -61,8 +61,8 @@ set(NOSTR_GLIB_SOURCES
   src/nostr_bip39.c
 )
 
-set(NOSTR_GLIB_HEADERS
-  include/nostr-glib.h
+set(NOSTR_GOBJECT_HEADERS
+  include/nostr-gobject.h
   include/nostr-error.h
   include/nostr-types.h
   include/nostr-enums.h
@@ -92,19 +92,19 @@ set(NOSTR_GLIB_HEADERS
 )
 
 # ── Library target ───────────────────────────────────────────────────
-add_library(nostr_glib ${NOSTR_GLIB_SOURCES})
+add_library(nostr_gobject ${NOSTR_GOBJECT_SOURCES})
 
-set_target_properties(nostr_glib PROPERTIES
-  OUTPUT_NAME nostr-glib-1.0
-  VERSION     ${NOSTR_GLIB_VERSION}
-  SOVERSION   ${NOSTR_GLIB_MAJOR_VERSION}
+set_target_properties(nostr_gobject PROPERTIES
+  OUTPUT_NAME nostr-gobject-1.0
+  VERSION     ${NOSTR_GOBJECT_VERSION}
+  SOVERSION   ${NOSTR_GOBJECT_MAJOR_VERSION}
 )
 
-target_include_directories(nostr_glib
+target_include_directories(nostr_gobject
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/nostr-glib-1.0>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0>
   PRIVATE
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
     ${CMAKE_SOURCE_DIR}/nips/nip06/include
@@ -114,7 +114,7 @@ target_include_directories(nostr_glib
 )
 
 # Public dependencies (propagated to consumers)
-target_link_libraries(nostr_glib
+target_link_libraries(nostr_gobject
   PUBLIC
     PkgConfig::GLIB2
     PkgConfig::GOBJECT2
@@ -122,7 +122,7 @@ target_link_libraries(nostr_glib
 )
 
 # Private dependencies (implementation only)
-target_link_libraries(nostr_glib
+target_link_libraries(nostr_gobject
   PRIVATE
     libnostr
     nostr_json
@@ -139,61 +139,61 @@ foreach(_nip nip04 nip06 nip11 nip19
              nostr_nip44_core nostr_nip46_core
              nostr_nip49_core nostr_nip49_glib)
   if(TARGET ${_nip})
-    target_link_libraries(nostr_glib PRIVATE ${_nip})
+    target_link_libraries(nostr_gobject PRIVATE ${_nip})
   endif()
 endforeach()
 
 if(JSON_GLIB_FOUND)
-  target_link_libraries(nostr_glib PRIVATE PkgConfig::JSON_GLIB)
+  target_link_libraries(nostr_gobject PRIVATE PkgConfig::JSON_GLIB)
 endif()
 if(LIBSODIUM_FOUND)
-  target_link_libraries(nostr_glib PRIVATE PkgConfig::LIBSODIUM)
+  target_link_libraries(nostr_gobject PRIVATE PkgConfig::LIBSODIUM)
 endif()
 if(ENABLE_NIP11)
-  target_compile_definitions(nostr_glib PRIVATE ENABLE_NIP11)
+  target_compile_definitions(nostr_gobject PRIVATE ENABLE_NIP11)
 endif()
 
 # Inherit sanitizer flags from root CMakeLists.txt
-apply_sanitizers(nostr_glib)
+apply_sanitizers(nostr_gobject)
 
 # ── GObject Introspection ────────────────────────────────────────────
-option(NOSTR_GLIB_ENABLE_GIR "Generate GNostr-1.0 GIR and typelib" OFF)
+option(NOSTR_GOBJECT_ENABLE_GIR "Generate GNostr-1.0 GIR and typelib" OFF)
 
-if(NOSTR_GLIB_ENABLE_GIR)
+if(NOSTR_GOBJECT_ENABLE_GIR)
   find_program(G_IR_SCANNER  g-ir-scanner)
   find_program(G_IR_COMPILER g-ir-compiler)
 
   if(G_IR_SCANNER AND G_IR_COMPILER)
-    # g-ir-scanner requires a shared library. If nostr_glib is static,
+    # g-ir-scanner requires a shared library. If nostr_gobject is static,
     # create a thin shared wrapper (same pattern as root NOSTR_ENABLE_GI).
-    get_target_property(_glib_type nostr_glib TYPE)
+    get_target_property(_glib_type nostr_gobject TYPE)
     if(_glib_type STREQUAL "STATIC_LIBRARY")
       set(_gir_wrapper_dir "${CMAKE_CURRENT_BINARY_DIR}/gir_wrappers")
       file(MAKE_DIRECTORY ${_gir_wrapper_dir})
       file(WRITE "${_gir_wrapper_dir}/dummy.c"
-           "/* GIR shared wrapper */\nint _nostr_glib_gir_dummy(void){return 0;}\n")
-      add_library(nostr_glib_shared SHARED "${_gir_wrapper_dir}/dummy.c")
-      target_link_libraries(nostr_glib_shared PRIVATE nostr_glib)
+           "/* GIR shared wrapper */\nint _nostr_gobject_gir_dummy(void){return 0;}\n")
+      add_library(nostr_gobject_shared SHARED "${_gir_wrapper_dir}/dummy.c")
+      target_link_libraries(nostr_gobject_shared PRIVATE nostr_gobject)
       if(APPLE)
-        target_link_options(nostr_glib_shared PRIVATE
-          "-Wl,-force_load,$<TARGET_FILE:nostr_glib>")
+        target_link_options(nostr_gobject_shared PRIVATE
+          "-Wl,-force_load,$<TARGET_FILE:nostr_gobject>")
       else()
-        target_link_options(nostr_glib_shared PRIVATE
-          -Wl,--whole-archive $<TARGET_FILE:nostr_glib> -Wl,--no-whole-archive)
+        target_link_options(nostr_gobject_shared PRIVATE
+          -Wl,--whole-archive $<TARGET_FILE:nostr_gobject> -Wl,--no-whole-archive)
       endif()
-      set(_gir_lib_name nostr_glib_shared)
-      set(_gir_lib_dep  nostr_glib_shared)
+      set(_gir_lib_name nostr_gobject_shared)
+      set(_gir_lib_dep  nostr_gobject_shared)
     else()
-      set(_gir_lib_name nostr_glib)
-      set(_gir_lib_dep  nostr_glib)
+      set(_gir_lib_name nostr_gobject)
+      set(_gir_lib_dep  nostr_gobject)
     endif()
 
     # Collect absolute paths for scanner
     set(_gir_input "")
-    foreach(_hdr ${NOSTR_GLIB_HEADERS})
+    foreach(_hdr ${NOSTR_GOBJECT_HEADERS})
       list(APPEND _gir_input "${CMAKE_CURRENT_SOURCE_DIR}/${_hdr}")
     endforeach()
-    foreach(_src ${NOSTR_GLIB_SOURCES})
+    foreach(_src ${NOSTR_GOBJECT_SOURCES})
       list(APPEND _gir_input "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
     endforeach()
 
@@ -236,7 +236,7 @@ if(NOSTR_GLIB_ENABLE_GIR)
       VERBATIM
     )
 
-    add_custom_target(nostr-glib-gir ALL DEPENDS ${_typelib})
+    add_custom_target(nostr-gobject-gir ALL DEPENDS ${_typelib})
 
     install(FILES ${_gir_file}
             DESTINATION ${CMAKE_INSTALL_DATADIR}/gir-1.0)
@@ -248,49 +248,49 @@ if(NOSTR_GLIB_ENABLE_GIR)
 endif()
 
 # ── pkg-config ───────────────────────────────────────────────────────
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nostr-glib-1.0.pc"
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-1.0.pc"
 "prefix=${CMAKE_INSTALL_PREFIX}
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}
 includedir=\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}
 
-Name: nostr-glib-1.0
+Name: nostr-gobject-1.0
 Description: GObject wrapper for libnostr — Nostr protocol library
-Version: ${NOSTR_GLIB_VERSION}
+Version: ${NOSTR_GOBJECT_VERSION}
 Requires: glib-2.0 gobject-2.0 gio-2.0
 Requires.private: openssl libsecp256k1
-Libs: -L\${libdir} -lnostr-glib-1.0
-Cflags: -I\${includedir}/nostr-glib-1.0
+Libs: -L\${libdir} -lnostr-gobject-1.0
+Cflags: -I\${includedir}/nostr-gobject-1.0
 ")
 
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-glib-1.0.pc"
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-1.0.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 # ── Installation ─────────────────────────────────────────────────────
-install(TARGETS nostr_glib
+install(TARGETS nostr_gobject
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(FILES ${NOSTR_GLIB_HEADERS}
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-glib-1.0)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-glib-version.h"
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-glib-1.0)
+install(FILES ${NOSTR_GOBJECT_HEADERS}
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0)
 
 # ── Tests ────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nostr_event.c")
-    add_executable(test_nostr_glib_event tests/test_nostr_event.c)
-    target_link_libraries(test_nostr_glib_event PRIVATE nostr_glib)
-    apply_sanitizers(test_nostr_glib_event)
-    add_test(NAME nostr_glib_event COMMAND test_nostr_glib_event)
+    add_executable(test_nostr_gobject_event tests/test_nostr_event.c)
+    target_link_libraries(test_nostr_gobject_event PRIVATE nostr_gobject)
+    apply_sanitizers(test_nostr_gobject_event)
+    add_test(NAME nostr_gobject_event COMMAND test_nostr_gobject_event)
   endif()
 
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip19.c")
-    add_executable(test_nostr_glib_nip19 tests/test_nip19.c)
-    target_link_libraries(test_nostr_glib_nip19 PRIVATE nostr_glib)
-    apply_sanitizers(test_nostr_glib_nip19)
-    add_test(NAME nostr_glib_nip19 COMMAND test_nostr_glib_nip19)
+    add_executable(test_nostr_gobject_nip19 tests/test_nip19.c)
+    target_link_libraries(test_nostr_gobject_nip19 PRIVATE nostr_gobject)
+    apply_sanitizers(test_nostr_gobject_nip19)
+    add_test(NAME nostr_gobject_nip19 COMMAND test_nostr_gobject_nip19)
   endif()
 endif()

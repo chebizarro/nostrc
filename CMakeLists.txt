@@ -324,7 +324,7 @@ endif()
 # Include NIP options/subdirs after global sanitizer flags so all NIP targets inherit them.
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 
-# GObject wrapper layer (nostr-glib-1.0) — must come after NIP targets
+# GObject wrapper layer (nostr-gobject-1.0) — must come after NIP targets
 add_subdirectory(nostr-gobject)
 
 # Add test targets from `tests/`.
