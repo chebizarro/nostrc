@@ -235,8 +235,12 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
       file(MAKE_DIRECTORY ${_gir_wrapper_dir})
       file(WRITE "${_gir_wrapper_dir}/dummy.c"
            "/* GIR shared wrapper */\nint _nostr_gobject_gir_dummy(void){return 0;}\n")
-      add_library(nostr_gobject_shared SHARED "${_gir_wrapper_dir}/dummy.c")
+      add_library(nostr_gobject_shared SHARED
+        "${_gir_wrapper_dir}/dummy.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gir_stubs.c")
       target_link_libraries(nostr_gobject_shared PRIVATE nostr_gobject)
+      target_include_directories(nostr_gobject_shared PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-1.0)
       if(APPLE)
         target_link_options(nostr_gobject_shared PRIVATE
           "-Wl,-force_load,$<TARGET_FILE:nostr_gobject>")
@@ -257,7 +261,12 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
       list(APPEND _gir_input "${CMAKE_CURRENT_SOURCE_DIR}/${_hdr}")
     endforeach()
     foreach(_src ${NOSTR_GOBJECT_SOURCES})
-      list(APPEND _gir_input "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+      # Skip generated files (absolute paths from build dir)
+      if(IS_ABSOLUTE "${_src}")
+        list(APPEND _gir_input "${_src}")
+      else()
+        list(APPEND _gir_input "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+      endif()
     endforeach()
 
     set(_gir_dir  "${CMAKE_CURRENT_BINARY_DIR}/gir")
@@ -275,7 +284,10 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           --namespace=GNostr
           --nsversion=1.0
           --symbol-prefix=gnostr
+          --symbol-prefix=gn
           --identifier-prefix=GNostr
+          --identifier-prefix=Gnostr
+          --identifier-prefix=Gn
           --warn-all
           --library ${_gir_lib_name}
           --library-path $<TARGET_FILE_DIR:${_gir_lib_dep}>

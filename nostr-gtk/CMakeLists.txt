@@ -188,7 +188,8 @@ if(NOSTR_GTK_ENABLE_GIR)
       target_link_libraries(nostr_gtk_shared PRIVATE nostr_gtk)
       if(APPLE)
         target_link_options(nostr_gtk_shared PRIVATE
-          "-Wl,-force_load,$<TARGET_FILE:nostr_gtk>")
+          "-Wl,-force_load,$<TARGET_FILE:nostr_gtk>"
+          "-Wl,-undefined,dynamic_lookup")
       else()
         target_link_options(nostr_gtk_shared PRIVATE
           -Wl,--whole-archive $<TARGET_FILE:nostr_gtk> -Wl,--no-whole-archive)
@@ -240,10 +241,13 @@ if(NOSTR_GTK_ENABLE_GIR)
           --include=Gtk-4.0
           --include=Adw-1
           --include=GNostr-1.0
+          --add-include-path ${CMAKE_BINARY_DIR}/nostr-gobject/gir
           --output ${_gir_file}
           ${_gir_input}
-      COMMAND ${G_IR_COMPILER} ${_gir_file} -o ${_typelib}
-      DEPENDS ${_gir_lib_dep}
+      COMMAND ${G_IR_COMPILER}
+          --includedir ${CMAKE_BINARY_DIR}/nostr-gobject/gir
+          ${_gir_file} -o ${_typelib}
+      DEPENDS ${_gir_lib_dep} nostr-gobject-gir
       COMMENT "Generating GNostrGtk-1.0 GIR and typelib"
       VERBATIM
     )
