@@ -36,6 +36,16 @@ json_glib_dep = dependency('json-glib-1.0')
 # Optional: libsecret for secure key storage on Linux
 libsecret_dep = dependency('libsecret-1', required: false)
 
+# ── nostr-gobject (pre-built by CMake) ────────────────────────────────
+cmake_build_dir = meson.current_source_dir() / '..' / '..' / 'build'
+nostr_gobject_shared = cc.find_library('nostr-gobject-1.0',
+  dirs: [cmake_build_dir / 'nostr-gobject'],
+  static: false)
+nostr_gobject_inc = include_directories('../../nostr-gobject/include')
+nostr_gobject_dep = declare_dependency(
+  dependencies: nostr_gobject_shared,
+  include_directories: nostr_gobject_inc)
+
 # Configure compile definitions
 conf_data = configuration_data()
 conf_data.set_quoted('APP_ID', app_id)
@@ -212,6 +222,7 @@ app_deps = [
   gio_dep,
   adwaita_dep,
   json_glib_dep,
+  nostr_gobject_dep,
 ]
 
 if libsecret_dep.found()
