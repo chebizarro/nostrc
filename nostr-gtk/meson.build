@@ -114,14 +114,14 @@ if get_option('introspection')
     nsversion: '1.0',
     symbol_prefix: 'nostr_gtk',
     identifier_prefix: 'NostrGtk',
-    includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0', 'Gtk-4.0', 'Adw-1'],
+    includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0', 'Gtk-4.0', 'Adw-1', 'GNostr-1.0'],
     install: true)
 
   # ── VAPI generation (Vala bindings) ────────────────────────────────
   if get_option('vapi')
     gnome.generate_vapi('nostr-gtk-1.0',
       sources: nostr_gtk_gir[0],
-      packages: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'gtk4', 'libadwaita-1'],
+      packages: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'gtk4', 'libadwaita-1', 'nostr-gobject-1.0'],
       install: true)
   endif()
 endif()

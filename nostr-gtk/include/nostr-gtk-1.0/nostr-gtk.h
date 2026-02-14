@@ -10,8 +10,21 @@
 
 #define NOSTR_GTK_INSIDE
 
+#include <glib.h>
+
 #include "nostr-gtk-version.h"
 
-/* Widgets will be added here as they are moved from the app */
+G_BEGIN_DECLS
+
+/**
+ * nostr_gtk_init:
+ *
+ * Initializes the nostr-gtk library. Call once before using widgets.
+ */
+void nostr_gtk_init (void);
+
+/* Widget headers will be added here as they are moved from the app */
+
+G_END_DECLS
 
 #undef NOSTR_GTK_INSIDE

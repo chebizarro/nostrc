@@ -160,6 +160,7 @@ if(NOSTR_GTK_ENABLE_GIR)
           --include=Gio-2.0
           --include=Gtk-4.0
           --include=Adw-1
+          --include=GNostr-1.0
           --output ${_gir_file}
           ${_gir_input}
       COMMAND ${G_IR_COMPILER} ${_gir_file} -o ${_typelib}
