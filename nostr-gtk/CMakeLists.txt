@@ -38,6 +38,7 @@ find_program(BLUEPRINT_COMPILER blueprint-compiler)
 set(NOSTR_GTK_BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/nostr-note-card-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
 )
 
 set(NOSTR_GTK_COMPILED_UI_FILES)
@@ -67,7 +68,8 @@ set(GRESOURCE_C   ${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-resources.c)
 
 # Collect all UI template files as dependencies
 file(GLOB _UI_FILES CONFIGURE_DEPENDS
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.ui)
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/*.ui)
 
 add_custom_command(
   OUTPUT ${GRESOURCE_C}
