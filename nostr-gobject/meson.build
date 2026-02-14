@@ -63,9 +63,6 @@ libgo_dep = declare_dependency(
   dependencies: libgo_deps,
   include_directories: libgo_inc)
 
-# Additional app-level includes (storage_ndb.h for NDB store backend)
-gnostr_app_inc = include_directories('../apps/gnostr/src')
-
 # ── NIP libraries (pre-built by CMake) ───────────────────────────────
 nip04_static = cc.find_library('nip04',
   dirs: [cmake_build_dir / 'nips' / 'nip04'],
@@ -247,7 +244,7 @@ nip46_inc = include_directories('../nips/nip46/include')
 
 nostr_glib_lib = library('nostr-glib-1.0',
   nostr_glib_sources,
-  include_directories: [nostr_glib_inc, gnostr_app_inc, nip46_inc],
+  include_directories: [nostr_glib_inc, nip46_inc],
   dependencies: nostr_glib_deps,
   install: true)
 

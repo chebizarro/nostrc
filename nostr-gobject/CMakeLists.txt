@@ -88,6 +88,7 @@ set(NOSTR_GLIB_HEADERS
   include/nostr_nip46_bunker.h
   include/nostr_nip49.h
   include/nostr_bip39.h
+  include/storage_ndb.h
 )
 
 # ── Library target ───────────────────────────────────────────────────

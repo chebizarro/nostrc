@@ -262,7 +262,8 @@ target_sources(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
   ${PROJECT_ROOT}/nostr-gobject/src/nostr_filter.c
   ${PROJECT_ROOT}/nostr-gobject/src/nostr_nip19.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pointer.c)
+  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pointer.c
+  ${PROJECT_ROOT}/nostr-gobject/src/storage_ndb.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
@@ -527,7 +528,7 @@ target_sources(gnostr-live-log PRIVATE
   ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
   ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
   ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
+  ${PROJECT_ROOT}/nostr-gobject/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
 endif()
@@ -737,7 +738,7 @@ if (BUILD_TESTING)
   add_executable(gnostr-test-thread-sub tests/test_thread_subscription.c
     src/model/gnostr-thread-subscription.c
     src/model/gn-ndb-sub-dispatcher.c
-    src/storage_ndb.c
+    ${PROJECT_ROOT}/nostr-gobject/src/storage_ndb.c
     ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c
     ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
     ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
