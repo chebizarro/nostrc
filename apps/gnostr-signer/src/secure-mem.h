@@ -19,7 +19,8 @@
  * - Size parameters must be accurate for secure zeroing to work correctly
  * - mlock() may fail without elevated privileges (non-fatal warning)
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SECURE_MEM_H
+#define APPS_GNOSTR_SIGNER_SECURE_MEM_H
 
 #include <glib.h>
 #include <stddef.h>
@@ -430,3 +431,4 @@ gchar *gnostr_secure_concat(const char *s1, const char *s2);
 gchar *gnostr_secure_sprintf(const char *format, ...) G_GNUC_PRINTF(1, 2);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SECURE_MEM_H */

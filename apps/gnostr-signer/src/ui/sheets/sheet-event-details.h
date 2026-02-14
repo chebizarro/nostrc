@@ -9,7 +9,8 @@
  * - Content (expandable)
  * - Tags (list view)
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_EVENT_DETAILS_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_EVENT_DETAILS_H
 
 #include <adwaita.h>
 
@@ -36,3 +37,4 @@ void sheet_event_details_set_event_json(SheetEventDetails *self,
                                         const gchar *event_json);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_EVENT_DETAILS_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GOBJECT_STORAGE_NDB_H
+#define NOSTR_GOBJECT_STORAGE_NDB_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -429,3 +430,4 @@ void storage_ndb_cursor_free(StorageNdbCursor *cursor);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NOSTR_GOBJECT_STORAGE_NDB_H */

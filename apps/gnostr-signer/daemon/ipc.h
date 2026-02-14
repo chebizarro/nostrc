@@ -7,7 +7,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_DAEMON_IPC_H
+#define APPS_GNOSTR_SIGNER_DAEMON_IPC_H
 
 #include <glib.h>
 
@@ -91,3 +92,4 @@ G_END_DECLS
 #ifdef __cplusplus
 }
 #endif
+#endif /* APPS_GNOSTR_SIGNER_DAEMON_IPC_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP5F_CORE_SOCK_INTERNAL_H
+#define NIPS_NIP5F_CORE_SOCK_INTERNAL_H
 
 #include <stddef.h>
 
@@ -21,3 +22,4 @@ int nip5f_ensure_socket_dirs(const char *socket_path);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP5F_CORE_SOCK_INTERNAL_H */

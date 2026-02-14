@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_NOSTR_INIT_H
+#define LIBNOSTR_NOSTR_INIT_H
 
 /*
  * libnostr global initialization and cleanup
@@ -33,3 +34,4 @@ void nostr_global_cleanup(void);
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBNOSTR_NOSTR_INIT_H */

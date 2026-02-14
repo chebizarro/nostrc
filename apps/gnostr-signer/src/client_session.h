@@ -14,7 +14,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_CLIENT_SESSION_H
+#define APPS_GNOSTR_SIGNER_CLIENT_SESSION_H
 
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -410,3 +411,4 @@ guint gn_client_session_manager_get_session_count(GnClientSessionManager *self);
 guint gn_client_session_manager_get_active_count(GnClientSessionManager *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_CLIENT_SESSION_H */

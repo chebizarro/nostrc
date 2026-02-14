@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_UTIL_FOLLOW_LIST_H
+#define APPS_GNOSTR_UTIL_FOLLOW_LIST_H
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -81,3 +82,4 @@ GPtrArray *gnostr_follow_list_get_cached(const gchar *pubkey_hex);
 gchar **gnostr_follow_list_get_pubkeys_cached(const gchar *pubkey_hex);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_UTIL_FOLLOW_LIST_H */

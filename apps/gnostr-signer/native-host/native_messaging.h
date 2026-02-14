@@ -8,7 +8,8 @@
  * - Writes 4-byte little-endian length prefix + JSON to stdout
  * - Each message is a JSON object with method, params, id
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_NATIVE_HOST_NATIVE_MESSAGING_H
+#define APPS_GNOSTR_SIGNER_NATIVE_HOST_NATIVE_MESSAGING_H
 
 #include <glib.h>
 
@@ -181,3 +182,4 @@ const gchar *native_messaging_error_message(NativeMessagingError code);
 #define NATIVE_MESSAGING_MAX_SIZE (1024 * 1024)
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_NATIVE_HOST_NATIVE_MESSAGING_H */

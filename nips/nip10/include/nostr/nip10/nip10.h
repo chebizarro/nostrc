@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP10_NOSTR_NIP10_NIP10_H
+#define NIPS_NIP10_NOSTR_NIP10_NIP10_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -154,3 +155,4 @@ int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadIn
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP10_NOSTR_NIP10_NIP10_H */

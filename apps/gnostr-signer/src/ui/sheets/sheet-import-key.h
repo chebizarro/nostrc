@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_IMPORT_KEY_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_IMPORT_KEY_H
 #include <adwaita.h>
 
 G_BEGIN_DECLS
@@ -17,3 +18,4 @@ void sheet_import_key_set_on_success(SheetImportKey *self,
                                      gpointer user_data);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_IMPORT_KEY_H */

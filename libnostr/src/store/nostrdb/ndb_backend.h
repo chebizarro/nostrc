@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_STORE_NOSTRDB_NDB_BACKEND_H
+#define LIBNOSTR_STORE_NOSTRDB_NDB_BACKEND_H
 
 #include "store_int.h"
 
@@ -9,3 +10,4 @@ struct ln_ndb_impl {
 
 /* Exported to registry when LIBNOSTR_WITH_NOSTRDB */
 const struct ln_store_ops *ln_ndb_get_ops(void);
+#endif /* LIBNOSTR_STORE_NOSTRDB_NDB_BACKEND_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_UTIL_DEBOUNCE_H
+#define APPS_GNOSTR_UTIL_DEBOUNCE_H
 
 #include <glib.h>
 
@@ -65,3 +66,4 @@ gboolean gnostr_debounce_is_pending(GnostrDebounce *debounce);
  * Safe to call with %NULL.
  */
 void gnostr_debounce_free(GnostrDebounce *debounce);
+#endif /* APPS_GNOSTR_UTIL_DEBOUNCE_H */

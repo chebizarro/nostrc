@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP31_NOSTR_NIP31_NIP31_H
+#define NIPS_NIP31_NOSTR_NIP31_NIP31_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,3 +40,4 @@ int  nostr_nip31_get_alt(const NostrEvent *ev, char **out_alt); /* malloc'd */
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP31_NOSTR_NIP31_NIP31_H */

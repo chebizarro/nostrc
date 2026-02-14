@@ -1,4 +1,5 @@
-#pragma once
+#ifndef GNOME_SEAHORSE_SECRET_STORE_H
+#define GNOME_SEAHORSE_SECRET_STORE_H
 #include <glib.h>
 #ifdef GNOSTR_HAVE_LIBSECRET
 #include <libsecret/secret.h>
@@ -33,3 +34,4 @@ gboolean gnostr_secret_store_delete_by_identity(const gchar *npub,
 #ifdef __cplusplus
 }
 #endif
+#endif /* GNOME_SEAHORSE_SECRET_STORE_H */

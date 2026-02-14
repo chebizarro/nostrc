@@ -6,7 +6,8 @@
  * - Show mnemonic seed words (if applicable)
  * - QR code display for scanning
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_ACCOUNT_BACKUP_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_ACCOUNT_BACKUP_H
 
 #include <adwaita.h>
 
@@ -27,3 +28,4 @@ SheetAccountBackup *sheet_account_backup_new(void);
 void sheet_account_backup_set_account(SheetAccountBackup *self, const gchar *npub);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_ACCOUNT_BACKUP_H */

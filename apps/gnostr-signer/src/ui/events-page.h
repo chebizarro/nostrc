@@ -2,8 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_EVENTS_PAGE_H
+#define APPS_GNOSTR_SIGNER_UI_EVENTS_PAGE_H
 
 #include <adwaita.h>
 
@@ -100,3 +100,4 @@ void events_page_clear(EventsPage *self);
 GListStore *events_page_get_event_store(EventsPage *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_EVENTS_PAGE_H */

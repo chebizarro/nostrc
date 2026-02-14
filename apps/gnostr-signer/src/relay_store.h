@@ -4,7 +4,8 @@
  * Each relay has read/write permissions.
  * Supports per-identity relay lists (nostrc-5ju).
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_RELAY_STORE_H
+#define APPS_GNOSTR_SIGNER_RELAY_STORE_H
 
 #include <glib.h>
 
@@ -108,3 +109,4 @@ void relay_store_copy_from(RelayStore *dest, RelayStore *src);
 void relay_store_reset_to_defaults(RelayStore *rs);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_RELAY_STORE_H */

@@ -11,7 +11,8 @@
  *
  * Issue: nostrc-orz
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_MULTISIG_NIP46_H
+#define APPS_GNOSTR_SIGNER_MULTISIG_NIP46_H
 
 #include <glib.h>
 #include "multisig_wallet.h"
@@ -147,3 +148,4 @@ gboolean multisig_nip46_is_connected(MultisigNip46Client *client,
 MultisigNip46Client *multisig_nip46_get_default(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_MULTISIG_NIP46_H */

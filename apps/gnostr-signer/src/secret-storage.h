@@ -10,7 +10,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SECRET_STORAGE_H
+#define APPS_GNOSTR_SIGNER_SECRET_STORAGE_H
 
 #include <glib.h>
 
@@ -182,3 +183,4 @@ GnSecretStorageKeyInfo *gn_secret_storage_get_key_info(const gchar *label,
                                                         GError **error);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SECRET_STORAGE_H */

@@ -1,5 +1,6 @@
 /* sheet-select-account.h - Account selection and management dialog */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_SELECT_ACCOUNT_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_SELECT_ACCOUNT_H
 
 #include <adwaita.h>
 
@@ -23,3 +24,4 @@ void sheet_select_account_set_on_select(SheetSelectAccount *self,
 void sheet_select_account_refresh(SheetSelectAccount *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_SELECT_ACCOUNT_H */

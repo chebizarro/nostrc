@@ -5,7 +5,8 @@
  * - Mnemonic Seed Phrase (12/24 words)
  * - Raw nsec Private Key
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_IMPORT_PROFILE_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_IMPORT_PROFILE_H
 
 #include <adwaita.h>
 
@@ -38,3 +39,4 @@ void sheet_import_profile_set_on_success(SheetImportProfile *self,
                                          gpointer user_data);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_IMPORT_PROFILE_H */

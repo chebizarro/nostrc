@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GTK_NOSTR_GTK_H
+#define NOSTR_GTK_NOSTR_GTK_H
 
 /**
  * SECTION:nostr-gtk
@@ -34,3 +35,4 @@ void nostr_gtk_init (void);
 G_END_DECLS
 
 #undef NOSTR_GTK_INSIDE
+#endif /* NOSTR_GTK_NOSTR_GTK_H */

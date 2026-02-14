@@ -21,7 +21,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_HSM_PROVIDER_TPM_H
+#define APPS_GNOSTR_SIGNER_HSM_PROVIDER_TPM_H
 
 #include "hsm_provider.h"
 
@@ -315,3 +316,4 @@ gboolean gn_hw_keystore_is_supported(void);
  */
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_HSM_PROVIDER_TPM_H */

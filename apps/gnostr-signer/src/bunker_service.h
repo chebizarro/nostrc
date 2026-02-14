@@ -10,7 +10,8 @@
  * - Event kind filtering
  * - UI prompts for approval
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_BUNKER_SERVICE_H
+#define APPS_GNOSTR_SIGNER_BUNKER_SERVICE_H
 
 #include <glib.h>
 
@@ -132,3 +133,4 @@ void bunker_service_create_client_session(BunkerService *bs,
                                           gint64 ttl_seconds);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_BUNKER_SERVICE_H */

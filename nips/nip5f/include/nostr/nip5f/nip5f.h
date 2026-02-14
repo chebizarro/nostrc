@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP5F_NOSTR_NIP5F_NIP5F_H
+#define NIPS_NIP5F_NOSTR_NIP5F_NIP5F_H
 
 /* See SPEC source: nips/nip5f/SPEC_SOURCE -> ../../docs/proposals/5F.md */
 
@@ -42,3 +43,4 @@ int nostr_nip5f_client_list_public_keys(void *conn, char **out_keys_json);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP5F_NOSTR_NIP5F_NIP5F_H */

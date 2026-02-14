@@ -7,7 +7,8 @@
  * - Recovering key from collected shares
  * - Managing existing recovery configuration
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_SOCIAL_RECOVERY_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_SOCIAL_RECOVERY_H
 
 #include <adwaita.h>
 
@@ -73,3 +74,4 @@ void sheet_social_recovery_set_on_complete(SheetSocialRecovery *self,
                                            gpointer user_data);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_SOCIAL_RECOVERY_H */

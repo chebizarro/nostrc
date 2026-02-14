@@ -10,7 +10,8 @@
  * - lud16: Lightning address for zaps
  * - website: Personal website URL
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_PROFILE_STORE_H
+#define APPS_GNOSTR_SIGNER_PROFILE_STORE_H
 
 #include <glib.h>
 
@@ -73,3 +74,4 @@ void profile_store_clear_dirty(ProfileStore *ps, const gchar *npub);
 const gchar *profile_store_cache_dir(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_PROFILE_STORE_H */

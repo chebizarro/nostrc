@@ -13,7 +13,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_HW_WALLET_PROVIDER_H
+#define APPS_GNOSTR_SIGNER_HW_WALLET_PROVIDER_H
 
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -544,3 +545,4 @@ void gn_hw_wallet_providers_init(void);
  */
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_HW_WALLET_PROVIDER_H */

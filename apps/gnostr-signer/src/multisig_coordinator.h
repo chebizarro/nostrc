@@ -12,7 +12,8 @@
  *
  * Issue: nostrc-orz
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_MULTISIG_COORDINATOR_H
+#define APPS_GNOSTR_SIGNER_MULTISIG_COORDINATOR_H
 
 #include <glib.h>
 #include "multisig_wallet.h"
@@ -251,3 +252,4 @@ void remote_signer_info_free(RemoteSignerInfo *info);
 void multisig_coordinator_free(MultisigCoordinator *coordinator);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_MULTISIG_COORDINATOR_H */

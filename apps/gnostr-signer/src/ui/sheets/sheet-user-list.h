@@ -1,5 +1,6 @@
 /* sheet-user-list.h - User list management dialog (follows/mutes) */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_USER_LIST_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_USER_LIST_H
 
 #include <adwaita.h>
 #include "../../user_list_store.h"
@@ -36,3 +37,4 @@ void sheet_user_list_update_user_profile(SheetUserList *self,
                                          const gchar *nip05);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_USER_LIST_H */

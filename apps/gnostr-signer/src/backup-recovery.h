@@ -6,7 +6,8 @@
  * NIP-49 uses scrypt for key derivation and XChaCha20-Poly1305 for encryption.
  * Mnemonic support uses NIP-06 (BIP-39/BIP-32 derivation path m/44'/1237'/0'/0/0).
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_BACKUP_RECOVERY_H
+#define APPS_GNOSTR_SIGNER_BACKUP_RECOVERY_H
 
 #include <glib.h>
 
@@ -277,3 +278,4 @@ gboolean gn_backup_get_npub(const gchar *nsec,
                              GError **error);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_BACKUP_RECOVERY_H */

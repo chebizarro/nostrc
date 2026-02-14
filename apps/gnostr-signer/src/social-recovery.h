@@ -17,7 +17,8 @@
  * - Threshold must be at least 2 to prevent single point of failure
  * - Maximum 255 shares supported (GF(2^8) arithmetic)
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SOCIAL_RECOVERY_H
+#define APPS_GNOSTR_SIGNER_SOCIAL_RECOVERY_H
 
 #include <glib.h>
 #include <stdint.h>
@@ -442,3 +443,4 @@ gchar *gn_social_recovery_format_share_message(const gchar *encrypted_share,
                                                const gchar *owner_npub);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SOCIAL_RECOVERY_H */

@@ -2,7 +2,8 @@
  * @file fiber_chan.h
  * @brief Bounded MPMC channels for pointer-sized messages between fibers.
  */
-#pragma once
+#ifndef LIBGO_FIBER_LIBGO_FIBER_CHAN_H
+#define LIBGO_FIBER_LIBGO_FIBER_CHAN_H
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
@@ -36,3 +37,4 @@ int         gof_chan_try_recv(gof_chan_t* c, void** out_value);
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBGO_FIBER_LIBGO_FIBER_CHAN_H */

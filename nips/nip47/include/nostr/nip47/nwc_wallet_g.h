@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_G_H
+#define NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_G_H
 
 #include <glib.h>
 #include "nwc_wallet.h"
@@ -147,3 +148,4 @@ const gchar *nostr_nwc_wallet_get_encryption_g(gpointer session);
 const gchar *nostr_nwc_wallet_get_client_pub_g(gpointer session);
 
 G_END_DECLS
+#endif /* NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_G_H */

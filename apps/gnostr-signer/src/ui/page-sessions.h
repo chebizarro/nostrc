@@ -8,7 +8,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_PAGE_SESSIONS_H
+#define APPS_GNOSTR_SIGNER_UI_PAGE_SESSIONS_H
 
 #include <adwaita.h>
 
@@ -36,3 +37,4 @@ GnPageSessions *gn_page_sessions_new(void);
 void gn_page_sessions_refresh(GnPageSessions *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_PAGE_SESSIONS_H */

@@ -3,8 +3,8 @@
  * Wraps the core NostrNip46Session client API in a GObject type with
  * properties, signals, and GTask-based async methods for GTK integration.
  */
-
-#pragma once
+#ifndef NOSTR_GOBJECT_NOSTR_NIP46_CLIENT_H
+#define NOSTR_GOBJECT_NOSTR_NIP46_CLIENT_H
 
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -179,3 +179,4 @@ const gchar       *gnostr_nip46_client_get_remote_pubkey(GNostrNip46Client *self
 NostrNip46Session *gnostr_nip46_client_get_session(GNostrNip46Client *self);
 
 G_END_DECLS
+#endif /* NOSTR_GOBJECT_NOSTR_NIP46_CLIENT_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP47_NOSTR_NIP47_NWC_ENVELOPE_H
+#define NIPS_NIP47_NOSTR_NIP47_NWC_ENVELOPE_H
 
 #include "nwc.h"
 
@@ -43,3 +44,4 @@ void nostr_nwc_response_body_clear(NostrNwcResponseBody *b);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP47_NOSTR_NIP47_NWC_ENVELOPE_H */

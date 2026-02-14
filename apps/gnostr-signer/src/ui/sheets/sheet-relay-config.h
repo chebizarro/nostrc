@@ -2,7 +2,8 @@
  *
  * Supports per-identity relay lists (nostrc-5ju).
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_RELAY_CONFIG_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_RELAY_CONFIG_H
 
 #include <adwaita.h>
 
@@ -38,3 +39,4 @@ void sheet_relay_config_set_on_publish(SheetRelayConfig *self,
 const gchar *sheet_relay_config_get_identity(SheetRelayConfig *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_RELAY_CONFIG_H */

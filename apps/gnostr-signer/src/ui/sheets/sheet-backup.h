@@ -8,7 +8,8 @@
  * - Importing from BIP-39 mnemonic phrase
  * - Verification before importing
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_BACKUP_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_BACKUP_H
 
 #include <adwaita.h>
 
@@ -84,3 +85,4 @@ void sheet_backup_set_on_import(SheetBackup *self,
 void sheet_backup_trigger_reminder(GtkWindow *parent, const gchar *npub);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_BACKUP_H */

@@ -17,7 +17,8 @@
  * - owner_uid/owner_username: Unix user association
  * - created_at: ISO 8601 timestamp
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SECRET_STORE_H
+#define APPS_GNOSTR_SIGNER_SECRET_STORE_H
 
 #include <glib.h>
 #include <gio/gio.h>  /* For GTask, GAsyncResult, GCancellable */
@@ -250,3 +251,4 @@ const gchar *secret_store_result_to_string(SecretStoreResult result);
 void secret_store_result_to_gerror(SecretStoreResult result, GError **error);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SECRET_STORE_H */

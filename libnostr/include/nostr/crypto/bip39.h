@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_NOSTR_CRYPTO_BIP39_H
+#define LIBNOSTR_NOSTR_CRYPTO_BIP39_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,3 +28,4 @@ bool nostr_bip39_seed(const char *mnemonic, const char *passphrase, uint8_t out[
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBNOSTR_NOSTR_CRYPTO_BIP39_H */

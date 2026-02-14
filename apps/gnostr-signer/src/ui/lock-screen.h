@@ -5,7 +5,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_LOCK_SCREEN_H
+#define APPS_GNOSTR_SIGNER_UI_LOCK_SCREEN_H
 
 #include <adwaita.h>
 #include <gtk/gtk.h>
@@ -120,3 +121,4 @@ gboolean gn_lock_screen_is_rate_limited(GnLockScreen *self);
 guint gn_lock_screen_get_rate_limit_remaining(GnLockScreen *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_LOCK_SCREEN_H */

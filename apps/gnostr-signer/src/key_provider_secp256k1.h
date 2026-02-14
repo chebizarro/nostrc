@@ -10,7 +10,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_KEY_PROVIDER_SECP256K1_H
+#define APPS_GNOSTR_SIGNER_KEY_PROVIDER_SECP256K1_H
 
 #include "key_provider.h"
 
@@ -103,3 +104,4 @@ gboolean gn_secp256k1_verify_hex(const gchar  *public_key_hex,
                                  GError      **error);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_KEY_PROVIDER_SECP256K1_H */

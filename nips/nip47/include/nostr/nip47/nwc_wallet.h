@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_H
+#define NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_H
 
 #include "nwc.h"
 #include "nwc_envelope.h"
@@ -43,3 +44,4 @@ int nostr_nwc_wallet_decrypt(const NostrNwcWalletSession *s,
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_H */

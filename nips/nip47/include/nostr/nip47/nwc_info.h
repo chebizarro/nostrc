@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP47_NOSTR_NIP47_NWC_INFO_H
+#define NIPS_NIP47_NOSTR_NIP47_NWC_INFO_H
 
 #include <stddef.h>
 
@@ -45,3 +46,4 @@ int nostr_nwc_info_parse(const char *event_json,
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP47_NOSTR_NIP47_NWC_INFO_H */

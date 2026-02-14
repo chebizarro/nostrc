@@ -13,7 +13,8 @@
  *
  * Reference: https://github.com/nostr-protocol/nips/blob/master/65.md
  */
-#pragma once
+#ifndef NIPS_NIP65_NOSTR_NIP65_NIP65_H
+#define NIPS_NIP65_NOSTR_NIP65_NIP65_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -303,3 +304,4 @@ void nostr_nip65_free_string_array(char **arr);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP65_NOSTR_NIP65_NIP65_H */

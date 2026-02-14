@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_LIBNOSTR_STORE_H
+#define LIBNOSTR_LIBNOSTR_STORE_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,3 +60,4 @@ void *ln_store_get_backend_handle(ln_store *s);
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBNOSTR_LIBNOSTR_STORE_H */

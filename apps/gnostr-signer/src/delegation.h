@@ -10,7 +10,8 @@
  * - Conditions string: "kind=1&created_at>1234&created_at<5678"
  * - Signature: schnorr_sign(sha256(sha256(delegatee_pubkey || conditions)))
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_DELEGATION_H
+#define APPS_GNOSTR_SIGNER_DELEGATION_H
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -266,3 +267,4 @@ gchar *gn_delegation_get_storage_path(const gchar *delegator_npub);
 const gchar *gn_delegation_kind_name(guint16 kind);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_DELEGATION_H */

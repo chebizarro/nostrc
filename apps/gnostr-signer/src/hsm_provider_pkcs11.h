@@ -16,7 +16,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_HSM_PROVIDER_PKCS11_H
+#define APPS_GNOSTR_SIGNER_HSM_PROVIDER_PKCS11_H
 
 #include "hsm_provider.h"
 
@@ -144,3 +145,4 @@ void gn_hsm_provider_pkcs11_enable_software_signing(GnHsmProviderPkcs11 *self,
                                                     gboolean enable);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_HSM_PROVIDER_PKCS11_H */

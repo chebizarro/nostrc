@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GOBJECT_NOSTR_UTILS_H
+#define NOSTR_GOBJECT_NOSTR_UTILS_H
 
 #include <glib.h>
 
@@ -17,3 +18,4 @@ G_BEGIN_DECLS
 gchar *gnostr_ensure_hex_pubkey(const char *input);
 
 G_END_DECLS
+#endif /* NOSTR_GOBJECT_NOSTR_UTILS_H */

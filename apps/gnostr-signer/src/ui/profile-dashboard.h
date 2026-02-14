@@ -4,7 +4,8 @@
  * - Profile header (avatar, display name, truncated npub)
  * - Action button grid for common operations
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_PROFILE_DASHBOARD_H
+#define APPS_GNOSTR_SIGNER_UI_PROFILE_DASHBOARD_H
 
 #include <adwaita.h>
 
@@ -31,3 +32,4 @@ void profile_dashboard_refresh(ProfileDashboard *self);
  */
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_PROFILE_DASHBOARD_H */

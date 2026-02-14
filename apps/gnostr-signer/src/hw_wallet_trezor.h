@@ -14,7 +14,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_HW_WALLET_TREZOR_H
+#define APPS_GNOSTR_SIGNER_HW_WALLET_TREZOR_H
 
 #include "hw_wallet_provider.h"
 
@@ -68,3 +69,4 @@ GnHwWalletProvider *gn_hw_wallet_trezor_provider_new(void);
 #define TREZOR_MAGIC_V2 '#'  /* 0x23 */
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_HW_WALLET_TREZOR_H */

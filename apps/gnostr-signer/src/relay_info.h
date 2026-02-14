@@ -3,7 +3,8 @@
  * Fetches and parses NIP-11 relay metadata documents.
  * Used to display relay name, description, and supported NIPs in the UI.
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_RELAY_INFO_H
+#define APPS_GNOSTR_SIGNER_RELAY_INFO_H
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -117,3 +118,4 @@ RelayInfo *relay_info_cache_get(const gchar *relay_url);
 void relay_info_cache_put(RelayInfo *info);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_RELAY_INFO_H */

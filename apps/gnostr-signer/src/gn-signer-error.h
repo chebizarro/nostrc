@@ -15,7 +15,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_GN_SIGNER_ERROR_H
+#define APPS_GNOSTR_SIGNER_GN_SIGNER_ERROR_H
 
 #include <glib.h>
 
@@ -67,3 +68,4 @@ typedef enum {
 const gchar *gn_signer_error_to_string(GnSignerError code);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_GN_SIGNER_ERROR_H */

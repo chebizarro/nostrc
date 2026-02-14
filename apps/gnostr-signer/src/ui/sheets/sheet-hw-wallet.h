@@ -8,7 +8,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_HW_WALLET_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_HW_WALLET_H
 
 #include <adwaita.h>
 #include "../../hw_wallet_provider.h"
@@ -123,3 +124,4 @@ void sheet_hw_wallet_set_device_filter(SheetHwWallet *self,
 void sheet_hw_wallet_refresh_devices(SheetHwWallet *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_HW_WALLET_H */

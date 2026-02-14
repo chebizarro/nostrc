@@ -3,7 +3,8 @@
  * Provides camera access for real-time QR code scanning using
  * GStreamer pipelines or platform-specific camera APIs.
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_QR_SCANNER_H
+#define APPS_GNOSTR_SIGNER_QR_SCANNER_H
 
 #include "qr-code.h"
 #include <gtk/gtk.h>
@@ -87,3 +88,4 @@ gboolean gn_qr_camera_available(void);
 gchar **gn_qr_list_cameras(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_QR_SCANNER_H */

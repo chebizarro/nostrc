@@ -11,7 +11,8 @@
  * This ensures private key operations are protected when the user
  * is away from their device.
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SESSION_MANAGER_H
+#define APPS_GNOSTR_SIGNER_SESSION_MANAGER_H
 
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -226,3 +227,4 @@ gboolean gn_session_manager_clear_password(GnSessionManager *self,
                                            GError **error);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SESSION_MANAGER_H */

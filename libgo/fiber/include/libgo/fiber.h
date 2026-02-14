@@ -6,7 +6,8 @@
  * lightweight synchronization primitives, and an integrated I/O netpoller. See
  * docs in `docs/fiber/` for architecture details and usage examples.
  */
-#pragma once
+#ifndef LIBGO_FIBER_LIBGO_FIBER_H
+#define LIBGO_FIBER_LIBGO_FIBER_H
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -164,3 +165,4 @@ void gof_trace_on_unblock(int fd, int ev);
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBGO_FIBER_LIBGO_FIBER_H */

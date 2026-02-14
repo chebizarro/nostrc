@@ -1,5 +1,6 @@
 // Internal shared struct between server acceptor and connection thread
-#pragma once
+#ifndef NIPS_NIP5F_CORE_SOCK_CONN_H
+#define NIPS_NIP5F_CORE_SOCK_CONN_H
 #include "nostr/nip5f/nip5f.h"
 
 struct Nip5fConnArg {
@@ -13,3 +14,4 @@ struct Nip5fConnArg {
 };
 
 void *nip5f_conn_thread(void *arg);
+#endif /* NIPS_NIP5F_CORE_SOCK_CONN_H */

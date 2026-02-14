@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_APP_RESOURCES_H
+#define APPS_GNOSTR_SIGNER_UI_APP_RESOURCES_H
 
 // Global resource path for GNostr Signer UI templates
 // All GtkBuilder templates are compiled into GResource under this prefix.
@@ -6,3 +7,4 @@
 #ifndef APP_RESOURCE_PATH
 #define APP_RESOURCE_PATH "/org/gnostr/signer"
 #endif
+#endif /* APPS_GNOSTR_SIGNER_UI_APP_RESOURCES_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GTK_NOSTR_NOTE_CARD_ROW_H
+#define NOSTR_GTK_NOSTR_NOTE_CARD_ROW_H
 
 /**
  * SECTION:nostr-note-card-row
@@ -267,3 +268,4 @@ gboolean gnostr_note_card_row_is_bound(GnostrNoteCardRow *self);
 guint64 gnostr_note_card_row_get_binding_id(GnostrNoteCardRow *self);
 
 G_END_DECLS
+#endif /* NOSTR_GTK_NOSTR_NOTE_CARD_ROW_H */

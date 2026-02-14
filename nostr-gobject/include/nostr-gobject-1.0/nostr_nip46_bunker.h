@@ -3,8 +3,8 @@
  * Wraps the core NIP-46 bunker API in a GObject type, replacing C function
  * pointer callbacks with GObject signals for authorize and sign requests.
  */
-
-#pragma once
+#ifndef NOSTR_GOBJECT_NOSTR_NIP46_BUNKER_H
+#define NOSTR_GOBJECT_NOSTR_NIP46_BUNKER_H
 
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -120,3 +120,4 @@ gboolean gnostr_nip46_bunker_handle_cipher(GNostrNip46Bunker *self,
 NostrNip46Session *gnostr_nip46_bunker_get_session(GNostrNip46Bunker *self);
 
 G_END_DECLS
+#endif /* NOSTR_GOBJECT_NOSTR_NIP46_BUNKER_H */

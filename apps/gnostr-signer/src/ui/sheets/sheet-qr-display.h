@@ -6,7 +6,8 @@
  * - nostr: URIs
  * - bunker URIs (NIP-46)
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_QR_DISPLAY_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_QR_DISPLAY_H
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -57,3 +58,4 @@ void sheet_qr_display_set_bunker_uri(SheetQrDisplay *self,
                                       const gchar *bunker_uri);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_QR_DISPLAY_H */

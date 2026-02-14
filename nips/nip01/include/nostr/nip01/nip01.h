@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP01_NOSTR_NIP01_NIP01_H
+#define NIPS_NIP01_NOSTR_NIP01_NIP01_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -154,3 +155,4 @@ int  nostr_nip01_filter_build(NostrFilterBuilder *fb, NostrFilter *out);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP01_NOSTR_NIP01_NIP01_H */

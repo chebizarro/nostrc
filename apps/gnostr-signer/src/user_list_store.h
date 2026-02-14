@@ -6,7 +6,8 @@
  *
  * Lists are stored locally and can be published as Nostr events.
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_USER_LIST_STORE_H
+#define APPS_GNOSTR_SIGNER_USER_LIST_STORE_H
 
 #include <glib.h>
 
@@ -153,3 +154,4 @@ void user_list_store_mark_synced(UserListStore *store);
 gboolean user_list_store_needs_sync(UserListStore *store, gint64 threshold_seconds);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_USER_LIST_STORE_H */

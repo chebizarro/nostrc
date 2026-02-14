@@ -12,7 +12,8 @@
  *
  * Uses libsodium if available, with fallback to system APIs.
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SECURE_MEMORY_H
+#define APPS_GNOSTR_SIGNER_SECURE_MEMORY_H
 
 #include <glib.h>
 #include <glib-object.h>
@@ -271,3 +272,4 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnSecureString, gn_secure_string_unref)
   gn_secure_zero((buf), sizeof(buf))
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SECURE_MEMORY_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_NOSTR_METRICS_SCHEMA_H
+#define LIBNOSTR_NOSTR_METRICS_SCHEMA_H
 
 /*
  * Metrics Schema — Formal definitions of all tracked metrics.
@@ -102,3 +103,4 @@
 
 /* EventBus dispatch latency */
 #define METRIC_BUS_DISPATCH_NS          "bus_dispatch_ns"
+#endif /* LIBNOSTR_NOSTR_METRICS_SCHEMA_H */

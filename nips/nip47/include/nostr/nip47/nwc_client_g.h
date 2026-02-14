@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP47_NOSTR_NIP47_NWC_CLIENT_G_H
+#define NIPS_NIP47_NOSTR_NIP47_NWC_CLIENT_G_H
 
 #include <glib.h>
 #include "nwc_client.h"
@@ -273,3 +274,4 @@ gboolean nostr_nwc_select_encryption_g(const gchar *const *client_supported, gsi
                                        GError **error);
 
 G_END_DECLS
+#endif /* NIPS_NIP47_NOSTR_NIP47_NWC_CLIENT_G_H */

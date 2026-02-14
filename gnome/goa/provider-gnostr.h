@@ -1,4 +1,5 @@
-#pragma once
+#ifndef GNOME_GOA_PROVIDER_GNOSTR_H
+#define GNOME_GOA_PROVIDER_GNOSTR_H
 #ifndef GOA_API_IS_SUBJECT_TO_CHANGE
 #define GOA_API_IS_SUBJECT_TO_CHANGE 1
 #endif
@@ -15,3 +16,4 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(ProviderGnostr, provider_gnostr, PROVIDER, GNOSTR, GoaProvider)
 
 G_END_DECLS
+#endif /* GNOME_GOA_PROVIDER_GNOSTR_H */

@@ -15,7 +15,8 @@
  *
  * Related to issue: nostrc-1g1
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_RATE_LIMITER_H
+#define APPS_GNOSTR_SIGNER_RATE_LIMITER_H
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -330,3 +331,4 @@ gchar *gn_rate_limiter_format_error_message(GnRateLimitStatus status,
                                              guint remaining_seconds);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_RATE_LIMITER_H */

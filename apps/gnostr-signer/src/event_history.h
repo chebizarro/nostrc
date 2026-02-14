@@ -12,7 +12,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_EVENT_HISTORY_H
+#define APPS_GNOSTR_SIGNER_EVENT_HISTORY_H
 
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -407,3 +408,4 @@ gboolean gn_event_history_export_to_file(GnEventHistory *self,
                                           GError **error);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_EVENT_HISTORY_H */

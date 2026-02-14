@@ -8,7 +8,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_STARTUP_TIMING_H
+#define APPS_GNOSTR_SIGNER_STARTUP_TIMING_H
 
 #include <glib.h>
 
@@ -174,3 +175,4 @@ static inline void startup_timing_measure_end(gint64 start_time,
 }
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_STARTUP_TIMING_H */

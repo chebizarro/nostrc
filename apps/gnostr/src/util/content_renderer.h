@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_UTIL_CONTENT_RENDERER_H
+#define APPS_GNOSTR_UTIL_CONTENT_RENDERER_H
 
 #include <glib.h>
 
@@ -78,3 +79,4 @@ GPtrArray *gnostr_extract_media_urls(const char *content, int content_len);
  * Returns: @str (same pointer, for chaining)
  */
 char *gnostr_strip_zwsp(char *str);
+#endif /* APPS_GNOSTR_UTIL_CONTENT_RENDERER_H */

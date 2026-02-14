@@ -12,7 +12,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_WIDGETS_GN_SECURE_ENTRY_H
+#define APPS_GNOSTR_SIGNER_UI_WIDGETS_GN_SECURE_ENTRY_H
 
 #include <gtk/gtk.h>
 
@@ -264,3 +265,4 @@ void gn_secure_entry_reset_timeout(GnSecureEntry *self);
 gboolean gn_secure_entry_grab_focus_entry(GnSecureEntry *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_WIDGETS_GN_SECURE_ENTRY_H */

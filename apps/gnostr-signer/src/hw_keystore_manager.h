@@ -15,7 +15,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_HW_KEYSTORE_MANAGER_H
+#define APPS_GNOSTR_SIGNER_HW_KEYSTORE_MANAGER_H
 
 #include <glib.h>
 #include <glib-object.h>
@@ -426,3 +427,4 @@ const gchar *hw_keystore_mode_to_string(HwKeystoreMode mode);
 const gchar *hw_keystore_setup_status_to_string(HwKeystoreSetupStatus status);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_HW_KEYSTORE_MANAGER_H */

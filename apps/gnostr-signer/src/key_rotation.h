@@ -21,7 +21,8 @@
  *   "sig": "<signature_from_old_key>"
  * }
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_KEY_ROTATION_H
+#define APPS_GNOSTR_SIGNER_KEY_ROTATION_H
 
 #include <glib.h>
 
@@ -260,3 +261,4 @@ const gchar *key_rotation_result_to_string(KeyRotationResult result);
 const gchar *key_rotation_state_to_string(KeyRotationState state);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_KEY_ROTATION_H */

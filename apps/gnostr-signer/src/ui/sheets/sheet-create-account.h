@@ -12,7 +12,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_ACCOUNT_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_ACCOUNT_H
 
 #include <adwaita.h>
 
@@ -62,3 +63,4 @@ void sheet_create_account_set_on_created(SheetCreateAccount *self,
 void sheet_create_account_set_word_count(SheetCreateAccount *self, gint word_count);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_ACCOUNT_H */

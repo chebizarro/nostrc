@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SIGNER_WINDOW_H
+#define APPS_GNOSTR_SIGNER_UI_SIGNER_WINDOW_H
 
 #include <adwaita.h>
 #include <gio/gio.h>
@@ -84,3 +85,4 @@ GSettings *signer_window_get_gsettings(SignerWindow *self);
 GSettings *signer_get_app_settings(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SIGNER_WINDOW_H */

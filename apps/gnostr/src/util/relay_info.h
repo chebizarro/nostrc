@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_UTIL_RELAY_INFO_H
+#define APPS_GNOSTR_UTIL_RELAY_INFO_H
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -291,3 +292,4 @@ GnostrRelayValidationResult *gnostr_relay_info_validate_for_publishing(
     const GnostrRelayInfo *info);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_UTIL_RELAY_INFO_H */

@@ -13,7 +13,8 @@
  * - Backup reminder with mandatory acknowledgment
  * - Ready/Get Started summary
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_ONBOARDING_ASSISTANT_H
+#define APPS_GNOSTR_SIGNER_UI_ONBOARDING_ASSISTANT_H
 
 #include <adwaita.h>
 
@@ -77,3 +78,4 @@ void onboarding_assistant_mark_completed(void);
 void onboarding_assistant_reset(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_ONBOARDING_ASSISTANT_H */

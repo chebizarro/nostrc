@@ -10,7 +10,8 @@
  * Issue: nostrc-orz
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_MULTISIG_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_MULTISIG_H
 
 #include <adwaita.h>
 
@@ -61,3 +62,4 @@ void sheet_create_multisig_set_default_threshold(SheetCreateMultisig *self,
                                                  guint n);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_MULTISIG_H */

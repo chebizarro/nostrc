@@ -3,7 +3,8 @@
  * Provides a type-safe API for accessing GSettings with proper defaults
  * and change notifications.
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SETTINGS_MANAGER_H
+#define APPS_GNOSTR_SIGNER_SETTINGS_MANAGER_H
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -296,3 +297,4 @@ gchar *settings_manager_get_language(SettingsManager *sm);
 void settings_manager_set_language(SettingsManager *sm, const gchar *lang);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SETTINGS_MANAGER_H */

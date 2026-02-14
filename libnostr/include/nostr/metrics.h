@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_NOSTR_METRICS_H
+#define LIBNOSTR_NOSTR_METRICS_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -63,3 +64,4 @@ size_t nostr_metrics_prometheus(char *buf, size_t buf_size);
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBNOSTR_NOSTR_METRICS_H */

@@ -5,8 +5,8 @@
  * and live relay switching. GSettings schema ID is injected via
  * gnostr_relays_init() — the library has no opinion about schema names.
  */
-
-#pragma once
+#ifndef NOSTR_GOBJECT_GNOSTR_RELAYS_H
+#define NOSTR_GOBJECT_GNOSTR_RELAYS_H
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -196,3 +196,4 @@ void gnostr_relay_change_emit(void);
 GSettings *gnostr_relay_get_settings(void);
 
 G_END_DECLS
+#endif /* NOSTR_GOBJECT_GNOSTR_RELAYS_H */

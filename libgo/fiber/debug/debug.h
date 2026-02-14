@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBGO_FIBER_DEBUG_DEBUG_H
+#define LIBGO_FIBER_DEBUG_DEBUG_H
 #include <stdint.h>
 #include <stddef.h>
 #include "../include/libgo/fiber.h"
@@ -15,3 +16,4 @@ void gof_introspect_register(gof_fiber *f);
 void gof_introspect_unregister(gof_fiber *f);
 
 /* Weak hooks declared in public header are defined as no-ops here unless overridden */
+#endif /* LIBGO_FIBER_DEBUG_DEBUG_H */

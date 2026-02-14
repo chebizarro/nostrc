@@ -9,7 +9,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_PAGE_HISTORY_H
+#define APPS_GNOSTR_SIGNER_UI_PAGE_HISTORY_H
 
 #include <adwaita.h>
 
@@ -45,3 +46,4 @@ void gn_page_history_refresh(GnPageHistory *self);
 void gn_page_history_clear_filters(GnPageHistory *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_PAGE_HISTORY_H */

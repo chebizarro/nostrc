@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GOBJECT_NOSTR_TYPES_H
+#define NOSTR_GOBJECT_NOSTR_TYPES_H
 
 #include <glib-object.h>
 
@@ -26,3 +27,4 @@ typedef struct _GNostrSubscription GNostrSubscription;
 /* Note: G_DEFINE_AUTOPTR_CLEANUP_FUNC is defined in each type's header */
 
 G_END_DECLS
+#endif /* NOSTR_GOBJECT_NOSTR_TYPES_H */

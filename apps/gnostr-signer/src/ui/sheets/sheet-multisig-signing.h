@@ -9,7 +9,8 @@
  * Issue: nostrc-orz
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_MULTISIG_SIGNING_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_MULTISIG_SIGNING_H
 
 #include <adwaita.h>
 #include "../../multisig_wallet.h"
@@ -90,3 +91,4 @@ void sheet_multisig_signing_complete(SheetMultisigSigning *self,
                                      const gchar *error_message);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_MULTISIG_SIGNING_H */

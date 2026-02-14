@@ -1,4 +1,3 @@
-#pragma once
 
 #ifndef NOSTR_BIP32_H
 #define NOSTR_BIP32_H

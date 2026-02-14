@@ -10,7 +10,8 @@
  * - Camera-based QR scanning
  * - Clipboard image paste scanning
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_QR_CODE_H
+#define APPS_GNOSTR_SIGNER_QR_CODE_H
 
 #include <glib.h>
 #include <gdk/gdk.h>
@@ -204,3 +205,4 @@ gboolean gn_qr_generation_available(void);
 gboolean gn_qr_scanning_available(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_QR_CODE_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_LIBNOSTR_ERRORS_H
+#define LIBNOSTR_LIBNOSTR_ERRORS_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,3 +21,4 @@ typedef enum {
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBNOSTR_LIBNOSTR_ERRORS_H */

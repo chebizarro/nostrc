@@ -14,7 +14,8 @@
  * - Uses GN_SIGNER_ERROR domain for general errors
  * - Propagates errors from underlying stores (secret_store, key_provider)
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_ACCOUNTS_STORE_H
+#define APPS_GNOSTR_SIGNER_ACCOUNTS_STORE_H
 #include <glib.h>
 #include "key_provider.h"
 
@@ -269,3 +270,4 @@ void accounts_store_sync_with_secrets_async(AccountsStore *as,
                                             gpointer user_data);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_ACCOUNTS_STORE_H */

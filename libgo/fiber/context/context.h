@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBGO_FIBER_CONTEXT_CONTEXT_H
+#define LIBGO_FIBER_CONTEXT_CONTEXT_H
 #include <stdint.h>
 #include <stddef.h>
 #include <stdalign.h>
@@ -58,3 +59,4 @@ typedef struct gof_context {
 int gof_ctx_init_bootstrap(gof_context *ctx, void *stack_base, size_t stack_size, void (*entry)(void*), void *arg);
 /* Swap from one context to another. Must preserve callee-saved state. */
 void gof_ctx_swap(gof_context *from, gof_context *to);
+#endif /* LIBGO_FIBER_CONTEXT_CONTEXT_H */

@@ -14,7 +14,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_KEY_PROVIDER_H
+#define APPS_GNOSTR_SIGNER_KEY_PROVIDER_H
 
 #include <glib-object.h>
 
@@ -382,3 +383,4 @@ GArray *gn_key_provider_list_available(void);
 void gn_key_providers_init(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_KEY_PROVIDER_H */

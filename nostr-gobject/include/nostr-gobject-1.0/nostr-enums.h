@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GOBJECT_NOSTR_ENUMS_H
+#define NOSTR_GOBJECT_NOSTR_ENUMS_H
 
 #include <glib-object.h>
 
@@ -88,3 +89,4 @@ GType gnostr_nip46_state_get_type(void) G_GNUC_CONST;
 #define GNOSTR_TYPE_NIP46_STATE (gnostr_nip46_state_get_type())
 
 G_END_DECLS
+#endif /* NOSTR_GOBJECT_NOSTR_ENUMS_H */

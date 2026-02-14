@@ -18,7 +18,8 @@
  *
  * Related: secure-memory.h for secure memory allocation
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_SECURE_DELETE_H
+#define APPS_GNOSTR_SIGNER_SECURE_DELETE_H
 
 #include <glib.h>
 #include <stdbool.h>
@@ -596,3 +597,4 @@ GnDeleteResult gn_secure_delete_identity_files(const char *npub);
 GnDeleteResult gn_secure_delete_all_data(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_SECURE_DELETE_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CHANGE_PASSWORD_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CHANGE_PASSWORD_H
 
 #include <adwaita.h>
 
@@ -11,3 +12,4 @@ SheetChangePassword *sheet_change_password_new(GtkWindow *parent);
 void sheet_change_password_set_account(SheetChangePassword *self, const char *account_id);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CHANGE_PASSWORD_H */

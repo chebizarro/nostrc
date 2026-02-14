@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP25_NOSTR_NIP25_NIP25_H
+#define NIPS_NIP25_NOSTR_NIP25_NIP25_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -214,3 +215,4 @@ int nostr_nip25_aggregate_reactions(
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP25_NOSTR_NIP25_NIP25_H */

@@ -12,7 +12,8 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_KEY_PROVIDER_ED25519_H
+#define APPS_GNOSTR_SIGNER_KEY_PROVIDER_ED25519_H
 
 #include "key_provider.h"
 
@@ -118,3 +119,4 @@ gboolean gn_ed25519_verify_hex(const gchar  *public_key_hex,
                                GError      **error);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_KEY_PROVIDER_ED25519_H */

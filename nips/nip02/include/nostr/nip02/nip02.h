@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP02_NOSTR_NIP02_NIP02_H
+#define NIPS_NIP02_NOSTR_NIP02_NIP02_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,3 +67,4 @@ int nostr_nip02_append(NostrEvent *ev, const NostrFollowEntry *add, size_t add_n
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP02_NOSTR_NIP02_NIP02_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP49_NOSTR_NIP49_NIP49_H
+#define NIPS_NIP49_NOSTR_NIP49_NIP49_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -57,3 +58,4 @@ int nostr_nip49_payload_deserialize(const uint8_t in[91], NostrNip49Payload *out
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP49_NOSTR_NIP49_NIP49_H */

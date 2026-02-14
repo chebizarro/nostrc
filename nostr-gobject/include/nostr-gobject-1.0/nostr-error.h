@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GOBJECT_NOSTR_ERROR_H
+#define NOSTR_GOBJECT_NOSTR_ERROR_H
 
 #include <glib.h>
 
@@ -53,3 +54,4 @@ typedef enum {
 } NostrError;
 
 G_END_DECLS
+#endif /* NOSTR_GOBJECT_NOSTR_ERROR_H */

@@ -4,7 +4,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_I18N_H
+#define APPS_GNOSTR_SIGNER_I18N_H
 
 #include <glib/gi18n.h>
 
@@ -82,3 +83,4 @@ gboolean gn_i18n_is_current_rtl(void);
  * Call this after changing the language to update the UI direction.
  */
 void gn_i18n_apply_text_direction(void);
+#endif /* APPS_GNOSTR_SIGNER_I18N_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP47_NOSTR_NIP47_NWC_H
+#define NIPS_NIP47_NOSTR_NIP47_NWC_H
 
 #include <stddef.h>
 
@@ -42,3 +43,4 @@ void nostr_nwc_connection_clear(NostrNwcConnection *c);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP47_NOSTR_NIP47_NWC_H */

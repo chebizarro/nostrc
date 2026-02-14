@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_UTIL_CACHE_PRUNE_H
+#define APPS_GNOSTR_UTIL_CACHE_PRUNE_H
 
 #include <glib.h>
 
@@ -67,3 +68,4 @@ int gnostr_cache_clear_images(void);
 char *gnostr_cache_stats_string(void);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_UTIL_CACHE_PRUNE_H */

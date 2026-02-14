@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NOSTR_GOBJECT_NOSTR_GOBJECT_H
+#define NOSTR_GOBJECT_NOSTR_GOBJECT_H
 
 /**
  * SECTION:nostr-gobject
@@ -53,3 +54,4 @@
  *   #include "nostr_simple_pool.h"     - pulls core nostr-simple-pool.h
  *   #include "nostr_query_batcher.h"   - pulls core nostr-filter.h
  */
+#endif /* NOSTR_GOBJECT_NOSTR_GOBJECT_H */

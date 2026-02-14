@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBGO_FIBER_SCHED_SCHED_H
+#define LIBGO_FIBER_SCHED_SCHED_H
 #include <stddef.h>
 #include <stdint.h>
 #include "../context/context.h"
@@ -57,3 +58,4 @@ int  gof_sched_get_npollers_value(void);
 /* Internal: affinity toggle */
 void gof_sched_set_affinity_enabled(int enable);
 int  gof_sched_get_affinity_enabled(void);
+#endif /* LIBGO_FIBER_SCHED_SCHED_H */

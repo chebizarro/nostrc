@@ -6,7 +6,8 @@
  * - Displaying migration event for manual publishing
  * - Confirming completion
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_KEY_ROTATION_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_KEY_ROTATION_H
 
 #include <adwaita.h>
 
@@ -59,3 +60,4 @@ void sheet_key_rotation_set_on_complete(SheetKeyRotation *self,
                                          gpointer user_data);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_KEY_ROTATION_H */

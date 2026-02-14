@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_WIDGETS_IDENTITY_ROW_H
+#define APPS_GNOSTR_SIGNER_UI_WIDGETS_IDENTITY_ROW_H
 #include <adwaita.h>
 G_BEGIN_DECLS
 #define TYPE_IDENTITY_ROW (identity_row_get_type())
@@ -18,3 +19,4 @@ GtkWidget *identity_row_new(void);
 void identity_row_set_identity(IdentityRow *self, const char *label, const char *npub, gboolean is_active);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_WIDGETS_IDENTITY_ROW_H */

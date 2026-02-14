@@ -7,7 +7,8 @@
  * - Sign events using the signer's key management
  * - Publish as kind:0 metadata events
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_PROFILE_EDITOR_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_PROFILE_EDITOR_H
 
 #include <adwaita.h>
 
@@ -53,3 +54,4 @@ void sheet_profile_editor_load_profile(SheetProfileEditor *self,
                                        const gchar *website);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_PROFILE_EDITOR_H */

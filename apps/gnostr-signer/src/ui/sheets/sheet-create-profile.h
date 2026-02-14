@@ -10,7 +10,8 @@
  * - Passphrase strength validation
  * - Passphrase match validation
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_PROFILE_H
+#define APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_PROFILE_H
 
 #include <adwaita.h>
 
@@ -38,3 +39,4 @@ void sheet_create_profile_set_on_success(SheetCreateProfile *self,
                                           gpointer user_data);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_CREATE_PROFILE_H */

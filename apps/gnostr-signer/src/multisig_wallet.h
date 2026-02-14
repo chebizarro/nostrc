@@ -13,7 +13,8 @@
  *
  * Issue: nostrc-orz
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_MULTISIG_WALLET_H
+#define APPS_GNOSTR_SIGNER_MULTISIG_WALLET_H
 
 #include <glib.h>
 
@@ -362,3 +363,4 @@ gboolean multisig_validate_config(guint threshold_m,
 gchar *multisig_format_progress(guint collected, guint required);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_MULTISIG_WALLET_H */

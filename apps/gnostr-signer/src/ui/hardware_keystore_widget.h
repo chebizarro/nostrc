@@ -9,7 +9,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_UI_HARDWARE_KEYSTORE_WIDGET_H
+#define APPS_GNOSTR_SIGNER_UI_HARDWARE_KEYSTORE_WIDGET_H
 
 #include <gtk/gtk.h>
 #include "../hw_keystore_manager.h"
@@ -77,3 +78,4 @@ void hw_keystore_widget_set_expanded(HwKeystoreWidget *self, gboolean expanded);
 gboolean hw_keystore_widget_get_expanded(HwKeystoreWidget *self);
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_UI_HARDWARE_KEYSTORE_WIDGET_H */

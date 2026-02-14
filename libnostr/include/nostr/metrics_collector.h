@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LIBNOSTR_NOSTR_METRICS_COLLECTOR_H
+#define LIBNOSTR_NOSTR_METRICS_COLLECTOR_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -97,3 +98,4 @@ bool nostr_metrics_collector_latest(NostrMetricsSnapshot *snap);
 #ifdef __cplusplus
 }
 #endif
+#endif /* LIBNOSTR_NOSTR_METRICS_COLLECTOR_H */

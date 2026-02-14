@@ -1,4 +1,5 @@
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_POLICY_STORE_H
+#define APPS_GNOSTR_SIGNER_POLICY_STORE_H
 #include <glib.h>
 
 typedef struct _PolicyStore PolicyStore;
@@ -32,3 +33,4 @@ gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *i
 
 /* Enumerate all entries (including expired); caller owns returned GPtrArray of PolicyEntry* and each entry fields. */
 GPtrArray *policy_store_list(PolicyStore *ps);
+#endif /* APPS_GNOSTR_SIGNER_POLICY_STORE_H */

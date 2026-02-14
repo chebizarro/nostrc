@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP49_NOSTR_NIP49_NIP49_G_H
+#define NIPS_NIP49_NOSTR_NIP49_NIP49_G_H
 
 #include <glib.h>
 
@@ -19,3 +20,4 @@ gboolean nostr_nip49_decrypt_g(const gchar *ncryptsec_bech32,
                                GError **error);
 
 G_END_DECLS
+#endif /* NIPS_NIP49_NOSTR_NIP49_NIP49_G_H */

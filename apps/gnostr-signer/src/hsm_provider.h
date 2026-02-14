@@ -10,7 +10,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#pragma once
+#ifndef APPS_GNOSTR_SIGNER_HSM_PROVIDER_H
+#define APPS_GNOSTR_SIGNER_HSM_PROVIDER_H
 
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -661,3 +662,4 @@ GnHsmProvider *gn_hsm_manager_get_provider_by_name(GnHsmManager *self,
  */
 
 G_END_DECLS
+#endif /* APPS_GNOSTR_SIGNER_HSM_PROVIDER_H */

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP18_NOSTR_NIP18_NIP18_H
+#define NIPS_NIP18_NOSTR_NIP18_NIP18_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -238,3 +239,4 @@ bool nostr_nip18_has_quote(const NostrEvent *ev);
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP18_NOSTR_NIP18_NIP18_H */

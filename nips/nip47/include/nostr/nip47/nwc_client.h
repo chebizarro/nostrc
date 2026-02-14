@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NIPS_NIP47_NOSTR_NIP47_NWC_CLIENT_H
+#define NIPS_NIP47_NOSTR_NIP47_NWC_CLIENT_H
 
 #include "nwc.h"
 #include "nwc_envelope.h"
@@ -42,3 +43,4 @@ int nostr_nwc_client_decrypt(const NostrNwcClientSession *s,
 #ifdef __cplusplus
 }
 #endif
+#endif /* NIPS_NIP47_NOSTR_NIP47_NWC_CLIENT_H */
