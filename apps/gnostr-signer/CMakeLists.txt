@@ -158,14 +158,8 @@ target_compile_definitions(${APP_SIGNER_BIN} PRIVATE
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/include)
 # NIP-46 core headers for bunker service
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip46/include)
-# GObject NIP-46 wrappers (GNostrNip46Client, GNostrNip46Bunker)
-target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nostr-gobject/include)
-target_sources(${APP_SIGNER_BIN} PRIVATE
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip46_client.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip46_bunker.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
-)
+# Link nostr-gobject library (GObject wrappers compiled once in nostr-gobject/)
+target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_gobject)
 # NIP-19 for bech32 encoding
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/include)
 # NIP-49 for encrypted key backup (ncryptsec)
@@ -208,17 +202,8 @@ endif()
 # Note: nostr core is already transitively linked via nostr_nip46_core
 # Do NOT link nostr directly here - it causes ODR violation with nostr_json.so
 
-# GObject wrapper headers (GNostrKeys, GNostrNip19, GNostrNip49, GNostrBip39)
+# nostr-gobject include dir (also provided by nostr_gobject PUBLIC interface)
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nostr-gobject/include)
-# Compile GObject wrapper sources into the signer (hq-7p5m6)
-target_sources(${APP_SIGNER_BIN} PRIVATE
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip49.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_bip39.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip19.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_keys.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_event.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
-  ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c)
 
 # Include project root so we can include gnome/seahorse/secret_store.h from the app
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})

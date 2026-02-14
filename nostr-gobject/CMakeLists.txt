@@ -59,6 +59,7 @@ set(NOSTR_GOBJECT_SOURCES
   src/nostr_nip46_bunker.c
   src/nostr_nip49.c
   src/nostr_bip39.c
+  src/storage_ndb.c
 )
 
 set(NOSTR_GOBJECT_HEADERS
@@ -142,6 +143,16 @@ foreach(_nip nip04 nip06 nip11 nip19
     target_link_libraries(nostr_gobject PRIVATE ${_nip})
   endif()
 endforeach()
+
+# nostrdb for storage_ndb.c
+target_include_directories(nostr_gobject PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/nostrdb/src
+  ${CMAKE_SOURCE_DIR}/third_party/nostrdb/ccan
+  ${CMAKE_SOURCE_DIR}/third_party/nostrdb/deps/flatcc/include
+)
+if(TARGET nostrdb_storage)
+  target_link_libraries(nostr_gobject PRIVATE nostrdb_storage)
+endif()
 
 if(JSON_GLIB_FOUND)
   target_link_libraries(nostr_gobject PRIVATE PkgConfig::JSON_GLIB)

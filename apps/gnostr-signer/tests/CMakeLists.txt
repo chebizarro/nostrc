@@ -239,17 +239,13 @@ add_executable(test-hsm-provider
     test_hsm_provider.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider_mock.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_keys.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip19.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_event.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c
 )
 target_include_directories(test-hsm-provider PRIVATE
     ${SIGNER_INCLUDE_DIRS}
 )
 target_link_libraries(test-hsm-provider PRIVATE
     ${SIGNER_TEST_LIBS}
+    nostr_gobject
 )
 # Link nip19 for npub encoding
 if(TARGET nip19)
@@ -315,16 +311,9 @@ add_executable(test-social-recovery
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/social-recovery.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/secure-mem.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/backup-recovery.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_keys.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip19.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_nip49.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_bip39.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr_event.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-error.c
-    ${CMAKE_SOURCE_DIR}/nostr-gobject/src/nostr-enums.c
 )
 target_include_directories(test-social-recovery PRIVATE ${SIGNER_INCLUDE_DIRS})
-target_link_libraries(test-social-recovery PRIVATE ${SIGNER_TEST_LIBS})
+target_link_libraries(test-social-recovery PRIVATE ${SIGNER_TEST_LIBS} nostr_gobject)
 target_link_directories(test-social-recovery PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-social-recovery PRIVATE c_std_11)
 apply_test_sanitizers(test-social-recovery)

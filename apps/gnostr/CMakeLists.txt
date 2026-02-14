@@ -239,31 +239,8 @@ if(NOT NSYNC_INCLUDE_DIR)
   find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
-# Compile the GI wrapper implementation into the app (no separate gobject lib target)
-# NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
-# nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
-# nostrc-kshv: Added nostr_keys for key operations wrapper
-# nostrc-h1ti: Added nostr_store interface and NDB store implementation
-target_sources(${APP_CLIENT_BIN} PRIVATE
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_keys.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_event.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_store.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_ndb_store.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_nip49.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_bip39.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_filter.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_nip19.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pointer.c
-  ${PROJECT_ROOT}/nostr-gobject/src/storage_ndb.c)
+# Link nostr-gobject library (GObject wrappers compiled once in nostr-gobject/)
+target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
@@ -513,22 +490,8 @@ target_include_directories(gnostr-live-log PRIVATE
   ${_NDB_VENDOR_DIR}/src
   ${_NDB_VENDOR_DIR}/ccan
   ${_NDB_VENDOR_DIR}/deps/flatcc/include)
-# Compile GI wrapper into the CLI as well
-# NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
-# nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
-# nostrc-7typ: nostr_simple_pool now depends on nostr_event_bus
-# hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by storage_ndb.c
-target_sources(gnostr-live-log PRIVATE
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
-  ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
-  ${PROJECT_ROOT}/nostr-gobject/src/storage_ndb.c)
+# Link nostr-gobject library
+target_link_libraries(gnostr-live-log PRIVATE nostr_gobject)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
 endif()
@@ -598,7 +561,6 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nips/nip46/include
     ${PROJECT_ROOT}/libgo/include
     ${PROJECT_ROOT}/nostr-gobject/include)
-  # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
   target_sources(gnostr-test-blossom PRIVATE
     src/util/blossom.c
     src/util/blossom_settings.c
@@ -606,15 +568,8 @@ if (BUILD_TESTING)
     src/util/relay_info.c
     src/ipc/signer_ipc.c
     src/ipc/gnostr-signer-service.c
-    ${SIGNER_PROXY_C}
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c)
+    ${SIGNER_PROXY_C})
+  target_link_libraries(gnostr-test-blossom PRIVATE nostr_gobject)
   # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
   target_compile_definitions(gnostr-test-blossom PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
@@ -638,22 +593,14 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nips/nip46/include
     ${PROJECT_ROOT}/libgo/include
     ${PROJECT_ROOT}/nostr-gobject/include)
-  # nostrc-ozlp: Added nostr_query_batcher for relay subscription batching
   target_sources(gnostr-test-blossom-settings PRIVATE
     src/util/blossom_settings.c
     src/util/relays.c
     src/util/relay_info.c
     src/ipc/signer_ipc.c
     src/ipc/gnostr-signer-service.c
-    ${SIGNER_PROXY_C}
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_simple_pool.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_relay.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_pool.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_subscription.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_query_batcher.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-enums.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c)
+    ${SIGNER_PROXY_C})
+  target_link_libraries(gnostr-test-blossom-settings PRIVATE nostr_gobject)
   # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
   target_compile_definitions(gnostr-test-blossom-settings PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
@@ -734,14 +681,9 @@ if (BUILD_TESTING)
     LABELS "thread;graph;unit;gnostr")
 
   # Thread subscription unit tests (nostrc-pp64)
-  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by storage_ndb.c
   add_executable(gnostr-test-thread-sub tests/test_thread_subscription.c
     src/model/gnostr-thread-subscription.c
-    src/model/gn-ndb-sub-dispatcher.c
-    ${PROJECT_ROOT}/nostr-gobject/src/storage_ndb.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_event_bus.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
+    src/model/gn-ndb-sub-dispatcher.c)
   target_compile_features(gnostr-test-thread-sub PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-sub PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -752,7 +694,7 @@ if (BUILD_TESTING)
     ${_NDB_VENDOR_DIR}/src
     ${_NDB_VENDOR_DIR}/ccan
     ${_NDB_VENDOR_DIR}/deps/flatcc/include)
-  target_link_libraries(gnostr-test-thread-sub PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  target_link_libraries(gnostr-test-thread-sub PRIVATE PkgConfig::GLIB PkgConfig::GIO nostr_gobject)
   if (TARGET nostr_json)
     target_link_libraries(gnostr-test-thread-sub PRIVATE nostr_json)
   endif()
@@ -777,11 +719,8 @@ if (BUILD_TESTING)
     LABELS "thread;subscription;unit;gnostr")
 
   # Thread graph model unit tests (nostrc-pp64 4.2)
-  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by gnostr-thread-graph-model.c
   add_executable(gnostr-test-thread-graph-model tests/test_thread_graph_model.c
-    src/model/gnostr-thread-graph-model.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
+    src/model/gnostr-thread-graph-model.c)
   target_compile_features(gnostr-test-thread-graph-model PRIVATE c_std_11)
   target_include_directories(gnostr-test-thread-graph-model PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -789,7 +728,7 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/libnostr/include
     ${_NOSTR_CONFIG_DIR}
     ${PROJECT_ROOT}/libgo/include)
-  target_link_libraries(gnostr-test-thread-graph-model PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  target_link_libraries(gnostr-test-thread-graph-model PRIVATE PkgConfig::GLIB PkgConfig::GIO nostr_gobject)
   if (TARGET nostr_json)
     target_link_libraries(gnostr-test-thread-graph-model PRIVATE nostr_json)
   endif()
@@ -800,11 +739,8 @@ if (BUILD_TESTING)
     LABELS "thread;graph;model;unit;gnostr")
 
   # NIP-10 thread manager unit tests (nostrc-pp64 4.3)
-  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by gnostr-nip10-thread-manager.c
   add_executable(gnostr-test-nip10-thread-mgr tests/test_nip10_thread_manager.c
-    src/model/gnostr-nip10-thread-manager.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
+    src/model/gnostr-nip10-thread-manager.c)
   target_compile_features(gnostr-test-nip10-thread-mgr PRIVATE c_std_11)
   target_include_directories(gnostr-test-nip10-thread-mgr PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -812,7 +748,7 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/libnostr/include
     ${_NOSTR_CONFIG_DIR}
     ${PROJECT_ROOT}/libgo/include)
-  target_link_libraries(gnostr-test-nip10-thread-mgr PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  target_link_libraries(gnostr-test-nip10-thread-mgr PRIVATE PkgConfig::GLIB PkgConfig::GIO nostr_gobject)
   if (TARGET nostr_json)
     target_link_libraries(gnostr-test-nip10-thread-mgr PRIVATE nostr_json)
   endif()
@@ -843,14 +779,11 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/libjson/include
     ${PROJECT_ROOT}/libgo/include
     ${_NOSTR_CONFIG_DIR})
-  # hq-nkusz: nostr_json.c + nostr-error.c needed for gnostr_json_* wrappers used by nip66_relay_discovery.c
   target_sources(gnostr-test-nip66-relay-discovery PRIVATE
-    src/util/nip66_relay_discovery.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr_json.c
-    ${PROJECT_ROOT}/nostr-gobject/src/nostr-error.c)
+    src/util/nip66_relay_discovery.c)
   # Disable async discovery (avoids nostr_simple_pool and relay dependencies)
   target_compile_definitions(gnostr-test-nip66-relay-discovery PRIVATE GNOSTR_NIP66_TEST_ONLY=1)
-  target_link_libraries(gnostr-test-nip66-relay-discovery PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_json libgo)
+  target_link_libraries(gnostr-test-nip66-relay-discovery PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_json libgo nostr_gobject)
   _gnostr_apply_sanitizers(gnostr-test-nip66-relay-discovery)
   add_test(NAME gnostr-test-nip66-relay-discovery COMMAND gnostr-test-nip66-relay-discovery)
   set_tests_properties(gnostr-test-nip66-relay-discovery PROPERTIES
