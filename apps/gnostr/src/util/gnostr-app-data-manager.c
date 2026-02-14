@@ -7,8 +7,8 @@
 
 #include "gnostr-app-data-manager.h"
 #include "nip78_app_data.h"
-#include "relays.h"
-#include "mute_list.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
+#include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include "bookmarks.h"
 #include "pin_list.h"
 #include "gnostr-drafts.h"

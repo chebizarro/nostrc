@@ -11,7 +11,7 @@
 
 #include "gnostr-chess-publish-dialog.h"
 #include "../ipc/gnostr-signer-service.h"
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "../util/nip64_chess.h"
 #include <glib/gi18n.h>
 #include <nostr-gobject-1.0/nostr_json.h>

@@ -9,11 +9,11 @@
  */
 
 #include "gnostr-search-results-view.h"
-#include "note_card_row.h"
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include "gnostr-main-window.h"
-#include "gnostr-profile-provider.h"
-#include "../storage_ndb.h"
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include "nostr-filter.h"
 #include "nostr-event.h"

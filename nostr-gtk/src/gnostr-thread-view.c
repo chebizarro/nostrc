@@ -1,5 +1,5 @@
 #include "gnostr-thread-view.h"
-#include "note_card_row.h"
+#include "nostr-note-card-row.h"
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>

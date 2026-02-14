@@ -11,12 +11,12 @@
 #define G_LOG_DOMAIN "gnostr-discover-search"
 
 #include "discover-search.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "nip05.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include <nostr-gobject-1.0/nostr_pool.h>
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 
 #include <string.h>
 #include <ctype.h>

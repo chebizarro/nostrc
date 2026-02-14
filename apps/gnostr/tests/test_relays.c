@@ -1,6 +1,6 @@
 #include <glib.h>
 #include <glib/gstdio.h>
-#include "util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 
 static gchar *make_temp_config_path(void) {
   const gchar *tmp = g_get_tmp_dir();

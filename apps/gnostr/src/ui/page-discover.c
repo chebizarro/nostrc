@@ -19,11 +19,11 @@
 #include "gnostr-live-card.h"
 #include "gnostr-articles-view.h"
 #include "../model/gn-profile-list-model.h"
-#include "../model/gn-nostr-profile.h"
-#include "../model/gn-ndb-sub-dispatcher.h"
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
+#include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include "../util/discover-search.h"
 #include "../util/nip53_live.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 
 #include <string.h>
 #include "../util/debounce.h"

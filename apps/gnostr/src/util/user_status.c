@@ -5,9 +5,9 @@
  */
 
 #include "user_status.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "utils.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "../ipc/gnostr-signer-service.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"

@@ -2,7 +2,7 @@
 #define GN_NOSTR_EVENT_MODEL_H
 
 #include "gn-nostr-event-item.h"
-#include "gn-timeline-query.h"
+#include <nostr-gobject-1.0/gn-timeline-query.h>
 #include <gio/gio.h>
 
 G_BEGIN_DECLS

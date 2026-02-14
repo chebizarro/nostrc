@@ -14,7 +14,7 @@
  */
 
 #include "neg-client.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr/nip77/negentropy.h>
 #include <nostr-relay.h>
 #include <nostr-json.h>

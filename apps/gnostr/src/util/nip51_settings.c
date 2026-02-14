@@ -6,7 +6,7 @@
  */
 
 #include "nip51_settings.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "blossom_settings.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <json-glib/json-glib.h>

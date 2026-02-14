@@ -7,8 +7,8 @@
  */
 
 #include "nip02_contacts.h"
-#include "relays.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include <glib.h>
 #include <string.h>
 

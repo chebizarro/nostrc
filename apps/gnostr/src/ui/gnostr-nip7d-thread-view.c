@@ -6,11 +6,11 @@
 
 #include "gnostr-nip7d-thread-view.h"
 #include "gnostr-avatar-cache.h"
-#include "gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "../util/nip7d_threads.h"
 #include "../util/utils.h"
-#include "../storage_ndb.h"
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_filter.h>
 #include "nostr-filter.h"
 #include <glib/gi18n.h>

@@ -8,8 +8,8 @@
 #define G_LOG_DOMAIN "badge-manager"
 
 #include "badge_manager.h"
-#include "../model/gn-ndb-sub-dispatcher.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "../util/zap.h"
 #include "../ui/gnostr-notifications-view.h"
 #include <nostr-gobject-1.0/nostr_json.h>

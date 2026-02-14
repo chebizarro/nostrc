@@ -4,16 +4,16 @@
 #include <errno.h>
 #include "ui/gnostr-main-window.h"
 #include "ui/gnostr-tray-icon.h"
-#include "model/gn-ndb-sub-dispatcher.h"
+#include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "util/gnostr_paths.h"
 #include "util/gnostr_e2e.h"
 #include "util/cache_prune.h"
 #include "util/utils.h"
 #include "util/gnostr-plugin-manager.h"
-#include "sync/gnostr-sync-service.h"
+#include <nostr-gobject-1.0/gnostr-sync-service.h>
 #include "sync/gnostr-sync-bridge.h"
-#include "util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;

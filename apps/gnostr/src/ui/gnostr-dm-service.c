@@ -9,9 +9,9 @@
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-conversation-view.h"
 #include "../util/utils.h"
-#include "gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "../ipc/gnostr-signer-service.h"
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "../util/dm_files.h"
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/nostr_subscription.h>
@@ -21,7 +21,7 @@
 #include "nostr-kinds.h"
 #include "nostr-json.h"
 #include "nostr-tag.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include <string.h>
 #include <time.h>
 

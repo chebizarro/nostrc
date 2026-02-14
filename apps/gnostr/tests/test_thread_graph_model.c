@@ -9,7 +9,7 @@
  */
 
 #include <glib.h>
-#include "../src/model/gnostr-thread-graph-model.h"
+#include <nostr-gobject-1.0/gnostr-thread-graph-model.h>
 
 /* Sample IDs */
 #define ROOT_ID   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

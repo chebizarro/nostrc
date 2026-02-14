@@ -8,7 +8,7 @@
 #include "gnostr-notifications-view.h"
 /* nostrc-lx36: profile pane moved to nostr-gtk library */
 #include <nostr-gtk-1.0/gnostr-profile-pane.h>
-#include "gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "gnostr-avatar-cache.h"
 #include "gnostr-repo-browser.h"
 #include "gnostr-search-results-view.h"

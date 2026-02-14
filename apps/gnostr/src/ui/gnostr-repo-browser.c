@@ -7,8 +7,8 @@
 #define G_LOG_DOMAIN "gnostr-repo-browser"
 
 #include "gnostr-repo-browser.h"
-#include "note_card_row.h"
-#include "gnostr-profile-provider.h"
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <adwaita.h>
 
 /* Repository data stored in list model */

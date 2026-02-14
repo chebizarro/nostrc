@@ -9,7 +9,7 @@
  */
 
 #include <glib.h>
-#include "../src/model/gnostr-thread-subscription.h"
+#include <nostr-gobject-1.0/gnostr-thread-subscription.h>
 #include <nostr-gobject-1.0/nostr_event_bus.h>
 #include "nostr-event.h"
 #include "nostr-tag.h"

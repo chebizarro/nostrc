@@ -5,12 +5,12 @@
 #include "gnostr-session-view.h"
 #include <nostr-gtk-1.0/gnostr-composer.h>
 #include "gnostr-timeline-view.h"
-#include "gn-timeline-tabs.h"
+#include <nostr-gtk-1.0/gn-timeline-tabs.h>
 #include <nostr-gtk-1.0/gnostr-profile-pane.h>
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
 #include "gnostr-article-reader.h"
 #include "gnostr-article-composer.h"
-#include "gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/nostr_profile_service.h>
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-conversation-view.h"
@@ -24,13 +24,13 @@
 #include "gnostr-repo-browser.h"
 #include "gnostr-plugin-manager-panel.h"
 #include "../util/gnostr-plugin-manager.h"
-#include "note_card_row.h"
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../model/gn-nostr-event-model.h"
-#include "../model/gn-timeline-query.h"
+#include <nostr-gobject-1.0/gn-timeline-query.h>
 #include "../model/gn-nostr-event-item.h"
-#include "../model/gn-nostr-profile.h"
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
 #include <gio/gio.h>
 #include <glib.h>
 #include <glib/gi18n.h>
@@ -53,23 +53,23 @@
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/nostr_subscription.h>
 /* NostrdB storage */
-#include "../storage_ndb.h"
-#include "../model/gn-ndb-sub-dispatcher.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include "libnostr_errors.h"
 /* Nostr event kinds */
 #include "nostr-kinds.h"
 /* Relays helpers */
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 /* NIP-11 relay information */
 #include "../util/relay_info.h"
 /* NIP-51 mute list */
-#include "../util/mute_list.h"
+#include <nostr-gobject-1.0/gnostr-mute-list.h>
 /* NIP-02 contact list */
 #include "../util/nip02_contacts.h"
 /* Follow list (for profile provider pre-warm callback) */
 #include "../util/follow_list.h"
 /* NIP-77 negentropy sync */
-#include "../sync/gnostr-sync-service.h"
+#include <nostr-gobject-1.0/gnostr-sync-service.h>
 /* NIP-32 labeling */
 #include "../util/nip32_labels.h"
 /* NIP-51 settings sync */

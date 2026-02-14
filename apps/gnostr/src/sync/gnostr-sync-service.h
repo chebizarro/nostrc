@@ -1,3 +1,0 @@
-/* Thin redirect — sync service moved to nostr-gobject (nostrc-lx23) */
-#pragma once
-#include <nostr-gobject-1.0/gnostr-sync-service.h>

@@ -8,7 +8,7 @@
 #include "gnostr-report-dialog.h"
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <glib/gi18n.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>

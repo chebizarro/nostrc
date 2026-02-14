@@ -7,7 +7,7 @@
  */
 
 #include "bookmarks.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib.h>

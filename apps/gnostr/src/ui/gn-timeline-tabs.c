@@ -6,7 +6,7 @@
 
 #define G_LOG_DOMAIN "gn-timeline-tabs"
 
-#include "gn-timeline-tabs.h"
+#include <nostr-gtk-1.0/gn-timeline-tabs.h>
 #include <adwaita.h>
 
 typedef struct {

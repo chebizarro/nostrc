@@ -5,7 +5,7 @@
  */
 
 #include "zap.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include "utils.h"
 #include "nostr-event.h"

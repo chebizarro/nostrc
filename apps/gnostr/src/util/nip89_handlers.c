@@ -5,8 +5,8 @@
  */
 
 #include "nip89_handlers.h"
-#include "../storage_ndb.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <string.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"

@@ -8,7 +8,7 @@
 #include <string.h>
 
 /* Include the header we're testing */
-#include "../src/model/gn-timeline-query.h"
+#include <nostr-gobject-1.0/gn-timeline-query.h>
 
 /* Test: Thread query generates proper #e tag filter */
 static void test_thread_query_event_filter(void) {

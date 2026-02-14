@@ -9,8 +9,8 @@
 
 #include "gnostr-article-reader.h"
 #include "gnostr-avatar-cache.h"
-#include "gnostr-profile-provider.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "../util/nip23.h"
 #include "../util/markdown_pango.h"
 #include "../util/utils.h"

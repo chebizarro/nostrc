@@ -9,7 +9,7 @@
 
 #include "blossom_settings.h"
 #include "../ipc/gnostr-signer-service.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <string.h>
 #include <time.h>
 #include <json-glib/json-glib.h>

@@ -9,10 +9,10 @@
 #include "gnostr-articles-view.h"
 #include "gnostr-wiki-card.h"
 #include "gnostr-article-card.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "../util/nip23.h"
 #include "../util/nip54_wiki.h"
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "../util/utils.h"
 #include "nostr-event.h"
 #include "nostr-json.h"

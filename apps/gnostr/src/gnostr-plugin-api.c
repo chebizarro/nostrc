@@ -13,7 +13,7 @@
 /* App-internal includes - only needed when building the main app */
 #ifndef GNOSTR_PLUGIN_BUILD
 #include <nostr-gobject-1.0/storage_ndb.h>
-#include "util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "ipc/gnostr-signer-service.h"
 #include "util/utils.h"
 /* nostr_pool.h provided via utils.h */
@@ -22,7 +22,7 @@
 #include "nostr-relay.h"
 #include "nostr-json.h"
 #include "nostr-filter.h"
-#include "model/gn-ndb-sub-dispatcher.h"
+#include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include "ui/gnostr-main-window.h"
 #include "ui/gnostr-repo-browser.h"
 #include <json-glib/json-glib.h>

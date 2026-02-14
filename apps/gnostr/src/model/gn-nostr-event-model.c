@@ -1,11 +1,11 @@
 #define G_LOG_DOMAIN "gnostr-event-model"
 
 #include "gn-nostr-event-model.h"
-#include "gn-timeline-query.h"
-#include "gn-ndb-sub-dispatcher.h"
-#include "../storage_ndb.h"
-#include "../util/mute_list.h"
-#include "../ui/gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/gn-timeline-query.h>
+#include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/gnostr-mute-list.h>
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr.h>
 #include <string.h>
 

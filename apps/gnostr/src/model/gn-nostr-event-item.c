@@ -1,5 +1,5 @@
 #include "gn-nostr-event-item.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "../util/content_renderer.h"
 #include <string.h>
 #include <nostr-gobject-1.0/nostr_json.h>

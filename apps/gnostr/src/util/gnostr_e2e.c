@@ -4,7 +4,7 @@
 #include <string.h>
 #include <glib/gstdio.h>
 
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 
 gboolean gnostr_e2e_enabled(void) {
   const char *v = g_getenv("GNOSTR_E2E");

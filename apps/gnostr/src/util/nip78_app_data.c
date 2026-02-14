@@ -5,7 +5,7 @@
  */
 
 #include "nip78_app_data.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "../ipc/gnostr-signer-service.h"
 #include <nostr-gobject-1.0/nostr_json.h>
 #include "json.h"

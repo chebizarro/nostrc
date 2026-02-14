@@ -10,7 +10,7 @@
  */
 
 #include <glib.h>
-#include "../src/model/gnostr-nip10-thread-manager.h"
+#include <nostr-gobject-1.0/gnostr-nip10-thread-manager.h>
 
 #define ROOT_ID  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 #define REPLY_ID "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

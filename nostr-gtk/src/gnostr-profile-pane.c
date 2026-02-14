@@ -6,13 +6,13 @@
 #include "gnostr-status-dialog.h"
 #include "gnostr-image-viewer.h"
 #include "gnostr-video-player.h"
-#include "note_card_row.h"
+#include "nostr-note-card-row.h"
 #include "note-card-factory.h"
 #include "gnostr-highlight-card.h"
 #include "gn-follow-list-model.h"
 #include "gnostr-avatar-cache.h"
 #include "gnostr-main-window.h"
-#include "gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 
 #include <glib.h>
 #include <glib/gi18n.h>
@@ -22,7 +22,7 @@
 /* App-specific NIP utilities — temporary cross-includes until moved to nostr-gobject */
 #include "nip05.h"
 #include "utils.h"
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "nip58_badges.h"
 #include "user_status.h"
 #include "nip39_identity.h"

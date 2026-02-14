@@ -7,9 +7,9 @@
  */
 
 #include "gn-follow-list-model.h"
-#include "../storage_ndb.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "../util/follow_list.h"
-#include "../util/gnostr-profile-service.h"
+#include <nostr-gobject-1.0/nostr_profile_service.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <string.h>

@@ -6,7 +6,7 @@
  */
 
 #include "gnostr-mute-list.h"
-#include "../util/mute_list.h"
+#include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include "../ipc/signer_ipc.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <glib.h>

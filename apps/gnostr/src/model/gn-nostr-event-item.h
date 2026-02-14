@@ -1,7 +1,7 @@
 #ifndef GN_NOSTR_EVENT_ITEM_H
 #define GN_NOSTR_EVENT_ITEM_H
 
-#include "gn-nostr-profile.h"
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
 #include "../util/content_renderer.h"
 #include <glib-object.h>
 #include <stdint.h>

@@ -7,9 +7,9 @@
  */
 
 #include "note-card-factory.h"
-#include "note_card_row.h"
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include "../model/gn-nostr-event-item.h"
-#include "../model/gn-nostr-profile.h"
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
 
 struct _NoteCardFactory {
   GObject parent_instance;

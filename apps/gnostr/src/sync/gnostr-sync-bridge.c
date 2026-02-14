@@ -13,12 +13,12 @@
  */
 
 #include "gnostr-sync-bridge.h"
-#include "gnostr-sync-service.h"
-#include "../ui/gnostr-profile-provider.h"
+#include <nostr-gobject-1.0/gnostr-sync-service.h>
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "../util/follow_list.h"
-#include "../util/mute_list.h"
+#include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include "../util/pin_list.h"
-#include "../util/relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_event_bus.h>
 
 /* Bridge state */

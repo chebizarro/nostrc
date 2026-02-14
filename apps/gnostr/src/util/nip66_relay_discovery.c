@@ -11,7 +11,7 @@
 #include <time.h>
 
 #ifndef GNOSTR_NIP66_TEST_ONLY
-#include "relays.h"
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include "utils.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
