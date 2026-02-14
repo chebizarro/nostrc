@@ -42,6 +42,7 @@ add_custom_command(
           ${GRESOURCE_XML}
   DEPENDS ${GRESOURCE_XML}
           ${CMAKE_CURRENT_SOURCE_DIR}/data/gnostr-thread-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.ui
   COMMENT "Compiling nostr-gtk GResources"
   VERBATIM)
 
@@ -49,12 +50,14 @@ add_custom_command(
 set(NOSTR_GTK_SOURCES
   src/nostr-gtk-init.c
   src/gnostr-thread-view.c
+  src/gnostr-composer.c
   ${GRESOURCE_C}
 )
 
 set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/nostr-gtk.h
   include/nostr-gtk-1.0/gnostr-thread-view.h
+  include/nostr-gtk-1.0/gnostr-composer.h
 )
 
 # ── Library target ───────────────────────────────────────────────────

@@ -32,7 +32,6 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.blp
@@ -100,7 +99,6 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
@@ -156,6 +154,8 @@ add_custom_command(
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
+# GnostrComposer is now provided by nostr-gtk library
+list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-composer.c)
 # Platform-specific files: on macOS, exclude the Linux C implementations
 # (the macOS Objective-C implementations are added later via target_sources)
 if (APPLE)

@@ -70,11 +70,13 @@ nostr_gtk_blueprints = []
 # ── Source files ─────────────────────────────────────────────────────
 nostr_gtk_sources = files(
   'src/nostr-gtk-init.c',
+  'src/gnostr-composer.c',
 )
 
 # ── Header files (public API) ───────────────────────────────────────
 nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/nostr-gtk.h',
+  'include/nostr-gtk-1.0/gnostr-composer.h',
 )
 
 # ── Include directories ─────────────────────────────────────────────

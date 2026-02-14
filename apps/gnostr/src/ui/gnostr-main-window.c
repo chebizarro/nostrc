@@ -3,7 +3,7 @@
 #include "gnostr-main-window.h"
 #include "gnostr-tray-icon.h"
 #include "gnostr-session-view.h"
-#include "gnostr-composer.h"
+#include <nostr-gtk-1.0/gnostr-composer.h>
 #include "gnostr-timeline-view.h"
 #include "gn-timeline-tabs.h"
 #include "gnostr-profile-pane.h"
@@ -76,6 +76,8 @@
 #include "../util/nip51_settings.h"
 /* Blossom server settings (kind 10063) */
 #include "../util/blossom_settings.h"
+#include "../util/media_upload.h"
+#include "../util/blossom.h"
 /* NIP-42 relay authentication */
 #include "../util/nip42_auth.h"
 /* NIP-47 Nostr Wallet Connect */
@@ -6787,6 +6789,213 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   g_idle_add_full(G_PRIORITY_DEFAULT, scroll_to_top_idle, g_object_ref(self), NULL);
 }
 
+/* ---- Composer signal handlers (nostr-gtk decoupled signals) ---- */
+
+/* Toast signal: show toast in main window */
+static void on_composer_toast_requested(GnostrComposer *composer,
+                                        const char *message,
+                                        gpointer user_data) {
+  (void)composer;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !message) return;
+  gnostr_main_window_show_toast(GTK_WIDGET(self), message);
+}
+
+/* Upload signal: perform Blossom upload and inject result back */
+static void on_composer_upload_blossom_done(GnostrBlossomBlob *blob, GError *error, gpointer user_data) {
+  GnostrComposer *composer = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(composer)) {
+    if (blob) gnostr_blossom_blob_free(blob);
+    return;
+  }
+
+  if (error) {
+    gnostr_composer_upload_failed(composer, error->message);
+    return;
+  }
+
+  if (!blob || !blob->url) {
+    gnostr_composer_upload_failed(composer, "Server returned no URL");
+    return;
+  }
+
+  gnostr_composer_upload_complete(composer, blob->url, blob->sha256,
+                                  blob->mime_type, blob->size);
+  gnostr_blossom_blob_free(blob);
+}
+
+static void on_composer_upload_requested(GnostrComposer *composer,
+                                         const char *file_path,
+                                         gpointer user_data) {
+  (void)user_data;
+  if (!GNOSTR_IS_COMPOSER(composer) || !file_path) return;
+
+  g_message("main-window: handling upload request for %s", file_path);
+  gnostr_media_upload_async(file_path, NULL,
+                             on_composer_upload_blossom_done, composer,
+                             NULL);
+}
+
+/* Draft save signal: read composer state and persist */
+static void on_draft_save_done(GnostrDrafts *drafts, gboolean success,
+                               const char *error_message, gpointer user_data) {
+  (void)drafts;
+  GnostrComposer *composer = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(composer)) return;
+  const char *d_tag = gnostr_composer_get_current_draft_d_tag(composer);
+  gnostr_composer_draft_save_complete(composer, success, error_message, d_tag);
+}
+
+static void on_composer_save_draft_requested(GnostrComposer *composer,
+                                              gpointer user_data) {
+  (void)user_data;
+  if (!GNOSTR_IS_COMPOSER(composer)) return;
+
+  g_autofree char *text = gnostr_composer_get_text(composer);
+  if (!text || !*text) return;
+
+  GnostrDraft *draft = gnostr_draft_new();
+  draft->content = g_strdup(text);
+  draft->target_kind = 1;
+
+  const char *current_d = gnostr_composer_get_current_draft_d_tag(composer);
+  if (current_d) draft->d_tag = g_strdup(current_d);
+
+  const char *subject = gnostr_composer_get_subject(composer);
+  if (subject) draft->subject = g_strdup(subject);
+
+  const char *reply_id = gnostr_composer_get_reply_to_id(composer);
+  if (reply_id) draft->reply_to_id = g_strdup(reply_id);
+
+  const char *root_id = gnostr_composer_get_root_id(composer);
+  if (root_id) draft->root_id = g_strdup(root_id);
+
+  const char *reply_pk = gnostr_composer_get_reply_to_pubkey(composer);
+  if (reply_pk) draft->reply_to_pubkey = g_strdup(reply_pk);
+
+  const char *quote_id = gnostr_composer_get_quote_id(composer);
+  if (quote_id) draft->quote_id = g_strdup(quote_id);
+
+  const char *quote_pk = gnostr_composer_get_quote_pubkey(composer);
+  if (quote_pk) draft->quote_pubkey = g_strdup(quote_pk);
+
+  const char *quote_uri = gnostr_composer_get_quote_nostr_uri(composer);
+  if (quote_uri) draft->quote_nostr_uri = g_strdup(quote_uri);
+
+  draft->is_sensitive = gnostr_composer_is_sensitive(composer);
+
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  gnostr_drafts_save_async(drafts_mgr, draft, on_draft_save_done, composer);
+
+  gnostr_draft_free(draft);
+}
+
+/* Draft list signal: load drafts and populate composer list */
+static void on_composer_load_drafts_requested(GnostrComposer *composer,
+                                               gpointer user_data) {
+  (void)user_data;
+  if (!GNOSTR_IS_COMPOSER(composer)) return;
+
+  gnostr_composer_clear_draft_rows(composer);
+
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  GPtrArray *drafts = gnostr_drafts_load_local(drafts_mgr);
+  if (!drafts || drafts->len == 0) {
+    if (drafts) g_ptr_array_free(drafts, TRUE);
+    return;
+  }
+
+  for (guint i = 0; i < drafts->len; i++) {
+    GnostrDraft *d = (GnostrDraft *)g_ptr_array_index(drafts, i);
+    const char *content = d->content ? d->content : "";
+    char *preview = g_strndup(content, 50);
+    for (char *p = preview; *p; p++) {
+      if (*p == '\n' || *p == '\r') *p = ' ';
+    }
+    if (strlen(content) > 50) {
+      char *tmp = g_strdup_printf("%s...", preview);
+      g_free(preview);
+      preview = tmp;
+    }
+    gnostr_composer_add_draft_row(composer, d->d_tag, preview, d->updated_at);
+    g_free(preview);
+  }
+
+  g_ptr_array_free(drafts, TRUE);
+}
+
+/* Draft load signal: load specific draft by d-tag */
+static void on_composer_draft_load_requested(GnostrComposer *composer,
+                                              const char *d_tag,
+                                              gpointer user_data) {
+  (void)user_data;
+  if (!GNOSTR_IS_COMPOSER(composer) || !d_tag) return;
+
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  GPtrArray *drafts = gnostr_drafts_load_local(drafts_mgr);
+  if (!drafts) return;
+
+  for (guint i = 0; i < drafts->len; i++) {
+    GnostrDraft *d = (GnostrDraft *)g_ptr_array_index(drafts, i);
+    if (d->d_tag && strcmp(d->d_tag, d_tag) == 0) {
+      GnostrComposerDraftInfo info = {
+        .d_tag = d->d_tag,
+        .content = d->content,
+        .subject = d->subject,
+        .reply_to_id = d->reply_to_id,
+        .root_id = d->root_id,
+        .reply_to_pubkey = d->reply_to_pubkey,
+        .quote_id = d->quote_id,
+        .quote_pubkey = d->quote_pubkey,
+        .quote_nostr_uri = d->quote_nostr_uri,
+        .is_sensitive = d->is_sensitive,
+        .target_kind = d->target_kind,
+        .updated_at = d->updated_at,
+      };
+      gnostr_composer_load_draft(composer, &info);
+      break;
+    }
+  }
+
+  g_ptr_array_free(drafts, TRUE);
+}
+
+/* Draft delete signal: delete by d-tag */
+static void on_draft_delete_done(GnostrDrafts *drafts, gboolean success,
+                                  const char *error_message, gpointer user_data) {
+  (void)drafts;
+  (void)error_message;
+  GnostrComposer *composer = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(composer)) return;
+  gnostr_composer_draft_delete_complete(composer, NULL, success);
+}
+
+static void on_composer_draft_delete_requested(GnostrComposer *composer,
+                                                const char *d_tag,
+                                                gpointer user_data) {
+  (void)user_data;
+  if (!GNOSTR_IS_COMPOSER(composer) || !d_tag) return;
+
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  gnostr_drafts_delete_async(drafts_mgr, d_tag, on_draft_delete_done, composer);
+}
+
+/* Connect all decoupled composer signals to app service implementations */
+static void connect_composer_signals(GnostrComposer *composer, GnostrMainWindow *self) {
+  g_signal_connect(composer, "toast-requested",
+                   G_CALLBACK(on_composer_toast_requested), self);
+  g_signal_connect(composer, "upload-requested",
+                   G_CALLBACK(on_composer_upload_requested), self);
+  g_signal_connect(composer, "save-draft-requested",
+                   G_CALLBACK(on_composer_save_draft_requested), self);
+  g_signal_connect(composer, "load-drafts-requested",
+                   G_CALLBACK(on_composer_load_drafts_requested), self);
+  g_signal_connect(composer, "draft-load-requested",
+                   G_CALLBACK(on_composer_draft_load_requested), self);
+  g_signal_connect(composer, "draft-delete-requested",
+                   G_CALLBACK(on_composer_draft_delete_requested), self);
+}
+
 /* nostrc-yo2m: Handle compose button click from session view */
 static void on_compose_requested(GnostrSessionView *session_view, gpointer user_data) {
   (void)session_view;
@@ -6812,6 +7021,9 @@ static void on_compose_requested(GnostrSessionView *session_view, gpointer user_
   /* Connect the post signal to our existing handler */
   g_signal_connect(composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
+
+  /* Connect decoupled service signals (upload, drafts, toast) */
+  connect_composer_signals(GNOSTR_COMPOSER(composer), self);
 
   /* Store dialog reference on composer so we can close it after post */
   g_object_set_data(G_OBJECT(composer), "compose-dialog", dialog);
@@ -6941,6 +7153,9 @@ static void open_compose_dialog_with_context(GnostrMainWindow *self, ComposeCont
   /* Connect the post signal to our existing handler */
   g_signal_connect(composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
+
+  /* Connect decoupled service signals (upload, drafts, toast) */
+  connect_composer_signals(GNOSTR_COMPOSER(composer), self);
 
   /* Store dialog reference on composer so we can close it after post */
   g_object_set_data(G_OBJECT(composer), "compose-dialog", dialog);
