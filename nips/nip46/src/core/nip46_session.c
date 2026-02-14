@@ -1327,6 +1327,13 @@ int nostr_nip46_client_get_public_key_rpc(NostrNip46Session *s, char **out_user_
     return 0;
 }
 
+/* nostrc-u1qh: NIP-46 TRANSPORT-LEVEL local-crypto functions.
+ * These use s->secret (the NIP-46 client communication key) for LOCAL encryption.
+ * They are for encrypting/decrypting NIP-46 PROTOCOL MESSAGES only (kind 24133).
+ *
+ * WARNING: Do NOT use these for user content encryption (DMs, etc.).
+ * For user content, use the _rpc variants below which delegate to the remote signer. */
+
 int nostr_nip46_client_nip04_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
     if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
     if (!s->secret) return -1;
@@ -1342,11 +1349,6 @@ int nostr_nip46_client_nip04_encrypt(NostrNip46Session *s, const char *peer_pubk
     *out_ciphertext = cipher;
     return 0;
 }
-
-/* NIP-46 protocol-level encrypt/decrypt using the session's communication key.
- * These perform LOCAL crypto operations using s->secret (the client communication
- * key), mirroring nostr_nip46_client_nip04_encrypt above. They are used for
- * encrypting/decrypting NIP-46 protocol messages between client and bunker. */
 
 int nostr_nip46_client_nip04_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
     if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
@@ -1401,6 +1403,62 @@ int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubk
     memcpy(result, plain, plain_len);
     result[plain_len] = '\0';
     free(plain);
+    *out_plaintext = result;
+    return 0;
+}
+
+/* nostrc-u1qh: NIP-46 content encrypt/decrypt via REMOTE SIGNER RPC.
+ *
+ * These delegate to the remote signer which holds the user's actual private key.
+ * The client NEVER has the user's key — s->secret is only the NIP-46 transport
+ * key for encrypting protocol messages between client and bunker.
+ *
+ * NIP-46 RPC method signatures:
+ *   nip04_encrypt(peer_pubkey_hex, plaintext)  -> ciphertext
+ *   nip04_decrypt(peer_pubkey_hex, ciphertext) -> plaintext
+ *   nip44_encrypt(peer_pubkey_hex, plaintext)  -> ciphertext
+ *   nip44_decrypt(peer_pubkey_hex, ciphertext) -> plaintext
+ *
+ * IMPORTANT: Do NOT confuse with the transport-level local-crypto functions above
+ * (nostr_nip46_client_nip04_encrypt, etc.) which use s->secret for encrypting
+ * NIP-46 protocol messages. Those are for internal/test use only. */
+
+int nostr_nip46_client_nip04_encrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
+    if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
+    *out_ciphertext = NULL;
+    const char *params[2] = { peer_pubkey_hex, plaintext };
+    char *result = nip46_rpc_call(s, "nip04_encrypt", params, 2, NULL);
+    if (!result) return -1;
+    *out_ciphertext = result;
+    return 0;
+}
+
+int nostr_nip46_client_nip04_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
+    if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
+    *out_plaintext = NULL;
+    const char *params[2] = { peer_pubkey_hex, ciphertext };
+    char *result = nip46_rpc_call(s, "nip04_decrypt", params, 2, NULL);
+    if (!result) return -1;
+    *out_plaintext = result;
+    return 0;
+}
+
+int nostr_nip46_client_nip44_encrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
+    if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
+    *out_ciphertext = NULL;
+    const char *params[2] = { peer_pubkey_hex, plaintext };
+    char *result = nip46_rpc_call(s, "nip44_encrypt", params, 2, NULL);
+    if (!result) return -1;
+    *out_ciphertext = result;
+    return 0;
+}
+
+int nostr_nip46_client_nip44_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
+    if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
+    *out_plaintext = NULL;
+    const char *params[2] = { peer_pubkey_hex, ciphertext };
+    char *result = nip46_rpc_call(s, "nip44_decrypt", params, 2, NULL);
+    if (!result) return -1;
     *out_plaintext = result;
     return 0;
 }

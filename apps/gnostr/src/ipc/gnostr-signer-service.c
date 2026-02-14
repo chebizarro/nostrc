@@ -855,16 +855,18 @@ nip46_nip44_thread(GTask *task, gpointer source, gpointer task_data, GCancellabl
 
   if (ctx->is_encrypt) {
     g_debug("[SIGNER_SERVICE] NIP-46 NIP-44 encrypting for %.16s...", ctx->peer_pubkey);
-    rc = nostr_nip46_client_nip44_encrypt(session,
-                                           ctx->peer_pubkey,
-                                           ctx->data,
-                                           &result);
+    /* nostrc-u1qh: Use _rpc variant to delegate to remote signer (not local transport key) */
+    rc = nostr_nip46_client_nip44_encrypt_rpc(session,
+                                               ctx->peer_pubkey,
+                                               ctx->data,
+                                               &result);
   } else {
     g_debug("[SIGNER_SERVICE] NIP-46 NIP-44 decrypting from %.16s...", ctx->peer_pubkey);
-    rc = nostr_nip46_client_nip44_decrypt(session,
-                                           ctx->peer_pubkey,
-                                           ctx->data,
-                                           &result);
+    /* nostrc-u1qh: Use _rpc variant to delegate to remote signer (not local transport key) */
+    rc = nostr_nip46_client_nip44_decrypt_rpc(session,
+                                               ctx->peer_pubkey,
+                                               ctx->data,
+                                               &result);
   }
 
   if (rc != 0 || !result) {

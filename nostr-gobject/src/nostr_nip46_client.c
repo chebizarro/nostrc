@@ -459,7 +459,8 @@ gnostr_nip46_client_nip04_encrypt(GNostrNip46Client *self,
     g_return_val_if_fail(self->session != NULL, FALSE);
 
     char *ct = NULL;
-    int rc = nostr_nip46_client_nip04_encrypt(self->session, peer_pubkey_hex, plaintext, &ct);
+    /* nostrc-u1qh: Use _rpc variant to delegate to remote signer (not local transport key) */
+    int rc = nostr_nip46_client_nip04_encrypt_rpc(self->session, peer_pubkey_hex, plaintext, &ct);
     if (rc != 0) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_ENCRYPTION_FAILED,
                             "NIP-46 nip04_encrypt RPC failed");
@@ -483,7 +484,8 @@ gnostr_nip46_client_nip04_decrypt(GNostrNip46Client *self,
     g_return_val_if_fail(self->session != NULL, FALSE);
 
     char *pt = NULL;
-    int rc = nostr_nip46_client_nip04_decrypt(self->session, peer_pubkey_hex, ciphertext, &pt);
+    /* nostrc-u1qh: Use _rpc variant to delegate to remote signer (not local transport key) */
+    int rc = nostr_nip46_client_nip04_decrypt_rpc(self->session, peer_pubkey_hex, ciphertext, &pt);
     if (rc != 0) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_DECRYPTION_FAILED,
                             "NIP-46 nip04_decrypt RPC failed");
@@ -507,7 +509,8 @@ gnostr_nip46_client_nip44_encrypt(GNostrNip46Client *self,
     g_return_val_if_fail(self->session != NULL, FALSE);
 
     char *ct = NULL;
-    int rc = nostr_nip46_client_nip44_encrypt(self->session, peer_pubkey_hex, plaintext, &ct);
+    /* nostrc-u1qh: Use _rpc variant to delegate to remote signer (not local transport key) */
+    int rc = nostr_nip46_client_nip44_encrypt_rpc(self->session, peer_pubkey_hex, plaintext, &ct);
     if (rc != 0) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_ENCRYPTION_FAILED,
                             "NIP-46 nip44_encrypt RPC failed");
@@ -531,7 +534,8 @@ gnostr_nip46_client_nip44_decrypt(GNostrNip46Client *self,
     g_return_val_if_fail(self->session != NULL, FALSE);
 
     char *pt = NULL;
-    int rc = nostr_nip46_client_nip44_decrypt(self->session, peer_pubkey_hex, ciphertext, &pt);
+    /* nostrc-u1qh: Use _rpc variant to delegate to remote signer (not local transport key) */
+    int rc = nostr_nip46_client_nip44_decrypt_rpc(self->session, peer_pubkey_hex, ciphertext, &pt);
     if (rc != 0) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_DECRYPTION_FAILED,
                             "NIP-46 nip44_decrypt RPC failed");

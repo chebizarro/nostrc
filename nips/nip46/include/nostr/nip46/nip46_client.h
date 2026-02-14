@@ -61,11 +61,22 @@ int nostr_nip46_client_set_secret(NostrNip46Session *s, const char *secret_hex);
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json);
 int nostr_nip46_client_ping(NostrNip46Session *s);
 
+/* NIP-46 TRANSPORT-LEVEL local-crypto using s->secret (client communication key).
+ * Use ONLY for encrypting/decrypting NIP-46 protocol messages (kind 24133).
+ * Do NOT use for user content — use the _rpc variants below instead. */
 int nostr_nip46_client_nip04_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);
 int nostr_nip46_client_nip04_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
-
 int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);
 int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
+
+/* nostrc-u1qh: NIP-46 CONTENT encrypt/decrypt via REMOTE SIGNER RPC.
+ * Delegates to the remote signer which holds the user's actual private key.
+ * The client NEVER has the user's key — s->secret is the NIP-46 transport key only.
+ * Use these for all user content encryption (DMs, NIP-44 encrypted content, etc.). */
+int nostr_nip46_client_nip04_encrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);
+int nostr_nip46_client_nip04_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
+int nostr_nip46_client_nip44_encrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);
+int nostr_nip46_client_nip44_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
 
 /* nostrc-j2yu: Persistent connection API.
  * Start a persistent relay connection for efficient RPC calls.
