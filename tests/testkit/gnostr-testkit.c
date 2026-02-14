@@ -10,6 +10,10 @@
 #include <stdlib.h>
 #include <glib/gstdio.h>
 
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
+
 /* ════════════════════════════════════════════════════════════════════
  * Temporary NDB Instance
  * ════════════════════════════════════════════════════════════════════ */
@@ -264,7 +268,6 @@ gn_test_get_rss_bytes(void)
     return rss_kb * 1024;  /* Convert kB to bytes */
 #elif defined(__APPLE__)
     /* macOS: use mach_task_basic_info */
-    #include <mach/mach.h>
     struct mach_task_basic_info info;
     mach_msg_type_number_t size = MACH_TASK_BASIC_INFO_COUNT;
     if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,

@@ -324,6 +324,11 @@ endif()
 # Include NIP options/subdirs after global sanitizer flags so all NIP targets inherit them.
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 
+# Shared test infrastructure (testkit) — must come before libraries that use it
+if(BUILD_TESTING)
+  add_subdirectory(tests/testkit)
+endif()
+
 # GObject wrapper layer (nostr-gobject-1.0) — must come after NIP targets
 add_subdirectory(nostr-gobject)
 
@@ -331,11 +336,6 @@ add_subdirectory(nostr-gobject)
 option(BUILD_NOSTR_GTK "Build nostr-gtk widget library (requires GTK4 + libadwaita)" ON)
 if (BUILD_NOSTR_GTK)
   add_subdirectory(nostr-gtk)
-endif()
-
-# Shared test infrastructure (testkit) — available to all test subdirectories
-if(BUILD_TESTING)
-  add_subdirectory(tests/testkit)
 endif()
 
 # Add test targets from `tests/`.

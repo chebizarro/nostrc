@@ -208,7 +208,7 @@ factory_bind_cb(GtkListItemFactory *factory G_GNUC_UNUSED,
     gulong handler_id = g_signal_connect(item, "notify::profile",
                                           G_CALLBACK(on_item_profile_changed), h);
     g_object_set_data(G_OBJECT(list_item), "profile-handler-id",
-                      GUINT_TO_POINTER((guint)handler_id));
+                      GSIZE_TO_POINTER((gsize)handler_id));
     g_object_set_data(G_OBJECT(list_item), "bound-item",
                       g_object_ref(item));
 }
@@ -223,7 +223,7 @@ factory_unbind_cb(GtkListItemFactory *factory G_GNUC_UNUSED,
 
     /* Disconnect the profile handler — this is the critical path.
      * In production, failure to disconnect here → UAF crash. */
-    gulong handler_id = (gulong)GPOINTER_TO_UINT(
+    gulong handler_id = (gulong)GPOINTER_TO_SIZE(
         g_object_get_data(G_OBJECT(list_item), "profile-handler-id"));
     MockEventItem *item = g_object_get_data(G_OBJECT(list_item), "bound-item");
 
