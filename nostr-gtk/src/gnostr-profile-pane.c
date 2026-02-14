@@ -314,7 +314,6 @@ struct _NostrGtkProfilePane {
   GtkWidget *own_profile_actions;
   GtkWidget *btn_edit_profile;
   GtkWidget *btn_set_status;
-  GtkWidget *btn_inspect_json;
 
   /* Tab widgets */
   GtkWidget *tab_switcher;
@@ -1486,7 +1485,6 @@ static void nostr_gtk_profile_pane_class_init(NostrGtkProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, own_profile_actions);
   gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_edit_profile);
   gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_set_status);
-  gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, btn_inspect_json);
 
   /* Tab widgets */
   gtk_widget_class_bind_template_child(wclass, NostrGtkProfilePane, tab_switcher);
@@ -1607,10 +1605,6 @@ static void nostr_gtk_profile_pane_init(NostrGtkProfilePane *self) {
     g_signal_connect(self->btn_message, "clicked", G_CALLBACK(on_message_clicked), self);
   }
 
-  /* Connect inspect JSON button */
-  if (self->btn_inspect_json) {
-    g_signal_connect(self->btn_inspect_json, "clicked", G_CALLBACK(on_inspect_json_clicked), self);
-  }
 
   /* nostrc-qvba: Connect bio label link activation */
   if (self->lbl_bio) {
