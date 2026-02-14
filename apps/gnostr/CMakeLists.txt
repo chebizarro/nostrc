@@ -31,7 +31,8 @@ endif()
 set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.blp
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
+  # gnostr-timeline-view.blp moved to nostr-gtk (nostrc-lx32)
+  # gnostr-composer.blp moved to nostr-gtk (nostrc-lx35)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
   # note-card-row.blp moved to nostr-gtk (nostrc-lx33)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.blp
@@ -98,7 +99,8 @@ endif()
 set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
+  # gnostr-timeline-view.ui moved to nostr-gtk (nostrc-lx32)
+  # gnostr-composer.ui moved to nostr-gtk (nostrc-lx35)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
   # note-card-row.ui moved to nostr-gtk (nostrc-lx33)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
@@ -154,8 +156,10 @@ add_custom_command(
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
-# GnostrComposer is now provided by nostr-gtk library
+# GnostrComposer is now provided by nostr-gtk library (nostrc-lx35)
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-composer.c)
+# GnTimelineTabs moved to nostr-gtk library (nostrc-lx32) - exclude app copy to avoid duplicate symbols
+list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gn-timeline-tabs.c)
 # Platform-specific files: on macOS, exclude the Linux C implementations
 # (the macOS Objective-C implementations are added later via target_sources)
 if (APPLE)
@@ -200,6 +204,7 @@ endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+  ${PROJECT_ROOT}/nostr-gtk/include
   ${PROJECT_ROOT}/nostr-gobject/include
   ${PROJECT_ROOT}/nostr-gtk/include
   ${PROJECT_ROOT}/libnostr/include
@@ -226,6 +231,8 @@ if(NOT NSYNC_INCLUDE_DIR)
 endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Link nostr-gobject library (GObject wrappers compiled once in nostr-gobject/)
+# nostrc-lx32: Link nostr-gtk widget library (GnostrTimelineView, GnTimelineTabs)
+target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject)
 # Link nostr-gtk widget library (GTK4/libadwaita widgets moved from app)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
@@ -528,12 +535,29 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-relays PRIVATE c_std_11)
   target_include_directories(gnostr-test-relays PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libgo/include
+    ${PROJECT_ROOT}/nips/nip46/include
     ${_NOSTR_CONFIG_DIR})
-  target_sources(gnostr-test-relays PRIVATE src/util/relays.c)
+  target_sources(gnostr-test-relays PRIVATE
+    src/util/relays.c
+    src/util/relay_info.c
+    src/ipc/signer_ipc.c
+    src/ipc/gnostr-signer-service.c)
   # Disable NIP-65 async functionality for this test (avoids nostr_simple_pool dependency)
   target_compile_definitions(gnostr-test-relays PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
-  target_link_libraries(gnostr-test-relays PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+  target_link_libraries(gnostr-test-relays PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_gobject nostr libgo)
+  if (TARGET nostr_nip46_core)
+    target_link_libraries(gnostr-test-relays PRIVATE nostr_nip46_core)
+  endif()
+  # nostr-gobject gnostr-relays.c references app-level gnostr_publish_to_relays_async,
+  # but the code path is gated by GNOSTR_RELAY_TEST_ONLY and never reached in tests.
+  if (APPLE)
+    target_link_options(gnostr-test-relays PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-relays PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
   _gnostr_apply_sanitizers(gnostr-test-relays)
   add_test(NAME gnostr-test-relays COMMAND gnostr-test-relays)
 
@@ -562,6 +586,11 @@ if (BUILD_TESTING)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
   if (TARGET nostr_nip46_core)
     target_link_libraries(gnostr-test-blossom PRIVATE nostr_nip46_core)
+  endif()
+  if (APPLE)
+    target_link_options(gnostr-test-blossom PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-blossom PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
   endif()
   _gnostr_apply_sanitizers(gnostr-test-blossom)
   add_test(NAME gnostr-test-blossom COMMAND gnostr-test-blossom)
@@ -594,6 +623,11 @@ if (BUILD_TESTING)
     nostr libgo)
   if (TARGET nostr_nip46_core)
     target_link_libraries(gnostr-test-blossom-settings PRIVATE nostr_nip46_core)
+  endif()
+  if (APPLE)
+    target_link_options(gnostr-test-blossom-settings PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-blossom-settings PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
   endif()
   _gnostr_apply_sanitizers(gnostr-test-blossom-settings)
   add_test(NAME gnostr-test-blossom-settings COMMAND gnostr-test-blossom-settings)

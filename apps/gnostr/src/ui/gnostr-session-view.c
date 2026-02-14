@@ -1099,6 +1099,11 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
 
   gtk_widget_init_template(GTK_WIDGET(self));
 
+  /* nostrc-lx32: Install app-specific factory on the library timeline widget */
+  if (self->timeline && GNOSTR_IS_TIMELINE_VIEW(GNOSTR_TIMELINE_VIEW(self->timeline))) {
+    gnostr_timeline_view_setup_app_factory(GNOSTR_TIMELINE_VIEW(self->timeline));
+  }
+
   /* Replace header avatar button icon with avatar overlay */
   if (self->btn_avatar) {
     GtkWidget *overlay = gtk_overlay_new();

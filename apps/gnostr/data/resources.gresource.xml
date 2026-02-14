@@ -3,7 +3,8 @@
   <gresource prefix="/org/gnostr/ui">
     <file>ui/gnostr-main-window.ui</file>
     <file>ui/widgets/gnostr-session-view.ui</file>
-    <file>ui/widgets/gnostr-timeline-view.ui</file>
+    <!-- gnostr-timeline-view.ui moved to nostr-gtk (nostrc-lx32) -->
+    <!-- gnostr-composer.ui moved to nostr-gtk (nostrc-lx35) -->
     <file>ui/widgets/gnostr-timeline-row.ui</file>
     <!-- note-card-row.ui moved to nostr-gtk (nostrc-lx33) -->
     <file>ui/widgets/gnostr-dm-inbox-view.ui</file>

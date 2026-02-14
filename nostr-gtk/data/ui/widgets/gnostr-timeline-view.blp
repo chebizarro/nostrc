@@ -1,0 +1,28 @@
+using Gtk 4.0;
+
+template $GnostrTimelineView: Widget {
+    hexpand: true;
+    vexpand: true;
+
+    Box root_box {
+        orientation: vertical;
+        hexpand: true;
+        vexpand: true;
+
+        $GnTimelineTabs tabs {
+            visible: false;
+        }
+
+        ScrolledWindow root_scroller {
+            hexpand: true;
+            vexpand: true;
+            hscrollbar-policy: never;
+            vscrollbar-policy: automatic;
+
+            ListView list_view {
+                hexpand: true;
+                vexpand: true;
+            }
+        }
+    }
+}

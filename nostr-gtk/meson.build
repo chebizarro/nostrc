@@ -70,6 +70,8 @@ nostr_gtk_sources = files(
   'src/gnostr-thread-view.c',
   'src/gnostr-composer.c',
   'src/nostr-note-card-row.c',
+  'src/gn-timeline-tabs.c',
+  'src/gnostr-timeline-view.c',
 )
 
 # ── Header files (public API) ───────────────────────────────────────
@@ -78,6 +80,8 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/gnostr-thread-view.h',
   'include/nostr-gtk-1.0/gnostr-composer.h',
   'include/nostr-gtk-1.0/nostr-note-card-row.h',
+  'include/nostr-gtk-1.0/gn-timeline-tabs.h',
+  'include/nostr-gtk-1.0/gnostr-timeline-view.h',
 )
 
 # ── Include directories ─────────────────────────────────────────────

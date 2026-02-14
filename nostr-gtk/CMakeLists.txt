@@ -87,6 +87,8 @@ set(NOSTR_GTK_SOURCES
   src/gnostr-composer.c
   src/gnostr-profile-pane.c
   src/nostr-note-card-row.c
+  src/gn-timeline-tabs.c
+  src/gnostr-timeline-view.c
   ${GRESOURCE_C}
 )
 
@@ -96,6 +98,8 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gnostr-composer.h
   include/nostr-gtk-1.0/gnostr-profile-pane.h
   include/nostr-gtk-1.0/nostr-note-card-row.h
+  include/nostr-gtk-1.0/gn-timeline-tabs.h
+  include/nostr-gtk-1.0/gnostr-timeline-view.h
 )
 
 # ── Library target ───────────────────────────────────────────────────
