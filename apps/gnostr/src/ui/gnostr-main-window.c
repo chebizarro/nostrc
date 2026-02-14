@@ -6,7 +6,7 @@
 #include <nostr-gtk-1.0/gnostr-composer.h>
 #include "gnostr-timeline-view.h"
 #include "gn-timeline-tabs.h"
-#include "gnostr-profile-pane.h"
+#include <nostr-gtk-1.0/gnostr-profile-pane.h>
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
 #include "gnostr-article-reader.h"
 #include "gnostr-article-composer.h"

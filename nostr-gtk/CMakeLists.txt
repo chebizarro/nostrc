@@ -13,6 +13,9 @@ set(NOSTR_GTK_MINOR_VERSION 0)
 set(NOSTR_GTK_MICRO_VERSION 0)
 set(NOSTR_GTK_VERSION "${NOSTR_GTK_MAJOR_VERSION}.${NOSTR_GTK_MINOR_VERSION}.${NOSTR_GTK_MICRO_VERSION}")
 
+# ── Project root ─────────────────────────────────────────────────────
+get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+
 # ── Find dependencies ────────────────────────────────────────────────
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4     REQUIRED IMPORTED_TARGET gtk4>=4.6)
@@ -20,6 +23,7 @@ pkg_check_modules(ADW      REQUIRED IMPORTED_TARGET libadwaita-1>=1.2)
 pkg_check_modules(GLIB2    REQUIRED IMPORTED_TARGET glib-2.0>=2.70)
 pkg_check_modules(GOBJECT2 REQUIRED IMPORTED_TARGET gobject-2.0>=2.70)
 pkg_check_modules(GIO2     REQUIRED IMPORTED_TARGET gio-2.0>=2.70)
+pkg_check_modules(SOUP3    QUIET    IMPORTED_TARGET libsoup-3.0)
 
 # ── Version header (configure from template) ─────────────────────────
 configure_file(
@@ -33,6 +37,10 @@ find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
 set(GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/nostr-gtk.gresource.xml)
 set(GRESOURCE_C   ${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-resources.c)
 
+# Collect all UI template files as dependencies
+file(GLOB _UI_FILES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.ui)
+
 add_custom_command(
   OUTPUT ${GRESOURCE_C}
   COMMAND ${GLIB_COMPILE_RESOURCES}
@@ -40,9 +48,7 @@ add_custom_command(
           --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data
           --target=${GRESOURCE_C}
           ${GRESOURCE_XML}
-  DEPENDS ${GRESOURCE_XML}
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/gnostr-thread-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.ui
+  DEPENDS ${GRESOURCE_XML} ${_UI_FILES}
   COMMENT "Compiling nostr-gtk GResources"
   VERBATIM)
 
@@ -51,6 +57,7 @@ set(NOSTR_GTK_SOURCES
   src/nostr-gtk-init.c
   src/gnostr-thread-view.c
   src/gnostr-composer.c
+  src/gnostr-profile-pane.c
   ${GRESOURCE_C}
 )
 
@@ -58,6 +65,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/nostr-gtk.h
   include/nostr-gtk-1.0/gnostr-thread-view.h
   include/nostr-gtk-1.0/gnostr-composer.h
+  include/nostr-gtk-1.0/gnostr-profile-pane.h
 )
 
 # ── Library target ───────────────────────────────────────────────────
@@ -83,6 +91,15 @@ target_include_directories(nostr_gtk
     ${CMAKE_SOURCE_DIR}/apps/gnostr/src/util
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/libgo/include
+    # nostrdb headers (required by storage_ndb in profile pane)
+    ${CMAKE_SOURCE_DIR}/third_party/nostrdb/src
+    ${CMAKE_SOURCE_DIR}/third_party/nostrdb/ccan
+    # NIP implementations used by profile pane
+    ${CMAKE_SOURCE_DIR}/nips/nip19/include
+    ${CMAKE_SOURCE_DIR}/nips/nip10/include
+    ${CMAKE_SOURCE_DIR}/nips/nip25/include
+    # Generated config header (from libnostr)
+    ${CMAKE_BINARY_DIR}/libnostr/generated
 )
 
 # Public dependencies (propagated to consumers)
@@ -100,6 +117,12 @@ target_link_libraries(nostr_gtk
   PRIVATE
     nostr_gobject
 )
+
+# Optional: libsoup for async image loading in profile pane
+if(SOUP3_FOUND)
+  target_link_libraries(nostr_gtk PRIVATE PkgConfig::SOUP3)
+  target_compile_definitions(nostr_gtk PRIVATE HAVE_SOUP3=1)
+endif()
 
 # Inherit sanitizer flags from root CMakeLists.txt
 apply_sanitizers(nostr_gtk)

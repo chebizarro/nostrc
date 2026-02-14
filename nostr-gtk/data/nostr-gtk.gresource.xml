@@ -3,5 +3,6 @@
   <gresource prefix="/org/nostr/gtk">
     <file>gnostr-thread-view.ui</file>
     <file preprocess="xml-stripblanks">ui/gnostr-composer.ui</file>
+    <file>ui/gnostr-profile-pane.ui</file>
   </gresource>
 </gresources>

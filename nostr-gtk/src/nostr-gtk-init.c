@@ -1,6 +1,6 @@
-/* nostr-gtk-init.c — Library initialization placeholder
+/* nostr-gtk-init.c — Library initialization
  *
- * Provides a minimal symbol so the library links before widgets are moved in.
+ * Registers custom widget types so GTK can instantiate them from UI templates.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -12,10 +12,11 @@
  * nostr_gtk_init:
  *
  * Initializes the nostr-gtk library. Call this once before using any
- * nostr-gtk widgets. Currently a no-op placeholder.
+ * nostr-gtk widgets. Ensures GType registration for template-based widgets.
  */
 void
 nostr_gtk_init (void)
 {
-  /* Will register custom widget types once widgets are moved here */
+  /* Force GType registration for widgets used in UI templates */
+  g_type_ensure (gnostr_profile_pane_get_type ());
 }

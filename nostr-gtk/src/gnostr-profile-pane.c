@@ -1,4 +1,7 @@
-#include "gnostr-profile-pane.h"
+/* nostrc-lx36: GnostrProfilePane — moved from apps/gnostr/src/ui/ to nostr-gtk */
+#include <nostr-gtk-1.0/gnostr-profile-pane.h>
+
+/* App-specific UI widgets — temporary cross-includes until fully decoupled */
 #include "gnostr-profile-edit.h"
 #include "gnostr-status-dialog.h"
 #include "gnostr-image-viewer.h"
@@ -6,37 +9,44 @@
 #include "note_card_row.h"
 #include "note-card-factory.h"
 #include "gnostr-highlight-card.h"
-#include "../model/gn-follow-list-model.h"
+#include "gn-follow-list-model.h"
+#include "gnostr-avatar-cache.h"
+#include "gnostr-main-window.h"
+#include "gnostr-profile-provider.h"
+
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <gtk/gtk.h>
-#include "gnostr-avatar-cache.h"
-#include "../util/nip05.h"
-#include "../util/utils.h"
-#include "../util/relays.h"
-#include "../util/nip58_badges.h"
-#include "../util/user_status.h"
-#include "../util/nip39_identity.h"
-#include "../util/nip84_highlights.h"
-#include "../storage_ndb.h"
-#include "nostr-filter.h"
-#include "nostr-event.h"
-#include "nostr-tag.h"
-#include "nostr-json.h"
+
+/* App-specific NIP utilities — temporary cross-includes until moved to nostr-gobject */
+#include "nip05.h"
+#include "utils.h"
+#include "relays.h"
+#include "nip58_badges.h"
+#include "user_status.h"
+#include "nip39_identity.h"
+#include "nip84_highlights.h"
+#include "bookmarks.h"
+#include "pin_list.h"
+#include "nip02_contacts.h"
+
+/* nostr-gobject + libnostr — proper library dependencies */
 #include <nostr-gobject-1.0/nostr_json.h>
-#include "json.h"
-#include "../util/bookmarks.h"
-#include "../util/pin_list.h"
-#include "../util/nip02_contacts.h"
-#include "gnostr-main-window.h"
-#include "gnostr-profile-provider.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_profile_service.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-filter.h>
+#include <nostr-event.h>
+#include <nostr-tag.h>
+#include <nostr-json.h>
+#include <json.h>
+
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
 
-#define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-profile-pane.ui"
+#define UI_RESOURCE "/org/nostr/gtk/ui/gnostr-profile-pane.ui"
 #define DEFAULT_BANNER_RESOURCE "/org/gnostr/assets/assets/background.png"
 
 /* Check if user is logged in by checking GSettings current-npub.
@@ -453,7 +463,10 @@ static void fetch_user_status(GnostrProfilePane *self);
 
 static void gnostr_profile_pane_dispose(GObject *obj) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(obj);
-  /* Cancel profile loading */
+  /* nostrc-lx36: Cancel profile service callbacks for this widget */
+  gpointer _svc = gnostr_profile_service_get_default();
+  gnostr_profile_service_cancel_for_user_data(_svc, self);
+  /* Cancel legacy profile cancellable (still used for other operations) */
   if (self->profile_cancellable) {
     g_cancellable_cancel(self->profile_cancellable);
     g_clear_object(&self->profile_cancellable);
@@ -1753,7 +1766,11 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     g_clear_object(&self->nip05_cancellable);
   }
 
-  /* Cancel profile loading */
+  /* nostrc-lx36: Cancel profile service callbacks + legacy cancellable */
+  {
+    gpointer svc = gnostr_profile_service_get_default();
+    gnostr_profile_service_cancel_for_user_data(svc, self);
+  }
   if (self->profile_cancellable) {
     g_cancellable_cancel(self->profile_cancellable);
     g_clear_object(&self->profile_cancellable);
@@ -4150,361 +4167,93 @@ static void load_media(GnostrProfilePane *self) {
   nostr_filter_free(filter);
 }
 
-/* ============== Profile Cache/Network Fetch ============== */
+/* ============== Profile Fetch via nostr-gobject Profile Service ============== */
 
-/* Helper: convert hex string to 32-byte binary */
-static gboolean hex_to_bytes32(const char *hex, uint8_t *out32) {
-  if (!hex || strlen(hex) != 64) return FALSE;
-  for (int i = 0; i < 32; i++) {
-    unsigned int b;
-    if (sscanf(hex + i*2, "%2x", &b) != 1) return FALSE;
-    out32[i] = (uint8_t)b;
-  }
-  return TRUE;
-}
-
-/* Callback when network profile fetch completes */
-static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* Check result BEFORE accessing user_data - if cancelled, the pane may be destroyed */
-  GError *error = NULL;
-  GPtrArray *results = gnostr_pool_query_finish(
-    GNOSTR_POOL(source), res, &error);
-
-  if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_warning("profile_pane: NETWORK fetch FAILED: %s", error->message);
-    }
-    g_error_free(error);
-    return;
-  }
-
-  /* Now safe to access user_data since operation wasn't cancelled */
-  if (user_data == NULL) return;
+/* nostrc-lx36: Profile service callback — replaces direct pool query.
+ * Called by gnostr_profile_service_request when profile data arrives
+ * (from cache or network). Runs on the main thread. */
+static void on_profile_service_result(const char *pubkey_hex,
+                                       const GnostrProfileMeta *meta,
+                                       gpointer user_data) {
   GnostrProfilePane *self = (GnostrProfilePane*)user_data;
   if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
-  if (!results || results->len == 0) {
-    g_debug("profile_pane: NETWORK MISS - no profile found for %.8s",
-              self->current_pubkey ? self->current_pubkey : "(null)");
-    if (results) g_ptr_array_unref(results);
+  /* Stale callback guard: ignore if user navigated to a different profile */
+  if (!self->current_pubkey || g_strcmp0(pubkey_hex, self->current_pubkey) != 0) {
+    g_debug("profile_pane: service callback STALE (current=%.8s, callback=%.8s)",
+            self->current_pubkey ? self->current_pubkey : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
     return;
   }
 
-  g_debug("profile_pane: NETWORK HIT - %u events for %.8s",
-            results->len, self->current_pubkey ? self->current_pubkey : "(null)");
-
-  /* Route results by kind: kind:0 → profile, kind:30315 → user status */
-  char *best_content = NULL;
-  char *best_event_json = NULL;
-  gint64 best_created_at = 0;
-
-  GPtrArray *status_events = g_ptr_array_new();
-
-  for (guint i = 0; i < results->len; i++) {
-    const char *event_json = g_ptr_array_index(results, i);
-    if (!event_json) continue;
-
-    NostrEvent *evt = nostr_event_new();
-    if (evt && nostr_event_deserialize(evt, event_json) == 0) {
-      /* nostrc-mawu: Validate pubkey matches current_pubkey to prevent race condition
-       * where stale fetch callback updates UI with wrong profile */
-      const char *event_pubkey = nostr_event_get_pubkey(evt);
-      if (!event_pubkey || !self->current_pubkey ||
-          strcmp(event_pubkey, self->current_pubkey) != 0) {
-        nostr_event_free(evt);
-        continue;
-      }
-
-      int kind = nostr_event_get_kind(evt);
-      if (kind == 30315) {
-        /* NIP-38 user status — collect for batch processing */
-        g_ptr_array_add(status_events, (gpointer)event_json);
-      } else if (kind == 0) {
-        gint64 created_at = (gint64)nostr_event_get_created_at(evt);
-        if (created_at > best_created_at) {
-          best_created_at = created_at;
-          g_free(best_content);
-          const char *content = nostr_event_get_content(evt);
-          best_content = content ? g_strdup(content) : NULL;
-          g_free(best_event_json);
-          best_event_json = g_strdup(event_json);
-        }
-      }
-    }
-    if (evt) nostr_event_free(evt);
+  if (!meta) {
+    g_debug("profile_pane: service returned NULL meta for %.8s", pubkey_hex);
+    return;
   }
 
-  /* Update profile from best kind:0 */
-  if (best_content && *best_content) {
-    g_debug("profile_pane: NETWORK HIT updating UI for %.8s (created_at=%" G_GINT64_FORMAT " content_len=%zu)",
-              self->current_pubkey ? self->current_pubkey : "(null)", best_created_at,
-              strlen(best_content));
+  g_debug("profile_pane: service HIT for %.8s display_name=%s",
+          pubkey_hex, meta->display_name ? meta->display_name : "(none)");
 
-    g_free(self->current_event_json);
-    self->current_event_json = best_event_json;
-    best_event_json = NULL;
-
-    /* Ingest into nostrdb in background so future lookups hit the cache */
-    if (self->current_event_json) {
-      GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
-      g_ptr_array_add(batch, g_strdup(self->current_event_json));
-      storage_ndb_ingest_events_async(batch);
-      g_debug("profile_pane: NDB ingest queued for %.8s (json_len=%zu)",
-                self->current_pubkey ? self->current_pubkey : "(null)",
-                strlen(self->current_event_json));
-    }
-
-    /* Also update the in-memory profile provider cache so subsequent
-     * lookups (including the profile pane's own fallback) succeed
-     * even if the async NDB ingest is delayed or fails silently. */
-    if (self->current_pubkey) {
-      gnostr_profile_provider_update(self->current_pubkey, best_content);
-    }
-
-    gnostr_profile_pane_update_from_json(self, best_content);
-    parse_external_identities(self);
-  } else {
-    g_warning("profile_pane: NETWORK FETCH returned %u events but no valid kind:0 content for %.8s",
-              results ? results->len : 0,
-              self->current_pubkey ? self->current_pubkey : "(null)");
+  /* Build JSON from meta fields for update_profile_ui compatibility */
+  GNostrJsonBuilder *jb = gnostr_json_builder_new();
+  gnostr_json_builder_begin_object(jb);
+  if (meta->display_name) {
+    gnostr_json_builder_set_key(jb, "display_name");
+    gnostr_json_builder_add_string(jb, meta->display_name);
   }
-
-  /* Process kind:30315 user status events */
-  for (guint i = 0; i < status_events->len; i++) {
-    const char *status_json = g_ptr_array_index(status_events, i);
-    GnostrUserStatus *status = gnostr_user_status_parse_event(status_json);
-    if (!status) continue;
-
-    if (!gnostr_user_status_is_expired(status)) {
-      if (status->type == GNOSTR_STATUS_GENERAL) {
-        if (!self->current_general_status ||
-            status->created_at > self->current_general_status->created_at) {
-          g_clear_pointer(&self->current_general_status, gnostr_user_status_free);
-          self->current_general_status = status;
-          status = NULL;
-        }
-      } else if (status->type == GNOSTR_STATUS_MUSIC) {
-        if (!self->current_music_status ||
-            status->created_at > self->current_music_status->created_at) {
-          g_clear_pointer(&self->current_music_status, gnostr_user_status_free);
-          self->current_music_status = status;
-          status = NULL;
-        }
-      }
-    }
-    if (status) gnostr_user_status_free(status);
+  if (meta->name) {
+    gnostr_json_builder_set_key(jb, "name");
+    gnostr_json_builder_add_string(jb, meta->name);
   }
-  if (status_events->len > 0) {
-    self->status_loaded = TRUE;
-    update_status_display(self);
+  if (meta->picture) {
+    gnostr_json_builder_set_key(jb, "picture");
+    gnostr_json_builder_add_string(jb, meta->picture);
   }
+  if (meta->banner) {
+    gnostr_json_builder_set_key(jb, "banner");
+    gnostr_json_builder_add_string(jb, meta->banner);
+  }
+  if (meta->nip05) {
+    gnostr_json_builder_set_key(jb, "nip05");
+    gnostr_json_builder_add_string(jb, meta->nip05);
+  }
+  if (meta->lud16) {
+    gnostr_json_builder_set_key(jb, "lud16");
+    gnostr_json_builder_add_string(jb, meta->lud16);
+  }
+  gnostr_json_builder_end_object(jb);
+  char *json = gnostr_json_builder_finish(jb);
+  g_object_unref(jb);
 
-  g_ptr_array_unref(status_events);
-  g_free(best_content);
-  g_free(best_event_json);
-
-  g_ptr_array_unref(results);
+  if (json && *json) {
+    gnostr_profile_pane_update_from_json(self, json);
+    self->profile_loaded_from_cache = TRUE;
+  }
+  g_free(json);
 }
 
-/* hq-zgxxb: Add URL to relay array if not already present */
-static void
-pp_add_relay_if_unique(GPtrArray *relay_urls, const gchar *url)
-{
-  for (guint j = 0; j < relay_urls->len; j++) {
-    if (g_strcmp0(url, g_ptr_array_index(relay_urls, j)) == 0)
-      return;
-  }
-  g_ptr_array_add(relay_urls, g_strdup(url));
-}
-
-/* Fetch profile from nostrdb cache first, then from network */
+/* nostrc-lx36: Fetch profile via nostr-gobject profile service.
+ * The service handles nostrdb cache, request batching/dedup, and network fetch.
+ * User status (kind:30315) is fetched separately via fetch_user_status(). */
 static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_warning("profile_pane: fetch ABORT - no pubkey set");
     return;
   }
 
-  g_debug("profile_pane: fetch START for %.8s", self->current_pubkey);
+  g_debug("profile_pane: fetch START for %.8s via profile service", self->current_pubkey);
 
-  /* Cancel any previous profile fetch */
-  if (self->profile_cancellable) {
-    g_cancellable_cancel(self->profile_cancellable);
-    g_clear_object(&self->profile_cancellable);
-  }
-  self->profile_cancellable = g_cancellable_new();
+  /* Cancel any previous profile service callbacks for this widget */
+  gpointer service = gnostr_profile_service_get_default();
+  gnostr_profile_service_cancel_for_user_data(service, self);
+
   self->profile_loaded_from_cache = FALSE;
 
-  /* Step 1: Try nostrdb cache first */
-  void *txn = NULL;
-  int ndb_rc = storage_ndb_begin_query(&txn);
-  g_debug("profile_pane: NDB begin_query rc=%d txn=%p", ndb_rc, txn);
-
-  if (ndb_rc == 0 && txn) {
-    uint8_t pk32[32];
-    gboolean hex_ok = hex_to_bytes32(self->current_pubkey, pk32);
-    g_debug("profile_pane: hex_to_bytes32 ok=%d", (int)hex_ok);
-
-    if (hex_ok) {
-      char *event_json = NULL;
-      int event_len = 0;
-
-      int prof_rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len);
-      g_debug("profile_pane: NDB get_profile rc=%d json=%p len=%d",
-                prof_rc, (void*)event_json, event_len);
-
-      if (prof_rc == 0 && event_json) {
-        /* Parse the event to get the content field */
-        NostrEvent *evt = nostr_event_new();
-        if (evt && nostr_event_deserialize(evt, event_json) == 0) {
-          const char *content = nostr_event_get_content(evt);
-          g_debug("profile_pane: NDB CACHE HIT for %.8s content=%s len=%zu",
-                    self->current_pubkey,
-                    (content && *content) ? "non-empty" : "EMPTY",
-                    content ? strlen(content) : 0);
-
-          if (content && *content) {
-            /* Store full event JSON for NIP-39 identity parsing */
-            g_free(self->current_event_json);
-            self->current_event_json = g_strdup(event_json);
-
-            gnostr_profile_pane_update_from_json(self, content);
-            self->profile_loaded_from_cache = TRUE;
-
-            /* Parse NIP-39 external identities from the event tags */
-            parse_external_identities(self);
-          }
-        } else {
-          g_warning("profile_pane: NDB event deserialize FAILED for %.8s", self->current_pubkey);
-        }
-        if (evt) nostr_event_free(evt);
-        free(event_json);  /* Caller-owned buffer from ln_ndb_get_profile_by_pubkey */
-      } else {
-        g_debug("profile_pane: NDB CACHE MISS for %.8s (rc=%d)", self->current_pubkey, prof_rc);
-      }
-    }
-    storage_ndb_end_query(txn);
-  } else {
-    g_warning("profile_pane: NDB begin_query FAILED rc=%d", ndb_rc);
-  }
-
-  /* Step 1b: If NDB missed, try the in-memory profile provider cache.
-   * The provider may have the profile from a prior network fetch even if
-   * the async NDB ingest hasn't completed yet. */
-  if (!self->profile_loaded_from_cache) {
-    GnostrProfileMeta *meta = gnostr_profile_provider_get(self->current_pubkey);
-    if (meta) {
-      g_debug("profile_pane: PROVIDER CACHE HIT for %.8s", self->current_pubkey);
-
-      /* Build a JSON object from the available fields so we can reuse
-       * the standard update_profile_ui path. GNostrJsonBuilder handles
-       * proper string escaping. */
-      GNostrJsonBuilder *jb = gnostr_json_builder_new();
-      gnostr_json_builder_begin_object(jb);
-      if (meta->display_name) {
-        gnostr_json_builder_set_key(jb, "display_name");
-        gnostr_json_builder_add_string(jb, meta->display_name);
-      }
-      if (meta->name) {
-        gnostr_json_builder_set_key(jb, "name");
-        gnostr_json_builder_add_string(jb, meta->name);
-      }
-      if (meta->picture) {
-        gnostr_json_builder_set_key(jb, "picture");
-        gnostr_json_builder_add_string(jb, meta->picture);
-      }
-      if (meta->banner) {
-        gnostr_json_builder_set_key(jb, "banner");
-        gnostr_json_builder_add_string(jb, meta->banner);
-      }
-      if (meta->nip05) {
-        gnostr_json_builder_set_key(jb, "nip05");
-        gnostr_json_builder_add_string(jb, meta->nip05);
-      }
-      if (meta->lud16) {
-        gnostr_json_builder_set_key(jb, "lud16");
-        gnostr_json_builder_add_string(jb, meta->lud16);
-      }
-      gnostr_json_builder_end_object(jb);
-      char *fallback_json = gnostr_json_builder_finish(jb);
-      g_object_unref(jb);
-
-      if (fallback_json && *fallback_json) {
-        gnostr_profile_pane_update_from_json(self, fallback_json);
-        /* Mark partial — network fetch will still proceed for full data
-         * (about/bio, website, lud06, etc.) */
-        self->profile_loaded_from_cache = TRUE;
-      }
-      g_free(fallback_json);
-      gnostr_profile_meta_free(meta);
-    }
-  }
-
-  /* Step 2: Always fetch from network for fresh data (even if cached) */
-  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
-
-  /* Use read relays from GSettings */
-  gnostr_get_read_relay_urls_into(relay_urls);
-
-  /* hq-zgxxb: Merge target user's NIP-65 write relays for better profile discovery.
-   * Write relays = where they publish their profile/posts. */
-  if (self->nip65_relays && self->nip65_relays->len > 0) {
-    GPtrArray *write_relays = gnostr_nip65_get_write_relays(self->nip65_relays);
-    for (guint i = 0; i < write_relays->len; i++) {
-      pp_add_relay_if_unique(relay_urls, g_ptr_array_index(write_relays, i));
-    }
-    g_ptr_array_unref(write_relays);
-  }
-
-  /* hq-zgxxb: Add profile-indexing relays when viewing other users' profiles.
-   * These relays index kind:0 metadata and improve discovery. */
-  if (self->own_pubkey &&
-      g_ascii_strcasecmp(self->current_pubkey, self->own_pubkey) != 0) {
-    static const char *profile_indexers[] = {
-      "wss://purplepag.es",
-      "wss://relay.nostr.band",
-      NULL
-    };
-    for (int i = 0; profile_indexers[i]; i++) {
-      pp_add_relay_if_unique(relay_urls, profile_indexers[i]);
-    }
-  }
-
-  g_debug("profile_pane: %u relays configured for network fetch", relay_urls->len);
-  if (relay_urls->len == 0) {
-    g_warning("profile_pane: NO RELAYS configured - network fetch skipped!");
-    g_ptr_array_unref(relay_urls);
-    return;
-  }
-
-  /* Build URL array for the API */
-  const char **urls = g_new0(const char*, relay_urls->len);
-  for (guint i = 0; i < relay_urls->len; i++) {
-    urls[i] = g_ptr_array_index(relay_urls, i);
-  }
-
-  /* Build authors array */
-  const char *authors[1] = { self->current_pubkey };
-
-  g_debug("profile_pane: fetching profile from %u relays for %.8s",
-          relay_urls->len, self->current_pubkey);
-
-  /* Fetch profile + user status in a single request: kind:0 + kind:30315 */
-  {
-    NostrFilter *pf = nostr_filter_new();
-    int pf_kinds[2] = { 0, 30315 };
-    nostr_filter_set_kinds(pf, pf_kinds, 2);
-    nostr_filter_set_authors(pf, authors, 1);
-
-    GNostrPool *pool = gnostr_get_shared_query_pool();
-    gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_urls->len);
-    NostrFilters *_qf = nostr_filters_new();
-    nostr_filters_add(_qf, pf);
-    gnostr_pool_query_async(pool, _qf, self->profile_cancellable, on_profile_fetch_done, self);
-    nostr_filter_free(pf);
-  }
-
-  g_free(urls);
-  g_ptr_array_unref(relay_urls);
+  /* Delegate to the centralized profile service.
+   * It checks nostrdb cache → batches/deduplicates → network fetches.
+   * Callback fires on the main thread when profile data is available. */
+  gnostr_profile_service_request(service, self->current_pubkey,
+                                  on_profile_service_result, self);
 }
 
 /* NIP-84 Highlights: Maximum highlights to fetch */

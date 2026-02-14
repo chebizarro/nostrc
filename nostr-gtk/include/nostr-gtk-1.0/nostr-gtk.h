@@ -26,6 +26,7 @@ void nostr_gtk_init (void);
 /* Widget headers */
 #include "gnostr-thread-view.h"
 #include "gnostr-composer.h"
+#include "gnostr-profile-pane.h"
 
 G_END_DECLS
 
