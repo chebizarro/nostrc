@@ -39,14 +39,45 @@ typedef enum {
   GNOSTR_SYNC_ERROR
 } GnostrSyncState;
 
-/* --- Singleton Access --- */
+/**
+ * GnostrSyncRelayProvider:
+ * @out: (element-type utf8): Array to populate with relay URL strings
+ * @user_data: User data from constructor
+ *
+ * Callback that populates relay URLs for the sync service.
+ * The provider appends relay URL strings (owned by the array) to @out.
+ * This decouples the sync service from any specific relay configuration
+ * mechanism (GSettings, config files, etc.).
+ */
+typedef void (*GnostrSyncRelayProvider)(GPtrArray *out, gpointer user_data);
+
+/* --- Construction --- */
+
+/**
+ * gnostr_sync_service_new:
+ * @relay_provider: Callback that provides relay URLs for syncing
+ * @user_data: User data passed to @relay_provider
+ *
+ * Creates the sync service with an injected relay provider.
+ * The first call sets the default singleton instance.
+ * The relay provider is called each time a sync needs relay URLs.
+ *
+ * Relay change monitoring is NOT handled internally — the caller
+ * should call gnostr_sync_service_sync_now() when relay config changes.
+ *
+ * Returns: (transfer none): The sync service singleton. Do not unref.
+ */
+GnostrSyncService *gnostr_sync_service_new(GnostrSyncRelayProvider relay_provider,
+                                            gpointer user_data);
 
 /**
  * gnostr_sync_service_get_default:
  *
- * Gets the singleton sync service instance. Thread-safe.
+ * Gets the singleton sync service instance.
+ * Must be preceded by a call to gnostr_sync_service_new().
  *
- * Returns: (transfer none): The default sync service. Do not unref.
+ * Returns: (transfer none) (nullable): The default sync service, or
+ *   %NULL if gnostr_sync_service_new() has not been called yet.
  */
 GnostrSyncService *gnostr_sync_service_get_default(void);
 

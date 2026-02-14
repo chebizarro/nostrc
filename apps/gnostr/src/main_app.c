@@ -12,9 +12,35 @@
 #include "util/gnostr-plugin-manager.h"
 #include "sync/gnostr-sync-service.h"
 #include "sync/gnostr-sync-bridge.h"
+#include "util/relays.h"
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
+
+/* nostrc-lx25: Relay change handler for sync service */
+static gulong s_relay_change_for_sync = 0;
+
+/* nostrc-lx25: App-side relay provider callback for sync service DI.
+ * The sync service calls this to get relay URLs without knowing about
+ * GSettings schemas or config files. */
+static void
+app_relay_provider(GPtrArray *out, gpointer user_data)
+{
+  (void)user_data;
+  gnostr_load_relays_into(out);
+}
+
+/* nostrc-lx25: When relay config changes, trigger immediate sync */
+static void
+on_relay_changed_for_sync(gpointer user_data)
+{
+  (void)user_data;
+  GnostrSyncService *svc = gnostr_sync_service_get_default();
+  if (svc && gnostr_sync_service_is_running(svc)) {
+    g_debug("[APP] Relay config changed, triggering sync");
+    gnostr_sync_service_sync_now(svc);
+  }
+}
 
 /* Update tray icon with relay connection status.
  * Called by main window when relay status changes. */
@@ -102,6 +128,12 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 
   /* Shutdown sync bridge (unsubscribes from EventBus) */
   gnostr_sync_bridge_shutdown();
+
+  /* nostrc-lx25: Disconnect relay change handler before shutting down sync */
+  if (s_relay_change_for_sync > 0) {
+    gnostr_relay_change_disconnect(s_relay_change_for_sync);
+    s_relay_change_for_sync = 0;
+  }
 
   /* Shutdown sync service (cancels pending sync, stops timer) */
   gnostr_sync_service_shutdown();
@@ -251,6 +283,15 @@ int main(int argc, char **argv) {
     /* Initialize sync bridge (subscribes to EventBus for data refresh).
      * User pubkey is set later on login via gnostr_sync_bridge_set_user_pubkey(). */
     gnostr_sync_bridge_init(NULL);
+
+    /* nostrc-lx25: Create sync service with injected relay provider.
+     * The app owns the relay configuration (GSettings); the library sync
+     * service just calls our provider callback to get URLs. */
+    gnostr_sync_service_new(app_relay_provider, NULL);
+
+    /* Wire relay config changes to trigger immediate sync */
+    s_relay_change_for_sync =
+      gnostr_relay_change_connect(on_relay_changed_for_sync, NULL);
   }
 
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);

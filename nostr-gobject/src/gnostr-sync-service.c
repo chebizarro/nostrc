@@ -6,13 +6,15 @@
  * - Base interval: 60 seconds after a change is detected
  * - Back off: interval doubles (up to 600s) on consecutive in-sync results
  * - Reset: interval drops to base on any detected change
- * - Reconnect: immediate sync when relay configuration changes
+ *
+ * Relay configuration is injected via GnostrSyncRelayProvider callback
+ * passed to gnostr_sync_service_new(). The caller is responsible for
+ * calling gnostr_sync_service_sync_now() when relay config changes.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "gnostr-sync-service.h"
-#include "gnostr-relays.h"
 #include "neg-client.h"
 #include <nostr-gobject-1.0/nostr_event_bus.h>
 #include <string.h>
@@ -49,8 +51,9 @@ struct _GnostrSyncService
   guint total_syncs;
   gboolean running;            /* TRUE if periodic timer is active */
 
-  /* Relay change monitoring */
-  gulong relay_change_handler_id;
+  /* Injected relay provider (nostrc-lx25) */
+  GnostrSyncRelayProvider relay_provider;
+  gpointer relay_provider_data;
 };
 
 G_DEFINE_TYPE(GnostrSyncService, gnostr_sync_service, G_TYPE_OBJECT)
@@ -58,7 +61,6 @@ G_DEFINE_TYPE(GnostrSyncService, gnostr_sync_service, G_TYPE_OBJECT)
 /* Forward declarations */
 static gboolean on_sync_timer(gpointer user_data);
 static void on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void on_relay_config_changed(gpointer user_data);
 static void schedule_next_sync(GnostrSyncService *self);
 static void do_sync(GnostrSyncService *self);
 
@@ -83,12 +85,6 @@ gnostr_sync_service_dispose(GObject *object)
     g_clear_object(&self->cancellable);
   }
 
-  /* Disconnect relay change handler */
-  if (self->relay_change_handler_id > 0) {
-    gnostr_relay_change_disconnect(self->relay_change_handler_id);
-    self->relay_change_handler_id = 0;
-  }
-
   G_OBJECT_CLASS(gnostr_sync_service_parent_class)->dispose(object);
 }
 
@@ -110,7 +106,8 @@ gnostr_sync_service_init(GnostrSyncService *self)
   self->consecutive_in_sync = 0;
   self->total_syncs = 0;
   self->running = FALSE;
-  self->relay_change_handler_id = 0;
+  self->relay_provider = NULL;
+  self->relay_provider_data = NULL;
 }
 
 /* ============================================================================
@@ -120,12 +117,28 @@ gnostr_sync_service_init(GnostrSyncService *self)
 static GnostrSyncService *default_instance = NULL;
 
 GnostrSyncService *
+gnostr_sync_service_new(GnostrSyncRelayProvider relay_provider,
+                         gpointer user_data)
+{
+  g_return_val_if_fail(relay_provider != NULL, NULL);
+
+  if (default_instance) {
+    g_warning("[SYNC] Sync service already created; updating relay provider");
+    default_instance->relay_provider = relay_provider;
+    default_instance->relay_provider_data = user_data;
+    return default_instance;
+  }
+
+  GnostrSyncService *instance = g_object_new(GNOSTR_TYPE_SYNC_SERVICE, NULL);
+  instance->relay_provider = relay_provider;
+  instance->relay_provider_data = user_data;
+  default_instance = instance;
+  return instance;
+}
+
+GnostrSyncService *
 gnostr_sync_service_get_default(void)
 {
-  if (g_once_init_enter_pointer (&default_instance)) {
-    GnostrSyncService *instance = g_object_new(GNOSTR_TYPE_SYNC_SERVICE, NULL);
-    g_once_init_leave_pointer(&default_instance, instance);
-  }
   return default_instance;
 }
 
@@ -198,10 +211,15 @@ schedule_next_sync(GnostrSyncService *self)
  * ============================================================================ */
 
 static gchar *
-get_first_relay_url(void)
+get_first_relay_url(GnostrSyncService *self)
 {
+  if (!self->relay_provider) {
+    g_debug("[SYNC] No relay provider configured");
+    return NULL;
+  }
+
   GPtrArray *relays = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(relays);
+  self->relay_provider(relays, self->relay_provider_data);
 
   gchar *url = NULL;
   if (relays->len > 0)
@@ -219,7 +237,7 @@ do_sync(GnostrSyncService *self)
     return;
   }
 
-  g_autofree gchar *relay_url = get_first_relay_url();
+  g_autofree gchar *relay_url = get_first_relay_url(self);
   if (!relay_url) {
     g_debug("[SYNC] No relays configured, skipping sync");
     return;
@@ -325,22 +343,6 @@ on_sync_timer(gpointer user_data)
 }
 
 /* ============================================================================
- * Relay reconnection handler
- * ============================================================================ */
-
-static void
-on_relay_config_changed(gpointer user_data)
-{
-  GnostrSyncService *self = GNOSTR_SYNC_SERVICE(user_data);
-
-  if (!self->running)
-    return;
-
-  g_debug("[SYNC] Relay config changed, triggering immediate sync");
-  gnostr_sync_service_sync_now(self);
-}
-
-/* ============================================================================
  * Public API
  * ============================================================================ */
 
@@ -355,12 +357,6 @@ gnostr_sync_service_start(GnostrSyncService *self)
   self->running = TRUE;
   self->current_interval_sec = SYNC_INTERVAL_BASE_SEC;
   self->consecutive_in_sync = 0;
-
-  /* Monitor relay config changes for reconnection sync */
-  if (self->relay_change_handler_id == 0) {
-    self->relay_change_handler_id =
-      gnostr_relay_change_connect(on_relay_config_changed, self);
-  }
 
   g_debug("[SYNC] Service started (base interval=%us)", SYNC_INTERVAL_BASE_SEC);
 
@@ -388,12 +384,6 @@ gnostr_sync_service_stop(GnostrSyncService *self)
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
-  }
-
-  /* Disconnect relay change handler */
-  if (self->relay_change_handler_id > 0) {
-    gnostr_relay_change_disconnect(self->relay_change_handler_id);
-    self->relay_change_handler_id = 0;
   }
 
   self->state = GNOSTR_SYNC_IDLE;
