@@ -147,6 +147,13 @@ nostr_gobject_version_h = configure_file(
   install: true,
   install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 
+# ── D-Bus signer proxy (gdbus-codegen) ──────────────────────────────
+signer_proxy = gnome.gdbus_codegen('signer_proxy',
+  sources: 'dbus/org.nostr.Signer.xml',
+  c_namespace: 'Nostr',
+  install_header: true,
+  install_dir: get_option('includedir') / 'nostr-gobject-1.0')
+
 # ── Source files ─────────────────────────────────────────────────────
 nostr_gobject_sources = files(
   'src/nostr-error.c',
@@ -243,7 +250,7 @@ endif
 nip46_inc = include_directories('../nips/nip46/include')
 
 nostr_gobject_lib = library('nostr-gobject-1.0',
-  nostr_gobject_sources,
+  nostr_gobject_sources + signer_proxy,
   include_directories: [nostr_gobject_inc, nip46_inc],
   dependencies: nostr_gobject_deps,
   install: true)

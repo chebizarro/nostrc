@@ -169,21 +169,8 @@ if (NOT APP_SRC)
   set(APP_SRC src/main_app.c)
 endif()
 
-# Generate D-Bus proxy from canonical XML (no inline XML)
-set(SIGNER_XML ${CMAKE_CURRENT_SOURCE_DIR}/../gnostr-signer/data/dbus/org.nostr.Signer.xml)
-set(SIGNER_PROXY_C ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy.c)
-set(SIGNER_PROXY_H ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy.h)
-add_custom_command(
-  OUTPUT ${SIGNER_PROXY_C} ${SIGNER_PROXY_H}
-  COMMAND gdbus-codegen
-          --generate-c-code ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy
-          --c-namespace Nostr
-          ${SIGNER_XML}
-  DEPENDS ${SIGNER_XML}
-  VERBATIM)
-
-list(APPEND APP_SRC ${SIGNER_PROXY_C})
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
+# D-Bus signer proxy is now generated and compiled in nostr-gobject;
+# consumers get it via the nostr_gobject target (PUBLIC include + link).
 add_executable(${APP_CLIENT_BIN} ${APP_SRC})
 target_compile_features(${APP_CLIENT_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}"
@@ -567,8 +554,7 @@ if (BUILD_TESTING)
     src/util/relays.c
     src/util/relay_info.c
     src/ipc/signer_ipc.c
-    src/ipc/gnostr-signer-service.c
-    ${SIGNER_PROXY_C})
+    src/ipc/gnostr-signer-service.c)
   target_link_libraries(gnostr-test-blossom PRIVATE nostr_gobject)
   # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
   target_compile_definitions(gnostr-test-blossom PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
@@ -598,8 +584,7 @@ if (BUILD_TESTING)
     src/util/relays.c
     src/util/relay_info.c
     src/ipc/signer_ipc.c
-    src/ipc/gnostr-signer-service.c
-    ${SIGNER_PROXY_C})
+    src/ipc/gnostr-signer-service.c)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE nostr_gobject)
   # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
   target_compile_definitions(gnostr-test-blossom-settings PRIVATE GNOSTR_RELAY_TEST_ONLY=1)

@@ -32,6 +32,23 @@ configure_file(
   ${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h
   @ONLY)
 
+# ── D-Bus signer proxy (gdbus-codegen) ──────────────────────────────
+find_program(GDBUS_CODEGEN gdbus-codegen REQUIRED)
+
+set(SIGNER_DBUS_XML ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Signer.xml)
+set(SIGNER_PROXY_C  ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy.c)
+set(SIGNER_PROXY_H  ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy.h)
+
+add_custom_command(
+  OUTPUT ${SIGNER_PROXY_C} ${SIGNER_PROXY_H}
+  COMMAND ${GDBUS_CODEGEN}
+          --generate-c-code ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy
+          --c-namespace Nostr
+          ${SIGNER_DBUS_XML}
+  DEPENDS ${SIGNER_DBUS_XML}
+  COMMENT "Generating D-Bus signer proxy from org.nostr.Signer.xml"
+  VERBATIM)
+
 # ── Source files ─────────────────────────────────────────────────────
 set(NOSTR_GOBJECT_SOURCES
   src/nostr-error.c
@@ -60,6 +77,7 @@ set(NOSTR_GOBJECT_SOURCES
   src/nostr_nip49.c
   src/nostr_bip39.c
   src/storage_ndb.c
+  ${SIGNER_PROXY_C}
 )
 
 set(NOSTR_GOBJECT_HEADERS
@@ -287,6 +305,7 @@ install(TARGETS nostr_gobject
 install(FILES ${NOSTR_GOBJECT_HEADERS}
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h"
+              "${SIGNER_PROXY_H}"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0)
 
 # ── Tests ────────────────────────────────────────────────────────────
