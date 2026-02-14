@@ -364,6 +364,7 @@ struct _GnostrProfilePane {
   GtkWidget *highlights_empty_box;
   GtkWidget *highlights_empty_label;
   GCancellable *highlights_cancellable;
+  guint highlights_timeout_id;
   gboolean highlights_loaded;
 
   /* nostrc-7447: Follows tab widgets */
@@ -1836,6 +1837,10 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->media_scroll, TRUE);
 
   /* Clear NIP-84 highlights */
+  if (self->highlights_timeout_id) {
+    g_source_remove(self->highlights_timeout_id);
+    self->highlights_timeout_id = 0;
+  }
   if (self->highlights_cancellable) {
     g_cancellable_cancel(self->highlights_cancellable);
     g_clear_object(&self->highlights_cancellable);
@@ -4347,6 +4352,16 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
     }
     g_error_free(err);
     if (results) g_ptr_array_unref(results);
+    /* nostrc-38wc: Still clean up UI on error — spinner must stop */
+    if (user_data && GNOSTR_IS_PROFILE_PANE(user_data)) {
+      GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+      if (GTK_IS_SPINNER(self->highlights_spinner))
+        gtk_spinner_stop(GTK_SPINNER(self->highlights_spinner));
+      if (GTK_IS_WIDGET(self->highlights_loading_box))
+        gtk_widget_set_visible(self->highlights_loading_box, FALSE);
+      if (GTK_IS_WIDGET(self->highlights_empty_box))
+        gtk_widget_set_visible(self->highlights_empty_box, TRUE);
+    }
     return;
   }
 
@@ -4354,6 +4369,12 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
   if (!user_data) return;
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
   if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  /* nostrc-38wc: Cancel the safety timeout since query completed */
+  if (self->highlights_timeout_id) {
+    g_source_remove(self->highlights_timeout_id);
+    self->highlights_timeout_id = 0;
+  }
 
   /* Hide loading indicator */
   if (GTK_IS_SPINNER(self->highlights_spinner)) {
@@ -4448,6 +4469,25 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
   }
 }
 
+/* nostrc-38wc: Safety timeout for highlights query — cancels the GCancellable
+ * if the query hasn't completed within 15 seconds. The pool query poll loop
+ * has no built-in timeout, so a misbehaving relay that never sends EOSE
+ * would cause the spinner to spin indefinitely. */
+#define HIGHLIGHTS_TIMEOUT_SECS 15
+
+static gboolean on_highlights_timeout(gpointer user_data) {
+  GnostrProfilePane *self = (GnostrProfilePane *)user_data;
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
+
+  self->highlights_timeout_id = 0;
+  g_debug("profile_pane: highlights query timed out after %ds", HIGHLIGHTS_TIMEOUT_SECS);
+
+  if (self->highlights_cancellable) {
+    g_cancellable_cancel(self->highlights_cancellable);
+  }
+  return G_SOURCE_REMOVE;
+}
+
 /* NIP-84: Load highlights for the current user */
 static void load_highlights(GnostrProfilePane *self) {
   if (!self || !self->current_pubkey || self->highlights_loaded) return;
@@ -4456,6 +4496,10 @@ static void load_highlights(GnostrProfilePane *self) {
   self->highlights_loaded = TRUE;
 
   /* Cancel previous request */
+  if (self->highlights_timeout_id) {
+    g_source_remove(self->highlights_timeout_id);
+    self->highlights_timeout_id = 0;
+  }
   if (self->highlights_cancellable) {
     g_cancellable_cancel(self->highlights_cancellable);
     g_clear_object(&self->highlights_cancellable);
@@ -4515,6 +4559,10 @@ static void load_highlights(GnostrProfilePane *self) {
     nostr_filters_add(_qf, filter);
     gnostr_pool_query_async(pool, _qf, self->highlights_cancellable, on_highlights_query_done, self);
   }
+
+  /* nostrc-38wc: Safety timeout — cancel query if relay never sends EOSE */
+  self->highlights_timeout_id = g_timeout_add_seconds(HIGHLIGHTS_TIMEOUT_SECS,
+                                                       on_highlights_timeout, self);
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
