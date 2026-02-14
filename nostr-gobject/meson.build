@@ -350,13 +350,17 @@ install_headers(nostr_gobject_headers, subdir: 'nostr-gobject-1.0')
 
 # ── Tests ─────────────────────────────────────────────────────────────
 if get_option('tests')
+  test_env = environment()
+  test_env.set('G_DEBUG', 'fatal-warnings,gc-friendly')
+  test_env.set('G_SLICE', 'always-malloc')
+
   test_nostr_event = executable('test_nostr_event',
     'tests/test_nostr_event.c',
     dependencies: [glib_dep, gobject_dep],
     link_with: nostr_gobject_lib,
     include_directories: nostr_gobject_pub_inc)
 
-  test('nostr_event', test_nostr_event)
+  test('nostr_event', test_nostr_event, env: test_env)
 
   test_nip19 = executable('test_nip19',
     'tests/test_nip19.c',
@@ -364,7 +368,24 @@ if get_option('tests')
     link_with: nostr_gobject_lib,
     include_directories: nostr_gobject_pub_inc)
 
-  test('nip19', test_nip19)
+  test('nip19', test_nip19, env: test_env)
+
+  # ── New tests (using testkit) ──────────────────────────────────────
+  # gnostr_testkit_dep should be declared via tests/testkit/meson.build
+  # in the parent project. If available:
+  if is_variable('gnostr_testkit_dep')
+    test_store_contract = executable('test_store_contract',
+      'tests/test_store_contract.c',
+      dependencies: [gnostr_testkit_dep, nostr_gobject_dep])
+
+    test('nostr-gobject:store-contract', test_store_contract, env: test_env)
+
+    test_lifecycle_leaks = executable('test_lifecycle_leaks',
+      'tests/test_lifecycle_leaks.c',
+      dependencies: [gnostr_testkit_dep, nostr_gobject_dep])
+
+    test('nostr-gobject:lifecycle-leaks', test_lifecycle_leaks, env: test_env)
+  endif
 endif
 
 # ── Examples ─────────────────────────────────────────────────────────

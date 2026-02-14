@@ -365,17 +365,33 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h"
 
 # ── Tests ────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/GnTest.cmake)
+
+  # Existing tests
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nostr_event.c")
-    add_executable(test_nostr_gobject_event tests/test_nostr_event.c)
-    target_link_libraries(test_nostr_gobject_event PRIVATE nostr_gobject)
-    apply_sanitizers(test_nostr_gobject_event)
-    add_test(NAME nostr_gobject_event COMMAND test_nostr_gobject_event)
+    gn_add_gtest(test_nostr_gobject_event
+      SOURCES tests/test_nostr_event.c
+      LIBS nostr_gobject
+    )
   endif()
 
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip19.c")
-    add_executable(test_nostr_gobject_nip19 tests/test_nip19.c)
-    target_link_libraries(test_nostr_gobject_nip19 PRIVATE nostr_gobject)
-    apply_sanitizers(test_nostr_gobject_nip19)
-    add_test(NAME nostr_gobject_nip19 COMMAND test_nostr_gobject_nip19)
+    gn_add_gtest(test_nostr_gobject_nip19
+      SOURCES tests/test_nip19.c
+      LIBS nostr_gobject
+    )
+  endif()
+
+  # ── New tests (require testkit) ──────────────────────────────────
+  if(TARGET gnostr-testkit)
+    gn_add_gtest(test_nostr_gobject_store_contract
+      SOURCES tests/test_store_contract.c
+      LIBS gnostr-testkit nostr_gobject
+    )
+
+    gn_add_gtest(test_nostr_gobject_lifecycle_leaks
+      SOURCES tests/test_lifecycle_leaks.c
+      LIBS gnostr-testkit nostr_gobject
+    )
   endif()
 endif()

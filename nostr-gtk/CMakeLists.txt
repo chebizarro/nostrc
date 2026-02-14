@@ -300,3 +300,26 @@ install(FILES ${NOSTR_GTK_HEADERS}
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-gtk-1.0)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-version.h"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-gtk-1.0)
+
+# ── Tests ────────────────────────────────────────────────────────────
+if(BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/GnTest.cmake)
+
+  # Widget tests — require headless GTK rendering (Xvfb on Linux, native on macOS)
+  gn_add_gtest_xvfb(test_nostr_gtk_listview_recycle_stress
+    SOURCES tests/test_listview_recycle_stress.c
+    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    TIMEOUT 120
+  )
+
+  gn_add_gtest_xvfb(test_nostr_gtk_note_card_measure
+    SOURCES tests/test_note_card_measure.c
+    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+  )
+
+  gn_add_gtest_xvfb(test_nostr_gtk_widget_churn_leaks
+    SOURCES tests/test_widget_churn_leaks.c
+    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    TIMEOUT 120
+  )
+endif()

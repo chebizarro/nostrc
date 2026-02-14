@@ -333,6 +333,11 @@ if (BUILD_NOSTR_GTK)
   add_subdirectory(nostr-gtk)
 endif()
 
+# Shared test infrastructure (testkit) — available to all test subdirectories
+if(BUILD_TESTING)
+  add_subdirectory(tests/testkit)
+endif()
+
 # Add test targets from `tests/`.
 add_subdirectory(tests)
 
@@ -344,6 +349,11 @@ endif()
 
 # Testing and debugging tools
 add_subdirectory(tools)
+
+# Performance and memory benchmarks (optional, for nightly CI)
+if(EXISTS ${CMAKE_SOURCE_DIR}/benchmark/CMakeLists.txt)
+  add_subdirectory(benchmark)
+endif()
 
 # Examples
 add_executable(relay_smoke examples/relay_smoke.c)

@@ -172,5 +172,5 @@ install_headers(nostr_gtk_headers, subdir: 'nostr-gtk-1.0')
 
 # ── Tests ────────────────────────────────────────────────────────────
 if get_option('tests')
-  # Tests will be added as widgets are moved in
+  subdir('tests')
 endif()
