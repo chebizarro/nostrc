@@ -33,7 +33,6 @@ configure_file(
   @ONLY)
 
 # ── Source files ─────────────────────────────────────────────────────
-# Note: nostr_ndb_store.c is excluded — it depends on app-level storage_ndb.c
 set(NOSTR_GOBJECT_SOURCES
   src/nostr-error.c
   src/nostr-enums.c
@@ -46,6 +45,7 @@ set(NOSTR_GOBJECT_SOURCES
   src/nostr_pool.c
   src/nostr_relay_store.c
   src/nostr_store.c
+  src/nostr_ndb_store.c
   src/crypto_utils.c
   src/nostr_async.c
   src/nostr_query_batcher.c

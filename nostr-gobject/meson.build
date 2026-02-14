@@ -160,7 +160,7 @@ nostr_gobject_sources = files(
   'src/nostr_pool.c',
   'src/nostr_relay_store.c',
   'src/nostr_store.c',
-  # nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
+  'src/nostr_ndb_store.c',
   'src/crypto_utils.c',
   'src/nostr_async.c',
   'src/nostr_query_batcher.c',
@@ -175,7 +175,6 @@ nostr_gobject_sources = files(
   'src/nostr_nip49.c',
   'src/nostr_bip39.c',
 )
-# nostr_ndb_store.c excluded: depends on app-level storage_ndb.c symbols
 
 # Header files (public API)
 nostr_gobject_headers = files(
