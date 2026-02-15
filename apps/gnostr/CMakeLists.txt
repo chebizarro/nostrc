@@ -831,6 +831,138 @@ if (BUILD_TESTING)
     TIMEOUT 60
     LABELS "chess;engine;nip64;unit;gnostr")
 
+  # ── Event model windowing tests (require testkit + NDB) ──────────
+  if(TARGET gnostr-testkit)
+    include(${PROJECT_ROOT}/cmake/GnTest.cmake)
+
+    gn_add_gtest(gnostr-test-event-model-windowing
+      SOURCES tests/test_event_model_windowing.c
+              src/model/gn-nostr-event-model.c
+              src/model/gn-nostr-event-item.c
+              src/util/content_renderer.c
+      LIBS gnostr-testkit nostr_gobject nostr_gtk
+           PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
+      TIMEOUT 120
+    )
+    target_include_directories(gnostr-test-event-model-windowing PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${PROJECT_ROOT}/nostr-gtk/include
+      ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/libnostr/include
+      ${_NOSTR_CONFIG_DIR}
+      ${PROJECT_ROOT}/libgo/include
+      ${_NDB_VENDOR_DIR}/src
+      ${_NDB_VENDOR_DIR}/ccan
+      ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    if(TARGET nostrdb_storage)
+      target_link_libraries(gnostr-test-event-model-windowing PRIVATE nostrdb_storage)
+      if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if(APPLE)
+          target_link_options(gnostr-test-event-model-windowing PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+            target_link_libraries(gnostr-test-event-model-windowing PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          endif()
+          target_link_libraries(gnostr-test-event-model-windowing PRIVATE "-framework Security")
+        else()
+          target_link_options(gnostr-test-event-model-windowing PRIVATE
+            -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
+          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+            target_link_libraries(gnostr-test-event-model-windowing PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          endif()
+        endif()
+      endif()
+    endif()
+    if(APPLE)
+      target_link_options(gnostr-test-event-model-windowing PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
+      target_link_options(gnostr-test-event-model-windowing PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+    endif()
+    _gnostr_apply_sanitizers(gnostr-test-event-model-windowing)
+    set_tests_properties(gnostr-test-event-model-windowing PROPERTIES
+      LABELS "model;windowing;unit;gnostr")
+
+    gn_add_gtest(gnostr-test-event-item-txn-budget
+      SOURCES tests/test_event_item_txn_budget.c
+              src/model/gn-nostr-event-item.c
+              src/util/content_renderer.c
+      LIBS gnostr-testkit nostr_gobject nostr_gtk
+           PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
+      TIMEOUT 90
+    )
+    target_include_directories(gnostr-test-event-item-txn-budget PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${PROJECT_ROOT}/nostr-gtk/include
+      ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/libnostr/include
+      ${_NOSTR_CONFIG_DIR}
+      ${PROJECT_ROOT}/libgo/include
+      ${_NDB_VENDOR_DIR}/src
+      ${_NDB_VENDOR_DIR}/ccan
+      ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    if(TARGET nostrdb_storage)
+      target_link_libraries(gnostr-test-event-item-txn-budget PRIVATE nostrdb_storage)
+      if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if(APPLE)
+          target_link_options(gnostr-test-event-item-txn-budget PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+            target_link_libraries(gnostr-test-event-item-txn-budget PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          endif()
+          target_link_libraries(gnostr-test-event-item-txn-budget PRIVATE "-framework Security")
+        else()
+          target_link_options(gnostr-test-event-item-txn-budget PRIVATE
+            -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
+          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+            target_link_libraries(gnostr-test-event-item-txn-budget PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          endif()
+        endif()
+      endif()
+    endif()
+    if(APPLE)
+      target_link_options(gnostr-test-event-item-txn-budget PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
+      target_link_options(gnostr-test-event-item-txn-budget PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+    endif()
+    _gnostr_apply_sanitizers(gnostr-test-event-item-txn-budget)
+    set_tests_properties(gnostr-test-event-item-txn-budget PROPERTIES
+      LABELS "model;item;txn;unit;gnostr")
+
+    # Integration: NIP-09 delete authorization
+    gn_add_gtest(gnostr-test-delete-authorization
+      SOURCES tests/integ/test_model_delete_authorization.c
+      LIBS gnostr-testkit nostr_gobject PkgConfig::GLIB PkgConfig::JSON_GLIB
+      TIMEOUT 120
+    )
+    target_include_directories(gnostr-test-delete-authorization PRIVATE
+      ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/libnostr/include
+      ${_NOSTR_CONFIG_DIR}
+      ${PROJECT_ROOT}/libgo/include
+      ${_NDB_VENDOR_DIR}/src
+      ${_NDB_VENDOR_DIR}/ccan
+      ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    if(TARGET nostrdb_storage)
+      target_link_libraries(gnostr-test-delete-authorization PRIVATE nostrdb_storage)
+      if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if(APPLE)
+          target_link_options(gnostr-test-delete-authorization PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+            target_link_libraries(gnostr-test-delete-authorization PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          endif()
+          target_link_libraries(gnostr-test-delete-authorization PRIVATE "-framework Security")
+        else()
+          target_link_options(gnostr-test-delete-authorization PRIVATE
+            -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
+          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+            target_link_libraries(gnostr-test-delete-authorization PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          endif()
+        endif()
+      endif()
+    endif()
+    _gnostr_apply_sanitizers(gnostr-test-delete-authorization)
+    set_tests_properties(gnostr-test-delete-authorization PROPERTIES
+      LABELS "nip09;delete;integ;gnostr")
+  endif()
+
 endif()
 
 # ---- GSettings schema compilation (development builds) ----

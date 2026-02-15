@@ -393,5 +393,29 @@ if(BUILD_TESTING)
       SOURCES tests/test_lifecycle_leaks.c
       LIBS gnostr-testkit nostr_gobject
     )
+
+    gn_add_gtest(test_nostr_gobject_profile_provider_lru
+      SOURCES tests/test_profile_provider_lru.c
+      LIBS gnostr-testkit nostr_gobject
+    )
+
+    gn_add_gtest(test_nostr_gobject_main_thread_latency
+      SOURCES tests/test_main_thread_forbidden_calls.c
+      LIBS gnostr-testkit nostr_gobject
+      TIMEOUT 90
+    )
+
+    # Integration tests (longer timeout, may use NDB ingestion)
+    gn_add_gtest(test_nostr_gobject_integ_event_flow
+      SOURCES tests/integ/test_event_flow_ingest_subscribe.c
+      LIBS gnostr-testkit nostr_gobject
+      TIMEOUT 120
+    )
+
+    gn_add_gtest(test_nostr_gobject_profile_service_batching
+      SOURCES tests/test_profile_service_batching.c
+      LIBS gnostr-testkit nostr_gobject
+      TIMEOUT 90
+    )
   endif()
 endif()

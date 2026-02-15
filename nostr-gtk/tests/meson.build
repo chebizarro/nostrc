@@ -82,3 +82,43 @@ else
     timeout: 120,
   )
 endif
+
+# ── Bind latency budget test ─────────────────────────────────────────
+test_latency = executable(
+  'test_bind_latency_budget',
+  'test_bind_latency_budget.c',
+  dependencies: test_deps,
+)
+
+if xvfb_run.found()
+  test('nostr-gtk:bind-latency-budget', xvfb_run,
+    args: ['-a', test_latency],
+    env: test_env,
+    timeout: 120,
+  )
+else
+  test('nostr-gtk:bind-latency-budget', test_latency,
+    env: test_env,
+    timeout: 120,
+  )
+endif
+
+# ── Thread view bounded load test ────────────────────────────────────
+test_thread_bounded = executable(
+  'test_thread_view_bounded_load',
+  'test_thread_view_bounded_load.c',
+  dependencies: test_deps,
+)
+
+if xvfb_run.found()
+  test('nostr-gtk:thread-view-bounded', xvfb_run,
+    args: ['-a', test_thread_bounded],
+    env: test_env,
+    timeout: 120,
+  )
+else
+  test('nostr-gtk:thread-view-bounded', test_thread_bounded,
+    env: test_env,
+    timeout: 120,
+  )
+endif

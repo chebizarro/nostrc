@@ -322,4 +322,16 @@ if(BUILD_TESTING)
     LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
     TIMEOUT 120
   )
+
+  gn_add_gtest_xvfb(test_nostr_gtk_bind_latency_budget
+    SOURCES tests/test_bind_latency_budget.c
+    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    TIMEOUT 120
+  )
+
+  gn_add_gtest_xvfb(test_nostr_gtk_thread_view_bounded
+    SOURCES tests/test_thread_view_bounded_load.c
+    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    TIMEOUT 120
+  )
 endif()

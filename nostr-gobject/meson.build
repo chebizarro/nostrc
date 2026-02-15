@@ -385,6 +385,30 @@ if get_option('tests')
       dependencies: [gnostr_testkit_dep, nostr_gobject_dep])
 
     test('nostr-gobject:lifecycle-leaks', test_lifecycle_leaks, env: test_env)
+
+    test_profile_lru = executable('test_profile_provider_lru',
+      'tests/test_profile_provider_lru.c',
+      dependencies: [gnostr_testkit_dep, nostr_gobject_dep])
+
+    test('nostr-gobject:profile-provider-lru', test_profile_lru, env: test_env)
+
+    test_latency = executable('test_main_thread_forbidden_calls',
+      'tests/test_main_thread_forbidden_calls.c',
+      dependencies: [gnostr_testkit_dep, nostr_gobject_dep])
+
+    test('nostr-gobject:main-thread-latency', test_latency, env: test_env, timeout: 90)
+
+    test_event_flow = executable('test_event_flow_ingest_subscribe',
+      'tests/integ/test_event_flow_ingest_subscribe.c',
+      dependencies: [gnostr_testkit_dep, nostr_gobject_dep])
+
+    test('nostr-gobject:event-flow-integ', test_event_flow, env: test_env, timeout: 120)
+
+    test_profile_service = executable('test_profile_service_batching',
+      'tests/test_profile_service_batching.c',
+      dependencies: [gnostr_testkit_dep, nostr_gobject_dep])
+
+    test('nostr-gobject:profile-service-batching', test_profile_service, env: test_env, timeout: 90)
   endif
 endif
 
