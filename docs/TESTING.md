@@ -7,16 +7,23 @@ The gnostr test suite validates memory safety, performance budgets, widget corre
 ### Architecture
 
 ```
-┌─────────────────────────────────────┐
-│  Perf / Memory Benchmarks (nightly) │  ← RSS ceiling, latency budgets
-├─────────────────────────────────────┤
-│  Integration Tests (CI per-PR)      │  ← Event flow, delete authorization
-├─────────────────────────────────────┤
-│  Widget Tests (Xvfb, CI per-PR)     │  ← Recycling stress, sizing, latency
-├─────────────────────────────────────┤
-│  Unit Tests (no display, fast)      │  ← Store contract, cache bounds, lifecycle
-└─────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  Real-Component Benchmarks (nightly)     │  ← RSS ceiling with real NDB data
+├──────────────────────────────────────────┤
+│  Real-Component Integration (CI per-PR)  │  ← NDB violation detection, real bind
+├──────────────────────────────────────────┤
+│  Mock-Based Integration (CI per-PR)      │  ← Event flow, delete authorization
+├──────────────────────────────────────────┤
+│  Widget Tests (Xvfb, CI per-PR)          │  ← Recycling stress, sizing, latency
+├──────────────────────────────────────────┤
+│  Unit Tests (no display, fast)           │  ← Store contract, cache bounds, lifecycle
+└──────────────────────────────────────────┘
 ```
+
+> **Key distinction**: The bottom 3 layers use mock objects and test individual
+> mechanisms. The top 2 layers use the **real** `GnNostrEventItem`, `GnNostrEventModel`,
+> `NoteCardFactory`, and a real temporary NDB — catching the architectural violations
+> that mocks hide (main-thread NDB transactions, lazy loading during bind, etc.).
 
 ### Test Locations
 
@@ -284,13 +291,16 @@ Same as above, but wraps execution in `xvfb-run -a` on Linux. On macOS, runs nat
 | 6 | `nostr-gtk/tests/test_listview_recycle_stress.c` | 6 | Segfault prevention | Yes |
 | 7 | `nostr-gtk/tests/test_note_card_measure.c` | 3 | Widget sizing | Yes |
 | 8 | `nostr-gtk/tests/test_widget_churn_leaks.c` | 2 | Memory leaks | Yes |
-| 9 | `nostr-gtk/tests/test_bind_latency_budget.c` | 2 | UI latency | Yes |
+| 9 | `nostr-gtk/tests/test_bind_latency_budget.c` | 2 | UI latency (mock) | Yes |
 | 10 | `nostr-gtk/tests/test_thread_view_bounded_load.c` | 5 | Sliding windows | Yes |
 | 11 | `apps/gnostr/tests/test_event_model_windowing.c` | 11 | Sliding windows | No |
 | 12 | `apps/gnostr/tests/test_event_item_txn_budget.c` | 7 | Transaction budgets | No |
 | 13 | `apps/gnostr/tests/integ/test_model_delete_authorization.c` | 6 | NIP-09 delete | No |
-| 14 | `benchmark/gnostr_bench_memory_timeline_scroll.c` | 1 | Memory ceiling | Yes |
-| — | **Total** | **~74** | | |
+| 14 | `benchmark/gnostr_bench_memory_timeline_scroll.c` | 1 | Memory ceiling (mock) | Yes |
+| 15 | `apps/gnostr/tests/test_ndb_main_thread_violations.c` | 5 | **NDB violation detection** | No |
+| 16 | `apps/gnostr/tests/test_real_bind_latency.c` | 2 | **Real-component latency** | Yes |
+| 17 | `benchmark/gnostr_bench_real_memory.c` | 1 | **Real-component memory** | Yes |
+| — | **Total** | **~82** | | |
 
 ---
 
