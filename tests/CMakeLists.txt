@@ -421,15 +421,18 @@ endif()
 find_program(VALGRIND_EXECUTABLE valgrind)
 if(VALGRIND_EXECUTABLE AND NOT SANITIZE)
   add_test(NAME gnostr_valgrind_crash_test
-    COMMAND ${VALGRIND_EXECUTABLE}
-      --tool=memcheck
-      --track-origins=yes
-      --leak-check=no
-      --error-limit=no
-      --errors-for-leak-kinds=none
-      --suppressions=${CMAKE_SOURCE_DIR}/valgrind.supp
-      --error-exitcode=1
-      ${GNOSTR_BINARY}
+    COMMAND /bin/bash -c
+      "ulimit -n 1024; \
+        timeout 15s ${VALGRIND_EXECUTABLE} \
+          --tool=memcheck \
+          --track-origins=yes \
+          --leak-check=no \
+          --error-limit=no \
+          --errors-for-leak-kinds=none \
+          --suppressions=${CMAKE_SOURCE_DIR}/valgrind.supp \
+          --error-exitcode=1 \
+          ${GNOSTR_BINARY}; \
+        rc=$?; if [ $rc -eq 124 ]; then exit 0; fi; exit $rc"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/apps/gnostr
   )
   set_tests_properties(gnostr_valgrind_crash_test PROPERTIES

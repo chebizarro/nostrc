@@ -96,7 +96,10 @@ static void mock_signer_window_init(MockSignerWindow *self) {
 }
 
 static MockSignerWindow *mock_signer_window_new(AdwApplication *app) {
-  return g_object_new(mock_signer_window_get_type(), "application", app, NULL);
+  (void)app;
+  /* Tests create windows manually; do not attach to a GApplication to avoid
+   * startup-order criticals in headless/unit contexts. */
+  return g_object_new(mock_signer_window_get_type(), NULL);
 }
 
 /* ===========================================================================

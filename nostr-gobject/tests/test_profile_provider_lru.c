@@ -8,6 +8,7 @@
  */
 
 #include <glib.h>
+#include <stdio.h>
 #include "gnostr-testkit.h"
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 
@@ -20,7 +21,7 @@ test_init_sets_capacity(void)
 
     GnostrProfileProviderStats stats;
     gnostr_profile_provider_get_stats(&stats);
-    g_assert_cmpuint(stats.capacity, ==, 50);
+    g_assert_cmpuint(stats.cache_cap, ==, 50);
 
     gnostr_profile_provider_shutdown();
 }
@@ -50,7 +51,7 @@ test_cache_respects_capacity(void)
     gnostr_profile_provider_get_stats(&stats);
 
     g_test_message("Cache size after 3x insert: %u (cap=%u)",
-                   stats.cache_size, stats.capacity);
+                   stats.cache_size, stats.cache_cap);
 
     /* Cache size should not exceed capacity */
     g_assert_cmpuint(stats.cache_size, <=, CAP);
@@ -137,6 +138,13 @@ test_init_shutdown_no_leak(void)
 }
 
 /* ── Test: Watcher registration and cleanup ───────────────────────── */
+static void dummy_watch_callback(const char *pubkey_hex, const GnostrProfileMeta *meta, gpointer user_data) {
+    (void)pubkey_hex;
+    (void)meta;
+    (void)user_data;
+    /* No-op callback for testing watcher registration */
+}
+
 static void
 test_watcher_cleanup(void)
 {
@@ -147,7 +155,7 @@ test_watcher_cleanup(void)
     for (int i = 0; i < 10; i++) {
         char pk[65];
         snprintf(pk, sizeof(pk), "%064x", i);
-        ids[i] = gnostr_profile_provider_watch(pk, NULL, NULL);
+        ids[i] = gnostr_profile_provider_watch(pk, dummy_watch_callback, NULL);
         g_assert_cmpuint(ids[i], >, 0);
     }
 

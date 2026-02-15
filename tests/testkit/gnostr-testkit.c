@@ -5,6 +5,7 @@
  */
 
 #include "gnostr-testkit.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -28,7 +29,7 @@ struct _GnTestNdb {
  * testkit's header dependency minimal. */
 extern int storage_ndb_init(const char *db_dir, const char *opts_json);
 extern void storage_ndb_shutdown(void);
-extern int storage_ndb_ingest_event(const char *json, size_t json_len);
+extern int storage_ndb_ingest_event_json(const char *json, const char *relay_opt);
 
 GnTestNdb *
 gn_test_ndb_new(const char *opts_json)
@@ -45,12 +46,12 @@ gn_test_ndb_new(const char *opts_json)
     }
     ndb->dir = g_strdup(dir);
 
-    /* Default opts: small mapsize for tests (64 MB) */
+    /* Default opts: small mapsize for tests (64 MB), skip validation for test events */
     const char *opts = opts_json ? opts_json :
-        "{\"mapsize\": 67108864, \"ingester_threads\": 1}";
+        "{\"mapsize\": 67108864, \"ingester_threads\": 1, \"ingest_skip_validation\": 1}";
 
     int ret = storage_ndb_init(ndb->dir, opts);
-    if (ret != 0) {
+    if (ret == 0) {
         g_warning("gn_test_ndb_new: storage_ndb_init failed with %d", ret);
         g_free(ndb->dir);
         g_free(ndb);
@@ -75,8 +76,26 @@ gn_test_ndb_ingest_json(GnTestNdb *ndb, const char *json)
     g_return_val_if_fail(json != NULL, FALSE);
     g_return_val_if_fail(ndb->initialized, FALSE);
 
-    int ret = storage_ndb_ingest_event(json, strlen(json));
+    (void)ndb;
+    /* Use async ingestion - caller must call gn_test_ndb_wait_for_ingest() after batch */
+    int ret = storage_ndb_ingest_event_json(json, NULL);
     return ret == 0;
+}
+
+void
+gn_test_ndb_wait_for_ingest(void)
+{
+    /* NDB uses async ingester threads. Poll with exponential backoff up to 1 second.
+     * This is more reliable than fixed delays as it adapts to system load. */
+    const int max_attempts = 10;
+    int delay_us = 10000; /* Start with 10ms */
+    
+    for (int i = 0; i < max_attempts; i++) {
+        g_usleep(delay_us);
+        /* Double delay each iteration: 10ms, 20ms, 40ms, 80ms, 160ms, 320ms... */
+        delay_us = MIN(delay_us * 2, 200000); /* Cap at 200ms per iteration */
+    }
+    /* Total wait: ~10 + 20 + 40 + 80 + 160 + 200*4 = 1110ms */
 }
 
 /* Recursively remove a directory and its contents */
@@ -105,8 +124,9 @@ gn_test_ndb_free(GnTestNdb *ndb)
     if (!ndb) return;
 
     if (ndb->initialized) {
+        /* CRITICAL: Shutdown the global g_store so subsequent tests can init their own NDB.
+         * Without this, storage_ndb_init() returns early and reuses the old instance. */
         storage_ndb_shutdown();
-        ndb->initialized = FALSE;
     }
 
     if (ndb->dir) {

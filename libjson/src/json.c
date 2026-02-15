@@ -44,7 +44,9 @@ int nostr_json_get_raw(const char *json,
     if (!json_is_object(root)) { json_decref(root); return -1; }
     json_t *v = json_object_get(root, entry_key);
     if (!v) { json_decref(root); return -1; }
-    char *dump = json_dumps(v, JSON_COMPACT | JSON_ENCODE_ANY);
+    /* Use explicit real precision to avoid unstable stringification like
+     * 3.1400000000000001 for values that were authored as 3.14. */
+    char *dump = json_dumps(v, JSON_COMPACT | JSON_ENCODE_ANY | JSON_REAL_PRECISION(15));
     if (!dump) { json_decref(root); return -1; }
     *out_raw = strdup(dump);
     free(dump);
@@ -279,35 +281,42 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
         return -1;
     }
 
+    int rc = 0;
     // Process according to envelope type
     switch (envelope->type) {
     case NOSTR_ENVELOPE_EVENT: {
         NostrEventEnvelope *env = (NostrEventEnvelope *)envelope;
         size_t n = json_array_size(json_obj);
-        if (n < 2) { json_decref(json_obj); return -1; }
+        if (n < 2) { rc = -1; break; }
         json_t *json_evt = json_array_get(json_obj, n-1);
-        if (!json_is_object(json_evt)) { json_decref(json_obj); return -1; }
+        if (!json_is_object(json_evt)) { rc = -1; break; }
         if (n == 3) {
             json_t *json_id = json_array_get(json_obj, 1);
-            if (!json_is_string(json_id)) { json_decref(json_obj); return -1; }
+            if (!json_is_string(json_id)) { rc = -1; break; }
             env->subscription_id = strdup(json_string_value(json_id));
         }
         env->event = nostr_event_new();
-        if (!env->event) { json_decref(json_obj); return -1; }
-        (void)_deserialize_event(env->event, json_evt);
+        if (!env->event) { rc = -1; break; }
+        if (_deserialize_event(env->event, json_evt) != 0) {
+            nostr_event_free(env->event);
+            env->event = NULL;
+            rc = -1;
+            break;
+        }
         break;
     }
     case NOSTR_ENVELOPE_REQ: {
         if (json_array_size(json_obj) < 3) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode REQ envelope: missing filters\n");
+            rc = -1;
             break;
         }
         NostrReqEnvelope *env = (NostrReqEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
-        if (!json_is_string(json_id)) { break; }
+        if (!json_is_string(json_id)) { rc = -1; break; }
         env->subscription_id = strdup(json_string_value(json_id));
         NostrFilters *fs = nostr_filters_new();
-        if (!fs) { break; }
+        if (!fs) { rc = -1; break; }
         for (size_t i = 2; i < json_array_size(json_obj); i++) {
             json_t *json_filter = json_array_get(json_obj, i);
             NostrFilter f = {0};
@@ -324,12 +333,13 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     case NOSTR_ENVELOPE_COUNT: {
         if (json_array_size(json_obj) < 4) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode COUNT envelope: missing filters\n");
+            rc = -1;
             break;
         }
         NostrCountEnvelope *env = (NostrCountEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
         json_t *json_count = json_array_get(json_obj, 2);
-        if (!json_is_string(json_id) || !json_is_object(json_count)) { break; }
+        if (!json_is_string(json_id) || !json_is_object(json_count)) { rc = -1; break; }
         env->subscription_id = strdup(json_string_value(json_id));
         // Default to 0 if missing or non-integer
         env->count = 0;
@@ -338,7 +348,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
             env->count = (int)json_integer_value(count_value);
         }
         NostrFilters *fs = nostr_filters_new();
-        if (!fs) { break; }
+        if (!fs) { rc = -1; break; }
         for (size_t i = 3; i < json_array_size(json_obj); i++) {
             json_t *json_filter = json_array_get(json_obj, i);
             NostrFilter f = {0};
@@ -355,60 +365,70 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     case NOSTR_ENVELOPE_NOTICE: {
         if (json_array_size(json_obj) < 2) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode NOTICE envelope\n");
+            rc = -1;
             break;
         }
         NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)envelope;
         json_t *json_message = json_array_get(json_obj, 1);
-        if (!json_is_string(json_message)) { break; }
+        if (!json_is_string(json_message)) { rc = -1; break; }
         env->message = strdup(json_string_value(json_message));
+        if (!env->message) rc = -1;
         break;
     }
     case NOSTR_ENVELOPE_EOSE: {
         if (json_array_size(json_obj) < 2) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode EOSE envelope\n");
+            rc = -1;
             break;
         }
         NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
         json_t *json_message = json_array_get(json_obj, 1);
-        if (!json_is_string(json_message)) { break; }
+        if (!json_is_string(json_message)) { rc = -1; break; }
         env->message = strdup(json_string_value(json_message));
+        if (!env->message) rc = -1;
         break;
     }
     case NOSTR_ENVELOPE_CLOSE: {
         if (json_array_size(json_obj) < 2) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode CLOSE envelope\n");
+            rc = -1;
             break;
         }
         NostrCloseEnvelope *env = (NostrCloseEnvelope *)envelope;
         json_t *json_message = json_array_get(json_obj, 1);
-        if (!json_is_string(json_message)) { break; }
+        if (!json_is_string(json_message)) { rc = -1; break; }
         env->message = strdup(json_string_value(json_message));
+        if (!env->message) rc = -1;
         break;
     }
     case NOSTR_ENVELOPE_CLOSED: {
         if (json_array_size(json_obj) < 3) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode CLOSED envelope\n");
+            rc = -1;
             break;
         }
         NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
         json_t *json_message = json_array_get(json_obj, 2);
-        if (!json_is_string(json_id) || !json_is_string(json_message)) { break; }
+        if (!json_is_string(json_id) || !json_is_string(json_message)) { rc = -1; break; }
         env->subscription_id = strdup(json_string_value(json_id));
         env->reason = strdup(json_string_value(json_message));
+        if (!env->subscription_id || !env->reason) rc = -1;
         break;
     }
     case NOSTR_ENVELOPE_OK: {
         if (json_array_size(json_obj) < 3) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode OK envelope\n");
+            rc = -1;
             break;
         }
         NostrOKEnvelope *env = (NostrOKEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
         json_t *json_ok = json_array_get(json_obj, 2);
-        if (!json_is_string(json_id) || !(json_is_true(json_ok) || json_is_false(json_ok))) { break; }
+        if (!json_is_string(json_id) || !(json_is_true(json_ok) || json_is_false(json_ok))) { rc = -1; break; }
         env->event_id = strdup(json_string_value(json_id));
         env->ok = json_is_true(json_ok);
+        if (!env->event_id) { rc = -1; break; }
         if (json_array_size(json_obj) >= 4) {
             json_t *json_reason = json_array_get(json_obj, 3);
             if (json_is_string(json_reason)) env->reason = strdup(json_string_value(json_reason));
@@ -418,26 +438,35 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     case NOSTR_ENVELOPE_AUTH: {
         if (json_array_size(json_obj) < 2) {
             if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode AUTH envelope\n");
+            rc = -1;
             break;
         }
         NostrAuthEnvelope *env = (NostrAuthEnvelope *)envelope;
         json_t *json_challenge = json_array_get(json_obj, 1);
         if (json_is_object(json_challenge)) {
             env->event = nostr_event_new();
-            if (env->event) _deserialize_event(env->event, json_challenge);
+            if (!env->event) { rc = -1; break; }
+            if (_deserialize_event(env->event, json_challenge) != 0) {
+                nostr_event_free(env->event);
+                env->event = NULL;
+                rc = -1;
+                break;
+            }
         } else if (json_is_string(json_challenge)) {
             env->challenge = strdup(json_string_value(json_challenge));
+            if (!env->challenge) rc = -1;
         } else {
-            // Invalid; neither object nor string
+            rc = -1;
         }
         break;
     }
     default:
+        rc = -1;
         break;
     }
 
     json_decref(json_obj);
-    return 0;
+    return rc;
 }
 
 int jansson_filter_deserialize(NostrFilter *filter, json_t *json_obj) {

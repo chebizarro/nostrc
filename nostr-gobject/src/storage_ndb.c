@@ -208,6 +208,34 @@ int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
   return rc;
 }
 
+int storage_ndb_ingest_event_json_sync(const char *json)
+{
+  if (!g_store || !json) return LN_ERR_INGEST;
+
+  /* Get raw NDB handle to call ndb_process_event directly */
+  struct ndb *ndb = get_ndb();
+  if (!ndb) return LN_ERR_INGEST;
+
+  /* CRITICAL FIX: Add tags field if missing */
+  char *fixed_json = ensure_tags_field(json);
+  if (!fixed_json) return LN_ERR_INGEST;
+
+  /* Synchronous ingestion - bypasses async ingester threads */
+  size_t len = strlen(fixed_json);
+  int rc = ndb_process_event(ndb, fixed_json, (int)len);
+
+  if (rc != 0) {
+    fprintf(stderr, "[storage_ndb_ingest_sync] FAILED rc=%d len=%zu json_head=%.100s\n", rc, len, fixed_json);
+    fflush(stderr);
+  } else {
+    g_ingest_count++;
+    g_ingest_bytes += len;
+  }
+
+  free(fixed_json);
+  return rc;
+}
+
 /* nostrc-mzab: Background batch ingestion via GTask thread pool */
 static void
 ingest_batch_task_func(GTask *task, gpointer source_object G_GNUC_UNUSED,

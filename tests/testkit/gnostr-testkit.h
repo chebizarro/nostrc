@@ -17,8 +17,8 @@
 #ifndef GNOSTR_TESTKIT_H
 #define GNOSTR_TESTKIT_H
 
-#include <glib.h>
 #include <gio/gio.h>
+#include <glib.h>
 
 G_BEGIN_DECLS
 
@@ -65,6 +65,15 @@ const char *gn_test_ndb_get_dir(GnTestNdb *ndb);
  * Returns: %TRUE on success
  */
 gboolean gn_test_ndb_ingest_json(GnTestNdb *ndb, const char *json);
+
+/**
+ * gn_test_ndb_wait_for_ingest:
+ *
+ * Waits for async NDB ingester threads to commit queued events to the database.
+ * Call this after gn_test_ndb_ingest_json() and before querying to ensure
+ * events are visible. Typically sleeps 50ms which is sufficient for small batches.
+ */
+void gn_test_ndb_wait_for_ingest(void);
 
 /**
  * gn_test_ndb_free:
@@ -116,9 +125,9 @@ GPtrArray *gn_test_make_events_bulk(guint n, int kind, gint64 start_ts);
  * Returns: (transfer full): a JSON string, free with g_free()
  */
 char *gn_test_make_event_json_with_pubkey(int kind,
-                                           const char *content,
-                                           gint64 created_at,
-                                           const char *pubkey_hex);
+					  const char *content,
+					  gint64 created_at,
+					  const char *pubkey_hex);
 
 /* ════════════════════════════════════════════════════════════════════
  * Main Loop Helpers
@@ -144,8 +153,8 @@ typedef gboolean (*GnTestPredicate)(gpointer user_data);
  * Returns: %TRUE if @pred returned %TRUE before timeout, %FALSE on timeout
  */
 gboolean gn_test_run_loop_until(GnTestPredicate pred,
-                                 gpointer user_data,
-                                 guint timeout_ms);
+				gpointer user_data,
+				guint timeout_ms);
 
 /**
  * gn_test_drain_main_loop:

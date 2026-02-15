@@ -26,6 +26,11 @@ void storage_ndb_shutdown(void);
 int storage_ndb_ingest_ldjson(const char *buf, size_t len);
 int storage_ndb_ingest_event_json(const char *json, const char *relay_opt);
 
+/* Synchronous event ingestion for tests. Uses ndb_process_event() directly,
+ * bypassing async ingester threads. Events are immediately queryable after return.
+ * Returns 0 on success, nonzero on failure. */
+int storage_ndb_ingest_event_json_sync(const char *json);
+
 /* nostrc-mzab: Async batch ingestion — runs storage_ndb_ingest_event_json for
  * each JSON string in a GLib worker thread. Takes ownership of the GPtrArray
  * (must have g_free as element free func). Use this instead of calling
@@ -55,16 +60,16 @@ int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], c
  * the JSON round-trip (FlatBuffer -> JSON -> struct).
  * All string fields are g_strdup'd copies; caller must g_free() each. */
 typedef struct {
-  char *name;          /* nullable */
-  char *display_name;  /* nullable */
-  char *picture;       /* nullable */
-  char *banner;        /* nullable */
-  char *nip05;         /* nullable */
-  char *lud16;         /* nullable */
-  char *about;         /* nullable */
-  char *website;       /* nullable */
-  char *lud06;         /* nullable */
-  uint32_t created_at; /* from the associated kind:0 note, 0 if unavailable */
+    char *name;		 /* nullable */
+    char *display_name;	 /* nullable */
+    char *picture;	 /* nullable */
+    char *banner;	 /* nullable */
+    char *nip05;	 /* nullable */
+    char *lud16;	 /* nullable */
+    char *about;	 /* nullable */
+    char *website;	 /* nullable */
+    char *lud06;	 /* nullable */
+    uint32_t created_at; /* from the associated kind:0 note, 0 if unavailable */
 } StorageNdbProfileMeta;
 
 /* Read profile fields directly from the NdbProfile FlatBuffer record.
@@ -73,8 +78,8 @@ typedef struct {
  * storage_ndb_profile_meta_clear() to free string fields.
  * Returns nonzero on failure (not found, txn error, etc.). */
 int storage_ndb_get_profile_meta_direct(void *txn,
-                                        const unsigned char pk32[32],
-                                        StorageNdbProfileMeta *out);
+					const unsigned char pk32[32],
+					StorageNdbProfileMeta *out);
 
 /* Free the string fields inside a StorageNdbProfileMeta.
  * Does NOT free the struct itself (it is typically stack-allocated). */
@@ -93,16 +98,16 @@ int storage_ndb_stat_json(char **json_out);
 
 /* Structured NDB statistics (nostrc-o6w) */
 typedef struct {
-  size_t note_count;        /* NDB_DB_NOTE entries */
-  size_t profile_count;     /* NDB_DB_PROFILE entries */
-  size_t total_bytes;       /* key_size + value_size across all DBs */
-  /* Per-kind note counts */
-  size_t kind_text;         /* kind 1 */
-  size_t kind_contacts;     /* kind 3 */
-  size_t kind_dm;           /* kind 4 */
-  size_t kind_repost;       /* kind 6 */
-  size_t kind_reaction;     /* kind 7 */
-  size_t kind_zap;          /* kind 9735 */
+    size_t note_count;	  /* NDB_DB_NOTE entries */
+    size_t profile_count; /* NDB_DB_PROFILE entries */
+    size_t total_bytes;	  /* key_size + value_size across all DBs */
+    /* Per-kind note counts */
+    size_t kind_text;	  /* kind 1 */
+    size_t kind_contacts; /* kind 3 */
+    size_t kind_dm;	  /* kind 4 */
+    size_t kind_repost;	  /* kind 6 */
+    size_t kind_reaction; /* kind 7 */
+    size_t kind_zap;	  /* kind 9735 */
 } StorageNdbStat;
 
 /* Populate structured statistics from NDB. Returns 0 on success. */
@@ -155,7 +160,7 @@ storage_ndb_note *storage_ndb_get_note_ptr(void *txn, uint64_t note_key);
 /* Get note key from note ID (32-byte binary). Returns key or 0 if not found.
  * Also returns note pointer if note_out is not NULL. */
 uint64_t storage_ndb_get_note_key_by_id(void *txn, const unsigned char id32[32],
-                                         storage_ndb_note **note_out);
+					storage_ndb_note **note_out);
 
 /* Direct note accessors - work on storage_ndb_note pointer while txn is open */
 const unsigned char *storage_ndb_note_id(storage_ndb_note *note);
@@ -221,25 +226,25 @@ char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex);
 
 /* Per-note count structure for reading/writing ndb_note_meta. */
 typedef struct {
-  guint total_reactions;   /* Total reaction count */
-  guint direct_replies;    /* Direct reply count */
-  guint thread_replies;    /* Thread reply count (includes nested) */
-  guint reposts;           /* Repost count */
-  guint quotes;            /* Quote count */
+    guint total_reactions; /* Total reaction count */
+    guint direct_replies;  /* Direct reply count */
+    guint thread_replies;  /* Thread reply count (includes nested) */
+    guint reposts;	   /* Repost count */
+    guint quotes;	   /* Quote count */
 } StorageNdbNoteCounts;
 
 /* Read all pre-computed counts for a note from ndb_note_meta in one call.
  * id32: 32-byte binary note ID. txn must be open.
  * Populates out struct; zeroes it first. Returns TRUE if metadata was found. */
 gboolean storage_ndb_read_note_counts(void *txn, const unsigned char id32[32],
-                                       StorageNdbNoteCounts *out);
+				      StorageNdbNoteCounts *out);
 
 /* Write/update note metadata counts via ndb_set_note_meta.
  * id32: 32-byte binary note ID.
  * counts: the count values to store.
  * Returns 0 on success, nonzero on failure. */
 int storage_ndb_write_note_counts(const unsigned char id32[32],
-                                   const StorageNdbNoteCounts *counts);
+				  const StorageNdbNoteCounts *counts);
 
 /* Increment a specific count field for a note in ndb_note_meta.
  * Reads existing metadata, increments the field, and writes back.
@@ -255,7 +260,7 @@ int storage_ndb_increment_note_meta(const unsigned char id32[32], const char *fi
  * Uses direct_replies from ndb_note_meta for O(1) per lookup.
  * Only events with count > 0 appear in the table.
  * Caller must g_hash_table_unref(). */
-GHashTable *storage_ndb_count_replies_batch(const char * const *event_ids, guint n_ids);
+GHashTable *storage_ndb_count_replies_batch(const char *const *event_ids, guint n_ids);
 
 /* ============== NIP-25 Reaction Count API ============== */
 
@@ -295,8 +300,8 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
 
 /* Result struct for batch zap stats */
 typedef struct {
-  guint zap_count;
-  gint64 total_msat;
+    guint zap_count;
+    gint64 total_msat;
 } StorageNdbZapStats;
 
 /* Batch count reactions (kind 7) for multiple events in a single query.
@@ -305,7 +310,7 @@ typedef struct {
  * Returns GHashTable mapping event_id_hex (owned) -> GUINT_TO_POINTER(count).
  * Only events with count > 0 appear in the table.
  * Caller must g_hash_table_unref(). */
-GHashTable *storage_ndb_count_reactions_batch(const char * const *event_ids, guint n_ids);
+GHashTable *storage_ndb_count_reactions_batch(const char *const *event_ids, guint n_ids);
 
 /* Batch count reposts for multiple events using ndb_note_meta.
  * event_ids: array of 64-char hex event IDs
@@ -313,7 +318,7 @@ GHashTable *storage_ndb_count_reactions_batch(const char * const *event_ids, gui
  * Returns GHashTable mapping event_id_hex (owned) -> GUINT_TO_POINTER(count).
  * Only events with count > 0 appear in the table.
  * Caller must g_hash_table_unref(). */
-GHashTable *storage_ndb_count_reposts_batch(const char * const *event_ids, guint n_ids);
+GHashTable *storage_ndb_count_reposts_batch(const char *const *event_ids, guint n_ids);
 
 /* Batch check if user has reacted to multiple events in a single query.
  * event_ids: array of 64-char hex event IDs
@@ -322,8 +327,8 @@ GHashTable *storage_ndb_count_reposts_batch(const char * const *event_ids, guint
  * Returns GHashTable mapping event_id_hex (owned) -> GINT_TO_POINTER(TRUE).
  * Only events the user HAS reacted to appear in the table.
  * Caller must g_hash_table_unref(). */
-GHashTable *storage_ndb_user_has_reacted_batch(const char * const *event_ids, guint n_ids,
-                                                const char *user_pubkey_hex);
+GHashTable *storage_ndb_user_has_reacted_batch(const char *const *event_ids, guint n_ids,
+					       const char *user_pubkey_hex);
 
 /* Batch get zap stats for multiple events in a single query.
  * event_ids: array of 64-char hex event IDs
@@ -331,7 +336,7 @@ GHashTable *storage_ndb_user_has_reacted_batch(const char * const *event_ids, gu
  * Returns GHashTable mapping event_id_hex (owned) -> StorageNdbZapStats* (owned).
  * Only events with zaps appear in the table.
  * Caller must g_hash_table_unref(). */
-GHashTable *storage_ndb_get_zap_stats_batch(const char * const *event_ids, guint n_ids);
+GHashTable *storage_ndb_get_zap_stats_batch(const char *const *event_ids, guint n_ids);
 
 /* ============== NIP-40 Expiration Timestamp API ============== */
 
@@ -363,10 +368,10 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
  * Returns allocated strings via out parameters. Caller must g_free().
  * Pass NULL for outputs you don't need. */
 void storage_ndb_note_get_nip10_thread_full(storage_ndb_note *note,
-                                             char **root_id_out,
-                                             char **reply_id_out,
-                                             char **root_relay_hint_out,
-                                             char **reply_relay_hint_out);
+					    char **root_id_out,
+					    char **reply_id_out,
+					    char **root_relay_hint_out,
+					    char **reply_relay_hint_out);
 
 /* Get the last "e" tag from a note via direct tag iteration (no NDB query).
  * Useful for reactions (kind 7) and zaps (kind 9735).
@@ -397,8 +402,8 @@ typedef struct _StorageNdbCursor StorageNdbCursor;
 
 /* Result entry from cursor iteration. */
 typedef struct {
-  uint64_t note_key;
-  uint32_t created_at;
+    uint64_t note_key;
+    uint32_t created_at;
 } StorageNdbCursorEntry;
 
 /* Create a new cursor for paginated query iteration.
@@ -414,8 +419,8 @@ StorageNdbCursor *storage_ndb_cursor_new(const char *filter_json, guint batch_si
  * count_out: (out) number of entries in this batch (0 when exhausted)
  * Returns 0 on success, nonzero on failure. */
 int storage_ndb_cursor_next(StorageNdbCursor *cursor,
-                            const StorageNdbCursorEntry **entries_out,
-                            guint *count_out);
+			    const StorageNdbCursorEntry **entries_out,
+			    guint *count_out);
 
 /* Check if cursor has more results.
  * Returns TRUE if there may be more results, FALSE if exhausted. */

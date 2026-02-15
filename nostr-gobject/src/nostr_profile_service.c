@@ -347,7 +347,7 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     g_ptr_array_unref(configured);
   }
   if (!svc->relay_urls || svc->relay_url_count == 0) {
-    g_warning("[PROFILE_SERVICE] No relays configured, cannot fetch");
+    g_message("[PROFILE_SERVICE] No relays configured, skipping fetch");
     g_mutex_unlock(&svc->mutex);
     return;
   }
@@ -580,6 +580,14 @@ void gnostr_profile_service_request(gpointer service,
                                      gpointer user_data) {
   GnostrProfileService *svc = (GnostrProfileService*)service;
   if (!svc || !pubkey_hex || strlen(pubkey_hex) != 64) return;
+
+  /* Validate hex characters */
+  for (size_t i = 0; i < 64; i++) {
+    char c = pubkey_hex[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+      return; /* Invalid hex character */
+    }
+  }
 
   g_mutex_lock(&svc->mutex);
 

@@ -75,6 +75,31 @@ static const ContentCase content_cases[] = {
 
 static const gsize n_content_cases = G_N_ELEMENTS(content_cases);
 
+static void
+factory_setup_cb(GtkListItemFactory *f G_GNUC_UNUSED,
+                 GtkListItem *li,
+                 gpointer ud G_GNUC_UNUSED)
+{
+    GtkBox *box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 4));
+    GtkLabel *label = GTK_LABEL(gtk_label_new(""));
+    gtk_label_set_wrap(label, TRUE);
+    gtk_label_set_lines(label, 12);
+    gtk_label_set_ellipsize(label, PANGO_ELLIPSIZE_END);
+    gtk_box_append(box, GTK_WIDGET(label));
+    gtk_list_item_set_child(li, GTK_WIDGET(box));
+}
+
+static void
+factory_bind_cb(GtkListItemFactory *f G_GNUC_UNUSED,
+                GtkListItem *li,
+                gpointer ud G_GNUC_UNUSED)
+{
+    GtkBox *box = GTK_BOX(gtk_list_item_get_child(li));
+    GtkLabel *label = GTK_LABEL(gtk_widget_get_first_child(GTK_WIDGET(box)));
+    GtkStringObject *so = GTK_STRING_OBJECT(gtk_list_item_get_item(li));
+    gtk_label_set_text(label, gtk_string_object_get_string(so));
+}
+
 /* ── Test: GtkLabel as baseline (sanity check) ────────────────────── */
 static void
 test_label_stays_bounded(void)
@@ -168,26 +193,8 @@ test_listview_row_heights_bounded(void)
     GtkSignalListItemFactory *factory = GTK_SIGNAL_LIST_ITEM_FACTORY(
         gtk_signal_list_item_factory_new());
 
-    g_signal_connect(factory, "setup", G_CALLBACK(+[](GtkListItemFactory *f G_GNUC_UNUSED,
-                                                       GtkListItem *li,
-                                                       gpointer ud G_GNUC_UNUSED) {
-        GtkBox *box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 4));
-        GtkLabel *label = GTK_LABEL(gtk_label_new(""));
-        gtk_label_set_wrap(label, TRUE);
-        gtk_label_set_lines(label, 12);
-        gtk_label_set_ellipsize(label, PANGO_ELLIPSIZE_END);
-        gtk_box_append(box, GTK_WIDGET(label));
-        gtk_list_item_set_child(li, GTK_WIDGET(box));
-    }), NULL);
-
-    g_signal_connect(factory, "bind", G_CALLBACK(+[](GtkListItemFactory *f G_GNUC_UNUSED,
-                                                      GtkListItem *li,
-                                                      gpointer ud G_GNUC_UNUSED) {
-        GtkBox *box = GTK_BOX(gtk_list_item_get_child(li));
-        GtkLabel *label = GTK_LABEL(gtk_widget_get_first_child(GTK_WIDGET(box)));
-        GtkStringObject *so = GTK_STRING_OBJECT(gtk_list_item_get_item(li));
-        gtk_label_set_text(label, gtk_string_object_get_string(so));
-    }), NULL);
+    g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(factory_bind_cb), NULL);
 
     GtkNoSelection *sel = gtk_no_selection_new(G_LIST_MODEL(store));
     GtkListView *lv = GTK_LIST_VIEW(gtk_list_view_new(GTK_SELECTION_MODEL(sel),

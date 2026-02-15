@@ -117,6 +117,7 @@ test_refresh_populates_model(void)
 
   gint64 base_ts = 1700000000;
   ingest_n_events(20, base_ts);
+  gn_test_ndb_wait_for_ingest(); /* Wait for async ingester to commit events */
 
   GnNostrEventModel *model = gn_nostr_event_model_new();
 
