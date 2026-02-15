@@ -929,7 +929,11 @@ if (BUILD_TESTING)
     # Integration: NIP-09 delete authorization
     gn_add_gtest(gnostr-test-delete-authorization
       SOURCES tests/integ/test_model_delete_authorization.c
-      LIBS gnostr-testkit nostr_gobject PkgConfig::GLIB PkgConfig::JSON_GLIB
+              src/model/gn-nostr-event-model.c
+              src/model/gn-nostr-event-item.c
+              src/util/content_renderer.c
+      LIBS gnostr-testkit nostr_gobject nostr_gtk
+           PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 120
     )
     if(NOT APPLE)

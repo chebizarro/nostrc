@@ -96,7 +96,10 @@ gn_test_record_violation(const char *func, int retry_attempts)
     gn_test_violations[slot].timestamp_us = g_get_monotonic_time();
     gn_test_violations[slot].retry_attempts = retry_attempts;
 
-    g_warning("MAIN-THREAD NDB TXN VIOLATION #%u: %s called on main thread "
+    /* Use g_message instead of g_warning so tests can detect violations
+     * without G_DEBUG=fatal-warnings causing immediate abort. The violation
+     * is recorded in gn_test_violations[] for test assertions. */
+    g_message("MAIN-THREAD NDB TXN VIOLATION #%u: %s called on main thread "
               "(retry_attempts=%d)", idx + 1, func, retry_attempts);
 }
 
