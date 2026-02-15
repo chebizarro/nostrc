@@ -932,8 +932,14 @@ if (BUILD_TESTING)
       LIBS gnostr-testkit nostr_gobject PkgConfig::GLIB PkgConfig::JSON_GLIB
       TIMEOUT 120
     )
+    if(NOT APPLE)
+      target_link_options(gnostr-test-delete-authorization PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+    endif()
     target_include_directories(gnostr-test-delete-authorization PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/model
       ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/nostr-gtk/include
       ${PROJECT_ROOT}/libnostr/include
       ${_NOSTR_CONFIG_DIR}
       ${PROJECT_ROOT}/libgo/include

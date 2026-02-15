@@ -109,9 +109,11 @@ test_request_dedup(void)
   GnostrProfileServiceStats stats;
   gnostr_profile_service_get_stats(svc, &stats);
   g_assert_cmpuint(stats.requests, ==, 2);
-  /* Only 1 unique pubkey should be pending */
+  /* Only 1 unique pubkey should be pending, but 2 callbacks registered */
   g_test_message("Pending requests: %u, pending callbacks: %u",
                  stats.pending_requests, stats.pending_callbacks);
+  g_assert_cmpuint(stats.pending_requests, ==, 1);
+  g_assert_cmpuint(stats.pending_callbacks, ==, 2);
 
   callback_data_clear(&cb1);
   callback_data_clear(&cb2);
@@ -284,6 +286,7 @@ test_invalid_pubkey_ignored(void)
   gnostr_profile_service_get_stats(svc, &stats);
   /* Invalid requests should not increment the counter */
   g_test_message("Requests after invalid pubkeys: %lu", (unsigned long)stats.requests);
+  g_assert_cmpuint(stats.requests, ==, 0);
 
   gnostr_profile_service_shutdown();
 }

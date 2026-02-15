@@ -12,11 +12,22 @@
 #include <gtk/gtk.h>
 #include <glib.h>
 
+/* ASan/UBSan relaxation: sanitizer builds are ~5-10x slower.
+ * Scale timing budgets accordingly to avoid CI flakes. */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) \
+    || (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)))
+#  define SANITIZER_SLOWDOWN 10
+#else
+#  define SANITIZER_SLOWDOWN 1
+#endif
+
 /* Budget: bind loop for N items should not cause any stall > MAX_STALL_MS */
 #define N_ITEMS         300
 #define HEARTBEAT_MS    5
-#define MAX_STALL_MS    100   /* 100ms max stall — beyond this, UI is noticeably janky */
-#define MAX_TOTAL_MS    5000  /* 5s total budget for all bind operations */
+#define MAX_STALL_MS    (100 * SANITIZER_SLOWDOWN)
+#define MAX_TOTAL_MS    (5000 * SANITIZER_SLOWDOWN)
+/* Minimum heartbeat iterations we expect in any test — ensures heartbeat actually fired */
+#define MIN_HEARTBEATS  3
 
 /* ── Heartbeat tracking ───────────────────────────────────────────── */
 
@@ -74,6 +85,19 @@ on_bind(GtkListItemFactory *f G_GNUC_UNUSED, GtkListItem *li, gpointer ud G_GNUC
     bind_count++;
 }
 
+/* ── Helper: ensure heartbeat fires enough times ─────────────────── */
+
+static void
+ensure_heartbeat_warmup(Heartbeat *hb, guint min_count)
+{
+    guint iters = 0;
+    while (hb->count < min_count && iters < 2000) {
+        g_main_context_iteration(g_main_context_default(), FALSE);
+        g_usleep(1000); /* 1ms */
+        iters++;
+    }
+}
+
 /* ── Test: Bind loop stays within latency budget ──────────────────── */
 static void
 test_bind_latency_within_budget(void)
@@ -92,15 +116,18 @@ test_bind_latency_within_budget(void)
         g_object_unref(so);
     }
 
-    /* Create factory + list view */
+    /* Create factory + list view.
+     * GtkNoSelection takes ownership of the model, so we need a ref for ourselves. */
     GtkSignalListItemFactory *factory = GTK_SIGNAL_LIST_ITEM_FACTORY(
         gtk_signal_list_item_factory_new());
     g_signal_connect(factory, "setup", G_CALLBACK(on_setup), NULL);
     g_signal_connect(factory, "bind", G_CALLBACK(on_bind), NULL);
 
     GtkNoSelection *sel = gtk_no_selection_new(G_LIST_MODEL(store));
+    /* store ownership transferred to sel — don't unref store separately */
     GtkListView *lv = GTK_LIST_VIEW(gtk_list_view_new(
         GTK_SELECTION_MODEL(sel), GTK_LIST_ITEM_FACTORY(factory)));
+    /* sel and factory ownership transferred to lv */
 
     GtkScrolledWindow *sw = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new());
     gtk_scrolled_window_set_child(sw, GTK_WIDGET(lv));
@@ -119,10 +146,13 @@ test_bind_latency_within_budget(void)
     /* Show window — triggers initial binds */
     gtk_window_present(win);
 
-    /* Iterate until initial binds complete */
+    /* Iterate until initial binds complete, also warming up the heartbeat */
     for (int i = 0; i < 200; i++) {
         g_main_context_iteration(g_main_context_default(), FALSE);
     }
+
+    /* Ensure heartbeat has had a chance to fire at least a few times */
+    ensure_heartbeat_warmup(&hb, MIN_HEARTBEATS);
 
     /* Scroll through the entire list */
     GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(sw);
@@ -144,17 +174,19 @@ test_bind_latency_within_budget(void)
     g_test_message("Bind latency test results:");
     g_test_message("  Total binds: %u", bind_count);
     g_test_message("  Total time: %.1f ms (budget: %d ms)", total_ms, MAX_TOTAL_MS);
-    g_test_message("  Heartbeat count: %u", hb.count);
+    g_test_message("  Heartbeat count: %u (minimum: %d)", hb.count, MIN_HEARTBEATS);
     g_test_message("  Missed heartbeats (>%dms): %u", MAX_STALL_MS, hb.missed);
     g_test_message("  Max gap: %.1f ms", hb.max_gap_us / 1000.0);
 
     /* Assertions */
     g_assert_cmpuint(bind_count, >, 0);
     g_assert_cmpfloat(total_ms, <, MAX_TOTAL_MS);
-    g_assert_cmpuint(hb.missed, <=, 2); /* Allow small margin for CI */
-    g_assert_cmpfloat(hb.max_gap_us / 1000.0, <, MAX_STALL_MS * 2); /* 2x margin */
+    /* Heartbeat must have actually fired — otherwise all stall assertions are vacuous */
+    g_assert_cmpuint(hb.count, >=, MIN_HEARTBEATS);
+    g_assert_cmpuint(hb.missed, <=, 2 * SANITIZER_SLOWDOWN);
+    g_assert_cmpfloat(hb.max_gap_us / 1000.0, <, MAX_STALL_MS * 2);
 
-    /* Cleanup */
+    /* Cleanup — window owns sw, lv, sel, factory; destroy cascades */
     gtk_window_destroy(win);
     for (int i = 0; i < 100; i++)
         g_main_context_iteration(g_main_context_default(), FALSE);
@@ -179,6 +211,7 @@ test_model_swap_no_stall(void)
     g_signal_connect(factory, "setup", G_CALLBACK(on_setup), NULL);
     g_signal_connect(factory, "bind", G_CALLBACK(on_bind), NULL);
 
+    /* Keep a ref on store since we need to clear/repopulate it later */
     GtkNoSelection *sel = gtk_no_selection_new(G_LIST_MODEL(g_object_ref(store)));
     GtkListView *lv = GTK_LIST_VIEW(gtk_list_view_new(
         GTK_SELECTION_MODEL(sel), GTK_LIST_ITEM_FACTORY(factory)));
@@ -215,16 +248,22 @@ test_model_swap_no_stall(void)
         g_test_message("Swap %d took %ld ms", swap, (long)swap_ms);
     }
 
+    /* Ensure heartbeat had time to fire */
+    ensure_heartbeat_warmup(&hb, MIN_HEARTBEATS);
     g_source_remove(hb_id);
 
     g_test_message("After 10 swaps: heartbeat_count=%u, missed=%u, max_gap=%.1fms",
                    hb.count, hb.missed, hb.max_gap_us / 1000.0);
 
-    g_assert_cmpuint(hb.missed, <=, 3);
+    /* Heartbeat must have fired */
+    g_assert_cmpuint(hb.count, >=, MIN_HEARTBEATS);
+    g_assert_cmpuint(hb.missed, <=, 3 * SANITIZER_SLOWDOWN);
 
+    /* Cleanup — destroy window (cascades to lv, which owns sel and factory) */
     gtk_window_destroy(win);
     for (int i = 0; i < 100; i++)
         g_main_context_iteration(g_main_context_default(), FALSE);
+    /* Release our extra ref on store */
     g_object_unref(store);
 }
 

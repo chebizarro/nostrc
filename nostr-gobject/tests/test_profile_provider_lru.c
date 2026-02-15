@@ -54,6 +54,8 @@ test_cache_respects_capacity(void)
 
     /* Cache size should not exceed capacity */
     g_assert_cmpuint(stats.cache_size, <=, CAP);
+    /* Cache should be at or near capacity (not drastically under-filling) */
+    g_assert_cmpuint(stats.cache_size, >=, CAP / 2);
 
     gnostr_profile_provider_shutdown();
 }
@@ -92,11 +94,23 @@ test_lru_evicts_oldest(void)
     char second_key[65];
     snprintf(second_key, sizeof(second_key), "%064x", 1);
 
-    /* After filling exactly cap+1, one entry should be evicted.
-     * The exact eviction depends on LRU ordering. */
+    /* After filling cap+1, one entry should be evicted.
+     * LRU should evict the LEAST recently used — not the first_key (which we
+     * just accessed via get()). The second_key (never accessed since insert)
+     * is the prime eviction candidate. */
+    GnostrProfileMeta *second = gnostr_profile_provider_get(second_key);
+    g_test_message("Second entry (index 1) after eviction: %s",
+                   second ? "still present" : "evicted (expected)");
+    /* We can't hard-assert second==NULL because LRU ordering may vary,
+     * but we CAN assert the cache respects capacity: */
     GnostrProfileProviderStats stats;
     gnostr_profile_provider_get_stats(&stats);
     g_assert_cmpuint(stats.cache_size, <=, CAP);
+    g_assert_cmpuint(stats.cache_size, ==, CAP);  /* Should be exactly at capacity */
+
+    /* The first entry was recently accessed via get(), so it should survive */
+    GnostrProfileMeta *first_check = gnostr_profile_provider_get(first_key);
+    g_assert_nonnull(first_check);
 
     gnostr_profile_provider_shutdown();
 }

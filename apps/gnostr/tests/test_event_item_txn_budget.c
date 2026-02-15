@@ -16,8 +16,18 @@
 #include "../src/model/gn-nostr-event-item.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 
+/* ASan/UBSan relaxation: sanitizer builds are ~5-10x slower.
+ * TIMING_BUDGET_US(base_us) returns a relaxed budget under sanitizers. */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) \
+    || (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)))
+#  define SANITIZER_SLOWDOWN 10
+#else
+#  define SANITIZER_SLOWDOWN 1
+#endif
+#define TIMING_BUDGET_US(base) ((gint64)(base) * SANITIZER_SLOWDOWN)
+
 /* Budget limits */
-#define TXN_BUDGET_US (50 * 1000)   /* 50ms per transaction operation */
+#define TXN_BUDGET_US TIMING_BUDGET_US(50 * 1000)  /* 50ms per txn op (relaxed under sanitizers) */
 #define BULK_ITEMS    200           /* Number of items for bulk tests */
 
 static GnTestNdb *s_ndb = NULL;
@@ -107,7 +117,7 @@ test_item_set_profile_no_txn(void)
 
   gint64 elapsed = g_get_monotonic_time() - start;
   g_test_message("set_profile(NULL) took %" G_GINT64_FORMAT " us", elapsed);
-  g_assert_cmpint(elapsed, <, 1000); /* Should be sub-1ms */
+  g_assert_cmpint(elapsed, <, TIMING_BUDGET_US(1000));
 
   /* get_profile should also be fast */
   start = g_get_monotonic_time();
@@ -115,7 +125,7 @@ test_item_set_profile_no_txn(void)
   elapsed = g_get_monotonic_time() - start;
   g_test_message("get_profile() took %" G_GINT64_FORMAT " us", elapsed);
   g_assert_null(profile);
-  g_assert_cmpint(elapsed, <, 1000);
+  g_assert_cmpint(elapsed, <, TIMING_BUDGET_US(1000));
 
   g_object_unref(item);
   teardown();
@@ -128,9 +138,12 @@ test_item_metadata_accessors_budget(void)
 {
   setup();
 
-  GnNostrEventItem *item = gn_nostr_event_item_new_from_key(1, 1700000000);
+  /* Use the LEGACY constructor (note_key==0) so update_from_event works.
+   * The new_from_key() path has note_key!=0 which makes update_from_event
+   * a no-op — data comes from NDB lazily instead. */
+  GnNostrEventItem *item = gn_nostr_event_item_new("deadbeef01234567890abcdef01234567890abcdef01234567890abcdef0123");
 
-  /* Set item data via update_from_event (no transaction needed) */
+  /* Set item data via update_from_event (works because note_key==0) */
   gn_nostr_event_item_update_from_event(item, "aabbccdd", 1700000000, "test content", 1);
 
   /* All accessors should be fast (cached in-memory, no DB round-trip) */
@@ -144,14 +157,17 @@ test_item_metadata_accessors_budget(void)
   gint64 elapsed = g_get_monotonic_time() - start;
   g_test_message("4 metadata accesses took %" G_GINT64_FORMAT " us total", elapsed);
 
-  /* All accessors combined should be sub-1ms */
-  g_assert_cmpint(elapsed, <, 1000);
+  /* All accessors combined should be sub-1ms (relaxed under sanitizers) */
+  gint64 budget = TIMING_BUDGET_US(1000);
+  g_assert_cmpint(elapsed, <, budget);
 
-  /* Verify values */
+  /* Verify values — these must be non-NULL and correct */
+  g_assert_nonnull(content);
   g_assert_cmpstr(content, ==, "test content");
+  g_assert_nonnull(pubkey);
+  g_assert_cmpstr(pubkey, ==, "aabbccdd");
   g_assert_cmpint(kind, ==, 1);
   g_assert_cmpint(created_at, ==, 1700000000);
-  (void)pubkey; /* pubkey may be partial if set via update_from_event */
 
   g_object_unref(item);
   teardown();
@@ -175,7 +191,7 @@ test_thread_info_set_get_budget(void)
 
   gint64 elapsed = g_get_monotonic_time() - start;
   g_test_message("Thread info set+get took %" G_GINT64_FORMAT " us", elapsed);
-  g_assert_cmpint(elapsed, <, 1000);
+  g_assert_cmpint(elapsed, <, TIMING_BUDGET_US(1000));
 
   g_assert_cmpstr(root, ==, "root123");
   g_assert_cmpstr(parent, ==, "parent456");
@@ -212,7 +228,7 @@ test_reaction_zap_stat_accessors(void)
 
   gint64 elapsed = g_get_monotonic_time() - start;
   g_test_message("10 stat set+get operations took %" G_GINT64_FORMAT " us", elapsed);
-  g_assert_cmpint(elapsed, <, 1000);
+  g_assert_cmpint(elapsed, <, TIMING_BUDGET_US(1000));
 
   g_object_unref(item);
   teardown();

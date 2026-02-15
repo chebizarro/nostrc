@@ -47,8 +47,10 @@ test_ingest_then_subscribe_poll(void)
         g_assert_true(ok);
     }
 
-    /* Wait for ingestion worker to process */
-    g_usleep(500000); /* 500ms */
+    /* Wait for ingestion worker to process — use bounded polling */
+    gn_test_drain_main_loop();
+    g_usleep(200000); /* 200ms for NDB ingestion worker */
+    gn_test_drain_main_loop();
 
     /* Subscribe for kind:1 */
     g_autoptr(GNostrNdbStore) store = gnostr_ndb_store_new();
@@ -62,9 +64,10 @@ test_ingest_then_subscribe_poll(void)
 
     g_test_message("Polled %d keys from subscription (expected %u)", n_keys, N);
 
-    /* We should get at least some of the ingested events.
+    /* We MUST get at least some of the ingested events.
+     * If n_keys==0, either ingestion or subscription is broken.
      * The exact count depends on how many the ingester has processed. */
-    g_assert_cmpint(n_keys, >=, 0);
+    g_assert_cmpint(n_keys, >, 0);
 
     /* Verify each key can retrieve a note */
     for (gint i = 0; i < n_keys; i++) {
@@ -73,12 +76,10 @@ test_ingest_then_subscribe_poll(void)
         GError *error = NULL;
         g_autofree char *note_json = gnostr_store_get_note_by_key(
             GNOSTR_STORE(store), keys[i], &error);
-        /* Note: get_note_by_key may not be implemented for all backends */
-        if (note_json) {
-            g_assert_nonnull(note_json);
-            /* The JSON should contain "kind":1 */
-            g_assert_nonnull(strstr(note_json, "\"kind\":1"));
-        }
+        /* The key came from a successful poll, so we must be able to retrieve the note */
+        g_assert_nonnull(note_json);
+        /* The JSON should contain "kind":1 */
+        g_assert_nonnull(strstr(note_json, "\"kind\":1"));
     }
 
     gnostr_store_unsubscribe(GNOSTR_STORE(store), sub_id);
@@ -102,7 +103,9 @@ test_multiple_subscriptions(void)
         gn_test_ndb_ingest_json(test_ndb, g_ptr_array_index(profiles, i));
     }
 
-    g_usleep(500000); /* Wait for ingestion */
+    gn_test_drain_main_loop();
+    g_usleep(200000); /* Wait for NDB ingestion worker */
+    gn_test_drain_main_loop();
 
     g_autoptr(GNostrNdbStore) store = gnostr_ndb_store_new();
 
@@ -145,7 +148,9 @@ test_poll_is_consumed(void)
     for (guint i = 0; i < events->len; i++) {
         gn_test_ndb_ingest_json(test_ndb, g_ptr_array_index(events, i));
     }
-    g_usleep(500000);
+    gn_test_drain_main_loop();
+    g_usleep(200000);
+    gn_test_drain_main_loop();
 
     g_autoptr(GNostrNdbStore) store = gnostr_ndb_store_new();
     guint64 sub_id = gnostr_store_subscribe(GNOSTR_STORE(store),
@@ -184,7 +189,9 @@ test_unsubscribe_stops_delivery(void)
     for (guint i = 0; i < events->len; i++) {
         gn_test_ndb_ingest_json(test_ndb, g_ptr_array_index(events, i));
     }
-    g_usleep(500000);
+    gn_test_drain_main_loop();
+    g_usleep(200000);
+    gn_test_drain_main_loop();
 
     guint64 keys[50];
     gint n = gnostr_store_poll_notes(GNOSTR_STORE(store), sub_id, keys, 50);

@@ -75,6 +75,17 @@ mock_thread_item_new(const char *event_id, const char *parent_id,
 
 static volatile gint g_live_thread_items = 0;
 
+/**
+ * Weak-ref callback that decrements the live item counter.
+ * GWeakNotify signature: void (*)(gpointer data, GObject *where_the_object_was)
+ */
+static void
+live_item_weak_notify(gpointer data G_GNUC_UNUSED,
+                      GObject *where_the_object_was G_GNUC_UNUSED)
+{
+  g_atomic_int_add(&g_live_thread_items, -1);
+}
+
 /* Track items added to stores */
 static MockThreadItem *
 make_tracked_item(const char *event_id, const char *parent_id,
@@ -83,10 +94,8 @@ make_tracked_item(const char *event_id, const char *parent_id,
   MockThreadItem *item = mock_thread_item_new(event_id, parent_id, depth, created_at);
   g_atomic_int_inc(&g_live_thread_items);
 
-  /* weak ref to decrement on finalize */
-  g_object_weak_ref(G_OBJECT(item),
-                    (GWeakNotify)(void (*)(void))g_atomic_int_add,
-                    GINT_TO_POINTER(-1));
+  /* weak ref to decrement on finalize — uses a proper GWeakNotify callback */
+  g_object_weak_ref(G_OBJECT(item), live_item_weak_notify, NULL);
   return item;
 }
 

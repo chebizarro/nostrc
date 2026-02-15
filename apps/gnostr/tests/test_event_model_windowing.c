@@ -43,13 +43,28 @@ teardown_ndb(void)
 
 /**
  * Ingest N kind-1 events with decreasing timestamps so they naturally
- * sort newest-first. Returns the base timestamp used.
+ * sort newest-first. Also ingest a kind-0 profile for each event's pubkey
+ * so the model considers them "ready" for display.
+ * Returns the base timestamp used.
  */
 static gint64
 ingest_n_events(guint n, gint64 base_ts)
 {
   for (guint i = 0; i < n; i++) {
-    g_autofree char *json = gn_test_make_event_json(1, "hello", base_ts - (gint64)i);
+    gint64 ts = base_ts - (gint64)i;
+    /* Generate a deterministic pubkey for this event */
+    g_autofree char *pubkey = g_strdup_printf(
+      "%08x%08x%08x%08x%08x%08x%08x%08x",
+      (guint)(i + 0x10), (guint)(i + 0x20), (guint)(i + 0x30), (guint)(i + 0x40),
+      (guint)(i + 0x50), (guint)(i + 0x60), (guint)(i + 0x70), (guint)(i + 0x80));
+
+    /* Ingest a kind-0 profile for this pubkey first */
+    g_autofree char *profile_json = gn_test_make_event_json_with_pubkey(
+      0, "{\"display_name\":\"TestUser\",\"name\":\"test\"}", ts - 1, pubkey);
+    gn_test_ndb_ingest_json(s_ndb, profile_json);
+
+    /* Then ingest the kind-1 event with the same pubkey */
+    g_autofree char *json = gn_test_make_event_json_with_pubkey(1, "hello", ts, pubkey);
     gboolean ok = gn_test_ndb_ingest_json(s_ndb, json);
     g_assert_true(ok);
   }
@@ -117,9 +132,13 @@ test_refresh_populates_model(void)
   gn_test_drain_main_loop();
 
   guint n = g_list_model_get_n_items(G_LIST_MODEL(model));
-  /* Should have ingested some events (may be less than 20 depending on
-   * author readiness filtering in the model) */
   g_test_message("Model has %u items after refresh with 20 ingested", n);
+
+  /* Model must have loaded events — profiles were ingested, so readiness
+   * filtering should not block them. If this fails, profile ingestion
+   * or readiness logic is broken. */
+  g_assert_cmpuint(n, >, 0);
+  g_assert_cmpuint(n, <=, MODEL_MAX_ITEMS);
 
   /* H2: sorted newest-first */
   assert_sorted_newest_first(model);
