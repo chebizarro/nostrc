@@ -557,7 +557,9 @@ static void* worker_main(void *arg) {
           break; /* will drain after unlocking */
         }
         if (!have_sleepers) {
-          /* No sleepers and no inject; if no IO waiters either, exit loop */
+          /* No sleepers and no inject; if no IO waiters either, exit loop.
+           * Also exit if background stop has been requested. */
+          if (gof_bg_stop_requested()) { exit_sched = 1; break; }
           if (!gof_io_have_waiters() && !have_live) { exit_sched = 1; break; }
           /* Otherwise, wait indefinitely for injected work */
           pthread_cond_wait(&S.cv, &S.mu);
@@ -732,4 +734,27 @@ static void* poller_main(void* arg) {
     /* Callback path enqueues runnables and signals condvar */
   }
   return NULL;
+}
+
+/* ── Background mode support ─────────────────────────────────────────── */
+
+void *gof_worker_main_external(void *arg) {
+  /* arg is the worker index (intptr_t) */
+  int idx = (int)(intptr_t)arg;
+  if (idx < 0 || idx >= S.nworkers) return NULL;
+  gof_worker *W = &S.workers[idx];
+  pthread_setspecific(S.worker_key, W);
+  return worker_main(W);
+}
+
+void gof_sched_wake_all(void) {
+  if (!S.initialized) return;
+  pthread_mutex_lock(&S.mu);
+  pthread_cond_broadcast(&S.cv);
+  pthread_mutex_unlock(&S.mu);
+}
+
+/* Weak default for gof_bg_stop_requested if api.c is not linked */
+int __attribute__((weak)) gof_bg_stop_requested(void) {
+  return 0;
 }

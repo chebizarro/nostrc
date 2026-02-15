@@ -28,6 +28,7 @@
 #include "go.h"
 #include "channel.h"
 #include "wait_group.h"
+#include <libgo/fiber.h>  /* gof_start_background, gof_request_stop, gof_join_background */
 
 typedef struct {
   nostrfs_options opts;
@@ -843,6 +844,14 @@ if (ctx->req_chan){ go_channel_close(ctx->req_chan); go_channel_free(ctx->req_ch
 
 int nostrfs_run(const nostrfs_options *opts, int argc, char **argv){
   if (!opts || !opts->mountpoint) return -1;
+
+  /* Initialize fiber scheduler as background thread pool.
+   * Must happen before any go_fiber_compat() calls.
+   * Uses 0 for default stack size (256KB per fiber). */
+  if (gof_start_background(0) != 0) {
+    fprintf(stderr, "[nostrfs] Failed to start fiber scheduler — falling back to OS threads\n");
+  }
+
   /* Build context */
   nostrfs_ctx *ctx = (nostrfs_ctx*)calloc(1, sizeof(*ctx)); if (!ctx) return -1;
   ctx->opts = *opts; ctx->manifest_loaded = 0; ctx->req_chan = go_channel_create(64); ctx->upload_q = go_channel_create(64); ctx->download_q = go_channel_create(64);
@@ -859,20 +868,25 @@ int nostrfs_run(const nostrfs_options *opts, int argc, char **argv){
     nh_cache_close(&c);
   }
   /* Start actor fiber */
-  go(manifest_manager, ctx);
+  go_fiber_compat(manifest_manager, ctx);
   /* Start upload workers */
   extern void *upload_worker(void *arg); /* forward */
-  for (int i=0;i<4;i++) go(upload_worker, ctx);
+  for (int i=0;i<4;i++) go_fiber_compat(upload_worker, ctx);
   /* Start download workers */
   extern void *download_worker(void *arg);
-  for (int i=0;i<4;i++) go(download_worker, ctx);
+  for (int i=0;i<4;i++) go_fiber_compat(download_worker, ctx);
   /* Start background publisher */
   extern void *publish_worker(void *arg);
-  go(publish_worker, ctx);
+  go_fiber_compat(publish_worker, ctx);
   /* Register destroy for cleanup */
   struct fuse_operations ops = nfs_ops; ops.destroy = nfs_destroy;
   /* Hand off to fuse_main (argv contains only FUSE args here) */
   int rc = fuse_main(argc, argv, &ops, ctx);
+
+  /* Shut down fiber scheduler after FUSE exits */
+  gof_request_stop();
+  gof_join_background();
+
   return rc;
 }
 

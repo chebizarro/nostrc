@@ -464,8 +464,8 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     loop_arg->ctx = ctx;
 
     go_wait_group_add(&relay->priv->workers, 2);
-    go(write_operations, write_arg);
-    go(message_loop, loop_arg);
+    go_fiber_compat(write_operations, write_arg);
+    go_fiber_compat(message_loop, loop_arg);
 
     return true;
 }
@@ -1199,7 +1199,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
         if (req) free(req);
         if (msg_copy) free(msg_copy);
         go_channel_unref(chan); // drop the extra ref we just took
-        go(write_error, chan);
+        go_fiber_compat(write_error, chan);
         return chan;
     }
     req->msg = msg_copy;
@@ -1208,7 +1208,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     // Enqueue request (non-blocking); if fails and context canceled, return error
     if (go_channel_send(r->priv->write_queue, req) != 0) {
         // Fallback: if cannot enqueue, surface error
-        go(write_error, chan);
+        go_fiber_compat(write_error, chan);
         free(req->msg);
         free(req);
         return chan;

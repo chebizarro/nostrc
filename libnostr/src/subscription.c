@@ -173,7 +173,7 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
         fprintf(stderr, "[sub %s] create: starting lifecycle thread\n", sub->priv->id);
     }
-    go(nostr_subscription_start, sub);
+    go_fiber_compat(nostr_subscription_start, sub);
     nostr_metric_counter_add("sub_created", 1);
 
     // LIFECYCLE: Log subscription creation

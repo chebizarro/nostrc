@@ -71,6 +71,8 @@ set(LIBGO_SOURCES
   src/ticker.c
   src/error.c
   src/metrics_stub.c
+  src/fiber_hooks_stub.c
+  src/blocking_executor.c
 )
 
 # Enable CTest for module-specific tests
@@ -402,6 +404,7 @@ set(GOF_COMMON_SOURCES
   ${GOF_FIBER_DIR}/sched/api.c
   ${GOF_FIBER_DIR}/sched/sched.c
   ${GOF_FIBER_DIR}/sched/park.c
+  ${GOF_FIBER_DIR}/sched/fiber_hooks_impl.c
   ${GOF_FIBER_DIR}/stack/stack.c
   ${GOF_FIBER_DIR}/chan/chan.c
   ${GOF_FIBER_DIR}/io/io.c
@@ -478,12 +481,12 @@ add_executable(gof_test_chan fiber/tests/test_chan.c)
 add_executable(gof_test_io fiber/tests/test_io.c)
 add_executable(gof_test_io_timeout fiber/tests/test_io_timeout.c)
 add_executable(gof_test_starvation fiber/tests/test_starvation.c)
-target_link_libraries(gof_test_basic PRIVATE go_fiber)
-target_link_libraries(gof_test_context PRIVATE go_fiber)
-target_link_libraries(gof_test_chan PRIVATE go_fiber)
-target_link_libraries(gof_test_io PRIVATE go_fiber)
-target_link_libraries(gof_test_io_timeout PRIVATE go_fiber)
-target_link_libraries(gof_test_starvation PRIVATE go_fiber)
+target_link_libraries(gof_test_basic PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_test_context PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_test_chan PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_test_io PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_test_io_timeout PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_test_starvation PRIVATE go_fiber libgo ${NSYNC_LIB})
 apply_warnings(gof_test_basic)
 apply_warnings(gof_test_context)
 apply_warnings(gof_test_chan)
@@ -540,10 +543,10 @@ add_executable(gof_bench_yield fiber/bench/bench_yield.c)
 add_executable(gof_bench_pingpong fiber/bench/bench_pingpong.c)
 add_executable(gof_bench_sleep fiber/bench/bench_sleep.c)
 add_executable(gof_bench_poll_partition fiber/bench/bench_poll_partition.c)
-target_link_libraries(gof_bench_yield PRIVATE go_fiber)
-target_link_libraries(gof_bench_pingpong PRIVATE go_fiber)
-target_link_libraries(gof_bench_sleep PRIVATE go_fiber)
-target_link_libraries(gof_bench_poll_partition PRIVATE go_fiber)
+target_link_libraries(gof_bench_yield PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_bench_pingpong PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_bench_sleep PRIVATE go_fiber libgo ${NSYNC_LIB})
+target_link_libraries(gof_bench_poll_partition PRIVATE go_fiber libgo ${NSYNC_LIB})
 apply_warnings(gof_bench_yield)
 apply_warnings(gof_bench_pingpong)
 apply_warnings(gof_bench_sleep)

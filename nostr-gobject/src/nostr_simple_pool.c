@@ -1811,7 +1811,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         sub_ctx->wg = (GoWaitGroup*)ctx->wg;
         
         go_wait_group_add((GoWaitGroup*)ctx->wg, 1);
-        if (go(subscription_goroutine, sub_ctx) != 0) {
+        if (go_fiber_compat(subscription_goroutine, sub_ctx) != 0) {
             g_critical("[GOROUTINE] Failed to launch subscription goroutine for %s", url);
             go_wait_group_done((GoWaitGroup*)ctx->wg);  /* Decrement since goroutine didn't start */
             g_free(sub_ctx);
@@ -2098,7 +2098,7 @@ void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx) {
     go_wait_group_init((GoWaitGroup*)ctx->wg);
     
     /* Launch main goroutine */
-    if (go(fetch_profiles_goroutine, ctx) != 0) {
+    if (go_fiber_compat(fetch_profiles_goroutine, ctx) != 0) {
         g_critical("PROFILE_FETCH_GOROUTINE: Failed to launch goroutine!");
         g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to launch goroutine");
         return;

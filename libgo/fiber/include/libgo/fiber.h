@@ -50,8 +50,57 @@ void        gof_sleep_ms(uint64_t ms);
 
 /**
  * @brief Enter the scheduler loop. Typically called once on the main thread.
+ * @note This blocks the calling thread until all fibers complete.
+ *       For applications with their own event loop (e.g., GTK/GLib),
+ *       use gof_start_background() instead.
  */
 void        gof_run(void);
+
+/**
+ * @brief Start the fiber scheduler on background threads and return immediately.
+ *
+ * Unlike gof_run() which takes over the calling thread, this spawns the
+ * scheduler worker threads in the background, allowing the calling thread
+ * to continue (e.g., to run a GTK main loop).
+ *
+ * The scheduler stays alive until gof_request_stop() is called or all fibers
+ * complete and no I/O waiters remain.
+ *
+ * @param default_stack_bytes Default stack size for fibers (0 = use default 256KB).
+ * @return 0 on success, -1 on error (e.g., already running).
+ */
+int         gof_start_background(size_t default_stack_bytes);
+
+/**
+ * @brief Request the fiber scheduler to stop.
+ *
+ * Wakes all workers so they can observe the stop flag and exit.
+ * Does not wait for completion — use gof_join_background() to wait.
+ * Safe to call from any thread (including GTK main thread).
+ */
+void        gof_request_stop(void);
+
+/**
+ * @brief Wait for all background scheduler threads to finish.
+ *
+ * Blocks until all worker threads have exited. Call after gof_request_stop()
+ * or after all fibers have naturally completed.
+ *
+ * @return 0 on success, -1 if not running in background mode.
+ */
+int         gof_join_background(void);
+
+/**
+ * @brief Check whether the current thread is a fiber scheduler worker.
+ * @return 1 if called from within a fiber or worker thread, 0 otherwise.
+ */
+int         gof_in_fiber(void);
+
+/**
+ * @brief Get the current fiber handle, if running inside a fiber.
+ * @return Current fiber handle, or NULL if not in a fiber.
+ */
+gof_fiber_t*gof_current(void);
 
 /** Fiber-friendly I/O wrappers that integrate with the netpoller. */
 ssize_t     gof_read(int fd, void *buf, size_t n);

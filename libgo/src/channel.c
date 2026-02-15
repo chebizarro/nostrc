@@ -2,6 +2,10 @@
 #include "select.h"
 #include "nostr/metrics.h"
 #include "context.h"
+
+/* Implemented in select.c — signals select waiters registered on this channel.
+ * Must be called while holding chan->mutex. */
+extern void go_channel_signal_select_waiters(GoChannel *chan);
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -328,6 +332,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
                 nsync_cv_broadcast(&chan->cond_empty);
             }
 #endif
+            go_channel_signal_select_waiters(chan);
             NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
@@ -405,6 +410,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             nsync_cv_broadcast(&chan->cond_empty);
         }
 #endif
+        go_channel_signal_select_waiters(chan);
         // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
         NOSTR_EVENT_SEND();
@@ -496,6 +502,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
                 nsync_cv_broadcast(&chan->cond_full);
             }
 #endif
+            go_channel_signal_select_waiters(chan);
             NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
@@ -580,6 +587,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             nsync_cv_broadcast(&chan->cond_full);
         }
 #endif
+        go_channel_signal_select_waiters(chan);
         // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
         NOSTR_EVENT_SEND();
@@ -659,6 +667,7 @@ GoChannel *go_channel_create(size_t capacity) {
     nsync_cv_init(&chan->cond_full);
     nsync_cv_init(&chan->cond_empty);
     atomic_store_explicit(&chan->refs, 1, memory_order_relaxed);
+    chan->select_waiters = NULL;
     return chan;
 }
 
@@ -865,6 +874,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         nsync_cv_broadcast(&chan->cond_empty);
     }
 #endif
+    go_channel_signal_select_waiters(chan);
     (void)was_empty; // suppress unused warning when REFINED_SIGNALING
     if (was_empty) {
         // On ARM with WFE/SEV, send event to nudge sleeping peers
@@ -1057,6 +1067,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         nsync_cv_broadcast(&chan->cond_full);
     }
 #endif
+    go_channel_signal_select_waiters(chan);
     // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
     NOSTR_EVENT_SEND();
@@ -1203,6 +1214,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         nsync_cv_broadcast(&chan->cond_empty);
     }
 #endif
+    go_channel_signal_select_waiters(chan);
     // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
     NOSTR_EVENT_SEND();
@@ -1297,22 +1309,15 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     (void)have_tw;
 
     {
-        int closed_empty;
+        int is_empty;
 #if NOSTR_CHANNEL_DERIVE_SIZE
-        closed_empty = (go_channel_occupancy(chan) == 0);
+        is_empty = (go_channel_occupancy(chan) == 0);
 #else
-        closed_empty = (chan->size == 0);
+        is_empty = (chan->size == 0);
 #endif
         int canceled = (ctx && go_context_is_canceled(ctx));
-        if (NOSTR_UNLIKELY(((chan->closed && closed_empty) || canceled))) {
-            int canceled = (ctx && go_context_is_canceled(ctx));
-            int closed_empty = (chan->closed
-#if NOSTR_CHANNEL_DERIVE_SIZE
-                && go_channel_occupancy(chan) == 0
-#else
-                && chan->size == 0
-#endif
-                );
+        int closed_empty = (chan->closed && is_empty);
+        if (NOSTR_UNLIKELY(closed_empty || canceled)) {
             size_t in_dbg = atomic_load_explicit(&chan->in, memory_order_acquire);
             size_t out_dbg = atomic_load_explicit(&chan->out, memory_order_acquire);
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1405,6 +1410,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         nsync_cv_broadcast(&chan->cond_full);
     }
 #endif
+    go_channel_signal_select_waiters(chan);
     // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
     NOSTR_EVENT_SEND();
@@ -1426,6 +1432,8 @@ void go_channel_close(GoChannel *chan) {
         // Wake up all potential waiters so they can observe closed state
         nsync_cv_broadcast(&chan->cond_full);
         nsync_cv_broadcast(&chan->cond_empty);
+        // Wake all select waiters — they need to re-evaluate their cases
+        go_channel_signal_select_waiters(chan);
         // Nudge ARM WFE sleepers
 #ifdef NOSTR_ARM_WFE
         NOSTR_EVENT_SEND();

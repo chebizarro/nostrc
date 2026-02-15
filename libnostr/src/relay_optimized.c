@@ -491,7 +491,7 @@ void *optimized_message_loop(void *arg) {
         NostrRelay *relay;
         OptimizedRelayChannels *channels;
     } control_ctx = {r, &channels};
-    go(control_processor, &control_ctx);
+    go_fiber_compat(control_processor, &control_ctx);
     
     // Start event workers
     for (int i = 0; i < WORKER_POOL_SIZE; i++) {
@@ -509,18 +509,18 @@ void *optimized_message_loop(void *arg) {
         worker_ctx->relay = r;
         worker_ctx->channels = &channels;
         worker_ctx->worker_id = i;
-        go(event_worker, worker_ctx);
+        go_fiber_compat(event_worker, worker_ctx);
     }
     
     // Start verification workers
     for (int i = 0; i < VERIFY_POOL_SIZE; i++) {
         go_wait_group_add(channels.workers, 1);
-        go(verification_worker, &channels);
+        go_fiber_compat(verification_worker, &channels);
     }
     
     // Start verification result processor
     go_wait_group_add(channels.workers, 1);
-    go(verification_result_processor, &channels);
+    go_fiber_compat(verification_result_processor, &channels);
     
     // Main read loop - route messages to appropriate channels
     char buf[4096];

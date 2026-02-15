@@ -58,4 +58,14 @@ int  gof_sched_get_npollers_value(void);
 /* Internal: affinity toggle */
 void gof_sched_set_affinity_enabled(int enable);
 int  gof_sched_get_affinity_enabled(void);
+
+/* Background mode: externally callable worker loop for pthread_create */
+void *gof_worker_main_external(void *arg);
+
+/* Wake all idle workers (used during shutdown / stop request) */
+void gof_sched_wake_all(void);
+
+/* Check if background stop has been requested (provided by api.c) */
+int gof_bg_stop_requested(void);
+
 #endif /* LIBGO_FIBER_SCHED_SCHED_H */

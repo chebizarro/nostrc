@@ -31,6 +31,73 @@ static void *go_wrapper_func(void *arg) {
     return result;
 }
 
+/* Forward declaration — provided by fiber runtime.
+ * We use a function pointer that defaults to NULL and is set by the fiber
+ * runtime when it initializes. This avoids weak symbol issues on macOS. */
+struct gof_fiber;
+typedef struct gof_fiber gof_fiber_t;
+typedef void (*gof_fn)(void *arg);
+
+/* Function pointer to fiber spawn — NULL if fiber runtime not linked/initialized */
+static gof_fiber_t* (*gof_spawn_ptr)(gof_fn fn, void *arg, size_t stack_bytes) = NULL;
+
+/* Called by fiber runtime to register its spawn function */
+void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size_t)) {
+    gof_spawn_ptr = spawn_fn;
+}
+
+int go_fiber(void (*fn)(void *arg), void *arg, size_t stack_bytes) {
+    if (!gof_spawn_ptr) {
+        /* Fiber runtime not linked — fall back to error */
+        fprintf(stderr, "go_fiber: fiber runtime not linked\n");
+        return -1;
+    }
+    gof_fiber_t *f = gof_spawn_ptr(fn, arg, stack_bytes);
+    return f ? 0 : -1;
+}
+
+/* ── go_fiber_compat: fiber-based replacement for go() ─────────────────
+ * Accepts the pthread-style void*(*)(void*) signature, wraps it into a
+ * void(*)(void*) trampoline so existing goroutine functions can be migrated
+ * to fibers without changing their signatures. Falls back to go() (OS thread)
+ * if the fiber runtime is not linked. */
+
+typedef struct {
+    void *(*fn)(void *);
+    void  *arg;
+} GoFiberCompatWrapper;
+
+static void go_fiber_compat_trampoline(void *ctx) {
+    GoFiberCompatWrapper *w = (GoFiberCompatWrapper *)ctx;
+    void *(*fn)(void *) = w->fn;
+    void *arg = w->arg;
+    free(w);
+    atomic_fetch_add(&g_active_goroutines, 1);
+    fn(arg);  /* return value discarded — same as detached pthread */
+    atomic_fetch_sub(&g_active_goroutines, 1);
+}
+
+int go_fiber_compat(void *(*start_routine)(void *), void *arg) {
+    if (!gof_spawn_ptr) {
+        /* Fiber runtime not linked — fall back to OS thread */
+        return go(start_routine, arg);
+    }
+    GoFiberCompatWrapper *w = malloc(sizeof(GoFiberCompatWrapper));
+    if (!w) {
+        fprintf(stderr, "go_fiber_compat: allocation failed\n");
+        return -1;
+    }
+    w->fn  = start_routine;
+    w->arg = arg;
+    gof_fiber_t *f = gof_spawn_ptr(go_fiber_compat_trampoline, w, 0);
+    if (!f) {
+        free(w);
+        /* Fall back to OS thread on spawn failure */
+        return go(start_routine, arg);
+    }
+    return 0;
+}
+
 // Wrapper function to create a new thread
 int go(void *(*start_routine)(void *), void *arg) {
     GoWrapper *w = (GoWrapper *)malloc(sizeof(GoWrapper));

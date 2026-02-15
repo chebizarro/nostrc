@@ -3,12 +3,38 @@
 #include <errno.h>
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 static int gof_once_inited = 0;
+
+/* ── Background scheduler state ──────────────────────────────────────── */
+static pthread_t *bg_worker_threads = NULL;
+static int bg_nworkers = 0;
+static atomic_int bg_stop_requested = 0;
+static atomic_int bg_running = 0;
+static pthread_mutex_t bg_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Exposed to sched.c worker_main so it can observe the stop flag */
+int gof_bg_stop_requested(void) {
+    return atomic_load_explicit(&bg_stop_requested, memory_order_acquire);
+}
+
+/* Forward declaration — implemented in sched.c */
+extern void *gof_worker_main_external(void *arg);
+
+/* Registration function provided by libgo's go.c */
+extern void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size_t));
+
+/* Forward declaration of our spawn function */
+gof_fiber_t* gof_spawn(gof_fn fn, void *arg, size_t stack_bytes);
 
 void gof_init(size_t default_stack_bytes) {
   if (!gof_once_inited) {
     gof_sched_init(default_stack_bytes);
+    /* Register our spawn function with libgo so go_fiber_compat works */
+    go_register_fiber_spawn(gof_spawn);
     gof_once_inited = 1;
   }
 }
@@ -125,4 +151,99 @@ int gof_set_npollers(int n) {
 int gof_get_npollers(void) {
   /* If not initialized yet, returns preset or default value. */
   return gof_sched_get_npollers_value();
+}
+
+/* ── Background scheduler API ────────────────────────────────────────── */
+
+int gof_start_background(size_t default_stack_bytes) {
+  pthread_mutex_lock(&bg_mutex);
+  if (atomic_load_explicit(&bg_running, memory_order_acquire)) {
+    pthread_mutex_unlock(&bg_mutex);
+    return -1; /* already running */
+  }
+  gof_init(default_stack_bytes);
+  atomic_store_explicit(&bg_stop_requested, 0, memory_order_release);
+
+  /* Get nworkers from the scheduler init */
+  gof_sched_stats stats;
+  gof_get_stats(&stats);
+  bg_nworkers = stats.nworkers;
+  if (bg_nworkers < 1) bg_nworkers = 1;
+
+  bg_worker_threads = (pthread_t *)calloc((size_t)bg_nworkers, sizeof(pthread_t));
+  if (!bg_worker_threads) {
+    pthread_mutex_unlock(&bg_mutex);
+    return -1;
+  }
+
+  /* Launch ALL workers as background threads (unlike gof_run which uses
+   * the calling thread as worker 0). */
+  for (int i = 0; i < bg_nworkers; ++i) {
+    /* gof_worker_main_external takes a worker index as argument */
+    int rc = pthread_create(&bg_worker_threads[i], NULL,
+                            gof_worker_main_external,
+                            (void *)(intptr_t)i);
+    if (rc != 0) {
+      fprintf(stderr, "[gof] failed to create background worker %d: %d\n", i, rc);
+      /* Clean up any already-created threads */
+      atomic_store_explicit(&bg_stop_requested, 1, memory_order_release);
+      for (int j = 0; j < i; ++j) {
+        pthread_join(bg_worker_threads[j], NULL);
+      }
+      free(bg_worker_threads);
+      bg_worker_threads = NULL;
+      bg_nworkers = 0;
+      pthread_mutex_unlock(&bg_mutex);
+      return -1;
+    }
+  }
+
+  atomic_store_explicit(&bg_running, 1, memory_order_release);
+  pthread_mutex_unlock(&bg_mutex);
+#if defined(GOF_DEBUG)
+  fprintf(stderr, "[gof] background scheduler started with %d workers\n", bg_nworkers);
+#endif
+  return 0;
+}
+
+void gof_request_stop(void) {
+  atomic_store_explicit(&bg_stop_requested, 1, memory_order_release);
+  /* Signal the scheduler condition variable to wake any idle workers */
+  /* This is done via the scheduler's internal API — we need to expose it.
+   * For now, inject a NULL sentinel that workers check. */
+  gof_sched_wake_all();
+}
+
+int gof_join_background(void) {
+  pthread_mutex_lock(&bg_mutex);
+  if (!atomic_load_explicit(&bg_running, memory_order_acquire) || !bg_worker_threads) {
+    pthread_mutex_unlock(&bg_mutex);
+    return -1;
+  }
+  /* Copy state locally so we can release the mutex before joining */
+  pthread_t *threads = bg_worker_threads;
+  int nworkers = bg_nworkers;
+  bg_worker_threads = NULL;
+  bg_nworkers = 0;
+  atomic_store_explicit(&bg_running, 0, memory_order_release);
+  pthread_mutex_unlock(&bg_mutex);
+
+  /* Join threads outside the mutex to avoid blocking other callers */
+  for (int i = 0; i < nworkers; ++i) {
+    pthread_join(threads[i], NULL);
+  }
+  free(threads);
+#if defined(GOF_DEBUG)
+  fprintf(stderr, "[gof] background scheduler stopped\n");
+#endif
+  return 0;
+}
+
+int gof_in_fiber(void) {
+  gof_fiber *f = gof_sched_current();
+  return f != NULL ? 1 : 0;
+}
+
+gof_fiber_t *gof_current(void) {
+  return (gof_fiber_t *)gof_sched_current();
 }

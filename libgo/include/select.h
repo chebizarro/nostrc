@@ -46,6 +46,13 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w);
 /* Unregister a waiter from a channel */
 void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w);
 
+/**
+ * Signal all select waiters registered on a channel.
+ * Called internally from channel send/recv/close paths.
+ * Must be called while holding chan->mutex.
+ */
+void go_channel_signal_select_waiters(GoChannel *chan);
+
 /* Standard select: blocks until one case is ready */
 int go_select(GoSelectCase *cases, size_t num_cases);
 

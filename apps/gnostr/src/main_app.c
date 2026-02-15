@@ -15,6 +15,8 @@
 #include "sync/gnostr-sync-bridge.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/gnostr-identity.h>
+#include <go.h>          /* go_blocking_executor_init/shutdown */
+#include <libgo/fiber.h>  /* gof_start_background, gof_request_stop, gof_join_background */
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -245,6 +247,16 @@ int main(int argc, char **argv) {
   gnostr_relays_init("org.gnostr.gnostr");
   gnostr_identity_init("org.gnostr.Client");
 
+  /* Initialize fiber scheduler as background thread pool.
+   * Must happen before any go_fiber_compat() calls (relay/subscription startup).
+   * Uses 0 for default stack size (256KB per fiber). */
+  if (gof_start_background(0) != 0) {
+    g_warning("Failed to start fiber scheduler — falling back to OS threads");
+  }
+  /* Initialize blocking executor for NDB I/O offload from fibers.
+   * 4 threads handles typical NDB query concurrency. */
+  go_blocking_executor_init(4);
+
   /* Initialize nostr-gtk widget library (nostrc-lx33) */
   nostr_gtk_init();
 
@@ -306,7 +318,16 @@ int main(int argc, char **argv) {
   }
 
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
+
+  /* Fiber scheduler and blocking executor are shut down after the main loop
+   * exits, ensuring all fibers complete before process teardown. */
   int status = g_application_run(G_APPLICATION(app), argc, argv);
+
+  /* Shut down fiber scheduler and blocking executor (drains queues first) */
+  go_blocking_executor_shutdown();
+  gof_request_stop();
+  gof_join_background();
+
   g_object_unref(app);
   return status;
 }
