@@ -64,8 +64,9 @@ static guint64 g_ingest_bytes = 0;
 
 #include <stdatomic.h>
 
-/* The thread ID of the GLib main thread (set by test harness) */
-static GThread *gn_test_main_thread = NULL;
+/* The thread ID of the GLib main thread (set by test harness).
+ * Access is protected by atomic operations for thread safety. */
+static _Atomic(GThread *) gn_test_main_thread = NULL;
 
 /* Violation log — circular buffer of recent violations */
 #define GN_TEST_MAX_VIOLATIONS 256
@@ -82,11 +83,15 @@ static atomic_uint gn_test_violation_count = 0;
 static inline void
 gn_test_record_violation(const char *func, int retry_attempts)
 {
-    if (!gn_test_main_thread) return;
-    if (g_thread_self() != gn_test_main_thread) return;
+    GThread *main_thread = atomic_load(&gn_test_main_thread);
+    if (!main_thread) return;
+    if (g_thread_self() != main_thread) return;
 
     unsigned idx = atomic_fetch_add(&gn_test_violation_count, 1);
     unsigned slot = idx % GN_TEST_MAX_VIOLATIONS;
+    /* Note: writes to gn_test_violations are safe because only the main thread
+     * (single writer) records violations. Readers should only access after
+     * the test completes. */
     gn_test_violations[slot].func_name = func;
     gn_test_violations[slot].timestamp_us = g_get_monotonic_time();
     gn_test_violations[slot].retry_attempts = retry_attempts;
@@ -98,12 +103,12 @@ gn_test_record_violation(const char *func, int retry_attempts)
 /* Public API for test harnesses (declared in storage_ndb.h under #ifdef) */
 void storage_ndb_testing_mark_main_thread(void)
 {
-    gn_test_main_thread = g_thread_self();
+    atomic_store(&gn_test_main_thread, g_thread_self());
 }
 
 void storage_ndb_testing_clear_main_thread(void)
 {
-    gn_test_main_thread = NULL;
+    atomic_store(&gn_test_main_thread, NULL);
 }
 
 unsigned storage_ndb_testing_get_violation_count(void)
@@ -119,7 +124,8 @@ void storage_ndb_testing_reset_violations(void)
 
 const char *storage_ndb_testing_get_violation_func(unsigned index)
 {
-    if (index >= GN_TEST_MAX_VIOLATIONS) return NULL;
+    unsigned count = atomic_load(&gn_test_violation_count);
+    if (index >= count || index >= GN_TEST_MAX_VIOLATIONS) return NULL;
     return gn_test_violations[index % GN_TEST_MAX_VIOLATIONS].func_name;
 }
 

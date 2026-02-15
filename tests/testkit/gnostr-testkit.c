@@ -366,11 +366,25 @@ unsigned storage_ndb_testing_get_violation_count(void) __attribute__((weak));
 void storage_ndb_testing_reset_violations(void) __attribute__((weak));
 const char *storage_ndb_testing_get_violation_func(unsigned index) __attribute__((weak));
 
+static gboolean gn_test_instrumentation_warned = FALSE;
+
+static void
+gn_test_warn_no_instrumentation(void)
+{
+    if (!gn_test_instrumentation_warned) {
+        g_test_message("WARNING: NDB violation instrumentation not available. "
+                       "Ensure nostr-gobject was compiled with -DGNOSTR_TESTING.");
+        gn_test_instrumentation_warned = TRUE;
+    }
+}
+
 void
 gn_test_mark_main_thread(void)
 {
     if (storage_ndb_testing_mark_main_thread)
         storage_ndb_testing_mark_main_thread();
+    else
+        gn_test_warn_no_instrumentation();
 }
 
 void
@@ -610,12 +624,9 @@ gn_test_ingest_realistic_corpus(GnTestNdb *ndb, guint n_events, guint n_profiles
     for (guint i = 0; i < n_events; i++) {
         GnTestContentStyle style = (GnTestContentStyle)(i % (GN_TEST_CONTENT_MIXED + 1));
         gint64 ts = 1700000000 - (gint64)i;
-        g_autofree char *json = gn_test_make_realistic_event_json(1, style, ts);
 
-        /* Patch the pubkey to one of our known pubkeys so profile readiness works */
-        /* For simplicity, just create with explicit pubkey */
+        /* Use explicit pubkey so profile readiness works */
         const char *pk = g_ptr_array_index(pubkeys, i % n_unique);
-        g_free(json);
 
         /* Generate content based on style */
         g_autofree char *content = NULL;
@@ -644,7 +655,7 @@ gn_test_ingest_realistic_corpus(GnTestNdb *ndb, guint n_events, guint n_profiles
             break;
         }
 
-        json = gn_test_make_event_json_with_pubkey(1, content, ts, pk);
+        g_autofree char *json = gn_test_make_event_json_with_pubkey(1, content, ts, pk);
         gn_test_ndb_ingest_json(ndb, json);
     }
 

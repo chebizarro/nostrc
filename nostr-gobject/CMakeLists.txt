@@ -147,7 +147,7 @@ if(BUILD_TESTING)
 endif()
 
 set_target_properties(nostr_gobject PROPERTIES
-   OUTPUT_NAME nostr-gobject-1.0
+  OUTPUT_NAME nostr-gobject-1.0
   VERSION     ${NOSTR_GOBJECT_VERSION}
   SOVERSION   ${NOSTR_GOBJECT_MAJOR_VERSION}
 )
