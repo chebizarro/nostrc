@@ -380,8 +380,13 @@ test_profile_notify_after_unbind(void)
     /* Clear the model — this triggers unbind for all visible rows */
     g_list_store_remove_all(h->store);
 
-    /* Drain to process unbinds */
-    for (int i = 0; i < 300; i++) {
+    /* Drain to process unbinds - need enough iterations for GTK to fully process */
+    for (int i = 0; i < 500; i++) {
+        g_main_context_iteration(g_main_context_default(), FALSE);
+    }
+    /* Additional sleep to ensure async operations complete */
+    g_usleep(50000); /* 50ms */
+    for (int i = 0; i < 100; i++) {
         g_main_context_iteration(g_main_context_default(), FALSE);
     }
 

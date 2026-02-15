@@ -123,8 +123,12 @@ test_label_stays_bounded(void)
         g_test_message("Case '%s': width min=%d nat=%d, height min=%d nat=%d",
                        cc->name, min_w, nat_w, min_h, nat_h);
 
-        /* Natural width shouldn't be absurd (but may be large for unwrapped) */
-        g_assert_cmpint(nat_w, >, 0);
+        /* Natural width should be >= 0. Empty content may have nat_w == 0. */
+        g_assert_cmpint(nat_w, >=, 0);
+        /* Non-empty content should have positive natural width */
+        if (cc->content && cc->content[0] != '\0' && cc->content[0] != '\n') {
+            g_assert_cmpint(nat_w, >, 0);
+        }
 
         /* Height should be bounded even for long content */
         /* Note: Without max-lines set, labels can be tall — that's expected.

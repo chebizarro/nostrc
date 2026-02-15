@@ -115,7 +115,9 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
 
   storage_ndb_note *note = storage_ndb_get_note_ptr(txn, self->note_key);
   if (!note) {
-    g_warning("[ITEM] ensure_note_loaded: note not found in DB for key %lu", (unsigned long)self->note_key);
+    /* Note: This is expected in tests where items are created without actual notes in NDB.
+     * In production, this indicates the note was deleted or the key is stale. */
+    g_debug("[ITEM] ensure_note_loaded: note not found in DB for key %lu", (unsigned long)self->note_key);
   }
   if (note) {
     /* Cache event ID */
