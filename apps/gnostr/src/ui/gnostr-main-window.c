@@ -625,12 +625,9 @@ static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_he
     return;
   }
 
-  /* hq-xxnm5: Even if the profile is not in memory cache, skip if we
-   * recently fetched it from relays. This avoids redundant relay queries
-   * for profiles that were fetched but evicted from the LRU cache. */
-  if (!storage_ndb_is_profile_stale(pubkey_hex, 0)) {
-    return;
-  }
+  /* Note: Removed storage_ndb_is_profile_stale() check here as it causes
+   * main-thread NDB queries during scroll pagination, freezing the UI.
+   * Profile deduplication is handled by the provider cache check above. */
   
   if (!self->profile_fetch_queue)
     self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);

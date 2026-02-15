@@ -1019,7 +1019,7 @@ GHashTable *storage_ndb_count_replies_batch(const char * const *event_ids, guint
   if (!event_ids || n_ids == 0) return counts;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return counts;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return counts;
 
   for (guint i = 0; i < n_ids; i++) {
     if (!event_ids[i] || strlen(event_ids[i]) != 64) continue;
@@ -1070,7 +1070,7 @@ guint storage_ndb_count_reactions(const char *event_id_hex)
   if (!hex_to_id32(event_id_hex, id32)) return 0;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return 0;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return 0;
 
   guint reaction_count = 0;
   struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
@@ -1094,7 +1094,7 @@ GHashTable *storage_ndb_count_reposts_batch(const char * const *event_ids, guint
   if (!event_ids || n_ids == 0) return counts;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return counts;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return counts;
 
   for (guint i = 0; i < n_ids; i++) {
     if (!event_ids[i] || strlen(event_ids[i]) != 64) continue;
@@ -1439,7 +1439,7 @@ GHashTable *storage_ndb_count_reactions_batch(const char * const *event_ids, gui
   if (!event_ids || n_ids == 0) return counts;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return counts;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return counts;
 
   gchar *filter_json = storage_ndb_build_batch_filter(7, event_ids, n_ids, NULL);
 
@@ -1517,7 +1517,7 @@ GHashTable *storage_ndb_get_zap_stats_batch(const char * const *event_ids, guint
   if (!event_ids || n_ids == 0) return stats;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return stats;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return stats;
 
   gchar *filter_json = storage_ndb_build_batch_filter(9735, event_ids, n_ids, NULL);
 
@@ -1636,7 +1636,7 @@ gboolean storage_ndb_is_event_expired(uint64_t note_key)
   if (note_key == 0) return FALSE;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return FALSE;
 
   storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
   gboolean expired = storage_ndb_note_is_expired(note);
@@ -1977,7 +1977,7 @@ gboolean storage_ndb_is_profile_stale(const char *pubkey_hex, uint64_t stale_sec
   if (!hex_to_id32(pubkey_hex, pk32)) return TRUE;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return TRUE;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return TRUE;
 
   uint64_t last_fetch = storage_ndb_read_last_profile_fetch(txn, pk32);
   storage_ndb_end_query(txn);

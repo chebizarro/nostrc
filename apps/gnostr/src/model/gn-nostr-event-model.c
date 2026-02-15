@@ -2466,10 +2466,6 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
 
   gn_nostr_event_model_clear(self);
 
-  /* Open a quick read txn for profile cache fills */
-  void *txn = NULL;
-  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
-
   guint added = 0;
   for (guint i = 0; i < entries->len; i++) {
     RefreshEntry *e = g_ptr_array_index(entries, i);
@@ -2480,16 +2476,8 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
     if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
       continue;
 
-    /* nostrc-gate: Opportunistically cache profile, never gate display */
-    if (have_txn) {
-      uint8_t pk32[32];
-      if (hex_to_bytes32(e->pubkey_hex, pk32)) {
-        if (!profile_cache_ensure_from_db(self, txn, pk32, e->pubkey_hex)) {
-          /* Profile not in DB yet -- request background fetch */
-          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
-        }
-      }
-    } else if (!e->has_profile) {
+    /* Request profile fetch via signal - no main-thread NDB queries during refresh */
+    if (!e->has_profile) {
       g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
     }
 
@@ -2497,8 +2485,6 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
     if (insert_note_silent(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0))
       added++;
   }
-
-  if (have_txn) storage_ndb_end_query(txn);
 
   /* Evict before signal to avoid nested items_changed */
   enforce_window_inline(self);
@@ -2543,10 +2529,6 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
   gboolean trim_newer = GPOINTER_TO_INT(
       g_object_get_data(G_OBJECT(result), "paginate-trim-newer"));
 
-  /* Open a quick read txn for profile cache fills */
-  void *txn = NULL;
-  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
-
   guint old_len = self->notes->len;
   guint added = 0;
   for (guint i = 0; i < entries->len; i++) {
@@ -2561,14 +2543,8 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
       continue;
 
-    /* nostrc-gate: Opportunistically cache profile, never gate display */
-    if (have_txn) {
-      uint8_t pk32[32];
-      if (hex_to_bytes32(e->pubkey_hex, pk32)) {
-        if (!profile_cache_ensure_from_db(self, txn, pk32, e->pubkey_hex))
-          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
-      }
-    } else if (!e->has_profile) {
+    /* Request profile fetch via signal - no main-thread NDB queries during pagination */
+    if (!e->has_profile) {
       g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
     }
 
@@ -2595,8 +2571,6 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     g_hash_table_add(self->note_key_set, set_key);
     added++;
   }
-
-  if (have_txn) storage_ndb_end_query(txn);
 
   /* Emit ONE batched items_changed for all insertions */
   if (added > 0) {

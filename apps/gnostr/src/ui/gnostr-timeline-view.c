@@ -1269,16 +1269,10 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
 
-  /* Disconnect g_signal_connect_object handlers from the item.
-   * These were connected in factory_bind_cb with row or item as user_data. */
-  GObject *obj = gtk_list_item_get_item(item);
-  if (obj && G_IS_OBJECT(obj)) {
-    /* Lines 2298-2311: handlers with row as user_data */
-    if (GTK_IS_WIDGET(row))
-      g_signal_handlers_disconnect_by_data(obj, row);
-    /* Line 2273: handler with item (GtkListItem) as user_data */
-    g_signal_handlers_disconnect_by_data(obj, item);
-  }
+  /* NOTE: Signal disconnection no longer needed here!
+   * All property notify signals now use g_signal_connect_object() which
+   * automatically disconnects when the row widget is destroyed.
+   * Manual disconnection was causing race conditions and Pango crashes. */
 
   /* Disconnect accumulated "request-embed" handlers on the row (line 2283).
    * Plain g_signal_connect adds a new handler on every bind without disconnect. */
@@ -2170,28 +2164,29 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   g_free(pubkey);
 
   /* Connect reactive updates so that later metadata changes update UI.
-   * Use plain g_signal_connect (NOT g_signal_connect_object) because unbind
-   * explicitly disconnects all these via disconnect_by_data(obj, row).
-   * Combining explicit disconnect with g_signal_connect_object causes
-   * double-removal of invalidation notifiers → SIGABRT (nostrc-sig1 fix). */
+   * CRITICAL: Use g_signal_connect_object to prevent Pango crash during recycling.
+   * When using g_signal_connect, manual disconnection has a race condition:
+   * profile updates can trigger label updates on widgets in transitional state,
+   * causing: AddressSanitizer: SEGV in pango_layout_line_unref.
+   * g_signal_connect_object auto-disconnects when row is destroyed, eliminating race. */
   if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
-    g_signal_connect(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row);
-    g_signal_connect(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row);
-    g_signal_connect(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row);
+    g_signal_connect_object(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row, 0);
+    g_signal_connect_object(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row, 0);
+    g_signal_connect_object(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row, 0);
 
     /* NIP-25: Connect reaction count/state change handlers */
-    g_signal_connect(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row);
-    g_signal_connect(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row);
+    g_signal_connect_object(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row, 0);
+    g_signal_connect_object(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row, 0);
 
     /* NIP-18: Connect repost count change handler */
-    g_signal_connect(obj, "notify::repost-count", G_CALLBACK(on_item_notify_repost_count), row);
+    g_signal_connect_object(obj, "notify::repost-count", G_CALLBACK(on_item_notify_repost_count), row, 0);
 
     /* NIP-57: Connect zap stats change handlers */
-    g_signal_connect(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      row);
-    g_signal_connect(obj, "notify::zap-total-msat", G_CALLBACK(on_item_notify_zap_total_msat), row);
+    g_signal_connect_object(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      row, 0);
+    g_signal_connect_object(obj, "notify::zap-total-msat", G_CALLBACK(on_item_notify_zap_total_msat), row, 0);
 
     /* hq-vvmzu: Connect reply count change handler */
-    g_signal_connect(obj, "notify::reply-count",    G_CALLBACK(on_item_notify_reply_count),    row);
+    g_signal_connect_object(obj, "notify::reply-count",    G_CALLBACK(on_item_notify_reply_count),    row, 0);
   }
 }
 

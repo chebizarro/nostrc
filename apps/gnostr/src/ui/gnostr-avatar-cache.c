@@ -730,9 +730,19 @@ static void on_avatar_decode_done(GObject *source, GAsyncResult *res, gpointer u
   GtkWidget *initials = g_weak_ref_get(&ctx->initials_ref);
 
   if (image) {
-    if (GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL) {
+    /* CRITICAL: Triple validation to prevent GTK image definition crash:
+     * 1. Check widget is still a GtkPicture
+     * 2. Check widget has a native surface (not recycled)
+     * 3. Check widget is mapped (actually visible in UI hierarchy)
+     * Setting paintable on unmapped widgets can corrupt GtkImageDefinition */
+    if (GTK_IS_PICTURE(image) && 
+        gtk_widget_get_native(image) != NULL &&
+        gtk_widget_get_mapped(image)) {
       gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(tex));
       gtk_widget_set_visible(image, TRUE);
+    } else {
+      g_debug("avatar decode: image widget not ready (url=%s mapped=%d)", 
+              ctx->url, image ? gtk_widget_get_mapped(image) : 0);
     }
     g_object_unref(image);
   } else {
@@ -740,7 +750,9 @@ static void on_avatar_decode_done(GObject *source, GAsyncResult *res, gpointer u
   }
 
   if (initials) {
-    if (GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
+    if (GTK_IS_WIDGET(initials) && 
+        gtk_widget_get_native(initials) != NULL &&
+        gtk_widget_get_mapped(initials)) {
       gtk_widget_set_visible(initials, FALSE);
     }
     g_object_unref(initials);
