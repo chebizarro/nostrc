@@ -351,3 +351,356 @@ gn_test_assert_not_finalized(GnTestPointerWatch *watch)
         g_test_fail();
     }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+ * Main-Thread NDB Violation Detection
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* These are weak symbols — if storage_ndb was not compiled with
+ * GNOSTR_TESTING, the functions resolve to no-ops at link time.
+ * This lets the testkit work both with and without instrumentation. */
+
+void storage_ndb_testing_mark_main_thread(void) __attribute__((weak));
+void storage_ndb_testing_clear_main_thread(void) __attribute__((weak));
+unsigned storage_ndb_testing_get_violation_count(void) __attribute__((weak));
+void storage_ndb_testing_reset_violations(void) __attribute__((weak));
+const char *storage_ndb_testing_get_violation_func(unsigned index) __attribute__((weak));
+
+void
+gn_test_mark_main_thread(void)
+{
+    if (storage_ndb_testing_mark_main_thread)
+        storage_ndb_testing_mark_main_thread();
+}
+
+void
+gn_test_clear_main_thread(void)
+{
+    if (storage_ndb_testing_clear_main_thread)
+        storage_ndb_testing_clear_main_thread();
+}
+
+void
+gn_test_reset_ndb_violations(void)
+{
+    if (storage_ndb_testing_reset_violations)
+        storage_ndb_testing_reset_violations();
+}
+
+unsigned
+gn_test_get_ndb_violation_count(void)
+{
+    if (storage_ndb_testing_get_violation_count)
+        return storage_ndb_testing_get_violation_count();
+    return 0;
+}
+
+void
+gn_test_assert_no_ndb_violations(const char *context)
+{
+    unsigned count = gn_test_get_ndb_violation_count();
+    if (count == 0) return;
+
+    g_test_message("╔════════════════════════════════════════════════════╗");
+    g_test_message("║ MAIN-THREAD NDB VIOLATIONS: %u %s", count,
+                   context ? context : "");
+    g_test_message("╠════════════════════════════════════════════════════╣");
+
+    if (storage_ndb_testing_get_violation_func) {
+        unsigned show = count < 20 ? count : 20;
+        for (unsigned i = 0; i < show; i++) {
+            const char *fn = storage_ndb_testing_get_violation_func(i);
+            g_test_message("║  [%u] %s", i, fn ? fn : "(unknown)");
+        }
+        if (count > 20)
+            g_test_message("║  ... and %u more", count - 20);
+    }
+
+    g_test_message("╚════════════════════════════════════════════════════╝");
+    g_test_message("");
+    g_test_message("FIX: Move NDB transactions to a GTask worker thread.");
+    g_test_message("     Use g_task_run_in_thread() for storage_ndb queries,");
+    g_test_message("     then marshal results back to the main thread via");
+    g_test_message("     the GTask callback.");
+
+    g_test_fail_printf("Expected zero main-thread NDB violations %s, got %u",
+                       context ? context : "", count);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Realistic Event Corpus Generation
+ * ════════════════════════════════════════════════════════════════════ */
+
+static const char *short_texts[] = {
+    "gm ☀️",
+    "this is a test note",
+    "hello world from nostr!",
+    "just setting up my nostr",
+    "LFG 🚀",
+    "testing 1 2 3",
+    "nostr is the way",
+    "bitcoin fixes this",
+};
+
+static const char *medium_templates[] = {
+    "Just published a new article about #nostr development. "
+    "Check it out: https://example.com/article/%d\n\n"
+    "Key takeaways:\n- Decentralization matters\n- NIPs are evolving\n"
+    "#bitcoin #freedom",
+
+    "Interesting thread on the future of social media. "
+    "The key insight is that protocol-level identity (NIP-05) "
+    "combined with relay selection gives users real control. "
+    "https://relay.example.com/thread/%d #nostr #decentralization",
+
+    "Today I learned about NIP-57 zaps and how they work under the hood. "
+    "The bolt11 invoice parsing is surprisingly elegant. "
+    "Lightning payments + social media = unstoppable 🚀⚡ "
+    "https://nostr-resources.com/%d",
+};
+
+static const char *long_template =
+    "🧵 Thread on Nostr protocol internals (1/%d)\n\n"
+    "Let me break down how event propagation works in the nostr network. "
+    "When you publish an event, it gets sent to all your connected relays. "
+    "Each relay validates the event signature using secp256k1.\n\n"
+    "The relay then stores the event in its database (many use LMDB via nostrdb) "
+    "and notifies any clients that have active subscriptions matching the event's "
+    "kind, authors, or tags.\n\n"
+    "This is fundamentally different from centralized platforms where a single "
+    "server controls the entire message flow. In nostr, the client chooses which "
+    "relays to publish to and read from.\n\n"
+    "Key NIPs involved:\n"
+    "- NIP-01: Basic protocol\n"
+    "- NIP-02: Contact list\n"
+    "- NIP-10: Thread markers\n"
+    "- NIP-25: Reactions\n"
+    "- NIP-57: Zaps\n\n"
+    "The implications for censorship resistance are profound. No single entity "
+    "can silence a user because they can always find new relays to publish to. "
+    "The tradeoff is that content moderation becomes a client-side concern.\n\n"
+    "#nostr #protocol #decentralization #bitcoin #freedom #opensource 🔑";
+
+static const char *unicode_texts[] = {
+    "测试中文内容 🇨🇳 これはテストです 🇯🇵 한국어 테스트 🇰🇷\n"
+    "Mixed script: αβγδ Кириллица العربية\n"
+    "Emoji storm: 🎉🎊🎈🎁🎂🎄🎃🎇🎆✨🎍🎋🎏🎎🎌🏮",
+
+    "Zero-width: foo\u200Bbar\u200Cbaz\u200Dqux\uFEFFend\n"
+    "Combining marks: e\u0301 a\u0308 n\u0303 o\u0302\n"
+    "Surrogates: 𝕳𝖊𝖑𝖑𝖔 𝕹𝖔𝖘𝖙𝖗 🔐",
+};
+
+static const char *url_templates[] = {
+    "Check out this image: https://image.nostr.build/%08x.jpg\n"
+    "And this video: https://v.nostr.build/%08x.mp4\n"
+    "Also: https://nitter.net/status/%d https://stacker.news/items/%d\n"
+    "Source: https://github.com/nostr-protocol/nips/blob/master/01.md",
+
+    "Media dump:\nhttps://cdn.example.com/photo_%d.png\n"
+    "https://cdn.example.com/video_%d.webm\n"
+    "https://cdn.example.com/audio_%d.mp3\n"
+    "https://cdn.example.com/doc_%d.pdf\n"
+    "#media #content",
+};
+
+char *
+gn_test_make_realistic_event_json(int kind,
+                                   GnTestContentStyle style,
+                                   gint64 created_at)
+{
+    /* For MIXED style, pick a random sub-style */
+    GnTestContentStyle actual = style;
+    if (actual == GN_TEST_CONTENT_MIXED) {
+        actual = (GnTestContentStyle)g_random_int_range(0, GN_TEST_CONTENT_MENTIONS);
+    }
+
+    g_autofree char *content = NULL;
+    guint32 r = (guint32)g_random_int();
+
+    switch (actual) {
+    case GN_TEST_CONTENT_SHORT:
+        content = g_strdup(short_texts[r % G_N_ELEMENTS(short_texts)]);
+        break;
+    case GN_TEST_CONTENT_MEDIUM:
+        content = g_strdup_printf(
+            medium_templates[r % G_N_ELEMENTS(medium_templates)], r);
+        break;
+    case GN_TEST_CONTENT_LONG:
+        content = g_strdup_printf(long_template, r % 20 + 2);
+        break;
+    case GN_TEST_CONTENT_UNICODE:
+        content = g_strdup(unicode_texts[r % G_N_ELEMENTS(unicode_texts)]);
+        break;
+    case GN_TEST_CONTENT_URLS:
+        content = g_strdup_printf(
+            url_templates[r % G_N_ELEMENTS(url_templates)], r, r + 1, r + 2, r + 3);
+        break;
+    case GN_TEST_CONTENT_MENTIONS: {
+        char fake_npub[65] = {0};
+        random_hex(fake_npub, 32);
+        content = g_strdup_printf(
+            "nostr:%s mentioned something interesting about "
+            "#nostr development. The thread is worth reading.\n"
+            "cc nostr:%s",
+            fake_npub, fake_npub);
+        break;
+    }
+    default:
+        content = g_strdup("fallback content");
+        break;
+    }
+
+    return gn_test_make_event_json(kind, content, created_at);
+}
+
+char *
+gn_test_make_profile_event_json(const char *pubkey_hex,
+                                 const char *name,
+                                 const char *about,
+                                 const char *picture_url,
+                                 gint64 created_at)
+{
+    g_autofree char *escaped_name = g_strescape(name ? name : "", NULL);
+    g_autofree char *escaped_about = g_strescape(about ? about : "", NULL);
+
+    g_autofree char *content = NULL;
+    if (picture_url) {
+        g_autofree char *escaped_pic = g_strescape(picture_url, NULL);
+        content = g_strdup_printf(
+            "{\"name\":\"%s\",\"about\":\"%s\",\"picture\":\"%s\"}",
+            escaped_name, escaped_about, escaped_pic);
+    } else {
+        content = g_strdup_printf(
+            "{\"name\":\"%s\",\"about\":\"%s\"}",
+            escaped_name, escaped_about);
+    }
+
+    return gn_test_make_event_json_with_pubkey(0, content, created_at, pubkey_hex);
+}
+
+GPtrArray *
+gn_test_ingest_realistic_corpus(GnTestNdb *ndb, guint n_events, guint n_profiles)
+{
+    g_return_val_if_fail(ndb != NULL, NULL);
+
+    GPtrArray *pubkeys = g_ptr_array_new_with_free_func(g_free);
+
+    /* Generate unique pubkeys */
+    guint n_unique = MAX(n_profiles, 1);
+    for (guint i = 0; i < n_unique; i++) {
+        char pk[65] = {0};
+        random_hex(pk, 32);
+        g_ptr_array_add(pubkeys, g_strdup(pk));
+    }
+
+    /* Ingest profiles first (so model readiness checks pass) */
+    for (guint i = 0; i < n_unique && i < n_profiles; i++) {
+        const char *pk = g_ptr_array_index(pubkeys, i);
+        g_autofree char *name = g_strdup_printf("TestUser_%u", i);
+        g_autofree char *about = g_strdup_printf("Test profile #%u for corpus", i);
+        g_autofree char *pic_url = g_strdup_printf(
+            "https://robohash.org/%s.png", pk);
+        g_autofree char *json = gn_test_make_profile_event_json(
+            pk, name, about, pic_url, 1700000000 + i);
+        gn_test_ndb_ingest_json(ndb, json);
+    }
+
+    /* Ingest events with varied content styles */
+    for (guint i = 0; i < n_events; i++) {
+        GnTestContentStyle style = (GnTestContentStyle)(i % (GN_TEST_CONTENT_MIXED + 1));
+        gint64 ts = 1700000000 - (gint64)i;
+        g_autofree char *json = gn_test_make_realistic_event_json(1, style, ts);
+
+        /* Patch the pubkey to one of our known pubkeys so profile readiness works */
+        /* For simplicity, just create with explicit pubkey */
+        const char *pk = g_ptr_array_index(pubkeys, i % n_unique);
+        g_free(json);
+
+        /* Generate content based on style */
+        g_autofree char *content = NULL;
+        guint32 r = (guint32)g_random_int();
+        switch (style) {
+        case GN_TEST_CONTENT_SHORT:
+            content = g_strdup(short_texts[r % G_N_ELEMENTS(short_texts)]);
+            break;
+        case GN_TEST_CONTENT_MEDIUM:
+            content = g_strdup_printf(
+                medium_templates[r % G_N_ELEMENTS(medium_templates)], r);
+            break;
+        case GN_TEST_CONTENT_LONG:
+            content = g_strdup_printf(long_template, r % 20 + 2);
+            break;
+        case GN_TEST_CONTENT_UNICODE:
+            content = g_strdup(unicode_texts[r % G_N_ELEMENTS(unicode_texts)]);
+            break;
+        case GN_TEST_CONTENT_URLS:
+            content = g_strdup_printf(
+                url_templates[r % G_N_ELEMENTS(url_templates)], r, r + 1, r + 2, r + 3);
+            break;
+        default:
+            content = g_strdup_printf("Corpus note #%u with %s style", i,
+                style == GN_TEST_CONTENT_MENTIONS ? "mentions" : "mixed");
+            break;
+        }
+
+        json = gn_test_make_event_json_with_pubkey(1, content, ts, pk);
+        gn_test_ndb_ingest_json(ndb, json);
+    }
+
+    /* Wait for async ingestion to complete */
+    gn_test_ndb_wait_for_ingest();
+
+    return pubkeys;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Heartbeat (main-loop stall detection)
+ * ════════════════════════════════════════════════════════════════════ */
+
+static gboolean
+heartbeat_tick_cb(gpointer user_data)
+{
+    GnTestHeartbeat *hb = user_data;
+    gint64 now = g_get_monotonic_time();
+
+    if (hb->last_us > 0) {
+        gint64 gap = now - hb->last_us;
+        if (gap > hb->max_gap_us)
+            hb->max_gap_us = gap;
+        if (gap > hb->max_stall_us)
+            hb->missed_count++;
+    }
+
+    hb->last_us = now;
+    hb->count++;
+    return G_SOURCE_CONTINUE;
+}
+
+void
+gn_test_heartbeat_start(GnTestHeartbeat *hb, guint interval_ms, guint max_stall_ms)
+{
+    g_return_if_fail(hb != NULL);
+
+    memset(hb, 0, sizeof(*hb));
+    hb->interval_ms = interval_ms;
+    hb->max_stall_us = (gint64)max_stall_ms * 1000;
+    hb->source_id = g_timeout_add(interval_ms, heartbeat_tick_cb, hb);
+}
+
+void
+gn_test_heartbeat_stop(GnTestHeartbeat *hb)
+{
+    g_return_if_fail(hb != NULL);
+
+    if (hb->source_id > 0) {
+        g_source_remove(hb->source_id);
+        hb->source_id = 0;
+    }
+
+    g_test_message("Heartbeat summary: count=%u, missed=%u, max_gap=%.1fms, "
+                   "threshold=%.1fms",
+                   hb->count, hb->missed_count,
+                   hb->max_gap_us / 1000.0,
+                   hb->max_stall_us / 1000.0);
+}

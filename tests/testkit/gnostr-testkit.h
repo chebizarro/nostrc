@@ -232,6 +232,172 @@ void gn_test_assert_finalized(GnTestPointerWatch *watch);
  */
 void gn_test_assert_not_finalized(GnTestPointerWatch *watch);
 
+/* ════════════════════════════════════════════════════════════════════
+	* Main-Thread NDB Violation Detection Helpers
+	*
+	* Wraps the storage_ndb_testing_* API (which requires GNOSTR_TESTING
+	* to be defined at storage_ndb.c compile time).  These helpers provide
+	* a convenient test API plus diagnostic dump on failure.
+	* ════════════════════════════════════════════════════════════════════ */
+
+/**
+	* gn_test_mark_main_thread:
+	*
+	* Mark the current thread as the GTK main thread for NDB violation
+	* detection. Must be called from the main test thread (the one
+	* that runs gtk_test_init / g_test_init). All subsequent NDB
+	* transactions opened on this thread will be recorded as violations.
+	*/
+void gn_test_mark_main_thread(void);
+
+/**
+	* gn_test_clear_main_thread:
+	*
+	* Clear the main-thread marker. Call from test teardown.
+	*/
+void gn_test_clear_main_thread(void);
+
+/**
+	* gn_test_reset_ndb_violations:
+	*
+	* Reset the violation counter to zero. Call before each test.
+	*/
+void gn_test_reset_ndb_violations(void);
+
+/**
+	* gn_test_get_ndb_violation_count:
+	*
+	* Returns: the number of NDB transactions opened on the main thread
+	* since the last reset.
+	*/
+unsigned gn_test_get_ndb_violation_count(void);
+
+/**
+	* gn_test_assert_no_ndb_violations:
+	* @context: descriptive string for error messages (e.g., "during bind")
+	*
+	* Asserts that zero main-thread NDB violations occurred. On failure,
+	* dumps the first N violation function names for diagnosis.
+	*/
+void gn_test_assert_no_ndb_violations(const char *context);
+
+/* ════════════════════════════════════════════════════════════════════
+	* Realistic Event Corpus Generation
+	*
+	* Generates events with varied, realistic content for integration
+	* tests that exercise real code paths (Pango rendering, URL parsing,
+	* NDB storage).
+	* ════════════════════════════════════════════════════════════════════ */
+
+/**
+	* GnTestContentStyle:
+	* @GN_TEST_CONTENT_SHORT: Short text (< 100 chars)
+	* @GN_TEST_CONTENT_MEDIUM: Medium text with URLs and hashtags
+	* @GN_TEST_CONTENT_LONG: Long multi-paragraph text
+	* @GN_TEST_CONTENT_UNICODE: Unicode-heavy content (CJK, emoji, ZWS)
+	* @GN_TEST_CONTENT_URLS: Multiple URLs and media links
+	* @GN_TEST_CONTENT_MENTIONS: Content with nostr mentions (npub/note refs)
+	* @GN_TEST_CONTENT_MIXED: Random mix of all styles
+	*/
+typedef enum {
+	GN_TEST_CONTENT_SHORT    = 0,
+	GN_TEST_CONTENT_MEDIUM   = 1,
+	GN_TEST_CONTENT_LONG     = 2,
+	GN_TEST_CONTENT_UNICODE  = 3,
+	GN_TEST_CONTENT_URLS     = 4,
+	GN_TEST_CONTENT_MENTIONS = 5,
+	GN_TEST_CONTENT_MIXED    = 6,
+} GnTestContentStyle;
+
+/**
+	* gn_test_make_realistic_event_json:
+	* @kind: event kind (1 = text note, 0 = profile metadata)
+	* @style: content style to generate
+	* @created_at: Unix timestamp
+	*
+	* Generates a realistic nostr event JSON string with content that
+	* exercises real parsing paths (URLs, hashtags, unicode, newlines).
+	*
+	* Returns: (transfer full): a JSON string, free with g_free()
+	*/
+char *gn_test_make_realistic_event_json(int kind,
+											GnTestContentStyle style,
+											gint64 created_at);
+
+/**
+	* gn_test_make_profile_event_json:
+	* @pubkey_hex: 64-character hex pubkey
+	* @name: display name
+	* @about: (nullable): about text
+	* @picture_url: (nullable): avatar URL
+	* @created_at: Unix timestamp
+	*
+	* Generates a kind-0 profile metadata event for a given pubkey.
+	*
+	* Returns: (transfer full): a JSON string, free with g_free()
+	*/
+char *gn_test_make_profile_event_json(const char *pubkey_hex,
+										const char *name,
+										const char *about,
+										const char *picture_url,
+										gint64 created_at);
+
+/**
+	* gn_test_ingest_realistic_corpus:
+	* @ndb: a #GnTestNdb
+	* @n_events: number of kind-1 events to ingest
+	* @n_profiles: number of kind-0 profiles to ingest (one per unique pubkey)
+	*
+	* Ingests a corpus of realistic events + matching profiles into the
+	* test NDB. Events have varied content lengths and styles.
+	* Profiles ensure that model readiness filters pass.
+	*
+	* Returns: (transfer full) (element-type utf8): array of pubkey hex
+	* strings used. Free with g_ptr_array_unref().
+	*/
+GPtrArray *gn_test_ingest_realistic_corpus(GnTestNdb *ndb,
+											guint n_events,
+											guint n_profiles);
+
+/* ════════════════════════════════════════════════════════════════════
+	* Heartbeat (main-loop stall detection)
+	* ════════════════════════════════════════════════════════════════════ */
+
+/**
+	* GnTestHeartbeat:
+	*
+	* Lightweight main-loop stall detector. Installs a periodic GSource
+	* that tracks the gap between invocations. After the test, check
+	* max_gap_us and missed_count.
+	*/
+typedef struct {
+	guint  source_id;
+	guint  interval_ms;
+	guint  count;
+	guint  missed_count;
+	gint64 last_us;
+	gint64 max_gap_us;
+	gint64 max_stall_us;
+} GnTestHeartbeat;
+
+/**
+	* gn_test_heartbeat_start:
+	* @hb: heartbeat struct to initialize
+	* @interval_ms: heartbeat interval (e.g. 5 for 5ms)
+	* @max_stall_ms: stall threshold; gaps exceeding this count as "missed"
+	*
+	* Starts a heartbeat timer on the default main context.
+	*/
+void gn_test_heartbeat_start(GnTestHeartbeat *hb, guint interval_ms, guint max_stall_ms);
+
+/**
+	* gn_test_heartbeat_stop:
+	* @hb: heartbeat to stop
+	*
+	* Stops the heartbeat timer and logs summary statistics.
+	*/
+void gn_test_heartbeat_stop(GnTestHeartbeat *hb);
+
 G_END_DECLS
 
 #endif /* GNOSTR_TESTKIT_H */

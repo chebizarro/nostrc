@@ -432,6 +432,54 @@ guint storage_ndb_cursor_total_fetched(StorageNdbCursor *cursor);
 /* Free cursor and all resources. Safe to call on NULL. */
 void storage_ndb_cursor_free(StorageNdbCursor *cursor);
 
+/* ============== Test Instrumentation API (GNOSTR_TESTING) ============== */
+
+#ifdef GNOSTR_TESTING
+
+/**
+	* storage_ndb_testing_mark_main_thread:
+	*
+	* Mark the current thread as the GLib/GTK main thread.
+	* After calling this, any NDB transaction opened on this thread
+	* will be recorded as a violation. Call from test setUp.
+	*/
+void storage_ndb_testing_mark_main_thread(void);
+
+/**
+	* storage_ndb_testing_clear_main_thread:
+	*
+	* Clear the main-thread marker. Call from test tearDown.
+	*/
+void storage_ndb_testing_clear_main_thread(void);
+
+/**
+	* storage_ndb_testing_get_violation_count:
+	*
+	* Returns: the total number of main-thread NDB transaction violations
+	* since the last reset. Each call to storage_ndb_begin_query() or
+	* storage_ndb_begin_query_retry() on the marked main thread increments
+	* this counter.
+	*/
+unsigned storage_ndb_testing_get_violation_count(void);
+
+/**
+	* storage_ndb_testing_reset_violations:
+	*
+	* Reset the violation counter and log to zero. Call before each test.
+	*/
+void storage_ndb_testing_reset_violations(void);
+
+/**
+	* storage_ndb_testing_get_violation_func:
+	* @index: violation index (0-based, wraps at 256)
+	*
+	* Returns: (nullable): the function name that caused the violation,
+	* or NULL if the index is out of range. Useful for diagnostic output.
+	*/
+const char *storage_ndb_testing_get_violation_func(unsigned index);
+
+#endif /* GNOSTR_TESTING */
+
 #ifdef __cplusplus
 }
 #endif

@@ -139,8 +139,15 @@ set(NOSTR_GOBJECT_HEADERS
 # ── Library target ───────────────────────────────────────────────────
 add_library(nostr_gobject ${NOSTR_GOBJECT_SOURCES})
 
+# Enable main-thread NDB transaction violation detection for test builds.
+# This adds lightweight instrumentation to storage_ndb_begin_query() that
+# records violations when called on the marked main thread.
+if(BUILD_TESTING)
+ target_compile_definitions(nostr_gobject PRIVATE GNOSTR_TESTING)
+endif()
+
 set_target_properties(nostr_gobject PROPERTIES
-  OUTPUT_NAME nostr-gobject-1.0
+   OUTPUT_NAME nostr-gobject-1.0
   VERSION     ${NOSTR_GOBJECT_VERSION}
   SOVERSION   ${NOSTR_GOBJECT_MAJOR_VERSION}
 )

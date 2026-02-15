@@ -360,6 +360,88 @@ static void test_fast_operation(void) {
 
 ---
 
+## Real-Component Integration Tests
+
+### The Problem with Mocks
+
+The original test suite used `MockEventItem` objects with static string properties.
+These mocks exercise the GTK recycling mechanism correctly but **skip the actual
+code paths that cause bugs**: NDB transactions, Pango content rendering, async HTTP
+fetches, and widget lifecycle complexity.
+
+| Real Component | What Mocks Skip |
+|---|---|
+| `GnNostrEventItem` + lazy NDB load | NDB transactions on main thread, content copying |
+| `NostrGtkNoteCardRow` (6300+ lines) | Pango layout, async HTTP, GStreamer video |
+| `storage_ndb_begin_query_retry` | `usleep()` blocking the main loop |
+| `gnostr_render_content()` | Synchronous content parsing |
+
+### Main-Thread NDB Violation Detection
+
+The core architectural test uses **instrumentation** in `storage_ndb.c` (enabled via
+`-DGNOSTR_TESTING`) to detect when NDB read transactions are opened on the main thread.
+
+```c
+// In your test setUp:
+gn_test_mark_main_thread();
+gn_test_reset_ndb_violations();
+
+// Exercise the code path...
+const char *content = gn_nostr_event_item_get_content(item);
+
+// Assert zero violations:
+gn_test_assert_no_ndb_violations("during item property access");
+```
+
+On failure, the assertion dumps diagnostic output:
+
+```
+╔════════════════════════════════════════════════════╗
+║ MAIN-THREAD NDB VIOLATIONS: 3 during bind
+╠════════════════════════════════════════════════════╣
+║  [0] storage_ndb_begin_query
+║  [1] storage_ndb_begin_query_retry
+║  [2] storage_ndb_begin_query
+╚════════════════════════════════════════════════════╝
+
+FIX: Move NDB transactions to a GTask worker thread.
+```
+
+### Key Real-Component Tests
+
+| Test | File | What It Catches |
+|------|------|-----------------|
+| NDB violations during item access | `test_ndb_main_thread_violations.c` | Lazy NDB loads on main thread |
+| NDB violations during model refresh | Same | Model queries on main thread |
+| NDB violations during batch metadata | Same | Batch reaction/zap queries on main thread |
+| Real bind with NDB violation counter | `test_real_bind_latency.c` | NDB txns during GtkListView bind |
+| Real bind with heartbeat stall detection | Same | Actual UI stalls during scroll |
+| Real NDB memory benchmark | `gnostr_bench_real_memory.c` | Memory with realistic content corpus |
+
+### Testkit Enhancements
+
+The testkit now includes:
+
+- **`gn_test_mark_main_thread()`** — Mark current thread for NDB violation detection
+- **`gn_test_assert_no_ndb_violations(ctx)`** — Assert zero violations with diagnostics
+- **`gn_test_ingest_realistic_corpus(ndb, n_events, n_profiles)`** — Ingest varied content
+- **`gn_test_make_realistic_event_json(kind, style, ts)`** — Content styles: short, medium, long, unicode, URLs, mentions
+- **`gn_test_make_profile_event_json(pk, name, about, pic, ts)`** — Kind-0 profiles
+- **`gn_test_heartbeat_start/stop(hb, interval_ms, max_stall_ms)`** — Stall detection
+
+### How to Use This for Iterative Bug Fixing
+
+The test harness is designed for LLM-assisted iterative development:
+
+1. **Run `gnostr-test-ndb-main-thread-violations`** — It will FAIL with a list of functions calling NDB on the main thread
+2. **Fix one violation at a time** — Move the NDB call to a `g_task_run_in_thread()` worker
+3. **Re-run the test** — The violation count decreases
+4. **Repeat until zero violations** — The test passes
+
+The violation counter is **deterministic** — it doesn't depend on timing, system load, or randomness. Each violation is a concrete function call that must be moved off the main thread.
+
+---
+
 ## Related Documentation
 
 - [`docs/TESTING_ARCHITECTURE.md`](TESTING_ARCHITECTURE.md) — Mock relay testing architecture

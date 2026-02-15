@@ -48,6 +48,83 @@ static void *g_sub_cb_ctx = NULL;
 static guint64 g_ingest_count = 0;
 static guint64 g_ingest_bytes = 0;
 
+/* ═══════════════════════════════════════════════════════════════════
+ * Main-thread NDB transaction violation detection (GNOSTR_TESTING)
+ *
+ * When enabled, every call to storage_ndb_begin_query() and
+ * storage_ndb_begin_query_retry() checks whether it is running on
+ * the GLib main thread.  If so, it records a violation with the
+ * caller's function name.  Tests can then assert zero violations
+ * after exercising the widget/model bind paths.
+ *
+ * This catches the core architectural issue: NDB read transactions
+ * and especially retry-with-usleep blocking the GTK main loop.
+ * ═══════════════════════════════════════════════════════════════════ */
+#ifdef GNOSTR_TESTING
+
+#include <stdatomic.h>
+
+/* The thread ID of the GLib main thread (set by test harness) */
+static GThread *gn_test_main_thread = NULL;
+
+/* Violation log — circular buffer of recent violations */
+#define GN_TEST_MAX_VIOLATIONS 256
+
+typedef struct {
+    const char *func_name;
+    gint64      timestamp_us;
+    int         retry_attempts; /* 0 for plain begin_query */
+} GnTestNdbViolation;
+
+static GnTestNdbViolation gn_test_violations[GN_TEST_MAX_VIOLATIONS];
+static atomic_uint gn_test_violation_count = 0;
+
+static inline void
+gn_test_record_violation(const char *func, int retry_attempts)
+{
+    if (!gn_test_main_thread) return;
+    if (g_thread_self() != gn_test_main_thread) return;
+
+    unsigned idx = atomic_fetch_add(&gn_test_violation_count, 1);
+    unsigned slot = idx % GN_TEST_MAX_VIOLATIONS;
+    gn_test_violations[slot].func_name = func;
+    gn_test_violations[slot].timestamp_us = g_get_monotonic_time();
+    gn_test_violations[slot].retry_attempts = retry_attempts;
+
+    g_warning("MAIN-THREAD NDB TXN VIOLATION #%u: %s called on main thread "
+              "(retry_attempts=%d)", idx + 1, func, retry_attempts);
+}
+
+/* Public API for test harnesses (declared in storage_ndb.h under #ifdef) */
+void storage_ndb_testing_mark_main_thread(void)
+{
+    gn_test_main_thread = g_thread_self();
+}
+
+void storage_ndb_testing_clear_main_thread(void)
+{
+    gn_test_main_thread = NULL;
+}
+
+unsigned storage_ndb_testing_get_violation_count(void)
+{
+    return atomic_load(&gn_test_violation_count);
+}
+
+void storage_ndb_testing_reset_violations(void)
+{
+    atomic_store(&gn_test_violation_count, 0);
+    memset(gn_test_violations, 0, sizeof(gn_test_violations));
+}
+
+const char *storage_ndb_testing_get_violation_func(unsigned index)
+{
+    if (index >= GN_TEST_MAX_VIOLATIONS) return NULL;
+    return gn_test_violations[index % GN_TEST_MAX_VIOLATIONS].func_name;
+}
+
+#endif /* GNOSTR_TESTING */
+
 guint64 storage_ndb_get_ingest_count(void) { return g_ingest_count; }
 guint64 storage_ndb_get_ingest_bytes(void) { return g_ingest_bytes; }
 
@@ -264,8 +341,11 @@ void storage_ndb_ingest_events_async(GPtrArray *jsons)
 
 int storage_ndb_begin_query(void **txn_out)
 {
-  if (!g_store || !txn_out) return LN_ERR_DB_TXN;
-  return ln_store_begin_query(g_store, txn_out);
+   if (!g_store || !txn_out) return LN_ERR_DB_TXN;
+#ifdef GNOSTR_TESTING
+   gn_test_record_violation("storage_ndb_begin_query", 0);
+#endif
+   return ln_store_begin_query(g_store, txn_out);
 }
 
 int storage_ndb_end_query(void *txn)
@@ -277,6 +357,9 @@ int storage_ndb_end_query(void *txn)
 int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms)
 {
   if (!txn_out) return LN_ERR_DB_TXN;
+#ifdef GNOSTR_TESTING
+  gn_test_record_violation("storage_ndb_begin_query_retry", attempts);
+#endif
   int rc = 0;
   void *txn = NULL;
   if (attempts <= 0) attempts = 1;

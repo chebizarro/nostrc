@@ -19,6 +19,9 @@ target_include_directories(gnostr-testkit
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Enable storage_ndb test instrumentation (main-thread violation detection)
+target_compile_definitions(gnostr-testkit PUBLIC GNOSTR_TESTING)
+
 # Testkit links against nostr-gobject (for storage_ndb functions)
 # and GLib/GIO for main loop and file system utilities.
 target_link_libraries(gnostr-testkit

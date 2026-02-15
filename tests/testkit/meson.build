@@ -14,6 +14,7 @@ gnostr_testkit_lib = static_library(
   sources: ['gnostr-testkit.c'],
   include_directories: include_directories('.'),
   dependencies: [glib_dep, gio_dep, nostr_gobject_dep],
+  c_args: ['-DGNOSTR_TESTING'],
 )
 
 gnostr_testkit_dep = declare_dependency(
