@@ -91,11 +91,12 @@ size_t gof_list(gof_info *out, size_t max) {
 void gof_dump_stacks(int fd) {
   char buf[512];
   int len;
+  ssize_t rc;
 
   pthread_mutex_lock(&registry_mu);
 
   len = snprintf(buf, sizeof(buf), "=== Fiber Stack Dump ===\n");
-  if (len > 0) write(fd, buf, (size_t)len);
+  if (len > 0) { rc = write(fd, buf, (size_t)len); (void)rc; }
 
   size_t count = 0;
   for (fiber_node *node = fiber_registry; node; node = node->next) {
@@ -115,12 +116,12 @@ void gof_dump_stacks(int fd) {
                    state_str,
                    f->name ? f->name : "(unnamed)",
                    f->stack.size);
-    if (len > 0) write(fd, buf, (size_t)len);
+    if (len > 0) { rc = write(fd, buf, (size_t)len); (void)rc; }
     count++;
   }
 
   len = snprintf(buf, sizeof(buf), "=== Total: %zu fibers ===\n", count);
-  if (len > 0) write(fd, buf, (size_t)len);
+  if (len > 0) { rc = write(fd, buf, (size_t)len); (void)rc; }
 
   pthread_mutex_unlock(&registry_mu);
 }

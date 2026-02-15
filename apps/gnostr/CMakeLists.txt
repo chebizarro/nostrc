@@ -209,6 +209,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${PROJECT_ROOT}/libnostr/include
   ${_NOSTR_CONFIG_DIR}
   ${PROJECT_ROOT}/libgo/include
+  ${PROJECT_ROOT}/libgo/fiber/include
   ${PROJECT_ROOT}/nips/nip04/include
   ${PROJECT_ROOT}/nips/nip11/include
   ${PROJECT_ROOT}/nips/nip44/include
@@ -233,6 +234,15 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Link nostr-gobject (GObject wrappers) and nostr-gtk (GTK4 widgets)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
+
+# libgo fiber runtime (background scheduler API used by main_app.c)
+if (TARGET go_fiber)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE go_fiber)
+endif()
+if (TARGET libgo)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE libgo)
+endif()
+
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
