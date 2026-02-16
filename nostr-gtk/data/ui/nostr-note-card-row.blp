@@ -7,6 +7,7 @@ template $NostrGtkNoteCardRow: Widget {
         orientation: vertical;
         hexpand: false;
         vexpand: false;
+        overflow: hidden;
 
         styles [
             "note-card",
@@ -317,6 +318,7 @@ template $NostrGtkNoteCardRow: Widget {
                 Frame embed_box {
                     visible: false;
                     hexpand: false;
+                    overflow: hidden;
 
                     styles [
                         "note-embed",

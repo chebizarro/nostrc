@@ -7,6 +7,7 @@
 #include "gnostr-note-embed.h"
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
+#include "../util/content_renderer.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-event.h>
@@ -728,8 +729,16 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
   }
 
   if (GTK_IS_LABEL(self->content_label)) {
-    g_autofree char *truncated = truncate_content(content, 200);
-    gtk_label_set_text(GTK_LABEL(self->content_label), truncated);
+    /* Use content renderer to format nostr: URIs and other special content.
+     * Don't pre-truncate - let the label's lines/ellipsize handle visual truncation
+     * so URLs and nostr: refs are properly formatted before being cut off. */
+    if (content && *content) {
+      GnContentRenderResult *render = gnostr_render_content(content, -1);
+      gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
+      gnostr_content_render_result_free(render);
+    } else {
+      gtk_label_set_text(GTK_LABEL(self->content_label), "");
+    }
   }
 
   load_avatar(self, avatar_url, author_display, author_handle);
