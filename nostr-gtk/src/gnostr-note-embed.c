@@ -24,7 +24,7 @@
 #include <libsoup/soup.h>
 #endif
 
-#define UI_RESOURCE "/org/nostr-gtk/ui/widgets/gnostr-note-embed.ui"
+#define UI_RESOURCE "/org/nostr/gtk/ui/widgets/gnostr-note-embed.ui"
 
 typedef enum {
   EMBED_TYPE_UNKNOWN,
