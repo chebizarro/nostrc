@@ -468,125 +468,131 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="max-sidebar-width">480</property>
                         <property name="content">
                           <object class="GtkOverlay" id="content_root">
-                            <property name="hexpand">true</property>
-                            <property name="vexpand">true</property>
                             <child>
-                              <object class="AdwViewStack" id="stack">
+                              <object class="AdwClamp" id="middle_clamp">
+                                <property name="maximum-size">760</property>
+                                <property name="tightening-threshold">560</property>
                                 <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">timeline</property>
-                                    <property name="title" translatable="yes">Timeline</property>
-                                    <property name="icon-name">view-list-symbolic</property>
-                                    <property name="child">
-                                      <object class="NostrGtkTimelineView" id="timeline">
-                                        <property name="vexpand">true</property>
-                                      </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">notifications</property>
-                                    <property name="title" translatable="yes">Notifications</property>
-                                    <property name="icon-name">preferences-system-notifications-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrNotificationsView" id="notifications_view">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
-                                      </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">messages</property>
-                                    <property name="title" translatable="yes">Messages</property>
-                                    <property name="icon-name">mail-unread-symbolic</property>
-                                    <property name="child">
-                                      <object class="GtkStack" id="dm_stack">
-                                        <property name="transition-type">6</property>
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
-                                        <child>
-                                          <object class="GtkStackPage">
-                                            <property name="name">inbox</property>
-                                            <property name="child">
-                                              <object class="GnostrDmInboxView" id="dm_inbox">
-                                                <property name="hexpand">true</property>
-                                                <property name="vexpand">true</property>
-                                              </object>
-                                            </property>
+                                <property name="halign">3</property>
+                                <property name="child">
+                                  <object class="AdwViewStack" id="stack">
+                                    <property name="vexpand">true</property>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">timeline</property>
+                                        <property name="title" translatable="yes">Timeline</property>
+                                        <property name="icon-name">view-list-symbolic</property>
+                                        <property name="child">
+                                          <object class="NostrGtkTimelineView" id="timeline">
+                                            <property name="vexpand">true</property>
                                           </object>
-                                        </child>
-                                        <child>
-                                          <object class="GtkStackPage">
-                                            <property name="name">conversation</property>
-                                            <property name="child">
-                                              <object class="GnostrDmConversationView" id="dm_conversation">
-                                                <property name="hexpand">true</property>
-                                                <property name="vexpand">true</property>
-                                              </object>
-                                            </property>
+                                        </property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">notifications</property>
+                                        <property name="title" translatable="yes">Notifications</property>
+                                        <property name="icon-name">preferences-system-notifications-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrNotificationsView" id="notifications_view">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
                                           </object>
-                                        </child>
+                                        </property>
                                       </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">discover</property>
-                                    <property name="title" translatable="yes">Discover</property>
-                                    <property name="icon-name">system-search-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrPageDiscover" id="discover_page">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">messages</property>
+                                        <property name="title" translatable="yes">Messages</property>
+                                        <property name="icon-name">mail-unread-symbolic</property>
+                                        <property name="child">
+                                          <object class="GtkStack" id="dm_stack">
+                                            <property name="transition-type">6</property>
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                            <child>
+                                              <object class="GtkStackPage">
+                                                <property name="name">inbox</property>
+                                                <property name="child">
+                                                  <object class="GnostrDmInboxView" id="dm_inbox">
+                                                    <property name="hexpand">true</property>
+                                                    <property name="vexpand">true</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkStackPage">
+                                                <property name="name">conversation</property>
+                                                <property name="child">
+                                                  <object class="GnostrDmConversationView" id="dm_conversation">
+                                                    <property name="hexpand">true</property>
+                                                    <property name="vexpand">true</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </property>
                                       </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">search</property>
-                                    <property name="title" translatable="yes">Search</property>
-                                    <property name="icon-name">edit-find-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrSearchResultsView" id="search_results_view">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">discover</property>
+                                        <property name="title" translatable="yes">Discover</property>
+                                        <property name="icon-name">system-search-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrPageDiscover" id="discover_page">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
                                       </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">classifieds</property>
-                                    <property name="title" translatable="yes">Marketplace</property>
-                                    <property name="icon-name">emblem-shopping-cart-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrClassifiedsView" id="classifieds_view">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">search</property>
+                                        <property name="title" translatable="yes">Search</property>
+                                        <property name="icon-name">edit-find-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrSearchResultsView" id="search_results_view">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
                                       </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">repos</property>
-                                    <property name="title" translatable="yes">Git Repos</property>
-                                    <property name="icon-name">folder-remote-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrRepoBrowser" id="repo_browser">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">classifieds</property>
+                                        <property name="title" translatable="yes">Marketplace</property>
+                                        <property name="icon-name">emblem-shopping-cart-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrClassifiedsView" id="classifieds_view">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
                                       </object>
-                                    </property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">repos</property>
+                                        <property name="title" translatable="yes">Git Repos</property>
+                                        <property name="icon-name">folder-remote-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrRepoBrowser" id="repo_browser">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
+                                      </object>
+                                    </child>
                                   </object>
-                                </child>
+                                </property>
                               </object>
                             </child>
                             <child type="overlay">

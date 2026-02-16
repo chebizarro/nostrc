@@ -952,7 +952,11 @@ gnostr_page_discover_dispose(GObject *object)
         self->scheduled_activities = NULL;
     }
 
-    g_clear_object(&self->profile_model);
+    /* Disconnect signal handlers before clearing model to prevent use-after-free */
+    if (self->profile_model) {
+        g_signal_handlers_disconnect_by_data(self->profile_model, self);
+        g_clear_object(&self->profile_model);
+    }
     g_clear_object(&self->local_selection);
     g_clear_object(&self->local_factory);
     g_clear_object(&self->network_results_model);

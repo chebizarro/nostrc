@@ -3037,7 +3037,8 @@ static void realize_pending_media_widgets(NostrGtkNoteCardRow *self) {
     } else {
       GnostrVideoPlayer *player = gnostr_video_player_new();
       gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
-      int w = item->width > 0 ? item->width : 608;
+      /* Cap width to 608 to prevent horizontal expansion (nostrc-lx32) */
+      int w = item->width > 0 && item->width < 608 ? item->width : 608;
       gtk_widget_set_size_request(GTK_WIDGET(player), w, item->height);
       if (item->alt_text && *item->alt_text) {
         gtk_widget_set_tooltip_text(GTK_WIDGET(player), item->alt_text);
@@ -4970,6 +4971,7 @@ void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
     gtk_widget_set_visible(self->article_image_box, FALSE);
 
     self->article_image = gtk_picture_new();
+    gtk_picture_set_can_shrink(GTK_PICTURE(self->article_image), TRUE);
     gtk_picture_set_content_fit(GTK_PICTURE(self->article_image), GTK_CONTENT_FIT_COVER);
     gtk_widget_set_size_request(self->article_image, -1, 180);
     gtk_widget_add_css_class(self->article_image, "article-header-image");
@@ -5307,6 +5309,7 @@ void nostr_gtk_note_card_row_set_video_mode(NostrGtkNoteCardRow *self,
 
     /* Create thumbnail picture */
     self->video_thumb_picture = gtk_picture_new();
+    gtk_picture_set_can_shrink(GTK_PICTURE(self->video_thumb_picture), TRUE);
     gtk_picture_set_content_fit(GTK_PICTURE(self->video_thumb_picture), GTK_CONTENT_FIT_COVER);
     gtk_widget_add_css_class(self->video_thumb_picture, "video-thumbnail");
     gtk_overlay_set_child(GTK_OVERLAY(self->video_overlay), self->video_thumb_picture);

@@ -426,19 +426,22 @@ template $GnostrSessionView: Adw.Bin {
                         max-sidebar-width: 480;
 
                         content: Overlay content_root {
-                            hexpand: true;
-                            vexpand: true;
-
-                            Adw.ViewStack stack {
+                            Adw.Clamp middle_clamp {
+                                maximum-size: 760;
+                                tightening-threshold: 560;
                                 hexpand: true;
                                 vexpand: true;
+                                halign: center;
+
+                                child: Adw.ViewStack stack {
+                                    vexpand: true;
 
                                     Adw.ViewStackPage {
                                         name: "timeline";
                                         title: _("Timeline");
                                         icon-name: "view-list-symbolic";
 
-                                        child: $GnostrTimelineView timeline {
+                                        child: $NostrGtkTimelineView timeline {
                                             vexpand: true;
                                         };
                                     }
@@ -527,6 +530,7 @@ template $GnostrSessionView: Adw.Bin {
                                             vexpand: true;
                                         };
                                     }
+                                };
                             }
 
                             [overlay]
@@ -573,13 +577,13 @@ template $GnostrSessionView: Adw.Bin {
                             orientation: vertical;
                             hexpand: true;
 
-                            $GnostrProfilePane profile_pane {
+                            $NostrGtkProfilePane profile_pane {
                                 hexpand: true;
                                 vexpand: true;
                                 visible: false;
                             }
 
-                            $GnostrThreadView thread_view {
+                            $NostrGtkThreadView thread_view {
                                 hexpand: true;
                                 vexpand: true;
                                 visible: false;

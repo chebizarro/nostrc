@@ -7,11 +7,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="NostrGtkNoteCardRow" parent="GtkWidget">
-    <property name="hexpand">true</property>
+    <property name="hexpand">false</property>
     <child>
       <object class="GtkBox" id="root">
         <property name="orientation">1</property>
-        <property name="hexpand">true</property>
+        <property name="hexpand">false</property>
         <property name="vexpand">false</property>
         <style>
           <class name="note-card"/>
@@ -318,11 +318,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="orientation">1</property>
                     <property name="spacing">6</property>
                     <property name="visible">false</property>
+                    <property name="hexpand">false</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkFrame" id="embed_box">
                     <property name="visible">false</property>
+                    <property name="hexpand">false</property>
                     <style>
                       <class name="note-embed"/>
                     </style>
@@ -332,6 +334,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkBox" id="og_preview_container">
                     <property name="orientation">1</property>
                     <property name="visible">false</property>
+                    <property name="hexpand">false</property>
                   </object>
                 </child>
                 <child>

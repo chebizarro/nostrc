@@ -1,11 +1,11 @@
 using Gtk 4.0;
 
-template $GnostrNoteCardRow: Widget {
-    hexpand: true;
+template $NostrGtkNoteCardRow: Widget {
+    hexpand: false;
 
     Box root {
         orientation: vertical;
-        hexpand: true;
+        hexpand: false;
         vexpand: false;
 
         styles [
@@ -183,7 +183,6 @@ template $GnostrNoteCardRow: Widget {
                                 "dim-label",
                             ]
                         }
-
                     }
 
                     Box header_bottom {
@@ -240,8 +239,8 @@ template $GnostrNoteCardRow: Widget {
             Box content_column {
                 orientation: vertical;
                 spacing: 8;
-                /* nostrc-1tn9: Don't use hexpand which can force window to grow */
 
+                /* nostrc-1tn9: Don't use hexpand which can force window to grow */
                 Overlay sensitive_content_overlay {
                     visible: false;
 
@@ -309,10 +308,12 @@ template $GnostrNoteCardRow: Widget {
                     orientation: vertical;
                     spacing: 6;
                     visible: false;
+                    hexpand: false;
                 }
 
                 Frame embed_box {
                     visible: false;
+                    hexpand: false;
 
                     styles [
                         "note-embed",
@@ -322,6 +323,7 @@ template $GnostrNoteCardRow: Widget {
                 Box og_preview_container {
                     orientation: vertical;
                     visible: false;
+                    hexpand: false;
                 }
 
                 FlowBox labels_box {
