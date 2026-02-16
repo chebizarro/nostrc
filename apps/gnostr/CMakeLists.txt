@@ -939,6 +939,11 @@ if (BUILD_TESTING)
       SOURCES tests/integ/test_model_delete_authorization.c
               src/model/gn-nostr-event-model.c
               src/model/gn-nostr-event-item.c
+              src/util/relays.c
+              src/util/relay_info.c
+              src/util/utils.c
+              src/ipc/signer_ipc.c
+              src/ipc/gnostr-signer-service.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 120
