@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrSearchResultsView: Widget {
+  accessibility {
+    label: _("Search results");
+  }
+
   Box root {
     orientation: vertical;
     hexpand: true;

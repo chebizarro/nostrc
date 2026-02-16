@@ -30,6 +30,9 @@ G_DECLARE_FINAL_TYPE(GnostrPageDiscover, gnostr_page_discover, GNOSTR, PAGE_DISC
  *   - kind is 30023 for long-form, 30818 for wiki
  * "zap-article-requested" (gchar* event_id, gchar* pubkey_hex, gchar* lud16, gpointer user_data)
  *   - Emitted when user requests to zap an article author
+ * "search-hashtag" (gchar* hashtag, gpointer user_data)
+ *   - Emitted when user clicks a trending hashtag chip
+ *   - hashtag is without '#' prefix (e.g. "bitcoin", "nostr")
  */
 
 /**

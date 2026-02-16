@@ -2281,8 +2281,47 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
 /* Load media image asynchronously - internal function that starts the actual fetch.
  * CRITICAL: Uses GWeakRef for the picture widget to prevent use-after-free
  * crash when GtkListView recycles rows during scrolling. */
+
+/**
+ * remote_media_loading_enabled:
+ *
+ * Check if remote media loading is enabled via GSettings.
+ *
+ * Uses a static GSettings singleton pattern - the settings object is created
+ * once and reused for all subsequent calls. This is acceptable because:
+ * 1. GSettings automatically monitors for changes and updates cached values
+ * 2. The object persists for the application lifetime (no cleanup needed)
+ * 3. This function is called frequently (on every media load check)
+ *
+ * Returns: TRUE if remote media should be loaded, FALSE for privacy mode
+ */
+static gboolean
+remote_media_loading_enabled(void) {
+  static GSettings *s = NULL;  /* Singleton - never freed (intentional) */
+  if (G_UNLIKELY(!s)) {
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    if (src && g_settings_schema_source_lookup(src, "org.gnostr.Client", TRUE))
+      s = g_settings_new("org.gnostr.Client");
+    else
+      return TRUE; /* default: load media if schema unavailable (library mode) */
+  }
+  return g_settings_get_boolean(s, "load-remote-media");
+}
+
 static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url, GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
+
+  /* Privacy: skip remote fetch if disabled (still serve from cache) */
+  if (!remote_media_loading_enabled()) {
+    GdkTexture *cached = media_image_cache_get(url);
+    if (cached) {
+      gtk_picture_set_paintable(picture, GDK_PAINTABLE(cached));
+      GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
+      if (container) show_loaded_image(container);
+      g_object_unref(cached);
+    }
+    return;
+  }
 
   /* Check cache first */
   GdkTexture *cached = media_image_cache_get(url);
@@ -2580,9 +2619,10 @@ void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
         gtk_widget_set_visible(self->avatar_initials, FALSE);
       }
       g_object_unref(cached);
-    } else {
+    } else if (remote_media_loading_enabled()) {
       gnostr_avatar_download_async(avatar_url, self->avatar_image, self->avatar_initials);
     }
+    /* else: remote media disabled — keep initials visible as placeholder */
   }
 #endif
 }
@@ -3176,7 +3216,7 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
     }
     gtk_widget_set_visible(self->og_preview_container, FALSE);
 
-    if (render->first_og_url) {
+    if (render->first_og_url && remote_media_loading_enabled()) {
       self->og_preview = og_preview_widget_new();
       gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       gtk_widget_set_visible(self->og_preview_container, TRUE);
@@ -3289,7 +3329,7 @@ void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
     }
     gtk_widget_set_visible(self->og_preview_container, FALSE);
 
-    if (render->first_og_url) {
+    if (render->first_og_url && remote_media_loading_enabled()) {
       self->og_preview = og_preview_widget_new();
       gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       gtk_widget_set_visible(self->og_preview_container, TRUE);
@@ -3626,7 +3666,7 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
           if (!is_media_url(t)) { url_start = t; break; }
         }
       }
-      if (url_start) {
+      if (url_start && remote_media_loading_enabled()) {
         self->og_preview = og_preview_widget_new();
         gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
         gtk_widget_set_visible(self->og_preview_container, TRUE);
@@ -5185,6 +5225,9 @@ static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gp
 static void load_video_thumbnail(NostrGtkNoteCardRow *self, const char *thumb_url) {
   if (!self || !thumb_url || !*thumb_url) return;
   if (!GTK_IS_PICTURE(self->video_thumb_picture)) return;
+
+  /* Privacy: skip remote fetch if disabled */
+  if (!remote_media_loading_enabled()) return;
 
   /* Cancel any previous fetch */
   if (self->video_thumb_cancellable) {

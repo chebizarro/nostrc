@@ -182,6 +182,15 @@
         The first server in the list is used as the default for uploads.
       </description>
     </key>
+    <key name="load-remote-media" type="b">
+      <default>true</default>
+      <summary>Load remote media</summary>
+      <description>
+        Whether to load remote images, videos, and other media from URLs in notes.
+        When disabled, media is not fetched and a placeholder is shown instead.
+        This improves privacy by preventing IP address leakage through media requests.
+      </description>
+    </key>
     <key name="video-autoplay" type="b">
       <default>false</default>
       <summary>Video Autoplay</summary>

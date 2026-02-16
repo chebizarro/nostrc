@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrDmInboxView: Widget {
+  accessibility {
+    label: _("Direct Messages");
+  }
+
   Box root {
     orientation: vertical;
     hexpand: true;

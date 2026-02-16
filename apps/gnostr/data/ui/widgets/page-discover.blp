@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrPageDiscover: Widget {
+    accessibility {
+        label: _("Discover");
+    }
+
     Box root {
         orientation: vertical;
         hexpand: true;
@@ -136,6 +140,34 @@ template $GnostrPageDiscover: Widget {
                         "dim-label",
                     ]
                 }
+            }
+        }
+
+        Box trending_section {
+            orientation: vertical;
+            spacing: 6;
+            margin-start: 12;
+            margin-end: 12;
+            margin-bottom: 8;
+            visible: false;
+
+            Label {
+                label: "Trending Hashtags";
+                xalign: 0.0;
+
+                styles [
+                    "title-4",
+                    "dim-label",
+                ]
+            }
+
+            FlowBox trending_flow_box {
+                selection-mode: none;
+                homogeneous: false;
+                min-children-per-line: 2;
+                max-children-per-line: 8;
+                row-spacing: 6;
+                column-spacing: 6;
             }
         }
 

@@ -23,6 +23,7 @@
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include "../util/discover-search.h"
 #include "../util/nip53_live.h"
+#include "../util/trending-hashtags.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 
 #include <string.h>
@@ -64,6 +65,10 @@ struct _GnostrPageDiscover {
     /* Template widgets - Articles view (NIP-54 Wiki + NIP-23 Long-form) */
     GnostrArticlesView *articles_view;
 
+    /* Template widgets - Trending Hashtags */
+    GtkBox *trending_section;
+    GtkFlowBox *trending_flow_box;
+
     /* Template widgets - Live Activities */
     GtkFlowBox *live_flow_box;
     GtkFlowBox *scheduled_flow_box;
@@ -93,11 +98,13 @@ struct _GnostrPageDiscover {
     /* State */
     GnostrDebounce *search_debounce;
     gboolean profiles_loaded;
+    gboolean trending_loaded;
     gboolean is_local_mode;
     gboolean is_live_mode;     /* TRUE for Live mode, FALSE for People mode */
     gboolean is_articles_mode; /* TRUE for Articles mode */
     gboolean articles_loaded;
     GCancellable *search_cancellable;
+    GCancellable *trending_cancellable;
 };
 
 G_DEFINE_TYPE(GnostrPageDiscover, gnostr_page_discover, GTK_TYPE_WIDGET)
@@ -112,6 +119,7 @@ enum {
     SIGNAL_WATCH_LIVE,
     SIGNAL_OPEN_ARTICLE,
     SIGNAL_ZAP_ARTICLE_REQUESTED,
+    SIGNAL_SEARCH_HASHTAG,
     N_SIGNALS
 };
 
@@ -918,6 +926,94 @@ on_model_items_changed(GListModel *model, guint position, guint removed, guint a
     }
 }
 
+/* --- Trending Hashtags --- */
+
+static void
+on_trending_hashtag_clicked(GtkButton *button, gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_PAGE_DISCOVER(user_data));
+  
+  GnostrPageDiscover *self = GNOSTR_PAGE_DISCOVER(user_data);
+  const char *tag = g_object_get_data(G_OBJECT(button), "hashtag");
+  if (tag && *tag) {
+    g_debug("discover: trending hashtag clicked: #%s", tag);
+    g_signal_emit(self, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
+  }
+}
+
+static void
+populate_trending_flow_box(GnostrPageDiscover *self, GPtrArray *hashtags)
+{
+  /* Clear existing children */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->trending_flow_box))) != NULL) {
+    gtk_flow_box_remove(self->trending_flow_box, child);
+  }
+
+  if (!hashtags || hashtags->len == 0) {
+    gtk_widget_set_visible(GTK_WIDGET(self->trending_section), FALSE);
+    return;
+  }
+
+  for (guint i = 0; i < hashtags->len; i++) {
+    GnostrTrendingHashtag *ht = g_ptr_array_index(hashtags, i);
+
+    /* Create a clickable chip: "#tag (count)" */
+    gchar *label_text = g_strdup_printf("#%s", ht->tag);
+    GtkWidget *button = gtk_button_new_with_label(label_text);
+    g_free(label_text);
+
+    gtk_widget_add_css_class(button, "pill");
+    gtk_widget_add_css_class(button, "flat");
+
+    /* Store tag string on the button for click handler */
+    g_object_set_data_full(G_OBJECT(button), "hashtag",
+                           g_strdup(ht->tag), g_free);
+
+    g_signal_connect(button, "clicked",
+                     G_CALLBACK(on_trending_hashtag_clicked), self);
+
+    gtk_flow_box_append(self->trending_flow_box, button);
+  }
+
+  gtk_widget_set_visible(GTK_WIDGET(self->trending_section), TRUE);
+  g_debug("discover: populated %u trending hashtags", hashtags->len);
+}
+
+static void
+on_trending_hashtags_ready(GPtrArray *hashtags, gpointer user_data)
+{
+  GnostrPageDiscover *self = GNOSTR_PAGE_DISCOVER(user_data);
+  if (!GTK_IS_WIDGET(self) || !self->trending_flow_box) {
+    g_ptr_array_unref(hashtags);
+    return;
+  }
+
+  /* Show feedback if trending hashtags failed to load */
+  if (!hashtags || hashtags->len == 0) {
+    g_debug("discover: trending hashtags unavailable (empty result)");
+    /* Hide the section - this is expected when NDB has few events */
+  }
+
+  populate_trending_flow_box(self, hashtags);
+  g_ptr_array_unref(hashtags);
+}
+
+static void
+load_trending_hashtags(GnostrPageDiscover *self)
+{
+  if (self->trending_loaded) return;
+  self->trending_loaded = TRUE;
+
+  /* Create cancellable for this operation */
+  self->trending_cancellable = g_cancellable_new();
+
+  /* Compute in background: scan last 500 kind-1 events, return top 15 */
+  gnostr_compute_trending_hashtags_async(500, 15,
+                                         on_trending_hashtags_ready, self,
+                                         self->trending_cancellable);
+}
+
 /* --- GObject Implementation --- */
 
 static void
@@ -935,6 +1031,11 @@ gnostr_page_discover_dispose(GObject *object)
     if (self->live_cancellable) {
         g_cancellable_cancel(self->live_cancellable);
         g_clear_object(&self->live_cancellable);
+    }
+
+    if (self->trending_cancellable) {
+        g_cancellable_cancel(self->trending_cancellable);
+        g_clear_object(&self->trending_cancellable);
     }
 
     /* Unsubscribe from live activities subscription */
@@ -1013,6 +1114,10 @@ gnostr_page_discover_class_init(GnostrPageDiscoverClass *klass)
     /* Bind template children - Articles view */
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, articles_view);
 
+    /* Bind template children - Trending Hashtags */
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, trending_section);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, trending_flow_box);
+
     /* Bind template children - Live Activities */
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, live_flow_box);
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, scheduled_flow_box);
@@ -1085,6 +1190,13 @@ gnostr_page_discover_class_init(GnostrPageDiscoverClass *klass)
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
         G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+
+    signals[SIGNAL_SEARCH_HASHTAG] = g_signal_new(
+        "search-hashtag",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 1, G_TYPE_STRING);
 
     /* CSS */
     gtk_widget_class_set_css_name(widget_class, "page-discover");
@@ -1225,6 +1337,9 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
     if (gn_profile_list_model_is_loading(self->profile_model)) {
         gtk_stack_set_visible_child_name(self->content_stack, "loading");
     }
+
+    /* Load trending hashtags asynchronously */
+    load_trending_hashtags(self);
 }
 
 GnostrPageDiscover *

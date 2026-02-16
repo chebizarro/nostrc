@@ -7,6 +7,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrLogin" parent="AdwBin">
+    <accessibility>
+      <property name="label" translatable="yes">Sign in to your Nostr account</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">

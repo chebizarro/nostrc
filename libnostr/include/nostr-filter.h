@@ -18,17 +18,40 @@ extern "C" {
 /* Provide canonical type names (forward matches nostr-event.h) */
 typedef struct _NostrEvent NostrEvent; /* forward */
 
+/**
+ * NostrFilter:
+ *
+ * Represents a NIP-01 filter object used in REQ subscriptions to request
+ * events matching specific criteria from relays.
+ *
+ * ## Timestamp boundary semantics (NIP-01 §5)
+ *
+ * Both `since` and `until` are **inclusive** Unix-epoch bounds:
+ *
+ * - `since`: events with `created_at >= since` match (inclusive lower bound)
+ * - `until`: events with `created_at <= until` match (inclusive upper bound)
+ * - When both are 0 (unset), no timestamp filtering is applied
+ * - An event at exactly `since` or `until` **is** included in results
+ *
+ * In `nostr_filter_matches()`, these are checked as:
+ * - Reject if `event->created_at < filter->since`
+ * - Reject if `event->created_at > filter->until`
+ *
+ * For pagination, callers typically set `until` to the oldest event's
+ * `created_at - 1` to avoid duplicates, and `since` to the newest event's
+ * `created_at` for gap-free forward queries.
+ */
 typedef struct NostrFilter {
-    StringArray ids;
-    IntArray kinds;
-    StringArray authors;
-    NostrTags *tags;
-    NostrTimestamp since;
-    NostrTimestamp until;
-    int limit;
-    char *search;
-    bool limit_zero;
-    StringArray relays;       /* nostrc-57j: relay URLs for relay-aware filtering */
+    StringArray ids;           /**< Event IDs to match (hex-encoded SHA256) */
+    IntArray kinds;            /**< Event kinds to match (NIP-01 kind integers) */
+    StringArray authors;       /**< Author pubkeys to match (hex-encoded) */
+    NostrTags *tags;           /**< Generic tag filters (#e, #p, etc.) */
+    NostrTimestamp since;      /**< Inclusive lower bound (created_at >= since). 0 = unset */
+    NostrTimestamp until;      /**< Inclusive upper bound (created_at <= until). 0 = unset */
+    int limit;                 /**< Maximum events to return. 0 = no limit (unless limit_zero) */
+    char *search;              /**< NIP-50 full-text search query (relay-dependent) */
+    bool limit_zero;           /**< Explicit limit=0 (request count only, no events) */
+    StringArray relays;        /**< nostrc-57j: relay URLs for relay-aware filtering */
 } NostrFilter;
 
 typedef struct NostrFilters {
@@ -158,13 +181,20 @@ void nostr_filter_set_tags(NostrFilter *filter, NostrTags *tags);
  * nostr_filter_get_since:
  * @filter: (nullable): filter
  *
- * Returns: since timestamp
+ * Returns the inclusive lower-bound timestamp. Events with
+ * `created_at >= since` will match. A value of 0 means unset (no lower bound).
+ *
+ * Returns: since timestamp (Unix epoch seconds), or 0 if unset
  */
 NostrTimestamp nostr_filter_get_since(const NostrFilter *filter);
 /**
  * nostr_filter_set_since:
  * @filter: (nullable): filter (no-op if NULL)
- * @since: timestamp
+ * @since: inclusive lower-bound Unix timestamp (0 to unset)
+ *
+ * Sets the inclusive lower bound for event timestamps.
+ * Only events with `created_at >= since` will match this filter.
+ * Per NIP-01, the boundary is inclusive — an event at exactly @since matches.
  */
 void nostr_filter_set_since(NostrFilter *filter, NostrTimestamp since);
 
@@ -172,13 +202,23 @@ void nostr_filter_set_since(NostrFilter *filter, NostrTimestamp since);
  * nostr_filter_get_until:
  * @filter: (nullable): filter
  *
- * Returns: until timestamp
+ * Returns the inclusive upper-bound timestamp. Events with
+ * `created_at <= until` will match. A value of 0 means unset (no upper bound).
+ *
+ * Returns: until timestamp (Unix epoch seconds), or 0 if unset
  */
 NostrTimestamp nostr_filter_get_until(const NostrFilter *filter);
 /**
  * nostr_filter_set_until:
  * @filter: (nullable): filter (no-op if NULL)
- * @until: timestamp
+ * @until: inclusive upper-bound Unix timestamp (0 to unset)
+ *
+ * Sets the inclusive upper bound for event timestamps.
+ * Only events with `created_at <= until` will match this filter.
+ * Per NIP-01, the boundary is inclusive — an event at exactly @until matches.
+ *
+ * For pagination, use `oldest_event->created_at - 1` to avoid fetching
+ * the same boundary event twice.
  */
 void nostr_filter_set_until(NostrFilter *filter, NostrTimestamp until);
 

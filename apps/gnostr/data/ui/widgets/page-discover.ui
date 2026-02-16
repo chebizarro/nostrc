@@ -7,6 +7,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrPageDiscover" parent="GtkWidget">
+    <accessibility>
+      <property name="label" translatable="yes">Discover</property>
+    </accessibility>
     <child>
       <object class="GtkBox" id="root">
         <property name="orientation">1</property>
@@ -152,6 +155,36 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </style>
                   </object>
                 </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="trending_section">
+            <property name="orientation">1</property>
+            <property name="spacing">6</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-bottom">8</property>
+            <property name="visible">false</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Trending Hashtags</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="title-4"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkFlowBox" id="trending_flow_box">
+                <property name="selection-mode">0</property>
+                <property name="homogeneous">false</property>
+                <property name="min-children-per-line">2</property>
+                <property name="max-children-per-line">8</property>
+                <property name="row-spacing">6</property>
+                <property name="column-spacing">6</property>
               </object>
             </child>
           </object>

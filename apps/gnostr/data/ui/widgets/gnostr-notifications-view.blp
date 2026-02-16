@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrNotificationsView: Widget {
+  accessibility {
+    label: _("Notifications");
+  }
+
   Box root {
     orientation: vertical;
     hexpand: true;

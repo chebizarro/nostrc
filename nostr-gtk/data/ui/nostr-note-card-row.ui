@@ -8,6 +8,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <requires lib="gtk" version="4.0"/>
   <template class="NostrGtkNoteCardRow" parent="GtkWidget">
     <property name="hexpand">false</property>
+    <accessibility>
+      <property name="label" translatable="yes">Note</property>
+    </accessibility>
     <child>
       <object class="GtkBox" id="root">
         <property name="orientation">1</property>

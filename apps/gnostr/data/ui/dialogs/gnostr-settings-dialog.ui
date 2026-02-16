@@ -750,6 +750,48 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                                 <property name="hexpand">true</property>
                                                 <child>
                                                   <object class="GtkLabel">
+                                                    <property name="label">Load Remote Media</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Load images and videos from URLs. Disable for privacy.</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_load_remote_media">
+                                                <property name="valign">3</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">0</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">1</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
                                                     <property name="label">Autoplay Videos</property>
                                                     <property name="xalign">0</property>
                                                   </object>

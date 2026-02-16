@@ -669,6 +669,43 @@ Window settings_window {
                         hexpand: true;
 
                         Label {
+                          label: "Load Remote Media";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Load images and videos from URLs. Disable for privacy.";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_load_remote_media {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
                           label: "Autoplay Videos";
                           xalign: 0;
                         }

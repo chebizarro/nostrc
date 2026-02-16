@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrComposer: Widget {
+  accessibility {
+    label: _("Compose note");
+  }
+
   Box root {
     orientation: vertical;
     spacing: 6;
@@ -76,6 +80,11 @@ template $GnostrComposer: Widget {
         right-margin: 6;
         top-margin: 6;
         bottom-margin: 6;
+
+        accessibility {
+          label: _("Note content");
+          description: _("Write your note here");
+        }
       }
     }
 

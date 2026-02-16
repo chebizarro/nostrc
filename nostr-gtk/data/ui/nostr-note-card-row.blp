@@ -4,6 +4,10 @@ using Adw 1;
 template $NostrGtkNoteCardRow: Widget {
     hexpand: false;
 
+    accessibility {
+        label: _("Note");
+    }
+
     Box root {
         orientation: vertical;
         hexpand: false;

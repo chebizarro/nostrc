@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrProfilePane: Widget {
+    accessibility {
+        label: _("User profile");
+    }
+
     Box root {
         orientation: vertical;
         spacing: 0;

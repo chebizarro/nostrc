@@ -3,6 +3,10 @@ using Gtk 4.0;
 template $NostrGtkTimelineView: Widget {
     vexpand: true;
 
+    accessibility {
+        label: _("Timeline");
+    }
+
     Box root_box {
         orientation: vertical;
         vexpand: true;

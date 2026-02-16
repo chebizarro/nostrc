@@ -62,6 +62,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="GtkListBox" id="sidebar_list">
                             <property name="selection-mode">2</property>
                             <property name="activate-on-single-click">true</property>
+                            <accessibility>
+                              <property name="label" translatable="yes">Navigation</property>
+                            </accessibility>
                             <style>
                               <class name="navigation-sidebar"/>
                             </style>

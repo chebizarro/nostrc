@@ -5,6 +5,10 @@ using Adw 1;
  * in the main window's GtkStack. GtkWindow is a GtkRoot and cannot be
  * a child of another widget. */
 template $GnostrLogin: Adw.Bin {
+    accessibility {
+        label: _("Sign in to your Nostr account");
+    }
+
     Adw.ToolbarView {
         [top]
         Adw.HeaderBar {

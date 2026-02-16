@@ -295,6 +295,7 @@ static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubke
 static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user_data);
 static void on_discover_open_article(GnostrPageDiscover *page, const char *event_id, gint kind, gpointer user_data);
 static void on_discover_zap_article(GnostrPageDiscover *page, const char *event_id, const char *pubkey_hex, const char *lud16, gpointer user_data);
+static void on_discover_search_hashtag(GnostrPageDiscover *page, const char *hashtag, gpointer user_data);
 static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gpointer user_data);
 /* Forward declaration (nostrc-29) */
 void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
@@ -2447,11 +2448,15 @@ typedef struct {
   GtkWindow *win;
   GtkBuilder *builder;
   GnostrMainWindow *main_window;
+  GSettings *client_settings;  /* Cached org.gnostr.Client settings */
+  GSettings *notif_settings;   /* Cached org.gnostr.Notifications settings */
 } SettingsDialogCtx;
 
 static void settings_dialog_ctx_free(SettingsDialogCtx *ctx) {
   if (!ctx) return;
   if (ctx->builder) g_object_unref(ctx->builder);
+  g_clear_object(&ctx->client_settings);
+  g_clear_object(&ctx->notif_settings);
   g_free(ctx);
 }
 
@@ -3106,20 +3111,31 @@ static void settings_dialog_setup_blossom_panel(SettingsDialogCtx *ctx) {
 }
 
 /* Signal handlers for media settings switches */
-static void on_video_autoplay_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+static void on_load_remote_media_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Client");
-  g_settings_set_boolean(settings, "video-autoplay", active);
-  g_object_unref(settings);
+  if (ctx && ctx->client_settings) {
+    g_settings_set_boolean(ctx->client_settings, "load-remote-media", active);
+  }
+}
+
+static void on_video_autoplay_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  if (ctx && ctx->client_settings) {
+    g_settings_set_boolean(ctx->client_settings, "video-autoplay", active);
+  }
 }
 
 static void on_video_loop_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Client");
-  g_settings_set_boolean(settings, "video-loop", active);
-  g_object_unref(settings);
+  if (ctx && ctx->client_settings) {
+    g_settings_set_boolean(ctx->client_settings, "video-loop", active);
+  }
 }
 
 /* nostrc-61s.6: Background mode switch handler */
@@ -3157,150 +3173,167 @@ static void on_background_mode_changed(GtkSwitch *sw, GParamSpec *pspec, gpointe
 static void settings_dialog_setup_media_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder) return;
 
-  GSettings *client_settings = g_settings_new("org.gnostr.Client");
-  if (!client_settings) return;
+  /* Cache client_settings in context if not already cached */
+  if (!ctx->client_settings) {
+    ctx->client_settings = g_settings_new("org.gnostr.Client");
+    if (!ctx->client_settings) return;
+  }
+
+  /* Load remote media switch */
+  GtkSwitch *w_load_media = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_load_remote_media"));
+  if (w_load_media) {
+    gtk_switch_set_active(w_load_media, g_settings_get_boolean(ctx->client_settings, "load-remote-media"));
+    g_signal_connect(w_load_media, "notify::active", G_CALLBACK(on_load_remote_media_changed), ctx);
+  }
 
   /* Video autoplay switch */
   GtkSwitch *w_autoplay = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_video_autoplay"));
   if (w_autoplay) {
-    gtk_switch_set_active(w_autoplay, g_settings_get_boolean(client_settings, "video-autoplay"));
-    g_signal_connect(w_autoplay, "notify::active", G_CALLBACK(on_video_autoplay_changed), NULL);
+    gtk_switch_set_active(w_autoplay, g_settings_get_boolean(ctx->client_settings, "video-autoplay"));
+    g_signal_connect(w_autoplay, "notify::active", G_CALLBACK(on_video_autoplay_changed), ctx);
   }
 
   /* Video loop switch */
   GtkSwitch *w_loop = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_video_loop"));
   if (w_loop) {
-    gtk_switch_set_active(w_loop, g_settings_get_boolean(client_settings, "video-loop"));
-    g_signal_connect(w_loop, "notify::active", G_CALLBACK(on_video_loop_changed), NULL);
+    gtk_switch_set_active(w_loop, g_settings_get_boolean(ctx->client_settings, "video-loop"));
+    g_signal_connect(w_loop, "notify::active", G_CALLBACK(on_video_loop_changed), ctx);
   }
-
-  g_object_unref(client_settings);
 }
 
 /* Signal handlers for notification settings switches */
 static void on_notif_enabled_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "enabled", active);
+  }
 }
 
 static void on_notif_mention_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "notify-mention-enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "notify-mention-enabled", active);
+  }
 }
 
 static void on_notif_dm_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "notify-dm-enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "notify-dm-enabled", active);
+  }
 }
 
 static void on_notif_zap_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "notify-zap-enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "notify-zap-enabled", active);
+  }
 }
 
 static void on_notif_reply_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "notify-reply-enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "notify-reply-enabled", active);
+  }
 }
 
 static void on_notif_sound_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "sound-enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "sound-enabled", active);
+  }
 }
 
 static void on_notif_tray_badge_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "tray-badge-enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "tray-badge-enabled", active);
+  }
 }
 
 static void on_notif_desktop_popup_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec; (void)user_data;
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
   gboolean active = gtk_switch_get_active(sw);
-  GSettings *settings = g_settings_new("org.gnostr.Notifications");
-  g_settings_set_boolean(settings, "desktop-popup-enabled", active);
-  g_object_unref(settings);
+  if (ctx && ctx->notif_settings) {
+    g_settings_set_boolean(ctx->notif_settings, "desktop-popup-enabled", active);
+  }
 }
 
 /* Setup notifications settings panel */
 static void settings_dialog_setup_notifications_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder) return;
 
-  GSettings *notif_settings = g_settings_new("org.gnostr.Notifications");
-  if (!notif_settings) return;
+  /* Cache notif_settings in context if not already cached */
+  if (!ctx->notif_settings) {
+    ctx->notif_settings = g_settings_new("org.gnostr.Notifications");
+    if (!ctx->notif_settings) return;
+  }
 
   /* Global enable switch */
   GtkSwitch *w_enabled = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_enabled"));
   if (w_enabled) {
-    gtk_switch_set_active(w_enabled, g_settings_get_boolean(notif_settings, "enabled"));
-    g_signal_connect(w_enabled, "notify::active", G_CALLBACK(on_notif_enabled_changed), NULL);
+    gtk_switch_set_active(w_enabled, g_settings_get_boolean(ctx->notif_settings, "enabled"));
+    g_signal_connect(w_enabled, "notify::active", G_CALLBACK(on_notif_enabled_changed), ctx);
   }
 
   /* Per-type toggles */
   GtkSwitch *w_mention = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_mention"));
   if (w_mention) {
-    gtk_switch_set_active(w_mention, g_settings_get_boolean(notif_settings, "notify-mention-enabled"));
-    g_signal_connect(w_mention, "notify::active", G_CALLBACK(on_notif_mention_changed), NULL);
+    gtk_switch_set_active(w_mention, g_settings_get_boolean(ctx->notif_settings, "notify-mention-enabled"));
+    g_signal_connect(w_mention, "notify::active", G_CALLBACK(on_notif_mention_changed), ctx);
   }
 
   GtkSwitch *w_dm = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_dm"));
   if (w_dm) {
-    gtk_switch_set_active(w_dm, g_settings_get_boolean(notif_settings, "notify-dm-enabled"));
-    g_signal_connect(w_dm, "notify::active", G_CALLBACK(on_notif_dm_changed), NULL);
+    gtk_switch_set_active(w_dm, g_settings_get_boolean(ctx->notif_settings, "notify-dm-enabled"));
+    g_signal_connect(w_dm, "notify::active", G_CALLBACK(on_notif_dm_changed), ctx);
   }
 
   GtkSwitch *w_zap = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_zap"));
   if (w_zap) {
-    gtk_switch_set_active(w_zap, g_settings_get_boolean(notif_settings, "notify-zap-enabled"));
-    g_signal_connect(w_zap, "notify::active", G_CALLBACK(on_notif_zap_changed), NULL);
+    gtk_switch_set_active(w_zap, g_settings_get_boolean(ctx->notif_settings, "notify-zap-enabled"));
+    g_signal_connect(w_zap, "notify::active", G_CALLBACK(on_notif_zap_changed), ctx);
   }
 
   GtkSwitch *w_reply = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_reply"));
   if (w_reply) {
-    gtk_switch_set_active(w_reply, g_settings_get_boolean(notif_settings, "notify-reply-enabled"));
-    g_signal_connect(w_reply, "notify::active", G_CALLBACK(on_notif_reply_changed), NULL);
+    gtk_switch_set_active(w_reply, g_settings_get_boolean(ctx->notif_settings, "notify-reply-enabled"));
+    g_signal_connect(w_reply, "notify::active", G_CALLBACK(on_notif_reply_changed), ctx);
   }
 
   /* Presentation switches */
   GtkSwitch *w_sound = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_sound"));
   if (w_sound) {
-    gtk_switch_set_active(w_sound, g_settings_get_boolean(notif_settings, "sound-enabled"));
-    g_signal_connect(w_sound, "notify::active", G_CALLBACK(on_notif_sound_changed), NULL);
+    gtk_switch_set_active(w_sound, g_settings_get_boolean(ctx->notif_settings, "sound-enabled"));
+    g_signal_connect(w_sound, "notify::active", G_CALLBACK(on_notif_sound_changed), ctx);
   }
 
   GtkSwitch *w_tray_badge = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_tray_badge"));
   if (w_tray_badge) {
-    gtk_switch_set_active(w_tray_badge, g_settings_get_boolean(notif_settings, "tray-badge-enabled"));
-    g_signal_connect(w_tray_badge, "notify::active", G_CALLBACK(on_notif_tray_badge_changed), NULL);
+    gtk_switch_set_active(w_tray_badge, g_settings_get_boolean(ctx->notif_settings, "tray-badge-enabled"));
+    g_signal_connect(w_tray_badge, "notify::active", G_CALLBACK(on_notif_tray_badge_changed), ctx);
   }
 
   GtkSwitch *w_desktop_popup = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_desktop_popup"));
   if (w_desktop_popup) {
-    gtk_switch_set_active(w_desktop_popup, g_settings_get_boolean(notif_settings, "desktop-popup-enabled"));
-    g_signal_connect(w_desktop_popup, "notify::active", G_CALLBACK(on_notif_desktop_popup_changed), NULL);
+    gtk_switch_set_active(w_desktop_popup, g_settings_get_boolean(ctx->notif_settings, "desktop-popup-enabled"));
+    g_signal_connect(w_desktop_popup, "notify::active", G_CALLBACK(on_notif_desktop_popup_changed), ctx);
   }
-
-  g_object_unref(notif_settings);
 }
 
 /* Plugin panel signal handlers */
@@ -5009,6 +5042,27 @@ static void on_discover_zap_article(GnostrPageDiscover *page, const char *event_
   g_debug("[ARTICLES] Zap article author requested: pubkey=%s, lud16=%s", pubkey_hex, lud16);
 }
 
+/**
+ * on_discover_search_hashtag - Navigate to a hashtag feed from Discover page
+ *
+ * Switches to the timeline and opens a hashtag tab for the selected tag.
+ */
+static void on_discover_search_hashtag(GnostrPageDiscover *page, const char *hashtag, gpointer user_data) {
+  (void)page;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !hashtag || !*hashtag) return;
+
+  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
+  if (timeline && NOSTR_GTK_IS_TIMELINE_VIEW(timeline)) {
+    nostr_gtk_timeline_view_add_hashtag_tab(NOSTR_GTK_TIMELINE_VIEW(timeline), hashtag);
+    /* Switch to timeline page */
+    if (self->session_view) {
+      gnostr_session_view_show_page(self->session_view, "timeline");
+    }
+    g_debug("[DISCOVER] Navigated to hashtag #%s from trending", hashtag);
+  }
+}
+
 static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -6267,6 +6321,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                        G_CALLBACK(on_discover_open_article), self);
       g_signal_connect(discover_page, "zap-article-requested",
                        G_CALLBACK(on_discover_zap_article), self);
+      g_signal_connect(discover_page, "search-hashtag",
+                       G_CALLBACK(on_discover_search_hashtag), self);
     }
   }
   /* Connect search results view signals (nostrc-29) */
