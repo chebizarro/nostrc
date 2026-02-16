@@ -177,8 +177,6 @@ static void on_embed_clicked(GtkGestureClick *gesture, int n_press, double x, do
   }
 }
 
-/* Clamp horizontal minimum/natural to zero so embedded notes never force the
- * timeline to expand beyond its allocated width. */
 static void
 gnostr_note_embed_measure(GtkWidget      *widget,
                            GtkOrientation  orientation,
@@ -206,8 +204,13 @@ gnostr_note_embed_measure(GtkWidget      *widget,
       minimum, natural, minimum_baseline, natural_baseline);
 
   if (orientation == GTK_ORIENTATION_HORIZONTAL) {
-    *minimum = 0;
-    *natural = 0;
+    const int MAX_EMBED_WIDTH = 700;
+    if (*natural > MAX_EMBED_WIDTH) {
+      *natural = MAX_EMBED_WIDTH;
+    }
+    if (*minimum > MAX_EMBED_WIDTH) {
+      *minimum = MAX_EMBED_WIDTH;
+    }
   }
 }
 
