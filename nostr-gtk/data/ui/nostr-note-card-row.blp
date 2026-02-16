@@ -316,19 +316,14 @@ template $NostrGtkNoteCardRow: Widget {
                     hexpand: false;
                 }
 
-                Adw.Clamp {
-                    maximum-size: 700;
-                    tightening-threshold: 600;
+                Frame embed_box {
+                    visible: false;
+                    hexpand: false;
+                    overflow: hidden;
 
-                    Frame embed_box {
-                        visible: false;
-                        hexpand: false;
-                        overflow: hidden;
-
-                        styles [
-                            "note-embed",
-                        ]
-                    }
+                    styles [
+                        "note-embed",
+                    ]
                 }
 
                 Box og_preview_container {
