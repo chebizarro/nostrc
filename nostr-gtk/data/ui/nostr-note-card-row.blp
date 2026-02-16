@@ -1,4 +1,5 @@
 using Gtk 4.0;
+using Adw 1;
 
 template $NostrGtkNoteCardRow: Widget {
     hexpand: false;
@@ -315,14 +316,19 @@ template $NostrGtkNoteCardRow: Widget {
                     hexpand: false;
                 }
 
-                Frame embed_box {
-                    visible: false;
-                    hexpand: false;
-                    overflow: hidden;
+                Adw.Clamp {
+                    maximum-size: 700;
+                    tightening-threshold: 600;
 
-                    styles [
-                        "note-embed",
-                    ]
+                    Frame embed_box {
+                        visible: false;
+                        hexpand: false;
+                        overflow: hidden;
+
+                        styles [
+                            "note-embed",
+                        ]
+                    }
                 }
 
                 Box og_preview_container {
