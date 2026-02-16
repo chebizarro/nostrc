@@ -39,6 +39,7 @@ set(NOSTR_GTK_BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/nostr-note-card-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
 )
 
 set(NOSTR_GTK_COMPILED_UI_FILES)
@@ -91,6 +92,8 @@ set(NOSTR_GTK_SOURCES
   src/nostr-note-card-row.c
   src/gn-timeline-tabs.c
   src/gnostr-timeline-view.c
+  src/gnostr-note-embed.c
+  src/content_renderer.c
   ${GRESOURCE_C}
 )
 
@@ -102,6 +105,8 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/nostr-note-card-row.h
   include/nostr-gtk-1.0/gn-timeline-tabs.h
   include/nostr-gtk-1.0/gnostr-timeline-view.h
+  include/nostr-gtk-1.0/gnostr-note-embed.h
+  include/nostr-gtk-1.0/content_renderer.h
 )
 
 # ── Library target ───────────────────────────────────────────────────

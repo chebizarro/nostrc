@@ -13,6 +13,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <property name="orientation">1</property>
         <property name="hexpand">false</property>
         <property name="vexpand">false</property>
+        <property name="overflow">1</property>
         <style>
           <class name="note-card"/>
         </style>
@@ -293,7 +294,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="wrap-mode">2</property>
                     <property name="xalign">0</property>
                     <property name="use-markup">true</property>
+                    <property name="hexpand">false</property>
                     <property name="max-width-chars">80</property>
+                    <property name="width-chars">1</property>
                     <style>
                       <class name="note-subject"/>
                     </style>
@@ -308,6 +311,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="hexpand">false</property>
                     <property name="natural-wrap-mode">2</property>
                     <property name="max-width-chars">80</property>
+                    <property name="width-chars">1</property>
                     <style>
                       <class name="note-content"/>
                     </style>
@@ -325,6 +329,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkFrame" id="embed_box">
                     <property name="visible">false</property>
                     <property name="hexpand">false</property>
+                    <property name="overflow">1</property>
                     <style>
                       <class name="note-embed"/>
                     </style>

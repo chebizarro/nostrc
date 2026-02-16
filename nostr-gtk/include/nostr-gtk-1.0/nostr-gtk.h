@@ -15,6 +15,16 @@
 
 #include "nostr-gtk-version.h"
 
+/* Widget headers */
+#include "content_renderer.h"
+#include "gn-timeline-tabs.h"
+#include "gnostr-composer.h"
+#include "gnostr-note-embed.h"
+#include "gnostr-profile-pane.h"
+#include "gnostr-thread-view.h"
+#include "gnostr-timeline-view.h"
+#include "nostr-note-card-row.h"
+
 G_BEGIN_DECLS
 
 /**
@@ -22,15 +32,8 @@ G_BEGIN_DECLS
  *
  * Initializes the nostr-gtk library. Call once before using widgets.
  */
-void nostr_gtk_init (void);
+void nostr_gtk_init(void);
 
-/* Widget headers */
-#include "gnostr-thread-view.h"
-#include "gnostr-composer.h"
-#include "gnostr-profile-pane.h"
-#include "nostr-note-card-row.h"
-#include "gn-timeline-tabs.h"
-#include "gnostr-timeline-view.h"
 
 G_END_DECLS
 

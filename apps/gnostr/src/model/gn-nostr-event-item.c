@@ -1,6 +1,7 @@
 #include "gn-nostr-event-item.h"
+#include "gn-nostr-event-model.h"
+#include <nostr-gtk-1.0/content_renderer.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
-#include "../util/content_renderer.h"
 #include <string.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>

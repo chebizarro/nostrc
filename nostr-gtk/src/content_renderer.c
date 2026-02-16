@@ -213,7 +213,62 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
 
   storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
   if (!blocks) {
-    res->markup = gnostr_strip_zwsp(g_markup_escape_text(content, content_len));
+    /* Fallback: manually truncate URLs in plain text when NDB parser fails.
+     * This handles cases where the content contains URLs but NDB can't parse it. */
+    GString *fallback = g_string_new("");
+    const char *p = content;
+    const char *end = content + content_len;
+    
+    while (p < end) {
+      /* Look for http:// or https:// */
+      const char *url_start = NULL;
+      if (p + 7 <= end && g_ascii_strncasecmp(p, "http://", 7) == 0) {
+        url_start = p;
+      } else if (p + 8 <= end && g_ascii_strncasecmp(p, "https://", 8) == 0) {
+        url_start = p;
+      }
+      
+      if (url_start) {
+        /* Find end of URL (whitespace or end of string) */
+        const char *url_end = url_start;
+        while (url_end < end && !g_ascii_isspace(*url_end)) {
+          url_end++;
+        }
+        size_t url_len = url_end - url_start;
+        
+        /* Create truncated display and link */
+        gchar *url = g_strndup(url_start, url_len);
+        gchar *esc_url = g_markup_escape_text(url, -1);
+        gchar *display;
+        if (url_len > 40) {
+          display = g_strdup_printf("%.35s...", url);
+        } else {
+          display = g_strdup(url);
+        }
+        gchar *esc_display = g_markup_escape_text(display, -1);
+        g_string_append_printf(fallback, "<a href=\"%s\">%s</a>", esc_url, esc_display);
+        g_free(esc_display);
+        g_free(display);
+        g_free(esc_url);
+        g_free(url);
+        
+        p = url_end;
+      } else {
+        /* Escape and append single character */
+        if (*p == '<') {
+          g_string_append(fallback, "&lt;");
+        } else if (*p == '>') {
+          g_string_append(fallback, "&gt;");
+        } else if (*p == '&') {
+          g_string_append(fallback, "&amp;");
+        } else {
+          g_string_append_c(fallback, *p);
+        }
+        p++;
+      }
+    }
+    
+    res->markup = gnostr_strip_zwsp(g_string_free(fallback, FALSE));
     return res;
   }
 

@@ -36,7 +36,7 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
   # note-card-row.blp moved to nostr-gtk (nostrc-lx33)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.blp
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
+  # gnostr-note-embed.blp moved to nostr-gtk (regression fix)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.blp
@@ -849,7 +849,6 @@ if (BUILD_TESTING)
       SOURCES tests/test_event_model_windowing.c
               src/model/gn-nostr-event-model.c
               src/model/gn-nostr-event-item.c
-              src/util/content_renderer.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 120
@@ -894,7 +893,6 @@ if (BUILD_TESTING)
     gn_add_gtest(gnostr-test-event-item-txn-budget
       SOURCES tests/test_event_item_txn_budget.c
               src/model/gn-nostr-event-item.c
-              src/util/content_renderer.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 90
@@ -941,7 +939,6 @@ if (BUILD_TESTING)
       SOURCES tests/integ/test_model_delete_authorization.c
               src/model/gn-nostr-event-model.c
               src/model/gn-nostr-event-item.c
-              src/util/content_renderer.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 120
@@ -990,7 +987,6 @@ if (BUILD_TESTING)
       SOURCES tests/test_ndb_main_thread_violations.c
               src/model/gn-nostr-event-model.c
               src/model/gn-nostr-event-item.c
-              src/util/content_renderer.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 180
@@ -1042,7 +1038,6 @@ if (BUILD_TESTING)
       SOURCES tests/test_real_bind_latency.c
               src/model/gn-nostr-event-model.c
               src/model/gn-nostr-event-item.c
-              src/util/content_renderer.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 180

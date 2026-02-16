@@ -1,9 +1,9 @@
 #ifndef GN_NOSTR_EVENT_ITEM_H
 #define GN_NOSTR_EVENT_ITEM_H
 
-#include <nostr-gobject-1.0/gn-nostr-profile.h>
-#include "../util/content_renderer.h"
 #include <glib-object.h>
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
+#include <nostr-gtk-1.0/content_renderer.h>
 #include <stdint.h>
 
 G_BEGIN_DECLS
@@ -25,12 +25,12 @@ const char *gn_nostr_event_item_get_pubkey(GnNostrEventItem *self);
 gint64 gn_nostr_event_item_get_created_at(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_content(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_tags_json(GnNostrEventItem *self);
-const char * const *gn_nostr_event_item_get_hashtags(GnNostrEventItem *self);
+const char *const *gn_nostr_event_item_get_hashtags(GnNostrEventItem *self);
 
 /* hq-ys1vk: Relay provenance - which relays a note was seen on.
  * Returns NULL-terminated array of relay URL strings, or NULL if none/unknown.
  * The array is owned by the item; do NOT free. */
-const char * const *gn_nostr_event_item_get_relay_urls(GnNostrEventItem *self);
+const char *const *gn_nostr_event_item_get_relay_urls(GnNostrEventItem *self);
 
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self);
 GNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self);

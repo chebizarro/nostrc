@@ -4,10 +4,10 @@
  * Renders nostr: URI references as compact embedded cards.
  */
 
-#include "gnostr-note-embed.h"
+#include <nostr-gtk-1.0/gnostr-note-embed.h>
+#include <nostr-gtk-1.0/content_renderer.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
-#include "../util/content_renderer.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-event.h>
@@ -24,7 +24,7 @@
 #include <libsoup/soup.h>
 #endif
 
-#define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-note-embed.ui"
+#define UI_RESOURCE "/org/nostr-gtk/ui/widgets/gnostr-note-embed.ui"
 
 typedef enum {
   EMBED_TYPE_UNKNOWN,
@@ -275,11 +275,17 @@ GnostrNoteEmbed *gnostr_note_embed_new(void) {
 }
 
 static void update_ui_state(GnostrNoteEmbed *self) {
-  if (!GTK_IS_WIDGET(self->main_box)) return;
+  if (!GTK_IS_WIDGET(self->main_box)) {
+    g_warning("NOTE_EMBED: update_ui_state - main_box is NOT a widget!");
+    return;
+  }
 
   gboolean show_main = (self->state == EMBED_STATE_LOADED);
   gboolean show_loading = (self->state == EMBED_STATE_LOADING);
   gboolean show_error = (self->state == EMBED_STATE_ERROR);
+
+  g_debug("NOTE_EMBED: update_ui_state - state=%d show_main=%d show_loading=%d show_error=%d",
+          self->state, show_main, show_loading, show_error);
 
   if (GTK_IS_WIDGET(self->main_box))
     gtk_widget_set_visible(self->main_box, show_main);
@@ -703,6 +709,10 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
                                     const char *timestamp,
                                     const char *avatar_url) {
   g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
+
+  g_debug("NOTE_EMBED: set_content called - author='%s' content='%.50s...'",
+          author_display ? author_display : "(null)",
+          content ? content : "(null)");
 
   self->embed_type = EMBED_TYPE_NOTE;
   self->state = EMBED_STATE_LOADED;

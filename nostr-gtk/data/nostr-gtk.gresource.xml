@@ -6,5 +6,6 @@
     <file>ui/gnostr-profile-pane.ui</file>
     <file>ui/nostr-note-card-row.ui</file>
     <file>ui/widgets/gnostr-timeline-view.ui</file>
+    <file>ui/widgets/gnostr-note-embed.ui</file>
   </gresource>
 </gresources>

@@ -6,7 +6,7 @@
 #include "gnostr-label-guard.h"
 #include "gnostr-image-viewer.h"
 #include "gnostr-video-player.h"
-#include "gnostr-note-embed.h"
+#include <nostr-gtk-1.0/gnostr-note-embed.h>
 #include "gnostr-avatar-cache.h"
 
 /* Standard/system libraries */
