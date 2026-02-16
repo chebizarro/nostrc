@@ -927,6 +927,9 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
     : gtk_picture_new();
   gtk_widget_add_css_class(self->picture, "video-content");
   gtk_picture_set_content_fit(GTK_PICTURE(self->picture), GTK_CONTENT_FIT_CONTAIN);
+  /* Allow picture to shrink below its natural size - critical for preventing
+   * HD video frames from expanding the timeline beyond card width */
+  gtk_picture_set_can_shrink(GTK_PICTURE(self->picture), TRUE);
   /* Prevent the picture from expanding the timeline to full screen width
    * when the video's natural size exceeds the card width */
   gtk_widget_set_hexpand(self->picture, FALSE);

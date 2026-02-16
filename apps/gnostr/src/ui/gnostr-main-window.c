@@ -7475,24 +7475,6 @@ static void gnostr_main_window_dispose(GObject *object) {
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(object);
 }
 
-/* Fix horizontal expansion: clamp minimum width to prevent window from expanding
- * beyond screen bounds due to child widgets requesting large minimum widths. */
-static void gnostr_main_window_measure(GtkWidget      *widget,
-                                       GtkOrientation  orientation,
-                                       int             for_size,
-                                       int            *minimum,
-                                       int            *natural,
-                                       int            *minimum_baseline,
-                                       int            *natural_baseline) {
-  GTK_WIDGET_CLASS(gnostr_main_window_parent_class)->measure(
-      widget, orientation, for_size, minimum, natural, minimum_baseline, natural_baseline);
-  
-  /* Clamp horizontal minimum to 400px (reasonable minimum for the app) */
-  if (orientation == GTK_ORIENTATION_HORIZONTAL && minimum && *minimum > 400) {
-    *minimum = 400;
-  }
-}
-
 static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
@@ -7500,7 +7482,6 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   object_class->dispose = gnostr_main_window_dispose;
   object_class->get_property = gnostr_main_window_get_property;
   object_class->set_property = gnostr_main_window_set_property;
-  widget_class->measure = gnostr_main_window_measure;
 
   props[PROP_COMPACT] = g_param_spec_boolean("compact", "Compact layout",
                                              "Whether the window uses the compact responsive layout",
