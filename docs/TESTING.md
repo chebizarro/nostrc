@@ -568,16 +568,44 @@ All tests automatically set these, but for manual debugging:
 | `GOBJECT_DEBUG` | `objects` | Track all GObject instances (heavy but thorough) |
 | `GTK_DEBUG` | `interactive` | Open GTK Inspector in Broadway session |
 
+### GTK Inspector
+
+The GTK Inspector is a built-in interactive debugger for GTK4 — widget tree
+introspection, live CSS editing, GObject property/signal monitoring, rendering
+performance analysis, and layout debugging. **It runs in the same Broadway session
+as the app**, so Playwright can interact with both.
+
+```bash
+# Launch any app with Inspector
+GTK_DEBUG=interactive GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
+  GSETTINGS_SCHEMA_DIR=build/apps/gnostr \
+  build/apps/gnostr/gnostr
+```
+
+| Inspector Panel | Debugging Use |
+|-----------------|---------------|
+| **Objects** | Widget tree navigation, GObject property inspection, signal handler auditing, reference count monitoring |
+| **CSS** | Live CSS editing to test layout fixes without recompiling |
+| **Visual** | Box model (margins/borders/padding/content), allocation bounds, baseline alignment |
+| **Accessibility** | Verify accessible roles/labels match Playwright `browser_snapshot()` output |
+| **Statistics** | Frame rate, frame times (stall detection), texture memory, CSS node count |
+| **Recorder** | Frame-by-frame render analysis, identify redundant redraws and layout cascades |
+
+> **📖 Full guide**: [`skills/gtk-inspector/SKILL.md`](../skills/gtk-inspector/SKILL.md) —
+> LLM-actionable workflows for each panel, Playwright-based interaction with the
+> inspector, programmatic usage in tests and GDB sessions, and 4 debugging scenarios
+> (widget sizing, signal leaks, memory growth, layout performance).
+
 ### Strategy by Bug Class
 
-| Bug Class | Identify | Reproduce | Diagnose | Verify |
-|-----------|----------|-----------|----------|--------|
-| **Segfault** | ASan build crashes | `ctest -R recycle` | ASan trace → freed-by location | Test passes under ASan |
-| **Memory leak** | `ASAN_OPTIONS=detect_leaks=1` | Lifecycle test | LSAN trace → allocation site | `gn_test_assert_finalized()` |
-| **Main-thread block** | UI stalls visibly | `ctest -R ndb-violations` | Violation dump → function name | Violation count = 0 |
-| **Widget sizing** | Broadway screenshot | `ctest -R note_card_measure` | `gtk_widget_measure()` values | Dimensions within bounds |
-| **Signal race** | Random crash on scroll | Recycle stress test | GDB break on `g_signal_connect/disconnect` | No ASan errors after 50 cycles |
-| **Latency** | Broadway feels slow | Heartbeat test + NDB violations | GDB break on `storage_ndb_begin_query` | Heartbeat missed count = 0 |
+| Bug Class | Identify | Reproduce | Diagnose | Verify | Inspector Panel |
+|-----------|----------|-----------|----------|--------|-----------------|
+| **Segfault** | ASan build crashes | `ctest -R recycle` | ASan trace → freed-by location | Test passes under ASan | Objects (signals) |
+| **Memory leak** | `ASAN_OPTIONS=detect_leaks=1` | Lifecycle test | LSAN trace → allocation site | `gn_test_assert_finalized()` | Objects (ref count) |
+| **Main-thread block** | UI stalls visibly | `ctest -R ndb-violations` | Violation dump → function name | Violation count = 0 | Statistics (frame times) |
+| **Widget sizing** | Broadway screenshot | `ctest -R note_card_measure` | Inspector Visual panel + CSS | Dimensions within bounds | **Visual + CSS** |
+| **Signal race** | Random crash on scroll | Recycle stress test | Inspector Objects → Signals section | No ASan errors after 50 cycles | **Objects (Signals)** |
+| **Latency** | Broadway feels slow | Heartbeat test + NDB violations | Inspector Statistics + Recorder | Heartbeat missed count = 0 | **Statistics + Recorder** |
 
 ---
 
@@ -586,5 +614,9 @@ All tests automatically set these, but for manual debugging:
 - [`docs/TESTING_ARCHITECTURE.md`](TESTING_ARCHITECTURE.md) — Mock relay testing architecture
 - [`docs/BROADWAY_TESTING.md`](BROADWAY_TESTING.md) — Broadway + Playwright browser UI testing
 - [`docs/test-scenarios/`](test-scenarios/) — Broadway-specific test scenarios
-- [`skills/`](../skills/) — LLM skill documents for debug workflows
+- [`skills/`](../skills/) — LLM skill documents for debug workflows:
+  - [`skills/broadway-debug/`](../skills/broadway-debug/SKILL.md) — Broadway + Playwright UI debugging
+  - [`skills/gtk-inspector/`](../skills/gtk-inspector/SKILL.md) — GTK Inspector debugging (widget tree, CSS, signals, performance)
+  - [`skills/gdb-debug/`](../skills/gdb-debug/SKILL.md) — GDB/LLDB debugging
+  - [`skills/closed-loop-debug/`](../skills/closed-loop-debug/SKILL.md) — Full closed-loop debug workflow
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — Project architecture overview

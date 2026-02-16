@@ -133,15 +133,15 @@ xvfb-run -a build/apps/gnostr/tests/gnostr-test-real-bind-latency 2>&1
 
 ### Strategy selection
 
-| Bug Type | Primary Tool | Secondary Tool |
-|----------|-------------|----------------|
-| Segfault | ASan build | GDB/LLDB `bt full` |
-| Use-after-free | ASan (shows alloc+free) | GDB watchpoint |
-| Memory leak | LSAN / Valgrind | GObject ref count tracing |
-| Main-thread blocking | NDB violation test | GDB breakpoint on `storage_ndb_begin_query` |
-| Widget sizing | Broadway screenshot | `gtk_widget_measure()` in test |
-| Signal handler bug | GDB break on `g_signal_*` | GObject `signals` debug |
-| Latency | Heartbeat test | GDB + NDB violation count |
+| Bug Type | Primary Tool | Secondary Tool | Inspector Panel |
+|----------|-------------|----------------|-----------------|
+| Segfault | ASan build | GDB/LLDB `bt full` | — |
+| Use-after-free | ASan (shows alloc+free) | GDB watchpoint | Objects (signal handlers) |
+| Memory leak | LSAN / Valgrind | GObject ref count tracing | Objects (instance count) |
+| Main-thread blocking | NDB violation test | GDB breakpoint on `storage_ndb_begin_query` | Statistics (frame times) |
+| Widget sizing | GTK Inspector Visual panel | `gtk_widget_measure()` in test | **Visual + CSS** |
+| Signal handler bug | GTK Inspector Objects panel | GDB break on `g_signal_*` | **Objects (Signals section)** |
+| Latency | Heartbeat test | GDB + NDB violation count | Statistics + Recorder |
 
 ### GDB diagnosis (Linux)
 
@@ -435,6 +435,7 @@ For writing deterministic widget tests (used in Phase 2):
 ## Related
 
 - [`skills/broadway-debug/SKILL.md`](../broadway-debug/SKILL.md) — Broadway + Playwright details
+- [`skills/gtk-inspector/SKILL.md`](../gtk-inspector/SKILL.md) — **GTK Inspector debugging (widget tree, CSS, GObject lifecycle, signals)**
 - [`skills/gdb-debug/SKILL.md`](../gdb-debug/SKILL.md) — GDB/LLDB reference
 - [`docs/TESTING.md`](../../docs/TESTING.md) — Full test suite documentation
 - [`AGENTS.md`](../../AGENTS.md) — Agent workflow and commit policy

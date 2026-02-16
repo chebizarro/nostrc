@@ -421,5 +421,6 @@ gdb --args build-debug/apps/gnostr/gnostr
 ## Related
 
 - [`skills/broadway-debug/SKILL.md`](../broadway-debug/SKILL.md) — UI debugging via Broadway
+- [`skills/gtk-inspector/SKILL.md`](../gtk-inspector/SKILL.md) — **GTK Inspector for widget/CSS/signal/performance debugging**
 - [`skills/closed-loop-debug/SKILL.md`](../closed-loop-debug/SKILL.md) — Full debug workflow
 - [`docs/TESTING.md`](../../docs/TESTING.md) — Test suite documentation

@@ -218,6 +218,11 @@ GTK_DEBUG=interactive GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
 The Inspector appears as a separate window in the Broadway session. Use
 Playwright to interact with both the app window and the inspector.
 
+> **📖 For comprehensive Inspector guidance** — widget tree navigation, CSS live
+> editing, GObject lifecycle debugging, signal handler inspection, rendering
+> performance analysis, and LLM-actionable workflows — see
+> [`skills/gtk-inspector/SKILL.md`](../gtk-inspector/SKILL.md).
+
 ## Common Debug Scenarios
 
 ### Scenario 1: Widget sizing regression
@@ -291,6 +296,7 @@ kill $(cat /tmp/broadway-5.pid)
 
 ## Related
 
+- [`skills/gtk-inspector/SKILL.md`](../gtk-inspector/SKILL.md) — **GTK Inspector debugging (comprehensive)**
 - [`docs/BROADWAY_TESTING.md`](../../docs/BROADWAY_TESTING.md) — Overview and test scenarios
 - [`docs/test-scenarios/`](../../docs/test-scenarios/) — Playwright test scripts
 - [`skills/gdb-debug/SKILL.md`](../gdb-debug/SKILL.md) — Debugger integration for crashes
