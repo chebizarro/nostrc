@@ -276,11 +276,30 @@ static void ensure_list_model(NostrGtkTimelineView *self) {
 
 /* ============== GObject Class ============== */
 
+/* Fix horizontal expansion: clamp minimum width to 0 so AdwClamp can constrain */
+static void nostr_gtk_timeline_view_measure(GtkWidget      *widget,
+                                            GtkOrientation  orientation,
+                                            int             for_size,
+                                            int            *minimum,
+                                            int            *natural,
+                                            int            *minimum_baseline,
+                                            int            *natural_baseline) {
+  /* Chain up to parent to get actual measurements */
+  GTK_WIDGET_CLASS(nostr_gtk_timeline_view_parent_class)->measure(
+      widget, orientation, for_size, minimum, natural, minimum_baseline, natural_baseline);
+  
+  /* Clamp horizontal minimum to 0 so parent containers can constrain width */
+  if (orientation == GTK_ORIENTATION_HORIZONTAL && minimum) {
+    *minimum = 0;
+  }
+}
+
 static void nostr_gtk_timeline_view_class_init(NostrGtkTimelineViewClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
   gobj_class->dispose = nostr_gtk_timeline_view_dispose;
   gobj_class->finalize = nostr_gtk_timeline_view_finalize;
+  widget_class->measure = nostr_gtk_timeline_view_measure;
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BOX_LAYOUT);
   g_type_ensure(NOSTR_GTK_TYPE_TIMELINE_TABS);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);

@@ -15,9 +15,11 @@ template $NostrGtkTimelineView: Widget {
             vexpand: true;
             hscrollbar-policy: never;
             vscrollbar-policy: automatic;
+            propagate-natural-width: false;
 
             ListView list_view {
                 vexpand: true;
+                hexpand: false;
             }
         }
     }

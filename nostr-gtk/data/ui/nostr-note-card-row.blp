@@ -283,7 +283,9 @@ template $NostrGtkNoteCardRow: Widget {
                     wrap-mode: word_char;
                     xalign: 0.0;
                     use-markup: true;
+                    hexpand: false;
                     max-width-chars: 80;
+                    width-chars: 1;
 
                     styles [
                         "note-subject",
@@ -298,6 +300,7 @@ template $NostrGtkNoteCardRow: Widget {
                     hexpand: false;
                     natural-wrap-mode: word;
                     max-width-chars: 80;
+                    width-chars: 1;
 
                     styles [
                         "note-content",

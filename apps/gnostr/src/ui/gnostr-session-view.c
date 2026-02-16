@@ -853,6 +853,25 @@ static void gnostr_session_view_set_property(GObject *object,
   }
 }
 
+/* Fix horizontal expansion: clamp minimum width to prevent window from expanding
+ * beyond screen bounds. Child widgets (GtkListView with note cards) can request
+ * very large minimum widths due to long unbreakable text in labels. */
+static void gnostr_session_view_measure(GtkWidget      *widget,
+                                        GtkOrientation  orientation,
+                                        int             for_size,
+                                        int            *minimum,
+                                        int            *natural,
+                                        int            *minimum_baseline,
+                                        int            *natural_baseline) {
+  GTK_WIDGET_CLASS(gnostr_session_view_parent_class)->measure(
+      widget, orientation, for_size, minimum, natural, minimum_baseline, natural_baseline);
+  
+  /* Clamp horizontal minimum to 400px (reasonable minimum for the app) */
+  if (orientation == GTK_ORIENTATION_HORIZONTAL && minimum && *minimum > 400) {
+    *minimum = 400;
+  }
+}
+
 static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
@@ -860,6 +879,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   object_class->dispose = gnostr_session_view_dispose;
   object_class->get_property = gnostr_session_view_get_property;
   object_class->set_property = gnostr_session_view_set_property;
+  widget_class->measure = gnostr_session_view_measure;
 
   props[PROP_COMPACT] = g_param_spec_boolean(
       "compact",
