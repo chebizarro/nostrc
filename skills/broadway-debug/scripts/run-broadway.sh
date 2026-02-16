@@ -41,7 +41,7 @@ if [ ! -f "$BROADWAY_PIDFILE" ] || ! kill -0 "$(cat "$BROADWAY_PIDFILE")" 2>/dev
     echo $BROADWAYD_PID > "$BROADWAY_PIDFILE"
     sleep 1
     echo "Broadway daemon started (PID $BROADWAYD_PID) at http://127.0.0.1:$BROADWAY_PORT"
-    echo "Use tools/stop-broadway.sh to stop the daemon when done."
+    echo "Use scripts/stop-broadway.sh to stop the daemon when done."
 fi
 
 echo ""

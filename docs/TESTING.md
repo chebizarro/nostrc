@@ -452,9 +452,139 @@ The violation counter is **deterministic** — it doesn't depend on timing, syst
 
 ---
 
+## LLM Closed-Loop Debugging
+
+This section describes how an LLM agent can perform complete debug cycles — identify
+bugs, reproduce them, diagnose root causes, apply fixes, and verify corrections —
+without human intervention between iterations.
+
+Detailed skill documents are in [`skills/`](../skills/):
+
+| Skill | File | Purpose |
+|-------|------|---------|
+| **Closed-Loop Debug** | [`skills/closed-loop-debug/SKILL.md`](../skills/closed-loop-debug/SKILL.md) | Full IDENTIFY → REPRO → DIAGNOSE → FIX → VERIFY workflow |
+| **Broadway + Playwright** | [`skills/broadway-debug/SKILL.md`](../skills/broadway-debug/SKILL.md) | UI debugging via Broadway HTML5 backend |
+| **GDB / LLDB** | [`skills/gdb-debug/SKILL.md`](../skills/gdb-debug/SKILL.md) | Memory errors, segfaults, reference counting |
+
+### The Debug Loop
+
+```
+    ┌──────────────────────────────────────────────────────────┐
+    │                                                          │
+    ▼                                                          │
+┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐
+│ IDENTIFY │───►│ REPRO   │───►│ DIAGNOSE│───►│  FIX    │───►│ VERIFY  │
+│ (test/   │    │ (test + │    │ (GDB/   │    │ (edit   │    │ (test + │
+│  report) │    │  ASan)  │    │  LLDB/  │    │  code)  │    │  Bway)  │──┐
+└─────────┘    └─────────┘    │  ASan)  │    └─────────┘    └─────────┘  │
+                               └─────────┘                        │       │
+                                                                  │ PASS  │ FAIL
+                                                                  ▼       │
+                                                               DONE ◄─────┘
+```
+
+### Broadway Persistent Sessions
+
+The Broadway daemon (`gtk4-broadwayd`) persists independently of the app process.
+This means the browser tab and Playwright MCP connection survive across app rebuilds:
+
+```bash
+# 1. Start daemon once (stays running)
+./skills/broadway-debug/scripts/run-broadway.sh
+
+# 2. Connect Playwright
+# browser_navigate(url="http://127.0.0.1:8080")
+
+# 3. Debug loop — daemon stays, browser stays:
+#    Edit code → cmake --build build → relaunch app → browser_snapshot()
+```
+
+Any GTK4 app in the nostrc stack works with Broadway:
+
+| App | Launch Command |
+|-----|---------------|
+| gnostr | `GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 GSETTINGS_SCHEMA_DIR=build/apps/gnostr build/apps/gnostr/gnostr` |
+| gnostr-signer | `GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 GSETTINGS_SCHEMA_DIR=build/apps/gnostr-signer build/apps/gnostr-signer/gnostr-signer` |
+
+### GTK Test Utilities vs Playwright
+
+For automated tests, prefer GTK's built-in test utilities over Playwright DOM interaction:
+
+| GTK Test Utility | Playwright Equivalent | When to Use GTK |
+|------------------|-----------------------|-----------------|
+| `gtk_widget_measure()` | Screenshot + pixel comparison | Widget sizing validation |
+| `gtk_test_widget_wait_for_draw()` | `browser_wait_for()` | Waiting for layout completion |
+| `gtk_test_accessible_assert_role()` | `browser_snapshot()` + parse | Accessibility contract tests |
+| `g_signal_emit()` | `browser_click()` | Deterministic signal testing |
+
+GTK test utilities are deterministic, run headless (via Xvfb), and don't need a
+Broadway daemon. Use Playwright for **visual verification** and **interaction flow
+debugging**, GTK utilities for **automated regression tests**.
+
+### Debugger Integration
+
+#### GDB (Linux) — batch mode for LLM agents
+
+```bash
+gdb -batch \
+  -ex "set pagination off" \
+  -ex "set print pretty on" \
+  -ex "run" \
+  -ex "bt full" \
+  -ex "thread apply all bt 10" \
+  --args build-debug/apps/gnostr/tests/FAILING_TEST 2>&1
+```
+
+#### LLDB (macOS) — batch mode for LLM agents
+
+```bash
+lldb -b \
+  -o "run" \
+  -o "bt all" \
+  -k "bt all" \
+  -k "quit" \
+  -- build-debug/apps/gnostr/tests/FAILING_TEST 2>&1
+```
+
+#### ASan (cross-platform) — self-diagnosing memory errors
+
+```bash
+ASAN_OPTIONS=detect_leaks=1 \
+  build-asan/apps/gnostr/tests/FAILING_TEST 2>&1
+```
+
+ASan reports are **self-contained diagnoses**: they show WHERE the crash happened,
+WHERE the memory was allocated, WHERE it was freed, and WHICH threads were involved.
+No interactive debugger session needed for most UAF/leak issues.
+
+### GLib Debug Environment
+
+All tests automatically set these, but for manual debugging:
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `G_DEBUG` | `fatal-warnings,gc-friendly` | Abort on warnings; GC-friendly for leak detection |
+| `G_SLICE` | `always-malloc` | Disable slab allocator (required for ASan) |
+| `GOBJECT_DEBUG` | `objects` | Track all GObject instances (heavy but thorough) |
+| `GTK_DEBUG` | `interactive` | Open GTK Inspector in Broadway session |
+
+### Strategy by Bug Class
+
+| Bug Class | Identify | Reproduce | Diagnose | Verify |
+|-----------|----------|-----------|----------|--------|
+| **Segfault** | ASan build crashes | `ctest -R recycle` | ASan trace → freed-by location | Test passes under ASan |
+| **Memory leak** | `ASAN_OPTIONS=detect_leaks=1` | Lifecycle test | LSAN trace → allocation site | `gn_test_assert_finalized()` |
+| **Main-thread block** | UI stalls visibly | `ctest -R ndb-violations` | Violation dump → function name | Violation count = 0 |
+| **Widget sizing** | Broadway screenshot | `ctest -R note_card_measure` | `gtk_widget_measure()` values | Dimensions within bounds |
+| **Signal race** | Random crash on scroll | Recycle stress test | GDB break on `g_signal_connect/disconnect` | No ASan errors after 50 cycles |
+| **Latency** | Broadway feels slow | Heartbeat test + NDB violations | GDB break on `storage_ndb_begin_query` | Heartbeat missed count = 0 |
+
+---
+
 ## Related Documentation
 
 - [`docs/TESTING_ARCHITECTURE.md`](TESTING_ARCHITECTURE.md) — Mock relay testing architecture
 - [`docs/BROADWAY_TESTING.md`](BROADWAY_TESTING.md) — Broadway + Playwright browser UI testing
 - [`docs/test-scenarios/`](test-scenarios/) — Broadway-specific test scenarios
+- [`skills/`](../skills/) — LLM skill documents for debug workflows
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — Project architecture overview

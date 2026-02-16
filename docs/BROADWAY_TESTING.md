@@ -12,10 +12,10 @@ The Broadway backend allows GTK4 applications to run in a web browser. Combined 
 
 ```bash
 # From project root
-./tools/run-broadway.sh
+./skills/broadway-debug/scripts/run-broadway.sh
 
 # Or with custom port
-BROADWAY_PORT=9090 ./tools/run-broadway.sh
+BROADWAY_PORT=9090 ./skills/broadway-debug/scripts/run-broadway.sh
 ```
 
 The script will:
@@ -35,7 +35,7 @@ The script will:
 
 ```bash
 # When done testing, stop the persistent daemon
-./tools/stop-broadway.sh
+./skills/broadway-debug/scripts/stop-broadway.sh
 ```
 
 ### 2. Access the UI
@@ -66,7 +66,7 @@ The Playwright MCP server (available in Windsurf) can interact with the Broadway
 ### Example: Custom Port
 
 ```bash
-BROADWAY_PORT=9090 ./tools/run-broadway.sh
+BROADWAY_PORT=9090 ./skills/broadway-debug/scripts/run-broadway.sh
 ```
 
 ## Test Scenarios
@@ -104,7 +104,7 @@ The Playwright MCP provides these tools:
 
 ```bash
 # Terminal 1: Start gnostr with Broadway
-./tools/run-broadway.sh
+./skills/broadway-debug/scripts/run-broadway.sh
 
 # Terminal 2 / Windsurf: Use Playwright MCP
 # Navigate to Broadway UI
@@ -143,7 +143,7 @@ lsof -i :8080
 
 Use a different port:
 ```bash
-BROADWAY_PORT=9090 ./tools/run-broadway.sh
+BROADWAY_PORT=9090 ./skills/broadway-debug/scripts/run-broadway.sh
 ```
 
 ### gnostr binary not found
@@ -156,7 +156,7 @@ cmake --build build
 
 Or specify the binary location:
 ```bash
-GNOSTR_BIN=/path/to/gnostr ./tools/run-broadway.sh
+GNOSTR_BIN=/path/to/gnostr ./skills/broadway-debug/scripts/run-broadway.sh
 ```
 
 ### Broadway daemon not found
