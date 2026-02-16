@@ -3151,6 +3151,7 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
     self->note_embed = NULL;
 
     if (render->first_nostr_ref) {
+      g_debug("NOTE_CARD: Creating embed widget for nostr ref: %s", render->first_nostr_ref);
       self->note_embed = gnostr_note_embed_new();
       gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
       g_signal_connect(self->note_embed, "profile-clicked",
@@ -3161,6 +3162,9 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
       }
       gtk_widget_set_visible(self->embed_box, TRUE);
       g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, render->first_nostr_ref);
+      g_debug("NOTE_CARD: Embed widget created and added to embed_box");
+    } else {
+      g_debug("NOTE_CARD: No first_nostr_ref in render result");
     }
   }
 
@@ -3260,6 +3264,7 @@ void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
     self->note_embed = NULL;
 
     if (render->first_nostr_ref) {
+      g_debug("NOTE_CARD: apply_deferred_content creating embed for: %s", render->first_nostr_ref);
       self->note_embed = gnostr_note_embed_new();
       gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
       g_signal_connect(self->note_embed, "profile-clicked",
@@ -3270,6 +3275,9 @@ void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
       }
       gtk_widget_set_visible(self->embed_box, TRUE);
       g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, render->first_nostr_ref);
+      g_debug("NOTE_CARD: apply_deferred_content embed widget created");
+    } else {
+      g_debug("NOTE_CARD: apply_deferred_content - no first_nostr_ref");
     }
   }
 

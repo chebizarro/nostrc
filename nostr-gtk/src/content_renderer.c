@@ -385,6 +385,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
             case NOSTR_BECH32_NPUB:
             case NOSTR_BECH32_NPROFILE:
               res->first_nostr_ref = g_strdup(href); /* "nostr:..." */
+              g_debug("CONTENT_RENDERER: Found first nostr ref: %s (type=%d)", href, bech32->type);
               break;
             default:
               break;
