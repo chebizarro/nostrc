@@ -1282,7 +1282,7 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
 
   /* Disconnect accumulated "request-embed" handlers on the row.
    * Plain g_signal_connect adds a new handler on every bind without disconnect. */
-  if (GTK_IS_WIDGET(row)) {
+  if (row && GTK_IS_WIDGET(row)) {
     g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
 
     /* Disconnect Tier 2 map handler if still active (not yet fired) */
@@ -1293,7 +1293,7 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
     }
   }
 
-  if (GTK_IS_WIDGET(row)) {
+  if (row && GTK_IS_WIDGET(row)) {
     /* Detach this row from any inflight embed fetches */
     inflight_detach_row(row);
 
