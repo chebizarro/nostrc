@@ -1,6 +1,7 @@
 using Gtk 4.0;
 
 template $NostrGtkTimelineView: Widget {
+    hexpand: true;
     vexpand: true;
 
     accessibility {
@@ -9,6 +10,7 @@ template $NostrGtkTimelineView: Widget {
 
     Box root_box {
         orientation: vertical;
+        hexpand: true;
         vexpand: true;
 
         $NostrGtkTimelineTabs tabs {
@@ -16,14 +18,17 @@ template $NostrGtkTimelineView: Widget {
         }
 
         ScrolledWindow root_scroller {
+            hexpand: true;
             vexpand: true;
+            halign: fill;
             hscrollbar-policy: never;
             vscrollbar-policy: automatic;
             propagate-natural-width: false;
 
             ListView list_view {
                 vexpand: true;
-                hexpand: false;
+                hexpand: true;
+                halign: fill;
             }
         }
     }

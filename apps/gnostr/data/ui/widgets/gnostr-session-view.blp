@@ -431,13 +431,14 @@ template $GnostrSessionView: Adw.Bin {
 
                         content: Overlay content_root {
                             Adw.Clamp middle_clamp {
-                                maximum-size: 760;
-                                tightening-threshold: 560;
+                                maximum-size: 20000;
+                                tightening-threshold: 20000;
                                 hexpand: true;
                                 vexpand: true;
-                                halign: center;
+                                halign: fill;
 
                                 child: Adw.ViewStack stack {
+                                    hexpand: true;
                                     vexpand: true;
 
                                     Adw.ViewStackPage {
@@ -446,6 +447,7 @@ template $GnostrSessionView: Adw.Bin {
                                         icon-name: "view-list-symbolic";
 
                                         child: $NostrGtkTimelineView timeline {
+                                            hexpand: true;
                                             vexpand: true;
                                         };
                                     }

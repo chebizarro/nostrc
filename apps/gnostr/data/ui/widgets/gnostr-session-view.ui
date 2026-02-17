@@ -473,13 +473,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="GtkOverlay" id="content_root">
                             <child>
                               <object class="AdwClamp" id="middle_clamp">
-                                <property name="maximum-size">760</property>
-                                <property name="tightening-threshold">560</property>
+                                <property name="maximum-size">20000</property>
+                                <property name="tightening-threshold">20000</property>
                                 <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
-                                <property name="halign">3</property>
+                                <property name="halign">0</property>
                                 <property name="child">
                                   <object class="AdwViewStack" id="stack">
+                                    <property name="hexpand">true</property>
                                     <property name="vexpand">true</property>
                                     <child>
                                       <object class="AdwViewStackPage">
@@ -488,6 +489,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="icon-name">view-list-symbolic</property>
                                         <property name="child">
                                           <object class="NostrGtkTimelineView" id="timeline">
+                                            <property name="hexpand">true</property>
                                             <property name="vexpand">true</property>
                                           </object>
                                         </property>

@@ -7,6 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="NostrGtkTimelineView" parent="GtkWidget">
+    <property name="hexpand">true</property>
     <property name="vexpand">true</property>
     <accessibility>
       <property name="label" translatable="yes">Timeline</property>
@@ -14,6 +15,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <child>
       <object class="GtkBox" id="root_box">
         <property name="orientation">1</property>
+        <property name="hexpand">true</property>
         <property name="vexpand">true</property>
         <child>
           <object class="NostrGtkTimelineTabs" id="tabs">
@@ -22,14 +24,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkScrolledWindow" id="root_scroller">
+            <property name="hexpand">true</property>
             <property name="vexpand">true</property>
+            <property name="halign">0</property>
             <property name="hscrollbar-policy">2</property>
             <property name="vscrollbar-policy">1</property>
             <property name="propagate-natural-width">false</property>
             <child>
               <object class="GtkListView" id="list_view">
                 <property name="vexpand">true</property>
-                <property name="hexpand">false</property>
+                <property name="hexpand">true</property>
+                <property name="halign">0</property>
               </object>
             </child>
           </object>
