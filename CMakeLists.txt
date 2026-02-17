@@ -329,6 +329,12 @@ if(BUILD_TESTING)
   add_subdirectory(tests/testkit)
 endif()
 
+# Marmot protocol library (MLS + Nostr) — depends on OpenSSL + libsodium
+option(BUILD_LIBMARMOT "Build libmarmot (Marmot protocol library)" ON)
+if (BUILD_LIBMARMOT)
+  add_subdirectory(libmarmot)
+endif()
+
 # GObject wrapper layer (nostr-gobject-1.0) — must come after NIP targets
 add_subdirectory(nostr-gobject)
 

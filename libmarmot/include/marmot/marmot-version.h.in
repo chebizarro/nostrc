@@ -1,0 +1,15 @@
+/*
+ * libmarmot - C implementation of the Marmot protocol (MLS + Nostr)
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef MARMOT_VERSION_H
+#define MARMOT_VERSION_H
+
+#define MARMOT_VERSION_MAJOR @MARMOT_VERSION_MAJOR@
+#define MARMOT_VERSION_MINOR @MARMOT_VERSION_MINOR@
+#define MARMOT_VERSION_PATCH @MARMOT_VERSION_PATCH@
+#define MARMOT_VERSION_STRING "@MARMOT_VERSION_STRING@"
+
+#endif /* MARMOT_VERSION_H */
