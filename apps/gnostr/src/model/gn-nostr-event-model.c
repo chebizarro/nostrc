@@ -2779,25 +2779,12 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
     return;
   }
 
-  /* nostrc-css-fix: Clear in batches to avoid GTK CSS node corruption.
-   * Mass widget disposal (items_changed with large removed count) can corrupt
-   * GTK's internal CSS node state, causing crashes in gtk_css_node_finalize.
-   * By clearing in smaller batches with main loop iterations between them,
-   * we give GTK time to properly clean up CSS state. */
-  #define CLEAR_BATCH_SIZE 20
-  while (self->notes->len > 0) {
-    guint batch = MIN(CLEAR_BATCH_SIZE, self->notes->len);
-    guint old_len = self->notes->len;
-
-    /* Remove from tail to avoid index shifting */
-    g_array_set_size(self->notes, old_len - batch);
-    g_list_model_items_changed(G_LIST_MODEL(self), self->notes->len, batch, 0);
-
-    /* Process pending GTK events to let CSS cleanup complete */
-    while (g_main_context_pending(NULL))
-      g_main_context_iteration(NULL, FALSE);
-  }
-  #undef CLEAR_BATCH_SIZE
+  /* Resize array and emit items_changed FIRST so GTK can tear down widgets
+   * while cached items are still valid.
+   * nostrc-css-fix: Single signal is safer than batched approach which can
+   * trigger async callbacks during clear and corrupt heap state. */
+  g_array_set_size(self->notes, 0);
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
 
   /* NOW clear caches after GTK has finished with widgets */
   g_hash_table_remove_all(self->note_key_set);
