@@ -644,62 +644,54 @@ query_thread_func(GTask         *task,
         return;
     }
 
-    /* nostrc-blk1: Drain events using protocol signals only — no arbitrary
-     * timeouts.  Relays signal completion via EOSE, or the subscription
-     * gets closed/disconnected.  This is WebSocket + Nostr, not REST.
+    /* nostrc-blk1: Drain events using protocol signals only — EOSE-driven.
+     * Each subscription has an EOSE channel that signals when the relay
+     * has finished sending historical events. We use non-blocking receives
+     * to drain channels and wait for EOSE signals.
      *
-     * EOSE quorum: once a majority of relays have EOSE'd, start a short
-     * grace window (2s) for stragglers, then break.  One misbehaving relay
-     * must not block the entire query for minutes. */
-    gint64 poll_start = g_get_monotonic_time();
-    gint64 first_event_time = 0;
-    gint64 quorum_time = 0;        /* when quorum was first reached (0 = not yet) */
-    const gint64 QUORUM_GRACE_US = 2 * G_USEC_PER_SEC; /* 2s grace after quorum */
-    guint poll_iterations = 0;
-    g_debug("pool_query_thread: polling for events (protocol-driven + EOSE quorum)");
+     * The loop continues until all relays have sent EOSE or disconnected.
+     * A 30-second safety timeout prevents infinite hangs if relays misbehave. */
+    gint64 query_start = g_get_monotonic_time();
+    const gint64 MAX_QUERY_TIME_US = 30 * G_USEC_PER_SEC; /* 30s safety timeout */
+    g_debug("pool_query_thread: waiting for EOSE from %u relays", items->len);
 
     for (;;) {
-        poll_iterations++;
         if (cancellable && g_cancellable_is_cancelled(cancellable)) {
-            fprintf(stderr, "[POOL_QUERY] poll: CANCELLED after %lldms (%u iters)\n",
-                    (long long)((g_get_monotonic_time() - poll_start) / 1000), poll_iterations);
+            g_debug("[POOL_QUERY] cancelled");
             break;
         }
 
-        gboolean any_activity = FALSE;
+        /* Safety timeout - don't hang forever if relays misbehave */
+        if (g_get_monotonic_time() - query_start > MAX_QUERY_TIME_US) {
+            g_debug("[POOL_QUERY] safety timeout after 30s");
+            break;
+        }
+
         gboolean all_done = TRUE;
+        gboolean any_activity = FALSE;
 
         for (guint i = 0; i < items->len; i++) {
             RelaySubItem *item = g_ptr_array_index(items, i);
             if (!item || !item->sub || item->eosed) continue;
 
-            /* Check if subscription was closed or relay disconnected */
+            all_done = FALSE;
+
+            /* Check if relay disconnected or subscription closed */
             if (nostr_subscription_is_closed(item->sub) ||
                 !nostr_relay_is_connected(item->core_relay)) {
-                item->eosed = TRUE; /* treat as done */
-                fprintf(stderr, "[POOL_QUERY] poll: relay[%u] %s after %lldms, %u results so far\n",
-                        i,
-                        nostr_subscription_is_closed(item->sub) ? "CLOSED" : "DISCONNECTED",
-                        (long long)((g_get_monotonic_time() - poll_start) / 1000),
-                        data->results->len);
+                item->eosed = TRUE;
+                g_debug("[POOL_QUERY] relay[%u] %s", i,
+                        nostr_subscription_is_closed(item->sub) ? "CLOSED" : "disconnected");
                 continue;
             }
 
-            all_done = FALSE;
-
-            /* Check for events */
-            void *msg = NULL;
+            /* Drain events channel */
             GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
+            void *msg = NULL;
             while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
                 any_activity = TRUE;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent *)msg;
-                    if (!first_event_time) {
-                        first_event_time = g_get_monotonic_time();
-                        fprintf(stderr, "[POOL_QUERY] poll: FIRST EVENT after %lldms (kind=%d)\n",
-                                (long long)((first_event_time - poll_start) / 1000),
-                                ev->kind);
-                    }
                     char *eid = nostr_event_get_id(ev);
                     if (eid && *eid && !g_hash_table_contains(data->seen_ids, eid)) {
                         g_hash_table_add(data->seen_ids, g_strdup(eid));
@@ -713,52 +705,28 @@ query_thread_func(GTask         *task,
                 msg = NULL;
             }
 
-            /* Check for EOSE */
+            /* Check for EOSE - this is the completion signal */
             GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 item->eosed = TRUE;
                 any_activity = TRUE;
-                fprintf(stderr, "[POOL_QUERY] poll: relay[%u] EOSE after %lldms, %u results so far\n",
-                        i, (long long)((g_get_monotonic_time() - poll_start) / 1000),
+                g_debug("[POOL_QUERY] relay[%u] EOSE after %lldms, %u results",
+                        i, (long long)((g_get_monotonic_time() - query_start) / 1000),
                         data->results->len);
             }
         }
 
         if (all_done) {
-            fprintf(stderr, "[POOL_QUERY] all relays done after %lldms, %u results collected\n",
-                    (long long)((g_get_monotonic_time() - poll_start) / 1000), data->results->len);
+            g_debug("[POOL_QUERY] all relays done after %lldms, %u results",
+                    (long long)((g_get_monotonic_time() - query_start) / 1000),
+                    data->results->len);
             break;
         }
 
-        /* EOSE quorum: count how many relays have finished */
-        if (!all_done && items->len >= 2) {
-            guint n_eosed = 0;
-            for (guint i = 0; i < items->len; i++) {
-                RelaySubItem *item = g_ptr_array_index(items, i);
-                if (item && item->eosed) n_eosed++;
-            }
-            /* Quorum = strict majority (more than half) */
-            if (n_eosed > items->len / 2) {
-                if (quorum_time == 0) {
-                    quorum_time = g_get_monotonic_time();
-                    fprintf(stderr, "[POOL_QUERY] EOSE quorum reached (%u/%u relays) after %lldms — "
-                            "grace window %lldms for stragglers\n",
-                            n_eosed, items->len,
-                            (long long)((quorum_time - poll_start) / 1000),
-                            (long long)(QUORUM_GRACE_US / 1000));
-                } else if (g_get_monotonic_time() - quorum_time > QUORUM_GRACE_US) {
-                    fprintf(stderr, "[POOL_QUERY] quorum grace expired — %u/%u relays done, "
-                            "%u results, breaking\n",
-                            n_eosed, items->len, data->results->len);
-                    break;
-                }
-            }
-        }
-
+        /* Brief sleep to avoid busy-spinning when no activity */
         if (!any_activity)
-            g_usleep(1000); /* 1ms backoff */
+            g_usleep(10000); /* 10ms */
     }
-    fprintf(stderr, "[POOL_QUERY] poll loop done, %u results total\n", data->results->len);
 
     /* nostrc-blk1: Deliver results BEFORE subscription cleanup.
      * nostr_subscription_close/free can block waiting on lifecycle worker
@@ -1157,10 +1125,46 @@ multi_sub_subscribe_to_relay(GNostrPoolMultiSub *multi_sub, GNostrRelay *relay)
             return TRUE;  /* already subscribed */
     }
     
+    /* Ensure relay is actually connected at the core level */
+    NostrRelay *core_relay = gnostr_relay_get_core_relay(relay);
+    if (!core_relay) {
+        g_warning("Multi-sub: relay %s has no core relay", url);
+        return FALSE;
+    }
+    
+    /* Connect the core relay if not already connected */
+    if (!nostr_relay_is_connected(core_relay)) {
+        Error *conn_err = NULL;
+        if (!nostr_relay_connect(core_relay, &conn_err)) {
+            g_warning("Multi-sub: failed to connect relay %s: %s", url,
+                      conn_err && conn_err->message ? conn_err->message : "unknown");
+            if (conn_err) free_error(conn_err);
+            return FALSE;
+        }
+        g_debug("Multi-sub: connected relay %s at core level", url);
+    }
+    
+    /* Deep copy filters for this subscription (each subscription takes ownership) */
+    NostrFilters *filters_copy = nostr_filters_new();
+    if (!filters_copy) {
+        g_warning("Multi-sub: failed to allocate filters for %s", url);
+        return FALSE;
+    }
+    for (size_t i = 0; i < multi_sub->filters->count; i++) {
+        NostrFilter *f = nostr_filter_copy(&multi_sub->filters->filters[i]);
+        if (!f || !nostr_filters_add(filters_copy, f)) {
+            if (f) nostr_filter_free(f);
+            nostr_filters_free(filters_copy);
+            g_warning("Multi-sub: failed to copy filter for %s", url);
+            return FALSE;
+        }
+    }
+    
     /* Create subscription for this relay */
     GError *error = NULL;
-    GNostrSubscription *sub = gnostr_subscription_new(relay, multi_sub->filters);
+    GNostrSubscription *sub = gnostr_subscription_new(relay, filters_copy);
     if (!sub) {
+        nostr_filters_free(filters_copy);
         g_warning("Multi-sub: failed to create subscription for %s", url);
         return FALSE;
     }

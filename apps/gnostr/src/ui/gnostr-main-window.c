@@ -9154,13 +9154,9 @@ static void start_pool_live(GnostrMainWindow *self) {
                                   &filters,
                                   0);  /* No limit - nostrdb handles storage */
   
-  /* Add since=(now - 5 minutes) to get recent events + live updates.
-   * This populates the timeline with fresh content while also receiving
-   * new events as they're published. */
-  if (filters && filters->count > 0) {
-    int64_t since = (int64_t)time(NULL) - (5 * 60);  /* 5 minutes ago */
-    nostr_filter_set_since_i64(&filters->filters[0], since);
-  }
+  /* No since filter - nostrdb handles deduplication automatically.
+   * Live subscription receives all matching events, nostrdb stores them,
+   * and the timeline model queries nostrdb for display. */
   if (!urls || url_count == 0 || !filters) {
     g_warning("[RELAY] No relay URLs configured, skipping live subscription");
     if (filters) nostr_filters_free(filters);
