@@ -262,7 +262,7 @@ static void gnostr_highlight_card_init(GnostrHighlightCard *self) {
   /* Add click gesture to source link */
   GtkGesture *source_click = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(source_click), GDK_BUTTON_PRIMARY);
-  g_signal_connect(source_click, "pressed", G_CALLBACK(on_source_clicked), self);
+  g_signal_connect(source_click, "released", G_CALLBACK(on_source_clicked), self);
   gtk_widget_add_controller(source_box, GTK_EVENT_CONTROLLER(source_click));
 
   gtk_widget_set_visible(source_box, FALSE);
@@ -295,7 +295,7 @@ static void gnostr_highlight_card_init(GnostrHighlightCard *self) {
   /* Add click gesture to highlighter */
   GtkGesture *highlighter_click = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(highlighter_click), GDK_BUTTON_PRIMARY);
-  g_signal_connect(highlighter_click, "pressed", G_CALLBACK(on_highlighter_clicked), self);
+  g_signal_connect(highlighter_click, "released", G_CALLBACK(on_highlighter_clicked), self);
   gtk_widget_add_controller(self->highlighter_box, GTK_EVENT_CONTROLLER(highlighter_click));
 
   /* Timestamp */
@@ -534,7 +534,7 @@ void gnostr_highlight_card_set_author(GnostrHighlightCard *self,
       /* Add click gesture */
       GtkGesture *author_click = gtk_gesture_click_new();
       gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(author_click), GDK_BUTTON_PRIMARY);
-      g_signal_connect(author_click, "pressed", G_CALLBACK(on_author_clicked), self);
+      g_signal_connect(author_click, "released", G_CALLBACK(on_author_clicked), self);
       gtk_widget_add_controller(self->author_label, GTK_EVENT_CONTROLLER(author_click));
 
       g_free(text);

@@ -309,7 +309,7 @@ build_ui(GnostrCommunityCard *self)
     /* Click gesture for the card */
     GtkGesture *click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
-    g_signal_connect(click, "pressed", G_CALLBACK(on_card_clicked), self);
+    g_signal_connect(click, "released", G_CALLBACK(on_card_clicked), self);
     gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(click));
 }
 

@@ -690,7 +690,7 @@ static void gnostr_poll_card_init(GnostrPollCard *self) {
   /* Make author row clickable */
   GtkGesture *author_click = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(author_click), GDK_BUTTON_PRIMARY);
-  g_signal_connect(author_click, "pressed", G_CALLBACK(on_author_clicked), self);
+  g_signal_connect(author_click, "released", G_CALLBACK(on_author_clicked), self);
   gtk_widget_add_controller(self->author_box, GTK_EVENT_CONTROLLER(author_click));
   gtk_widget_set_cursor_from_name(self->author_box, "pointer");
 

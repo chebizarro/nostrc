@@ -260,7 +260,7 @@ setup_card_ui(GnostrThreadCard *self)
     /* Add click gesture to root */
     GtkGesture *click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
-    g_signal_connect(click, "pressed", G_CALLBACK(on_card_clicked), self);
+    g_signal_connect(click, "released", G_CALLBACK(on_card_clicked), self);
     gtk_widget_add_controller(self->root_box, GTK_EVENT_CONTROLLER(click));
 
     /* Header: Avatar + Author info + Timestamp */

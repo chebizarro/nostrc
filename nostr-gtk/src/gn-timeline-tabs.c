@@ -124,7 +124,7 @@ guint nostr_gtk_timeline_tabs_add_tab(NostrGtkTimelineTabs *self,
     GtkGesture *gesture = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), GDK_BUTTON_PRIMARY);
     gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(gesture), GTK_PHASE_CAPTURE);
-    g_signal_connect(gesture, "pressed", G_CALLBACK(on_close_gesture_pressed), self);
+    g_signal_connect(gesture, "released", G_CALLBACK(on_close_gesture_pressed), self);
     gtk_widget_add_controller(info->close_button, GTK_EVENT_CONTROLLER(gesture));
 
     gtk_box_append(GTK_BOX(hbox), info->close_button);

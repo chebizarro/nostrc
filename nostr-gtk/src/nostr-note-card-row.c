@@ -2065,7 +2065,7 @@ static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
   if (GTK_IS_WIDGET(self->reply_indicator_box)) {
     GtkGesture *reply_click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(reply_click), GDK_BUTTON_PRIMARY);
-    g_signal_connect(reply_click, "pressed", G_CALLBACK(on_reply_indicator_clicked), self);
+    g_signal_connect(reply_click, "released", G_CALLBACK(on_reply_indicator_clicked), self);
     gtk_widget_add_controller(self->reply_indicator_box, GTK_EVENT_CONTROLLER(reply_click));
     /* Add CSS class for hover styling and cursor */
     gtk_widget_add_css_class(self->reply_indicator_box, "reply-indicator-clickable");
@@ -2076,7 +2076,7 @@ static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
   if (GTK_IS_WIDGET(self->reply_count_box)) {
     GtkGesture *count_click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(count_click), GDK_BUTTON_PRIMARY);
-    g_signal_connect(count_click, "pressed", G_CALLBACK(on_reply_count_clicked), self);
+    g_signal_connect(count_click, "released", G_CALLBACK(on_reply_count_clicked), self);
     gtk_widget_add_controller(self->reply_count_box, GTK_EVENT_CONTROLLER(count_click));
     gtk_widget_set_cursor_from_name(self->reply_count_box, "pointer");
   }
@@ -3065,7 +3065,7 @@ static void realize_pending_media_widgets(NostrGtkNoteCardRow *self) {
       GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
       GtkGesture *click_gesture = gtk_gesture_click_new();
       gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-      g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
+      g_signal_connect(click_gesture, "released", G_CALLBACK(on_media_image_clicked), NULL);
       gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
       gtk_box_append(GTK_BOX(self->media_box), container);
       gtk_widget_set_visible(self->media_box, TRUE);

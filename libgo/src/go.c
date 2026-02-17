@@ -78,24 +78,10 @@ static void go_fiber_compat_trampoline(void *ctx) {
 }
 
 int go_fiber_compat(void *(*start_routine)(void *), void *arg) {
-    if (!gof_spawn_ptr) {
-        /* Fiber runtime not linked — fall back to OS thread */
-        return go(start_routine, arg);
-    }
-    GoFiberCompatWrapper *w = malloc(sizeof(GoFiberCompatWrapper));
-    if (!w) {
-        fprintf(stderr, "go_fiber_compat: allocation failed\n");
-        return -1;
-    }
-    w->fn  = start_routine;
-    w->arg = arg;
-    gof_fiber_t *f = gof_spawn_ptr(go_fiber_compat_trampoline, w, 0);
-    if (!f) {
-        free(w);
-        /* Fall back to OS thread on spawn failure */
-        return go(start_routine, arg);
-    }
-    return 0;
+    /* nostrc-b0h-revert: Always use OS threads instead of fibers.
+     * The fiber runtime has issues where spawned fibers don't execute,
+     * causing relay message loops to never start. OS threads are reliable. */
+    return go(start_routine, arg);
 }
 
 // Wrapper function to create a new thread

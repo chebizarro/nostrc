@@ -971,23 +971,29 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
     }
 
     // Wait on either an incoming message or context cancellation
+    // nostrc-b0h-revert: Use polling instead of go_select due to race condition
+    // where websocket messages arrive before select waiters are registered.
     WebSocketMessage *msg = NULL;
     if (ctx) {
-        GoSelectCase cases[] = {
-            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = recv_chan, .value = NULL, .recv_buf = (void **)&msg },
-            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = done_chan, .value = NULL, .recv_buf = NULL },
-        };
-        int idx = go_select(cases, 2);
-        if (idx == -1) {
-            // All channels invalid (freed during shutdown)
-            if (err) *err = new_error(1, "Channels invalid or freed");
-            return;
+        // Poll both channels with 1ms backoff
+        for (;;) {
+            // Check if context is canceled
+            if (go_context_is_canceled(ctx)) {
+                if (err) *err = new_error(1, "Context canceled");
+                return;
+            }
+            // Try to receive a message
+            if (go_channel_try_receive(recv_chan, (void **)&msg) == 0) {
+                break; // Got a message
+            }
+            // Check if channel is closed
+            if (go_channel_is_closed(recv_chan)) {
+                if (err) *err = new_error(1, "Receive channel closed");
+                return;
+            }
+            // Brief sleep to avoid busy-waiting
+            usleep(1000); // 1ms
         }
-        if (idx == 1) {
-            if (err) *err = new_error(1, "Context canceled");
-            return;
-        }
-        // idx == 0 => message
         if (msg == NULL) {
             if (err) *err = new_error(1, "Receive failed or channel closed");
             return;

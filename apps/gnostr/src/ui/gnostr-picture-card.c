@@ -355,7 +355,7 @@ gnostr_picture_card_init(GnostrPictureCard *self) {
 
   /* Image click gesture */
   GtkGesture *click = gtk_gesture_click_new();
-  g_signal_connect(click, "pressed", G_CALLBACK(on_image_clicked), self);
+  g_signal_connect(click, "released", G_CALLBACK(on_image_clicked), self);
   gtk_widget_add_controller(self->image_overlay, GTK_EVENT_CONTROLLER(click));
 
   /* Loading spinner */

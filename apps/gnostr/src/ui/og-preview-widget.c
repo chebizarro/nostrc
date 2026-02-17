@@ -912,7 +912,7 @@ static void og_preview_widget_init(OgPreviewWidget *self) {
   
   /* Make card clickable */
   GtkGesture *click = gtk_gesture_click_new();
-  g_signal_connect(click, "pressed", G_CALLBACK(on_card_clicked), self);
+  g_signal_connect(click, "released", G_CALLBACK(on_card_clicked), self);
   gtk_widget_add_controller(self->card_box, GTK_EVENT_CONTROLLER(click));
 }
 

@@ -828,7 +828,7 @@ void gnostr_calendar_event_card_add_participant(GnostrCalendarEventCard *self,
 
   /* Make clickable */
   GtkGesture *click = gtk_gesture_click_new();
-  g_signal_connect(click, "pressed", G_CALLBACK(on_participant_clicked), avatar_box);
+  g_signal_connect(click, "released", G_CALLBACK(on_participant_clicked), avatar_box);
   gtk_widget_add_controller(avatar_box, GTK_EVENT_CONTROLLER(click));
 
   gtk_widget_set_cursor_from_name(avatar_box, "pointer");
