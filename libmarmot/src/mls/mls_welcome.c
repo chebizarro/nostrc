@@ -264,6 +264,14 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
         return MARMOT_ERR_WELCOME_INVALID;
     }
+
+    /* Verify GroupInfo signature.
+     * NOTE: In a full implementation, we would need to extract the signer's
+     * public key from the ratchet tree at gi.signer_leaf. For now, we skip
+     * signature verification as the tree is not yet fully deserialized.
+     * This is a known limitation that should be addressed when implementing
+     * full ratchet tree support. */
+    
     free(gi_data);
 
     /* Initialize group state from GroupInfo */
@@ -310,8 +318,9 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         group_out->extensions_len = gi.extensions_len;
     }
 
-    /* Store our signing key */
+    /* Store our signing key and encryption key */
     memcpy(group_out->own_signature_key, kp_priv->signature_key_private, MLS_SIG_SK_LEN);
+    memcpy(group_out->own_encryption_key, kp_priv->encryption_key_private, MLS_KEM_SK_LEN);
 
     /* Initialize ratchet tree.
      * In a full implementation, the tree would be provided either via
@@ -332,16 +341,34 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* Leaf 1 is us (we were just added) */
+    /* Find our leaf index by matching our KeyPackage's encryption key in the tree.
+     * For now, with a 2-leaf tree, we assume we're at index 1 (the joiner).
+     * In a full implementation, we would search the tree for our encryption key. */
     group_out->own_leaf_index = 1;
-    uint32_t own_node_idx = mls_tree_leaf_to_node(1);
-    group_out->tree.nodes[own_node_idx].type = MLS_NODE_LEAF;
-    if (mls_leaf_node_clone(&group_out->tree.nodes[own_node_idx].leaf,
-                             &kp->leaf_node) != 0) {
+    bool found_self = false;
+    
+    for (uint32_t leaf_idx = 0; leaf_idx < group_out->tree.n_leaves; leaf_idx++) {
+        uint32_t node_idx = mls_tree_leaf_to_node(leaf_idx);
+        /* For now, just populate our known position */
+        if (leaf_idx == 1) {
+            group_out->tree.nodes[node_idx].type = MLS_NODE_LEAF;
+            if (mls_leaf_node_clone(&group_out->tree.nodes[node_idx].leaf,
+                                     &kp->leaf_node) != 0) {
+                mls_group_info_clear(&gi);
+                sodium_memzero(joiner_secret, sizeof(joiner_secret));
+                mls_group_free(group_out);
+                return MARMOT_ERR_INTERNAL;
+            }
+            found_self = true;
+            break;
+        }
+    }
+    
+    if (!found_self) {
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
         mls_group_free(group_out);
-        return MARMOT_ERR_INTERNAL;
+        return MARMOT_ERR_WELCOME_NOT_FOUND;
     }
 
     /* Derive epoch secrets from joiner_secret.

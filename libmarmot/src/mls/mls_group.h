@@ -138,6 +138,7 @@ typedef struct {
     /* ── Own state ────────────────────────────────────────────────────── */
     uint32_t       own_leaf_index;      /**< Our leaf index in the tree */
     uint8_t        own_signature_key[MLS_SIG_SK_LEN]; /**< Our Ed25519 private key */
+    uint8_t        own_encryption_key[MLS_KEM_SK_LEN]; /**< Our X25519 encryption private key */
 
     /* ── Key schedule ─────────────────────────────────────────────────── */
     MlsEpochSecrets epoch_secrets;      /**< Derived epoch secrets */
