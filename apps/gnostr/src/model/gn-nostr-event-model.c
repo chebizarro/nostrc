@@ -686,30 +686,52 @@ static void insertion_buffer_sorted_insert(GArray *buf, PendingEntry *entry) {
  * Evict oldest items from the tail of the newest-first notes array when
  * exceeding MODEL_MAX_ITEMS. Returns the number of items evicted.
  *
- * Called from the tick callback instead of scheduling an idle, avoiding
- * nested items_changed signals. Cache cleanup happens inline.
+ * CRITICAL: This function collects keys to evict and resizes the array,
+ * but does NOT clean up caches. The caller MUST call cleanup_evicted_keys()
+ * AFTER emitting items_changed to avoid use-after-free during GTK widget
+ * finalization.
  */
-static guint enforce_window_inline(GnNostrEventModel *self) {
+static guint enforce_window_inline(GnNostrEventModel *self, GArray **evicted_keys_out) {
   if (self->is_thread_view) return 0;
   guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
   if (self->notes->len <= cap) return 0;
 
   guint to_remove = self->notes->len - cap;
 
-  /* Clean up caches for evicted keys (oldest are at tail in newest-first array) */
+  /* Collect keys to evict (oldest are at tail in newest-first array) */
+  GArray *evicted = g_array_sized_new(FALSE, FALSE, sizeof(uint64_t), to_remove);
   for (guint i = 0; i < to_remove; i++) {
     guint idx = self->notes->len - 1 - i;
     NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
-    uint64_t k = old->note_key;
+    g_array_append_val(evicted, old->note_key);
+  }
+
+  g_array_set_size(self->notes, cap);
+
+  if (evicted_keys_out) {
+    *evicted_keys_out = evicted;
+  } else {
+    g_array_unref(evicted);
+  }
+  return to_remove;
+}
+
+/**
+ * cleanup_evicted_keys:
+ * Clean up caches for evicted keys. MUST be called AFTER items_changed
+ * signal so GTK widgets are disposed before cache entries are freed.
+ */
+static void cleanup_evicted_keys(GnNostrEventModel *self, GArray *evicted_keys) {
+  if (!evicted_keys) return;
+  for (guint i = 0; i < evicted_keys->len; i++) {
+    uint64_t k = g_array_index(evicted_keys, uint64_t, i);
     g_hash_table_remove(self->note_key_set, &k);
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
     g_hash_table_remove(self->skip_animation_keys, &k);
   }
-
-  g_array_set_size(self->notes, cap);
-  return to_remove;
+  g_array_unref(evicted_keys);
 }
 
 /**
@@ -852,9 +874,11 @@ static gboolean on_drain_timer(gpointer user_data) {
     guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
     if (self->notes->len > cap) {
       guint pre_evict = self->notes->len;
-      guint evicted = enforce_window_inline(self);
+      GArray *evicted_keys = NULL;
+      guint evicted = enforce_window_inline(self, &evicted_keys);
       if (evicted > 0) {
         g_list_model_items_changed(G_LIST_MODEL(self), self->notes->len, evicted, 0);
+        cleanup_evicted_keys(self, evicted_keys);
         g_debug("[FRAME] Evicted %u items from tail, model %u -> %u",
                 evicted, pre_evict, self->notes->len);
       }
@@ -1514,8 +1538,10 @@ static void timeline_batch_complete_cb(GObject      *source_object,
    * CRITICAL: evict BEFORE signal to keep model consistent — same pattern
    * as refresh and on_refresh_async_done. */
   if (direct_inserted > 0) {
-    enforce_window_inline(self);
+    GArray *evicted_keys = NULL;
+    enforce_window_inline(self, &evicted_keys);
     g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, self->notes->len);
+    cleanup_evicted_keys(self, evicted_keys);
     g_debug("[INSERT] Direct insert: %u items (startup fallback), model now %u",
             direct_inserted, self->notes->len);
   }
@@ -1563,7 +1589,6 @@ static void timeline_batch_complete_cb(GObject      *source_object,
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
   (void)subid;
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  g_warning("[MODEL] on_sub_timeline_batch: subid=%lu n_keys=%u", (unsigned long)subid, n_keys);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
   /* Allocate and populate batch data with snapshots of filter params */
@@ -2098,8 +2123,10 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
       storage_ndb_cursor_free(cursor);
 
       if (self->notes->len > 0) {
-        enforce_window_inline(self);
+        GArray *evicted_keys = NULL;
+        enforce_window_inline(self, &evicted_keys);
         g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+        cleanup_evicted_keys(self, evicted_keys);
         g_debug("[MODEL] Initial load: %u events from nostrdb cache", self->notes->len);
       }
     }
@@ -2260,11 +2287,13 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   g_string_free(filter, TRUE);
 
   /* Evict before signal to avoid nested items_changed */
-  enforce_window_inline(self);
+  GArray *evicted_keys_refresh = NULL;
+  enforce_window_inline(self, &evicted_keys_refresh);
 
   /* ONE batched signal for all insertions (model was cleared above, so old=0) */
   if (self->notes->len > 0)
     g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+  cleanup_evicted_keys(self, evicted_keys_refresh);
 
   g_debug("[MODEL] Refresh complete: %u total items (%u added)", self->notes->len, added);
 }
@@ -2488,11 +2517,13 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   }
 
   /* Evict before signal to avoid nested items_changed */
-  enforce_window_inline(self);
+  GArray *evicted_keys_async = NULL;
+  enforce_window_inline(self, &evicted_keys_async);
 
   /* ONE batched signal for all insertions (model was cleared, so old=0) */
   if (self->notes->len > 0)
     g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+  cleanup_evicted_keys(self, evicted_keys_async);
 
   g_debug("[MODEL] Async refresh complete: %u total items (%u added)", self->notes->len, added);
 
@@ -2840,10 +2871,14 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
   parse_nip10_tags(evt, &root_id, &reply_id);
 
   add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-  guint evicted = enforce_window_inline(self);
+  GArray *evicted_keys_add = NULL;
+  guint evicted = enforce_window_inline(self, &evicted_keys_add);
   if (evicted > 0) {
     guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
     g_list_model_items_changed(G_LIST_MODEL(self), cap, evicted, 0);
+    cleanup_evicted_keys(self, evicted_keys_add);
+  } else {
+    cleanup_evicted_keys(self, evicted_keys_add);
   }
 
   g_free(root_id);
