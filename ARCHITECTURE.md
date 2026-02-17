@@ -2,109 +2,306 @@
 
 ## Overview
 
-Nostrc is a C library that implements the Nostr protocol with modular components for core protocol primitives, JSON handling, concurrency primitives, and optional NIP modules. The repository is a monorepo with multiple libraries and tests built via CMake.
+Nostrc is a monorepo implementing the Nostr protocol in C, from low-level crypto primitives to full GTK4 desktop applications. It is built via CMake (primary) and Meson (per-library), with optional GObject Introspection (GIR) and Vala (VAPI) bindings.
 
-- Core library: `libnostr/`
-- Concurrency primitives: `libgo/`
-- JSON and integration helpers: `libjson/`
-- NIP implementations: `nips/`
-- Optional serialization: `nson/` (when ENABLE_NSON is used)
-- Examples: `examples/`
-- Tests: `tests/`
-- Relay applications and core policy helpers: `apps/`
+### Libraries
 
-## High-level Component Diagram
+| Library | Directory | Purpose | Dependencies |
+|---------|-----------|---------|-------------|
+| **libgo** | `libgo/` | Go-like concurrency: channels, contexts, wait groups, fibers | nsync |
+| **libnostr** | `libnostr/` | Core Nostr types: events, relays, subscriptions, filters, keys | libgo, OpenSSL, libsecp256k1, libwebsockets |
+| **libjson** | `libjson/` | JSON serialization/deserialization via jansson | libnostr, jansson, nsync |
+| **NIP modules** | `nips/` | Per-NIP implementations (NIP-01 through NIP-98) | libnostr |
+| **libmarmot** | `libmarmot/` | Marmot protocol: MLS (RFC 9420) + Nostr for group messaging | libsodium, OpenSSL, libnostr, NIP-44, NIP-59 |
+| **nostr-gobject** | `nostr-gobject/` | GObject wrappers for libnostr + models + services | libnostr, GLib/GObject/GIO |
+| **nostr-gtk** | `nostr-gtk/` | GTK4/libadwaita widget library | nostr-gobject, GTK4, libadwaita |
+| **marmot-gobject** | `marmot-gobject/` | GObject wrappers for libmarmot | libmarmot, GLib/GObject/GIO |
+
+### Applications
+
+| App | Directory | Purpose |
+|-----|-----------|---------|
+| **gnostr** | `apps/gnostr/` | GTK4 Nostr desktop client |
+| **gnostr-signer** | `apps/gnostr-signer/` | D-Bus signing service (NIP-46 bunker) |
+| **relayd** | `apps/relayd/` | Nostr relay daemon |
+| **relayctl** | `apps/relayctl/` | Relay management CLI |
+| **grelay** | `apps/grelay/` | GTK relay monitor |
+
+### GNOME Integration
+
+| Component | Directory | Purpose |
+|-----------|-----------|---------|
+| GNOME Online Accounts provider | `gnome/goa/` | Nostr identity via GOA |
+| Seahorse helpers | `gnome/seahorse/` | Secret Service / GNOME Keyring integration |
+| PKCS#11 module | `pkcs11/` | Hardware token support |
+| nostr-homed | `gnome/nostr-homed/` | GNOME roaming home via Nostr |
+| GOA overlay | `gnome/nostr-goa-overlay/` | GOA provider overlay |
+
+---
+
+## Dependency Graph
 
 ```
-+-------------------+         +--------------------+
-|   Applications    |  use    |      Examples      |
-| (your programs)   +--------->  examples/*.c      |
-+---------+---------+         +--------------------+
-          |
-          | links
-          v
-+-------------------+        +---------------------+
-|     libnostr      |<------>|       libjson       |
-| Core Nostr types  |  uses  | JSON (jansson) +    |
-| events, relays,   |        | sync (nsync)        |
-| filters, keys     |        +---------------------+
-+---------+---------+                 ^
-          ^                           |
-          | uses                      | uses
-+---------+---------+                 |
-|       libgo       |-----------------+
-| Go-like channels, |
-| context, waitgrp, |
-| threads           |
-+-------------------+
-
-NIP modules (nips/*) extend libnostr capabilities and are compiled as submodules.
+                        ┌─────────────┐
+                        │   libgo     │  Go-like concurrency (channels, fibers)
+                        └──────┬──────┘
+                               │
+                        ┌──────▼──────┐
+                ┌──────►│  libnostr   │◄──────┐
+                │       │  (core C)   │       │
+                │       └──────┬──────┘       │
+                │              │              │
+         ┌──────┴──────┐ ┌────▼─────┐ ┌──────┴──────┐
+         │   libjson   │ │  NIP-44  │ │  NIP-59     │
+         │  (jansson)  │ │  NIP-19  │ │  NIP-51     │
+         └─────────────┘ │  NIP-46  │ │   etc.      │
+                         │  etc.    │ └──────┬──────┘
+                         └────┬─────┘        │
+                              │              │
+                       ┌──────▼──────────────▼───┐
+                       │      libmarmot          │  MLS + Nostr group messaging
+                       │  (MIP-00 ─ MIP-04)      │
+                       └──────────┬──────────────┘
+                                  │
+          ┌───────────────────────┼───────────────────────┐
+          │                       │                       │
+   ┌──────▼──────┐        ┌──────▼──────┐        ┌───────▼──────┐
+   │nostr-gobject│        │marmot-gobject│       │  nostr-gtk   │
+   │  (GObject)  │        │  (GObject)   │       │ (GTK4/Adw)   │
+   └──────┬──────┘        └──────┬───────┘       └──────┬───────┘
+          │                      │                       │
+          └──────────────────────┼───────────────────────┘
+                                 │
+                    ┌────────────▼─────────────┐
+                    │     gnostr / gnostr-signer│
+                    │   relayd / relayctl       │
+                    │   (applications)          │
+                    └──────────────────────────┘
 ```
+
+---
 
 ## Data Flow
 
-- Event creation and signing flows through `libnostr` APIs (`event.h`, `keys.h`) and uses OpenSSL and libsecp256k1 underneath for cryptography (linked in tests and applications).
-- JSON serialization/deserialization is performed by `libjson` via `jansson` and synchronized using `nsync` primitives when needed.
-- Concurrency and coordination in C are provided by `libgo` (channels, contexts, wait groups), used by higher-level modules for non-blocking operations.
-- Relay connections and subscriptions (`nostr-relay.h`, `nostr-subscription.h`) orchestrate message flow to/from Nostr relays. WebSocket linkage is prepared in `libnostr/CMakeLists.txt` for libwebsockets.
+### Event Flow (read path)
+1. **Relay** → WebSocket message received by `libnostr` relay connection
+2. **Validation** → Event signature verified (`nostr_event_check_signature`), invalid events logged and discarded
+3. **Ingestion** → Valid events queued to background ingest thread → stored in nostrdb (NDB)
+4. **Subscription** → NDB notifies subscribed models via poll/callback
+5. **Model** → `GnNostrEventModel` (nostr-gobject) maintains a windowed view into NDB
+6. **Widget** → `GtkListView` (nostr-gtk) binds model items to `NoteCardRow` widgets via factory
 
-## Security Posture (High-level)
+### Event Flow (write path)
+1. **Compose** → User creates note in `GnostrComposer` (nostr-gtk)
+2. **Sign** → Event signed via local signer or D-Bus signer proxy (NIP-46)
+3. **Publish** → `relay_publish_thread` sends to all write relays via `g_task_run_in_thread`
+4. **Reconcile** → Per-relay OK/CLOSED responses collected, toast shows success/failure breakdown
 
-- Event integrity: canonical NIP-01 preimage is used for id/signature; verification recomputes hash and never trusts caller-supplied `id`.
-- Encryption: NIP-04 uses AEAD v2 (`v=2:` with AES-256-GCM) for all encryption. Legacy `?iv=` decrypt is supported for interop. Unified decrypt error messages reduce leakage.
-- Optional hardening: a build-time switch `-DNIP04_STRICT_AEAD_ONLY=ON` disables legacy decrypt entirely.
-- Ingress mitigations: replay TTL + timestamp skew checks, with metrics. The policy decider is pure (no websockets) and unit-testable.
-- A reusable, websocket-free ingress decision function is provided for tests and reuse:
-  - `apps/relayd/include/protocol_nip01.h` exports `relayd_nip01_ingress_decide_json(...)`, plus `nostr_relay_set_replay_ttl(...)`, `nostr_relay_set_skew(...)`, and getters.
-- The ingress policy core is implemented in `apps/relayd/src/policy_decider.c` with a fixed-size duplicate cache and skew checks.
-- Relay metrics live in `apps/relayd/src/metrics.c` and include counters such as `duplicate_drops` and `skew_rejects`.
-- On startup, the relay prints a one-line security banner, for example: `nostrc-relayd: security AEAD=v2 replayTTL=900s skew=+600/-86400`.
+### Group Messaging Flow (Marmot)
+1. **Create group** → `marmot_create_group()` initializes MLS group state → produces kind:443 KeyPackages + kind:444 Welcome events
+2. **Join** → `marmot_process_welcome()` decrypts NIP-59 gift-wrapped Welcome → initializes member's group state
+3. **Send** → `marmot_create_message()` encrypts inner event with NIP-44 using MLS exporter secret → kind:445 event
+4. **Receive** → `marmot_process_message()` decrypts kind:445 → recovers inner event + sender identity
 
-## Relay Daemon and Policy Core
+---
 
-- The relay daemon lives under `apps/relayd/`. Runtime mitigations (replay TTL and timestamp skew) are configured via environment variables and set at startup.
+## libmarmot MLS Architecture
 
-## Technology Choices & Rationale
+libmarmot implements a focused subset of RFC 9420 (MLS) supporting exactly one ciphersuite: `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` (0x0001).
 
-- C + CMake: portability across embedded/IoT and desktop environments.
-- `nsync`: lightweight synchronization primitives compatible with C.
-- `jansson`: mature C JSON parser/serializer with permissive license.
-- OpenSSL + libsecp256k1: widely adopted crypto libraries for hashing/ECDSA.
-- libwebsockets: efficient WebSocket client/server in C.
-- OpenSSL + libsecp256k1 for cryptography; stable, widely used.
+```
+┌─────────────────────────────────────────────────────┐
+│                Public API (marmot.h)                 │
+│  marmot_create_group / process_welcome / …           │
+├─────────────────────────────────────────────────────┤
+│               Protocol Layer (MIP-00─04)             │
+│  credentials · groups · welcome · messages · media   │
+├─────────────────────────────────────────────────────┤
+│                 MLS Layer (RFC 9420)                  │
+│  mls_crypto    — X25519, Ed25519, AES-128-GCM, HKDF │
+│  mls_tls       — TLS presentation language codec     │
+│  mls_tree      — TreeKEM ratchet tree (left-balanced)│
+│  mls_key_sched — Epoch secrets, sender ratchets      │
+│  mls_framing   — PrivateMessage encrypt/decrypt      │
+│  mls_key_pkg   — KeyPackage creation/validation      │
+│  mls_group     — Group state machine                 │
+│  mls_welcome   — Welcome message construction        │
+├─────────────────────────────────────────────────────┤
+│             Storage Interface (vtable)                │
+│  memory · sqlite · nostrdb  backends                 │
+├─────────────────────────────────────────────────────┤
+│  libsodium (Ed25519/X25519)  OpenSSL (AES/HKDF/SHA) │
+└─────────────────────────────────────────────────────┘
+```
 
-## Build & Link Boundaries
+### Storage Backends
 
-- `libnostr` is a static library by default, built with `-fPIC` to support shared linkage.
-- `libjson` is currently a shared library (`SHARED`) that links against `jansson`, `libnostr`, and `nsync`.
-- `libgo` is a static library providing concurrency utilities with `nsync`.
+| Backend | Use Case | Persistence | Encryption |
+|---------|----------|-------------|------------|
+| Memory | Testing, ephemeral | ❌ | N/A |
+| SQLite | Standalone apps | ✅ | Optional (via SQLCipher) |
+| nostrdb | gnostr app integration | ✅ (via LMDB) | Via LMDB encryption |
 
-- Tests link against `libnostr`, `nostr_json`, OpenSSL, libsecp256k1, and `nsync`.
-- Relay helpers for tests are provided by the `relayd_core` static library built from `apps/relayd/src/policy_decider.c` and `apps/relayd/src/metrics.c`.
+### GObject Integration (marmot-gobject)
 
-## Performance Considerations
+`marmot-gobject` wraps libmarmot in GObject types for use in GTK applications:
 
-- Avoid unnecessary JSON allocations; reuse buffers where possible.
-- Prefer stack allocation for small structures (`event`, `tag`) and pass by pointer to avoid copies.
-- Use `libgo` channels and contexts to handle IO timeouts and cancellation cleanly.
-- Enable `-O2` or higher in Release builds; consider LTO for final binaries.
+| C Type | GObject Wrapper | GIR Type |
+|--------|----------------|----------|
+| `Marmot` | `MarmotGobjectClient` | `Marmot.Client` |
+| `MarmotGroup` | `MarmotGobjectGroup` | `Marmot.Group` |
+| `MarmotMessage` | `MarmotGobjectMessage` | `Marmot.Message` |
+| `MarmotWelcome` | `MarmotGobjectWelcome` | `Marmot.Welcome` |
+| `MarmotStorage` | `MarmotGobjectStorage` (GInterface) | `Marmot.Storage` |
 
-## Scalability Notes
+All async operations use `GTask` for non-blocking integration with the GTK main loop:
+- `marmot_gobject_client_create_group_async()` / `_finish()`
+- `marmot_gobject_client_process_welcome_async()` / `_finish()`
+- `marmot_gobject_client_send_message_async()` / `_finish()`
 
-- For high-connection counts, ensure non-blocking IO and backpressure via channels.
-- Batch JSON parsing/encoding when processing large event sets.
-- Use `nsync` primitives to avoid contention; shard state by relay or subscription when possible.
+Signals: `group-joined`, `message-received`, `welcome-received`
+
+---
+
+## Concurrency Architecture
+
+### libgo Runtime
+
+libgo provides Go-like concurrency primitives in C:
+
+| Primitive | Header | Purpose |
+|-----------|--------|---------|
+| `GoChannel` | `go_channel.h` | Bounded/unbounded channels with nsync CVs |
+| `GoContext` | `go_context.h` | Cancellation propagation |
+| `GoWaitGroup` | `go_wait_group.h` | Fork-join synchronization |
+| `go()` / `go_fiber_compat()` | `go.h` | Launch goroutines (OS thread or fiber) |
+| `go_select()` | `select.h` | Multi-channel select with waiter signaling |
+| `go_blocking_submit()` | `blocking_executor.h` | Submit work to bounded thread pool |
+
+### Fiber Runtime (libgo/fiber/)
+
+A cooperative work-stealing fiber scheduler for lightweight concurrency:
+
+- **Workers**: N OS threads (default: CPU count) running the work-stealing scheduler
+- **Fibers**: Lightweight stacks (256KB default) parked/woken cooperatively
+- **`go_fiber_compat()`**: Migration shim — uses fibers when available, falls back to `go()` (OS threads)
+- **`gof_start_background()`**: Start scheduler without blocking (GTK-compatible)
+- **Netpoll**: epoll/kqueue integration for I/O
+
+Thread count reduction: ~187 OS threads → ~12 (8 fiber workers + 4 blocking executor threads)
+
+---
+
+## Security Posture
+
+- **Event integrity**: Canonical NIP-01 preimage for id/signature; verification recomputes hash
+- **Encryption**: NIP-04 AEAD v2 (AES-256-GCM), NIP-44 v2 (ChaCha20-Poly1305 + HKDF), NIP-59 gift wrapping
+- **MLS (RFC 9420)**: Forward secrecy, post-compromise security via TreeKEM epoch rotation
+- **Key storage**: libsecret (Linux/GNOME Keyring) or macOS Keychain; never logged
+- **Ingress mitigations**: Replay TTL + timestamp skew checks with metrics
+- **Build hardening**: `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2`, RELRO, ASan/UBSan/TSan support
+
+---
+
+## Build System
+
+### CMake (primary)
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON \
+  -DBUILD_LIBMARMOT=ON \
+  -DBUILD_MARMOT_GOBJECT=ON \
+  -DBUILD_NOSTR_GTK=ON \
+  -DBUILD_APPS=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+### Meson (per-library)
+
+Each library has a standalone `meson.build`:
+- `nostr-gobject/meson.build` — GIR + VAPI generation
+- `nostr-gtk/meson.build` — Blueprint compilation, GIR + VAPI
+- `libmarmot/meson.build` — Crypto + storage tests
+- `marmot-gobject/meson.build` — GIR + VAPI generation
+
+### Build Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `BUILD_LIBMARMOT` | ON | Build libmarmot library |
+| `BUILD_MARMOT_GOBJECT` | ON | Build marmot-gobject GObject wrapper |
+| `BUILD_NOSTR_GTK` | ON | Build nostr-gtk widget library |
+| `BUILD_APPS` | ON | Build application binaries |
+| `BUILD_TESTING` | ON | Build test executables |
+| `BUILD_BENCHMARKS` | OFF | Build performance benchmarks |
+| `GNOSTR_ENABLE_ASAN` | OFF | AddressSanitizer |
+| `GNOSTR_ENABLE_UBSAN` | OFF | UndefinedBehaviorSanitizer |
+| `GNOSTR_ENABLE_TSAN` | OFF | ThreadSanitizer |
+| `NOSTR_ENABLE_GI` | OFF | GObject Introspection for libnostr |
+| `MARMOT_GOBJECT_INTROSPECTION` | OFF | GIR for marmot-gobject (CMake) |
+
+---
+
+## Test Architecture
+
+See [docs/TESTING.md](docs/TESTING.md) for the comprehensive test strategy.
+
+```
+┌──────────────────────────────────────────┐
+│  Real-Component Benchmarks (nightly)     │
+├──────────────────────────────────────────┤
+│  Real-Component Integration (CI per-PR)  │
+├──────────────────────────────────────────┤
+│  Mock-Based Integration (CI per-PR)      │
+├──────────────────────────────────────────┤
+│  Widget Tests (Xvfb, CI per-PR)          │
+├──────────────────────────────────────────┤
+│  Unit Tests (no display, fast)           │
+└──────────────────────────────────────────┘
+```
+
+### Test Suites by Library
+
+| Library | Test Files | Test Count | Focus |
+|---------|-----------|------------|-------|
+| libmarmot | 16 files | ~200+ | MLS crypto, tree, key schedule, framing, group, welcome, protocol, storage, interop |
+| nostr-gobject | 6 files | ~35 | Store contract, lifecycle, profile service, event flow |
+| nostr-gtk | 6 files | ~25 | Widget recycling, sizing, bind latency, thread views |
+| apps/gnostr | 5 files | ~30 | Event model windowing, NDB violations, real-bind latency |
+| tests/ | 40+ files | ~200+ | Core libnostr, relay, subscription, JSON, crypto |
+
+---
 
 ## ASCII Module Map
 
 ```
 / (root)
-├── libgo/          # Concurrency primitives
-├── libnostr/       # Core Nostr types and relay/subscription logic
-├── libjson/        # JSON integration and helpers
-├── nips/           # NIP-specific extensions (nip04, 05, 13, 19, 29, 31, 34, 42, 44, 46, 49, 52, 53, 54, 94)
-├── nson/           # Optional serialization format (if enabled)
-├── examples/       # Example programs
-└── tests/          # Unit/integration tests
-└── apps/           # Relay daemon and core relay helpers
+├── libgo/              # Concurrency primitives + fiber runtime
+├── libnostr/           # Core Nostr types, relay/subscription, keys
+├── libjson/            # JSON integration via jansson
+├── nips/               # NIP-specific extensions (01─98)
+├── libmarmot/          # Marmot protocol: MLS + Nostr group messaging
+│   └── src/mls/        # Focused RFC 9420 implementation
+├── nostr-gobject/      # GObject wrappers + models + services
+├── nostr-gtk/          # GTK4/libadwaita widgets
+├── marmot-gobject/     # GObject wrappers for libmarmot
+├── apps/
+│   ├── gnostr/         # GTK4 desktop client
+│   ├── gnostr-signer/  # D-Bus signing service
+│   ├── relayd/         # Relay daemon
+│   ├── relayctl/       # Relay management CLI
+│   └── grelay/         # GTK relay monitor
+├── gnome/              # GNOME platform integration
+├── components/nostrdb/ # nostrdb storage component
+├── testing/            # Mock relay testing framework
+├── tests/              # Global unit/integration tests
+├── tests/testkit/      # Shared test infrastructure
+├── benchmark/          # Performance benchmarks
+├── tools/              # Development tools
+├── docs/               # Documentation
+├── skills/             # LLM skill documents
+├── cmake/              # Shared CMake modules (GnTest.cmake, Blueprint.cmake)
+└── examples/           # Example programs
 ```

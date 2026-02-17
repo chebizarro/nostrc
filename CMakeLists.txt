@@ -335,6 +335,12 @@ if (BUILD_LIBMARMOT)
   add_subdirectory(libmarmot)
 endif()
 
+# Marmot GObject wrapper (requires libmarmot + GLib/GObject/GIO)
+option(BUILD_MARMOT_GOBJECT "Build marmot-gobject GObject wrapper (requires libmarmot + GLib)" ON)
+if (BUILD_MARMOT_GOBJECT AND BUILD_LIBMARMOT)
+  add_subdirectory(marmot-gobject)
+endif()
+
 # GObject wrapper layer (nostr-gobject-1.0) — must come after NIP targets
 add_subdirectory(nostr-gobject)
 
