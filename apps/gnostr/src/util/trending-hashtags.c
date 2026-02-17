@@ -77,8 +77,8 @@ normalize_hashtag(const char *raw)
 static gint
 compare_by_count_desc(gconstpointer a, gconstpointer b)
 {
-  const GnostrTrendingHashtag *ha = *(const GnostrTrendingHashtag **)a;
-  const GnostrTrendingHashtag *hb = *(const GnostrTrendingHashtag **)b;
+  const GnostrTrendingHashtag *ha = (const GnostrTrendingHashtag *)a;
+  const GnostrTrendingHashtag *hb = (const GnostrTrendingHashtag *)b;
   
   /* Guard against NULL pointers */
   if (!ha && !hb) return 0;
@@ -87,7 +87,7 @@ compare_by_count_desc(gconstpointer a, gconstpointer b)
   
   if (ha->count > hb->count) return -1;
   if (ha->count < hb->count) return 1;
-  return strcmp(ha->tag, hb->tag);
+  return g_strcmp0(ha->tag, hb->tag);
 }
 
 /* --- Core computation --- */
@@ -209,7 +209,7 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
   /* Convert counts to result array */
   GHashTableIter ht_iter;
   gpointer key, value;
-  GPtrArray *all = g_ptr_array_new();
+  g_autoptr(GPtrArray) all = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_trending_hashtag_free);
 
   g_hash_table_iter_init(&ht_iter, counts);
   while (g_hash_table_iter_next(&ht_iter, &key, &value)) {
@@ -227,17 +227,13 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
   /* Sort by count descending */
   g_ptr_array_sort(all, compare_by_count_desc);
 
-  /* Take top N */
+  /* Take top N - steal pointers from all array to result */
   guint take = MIN(top_n, all->len);
   for (guint i = 0; i < take; i++) {
-    g_ptr_array_add(result, g_ptr_array_index(all, i));
+    gpointer item = g_ptr_array_steal_index(all, 0);
+    g_ptr_array_add(result, item);
   }
-  /* Free remaining entries not moved to result */
-  for (guint i = take; i < all->len; i++) {
-    gnostr_trending_hashtag_free(g_ptr_array_index(all, i));
-  }
-  /* Free the temp array (elements already moved/freed) */
-  g_ptr_array_free(all, TRUE);
+  /* Remaining items in 'all' will be freed automatically by g_autoptr */
 
   g_debug("trending: computed %u hashtags from %d events", result->len, got);
   return result;
