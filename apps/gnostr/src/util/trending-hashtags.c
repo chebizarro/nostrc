@@ -217,9 +217,13 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
     if (count < 2) continue; /* Require at least 2 events to be "trending" */
 
     GnostrTrendingHashtag *ht = g_new0(GnostrTrendingHashtag, 1);
-    ht->tag = g_strdup((const char *)key);
+    /* Steal the string from hash table - we take ownership, hash table won't free it */
+    ht->tag = (char *)key;
     ht->count = count;
     g_ptr_array_add(all, ht);
+    
+    /* Remove from hash table without freeing the key (we stole it) */
+    g_hash_table_iter_steal(&ht_iter);
   }
 
   g_hash_table_destroy(counts);
