@@ -2686,6 +2686,9 @@ void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, con
 void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
+  /* Stop drain timer to avoid concurrent mutations during clear */
+  remove_drain_timer(self);
+
   /* Clear insertion buffer pipeline state */
   if (self->insertion_buffer)
     g_array_set_size(self->insertion_buffer, 0);
