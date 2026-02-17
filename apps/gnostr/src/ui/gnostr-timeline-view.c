@@ -1268,15 +1268,16 @@ static void on_item_notify_zap_total_msat(GObject *obj, GParamSpec *pspec, gpoin
 static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
-  GObject *obj = G_OBJECT(gtk_list_item_get_item(item));
+  gpointer item_ptr = gtk_list_item_get_item(item);
 
   /* nostrc-heap-fix: Disconnect g_signal_connect_object handlers BEFORE unbind.
    * These handlers are on the obj (GnNostrEventItem) watching the row.
    * When the model removes items, the obj may be finalized while handlers
    * still reference the row, causing heap corruption in closure_array_destroy_all.
-   * We must disconnect these handlers explicitly during unbind. */
-  if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
-    g_signal_handlers_disconnect_by_data(obj, row);
+   * We must disconnect these handlers explicitly during unbind.
+   * Note: item_ptr may be NULL if the model item was already removed. */
+  if (item_ptr && G_IS_OBJECT(item_ptr) && row && GTK_IS_WIDGET(row)) {
+    g_signal_handlers_disconnect_by_data(G_OBJECT(item_ptr), row);
   }
 
   /* Disconnect accumulated "request-embed" handlers on the row.
@@ -2201,11 +2202,12 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
-  GObject *obj = G_OBJECT(gtk_list_item_get_item(item));
+  gpointer item_ptr = gtk_list_item_get_item(item);
 
-  /* Disconnect signal handlers from obj to prevent heap corruption */
-  if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
-    g_signal_handlers_disconnect_by_data(obj, row);
+  /* Disconnect signal handlers from obj to prevent heap corruption.
+   * Note: item_ptr may be NULL during teardown if the model item was already removed. */
+  if (item_ptr && G_IS_OBJECT(item_ptr) && row && GTK_IS_WIDGET(row)) {
+    g_signal_handlers_disconnect_by_data(G_OBJECT(item_ptr), row);
   }
 
   /* Prepare row for disposal */
