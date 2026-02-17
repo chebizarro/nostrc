@@ -138,8 +138,21 @@ marmot_encrypt_media(Marmot *m,
     result->original_size = file_len;
 
     /* Build imeta info */
-    result->imeta.mime_type = mime_type ? strdup(mime_type) : NULL;
-    result->imeta.filename = filename ? strdup(filename) : NULL;
+    if (mime_type) {
+        result->imeta.mime_type = strdup(mime_type);
+        if (!result->imeta.mime_type) {
+            free(ciphertext);
+            return MARMOT_ERR_MEMORY;
+        }
+    }
+    if (filename) {
+        result->imeta.filename = strdup(filename);
+        if (!result->imeta.filename) {
+            free(result->imeta.mime_type);
+            free(ciphertext);
+            return MARMOT_ERR_MEMORY;
+        }
+    }
     result->imeta.original_size = file_len;
     memcpy(result->imeta.file_hash, file_hash, 32);
     memcpy(result->imeta.nonce, nonce, 12);

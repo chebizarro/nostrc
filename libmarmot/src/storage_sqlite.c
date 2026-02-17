@@ -667,11 +667,16 @@ sql_save_welcome(void *ctx, const MarmotWelcome *w)
         }
         relay_str = malloc(total + 1);
         if (relay_str) {
-            relay_str[0] = '\0';
+            char *p = relay_str;
             for (size_t i = 0; i < w->group_relay_count; i++) {
-                if (i > 0) strcat(relay_str, "\t");
-                if (w->group_relays[i]) strcat(relay_str, w->group_relays[i]);
+                if (w->group_relays[i]) {
+                    if (p != relay_str) *p++ = '\t';
+                    size_t len = strlen(w->group_relays[i]);
+                    memcpy(p, w->group_relays[i], len);
+                    p += len;
+                }
             }
+            *p = '\0';
         }
     }
 

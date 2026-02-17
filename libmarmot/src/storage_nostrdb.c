@@ -77,6 +77,66 @@ typedef struct {
 
 /* ── LMDB helpers ──────────────────────────────────────────────────────── */
 
+/* Endianness-safe serialization helpers */
+static inline void write_u32_le(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v);
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static inline uint32_t read_u32_le(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static inline void write_i64_le(uint8_t *p, int64_t v) {
+    uint64_t u = (uint64_t)v;
+    p[0] = (uint8_t)(u);
+    p[1] = (uint8_t)(u >> 8);
+    p[2] = (uint8_t)(u >> 16);
+    p[3] = (uint8_t)(u >> 24);
+    p[4] = (uint8_t)(u >> 32);
+    p[5] = (uint8_t)(u >> 40);
+    p[6] = (uint8_t)(u >> 48);
+    p[7] = (uint8_t)(u >> 56);
+}
+
+static inline int64_t read_i64_le(const uint8_t *p) {
+    uint64_t u = (uint64_t)p[0] | ((uint64_t)p[1] << 8) |
+                 ((uint64_t)p[2] << 16) | ((uint64_t)p[3] << 24) |
+                 ((uint64_t)p[4] << 32) | ((uint64_t)p[5] << 40) |
+                 ((uint64_t)p[6] << 48) | ((uint64_t)p[7] << 56);
+    return (int64_t)u;
+}
+
+static inline void write_u64_le(uint8_t *p, uint64_t v) {
+    p[0] = (uint8_t)(v);
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+    p[4] = (uint8_t)(v >> 32);
+    p[5] = (uint8_t)(v >> 40);
+    p[6] = (uint8_t)(v >> 48);
+    p[7] = (uint8_t)(v >> 56);
+}
+
+static inline uint64_t read_u64_le(const uint8_t *p) {
+    return (uint64_t)p[0] | ((uint64_t)p[1] << 8) |
+           ((uint64_t)p[2] << 16) | ((uint64_t)p[3] << 24) |
+           ((uint64_t)p[4] << 32) | ((uint64_t)p[5] << 40) |
+           ((uint64_t)p[6] << 48) | ((uint64_t)p[7] << 56);
+}
+
+static inline void write_i32_le(uint8_t *p, int32_t v) {
+    uint32_t u = (uint32_t)v;
+    write_u32_le(p, u);
+}
+
+static inline int32_t read_i32_le(const uint8_t *p) {
+    return (int32_t)read_u32_le(p);
+}
+
 /* Composite key for exporter secrets: group_id || epoch (big-endian) */
 static size_t
 make_secret_key(const MarmotGroupId *gid, uint64_t epoch,
@@ -132,6 +192,10 @@ serialize_group(const MarmotGroup *g, size_t *out_len)
     size_t name_len = g->name ? strlen(g->name) : 0;
     size_t desc_len = g->description ? strlen(g->description) : 0;
     size_t lmid_len = g->last_message_id ? strlen(g->last_message_id) : 0;
+    
+    /* Bounds check to prevent integer overflow */
+    if (g->admin_count > (SIZE_MAX / 32)) return NULL;
+    
     size_t size = 1 + 4 + 32 + 4 + name_len + 4 + desc_len
                 + 3 + (g->image_hash ? 32 : 0) + (g->image_key ? 32 : 0) + (g->image_nonce ? 12 : 0)
                 + 4 + g->admin_count * 32
@@ -144,18 +208,15 @@ serialize_group(const MarmotGroup *g, size_t *out_len)
     *p++ = 1; /* version */
 
     /* nostr_group_id */
-    uint32_t v32 = 32;
-    memcpy(p, &v32, 4); p += 4;
+    write_u32_le(p, 32); p += 4;
     memcpy(p, g->nostr_group_id, 32); p += 32;
 
     /* name */
-    v32 = (uint32_t)name_len;
-    memcpy(p, &v32, 4); p += 4;
+    write_u32_le(p, (uint32_t)name_len); p += 4;
     if (name_len > 0) { memcpy(p, g->name, name_len); p += name_len; }
 
     /* description */
-    v32 = (uint32_t)desc_len;
-    memcpy(p, &v32, 4); p += 4;
+    write_u32_le(p, (uint32_t)desc_len); p += 4;
     if (desc_len > 0) { memcpy(p, g->description, desc_len); p += desc_len; }
 
     /* image fields */
@@ -167,24 +228,21 @@ serialize_group(const MarmotGroup *g, size_t *out_len)
     if (g->image_nonce) { memcpy(p, g->image_nonce, 12); p += 12; }
 
     /* admins */
-    v32 = (uint32_t)g->admin_count;
-    memcpy(p, &v32, 4); p += 4;
+    write_u32_le(p, (uint32_t)g->admin_count); p += 4;
     if (g->admin_count > 0 && g->admin_pubkeys) {
         memcpy(p, g->admin_pubkeys, g->admin_count * 32);
         p += g->admin_count * 32;
     }
 
     /* last_message_id */
-    v32 = (uint32_t)lmid_len;
-    memcpy(p, &v32, 4); p += 4;
+    write_u32_le(p, (uint32_t)lmid_len); p += 4;
     if (lmid_len > 0) { memcpy(p, g->last_message_id, lmid_len); p += lmid_len; }
 
     /* timestamps and state */
-    int64_t i64;
-    i64 = g->last_message_at; memcpy(p, &i64, 8); p += 8;
-    i64 = g->last_message_processed_at; memcpy(p, &i64, 8); p += 8;
-    uint64_t u64 = g->epoch; memcpy(p, &u64, 8); p += 8;
-    int32_t i32 = (int32_t)g->state; memcpy(p, &i32, 4); p += 4;
+    write_i64_le(p, g->last_message_at); p += 8;
+    write_i64_le(p, g->last_message_processed_at); p += 8;
+    write_u64_le(p, g->epoch); p += 8;
+    write_i32_le(p, (int32_t)g->state); p += 4;
 
     *out_len = (size_t)(p - buf);
     return buf;
@@ -205,51 +263,70 @@ deserialize_group(const MarmotGroupId *mls_gid, const uint8_t *data, size_t len)
 
     /* nostr_group_id */
     if (p + 4 > end) goto fail;
-    uint32_t v32; memcpy(&v32, p, 4); p += 4;
+    uint32_t v32 = read_u32_le(p); p += 4;
     if (p + v32 > end || v32 != 32) goto fail;
     memcpy(g->nostr_group_id, p, 32); p += 32;
 
     /* name */
     if (p + 4 > end) goto fail;
-    memcpy(&v32, p, 4); p += 4;
+    v32 = read_u32_le(p); p += 4;
     if (p + v32 > end) goto fail;
     if (v32 > 0) { g->name = strndup((const char *)p, v32); p += v32; }
 
     /* description */
     if (p + 4 > end) goto fail;
-    memcpy(&v32, p, 4); p += 4;
+    v32 = read_u32_le(p); p += 4;
     if (p + v32 > end) goto fail;
     if (v32 > 0) { g->description = strndup((const char *)p, v32); p += v32; }
 
     /* image fields */
     if (p + 3 > end) goto fail;
-    if (*p++) { if (p + 32 > end) goto fail; g->image_hash = malloc(32); if (g->image_hash) memcpy(g->image_hash, p, 32); p += 32; }
-    if (*p++) { if (p + 32 > end) goto fail; g->image_key = malloc(32); if (g->image_key) memcpy(g->image_key, p, 32); p += 32; }
-    if (*p++) { if (p + 12 > end) goto fail; g->image_nonce = malloc(12); if (g->image_nonce) memcpy(g->image_nonce, p, 12); p += 12; }
+    if (*p++) {
+        if (p + 32 > end) goto fail;
+        g->image_hash = malloc(32);
+        if (!g->image_hash) goto fail;
+        memcpy(g->image_hash, p, 32);
+        p += 32;
+    }
+    if (*p++) {
+        if (p + 32 > end) goto fail;
+        g->image_key = malloc(32);
+        if (!g->image_key) goto fail;
+        memcpy(g->image_key, p, 32);
+        p += 32;
+    }
+    if (*p++) {
+        if (p + 12 > end) goto fail;
+        g->image_nonce = malloc(12);
+        if (!g->image_nonce) goto fail;
+        memcpy(g->image_nonce, p, 12);
+        p += 12;
+    }
 
     /* admins */
     if (p + 4 > end) goto fail;
-    memcpy(&v32, p, 4); p += 4;
+    v32 = read_u32_le(p); p += 4;
     if (v32 > 0) {
         if (p + v32 * 32 > end) goto fail;
         g->admin_pubkeys = malloc(v32 * 32);
-        if (g->admin_pubkeys) { memcpy(g->admin_pubkeys, p, v32 * 32); g->admin_count = v32; }
+        if (!g->admin_pubkeys) goto fail;
+        memcpy(g->admin_pubkeys, p, v32 * 32);
+        g->admin_count = v32;
         p += v32 * 32;
     }
 
     /* last_message_id */
     if (p + 4 > end) goto fail;
-    memcpy(&v32, p, 4); p += 4;
+    v32 = read_u32_le(p); p += 4;
     if (p + v32 > end) goto fail;
     if (v32 > 0) { g->last_message_id = strndup((const char *)p, v32); p += v32; }
 
     /* timestamps and state */
     if (p + 28 > end) goto fail;
-    memcpy(&g->last_message_at, p, 8); p += 8;
-    memcpy(&g->last_message_processed_at, p, 8); p += 8;
-    memcpy(&g->epoch, p, 8); p += 8;
-    int32_t state; memcpy(&state, p, 4); p += 4;
-    g->state = state;
+    g->last_message_at = read_i64_le(p); p += 8;
+    g->last_message_processed_at = read_i64_le(p); p += 8;
+    g->epoch = read_u64_le(p); p += 8;
+    g->state = read_i32_le(p); p += 4;
 
     return g;
 fail:
@@ -306,14 +383,15 @@ ndb_all_groups(void *ctx, MarmotGroup ***out, size_t *out_count)
     while (mdb_cursor_get(cur, &k, &v, i == 0 ? MDB_FIRST : MDB_NEXT) == 0 && i < count) {
         MarmotGroupId gid = marmot_group_id_new(k.mv_data, k.mv_size);
         (*out)[i] = deserialize_group(&gid, v.mv_data, v.mv_size);
-        marmot_group_id_free(&gid);
         if (!(*out)[i]) {
+            marmot_group_id_free(&gid);
             for (size_t j = 0; j < i; j++) marmot_group_free((*out)[j]);
             free(*out); *out = NULL;
             mdb_cursor_close(cur);
             mdb_txn_abort(txn);
             return MARMOT_ERR_MEMORY;
         }
+        marmot_group_id_free(&gid);
         i++;
     }
 
@@ -519,12 +597,13 @@ ndb_save_message(void *ctx, const MarmotMessage *msg)
 
     if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
 
-    /* Also ingest the event JSON into nostrdb if available */
+    mdb_txn_commit(txn);
+
+    /* Ingest the event JSON into nostrdb after commit to avoid holding write lock */
     if (nc->ndb && msg->event_json) {
         ndb_process_event(nc->ndb, msg->event_json, (int)strlen(msg->event_json));
     }
 
-    mdb_txn_commit(txn);
     return MARMOT_OK;
 }
 
@@ -586,7 +665,17 @@ ndb_messages(void *ctx, const MarmotGroupId *gid,
                     if (added >= cap) {
                         cap *= 2;
                         MarmotMessage **new_arr = realloc(arr, cap * sizeof(MarmotMessage *));
-                        if (!new_arr) { marmot_message_free(m); break; }
+                        if (!new_arr) {
+                            marmot_message_free(m);
+                            /* Clean up all previously allocated messages */
+                            for (size_t i = 0; i < added; i++) {
+                                marmot_message_free(arr[i]);
+                            }
+                            free(arr);
+                            mdb_cursor_close(cur);
+                            mdb_txn_abort(txn);
+                            return MARMOT_ERR_MEMORY;
+                        }
                         arr = new_arr;
                     }
                     arr[added++] = m;
@@ -818,14 +907,20 @@ ndb_replace_group_relays(void *ctx, const MarmotGroupId *gid,
         for (size_t i = 0; i < count; i++) {
             if (urls[i]) total += strlen(urls[i]) + 1;
         }
-        char *str = malloc(total);
+        /* Allocate space for null terminator */
+        char *str = malloc(total + 1);
         if (str) {
-            str[0] = '\0';
+            char *p = str;
             for (size_t i = 0; i < count; i++) {
-                if (i > 0) strcat(str, "\t");
-                if (urls[i]) strcat(str, urls[i]);
+                if (urls[i]) {
+                    if (p != str) *p++ = '\t';
+                    size_t len = strlen(urls[i]);
+                    memcpy(p, urls[i], len);
+                    p += len;
+                }
             }
-            MDB_val v = { .mv_size = strlen(str), .mv_data = str };
+            *p = '\0';
+            MDB_val v = { .mv_size = (size_t)(p - str), .mv_data = str };
             mdb_put(txn, nc->dbi_relays, &k, &v, 0);
             free(str);
         }
