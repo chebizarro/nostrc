@@ -43,7 +43,11 @@ buf_ensure(MlsTlsBuf *buf, size_t additional)
     if (needed <= buf->cap) return 0;
 
     size_t new_cap = buf->cap * 2;
-    while (new_cap < needed) new_cap *= 2;
+    /* Check for overflow in doubling loop */
+    while (new_cap < needed) {
+        if (new_cap > SIZE_MAX / 2) return -1;
+        new_cap *= 2;
+    }
 
     uint8_t *new_data = realloc(buf->data, new_cap);
     if (!new_data) return -1;

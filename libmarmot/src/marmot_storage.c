@@ -1,5 +1,5 @@
 /*
- * libmarmot - Storage helper
+ * libmarmot - Storage interface implementation
  *
  * SPDX-License-Identifier: MIT
  */

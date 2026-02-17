@@ -71,6 +71,19 @@ marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
 {
     if (!ext || !out_data || !out_len) return MARMOT_ERR_INVALID_ARG;
 
+    /* Validate string lengths fit in uint16 */
+    size_t name_len = ext->name ? strlen(ext->name) : 0;
+    size_t desc_len = ext->description ? strlen(ext->description) : 0;
+    if (name_len > 65535 || desc_len > 65535)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+
+    /* Validate image fields: all present or all absent */
+    bool has_image = (ext->image_hash != NULL);
+    if (has_image) {
+        if (!ext->image_key || !ext->image_nonce)
+            return MARMOT_ERR_EXTENSION_FORMAT;
+    }
+
     MlsTlsBuf buf;
     if (mls_tls_buf_init(&buf, 512) != 0)
         return MARMOT_ERR_MEMORY;
@@ -84,12 +97,10 @@ marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
     if (mls_tls_buf_append(&buf, ext->nostr_group_id, 32) != 0) goto fail;
 
     /* name<2> */
-    size_t name_len = ext->name ? strlen(ext->name) : 0;
     if (mls_tls_write_opaque16(&buf, (const uint8_t *)ext->name, name_len) != 0)
         goto fail;
 
     /* description<2> */
-    size_t desc_len = ext->description ? strlen(ext->description) : 0;
     if (mls_tls_write_opaque16(&buf, (const uint8_t *)ext->description, desc_len) != 0)
         goto fail;
 
@@ -124,26 +135,13 @@ marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
     }
 
     /* has_image flag */
-    bool has_image = (ext->image_hash != NULL);
     if (mls_tls_write_u8(&buf, has_image ? 1 : 0) != 0) goto fail;
 
     if (has_image) {
+        /* All image fields are guaranteed non-NULL by validation above */
         if (mls_tls_buf_append(&buf, ext->image_hash, 32) != 0) goto fail;
-
-        /* image_key may be NULL even with hash (partial image metadata) */
-        if (ext->image_key) {
-            if (mls_tls_buf_append(&buf, ext->image_key, 32) != 0) goto fail;
-        } else {
-            uint8_t zero32[32] = {0};
-            if (mls_tls_buf_append(&buf, zero32, 32) != 0) goto fail;
-        }
-
-        if (ext->image_nonce) {
-            if (mls_tls_buf_append(&buf, ext->image_nonce, 12) != 0) goto fail;
-        } else {
-            uint8_t zero12[12] = {0};
-            if (mls_tls_buf_append(&buf, zero12, 12) != 0) goto fail;
-        }
+        if (mls_tls_buf_append(&buf, ext->image_key, 32) != 0) goto fail;
+        if (mls_tls_buf_append(&buf, ext->image_nonce, 12) != 0) goto fail;
 
         /* v2: upload key */
         if (ext->version >= 2) {
@@ -223,6 +221,8 @@ marmot_group_data_extension_deserialize(const uint8_t *data, size_t len)
         if (mls_tls_read_u32(&r, &admins_len) != 0) goto fail;
         if (admins_len % 32 != 0) goto fail;
         ext->admin_count = admins_len / 32;
+        /* Reasonable upper bound: 1000 admins */
+        if (ext->admin_count > 1000) goto fail;
         if (ext->admin_count > 0) {
             ext->admins = malloc(admins_len);
             if (!ext->admins) goto fail;
@@ -250,6 +250,8 @@ marmot_group_data_extension_deserialize(const uint8_t *data, size_t len)
                 if (mls_tls_reader_remaining(&rr) < url_len) { free(relays_data); goto fail; }
                 rr.pos += url_len;
                 count++;
+                /* Reasonable upper bound: 100 relays */
+                if (count > 100) { free(relays_data); goto fail; }
             }
 
             ext->relay_count = count;
@@ -286,11 +288,13 @@ marmot_group_data_extension_deserialize(const uint8_t *data, size_t len)
         if (mls_tls_read_u8(&r, &has_image) != 0) goto fail;
 
         if (has_image) {
+            /* Allocate all three fields atomically to avoid partial allocation */
             ext->image_hash = malloc(32);
+            if (!ext->image_hash) goto fail;
             ext->image_key = malloc(32);
+            if (!ext->image_key) goto fail;
             ext->image_nonce = malloc(12);
-            if (!ext->image_hash || !ext->image_key || !ext->image_nonce)
-                goto fail;
+            if (!ext->image_nonce) goto fail;
 
             if (mls_tls_read_fixed(&r, ext->image_hash, 32) != 0) goto fail;
             if (mls_tls_read_fixed(&r, ext->image_key, 32) != 0) goto fail;

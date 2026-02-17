@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sodium.h>
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Internal helpers
@@ -35,19 +36,28 @@ marmot_hex_decode(const char *hex, uint8_t *out, size_t out_len)
     size_t hex_len = strlen(hex);
     if (hex_len != out_len * 2) return -1;
 
+    /* First pass: validate all characters are valid hex */
+    for (size_t i = 0; i < hex_len; i++) {
+        char ch = hex[i];
+        if (!((ch >= '0' && ch <= '9') ||
+              (ch >= 'a' && ch <= 'f') ||
+              (ch >= 'A' && ch <= 'F'))) {
+            return -1;
+        }
+    }
+
+    /* Second pass: decode */
     for (size_t i = 0; i < out_len; i++) {
         uint8_t hi, lo;
         char ch = hex[i * 2];
         if      (ch >= '0' && ch <= '9') hi = (uint8_t)(ch - '0');
         else if (ch >= 'a' && ch <= 'f') hi = (uint8_t)(ch - 'a' + 10);
-        else if (ch >= 'A' && ch <= 'F') hi = (uint8_t)(ch - 'A' + 10);
-        else return -1;
+        else    hi = (uint8_t)(ch - 'A' + 10);
 
         ch = hex[i * 2 + 1];
         if      (ch >= '0' && ch <= '9') lo = (uint8_t)(ch - '0');
         else if (ch >= 'a' && ch <= 'f') lo = (uint8_t)(ch - 'a' + 10);
-        else if (ch >= 'A' && ch <= 'F') lo = (uint8_t)(ch - 'A' + 10);
-        else return -1;
+        else    lo = (uint8_t)(ch - 'A' + 10);
 
         out[i] = (hi << 4) | lo;
     }
@@ -113,14 +123,9 @@ marmot_free(Marmot *m)
 {
     if (!m) return;
 
-    /* Securely wipe key material */
-    volatile uint8_t *p;
-
-    p = (volatile uint8_t *)m->ed25519_sk;
-    for (size_t i = 0; i < sizeof(m->ed25519_sk); i++) p[i] = 0;
-
-    p = (volatile uint8_t *)m->hpke_sk;
-    for (size_t i = 0; i < sizeof(m->hpke_sk); i++) p[i] = 0;
+    /* Securely wipe key material using libsodium */
+    sodium_memzero(m->ed25519_sk, sizeof(m->ed25519_sk));
+    sodium_memzero(m->hpke_sk, sizeof(m->hpke_sk));
 
     /* Free storage backend */
     marmot_storage_free(m->storage);

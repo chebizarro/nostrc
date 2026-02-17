@@ -72,6 +72,8 @@ mls_crypto_hkdf_expand(uint8_t *out, size_t out_len,
      * T(i) = HMAC-SHA256(PRK, T(i-1) || info || i)
      * Output is T(1) || T(2) || ... truncated to out_len
      */
+    /* Check for overflow before arithmetic */
+    if (out_len > SIZE_MAX - MLS_HASH_LEN + 1) return -1;
     size_t n = (out_len + MLS_HASH_LEN - 1) / MLS_HASH_LEN;
     if (n > 255) return -1;
 

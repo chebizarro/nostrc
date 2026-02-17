@@ -40,6 +40,9 @@ marmot_group_id_equal(const MarmotGroupId *a, const MarmotGroupId *b)
 {
     if (!a || !b) return false;
     if (a->len != b->len) return false;
+    /* Validate data pointer consistency */
+    if (a->len > 0 && !a->data) return false;
+    if (b->len > 0 && !b->data) return false;
     if (a->len == 0) return true;
     return memcmp(a->data, b->data, a->len) == 0;
 }

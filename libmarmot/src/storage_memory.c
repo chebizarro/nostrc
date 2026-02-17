@@ -60,9 +60,11 @@ xstrdup(const char *s)
 static uint8_t *
 xmemdup(const uint8_t *data, size_t len)
 {
-    if (!data || len == 0) return NULL;
+    if (!data) return NULL;
+    if (len == 0) return NULL;
     uint8_t *out = malloc(len);
-    if (out) memcpy(out, data, len);
+    if (!out) return NULL;
+    memcpy(out, data, len);
     return out;
 }
 
@@ -76,15 +78,20 @@ group_deep_copy(const MarmotGroup *src)
     memcpy(g->nostr_group_id, src->nostr_group_id, 32);
     g->name = xstrdup(src->name);
     g->description = xstrdup(src->description);
-    g->image_hash = xmemdup(src->image_hash, 32);
-    g->image_key = xmemdup(src->image_key, 32);
-    g->image_nonce = xmemdup(src->image_nonce, 12);
+    g->image_hash = src->image_hash ? xmemdup(src->image_hash, 32) : NULL;
+    g->image_key = src->image_key ? xmemdup(src->image_key, 32) : NULL;
+    g->image_nonce = src->image_nonce ? xmemdup(src->image_nonce, 12) : NULL;
     if (src->admin_count > 0 && src->admin_pubkeys) {
         g->admin_pubkeys = malloc(src->admin_count * 32);
-        if (g->admin_pubkeys)
+        if (g->admin_pubkeys) {
             memcpy(g->admin_pubkeys, src->admin_pubkeys, src->admin_count * 32);
+            g->admin_count = src->admin_count;
+        } else {
+            g->admin_count = 0;
+        }
+    } else {
+        g->admin_count = 0;
     }
-    g->admin_count = src->admin_count;
     g->last_message_id = xstrdup(src->last_message_id);
     g->last_message_at = src->last_message_at;
     g->last_message_processed_at = src->last_message_processed_at;
@@ -177,9 +184,11 @@ mem_save_group(void *ctx, const MarmotGroup *group)
     /* Upsert: check if group already exists */
     for (size_t i = 0; i < mc->group_count; i++) {
         if (marmot_group_id_equal(&mc->groups[i]->mls_group_id, &group->mls_group_id)) {
+            MarmotGroup *new_group = group_deep_copy(group);
+            if (!new_group) return MARMOT_ERR_MEMORY;
             marmot_group_free(mc->groups[i]);
-            mc->groups[i] = group_deep_copy(group);
-            return mc->groups[i] ? MARMOT_OK : MARMOT_ERR_MEMORY;
+            mc->groups[i] = new_group;
+            return MARMOT_OK;
         }
     }
 
@@ -347,21 +356,33 @@ welcome_deep_copy(const MarmotWelcome *src)
     memcpy(w->nostr_group_id, src->nostr_group_id, 32);
     w->group_name = xstrdup(src->group_name);
     w->group_description = xstrdup(src->group_description);
-    w->group_image_hash = xmemdup(src->group_image_hash, 32);
+    w->group_image_hash = src->group_image_hash ? xmemdup(src->group_image_hash, 32) : NULL;
     if (src->group_admin_count > 0 && src->group_admin_pubkeys) {
         w->group_admin_pubkeys = malloc(src->group_admin_count * 32);
-        if (w->group_admin_pubkeys)
+        if (w->group_admin_pubkeys) {
             memcpy(w->group_admin_pubkeys, src->group_admin_pubkeys, src->group_admin_count * 32);
+            w->group_admin_count = src->group_admin_count;
+        } else {
+            w->group_admin_count = 0;
+        }
+    } else {
+        w->group_admin_count = 0;
     }
-    w->group_admin_count = src->group_admin_count;
     if (src->group_relay_count > 0 && src->group_relays) {
         w->group_relays = calloc(src->group_relay_count, sizeof(char *));
         if (w->group_relays) {
-            for (size_t i = 0; i < src->group_relay_count; i++)
+            size_t copied = 0;
+            for (size_t i = 0; i < src->group_relay_count; i++) {
                 w->group_relays[i] = xstrdup(src->group_relays[i]);
+                if (w->group_relays[i]) copied++;
+            }
+            w->group_relay_count = copied;
+        } else {
+            w->group_relay_count = 0;
         }
+    } else {
+        w->group_relay_count = 0;
     }
-    w->group_relay_count = src->group_relay_count;
     memcpy(w->welcomer, src->welcomer, 32);
     w->member_count = src->member_count;
     w->state = src->state;
