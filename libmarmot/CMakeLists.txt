@@ -28,6 +28,9 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_memory.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_crypto.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_tls.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_tree.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_schedule.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_framing.c
 )
 
 set(MARMOT_PUBLIC_HEADERS
@@ -129,4 +132,22 @@ if(BUILD_TESTING)
   add_executable(test_types ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_types.c)
   target_link_libraries(test_types PRIVATE marmot)
   add_test(NAME marmot_test_types COMMAND test_types)
+
+  # Test: MLS TreeKEM ratchet tree
+  add_executable(test_mls_tree ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_tree.c)
+  target_link_libraries(test_mls_tree PRIVATE marmot)
+  target_include_directories(test_mls_tree PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_mls_tree COMMAND test_mls_tree)
+
+  # Test: MLS key schedule
+  add_executable(test_mls_key_schedule ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_key_schedule.c)
+  target_link_libraries(test_mls_key_schedule PRIVATE marmot)
+  target_include_directories(test_mls_key_schedule PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_mls_key_schedule COMMAND test_mls_key_schedule)
+
+  # Test: MLS message framing
+  add_executable(test_mls_framing ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_framing.c)
+  target_link_libraries(test_mls_framing PRIVATE marmot)
+  target_include_directories(test_mls_framing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_mls_framing COMMAND test_mls_framing)
 endif()

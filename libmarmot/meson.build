@@ -38,6 +38,9 @@ marmot_sources = files(
   'src/storage_memory.c',
   'src/mls/mls_crypto.c',
   'src/mls/mls_tls.c',
+  'src/mls/mls_tree.c',
+  'src/mls/mls_key_schedule.c',
+  'src/mls/mls_framing.c',
 )
 
 # Public include directories
@@ -119,4 +122,28 @@ if get_option('tests')
     dependencies: [openssl_dep, sodium_dep],
   )
   test('marmot_types', test_types)
+
+  test_mls_tree = executable('test_mls_tree',
+    'tests/test_mls_tree.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_mls_tree', test_mls_tree)
+
+  test_mls_key_schedule = executable('test_mls_key_schedule',
+    'tests/test_mls_key_schedule.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_mls_key_schedule', test_mls_key_schedule)
+
+  test_mls_framing = executable('test_mls_framing',
+    'tests/test_mls_framing.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_mls_framing', test_mls_framing)
 endif
