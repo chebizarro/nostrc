@@ -576,7 +576,9 @@ do_template_dispose:
 
   /* Part 2: NULL the layout manager to prevent the BoxLayout from trying to
    * measure remaining children while others are being disposed. */
-  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+  /* DISABLED: This may cause GTK to access freed memory during template disposal.
+   * Let GTK handle layout manager cleanup automatically. */
+  // gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
   gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
