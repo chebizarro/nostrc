@@ -209,7 +209,7 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
   /* Convert counts to result array */
   GHashTableIter ht_iter;
   gpointer key, value;
-  GPtrArray *all = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_trending_hashtag_free);
+  GPtrArray *all = g_ptr_array_new();  /* No free function - we'll manage memory manually */
 
   g_hash_table_iter_init(&ht_iter, counts);
   while (g_hash_table_iter_next(&ht_iter, &key, &value)) {
@@ -233,11 +233,13 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
     g_ptr_array_add(result, g_ptr_array_index(all, i));
   }
   
-  /* Remove moved items from all array to prevent double free */
-  g_ptr_array_remove_range(all, 0, take);
+  /* Manually free items that weren't moved to result */
+  for (guint i = take; i < all->len; i++) {
+    gnostr_trending_hashtag_free(g_ptr_array_index(all, i));
+  }
   
-  /* Free the temp array - remaining items will be freed by the free_func */
-  g_ptr_array_unref(all);
+  /* Free the temp array (items already freed or moved) */
+  g_ptr_array_free(all, TRUE);
 
   g_debug("trending: computed %u hashtags from %d events", result->len, got);
   return result;
