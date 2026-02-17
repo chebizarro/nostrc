@@ -259,37 +259,42 @@ typedef struct {
   GCancellable *cancellable;
 } TrendingAsyncData;
 
-static gboolean
-trending_async_deliver(gpointer user_data)
-{
-  TrendingAsyncData *data = user_data;
-  
-  /* Check if operation was cancelled before delivering */
-  if (!data->cancellable || !g_cancellable_is_cancelled(data->cancellable)) {
-    data->callback(data->result, data->user_data);
-  } else {
-    /* Operation cancelled - free the result without calling callback */
-    if (data->result) {
-      g_ptr_array_unref(data->result);
-    }
-  }
-  
-  g_clear_object(&data->cancellable);
-  g_free(data);
-  return G_SOURCE_REMOVE;
-}
-
 static void
 trending_async_thread(GTask *task, gpointer source_object,
                       gpointer task_data, GCancellable *cancellable)
 {
-  (void)task; (void)source_object; (void)cancellable;
+  (void)source_object;
   TrendingAsyncData *data = task_data;
+
+  /* Check if cancelled before doing work */
+  if (g_task_return_error_if_cancelled(task)) {
+    return;
+  }
 
   data->result = gnostr_compute_trending_hashtags(data->max_events, data->top_n);
 
-  /* Deliver on main thread */
-  g_idle_add(trending_async_deliver, data);
+  /* Return result via GTask - this handles main thread delivery automatically */
+  g_task_return_pointer(task, data, NULL);
+}
+
+static void
+trending_async_callback(GObject *source_object, GAsyncResult *result, gpointer user_data)
+{
+  (void)source_object;
+  (void)user_data;
+  
+  GTask *task = G_TASK(result);
+  TrendingAsyncData *data = g_task_propagate_pointer(task, NULL);
+  
+  if (data) {
+    /* Deliver result to original callback */
+    if (data->result) {
+      data->callback(data->result, data->user_data);
+    }
+    
+    g_clear_object(&data->cancellable);
+    g_free(data);
+  }
 }
 
 void
@@ -308,8 +313,8 @@ gnostr_compute_trending_hashtags_async(guint max_events,
   data->user_data = user_data;
   data->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
 
-  GTask *task = g_task_new(NULL, cancellable, NULL, NULL);
-  g_task_set_task_data(task, data, NULL); /* data freed in deliver callback */
+  GTask *task = g_task_new(NULL, cancellable, trending_async_callback, NULL);
+  g_task_set_task_data(task, data, NULL); /* data freed in callback */
   g_task_run_in_thread(task, trending_async_thread);
   g_object_unref(task);
 }
