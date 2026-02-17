@@ -71,13 +71,13 @@ int nh_open_session(const char *username){
     fprintf(stderr, "OpenSession: systemctl start %s failed: %s\n", svc, err?err->message:"error");
     if (err) g_error_free(err);
   } else {
+    /* Wait for systemctl to complete — the unit is active when this returns. */
+    g_subprocess_wait(proc, NULL, NULL);
     g_object_unref(proc);
   }
-  /* User provisioning moved to WarmCache */
-  /* Wait for mount readiness (up to ~5s) */
-  for (int i=0; i<25; i++){
-    if (is_mountpoint(mnt)) break;
-    g_usleep(200 * 1000);
+  /* After systemctl start returns, the mount should be ready (or failed). */
+  if (!is_mountpoint(mnt)) {
+    fprintf(stderr, "OpenSession: mountpoint %s not ready after service start\n", mnt);
   }
   /* Persist status, pid and mountpoint */
   nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
@@ -104,20 +104,17 @@ int nh_close_session(const char *username){
   /* Stop systemd template unit; systemd will handle unmount */
   GError *err=NULL; gchar *svc = g_strdup_printf("nostrfs@%s.service", username);
   GSubprocess *u = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, "systemctl", "stop", svc, NULL);
-  if (!u){ if (err) { g_error_free(err); } }
-  else g_object_unref(u);
+  if (!u) {
+    if (err) { g_error_free(err); }
+  } else {
+    /* Wait for systemctl stop to complete — unmount happens during stop. */
+    g_subprocess_wait(u, NULL, NULL);
+    g_object_unref(u);
+  }
   g_free(svc);
   /* Update status */
   if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
     char key[256]; snprintf(key, sizeof key, "status.%s", username); nh_cache_set_setting(&c, key, "closed"); nh_cache_close(&c);
-  }
-  /* Wait for unmount (~5s) */
-  for (int i=0; i<25; i++){
-    char mnt[256]=""; nh_cache c2; if (nh_cache_open_configured(&c2, "/etc/nss_nostr.conf")==0){ char k2[256]; snprintf(k2, sizeof k2, "mount.%s", username); (void)nh_cache_get_setting(&c2, k2, mnt, sizeof mnt); nh_cache_close(&c2);} if (mnt[0]==0) break;
-    if (!is_mountpoint(mnt)) {
-      break;
-    }
-    g_usleep(200 * 1000);
   }
   printf("nostr-homectl: CloseSession %s\n", username);
   return 0;

@@ -66,19 +66,16 @@ static void on_event(GNostrSubscription *sub, const gchar *event_json, gpointer 
             storage_ndb_end_query(txn);
           }
         }
-        /* nostrc-3gd6: Reduced from 10x250ms polling loop (2.5s max blocking) to
-         * 3x200ms (600ms max). Profile indexing is async; a future improvement
-         * would emit a storage event via EventBus when indexing completes. */
-        for (int attempt = 0; attempt < 3; attempt++) {
-          if (attempt > 0) g_usleep(200000); /* 200ms between retries only */
+        /* Timeout-audit: Single attempt, fail-fast. Profile indexing is async
+         * so it may not be available yet — that's fine for diagnostics. */
+        {
           void *txn = NULL;
           if (storage_ndb_begin_query(&txn) == 0) {
             char *pjson = NULL; int plen = 0;
             int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
-            g_message("ndb_profile_readback(profile_sub): pk=%s rc=%d len=%d present=%s attempt=%d", pk, prc, plen, pjson?"yes":"no", attempt+1);
+            g_message("ndb_profile_readback(profile_sub): pk=%s rc=%d len=%d present=%s", pk, prc, plen, pjson?"yes":"no");
             storage_ndb_end_query(txn);
             if (pjson) { free(pjson); }
-            if (pjson || prc == 0) break;
           }
         }
       }

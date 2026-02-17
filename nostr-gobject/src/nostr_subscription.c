@@ -20,6 +20,7 @@
 #include "json.h"                 /* nostr_event_serialize */
 #include "context.h"              /* GoContext */
 #include "channel.h"              /* GoChannel, go_channel_try_receive */
+#include "select.h"               /* go_select, GoSelectCase */
 #include "error.h"                /* Error, free_error */
 
 /* GObject wrapper headers */
@@ -248,6 +249,14 @@ emit_closed_on_main(gpointer data)
 
 /* --- Monitor thread --- */
 
+/* nostrc-b0h: REPLACED polling loop with event-driven go_select().
+ * Previously: try_receive on 3 channels in a loop with 1ms usleep.
+ * Now: go_select blocks cooperatively until one of the channels has data.
+ * Zero CPU when idle, instant wake on any event.
+ *
+ * The events channel is drained greedily after select wakes us — a single
+ * select wake may correspond to many buffered events, so we drain all
+ * available events before going back to select. */
 static gpointer
 subscription_monitor_thread(gpointer data)
 {
@@ -258,66 +267,95 @@ subscription_monitor_thread(gpointer data)
     GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
     GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
 
+    /* Build select cases — up to 3 channels, all receive */
+    int n_cases = 0;
+    int idx_events = -1, idx_eose = -1, idx_closed = -1;
+    GoSelectCase cases[3];
+    memset(cases, 0, sizeof(cases));
+
+    if (ch_events) {
+        idx_events = n_cases;
+        cases[n_cases].chan = ch_events;
+        cases[n_cases].dir = GO_SELECT_RECV;
+        n_cases++;
+    }
+    if (ch_eose) {
+        idx_eose = n_cases;
+        cases[n_cases].chan = ch_eose;
+        cases[n_cases].dir = GO_SELECT_RECV;
+        n_cases++;
+    }
+    if (ch_closed) {
+        idx_closed = n_cases;
+        cases[n_cases].chan = ch_closed;
+        cases[n_cases].dir = GO_SELECT_RECV;
+        n_cases++;
+    }
+
     while (__atomic_load_n(&self->monitor_running, __ATOMIC_SEQ_CST)) {
-        gboolean any_activity = FALSE;
 
-        /* Drain events channel into batched queue (nostrc-mzab) */
-        void *msg = NULL;
-        while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-            any_activity = TRUE;
-            if (msg) {
-                NostrEvent *ev = (NostrEvent *)msg;
-                char *json = nostr_event_serialize(ev);
-                nostr_event_free(ev);
-                if (json) {
-                    g_mutex_lock(&self->event_queue_mutex);
+        if (n_cases == 0) break; /* No channels to monitor */
 
-                    /* nostrc-75o3: Bound event queue — drop oldest when
-                     * at capacity.  NDB persistence already stores all
-                     * events via the ingest path, so UI-level drops are
-                     * safe; the UI will catch up on the next query. */
-                    while (self->event_queue->len >= EVENT_QUEUE_CAPACITY) {
-                        gchar *oldest = g_ptr_array_index(self->event_queue, 0);
-                        g_free(oldest);
-                        g_ptr_array_remove_index(self->event_queue, 0);
+        /* Block until one of the channels has data. go_select returns
+         * the index of the ready case, or -1 if all channels are closed. */
+        int ready = go_select(cases, n_cases);
+        if (ready < 0) break; /* All channels closed */
+
+        /* Check if we should stop */
+        if (!__atomic_load_n(&self->monitor_running, __ATOMIC_SEQ_CST))
+            break;
+
+        /* Handle whichever channel woke us */
+        if (ready == idx_events) {
+            /* Drain ALL available events (greedy — one select wake may
+             * correspond to many buffered events in the channel) */
+            void *msg = cases[idx_events].val;
+            do {
+                if (msg) {
+                    NostrEvent *ev = (NostrEvent *)msg;
+                    char *json = nostr_event_serialize(ev);
+                    nostr_event_free(ev);
+                    if (json) {
+                        g_mutex_lock(&self->event_queue_mutex);
+
+                        /* nostrc-75o3: Bound event queue — drop oldest when
+                         * at capacity.  NDB persistence already stores all
+                         * events via the ingest path, so UI-level drops are
+                         * safe; the UI will catch up on the next query. */
+                        while (self->event_queue->len >= EVENT_QUEUE_CAPACITY) {
+                            gchar *oldest = g_ptr_array_index(self->event_queue, 0);
+                            g_free(oldest);
+                            g_ptr_array_remove_index(self->event_queue, 0);
+                        }
+
+                        g_ptr_array_add(self->event_queue, json);
+                        if (!self->event_idle_scheduled) {
+                            self->event_idle_scheduled = TRUE;
+                            g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                                            drain_event_queue_on_main,
+                                            g_object_ref(self),
+                                            drain_event_queue_destroy);
+                        }
+                        g_mutex_unlock(&self->event_queue_mutex);
                     }
-
-                    g_ptr_array_add(self->event_queue, json);
-                    if (!self->event_idle_scheduled) {
-                        self->event_idle_scheduled = TRUE;
-                        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
-                                        drain_event_queue_on_main,
-                                        g_object_ref(self),
-                                        drain_event_queue_destroy);
-                    }
-                    g_mutex_unlock(&self->event_queue_mutex);
                 }
-            }
-            msg = NULL;
-        }
+                msg = NULL;
+            } while (ch_events && go_channel_try_receive(ch_events, &msg) == 0);
 
-        /* Check EOSE channel */
-        if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-            any_activity = TRUE;
+        } else if (ready == idx_eose) {
             EoseSignalData *sdata = g_new(EoseSignalData, 1);
             sdata->self = g_object_ref(self);
             g_idle_add_full(G_PRIORITY_DEFAULT, emit_eose_on_main, sdata, NULL);
-        }
 
-        /* Check CLOSED channel */
-        void *reason = NULL;
-        if (ch_closed && go_channel_try_receive(ch_closed, &reason) == 0) {
-            any_activity = TRUE;
+        } else if (ready == idx_closed) {
+            void *reason = cases[idx_closed].val;
             ClosedSignalData *sdata = g_new(ClosedSignalData, 1);
             sdata->self = g_object_ref(self);
             sdata->reason = reason ? g_strdup((const char *)reason) : NULL;
             g_idle_add_full(G_PRIORITY_DEFAULT, emit_closed_on_main, sdata, NULL);
-            /* Subscription was closed by relay - stop monitoring */
+            /* Subscription was closed by relay — stop monitoring */
             break;
         }
-
-        if (!any_activity)
-            g_usleep(1000); /* 1ms backoff */
     }
 
     g_object_unref(self); /* Release monitor thread's ref */

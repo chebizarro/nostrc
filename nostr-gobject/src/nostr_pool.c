@@ -28,6 +28,8 @@
  * declared in nostr_pool.h. */
 #include "nostr_pool.h"
 #include "nostr_relay.h"
+#include "channel.h"
+#include "select.h"
 
 /* Forward-declare subscription API to avoid include conflicts (nostrc-wjlt) */
 GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters);
@@ -644,16 +646,24 @@ query_thread_func(GTask         *task,
         return;
     }
 
-    /* nostrc-blk1: Drain events using protocol signals only — EOSE-driven.
-     * Each subscription has an EOSE channel that signals when the relay
-     * has finished sending historical events. We use non-blocking receives
-     * to drain channels and wait for EOSE signals.
+    /* Timeout-audit: Event-driven EOSE-based query loop using go_select.
      *
-     * The loop continues until all relays have sent EOSE or disconnected.
-     * A 30-second safety timeout prevents infinite hangs if relays misbehave. */
+     * Instead of polling channels with try_receive + g_usleep(10ms), we build
+     * a go_select case array covering every subscription's events + eose
+     * channels. go_select blocks until at least one channel has data, then
+     * we greedy-drain all channels before blocking again.
+     *
+     * A 500ms select timeout handles cancellation checks and the 30s safety
+     * timeout for misbehaving relays. */
     gint64 query_start = g_get_monotonic_time();
     const gint64 MAX_QUERY_TIME_US = 30 * G_USEC_PER_SEC; /* 30s safety timeout */
     g_debug("pool_query_thread: waiting for EOSE from %u relays", items->len);
+
+    /* Pre-build select cases: 2 channels per relay (events + eose).
+     * We rebuild each iteration to skip already-eosed relays. */
+    const guint max_cases = items->len * 2;
+    GoSelectCase *cases = g_new0(GoSelectCase, max_cases);
+    void **recv_bufs = g_new0(void *, max_cases);
 
     for (;;) {
         if (cancellable && g_cancellable_is_cancelled(cancellable)) {
@@ -661,20 +671,23 @@ query_thread_func(GTask         *task,
             break;
         }
 
-        /* Safety timeout - don't hang forever if relays misbehave */
+        /* Safety timeout — don't hang forever if relays misbehave */
         if (g_get_monotonic_time() - query_start > MAX_QUERY_TIME_US) {
             g_debug("[POOL_QUERY] safety timeout after 30s");
             break;
         }
 
+        /* Check for completion and build select cases for active relays */
         gboolean all_done = TRUE;
-        gboolean any_activity = FALSE;
+        size_t n_cases = 0;
+
+        /* Track which item index each case maps to, for post-select dispatch */
+        guint *case_item_idx = g_newa(guint, max_cases);
+        gboolean *case_is_eose = g_newa(gboolean, max_cases);
 
         for (guint i = 0; i < items->len; i++) {
             RelaySubItem *item = g_ptr_array_index(items, i);
             if (!item || !item->sub || item->eosed) continue;
-
-            all_done = FALSE;
 
             /* Check if relay disconnected or subscription closed */
             if (nostr_subscription_is_closed(item->sub) ||
@@ -685,11 +698,84 @@ query_thread_func(GTask         *task,
                 continue;
             }
 
-            /* Drain events channel */
+            all_done = FALSE;
+
+            /* Add events channel case */
+            GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
+            if (ch_events) {
+                recv_bufs[n_cases] = NULL;
+                cases[n_cases].op = GO_SELECT_RECEIVE;
+                cases[n_cases].chan = ch_events;
+                cases[n_cases].recv_buf = &recv_bufs[n_cases];
+                case_item_idx[n_cases] = i;
+                case_is_eose[n_cases] = FALSE;
+                n_cases++;
+            }
+
+            /* Add eose channel case */
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
+            if (ch_eose) {
+                recv_bufs[n_cases] = NULL;
+                cases[n_cases].op = GO_SELECT_RECEIVE;
+                cases[n_cases].chan = ch_eose;
+                cases[n_cases].recv_buf = &recv_bufs[n_cases];
+                case_item_idx[n_cases] = i;
+                case_is_eose[n_cases] = TRUE;
+                n_cases++;
+            }
+        }
+
+        if (all_done) {
+            g_debug("[POOL_QUERY] all relays done after %lldms, %u results",
+                    (long long)((g_get_monotonic_time() - query_start) / 1000),
+                    data->results->len);
+            break;
+        }
+
+        /* Block until any channel fires (500ms timeout for cancellation checks) */
+        GoSelectResult sel = { .selected_case = -1 };
+        if (n_cases > 0) {
+            sel = go_select_timeout(cases, n_cases, 500);
+        }
+
+        /* If select returned a specific case, handle the received value */
+        if (sel.selected_case >= 0) {
+            size_t sc = (size_t)sel.selected_case;
+            guint idx = case_item_idx[sc];
+            RelaySubItem *item = g_ptr_array_index(items, idx);
+
+            if (case_is_eose[sc]) {
+                /* EOSE received for this relay */
+                if (item) {
+                    item->eosed = TRUE;
+                    g_debug("[POOL_QUERY] relay[%u] EOSE after %lldms, %u results",
+                            idx, (long long)((g_get_monotonic_time() - query_start) / 1000),
+                            data->results->len);
+                }
+            } else if (recv_bufs[sc]) {
+                /* Event received — process it */
+                NostrEvent *ev = (NostrEvent *)recv_bufs[sc];
+                char *eid = nostr_event_get_id(ev);
+                if (eid && *eid && !g_hash_table_contains(data->seen_ids, eid)) {
+                    g_hash_table_add(data->seen_ids, g_strdup(eid));
+                    char *json = nostr_event_serialize(ev);
+                    if (json)
+                        g_ptr_array_add(data->results, json);
+                }
+                free(eid);
+                nostr_event_free(ev);
+            }
+        }
+
+        /* Greedy-drain ALL channels (events arrived on other relays too) */
+        for (guint i = 0; i < items->len; i++) {
+            RelaySubItem *item = g_ptr_array_index(items, i);
+            if (!item || !item->sub || item->eosed) continue;
+
+            /* Drain events */
             GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
             void *msg = NULL;
             while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-                any_activity = TRUE;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent *)msg;
                     char *eid = nostr_event_get_id(ev);
@@ -705,28 +791,19 @@ query_thread_func(GTask         *task,
                 msg = NULL;
             }
 
-            /* Check for EOSE - this is the completion signal */
+            /* Check EOSE */
             GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 item->eosed = TRUE;
-                any_activity = TRUE;
                 g_debug("[POOL_QUERY] relay[%u] EOSE after %lldms, %u results",
                         i, (long long)((g_get_monotonic_time() - query_start) / 1000),
                         data->results->len);
             }
         }
-
-        if (all_done) {
-            g_debug("[POOL_QUERY] all relays done after %lldms, %u results",
-                    (long long)((g_get_monotonic_time() - query_start) / 1000),
-                    data->results->len);
-            break;
-        }
-
-        /* Brief sleep to avoid busy-spinning when no activity */
-        if (!any_activity)
-            g_usleep(10000); /* 10ms */
     }
+
+    g_free(cases);
+    g_free(recv_bufs);
 
     /* nostrc-blk1: Deliver results BEFORE subscription cleanup.
      * nostr_subscription_close/free can block waiting on lifecycle worker

@@ -21,6 +21,12 @@ void gof_hook_block_current(void) {
 }
 
 __attribute__((weak))
+void gof_hook_block_current_until(uint64_t deadline_ns) {
+    (void)deadline_ns;
+    /* No-op: caller should not reach here if gof_hook_current() returned NULL */
+}
+
+__attribute__((weak))
 void gof_hook_make_runnable(gof_fiber_handle f) {
     (void)f;
     /* No-op: caller should not reach here if gof_hook_current() returned NULL */

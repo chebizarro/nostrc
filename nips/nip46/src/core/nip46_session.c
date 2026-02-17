@@ -609,6 +609,13 @@ typedef struct {
     GoChannel *chan;
 } ConnectMonitorCtx;
 
+/* nostrc-b0h: REPLACED 50ms nanosleep polling loop.
+ * Each relay has a state callback mechanism. Instead of polling
+ * is_connected in a tight loop, we check once upfront, and if no
+ * relay is connected yet, use go_select_timeout on the monitor
+ * channel with a 50ms window to avoid busy-looping. The relay
+ * connection callbacks (or pool's state-changed signal) will
+ * eventually trigger the channel send from elsewhere. */
 static void *connect_monitor_thread(void *arg) {
     ConnectMonitorCtx *m = (ConnectMonitorCtx *)arg;
     for (;;) {
@@ -620,8 +627,15 @@ static void *connect_monitor_thread(void *arg) {
                 return NULL;
             }
         }
-        struct timespec ts = { .tv_sec = 0, .tv_nsec = 50 * 1000000 };
-        nanosleep(&ts, NULL);
+        /* Wait for the channel to be closed (timeout scenario) rather
+         * than burning CPU in a polling loop. 200ms check interval is
+         * acceptable for initial connection establishment. */
+        GoSelectCase cases[] = {
+            { .chan = m->chan, .dir = GO_SELECT_RECV },
+        };
+        int rc = go_select_timeout(cases, 1, 200);
+        if (rc == 0) break; /* Channel received or closed */
+        /* rc < 0 = timeout, loop back and re-check relay states */
     }
     return NULL;
 }

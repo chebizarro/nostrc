@@ -492,11 +492,11 @@ void relay_store_test_connection(const gchar *url, RelayTestCallback cb, gpointe
   data->cb = cb;
   data->user_data = user_data;
 
-  /* If URL looks valid, report connected after brief delay; otherwise error */
+  /* If URL looks valid, report connected on next idle; otherwise error */
   if (relay_store_validate_url(url)) {
-    /* Simulate successful connection after 500ms */
-    g_timeout_add(500, relay_test_timeout, data);
-    /* Update to connecting status immediately via callback */
+    /* Timeout-audit: Replaced 500ms simulated delay with idle callback.
+     * A real connection test should be used here eventually. */
+    g_idle_add(relay_test_timeout, data);
     cb(url, RELAY_STATUS_CONNECTING, user_data);
   } else {
     /* Invalid URL - report error immediately */

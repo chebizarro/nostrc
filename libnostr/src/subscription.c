@@ -949,40 +949,19 @@ static void *async_cleanup_worker(void *arg) {
         sub->priv->cancel(sub->context);
     }
     
-    /* Step 2: Simply wait for wait_group with timeout using a background approach
-     * Since go_wait_group_wait() blocks, we'll use a timeout-based approach */
-    if (timeout_ms > 0) {
-        /* Give the worker thread time to exit after context cancellation */
-        uint64_t poll_interval_ms = 10; // Poll every 10ms
-        uint64_t elapsed_ms = 0;
-        
-        while (elapsed_ms < timeout_ms) {
-            /* Check elapsed time */
-            struct timeval now_tv;
-            gettimeofday(&now_tv, NULL);
-            uint64_t now_us = (uint64_t)now_tv.tv_sec * 1000000 + (uint64_t)now_tv.tv_usec;
-            elapsed_ms = (now_us - start_us) / 1000;
-            
-            if (elapsed_ms >= timeout_ms) {
-                /* Timeout */
-                if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
-                    fprintf(stderr, "[sub %s] async_cleanup: TIMEOUT after %lums\n", 
-                            sub->priv->id, (unsigned long)elapsed_ms);
-                }
-                atomic_store(&handle->timed_out, true);
-                success = false;
-                nostr_metric_counter_add("sub_cleanup_timeout", 1);
-                goto cleanup_done;
-            }
-            
-            /* Sleep briefly */
-            usleep(poll_interval_ms * 1000);
-            
-            /* After 100ms, assume worker has had enough time to exit */
-            if (elapsed_ms >= 100) {
-                break;
-            }
-        }
+    /* Step 2: Wait for the lifecycle worker to exit.
+     * The context was cancelled in step 1, which unblocks the worker's
+     * go_channel_receive(done). The wait group signals when the worker
+     * thread returns. This is a proper blocking wait — no polling. */
+    go_wait_group_wait(&sub->priv->wg);
+    
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        struct timeval now_tv;
+        gettimeofday(&now_tv, NULL);
+        uint64_t now_us = (uint64_t)now_tv.tv_sec * 1000000 + (uint64_t)now_tv.tv_usec;
+        uint64_t elapsed_ms = (now_us - start_us) / 1000;
+        fprintf(stderr, "[sub %s] async_cleanup: wait_group done after %lums\n",
+                sub->priv->id, (unsigned long)elapsed_ms);
     }
     
     /* If we got here without timeout, do the actual cleanup via unref (nostrc-nr96) */

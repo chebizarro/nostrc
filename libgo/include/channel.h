@@ -23,6 +23,9 @@
 /* Forward declaration for select waiter */
 struct GoSelectWaiter;
 
+/* Forward declaration for fiber waiter (used by fiber-aware CV_WAIT) */
+struct GoFiberWaiter;
+
 typedef struct GoChannel {
     // Magic number for validation (must be first field)
     uint32_t magic;
@@ -48,6 +51,10 @@ typedef struct GoChannel {
     _Atomic int refs;
     // Linked list of select waiters (protected by mutex)
     struct GoSelectWaiter *select_waiters;
+    // Linked list of fiber waiters on cond_full (protected by mutex)
+    struct GoFiberWaiter *fiber_waiters_full;
+    // Linked list of fiber waiters on cond_empty (protected by mutex)
+    struct GoFiberWaiter *fiber_waiters_empty;
 } __attribute__((aligned(NOSTR_CACHELINE))) GoChannel;
 
 // Compile-time checks to ensure hot fields start at cacheline boundaries.

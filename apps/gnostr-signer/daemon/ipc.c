@@ -7,6 +7,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#ifndef G_OS_WIN32
+#include <poll.h>
+#endif
 #include "ipc.h"
 
 /* Error domain registration */
@@ -552,19 +555,29 @@ static gpointer tcp_ipc_accept_thread(gpointer data) {
   
   g_message("tcp: accept thread started");
   
+  struct pollfd pfd = { .fd = s->tcp_fd, .events = POLLIN };
+
   while (!g_atomic_int_get(&s->stop_flag)) {
-    // Check connection limit
-    if (g_atomic_int_get(&s->active_connections) >= (gint)s->max_connections) {
-      g_usleep(100000); // Sleep 100ms and retry
-      continue;
+    /* Block in poll() until a connection arrives or 200ms elapses.
+     * This replaces both the EAGAIN g_usleep(10ms) and the
+     * connection-limit g_usleep(100ms) — zero CPU when idle. */
+    int pr = poll(&pfd, 1, 200); /* 200ms timeout for stop_flag checks */
+    if (pr < 0) {
+      if (errno == EINTR) continue;
+      if (!g_atomic_int_get(&s->stop_flag))
+        g_warning("tcp: poll failed: %s", g_strerror(errno));
+      break;
     }
-    
+    if (pr == 0) continue; /* timeout — recheck stop_flag */
+
+    /* Check connection limit AFTER poll returns (don't busy-wait) */
+    if (g_atomic_int_get(&s->active_connections) >= (gint)s->max_connections)
+      continue; /* loop back to poll — waits instead of spinning */
+
     int cfd = accept(s->tcp_fd, NULL, NULL);
     if (cfd < 0) {
-      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-        g_usleep(10000); // Sleep 10ms before retry
-        continue;
-      }
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+        continue; /* poll will wait for next connection */
       if (!g_atomic_int_get(&s->stop_flag)) {
         g_warning("tcp: accept failed: %s", g_strerror(errno));
         ipc_stats_error(s);

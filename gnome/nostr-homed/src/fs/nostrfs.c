@@ -259,21 +259,22 @@ static void publish_best_effort(nostrfs_ctx *ctx, const char *content_json){
   const char **pub_urls = NULL; size_t pub_count = 0;
   if (profile_count > 0){ pub_urls = (const char **)profile_relays; pub_count = profile_count; }
   else { pub_urls = base_list; pub_count = base_count; }
-  /* Publish with simple retry/backoff */
-  int attempts = 0, max_attempts = 3;
-  while (attempts < max_attempts){
-    int published_any = 0;
-    for (size_t i=0;i<pub_count;i++){
-      const char *url = pub_urls[i]; if (!url || !*url) continue;
-      NostrRelay *r = nostr_relay_new(NULL, url, NULL);
-      if (r){ if (nostr_relay_connect(r, NULL)) { nostr_relay_publish(r, ev); nostr_relay_close(r, NULL); published_any = 1; } nostr_relay_free(r); }
+  /* Publish: try each relay once, no retries.  Nostr publish is fire-and-forget;
+   * if a relay isn't reachable, retrying with a sleep blocks the FUSE thread. */
+  int published_any = 0;
+  for (size_t i = 0; i < pub_count; i++) {
+    const char *url = pub_urls[i]; if (!url || !*url) continue;
+    NostrRelay *r = nostr_relay_new(NULL, url, NULL);
+    if (r) {
+      if (nostr_relay_connect(r, NULL)) {
+        nostr_relay_publish(r, ev);
+        nostr_relay_close(r, NULL);
+        published_any = 1;
+      }
+      nostr_relay_free(r);
     }
-    if (published_any) break;
-    attempts++;
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = 200 * 1000000L }; /* 200ms */
-    nanosleep(&ts, NULL);
   }
-  if (attempts >= max_attempts){ warn_throttle("pub", "publish attempts exhausted"); }
+  if (!published_any) { warn_throttle("pub", "no relay reachable for publish"); }
   if (profile_relays){ for (size_t i=0;i<profile_count;i++) free(profile_relays[i]); free(profile_relays); }
   nostr_event_free(ev);
 }

@@ -19,6 +19,7 @@
 #include <time.h>
 #include "select.h"
 #include "channel.h"
+#include "fiber_hooks.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -31,6 +32,7 @@ void go_select_waiter_init(GoSelectWaiter *w) {
     nsync_mu_init(&w->mutex);
     nsync_cv_init(&w->cond);
     atomic_store_explicit(&w->signaled, 0, memory_order_relaxed);
+    w->fiber_handle = NULL;
     w->next = NULL;
 }
 
@@ -104,10 +106,17 @@ void go_channel_signal_select_waiters(GoChannel *chan) {
         GoSelectWaiter *next = w->next;  /* Cache before signaling */
         /* Set signaled flag atomically — waiter checks this in cv_wait loop */
         atomic_store_explicit(&w->signaled, 1, memory_order_release);
-        /* Signal the CV without holding waiter->mutex to avoid ABBA deadlock.
-         * nsync_cv_signal is safe to call without the mutex — it just wakes
-         * a thread which will then acquire the mutex and re-check the predicate. */
-        nsync_cv_signal(&w->cond);
+        /* Wake the waiter — either fiber or OS thread */
+        if (w->fiber_handle) {
+            /* Fiber path: make the parked fiber runnable again */
+            gof_hook_make_runnable(w->fiber_handle);
+        } else {
+            /* OS thread path: signal the CV without holding waiter->mutex
+             * to avoid ABBA deadlock. nsync_cv_signal is safe to call
+             * without the mutex — it just wakes a thread which will then
+             * acquire the mutex and re-check the predicate. */
+            nsync_cv_signal(&w->cond);
+        }
         w = next;
     }
 }
@@ -217,13 +226,40 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
             return -1;
         }
 
-        /* Block efficiently on the waiter's condition variable.
-         * This replaces the old nanosleep(1ms) polling loop. */
-        nsync_mu_lock(&waiter.mutex);
-        while (!atomic_load_explicit(&waiter.signaled, memory_order_acquire)) {
-            nsync_cv_wait(&waiter.cond, &waiter.mutex);
+        /* Block efficiently — either by parking the fiber (cooperative)
+         * or by nsync_cv_wait (OS thread blocking). */
+        gof_fiber_handle _sel_fiber = gof_hook_current();
+        if (_sel_fiber) {
+            /* Fiber path: park cooperatively.
+             * The select waiter's signaled flag is set atomically by
+             * go_channel_signal_select_waiters(), and the CV is signaled
+             * which would wake an OS thread. For fibers, we store our
+             * fiber handle and park. The CV signal handler in
+             * go_channel_signal_select_waiters already sets signaled=1
+             * and signals the CV. We need to also be woken by fiber wake.
+             * Since we registered as a select waiter, we'll be woken
+             * when any channel transitions. We just need to check signaled. */
+            if (!atomic_load_explicit(&waiter.signaled, memory_order_acquire)) {
+                /* Not signaled yet — park the fiber. We'll be woken by
+                 * go_channel_signal_select_waiters which calls nsync_cv_signal
+                 * on the waiter's CV. For fiber awareness, we piggyback on
+                 * the signaled flag: since we've already registered as a
+                 * select waiter, when any channel transitions, our signaled
+                 * flag will be set. We just need a way to be woken.
+                 *
+                 * Store our fiber handle in the waiter for channel code to wake us. */
+                waiter.fiber_handle = _sel_fiber;
+                gof_hook_block_current(); /* Parks fiber — OS thread freed */
+                waiter.fiber_handle = NULL;
+            }
+        } else {
+            /* OS thread path: use nsync_cv_wait */
+            nsync_mu_lock(&waiter.mutex);
+            while (!atomic_load_explicit(&waiter.signaled, memory_order_acquire)) {
+                nsync_cv_wait(&waiter.cond, &waiter.mutex);
+            }
+            nsync_mu_unlock(&waiter.mutex);
         }
-        nsync_mu_unlock(&waiter.mutex);
 
         /* Unregister before retrying (avoids stale registrations) */
         unregister_waiter_all(cases, num_cases, &waiter);
@@ -315,16 +351,38 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases,
             abs_deadline.tv_nsec = (long)(deadline_ns % 1000000000ull);
         }
 
-        nsync_mu_lock(&waiter.mutex);
-        while (!atomic_load_explicit(&waiter.signaled, memory_order_acquire)) {
-            int wait_rc = nsync_cv_wait_with_deadline(
-                &waiter.cond, &waiter.mutex, abs_deadline, NULL);
-            if (wait_rc != 0) {
-                /* Timeout expired */
-                break;
+        gof_fiber_handle _sel_fiber_t = gof_hook_current();
+        if (_sel_fiber_t) {
+            /* Fiber path: park with timeout awareness.
+             * Use gof_hook_block_current_until() which parks the fiber with a
+             * deadline. The fiber will be woken either by:
+             *   (a) channel transition → go_channel_signal_select_waiters → make_runnable
+             *   (b) scheduler sleeper timeout → automatic wake when deadline expires
+             * This avoids indefinite parking when no channel activity occurs. */
+            if (!atomic_load_explicit(&waiter.signaled, memory_order_acquire)) {
+                waiter.fiber_handle = _sel_fiber_t;
+                /* Convert remaining_us to absolute nanosecond deadline for the scheduler */
+                struct timespec _ts_now;
+                clock_gettime(CLOCK_REALTIME, &_ts_now);
+                uint64_t _abs_deadline_ns = (uint64_t)_ts_now.tv_sec * 1000000000ull
+                                          + (uint64_t)_ts_now.tv_nsec
+                                          + remaining_us * 1000ull;
+                gof_hook_block_current_until(_abs_deadline_ns);
+                waiter.fiber_handle = NULL;
             }
+        } else {
+            /* OS thread path: use nsync_cv_wait_with_deadline */
+            nsync_mu_lock(&waiter.mutex);
+            while (!atomic_load_explicit(&waiter.signaled, memory_order_acquire)) {
+                int wait_rc = nsync_cv_wait_with_deadline(
+                    &waiter.cond, &waiter.mutex, abs_deadline, NULL);
+                if (wait_rc != 0) {
+                    /* Timeout expired */
+                    break;
+                }
+            }
+            nsync_mu_unlock(&waiter.mutex);
         }
-        nsync_mu_unlock(&waiter.mutex);
 
         /* Unregister before retrying */
         unregister_waiter_all(cases, num_cases, &waiter);

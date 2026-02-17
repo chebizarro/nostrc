@@ -69,6 +69,11 @@ typedef struct _NostrSimplePool {
 
     /* nostrc-ey0f: Disposed flag to prevent double-free */
     volatile int disposed;          /* 0 = active, 1 = disposed */
+
+    /* Timeout-audit: Wake channel for event-driven worker loop.
+     * Signaled when subscriptions change or pool is stopping.
+     * Allows the worker to block in go_select instead of polling. */
+    struct GoChannel *wake_ch;
 } NostrSimplePool;
 
 typedef struct _NostrDirectedFilters {

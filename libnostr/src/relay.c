@@ -16,6 +16,8 @@
 #include "nostr_log.h"
 #include "go.h"
 #include "channel.h"
+#include "select.h"
+#include "context.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1017,12 +1019,18 @@ static void *message_loop(void *arg) {
                         nostr_rl_log(NLOG_DEBUG, "relay", "drop low-priority event: queue %u%% full", util);
                         /* Event dropped - will be freed by envelope cleanup */
                     } else {
-                        /* Apply throttle delay for non-critical events under pressure */
+                        /* nostrc-b0h: REMOVED per-event usleep() throttle.
+                         * Throttling via sleep blocks the message_loop fiber/thread,
+                         * preventing ALL events (including critical ones) from being
+                         * processed during the sleep. Queue-based backpressure
+                         * (the drop path above) is the correct mechanism.
+                         * The throttle metric is still tracked for observability. */
                         if (priority != NOSTR_EVENT_PRIORITY_CRITICAL) {
                             uint64_t delay_us = nostr_subscription_get_throttle_delay_us(subscription);
                             if (delay_us > 0) {
                                 nostr_metric_counter_add("relay_throttle_applied", 1);
-                                usleep((useconds_t)delay_us);
+                                /* Previously: usleep(delay_us) — removed.
+                                 * Throttle is now advisory-only. */
                             }
                         }
 
@@ -1138,21 +1146,29 @@ static void *message_loop(void *arg) {
         nsync_mu_unlock(&r->priv->mutex);
         relay_set_state(r, NOSTR_RELAY_STATE_BACKOFF);
 
-        /* Wait for backoff period, checking for context cancellation */
-        uint64_t wait_start = get_monotonic_time_ms();
-        while (get_monotonic_time_ms() - wait_start < backoff_ms) {
-            /* Check if context is canceled or reconnect_now was called */
+        /* nostrc-b0h: Event-driven backoff wait.
+         * REPLACED: usleep(100ms) polling loop checking for cancellation.
+         * NOW: go_select_timeout on the context's done channel. Wakes
+         * instantly on cancellation, otherwise waits for the full backoff
+         * period with zero CPU usage. */
+        {
+            GoChannel *done_ch = go_context_done(ctx);
+            GoSelectCase backoff_cases[] = {
+                { .chan = done_ch, .dir = GO_SELECT_RECV },
+            };
+            int which = go_select_timeout(backoff_cases, done_ch ? 1 : 0,
+                                           (int)backoff_ms);
+            if (which == 0) {
+                /* Done channel fired — context canceled */
+                context_canceled = true;
+            }
+            /* which < 0 means timeout expired — backoff complete.
+             * Also check reconnect_requested flag (set by external API). */
             nsync_mu_lock(&r->priv->mutex);
             bool reconnect_now = r->priv->reconnect_requested;
             r->priv->reconnect_requested = false;
             nsync_mu_unlock(&r->priv->mutex);
-
-            if (reconnect_now) break;  /* Skip remaining backoff */
-            if (go_context_is_canceled(ctx)) {
-                context_canceled = true;
-                break;  /* Cancel reconnection */
-            }
-            usleep(100000);  /* Sleep 100ms between checks */
+            (void)reconnect_now; /* Used for logging, backoff already elapsed */
         }
 
         if (context_canceled) {

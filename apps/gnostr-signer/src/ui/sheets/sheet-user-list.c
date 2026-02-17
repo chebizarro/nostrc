@@ -577,8 +577,9 @@ static void on_sync(GtkButton *btn, gpointer user_data) {
    * connection infrastructure is complete.
    */
 
-  /* Simulate 1.5 second sync delay */
-  ctx->timeout_id = g_timeout_add(1500, on_sync_timeout, ctx);
+    /* Timeout-audit: Replaced 1.5s simulated delay with idle callback.
+     * TODO: Replace with actual relay sync when infrastructure is ready. */
+    ctx->timeout_id = g_idle_add(on_sync_timeout, ctx);
 
   /* Cleanup */
   g_ptr_array_unref(write_relays);

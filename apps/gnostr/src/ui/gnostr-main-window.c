@@ -6482,9 +6482,9 @@ deferred_heavy_init_cb(gpointer data)
   g_warning("[STARTUP] gift wrap sub done, scheduling 150ms timeout");
 
   /* Seed initial items so Timeline page isn't empty.
-   * 150ms delay allows relay pool setup (started above) to begin connecting.
-   * nostrc-b0h: Audited - brief delay for async initialization is appropriate. */
-  g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
+   * Timeout-audit: Use g_idle_add instead of 150ms timeout — the refresh
+   * runs on the next main loop iteration after pool setup completes. */
+  g_idle_add_once((GSourceOnceFunc)initial_refresh_timeout_cb, self);
   g_warning("[STARTUP] deferred_heavy_init_cb: EXIT (timeout scheduled)");
 
   /* Background profile prefetch disabled (model emits need-profile when required). */
@@ -9002,11 +9002,10 @@ static void on_relay_config_changed(gpointer user_data) {
     g_object_unref(self->pool_cancellable);
     self->pool_cancellable = NULL;
 
-    /* LEGITIMATE TIMEOUT - Allow cancellation to complete before restart.
-     * 100ms gives goroutines time to clean up connections gracefully.
-     * nostrc-b0h: Audited - brief delay for async cleanup is appropriate. */
-    g_timeout_add_full(G_PRIORITY_DEFAULT, 100, on_relay_config_changed_restart,
-                       g_object_ref(self), g_object_unref);
+    /* Timeout-audit: Use idle instead of 100ms timeout — the restart runs
+     * on the next main loop iteration, after cleanup signals propagate. */
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, on_relay_config_changed_restart,
+                    g_object_ref(self), g_object_unref);
   }
 
   /* Restart DM service to pick up new DM relays (nostrc-36y.4) */
@@ -9073,15 +9072,12 @@ on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
     }
     g_clear_error(&err);
 
-    g_warning("[RELAY] First relay connected, waiting 500ms for others to connect...");
-    
-    /* Wait 500ms for other relays to finish connecting before creating multi-sub.
-     * gnostr_pool_connect_all_async returns as soon as the FIRST relay connects,
-     * but we want to give other relays time to connect so the multi-sub can
-     * subscribe to all of them immediately rather than relying on state-changed signals. */
-    g_usleep(500000);  /* 500ms */
-    
-    g_warning("[RELAY] Starting multi-relay live subscription");
+    /* nostrc-b0h: REMOVED g_usleep(500000) "wait for other relays."
+     * The multi-sub already handles relays connecting after creation —
+     * it subscribes to new relays via pool state-changed signals.
+     * Blocking the GTask callback thread for 500ms added latency to
+     * EVERY startup and reconnection with zero benefit. */
+    g_warning("[RELAY] Starting multi-relay live subscription (relays connected: first, others joining asynchronously)");
 
     GError *sub_error = NULL;
     GNostrPoolMultiSub *multi_sub = gnostr_pool_subscribe_multi(

@@ -34,6 +34,7 @@ typedef struct GoSelectWaiter {
     nsync_mu mutex;              // Protects signaled flag
     nsync_cv cond;               // Signaled when any channel is ready
     _Atomic int signaled;        // Set to 1 when a channel signals us
+    void *fiber_handle;          // Fiber handle for cooperative wakeup (NULL if OS thread)
     struct GoSelectWaiter *next; // Intrusive linked list for channel's waiter list
 } GoSelectWaiter;
 

@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <sched.h>
 #include <glib.h>
 #include <gio/gio.h>
 #include "nostr_json.h"
@@ -369,17 +370,32 @@ int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms)
 #ifdef GNOSTR_TESTING
   gn_test_record_violation("storage_ndb_begin_query_retry", attempts);
 #endif
+
+  /* nostrc-b0h: FAIL FAST instead of blocking with usleep().
+   *
+   * The old implementation did exponential backoff with usleep() up to
+   * 512ms between attempts — catastrophic when called from the GTK main
+   * thread (via ensure_note_loaded → factory_bind_cb). A 512ms stall
+   * during scroll is unacceptable.
+   *
+   * New behavior: try `attempts` times with NO sleep between retries.
+   * LMDB read transactions are near-instant when the write lock is free.
+   * If they fail repeatedly, it means a long write transaction is running —
+   * sleeping won't help, and blocking the caller is worse than failing.
+   *
+   * Callers on the main thread should use the single-try begin_query()
+   * and handle failure gracefully (show placeholder, retry on next frame).
+   * Callers on worker threads can retry at their own cadence. */
   int rc = 0;
   void *txn = NULL;
   if (attempts <= 0) attempts = 1;
-  if (sleep_ms <= 0) sleep_ms = 1;
+  (void)sleep_ms; /* no longer used — no sleeping */
   for (int i = 0; i < attempts; i++) {
     rc = storage_ndb_begin_query(&txn);
     if (rc == 0 && txn) { *txn_out = txn; return 0; }
-    /* Exponential backoff capped at ~512ms between attempts */
-    int backoff_ms = sleep_ms << (i / 50); /* increase every 50 attempts */
-    if (backoff_ms > 512) backoff_ms = 512;
-    usleep((useconds_t)backoff_ms * 1000);
+    /* Yield to other threads/fibers but don't block.
+     * sched_yield is ~1µs vs usleep's ~1ms minimum. */
+    sched_yield();
   }
   *txn_out = NULL;
   return rc != 0 ? rc : LN_ERR_DB_TXN;

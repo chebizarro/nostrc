@@ -18,6 +18,14 @@ void gof_hook_block_current(void) {
     gof_sched_block_current();
 }
 
+void gof_hook_block_current_until(uint64_t deadline_ns) {
+    if (deadline_ns == 0) {
+        gof_sched_block_current();
+        return;
+    }
+    gof_sched_park_until(deadline_ns);
+}
+
 void gof_hook_make_runnable(gof_fiber_handle f) {
     if (!f) return;
     gof_sched_make_runnable((gof_fiber *)f);

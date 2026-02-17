@@ -1,5 +1,6 @@
 #include "channel.h"
 #include "select.h"
+#include "fiber_hooks.h"
 #include "nostr/metrics.h"
 #include "context.h"
 
@@ -11,6 +12,52 @@ extern void go_channel_signal_select_waiters(GoChannel *chan);
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+
+/* ── Fiber waiter infrastructure ──────────────────────────────────────
+ * When a fiber calls go_channel_send/receive and the channel would block,
+ * instead of calling nsync_cv_wait (which blocks the OS worker thread and
+ * starves the fiber scheduler), we park the fiber cooperatively.
+ *
+ * A GoFiberWaiter is stack-allocated by the blocking fiber, linked into
+ * the channel's fiber_waiters_full or fiber_waiters_empty list, and the
+ * fiber is parked. When the channel transitions (send signals empty waiters,
+ * receive signals full waiters), the fiber is made runnable again.
+ */
+typedef struct GoFiberWaiter {
+    gof_fiber_handle fiber;          /* The parked fiber handle */
+    struct GoFiberWaiter *next;      /* Linked list */
+} GoFiberWaiter;
+
+/* Wake one fiber waiter from a list. Returns the removed waiter, or NULL.
+ * Must be called while holding chan->mutex. */
+static GoFiberWaiter *fiber_waiter_wake_one(GoFiberWaiter **list) {
+    GoFiberWaiter *w = *list;
+    if (w) {
+        *list = w->next;
+        w->next = NULL;
+        gof_hook_make_runnable(w->fiber);
+    }
+    return w;
+}
+
+/* Wake ALL fiber waiters from a list (used on close).
+ * Must be called while holding chan->mutex. */
+static void fiber_waiter_wake_all(GoFiberWaiter **list) {
+    GoFiberWaiter *w = *list;
+    while (w) {
+        GoFiberWaiter *next = w->next;
+        w->next = NULL;
+        gof_hook_make_runnable(w->fiber);
+        w = next;
+    }
+    *list = NULL;
+}
+
+/* Add a fiber waiter to a list. Must hold chan->mutex. */
+static void fiber_waiter_enqueue(GoFiberWaiter **list, GoFiberWaiter *w) {
+    w->next = *list;
+    *list = w;
+}
 
 // TSAN-aware mutex/condvar helpers for nsync_mu/nsync_cv
 #if defined(__has_feature)
@@ -39,12 +86,66 @@ static inline void tsan_mu_unlock(nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); n
 static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); nsync_cv_wait(cv, m); __tsan_mutex_post_lock(m, 0, 0); }
 #  define NLOCK(mu_ptr)   tsan_mu_lock((mu_ptr))
 #  define NUNLOCK(mu_ptr) tsan_mu_unlock((mu_ptr))
-#  define CV_WAIT(cv_ptr, mu_ptr) tsan_cv_wait((cv_ptr), (mu_ptr))
+#  define CV_WAIT_OS(cv_ptr, mu_ptr) tsan_cv_wait((cv_ptr), (mu_ptr))
 #else
 #  define NLOCK(mu_ptr)   nsync_mu_lock((mu_ptr))
 #  define NUNLOCK(mu_ptr) nsync_mu_unlock((mu_ptr))
-#  define CV_WAIT(cv_ptr, mu_ptr) nsync_cv_wait((cv_ptr), (mu_ptr))
+#  define CV_WAIT_OS(cv_ptr, mu_ptr) nsync_cv_wait((cv_ptr), (mu_ptr))
 #endif
+
+/* ── Fiber-aware CV_WAIT ──────────────────────────────────────────────
+ * If called from within a fiber context, parks the fiber cooperatively
+ * instead of blocking the OS worker thread. The fiber is registered on
+ * the channel's fiber waiter list so it can be woken when the channel
+ * state transitions (send/recv/close).
+ *
+ * chan_ptr:    GoChannel* — needed to access the fiber waiter list
+ * cv_ptr:     &chan->cond_full or &chan->cond_empty
+ * mu_ptr:     &chan->mutex (must be held on entry, re-held on return)
+ * waiter_list: &chan->fiber_waiters_full or &chan->fiber_waiters_empty
+ */
+#define CV_WAIT_FIBER(chan_ptr, cv_ptr, mu_ptr, waiter_list) do { \
+    gof_fiber_handle _cur_fiber = gof_hook_current();              \
+    if (_cur_fiber) {                                               \
+        /* Fiber path: park cooperatively instead of blocking OS thread */ \
+        GoFiberWaiter _fw = { .fiber = _cur_fiber, .next = NULL };  \
+        fiber_waiter_enqueue((waiter_list), &_fw);                  \
+        NUNLOCK(mu_ptr);                                            \
+        gof_hook_block_current(); /* Parks fiber — OS thread is freed */ \
+        NLOCK(mu_ptr);                                              \
+    } else {                                                        \
+        /* OS thread path: use normal nsync_cv_wait */              \
+        CV_WAIT_OS((cv_ptr), (mu_ptr));                             \
+    }                                                               \
+} while(0)
+
+/* ── Fiber-aware signal/broadcast ──────────────────────────────────────
+ * These wrappers wake both OS-thread waiters (via nsync_cv) AND
+ * fiber waiters (via the fiber waiter list). Must hold chan->mutex.
+ *
+ * "signal" wakes ONE waiter; "broadcast" wakes ALL.
+ * We always signal both the CV and the fiber list because mixed
+ * fiber+thread workloads may have waiters in both paths.
+ */
+#define CV_SIGNAL_EMPTY(chan) do {                       \
+    nsync_cv_signal(&(chan)->cond_empty);                \
+    fiber_waiter_wake_one(&(chan)->fiber_waiters_empty); \
+} while(0)
+
+#define CV_BROADCAST_EMPTY(chan) do {                    \
+    nsync_cv_broadcast(&(chan)->cond_empty);             \
+    fiber_waiter_wake_all(&(chan)->fiber_waiters_empty); \
+} while(0)
+
+#define CV_SIGNAL_FULL(chan) do {                        \
+    nsync_cv_signal(&(chan)->cond_full);                 \
+    fiber_waiter_wake_one(&(chan)->fiber_waiters_full);  \
+} while(0)
+
+#define CV_BROADCAST_FULL(chan) do {                     \
+    nsync_cv_broadcast(&(chan)->cond_full);              \
+    fiber_waiter_wake_all(&(chan)->fiber_waiters_full);  \
+} while(0)
 
 // Portable aligned allocation: prefer C11 aligned_alloc, fallback to malloc
 static inline void *go_aligned_alloc(size_t alignment, size_t size) {
@@ -326,10 +427,10 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             int was_empty = (head == tail);
             NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
-            nsync_cv_signal(&chan->cond_empty);
+            CV_SIGNAL_EMPTY(chan);
 #else
             if (was_empty) {
-                nsync_cv_broadcast(&chan->cond_empty);
+                CV_BROADCAST_EMPTY(chan);
             }
 #endif
             go_channel_signal_select_waiters(chan);
@@ -404,10 +505,10 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         // With REFINED_SIGNALING, always signal because only one waiter
         // wakes per signal, leaving others blocked even when data exists.
 #if NOSTR_REFINED_SIGNALING
-        nsync_cv_signal(&chan->cond_empty);
+        CV_SIGNAL_EMPTY(chan);
 #else
         if (was_empty) {
-            nsync_cv_broadcast(&chan->cond_empty);
+            CV_BROADCAST_EMPTY(chan);
         }
 #endif
         go_channel_signal_select_waiters(chan);
@@ -495,11 +596,11 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
             // Always signal to wake one blocked sender
-            nsync_cv_signal(&chan->cond_full);
+            CV_SIGNAL_FULL(chan);
 #else
             // Broadcast only needed when transitioning from full
             if (was_full) {
-                nsync_cv_broadcast(&chan->cond_full);
+                CV_BROADCAST_FULL(chan);
             }
 #endif
             go_channel_signal_select_waiters(chan);
@@ -581,10 +682,10 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         // With REFINED_SIGNALING, always signal because only one waiter
         // wakes per signal, leaving others blocked even when space exists.
 #if NOSTR_REFINED_SIGNALING
-        nsync_cv_signal(&chan->cond_full);
+        CV_SIGNAL_FULL(chan);
 #else
         if (was_full) {
-            nsync_cv_broadcast(&chan->cond_full);
+            CV_BROADCAST_FULL(chan);
         }
 #endif
         go_channel_signal_select_waiters(chan);
@@ -668,6 +769,8 @@ GoChannel *go_channel_create(size_t capacity) {
     nsync_cv_init(&chan->cond_empty);
     atomic_store_explicit(&chan->refs, 1, memory_order_relaxed);
     chan->select_waiters = NULL;
+    chan->fiber_waiters_full = NULL;
+    chan->fiber_waiters_empty = NULL;
     return chan;
 }
 
@@ -703,8 +806,8 @@ void go_channel_unref(GoChannel *chan) {
     NLOCK(&chan->mutex);
     // Mark closed and wake all waiters to prevent further use
     atomic_store_explicit(&chan->closed, 1, memory_order_release);
-    nsync_cv_broadcast(&chan->cond_full);
-    nsync_cv_broadcast(&chan->cond_empty);
+    CV_BROADCAST_FULL(chan);
+    CV_BROADCAST_EMPTY(chan);
     // Clear magic to help detect use-after-free
     chan->magic = 0;
     if (chan->buffer) {
@@ -759,7 +862,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
 #endif
              && NOSTR_LIKELY(!chan->closed); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT(&chan->cond_full, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
             // woke up
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if (
@@ -783,7 +886,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
             NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
             && NOSTR_LIKELY(!chan->closed)) {
-            CV_WAIT(&chan->cond_full, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
             // woke up
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if (
@@ -868,10 +971,10 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     // With REFINED_SIGNALING, always signal because only one waiter
     // wakes per signal, leaving others blocked even when data exists.
 #if NOSTR_REFINED_SIGNALING
-    nsync_cv_signal(&chan->cond_empty);
+    CV_SIGNAL_EMPTY(chan);
 #else
     if (was_empty) {
-        nsync_cv_broadcast(&chan->cond_empty);
+        CV_BROADCAST_EMPTY(chan);
     }
 #endif
     go_channel_signal_select_waiters(chan);
@@ -927,7 +1030,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 #endif
              && NOSTR_LIKELY(!chan->closed); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT(&chan->cond_empty, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -951,7 +1054,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
             NOSTR_UNLIKELY(chan->size == 0)
 #endif
             ) && NOSTR_LIKELY(!chan->closed)) {
-            CV_WAIT(&chan->cond_empty, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -1060,11 +1163,11 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     // waking one waiter, leaving others blocked).
 #if NOSTR_REFINED_SIGNALING
     // With refined signaling, always signal to wake one blocked sender
-    nsync_cv_signal(&chan->cond_full);
+    CV_SIGNAL_FULL(chan);
 #else
     // Broadcast only needed when transitioning from full
     if (was_full) {
-        nsync_cv_broadcast(&chan->cond_full);
+        CV_BROADCAST_FULL(chan);
     }
 #endif
     go_channel_signal_select_waiters(chan);
@@ -1122,7 +1225,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 #endif
              && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx)); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT(&chan->cond_full, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
             // woke up (deadline or condition)
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if ((
@@ -1147,7 +1250,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 #endif
             ) && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
             // Correctness-first: wait under mutex until space is available
-            CV_WAIT(&chan->cond_full, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1208,10 +1311,10 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     // With REFINED_SIGNALING, always signal because only one waiter
     // wakes per signal, leaving others blocked even when data exists.
 #if NOSTR_REFINED_SIGNALING
-    nsync_cv_signal(&chan->cond_empty);
+    CV_SIGNAL_EMPTY(chan);
 #else
     if (was_empty2) {
-        nsync_cv_broadcast(&chan->cond_empty);
+        CV_BROADCAST_EMPTY(chan);
     }
 #endif
     go_channel_signal_select_waiters(chan);
@@ -1263,7 +1366,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #endif
              && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx)); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT(&chan->cond_empty, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -1288,7 +1391,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #endif
             ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
             // Correctness-first: wait under mutex until data is available
-            CV_WAIT(&chan->cond_empty, &chan->mutex);
+            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1403,11 +1506,11 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     // waking one waiter, leaving others blocked).
 #if NOSTR_REFINED_SIGNALING
     // With refined signaling, always signal to wake one blocked sender
-    nsync_cv_signal(&chan->cond_full);
+    CV_SIGNAL_FULL(chan);
 #else
     // Broadcast only needed when transitioning from full
     if (was_full2) {
-        nsync_cv_broadcast(&chan->cond_full);
+        CV_BROADCAST_FULL(chan);
     }
 #endif
     go_channel_signal_select_waiters(chan);
@@ -1430,8 +1533,8 @@ void go_channel_close(GoChannel *chan) {
     if (!atomic_load_explicit(&chan->closed, memory_order_acquire)) {
         atomic_store_explicit(&chan->closed, 1, memory_order_release); // Mark the channel as closed
         // Wake up all potential waiters so they can observe closed state
-        nsync_cv_broadcast(&chan->cond_full);
-        nsync_cv_broadcast(&chan->cond_empty);
+        CV_BROADCAST_FULL(chan);
+        CV_BROADCAST_EMPTY(chan);
         // Wake all select waiters — they need to re-evaluate their cases
         go_channel_signal_select_waiters(chan);
         // Nudge ARM WFE sleepers

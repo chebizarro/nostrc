@@ -273,11 +273,13 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     pool->sub_registry = subscription_registry_new();
     pool->cleanup_worker_running = false;
 
+    /* Timeout-audit: wake channel for event-driven worker loop */
+    pool->wake_ch = go_channel_create(1);
+
     if (pool->sub_registry) {
-        // Start cleanup worker thread
+        // Start cleanup worker thread (joinable — NOT detached)
         if (pthread_create(&pool->cleanup_worker_thread, NULL, cleanup_worker_thread, pool) == 0) {
             pool->cleanup_worker_running = true;
-            pthread_detach(pool->cleanup_worker_thread);
             fprintf(stderr, "[pool] cleanup worker thread started\n");
         } else {
             fprintf(stderr, "[pool] WARNING: failed to start cleanup worker thread\n");
@@ -343,18 +345,14 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
         fprintf(stderr, "[pool] shutting down cleanup worker...\n");
         pool->sub_registry->shutdown_requested = true;
 
-        // Close cleanup queue to wake up worker
+        // Close cleanup queue to wake up worker — it checks shutdown_requested
+        // on every go_select_timeout cycle and will exit its loop.
         go_channel_close(pool->sub_registry->cleanup_queue);
 
-        // Give worker time to exit gracefully (max 2s)
+        // Join the cleanup worker (blocks until it exits — no arbitrary sleep)
         if (pool->cleanup_worker_running) {
-            struct timespec ts;
-            ts.tv_sec = 0;
-            ts.tv_nsec = 100000000; // 100ms
-            for (int i = 0; i < 20; i++) {
-                nanosleep(&ts, NULL);
-                // Worker should exit on its own
-            }
+            pthread_join(pool->cleanup_worker_thread, NULL);
+            pool->cleanup_worker_running = false;
         }
 
         fprintf(stderr, "[pool] cleanup worker shutdown complete\n");
@@ -381,11 +379,10 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
         }
         pthread_mutex_unlock(&pool->sub_registry->mutex);
 
-        // Give subscriptions brief time to cleanup (500ms)
-        struct timespec ts;
-        ts.tv_sec = 0;
-        ts.tv_nsec = 500000000;
-        nanosleep(&ts, NULL);
+        /* No arbitrary sleep — the cleanup worker (already joined above)
+         * handled in-flight cleanups. Remaining subscriptions in the
+         * registry have had their contexts cancelled; they'll tear down
+         * when their threads observe the cancellation. */
 
         subscription_registry_free(pool->sub_registry);
         fprintf(stderr, "[pool] subscription registry freed\n");
@@ -423,6 +420,13 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
     if (pool->brown_list) {
         nostr_brown_list_free(pool->brown_list);
         pool->brown_list = NULL;
+    }
+
+    /* Timeout-audit: Free wake channel */
+    if (pool->wake_ch) {
+        go_channel_close(pool->wake_ch);
+        go_channel_unref(pool->wake_ch);
+        pool->wake_ch = NULL;
     }
 
     pthread_mutex_destroy(&pool->pool_mutex);
@@ -622,120 +626,217 @@ static int pool_seen(NostrSimplePool *pool, const char *id) {
     return 0;
 }
 
+/* Helper: add an event to the batch, growing the buffer as needed.
+ * Returns 1 if added, 0 if allocation failed (caller frees ev). */
+static int batch_add(NostrIncomingEvent **batch, size_t *len, size_t *cap,
+                     NostrEvent *ev, NostrRelay *relay) {
+    if (*len == *cap) {
+        size_t new_cap = *cap ? *cap * 2 : 64;
+        NostrIncomingEvent *nb = realloc(*batch, new_cap * sizeof(NostrIncomingEvent));
+        if (!nb) return 0;
+        *batch = nb;
+        *cap = new_cap;
+    }
+    (*batch)[(*len)++] = (NostrIncomingEvent){ .event = ev, .relay = relay };
+    return 1;
+}
+
+/* Helper: remove subscription at index j from pool->subs (caller holds pool_mutex). */
+static void pool_remove_sub_locked(NostrSimplePool *pool, size_t j) {
+    for (size_t k = j + 1; k < pool->subs_count; k++)
+        pool->subs[k - 1] = pool->subs[k];
+    pool->subs_count--;
+    if (pool->subs_count == 0) { free(pool->subs); pool->subs = NULL; }
+}
+
+/* Helper: greedy-drain events from all subscriptions (non-blocking).
+ * Also handles CLOSED and EOSE signals. */
+static void pool_drain_all(NostrSimplePool *pool,
+                           NostrSubscription **subs, size_t count,
+                           NostrIncomingEvent **batch, size_t *batch_len,
+                           size_t *batch_cap) {
+    const int spin_limit = 256;
+
+    for (size_t i = 0; i < count; i++) {
+        NostrSubscription *sub = subs[i];
+        if (!sub) continue;
+
+        /* --- Drain events channel --- */
+        GoChannel *ch = nostr_subscription_get_events_channel(sub);
+        if (ch) {
+            void *msg = NULL;
+            int spins = 0;
+            while (go_channel_try_receive(ch, &msg) == 0 && spins++ < spin_limit) {
+                if (!msg) break;
+                NostrEvent *ev = (NostrEvent *)msg;
+                char *eid = nostr_event_get_id(ev);
+                int seen = pool_seen(pool, eid);
+                free(eid);
+                if (seen) {
+                    nostr_event_free(ev);
+                } else if (pool->event_middleware || pool->batch_middleware) {
+                    if (!batch_add(batch, batch_len, batch_cap, ev,
+                                   nostr_subscription_get_relay(sub)))
+                        nostr_event_free(ev);
+                } else {
+                    nostr_event_free(ev);
+                }
+                msg = NULL;
+            }
+        }
+
+        /* --- CLOSED signal: prune subscription --- */
+        GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
+        void *closed_msg = NULL;
+        if (ch_closed && go_channel_try_receive(ch_closed, &closed_msg) == 0) {
+            pthread_mutex_lock(&pool->pool_mutex);
+            for (size_t j = 0; j < pool->subs_count; j++) {
+                if (pool->subs[j] == sub) {
+                    nostr_subscription_close(sub, NULL);
+                    nostr_subscription_free(sub);
+                    pool_remove_sub_locked(pool, j);
+                    subs[i] = NULL; /* mark stale in local snapshot */
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&pool->pool_mutex);
+            continue; /* sub freed, skip EOSE check */
+        }
+
+        /* --- EOSE signal: optionally auto-unsubscribe --- */
+        GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
+        if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+            if (pool->auto_unsub_on_eose) {
+                pthread_mutex_lock(&pool->pool_mutex);
+                for (size_t j = 0; j < pool->subs_count; j++) {
+                    if (pool->subs[j] == sub) {
+                        nostr_subscription_unsubscribe(sub);
+                        nostr_subscription_close(sub, NULL);
+                        nostr_subscription_free(sub);
+                        pool_remove_sub_locked(pool, j);
+                        subs[i] = NULL;
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&pool->pool_mutex);
+            }
+        }
+    }
+}
+
 void *simple_pool_thread_func(void *arg) {
     NostrSimplePool *pool = (NostrSimplePool *)arg;
 
-    /* nostrc-wmg8: Increased throughput to prevent queue overflow.
-     * - Spin limit raised from 32 to 256 per subscription per cycle
-     * - Skip sleep entirely when spin limit hit (more work waiting)
-     * - Backoff only applies when no work done */
-    unsigned backoff_us = 2000;
-    const unsigned backoff_min = 2000;
-    const unsigned backoff_max = 50000;
-    const int spin_limit = 256;  /* Events per subscription per cycle */
-    size_t rr_start = 0; // round-robin start index for fairness
+    /* Timeout-audit: Event-driven worker loop using go_select.
+     *
+     * Instead of polling all subscription channels with try_receive + usleep,
+     * we build a go_select case array covering:
+     *   - The pool's wake_ch (signals new subs added or stop requested)
+     *   - Every subscription's events channel
+     *
+     * go_select blocks until at least one channel has data, then we do a
+     * greedy non-blocking drain of ALL channels before blocking again.
+     * A 200ms timeout ensures we rescan for new/removed subscriptions
+     * even if nothing signals the wake channel (safety net). */
 
     while (pool->running) {
-        // Snapshot subs under lock to avoid races while iterating
+        /* 1. Snapshot subscriptions under lock */
         pthread_mutex_lock(&pool->pool_mutex);
         size_t local_count = pool->subs_count;
         NostrSubscription **local_subs = NULL;
         if (local_count > 0 && pool->subs) {
-            local_subs = (NostrSubscription **)malloc(local_count * sizeof(NostrSubscription *));
-            if (local_subs) memcpy(local_subs, pool->subs, local_count * sizeof(NostrSubscription *));
+            local_subs = malloc(local_count * sizeof(NostrSubscription *));
+            if (local_subs)
+                memcpy(local_subs, pool->subs, local_count * sizeof(NostrSubscription *));
         }
         pthread_mutex_unlock(&pool->pool_mutex);
 
-        // Batch to deliver to middleware after scan
-        NostrIncomingEvent *batch = NULL; size_t batch_len = 0; size_t batch_cap = 0;
+        /* 2. Build select case array: wake_ch + one events channel per sub.
+         * Max cases = 1 (wake) + local_count (events channels). */
+        size_t max_cases = 1 + (local_subs ? local_count : 0);
+        GoSelectCase *cases = calloc(max_cases, sizeof(GoSelectCase));
+        size_t n_cases = 0;
 
-        int did_work = 0; // any events processed or subs pruned
-        int hit_spin_limit = 0; // nostrc-wmg8: track if we need to drain more
+        /* Case 0: wake channel — always present */
+        void *wake_val = NULL;
+        if (pool->wake_ch) {
+            cases[n_cases].op = GO_SELECT_RECEIVE;
+            cases[n_cases].chan = pool->wake_ch;
+            cases[n_cases].recv_buf = &wake_val;
+            n_cases++;
+        }
+
+        /* Remaining cases: one events channel per subscription */
+        void **recv_bufs = NULL;
+        if (local_subs && local_count > 0) {
+            recv_bufs = calloc(local_count, sizeof(void *));
+            for (size_t i = 0; i < local_count; i++) {
+                if (!local_subs[i]) continue;
+                GoChannel *ch = nostr_subscription_get_events_channel(local_subs[i]);
+                if (!ch) continue;
+                cases[n_cases].op = GO_SELECT_RECEIVE;
+                cases[n_cases].chan = ch;
+                cases[n_cases].recv_buf = &recv_bufs[i];
+                n_cases++;
+            }
+        }
+
+        /* 3. Block until any channel has data (200ms timeout as safety net) */
+        if (n_cases > 0) {
+            go_select_timeout(cases, n_cases, 200);
+        } else {
+            /* No subs and no wake channel — shouldn't happen in practice.
+             * go_select_timeout(0) returns immediately, so use usleep
+             * to avoid a tight spin while waiting for subs to appear. */
+            usleep(50000); /* 50ms */
+        }
+
+        /* 4. Check if we should exit */
+        if (!pool->running) {
+            free(cases);
+            free(recv_bufs);
+            free(local_subs);
+            break;
+        }
+
+        /* 5. Drain wake channel (consume any pending wake signals) */
+        if (pool->wake_ch) {
+            void *dummy = NULL;
+            while (go_channel_try_receive(pool->wake_ch, &dummy) == 0) { /* drain */ }
+        }
+
+        /* 6. Greedy drain ALL subscription channels (events + closed + eose) */
+        NostrIncomingEvent *batch = NULL;
+        size_t batch_len = 0, batch_cap = 0;
 
         if (local_subs && local_count > 0) {
-            // Fairness: start at rotating index
-            size_t start = rr_start % local_count;
-            for (size_t ofs = 0; ofs < local_count; ofs++) {
-                size_t i = (start + ofs) % local_count;
-                NostrSubscription *sub = local_subs[i];
-                if (!sub) continue;
-                GoChannel *ch = nostr_subscription_get_events_channel(sub);
-                if (!ch) continue;
-                void *msg = NULL;
-                int spins = 0;
-                while (go_channel_try_receive(ch, &msg) == 0 && spins++ < spin_limit) {
-                    if (!msg) break;
-                    NostrEvent *ev = (NostrEvent *)msg;
+            /* If select returned a specific event, process it first */
+            if (recv_bufs) {
+                for (size_t i = 0; i < local_count; i++) {
+                    if (!recv_bufs[i] || !local_subs[i]) continue;
+                    NostrEvent *ev = (NostrEvent *)recv_bufs[i];
                     char *eid = nostr_event_get_id(ev);
                     int seen = pool_seen(pool, eid);
                     free(eid);
                     if (seen) {
                         nostr_event_free(ev);
-                    } else {
-                        // Add to batch (or free if no middleware)
-                        if (pool->event_middleware || pool->batch_middleware) {
-                            if (batch_len == batch_cap) {
-                                size_t new_cap = batch_cap ? batch_cap * 2 : 64;
-                                NostrIncomingEvent *nb = (NostrIncomingEvent *)realloc(batch, new_cap * sizeof(NostrIncomingEvent));
-                                if (!nb) { nostr_event_free(ev); break; }
-                                batch = nb; batch_cap = new_cap;
-                            }
-                            batch[batch_len++] = (NostrIncomingEvent){ .event = ev, .relay = nostr_subscription_get_relay(sub) };
-                        } else {
-                            // default: free to avoid leak; real users should set middleware
+                    } else if (pool->event_middleware || pool->batch_middleware) {
+                        if (!batch_add(&batch, &batch_len, &batch_cap, ev,
+                                       nostr_subscription_get_relay(local_subs[i])))
                             nostr_event_free(ev);
-                        }
-                        did_work = 1;
+                    } else {
+                        nostr_event_free(ev);
                     }
-                    msg = NULL;
-                }
-                /* nostrc-wmg8: Track if we hit spin limit (more events likely waiting) */
-                if (spins >= spin_limit) hit_spin_limit = 1;
-
-                // Opportunistically prune CLOSED subscriptions (non-blocking)
-                GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
-                void *closed_msg = NULL;
-                if (ch_closed && go_channel_try_receive(ch_closed, &closed_msg) == 0) {
-                    pthread_mutex_lock(&pool->pool_mutex);
-                    for (size_t j = 0; j < pool->subs_count; j++) {
-                        if (pool->subs[j] == sub) {
-                            nostr_subscription_close(sub, NULL);
-                            nostr_subscription_free(sub);
-                            for (size_t k = j + 1; k < pool->subs_count; k++) pool->subs[k - 1] = pool->subs[k];
-                            pool->subs_count--;
-                            if (pool->subs_count == 0) { free(pool->subs); pool->subs = NULL; }
-                            break;
-                        }
-                    }
-                    pthread_mutex_unlock(&pool->pool_mutex);
-                    did_work = 1;
-                }
-
-                // EOSE handling: optionally auto-unsubscribe
-                GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
-                if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-                    if (pool->auto_unsub_on_eose) {
-                        pthread_mutex_lock(&pool->pool_mutex);
-                        for (size_t j = 0; j < pool->subs_count; j++) {
-                            if (pool->subs[j] == sub) {
-                                nostr_subscription_unsubscribe(sub);
-                                nostr_subscription_close(sub, NULL);
-                                nostr_subscription_free(sub);
-                                for (size_t k = j + 1; k < pool->subs_count; k++) pool->subs[k - 1] = pool->subs[k];
-                                pool->subs_count--;
-                                if (pool->subs_count == 0) { free(pool->subs); pool->subs = NULL; }
-                                break;
-                            }
-                        }
-                        pthread_mutex_unlock(&pool->pool_mutex);
-                    }
-                    did_work = 1;
+                    recv_bufs[i] = NULL;
                 }
             }
-            rr_start = (start + 1) % local_count;
+
+            /* Now greedy-drain everything else */
+            pool_drain_all(pool, local_subs, local_count,
+                           &batch, &batch_len, &batch_cap);
         }
 
-        // Deliver batch to middleware outside of any locks
+        /* 7. Deliver batch to middleware outside of any locks */
         if (batch_len > 0) {
             if (pool->batch_middleware) {
                 pool->batch_middleware(batch, batch_len);
@@ -744,29 +845,16 @@ void *simple_pool_thread_func(void *arg) {
                     pool->event_middleware(&batch[i]);
                 }
             } else {
-                // No middleware: free events to avoid leaks
                 for (size_t i = 0; i < batch_len; i++) {
                     if (batch[i].event) nostr_event_free(batch[i].event);
                 }
             }
         }
-        // If no middleware, events were already freed on receipt
-        free(batch);
-        free(local_subs);
 
-        /* nostrc-wmg8: Adaptive sleep/backoff with spin limit awareness.
-         * Skip sleep entirely when we hit the spin limit to maximize throughput.
-         * This prevents queue overflow during high event rate periods. */
-        if (hit_spin_limit) {
-            /* More events likely waiting - loop immediately without sleep */
-            backoff_us = backoff_min;
-        } else if (did_work) {
-            backoff_us = backoff_min;
-            usleep(backoff_us);
-        } else {
-            backoff_us = (backoff_us < backoff_max) ? (backoff_us * 2) : backoff_max;
-            usleep(backoff_us);
-        }
+        free(batch);
+        free(cases);
+        free(recv_bufs);
+        free(local_subs);
     }
 
     return NULL;
@@ -782,6 +870,10 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
 void nostr_simple_pool_stop(NostrSimplePool *pool) {
     if (!pool) return;
     pool->running = false;
+    /* Wake the worker so it sees running=false immediately */
+    if (pool->wake_ch) {
+        go_channel_try_send(pool->wake_ch, (void *)(uintptr_t)1);
+    }
     if (pool->thread) pthread_join(pool->thread, NULL);
     // On stop: unsubscribe/close/free any active subs and clear list
     pthread_mutex_lock(&pool->pool_mutex);
@@ -853,6 +945,10 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
         pool->subs[pool->subs_count++] = sub;
     }
     pthread_mutex_unlock(&pool->pool_mutex);
+
+    /* Wake the worker loop so it picks up the new subscriptions immediately */
+    if (pool->wake_ch)
+        go_channel_try_send(pool->wake_ch, (void *)(uintptr_t)1);
 }
 
 // Function to query a single event from multiple relays

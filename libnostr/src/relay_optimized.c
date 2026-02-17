@@ -375,49 +375,70 @@ static void *control_processor(void *arg) {
     return NULL;
 }
 
-// Batch collector - accumulates messages for batch processing
+/* nostrc-b0h: Event-driven batch collector.
+ * REPLACED: try_receive + GO_SELECT_DEFAULT + usleep(1ms) polling loop.
+ * NOW: Blocking go_channel_receive on the input channel. When a message
+ * arrives, greedily drain all available messages. If the batch is full,
+ * send it. If partial, use a short timed select (5ms) to allow more
+ * messages to accumulate before flushing — this batches without polling. */
 static void *batch_collector(void *arg) {
     struct {
         GoChannel *input;
         GoChannel *output;
         OptimizedRelayChannels *channels;
     } *ctx = arg;
-    
+
     MessageBatch *current = create_batch(BATCH_SIZE);
-    
+
     while (1) {
         WebSocketMessage *msg = NULL;
-        
-        // Try to fill batch with timeout
-        GoSelectCase cases[] = {
-            {GO_SELECT_RECEIVE, ctx->input, NULL, (void**)&msg},
-            {GO_SELECT_DEFAULT, NULL, NULL, NULL}
-        };
-        
-        int idx = go_select(cases, 2);
-        
-        if (idx == 0 && msg) {
-            // Add to batch
+
+        if (current->count == 0) {
+            /* Empty batch: BLOCK until first message arrives.
+             * No polling, no CPU usage, instant wake. */
+            if (go_channel_receive(ctx->input, (void **)&msg) != 0)
+                break; /* Channel closed */
+        } else {
+            /* Partial batch: use timed select to collect more messages
+             * or flush after a short deadline (5ms batch window). */
+            GoSelectCase cases[] = {
+                {GO_SELECT_RECEIVE, ctx->input, NULL, (void **)&msg},
+            };
+            int idx = go_select_timeout(cases, 1, 5); /* 5ms window */
+            if (idx < 0) {
+                /* Timeout or closed — flush what we have */
+                go_channel_send(ctx->output, current);
+                current = create_batch(BATCH_SIZE);
+                continue;
+            }
+        }
+
+        if (msg) {
             current->messages[current->count++] = msg;
-            
-            // Send full batch
+
+            /* Greedily drain any additional buffered messages */
+            while (current->count < BATCH_SIZE) {
+                WebSocketMessage *extra = NULL;
+                if (go_channel_try_receive(ctx->input, (void **)&extra) != 0)
+                    break;
+                if (extra)
+                    current->messages[current->count++] = extra;
+            }
+
+            /* Send full batch immediately */
             if (current->count >= BATCH_SIZE) {
                 go_channel_send(ctx->output, current);
                 current = create_batch(BATCH_SIZE);
             }
-        } else {
-            // No message available, send partial batch if any
-            if (current->count > 0) {
-                go_channel_send(ctx->output, current);
-                current = create_batch(BATCH_SIZE);
-            }
-            
-            // Brief sleep to avoid busy loop
-            usleep(1000); // 1ms
         }
     }
-    
-    free_batch(current);
+
+    /* Flush remaining */
+    if (current->count > 0)
+        go_channel_send(ctx->output, current);
+    else
+        free_batch(current);
+
     go_wait_group_done(ctx->channels->workers);
     return NULL;
 }

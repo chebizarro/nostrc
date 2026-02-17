@@ -22,6 +22,7 @@
 #define LIBGO_FIBER_HOOKS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,21 @@ gof_fiber_handle gof_hook_current(void);
  * No-op if not called from a fiber context.
  */
 void gof_hook_block_current(void);
+
+/**
+ * @brief Park the current fiber until a deadline (or early wake via make_runnable).
+ *
+ * Like gof_hook_block_current() but with an absolute timeout.
+ * The fiber will be woken by gof_hook_make_runnable() if called before
+ * the deadline, OR automatically by the scheduler's sleeper mechanism
+ * when deadline_ns (nanoseconds since epoch) expires.
+ *
+ * @param deadline_ns Absolute deadline in nanoseconds (clock_gettime CLOCK_REALTIME).
+ *                    Use 0 to block indefinitely (same as gof_hook_block_current).
+ *
+ * No-op if not called from a fiber context.
+ */
+void gof_hook_block_current_until(uint64_t deadline_ns);
 
 /**
  * @brief Make a previously-parked fiber runnable again.
