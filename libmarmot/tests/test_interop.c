@@ -464,12 +464,22 @@ test_mdk_key_schedule_vectors(const char *vector_dir)
     if (count > 0 && vectors[0].epoch_count > 0) {
         MdkEpochVector *epoch = &vectors[0].epochs[0];
         
-        /* Test MLS-Exporter per spec: exporter.secret = MLS-Exporter(label, context, length) */
+        /* Test MLS-Exporter per spec: exporter.secret = MLS-Exporter(label, context, length) 
+         * Note: MDK vectors use hex-encoded labels */
         if (epoch->exporter_length > 0 && epoch->exporter_label[0] != '\0') {
             uint8_t derived[64];
             size_t out_len = epoch->exporter_length < sizeof(derived) ? epoch->exporter_length : sizeof(derived);
             
-            /* Use mls_exporter function which implements the full MLS-Exporter spec */
+            printf("\n  Debug MLS-Exporter:\n");
+            printf("    label='%s' (len=%zu)\n", epoch->exporter_label, strlen(epoch->exporter_label));
+            printf("    exporter_secret: ");
+            for (size_t i = 0; i < 8; i++) printf("%02x", epoch->exporter_secret[i]);
+            printf("...\n");
+            printf("    context: ");
+            for (size_t i = 0; i < 8; i++) printf("%02x", epoch->exporter_context[i]);
+            printf("...\n");
+            
+            /* Try with hex string as label */
             int rc = mls_exporter(
                 epoch->exporter_secret,
                 epoch->exporter_label,
@@ -479,10 +489,21 @@ test_mdk_key_schedule_vectors(const char *vector_dir)
                 out_len
             );
             
+            printf("    Expected: ");
+            for (size_t i = 0; i < (out_len < 16 ? out_len : 16); i++) 
+                printf("%02x", epoch->exporter_secret_out[i]);
+            printf("%s\n", out_len > 16 ? "..." : "");
+            printf("    Got:      ");
+            for (size_t i = 0; i < (out_len < 16 ? out_len : 16); i++) 
+                printf("%02x", derived[i]);
+            printf("%s\n", out_len > 16 ? "..." : "");
+            
             if (rc == 0 && memcmp(derived, epoch->exporter_secret_out, out_len) == 0) {
                 printf("  ✓ MLS-Exporter matches MDK\n");
             } else {
                 printf("  ✗ MLS-Exporter mismatch\n");
+                printf("  Note: MDK vectors use hex-encoded labels (64 hex chars = 32 bytes)\n");
+                printf("        This may indicate the MDK uses a different exporter implementation\n");
             }
         }
     }
@@ -513,6 +534,7 @@ test_mdk_crypto_basics_vectors(const char *vector_dir)
     for (size_t i = 0; i < count; i++) {
         if (vectors[i].cipher_suite == 1 && vectors[i].expand_length > 0) {
             uint8_t derived[32];
+            
             int rc = mls_crypto_expand_with_label(
                 derived, vectors[i].expand_length,
                 vectors[i].expand_secret,

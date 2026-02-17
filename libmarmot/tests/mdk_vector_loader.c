@@ -357,7 +357,25 @@ mdk_load_crypto_basics_vectors(const char *path,
         if (expand_obj && expand_obj < obj_end) {
             extract_hex_field(expand_obj, "secret", vec->expand_secret, 32);
             extract_hex_field(expand_obj, "context", vec->expand_context, 32);
-            extract_hex_field(expand_obj, "out", vec->expand_out, 32);
+            
+            /* Get length */
+            mdk_json_find_number(expand_obj, "length", &vec->expand_length);
+            
+            /* Extract out field - read up to 32 bytes, actual length determined by length field */
+            const char *out_hex = mdk_json_find_string(expand_obj, "out");
+            if (out_hex) {
+                char hex_buf[128];
+                size_t i = 0;
+                while (out_hex[i] && out_hex[i] != '"' && i < sizeof(hex_buf) - 1) {
+                    hex_buf[i] = out_hex[i];
+                    i++;
+                }
+                hex_buf[i] = '\0';
+                size_t hex_len = strlen(hex_buf) / 2;
+                if (hex_len <= 32) {
+                    mdk_hex_decode(vec->expand_out, hex_buf, hex_len);
+                }
+            }
             
             const char *label = mdk_json_find_string(expand_obj, "label");
             if (label) {
@@ -368,8 +386,6 @@ mdk_load_crypto_basics_vectors(const char *path,
                 }
                 vec->expand_label[i] = '\0';
             }
-            
-            mdk_json_find_number(expand_obj, "length", &vec->expand_length);
         }
         
         /* Extract derive_secret test */
