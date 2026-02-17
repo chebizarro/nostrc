@@ -233,4 +233,22 @@ if get_option('tests')
     dependencies: [openssl_dep, sodium_dep],
   )
   test('marmot_media', test_media)
+
+  # RFC 9420 test vectors & crypto validation
+  test_rfc9420 = executable('test_rfc9420_vectors',
+    'tests/test_rfc9420_vectors.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_rfc9420_vectors', test_rfc9420)
+
+  # MDK interoperability tests
+  test_interop = executable('test_interop',
+    'tests/test_interop.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep, secp256k1_dep],
+  )
+  test('marmot_interop', test_interop)
 endif

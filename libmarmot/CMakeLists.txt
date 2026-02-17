@@ -236,4 +236,16 @@ if(BUILD_TESTING)
   target_link_libraries(test_media PRIVATE marmot)
   target_include_directories(test_media PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_media COMMAND test_media)
+
+  # Test: RFC 9420 test vectors & crypto validation
+  add_executable(test_rfc9420_vectors ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rfc9420_vectors.c)
+  target_link_libraries(test_rfc9420_vectors PRIVATE marmot)
+  target_include_directories(test_rfc9420_vectors PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_rfc9420_vectors COMMAND test_rfc9420_vectors)
+
+  # Test: MDK interoperability
+  add_executable(test_interop ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_interop.c)
+  target_link_libraries(test_interop PRIVATE marmot)
+  target_include_directories(test_interop PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_interop COMMAND test_interop)
 endif()
