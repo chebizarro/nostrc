@@ -80,10 +80,46 @@ All binary values are hex-encoded strings.
 }
 ```
 
-## Capturing from MDK
+## Creating Test Vectors
 
-1. Clone MDK: `git clone https://github.com/marmot-labs/mdk`
-2. Set dump env: `MDK_DUMP_VECTORS=1`
-3. Run tests: `cargo test`
-4. Copy from `target/test_vectors/` to this directory
-5. Or use the MDK CLI: `mdk test-vectors --output ./`
+### Current Status
+
+The MDK (Marmot Development Kit) Rust reference implementation is not yet available.
+Until MDK is published, test vectors can be created in the following ways:
+
+### Option 1: Self-Generated Vectors (Current Approach)
+
+The `test_interop.c` test suite generates self-consistency vectors that exercise
+the same serialization and protocol paths. To capture these for cross-validation:
+
+1. Run the interop test with vector dumping enabled:
+   ```bash
+   cd libmarmot
+   MARMOT_DUMP_VECTORS=1 ./build/tests/test_interop > vectors.json
+   ```
+
+2. Manually format the output into the JSON structure documented above
+
+### Option 2: Manual Vector Creation
+
+Create JSON files manually using known-answer tests from:
+- RFC 9420 MLS test vectors
+- RFC 5869 HKDF test vectors  
+- RFC 8032 Ed25519 test vectors
+- Cross-validation with other MLS implementations
+
+### Option 3: Future MDK Integration
+
+Once the MDK Rust implementation is available:
+
+1. Clone MDK repository (URL TBD)
+2. Enable vector dumping: `MDK_DUMP_VECTORS=1 cargo test`
+3. Copy generated vectors from `target/test_vectors/` to this directory
+
+### Vector Validation
+
+All vectors in this directory should be validated against both:
+- libmarmot (this C implementation)
+- MDK (Rust reference implementation, when available)
+
+This ensures cross-implementation compatibility.
