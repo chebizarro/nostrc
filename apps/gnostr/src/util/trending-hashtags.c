@@ -238,8 +238,8 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
     gnostr_trending_hashtag_free(g_ptr_array_index(all, i));
   }
   
-  /* Free the temp array structure and segment (no free function, so items not freed) */
-  g_ptr_array_free(all, TRUE);
+  /* Free only the array structure, not the segment (segment contains pointers owned by result) */
+  g_ptr_array_free(all, FALSE);
 
   g_debug("trending: computed %u hashtags from %d events", result->len, got);
   return result;
