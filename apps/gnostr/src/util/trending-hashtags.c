@@ -227,12 +227,14 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
   /* Sort by count descending */
   g_ptr_array_sort(all, compare_by_count_desc);
 
-  /* Take top N - steal pointers from all array to result */
+  /* Take top N and move to result */
   guint take = MIN(top_n, all->len);
   for (guint i = 0; i < take; i++) {
-    gpointer item = g_ptr_array_steal_index(all, 0);
-    g_ptr_array_add(result, item);
+    g_ptr_array_add(result, g_ptr_array_index(all, i));
   }
+  
+  /* Remove moved items from all array to prevent double free */
+  g_ptr_array_remove_range(all, 0, take);
   
   /* Free the temp array - remaining items will be freed by the free_func */
   g_ptr_array_unref(all);
