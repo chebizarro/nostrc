@@ -2531,51 +2531,85 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
 
   guint old_len = self->notes->len;
   guint added = 0;
-  for (guint i = 0; i < entries->len; i++) {
-    RefreshEntry *e = g_ptr_array_index(entries, i);
-    if (!e) continue;
 
-    /* Skip duplicates already in model */
-    if (has_note_key(self, e->note_key)) continue;
+  /* Pagination inserts should avoid replace-all items_changed to prevent mass disposal.
+   * Use trim_newer flag: TRUE = load older (append), FALSE = load newer (prepend). */
+  if (trim_newer) {
+    /* Load older: append in the order we received (newest-first among older). */
+    for (guint i = 0; i < entries->len; i++) {
+      RefreshEntry *e = g_ptr_array_index(entries, i);
+      if (!e) continue;
 
-    /* Mute list check (must be on main thread) */
-    GNostrMuteList *ml = gnostr_mute_list_get_default();
-    if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
-      continue;
+      if (has_note_key(self, e->note_key)) continue;
 
-    /* Request profile fetch via signal - no main-thread NDB queries during pagination */
-    if (!e->has_profile) {
-      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
-    }
+      GNostrMuteList *ml = gnostr_mute_list_get_default();
+      if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
+        continue;
 
-    /* Store thread info before insertion */
-    if (e->root_id || e->reply_id) {
-      if (!g_hash_table_contains(self->thread_info, &e->note_key)) {
-        ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
-        tinfo->root_id = g_strdup(e->root_id);
-        tinfo->parent_id = g_strdup(e->reply_id);
-        tinfo->depth = 0;
-        uint64_t *key_copy = g_new(uint64_t, 1);
-        *key_copy = e->note_key;
-        g_hash_table_insert(self->thread_info, key_copy, tinfo);
+      if (!e->has_profile) {
+        g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
       }
-    }
 
-    /* Direct sorted insert — NO per-note signal, NO calm-timeline deferral
-     * (pagination is user-initiated, results must always appear) */
-    guint pos = find_sorted_position(self, e->created_at);
-    NoteEntry entry = { .note_key = e->note_key, .created_at = e->created_at };
-    g_array_insert_val(self->notes, pos, entry);
-    uint64_t *set_key = g_new(uint64_t, 1);
-    *set_key = e->note_key;
-    g_hash_table_add(self->note_key_set, set_key);
-    added++;
+      if (e->root_id || e->reply_id) {
+        if (!g_hash_table_contains(self->thread_info, &e->note_key)) {
+          ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+          tinfo->root_id = g_strdup(e->root_id);
+          tinfo->parent_id = g_strdup(e->reply_id);
+          tinfo->depth = 0;
+          uint64_t *key_copy = g_new(uint64_t, 1);
+          *key_copy = e->note_key;
+          g_hash_table_insert(self->thread_info, key_copy, tinfo);
+        }
+      }
+
+      NoteEntry entry = { .note_key = e->note_key, .created_at = e->created_at };
+      g_array_insert_val(self->notes, self->notes->len, entry);
+      uint64_t *set_key = g_new(uint64_t, 1);
+      *set_key = e->note_key;
+      g_hash_table_add(self->note_key_set, set_key);
+      added++;
+    }
+  } else {
+    /* Load newer: prepend in reverse order to preserve newest-first. */
+    for (gint i = (gint)entries->len - 1; i >= 0; i--) {
+      RefreshEntry *e = g_ptr_array_index(entries, (guint)i);
+      if (!e) continue;
+
+      if (has_note_key(self, e->note_key)) continue;
+
+      GNostrMuteList *ml = gnostr_mute_list_get_default();
+      if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
+        continue;
+
+      if (!e->has_profile) {
+        g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
+      }
+
+      if (e->root_id || e->reply_id) {
+        if (!g_hash_table_contains(self->thread_info, &e->note_key)) {
+          ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+          tinfo->root_id = g_strdup(e->root_id);
+          tinfo->parent_id = g_strdup(e->reply_id);
+          tinfo->depth = 0;
+          uint64_t *key_copy = g_new(uint64_t, 1);
+          *key_copy = e->note_key;
+          g_hash_table_insert(self->thread_info, key_copy, tinfo);
+        }
+      }
+
+      NoteEntry entry = { .note_key = e->note_key, .created_at = e->created_at };
+      g_array_insert_val(self->notes, 0, entry);
+      uint64_t *set_key = g_new(uint64_t, 1);
+      *set_key = e->note_key;
+      g_hash_table_add(self->note_key_set, set_key);
+      added++;
+    }
   }
 
-  /* Emit ONE batched items_changed for all insertions */
+  /* Emit ONE localized items_changed for all insertions */
   if (added > 0) {
-    guint new_len = self->notes->len;
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+    guint start = trim_newer ? old_len : 0;
+    g_list_model_items_changed(G_LIST_MODEL(self), start, 0, added);
   }
 
   /* Trim model to bounded size if requested */
