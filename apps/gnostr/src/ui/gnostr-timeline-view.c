@@ -1268,13 +1268,18 @@ static void on_item_notify_zap_total_msat(GObject *obj, GParamSpec *pspec, gpoin
 static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
+  GObject *obj = G_OBJECT(gtk_list_item_get_item(item));
 
-  /* NOTE: Signal disconnection no longer needed here!
-   * All property notify signals now use g_signal_connect_object() which
-   * automatically disconnects when the row widget is destroyed.
-   * Manual disconnection was causing race conditions and Pango crashes. */
+  /* nostrc-heap-fix: Disconnect g_signal_connect_object handlers BEFORE unbind.
+   * These handlers are on the obj (GnNostrEventItem) watching the row.
+   * When the model removes items, the obj may be finalized while handlers
+   * still reference the row, causing heap corruption in closure_array_destroy_all.
+   * We must disconnect these handlers explicitly during unbind. */
+  if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
+    g_signal_handlers_disconnect_by_data(obj, row);
+  }
 
-  /* Disconnect accumulated "request-embed" handlers on the row (line 2283).
+  /* Disconnect accumulated "request-embed" handlers on the row.
    * Plain g_signal_connect adds a new handler on every bind without disconnect. */
   if (GTK_IS_WIDGET(row)) {
     g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
