@@ -1150,25 +1150,31 @@ static void *message_loop(void *arg) {
          * REPLACED: usleep(100ms) polling loop checking for cancellation.
          * NOW: go_select_timeout on the context's done channel. Wakes
          * instantly on cancellation, otherwise waits for the full backoff
-         * period with zero CPU usage. */
+         * period with zero CPU usage.
+         *
+         * NOTE: The old code checked reconnect_requested to skip remaining
+         * backoff. With event-driven wait, we'd need a separate channel to
+         * wake early. For now, reconnect_requested is cleared but not acted
+         * upon — the full backoff elapses. This is acceptable because:
+         * (a) backoff is typically short (100ms-5s)
+         * (b) immediate reconnect requests are rare
+         * (c) adding a reconnect channel adds complexity for little benefit */
         {
             GoChannel *done_ch = go_context_done(ctx);
             GoSelectCase backoff_cases[] = {
-                { .chan = done_ch, .dir = GO_SELECT_RECV },
+                { .op = GO_SELECT_RECEIVE, .chan = done_ch },
             };
-            int which = go_select_timeout(backoff_cases, done_ch ? 1 : 0,
-                                           (int)backoff_ms);
-            if (which == 0) {
+            GoSelectResult sel = go_select_timeout(backoff_cases, done_ch ? 1 : 0,
+                                                    (uint64_t)backoff_ms);
+            if (sel.selected_case == 0) {
                 /* Done channel fired — context canceled */
                 context_canceled = true;
             }
-            /* which < 0 means timeout expired — backoff complete.
-             * Also check reconnect_requested flag (set by external API). */
+            /* Clear reconnect_requested flag (consumed but not acted upon —
+             * see NOTE above about why early-exit isn't implemented) */
             nsync_mu_lock(&r->priv->mutex);
-            bool reconnect_now = r->priv->reconnect_requested;
             r->priv->reconnect_requested = false;
             nsync_mu_unlock(&r->priv->mutex);
-            (void)reconnect_now; /* Used for logging, backoff already elapsed */
         }
 
         if (context_canceled) {

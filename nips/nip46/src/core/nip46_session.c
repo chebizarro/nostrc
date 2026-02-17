@@ -631,11 +631,11 @@ static void *connect_monitor_thread(void *arg) {
          * than burning CPU in a polling loop. 200ms check interval is
          * acceptable for initial connection establishment. */
         GoSelectCase cases[] = {
-            { .chan = m->chan, .dir = GO_SELECT_RECV },
+            { .op = GO_SELECT_RECEIVE, .chan = m->chan },
         };
-        int rc = go_select_timeout(cases, 1, 200);
-        if (rc == 0) break; /* Channel received or closed */
-        /* rc < 0 = timeout, loop back and re-check relay states */
+        GoSelectResult sel = go_select_timeout(cases, 1, 200);
+        if (sel.selected_case == 0) break; /* Channel received or closed */
+        /* sel.selected_case < 0 = timeout, loop back and re-check relay states */
     }
     return NULL;
 }

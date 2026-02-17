@@ -59,6 +59,21 @@ static void fiber_waiter_enqueue(GoFiberWaiter **list, GoFiberWaiter *w) {
     *list = w;
 }
 
+/* Remove a specific fiber waiter from a list. Must hold chan->mutex.
+ * Returns 1 if found and removed, 0 if not found. */
+static int fiber_waiter_remove(GoFiberWaiter **list, GoFiberWaiter *w) {
+    GoFiberWaiter **pp = list;
+    while (*pp) {
+        if (*pp == w) {
+            *pp = w->next;
+            w->next = NULL;
+            return 1;
+        }
+        pp = &(*pp)->next;
+    }
+    return 0;
+}
+
 // TSAN-aware mutex/condvar helpers for nsync_mu/nsync_cv
 #if defined(__has_feature)
 #  if __has_feature(thread_sanitizer)
@@ -113,6 +128,11 @@ static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unl
         NUNLOCK(mu_ptr);                                            \
         gof_hook_block_current(); /* Parks fiber — OS thread is freed */ \
         NLOCK(mu_ptr);                                              \
+        /* Remove ourselves from the waiter list to prevent use-after-free. \
+         * The waiter may have already been removed by fiber_waiter_wake_one \
+         * if we were woken by a signal, but we must ensure removal in case \
+         * of spurious wakeup or broadcast. */                      \
+        fiber_waiter_remove((waiter_list), &_fw);                   \
     } else {                                                        \
         /* OS thread path: use normal nsync_cv_wait */              \
         CV_WAIT_OS((cv_ptr), (mu_ptr));                             \

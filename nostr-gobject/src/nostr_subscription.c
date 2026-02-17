@@ -273,22 +273,27 @@ subscription_monitor_thread(gpointer data)
     GoSelectCase cases[3];
     memset(cases, 0, sizeof(cases));
 
+    void *recv_bufs[3] = {NULL, NULL, NULL};
+
     if (ch_events) {
         idx_events = n_cases;
+        cases[n_cases].op = GO_SELECT_RECEIVE;
         cases[n_cases].chan = ch_events;
-        cases[n_cases].dir = GO_SELECT_RECV;
+        cases[n_cases].recv_buf = &recv_bufs[n_cases];
         n_cases++;
     }
     if (ch_eose) {
         idx_eose = n_cases;
+        cases[n_cases].op = GO_SELECT_RECEIVE;
         cases[n_cases].chan = ch_eose;
-        cases[n_cases].dir = GO_SELECT_RECV;
+        cases[n_cases].recv_buf = &recv_bufs[n_cases];
         n_cases++;
     }
     if (ch_closed) {
         idx_closed = n_cases;
+        cases[n_cases].op = GO_SELECT_RECEIVE;
         cases[n_cases].chan = ch_closed;
-        cases[n_cases].dir = GO_SELECT_RECV;
+        cases[n_cases].recv_buf = &recv_bufs[n_cases];
         n_cases++;
     }
 
@@ -309,7 +314,7 @@ subscription_monitor_thread(gpointer data)
         if (ready == idx_events) {
             /* Drain ALL available events (greedy — one select wake may
              * correspond to many buffered events in the channel) */
-            void *msg = cases[idx_events].val;
+            void *msg = recv_bufs[idx_events];
             do {
                 if (msg) {
                     NostrEvent *ev = (NostrEvent *)msg;
@@ -348,7 +353,7 @@ subscription_monitor_thread(gpointer data)
             g_idle_add_full(G_PRIORITY_DEFAULT, emit_eose_on_main, sdata, NULL);
 
         } else if (ready == idx_closed) {
-            void *reason = cases[idx_closed].val;
+            void *reason = recv_bufs[idx_closed];
             ClosedSignalData *sdata = g_new(ClosedSignalData, 1);
             sdata->self = g_object_ref(self);
             sdata->reason = reason ? g_strdup((const char *)reason) : NULL;

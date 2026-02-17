@@ -781,14 +781,19 @@ void *simple_pool_thread_func(void *arg) {
             }
         }
 
-        /* 3. Block until any channel has data (200ms timeout as safety net) */
+        /* 3. Block until any channel has data (200ms timeout as safety net).
+         * n_cases is always >= 1 because wake_ch is always present. */
         if (n_cases > 0) {
             go_select_timeout(cases, n_cases, 200);
         } else {
-            /* No subs and no wake channel — shouldn't happen in practice.
-             * go_select_timeout(0) returns immediately, so use usleep
-             * to avoid a tight spin while waiting for subs to appear. */
-            usleep(50000); /* 50ms */
+            /* Defensive: wake_ch should always be present, making n_cases >= 1.
+             * If we somehow get here, wait on wake_ch directly instead of usleep. */
+            if (pool->wake_ch) {
+                GoSelectCase wake_case = { .op = GO_SELECT_RECEIVE, .chan = pool->wake_ch };
+                go_select_timeout(&wake_case, 1, 200);
+            }
+            /* If wake_ch is NULL (shouldn't happen), the loop will spin but
+             * pool->running check below will eventually exit. */
         }
 
         /* 4. Check if we should exit */

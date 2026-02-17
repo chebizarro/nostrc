@@ -433,11 +433,21 @@ static void *batch_collector(void *arg) {
         }
     }
 
-    /* Flush remaining */
-    if (current->count > 0)
-        go_channel_send(ctx->output, current);
-    else
+    /* Flush remaining — if send fails (channel closed), free the batch to avoid leak */
+    if (current->count > 0) {
+        if (go_channel_send(ctx->output, current) != 0) {
+            /* Output channel closed — free batch and its messages */
+            for (size_t i = 0; i < current->count; i++) {
+                if (current->messages[i]) {
+                    free(current->messages[i]->data);
+                    free(current->messages[i]);
+                }
+            }
+            free_batch(current);
+        }
+    } else {
         free_batch(current);
+    }
 
     go_wait_group_done(ctx->channels->workers);
     return NULL;
