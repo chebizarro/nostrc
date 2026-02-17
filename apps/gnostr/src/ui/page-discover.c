@@ -957,6 +957,17 @@ populate_trending_flow_box(GnostrPageDiscover *self, GPtrArray *hashtags)
 
   for (guint i = 0; i < hashtags->len; i++) {
     GnostrTrendingHashtag *ht = g_ptr_array_index(hashtags, i);
+    
+    /* Validate pointer before dereferencing */
+    if (!ht) {
+      g_warning("discover: NULL hashtag at index %u, skipping", i);
+      continue;
+    }
+    
+    if (!ht->tag) {
+      g_warning("discover: hashtag at index %u has NULL tag, skipping", i);
+      continue;
+    }
 
     /* Create a clickable chip: "#tag (count)" */
     gchar *label_text = g_strdup_printf("#%s", ht->tag);
