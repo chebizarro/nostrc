@@ -2195,6 +2195,25 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
 }
 
+/* nostrc-heap-fix: Teardown handler to ensure signal handlers are disconnected
+ * when items are removed from the model. GTK may call teardown without unbind
+ * during rapid model changes, causing heap corruption in closure_array_destroy_all. */
+static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+  (void)f; (void)data;
+  GtkWidget *row = gtk_list_item_get_child(item);
+  GObject *obj = G_OBJECT(gtk_list_item_get_item(item));
+
+  /* Disconnect signal handlers from obj to prevent heap corruption */
+  if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
+    g_signal_handlers_disconnect_by_data(obj, row);
+  }
+
+  /* Prepare row for disposal */
+  if (row && NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+    nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
+  }
+}
+
 void nostr_gtk_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
 
@@ -2202,6 +2221,7 @@ void nostr_gtk_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
   g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), self);
   g_signal_connect(factory, "bind", G_CALLBACK(factory_bind_cb), self);
   g_signal_connect(factory, "unbind", G_CALLBACK(factory_unbind_cb), self);
+  g_signal_connect(factory, "teardown", G_CALLBACK(factory_teardown_cb), self);
   nostr_gtk_timeline_view_set_factory(self, factory);
   g_object_unref(factory);
 

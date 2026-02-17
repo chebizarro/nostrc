@@ -1,0 +1,8 @@
+[Plugin]
+Module=nip99-marketplace
+Name=NIP-99 Marketplace
+Description=Browse and publish classified listings on Nostr
+Authors=Gnostr Contributors
+Copyright=Copyright © 2026 Gnostr Contributors
+Website=https://github.com/gnostr-org/gnostr
+Version=1.0.0

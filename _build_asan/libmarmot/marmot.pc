@@ -1,0 +1,11 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libmarmot
+Description: C implementation of the Marmot protocol (MLS + Nostr)
+Version: 0.1.0
+Requires: libsodium openssl
+Libs: -L${libdir} -lmarmot
+Cflags: -I${includedir}

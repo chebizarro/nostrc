@@ -1,0 +1,12 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: marmot-gobject-1.0
+Description: GObject wrapper for libmarmot — Marmot protocol (MLS + Nostr)
+Version: 1.0.0
+Requires: glib-2.0 gobject-2.0 gio-2.0
+Requires.private: libmarmot
+Libs: -L${libdir} -lmarmot-gobject-1.0
+Cflags: -I${includedir}
