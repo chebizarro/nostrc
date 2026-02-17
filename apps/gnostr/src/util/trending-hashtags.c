@@ -132,7 +132,8 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
     struct ndb_note *note = qres[i].note;
     if (!note) continue;
 
-    /* Track which hashtags this event contributed (dedup within event) */
+    /* Track which hashtags this event contributed (dedup within event)
+     * seen_in_event owns all its keys and will free them when destroyed */
     GHashTable *seen_in_event = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
     struct ndb_iterator iter;
@@ -143,14 +144,22 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
       int nelem = ndb_tag_count(tag);
       if (nelem < 2) continue;
 
-      /* Check for "t" tag */
+      /* Check for tag key "t" (must be packed string, NUL-terminated) */
       struct ndb_str key = ndb_tag_str(note, tag, 0);
-      if (!key.str || strcmp(key.str, "t") != 0) continue;
+      if (key.flag != NDB_PACKED_STR || !key.str || key.str[0] != 't' || key.str[1] != '\0') continue;
 
       struct ndb_str value = ndb_tag_str(note, tag, 1);
-      if (!value.str) continue;
+      if (value.flag != NDB_PACKED_STR || !value.str) continue;
 
-      char *normalized = normalize_hashtag(value.str);
+      int value_len = ndb_str_len(&value);
+      if (value_len <= 0) continue;
+
+      /* ndb_str is not guaranteed to be safe for -1/strlen-based APIs */
+      char *value_copy = g_strndup(value.str, (gsize)value_len);
+      if (!value_copy) continue;
+
+      char *normalized = normalize_hashtag(value_copy);
+      g_free(value_copy);
       if (!normalized) continue;
 
       /* Skip if already counted for this event */
@@ -159,29 +168,32 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
         continue;
       }
 
-      /* Mark as seen in this event - seen_in_event now owns a copy */
-      g_hash_table_add(seen_in_event, g_strdup(normalized));
+      /* Mark as seen in this event - seen_in_event takes ownership */
+      g_hash_table_insert(seen_in_event, normalized, GINT_TO_POINTER(1));
 
-      /* Increment global count */
+      /* Increment global count - counts table owns its own copy of the key */
       gpointer existing = g_hash_table_lookup(counts, normalized);
       guint existing_count = GPOINTER_TO_UINT(existing);
       
       /* Guard against overflow (extremely unlikely but theoretically possible) */
       if (existing_count >= G_MAXUINT) {
-        g_free(normalized);
         continue;
       }
       
       guint count = existing_count + 1;
-      /* We need the key in the counts table to own the string */
       if (!existing) {
-        g_hash_table_insert(counts, normalized, GUINT_TO_POINTER(count));
+        /* New hashtag - counts needs its own copy of the string */
+        g_hash_table_insert(counts, g_strdup(normalized), GUINT_TO_POINTER(count));
       } else {
-        g_hash_table_replace(counts, normalized, GUINT_TO_POINTER(count));
-        g_free(normalized); /* Free the duplicate since replace doesn't consume it */
+        /* Existing hashtag - just update the count, counts already owns the key */
+        gpointer orig_key;
+        if (g_hash_table_lookup_extended(counts, normalized, &orig_key, NULL)) {
+          g_hash_table_replace(counts, orig_key, GUINT_TO_POINTER(count));
+        }
       }
     }
 
+    /* Clean up seen_in_event - it owns all its keys and will free them */
     g_hash_table_destroy(seen_in_event);
   }
 
