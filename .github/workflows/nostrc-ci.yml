@@ -95,6 +95,15 @@ jobs:
         run: |
           ctest --test-dir build --output-on-failure -j2
 
+      - name: Run MDK Vector Tests
+        run: |
+          echo "Running MLS MDK cross-implementation validation..."
+          if [ -f build/libmarmot/test_marmot_interop ]; then
+            build/libmarmot/test_marmot_interop || exit 1
+          else
+            echo "MDK interop test not built, skipping"
+          fi
+
       - name: Short fuzz (libFuzzer)
         if: matrix.sanitizer == 'asan_ubsan'
         run: |
