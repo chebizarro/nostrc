@@ -245,7 +245,10 @@ if(BUILD_TESTING)
 
   # Test: MDK interoperability
   add_executable(test_interop ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_interop.c)
-  target_link_libraries(test_interop PRIVATE marmot)
+  target_link_libraries(test_interop PRIVATE marmot ${OPENSSL_LIBRARIES} sodium)
+  if(TARGET secp256k1)
+    target_link_libraries(test_interop PRIVATE secp256k1)
+  endif()
   target_include_directories(test_interop PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_interop COMMAND test_interop)
 endif()

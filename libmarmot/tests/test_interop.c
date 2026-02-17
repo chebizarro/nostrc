@@ -38,8 +38,10 @@
 static void
 hex_encode(char *out, const uint8_t *data, size_t len)
 {
-    for (size_t i = 0; i < len; i++)
-        sprintf(out + 2 * i, "%02x", data[i]);
+    for (size_t i = 0; i < len; i++) {
+        int written = snprintf(out + 2 * i, 3, "%02x", data[i]);
+        assert(written == 2 && "hex_encode formatting error");
+    }
     out[2 * len] = '\0';
 }
 
@@ -119,9 +121,9 @@ test_group_data_extension_roundtrip(void)
 
     /* Add 2 admins */
     ext->admin_count = 2;
-    ext->admins = calloc(2, 32);
-    randombytes_buf(ext->admins[0], 32);
-    randombytes_buf(ext->admins[1], 32);
+    ext->admins = calloc(2 * 32, 1);
+    randombytes_buf(ext->admins, 32);
+    randombytes_buf(ext->admins + 32, 32);
 
     /* Add 2 relays */
     ext->relay_count = 2;
@@ -176,11 +178,23 @@ test_group_data_extension_with_image(void)
     ext->name = strdup("Image Group");
 
     /* Add optional image fields */
-    ext->image_hash = calloc(1, 32);
+    ext->image_hash = malloc(32);
+    if (!ext->image_hash) {
+        marmot_group_data_extension_free(ext);
+        assert(0 && "malloc failed");
+    }
     randombytes_buf(ext->image_hash, 32);
-    ext->image_key = calloc(1, 32);
+    ext->image_key = malloc(32);
+    if (!ext->image_key) {
+        marmot_group_data_extension_free(ext);
+        assert(0 && "malloc failed");
+    }
     randombytes_buf(ext->image_key, 32);
-    ext->image_nonce = calloc(1, 12);
+    ext->image_nonce = malloc(12);
+    if (!ext->image_nonce) {
+        marmot_group_data_extension_free(ext);
+        assert(0 && "malloc failed");
+    }
     randombytes_buf(ext->image_nonce, 12);
 
     uint8_t *ser_data = NULL;
@@ -400,7 +414,12 @@ test_dump_self_vectors(void)
 
     /* Encode to hex for future comparison */
     char *kp_hex = malloc(buf.len * 2 + 1);
-    assert(kp_hex != NULL);
+    if (!kp_hex) {
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&priv);
+        mls_tls_buf_free(&buf);
+        assert(0 && "malloc failed");
+    }
     hex_encode(kp_hex, buf.data, buf.len);
     assert(strlen(kp_hex) == buf.len * 2);
 
@@ -425,9 +444,22 @@ int main(void)
 
     printf("libmarmot: Interoperability test suite\n");
 
-    /* Check for MDK vector files */
+    /* Check for MDK vector files - try multiple possible locations */
     struct stat st;
-    if (stat("tests/vectors/mdk", &st) == 0 && S_ISDIR(st.st_mode)) {
+    const char *vector_paths[] = {
+        "tests/vectors/mdk",
+        "libmarmot/tests/vectors/mdk",
+        "../tests/vectors/mdk",
+        "./vectors/mdk"
+    };
+    bool found_vectors = false;
+    for (size_t i = 0; i < sizeof(vector_paths) / sizeof(vector_paths[0]); i++) {
+        if (stat(vector_paths[i], &st) == 0 && S_ISDIR(st.st_mode)) {
+            found_vectors = true;
+            break;
+        }
+    }
+    if (found_vectors) {
         printf("  MDK vector directory found — running cross-implementation tests\n");
         /* TODO(mm51): Load and validate MDK vectors here */
     } else {

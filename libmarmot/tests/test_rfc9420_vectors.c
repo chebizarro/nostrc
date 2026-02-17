@@ -41,8 +41,8 @@ hex_decode(uint8_t *out, const char *hex, size_t out_len)
 static void
 assert_hex_eq(const uint8_t *actual, const char *expected_hex, size_t len)
 {
+    assert(len <= 256 && "hex comparison buffer too small");
     uint8_t expected[256];
-    assert(len <= sizeof(expected));
     hex_decode(expected, expected_hex, len);
     if (memcmp(actual, expected, len) != 0) {
         fprintf(stderr, "\n  Expected: %s\n  Actual:   ", expected_hex);
@@ -286,8 +286,9 @@ test_key_schedule_epoch0(void)
         secrets.welcome_secret,
         secrets.joiner_secret,
     };
-    for (int i = 0; i < 11; i++)
-        for (int j = i + 1; j < 11; j++)
+    const int num_secrets = sizeof(all_secrets) / sizeof(all_secrets[0]);
+    for (int i = 0; i < num_secrets; i++)
+        for (int j = i + 1; j < num_secrets; j++)
             assert(memcmp(all_secrets[i], all_secrets[j], 32) != 0);
 
     free(gc_data);
