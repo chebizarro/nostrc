@@ -2,7 +2,8 @@ using Gtk 4.0;
 using Adw 1;
 
 template $NostrGtkNoteCardRow: Widget {
-    hexpand: false;
+    hexpand: true;
+    halign: fill;
 
     accessibility {
         label: _("Note");
@@ -10,7 +11,8 @@ template $NostrGtkNoteCardRow: Widget {
 
     Box root {
         orientation: vertical;
-        hexpand: false;
+        hexpand: true;
+        halign: fill;
         vexpand: false;
         overflow: hidden;
 
@@ -54,6 +56,8 @@ template $NostrGtkNoteCardRow: Widget {
         Box main_content {
             orientation: vertical;
             spacing: 8;
+            hexpand: true;
+            halign: fill;
             margin-start: 16;
             margin-end: 16;
             margin-top: 12;
@@ -245,6 +249,8 @@ template $NostrGtkNoteCardRow: Widget {
             Box content_column {
                 orientation: vertical;
                 spacing: 8;
+                hexpand: true;
+                halign: fill;
 
                 /* nostrc-1tn9: Don't use hexpand which can force window to grow */
                 Overlay sensitive_content_overlay {
@@ -317,12 +323,12 @@ template $NostrGtkNoteCardRow: Widget {
                     orientation: vertical;
                     spacing: 6;
                     visible: false;
-                    hexpand: false;
+                    hexpand: true;
                 }
 
                 Frame embed_box {
                     visible: false;
-                    hexpand: false;
+                    hexpand: true;
                     overflow: hidden;
 
                     styles [
@@ -333,7 +339,7 @@ template $NostrGtkNoteCardRow: Widget {
                 Box og_preview_container {
                     orientation: vertical;
                     visible: false;
-                    hexpand: false;
+                    hexpand: true;
                 }
 
                 FlowBox labels_box {

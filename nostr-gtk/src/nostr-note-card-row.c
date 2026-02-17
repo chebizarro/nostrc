@@ -3756,6 +3756,15 @@ void nostr_gtk_note_card_row_set_thread_info(NostrGtkNoteCardRow *self,
 /* Public helper to set the embed mini-card content */
 void nostr_gtk_note_card_row_set_embed(NostrGtkNoteCardRow *self, const char *title, const char *snippet) {
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_FRAME(self->embed_box)) return;
+
+  /* If a full NIP-21 embed widget is already attached, do not clobber it
+   * with the legacy mini-card fallback content. */
+  if (self->note_embed &&
+      GTK_IS_WIDGET(self->note_embed) &&
+      gtk_frame_get_child(GTK_FRAME(self->embed_box)) == GTK_WIDGET(self->note_embed)) {
+    return;
+  }
+
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
   GtkWidget *lbl_title = gtk_label_new(title ? title : "");
   GtkWidget *lbl_snip = gtk_label_new(snippet ? snippet : "");
@@ -3772,6 +3781,15 @@ void nostr_gtk_note_card_row_set_embed(NostrGtkNoteCardRow *self, const char *ti
 /* Rich embed variant: adds meta line between title and snippet */
 void nostr_gtk_note_card_row_set_embed_rich(NostrGtkNoteCardRow *self, const char *title, const char *meta, const char *snippet) {
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_FRAME(self->embed_box)) return;
+
+  /* If a full NIP-21 embed widget is already attached, do not clobber it
+   * with the legacy mini-card fallback content. */
+  if (self->note_embed &&
+      GTK_IS_WIDGET(self->note_embed) &&
+      gtk_frame_get_child(GTK_FRAME(self->embed_box)) == GTK_WIDGET(self->note_embed)) {
+    return;
+  }
+
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
   GtkWidget *lbl_title = gtk_label_new(title ? title : "");
   GtkWidget *lbl_meta  = gtk_label_new(meta ? meta : "");

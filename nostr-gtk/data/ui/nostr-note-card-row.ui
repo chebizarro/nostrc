@@ -7,14 +7,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="NostrGtkNoteCardRow" parent="GtkWidget">
-    <property name="hexpand">false</property>
+    <property name="hexpand">true</property>
+    <property name="halign">0</property>
     <accessibility>
       <property name="label" translatable="yes">Note</property>
     </accessibility>
     <child>
       <object class="GtkBox" id="root">
         <property name="orientation">1</property>
-        <property name="hexpand">false</property>
+        <property name="hexpand">true</property>
+        <property name="halign">0</property>
         <property name="vexpand">false</property>
         <property name="overflow">1</property>
         <style>
@@ -57,6 +59,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkBox" id="main_content">
             <property name="orientation">1</property>
             <property name="spacing">8</property>
+            <property name="hexpand">true</property>
+            <property name="halign">0</property>
             <property name="margin-start">16</property>
             <property name="margin-end">16</property>
             <property name="margin-top">12</property>
@@ -251,6 +255,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkBox" id="content_column">
                 <property name="orientation">1</property>
                 <property name="spacing">8</property>
+                <property name="hexpand">true</property>
+                <property name="halign">0</property>
                 <child>
                   <object class="GtkOverlay" id="sensitive_content_overlay">
                     <property name="visible">false</property>
@@ -325,13 +331,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="orientation">1</property>
                     <property name="spacing">6</property>
                     <property name="visible">false</property>
-                    <property name="hexpand">false</property>
+                    <property name="hexpand">true</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkFrame" id="embed_box">
                     <property name="visible">false</property>
-                    <property name="hexpand">false</property>
+                    <property name="hexpand">true</property>
                     <property name="overflow">1</property>
                     <style>
                       <class name="note-embed"/>
@@ -342,7 +348,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkBox" id="og_preview_container">
                     <property name="orientation">1</property>
                     <property name="visible">false</property>
-                    <property name="hexpand">false</property>
+                    <property name="hexpand">true</property>
                   </object>
                 </child>
                 <child>
