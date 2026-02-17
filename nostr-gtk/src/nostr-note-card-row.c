@@ -493,25 +493,21 @@ do_template_dispose:
    * state chain properly. */
   if (self->repost_popover && GTK_IS_POPOVER(self->repost_popover)) {
     gtk_popover_popdown(GTK_POPOVER(self->repost_popover));
-    gtk_widget_unparent(self->repost_popover);
   }
   self->repost_popover = NULL;
 
   if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
     gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
-    gtk_widget_unparent(self->menu_popover);
   }
   self->menu_popover = NULL;
 
   if (self->emoji_picker_popover && GTK_IS_POPOVER(self->emoji_picker_popover)) {
     gtk_popover_popdown(GTK_POPOVER(self->emoji_picker_popover));
-    gtk_widget_unparent(self->emoji_picker_popover);
   }
   self->emoji_picker_popover = NULL;
 
   if (self->reactions_popover && GTK_IS_POPOVER(self->reactions_popover)) {
     gtk_popover_popdown(GTK_POPOVER(self->reactions_popover));
-    gtk_widget_unparent(self->reactions_popover);
   }
   self->reactions_popover = NULL;
   /* NIP-25: Clean up reaction breakdown */
