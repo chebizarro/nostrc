@@ -227,6 +227,32 @@ MarmotStorage *marmot_storage_sqlite_new(const char *path,
                                           const char *encryption_key);
 
 /**
+ * marmot_storage_nostrdb_new:
+ * @ndb_handle: (nullable): pointer to an existing `struct ndb *` instance
+ *              (borrowed — caller retains ownership). If NULL, event
+ *              ingestion into nostrdb is skipped.
+ * @mls_state_dir: path to a directory for MLS state LMDB files
+ *
+ * Create a nostrdb-backed persistent storage.
+ *
+ * This hybrid backend uses nostrdb for Nostr event storage (kind 443/444/445)
+ * and a separate LMDB environment for MLS internal state (group data, key
+ * packages, exporter secrets, snapshots).
+ *
+ * Benefits:
+ * - Events properly indexed by nostrdb (kind, author, tags, fulltext search)
+ * - Shared nostrdb instance with the main app (no double storage)
+ * - LMDB for MLS state is extremely fast for binary key-value operations
+ * - No SQLite dependency
+ *
+ * Requires nostrdb headers at compile time; returns NULL if not available.
+ *
+ * Returns: (transfer full) (nullable): a new MarmotStorage, or NULL on error
+ */
+MarmotStorage *marmot_storage_nostrdb_new(void *ndb_handle,
+                                           const char *mls_state_dir);
+
+/**
  * marmot_storage_free:
  * @storage: (transfer full) (nullable): storage to destroy
  *

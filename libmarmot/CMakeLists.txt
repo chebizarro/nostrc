@@ -19,6 +19,17 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
 pkg_check_modules(SECP256K1 REQUIRED IMPORTED_TARGET libsecp256k1)
 
+# Optional: SQLite3 for persistent storage backend
+pkg_check_modules(SQLITE3 IMPORTED_TARGET sqlite3)
+if(SQLITE3_FOUND)
+  message(STATUS "SQLite3 found — building SQLite storage backend")
+else()
+  message(STATUS "SQLite3 not found — SQLite storage backend disabled")
+endif()
+
+# Optional: LMDB for nostrdb storage backend
+pkg_check_modules(LMDB IMPORTED_TARGET lmdb)
+
 # Find libnostr and NIP-44 (sibling libraries in the nostrc tree)
 # These are expected to be available via the parent CMakeLists.txt
 # or via pkg-config when installed system-wide.
@@ -43,7 +54,16 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/messages.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/media.c
 )
+
+# Conditionally add storage backends
+if(SQLITE3_FOUND)
+  list(APPEND MARMOT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_sqlite.c)
+endif()
+
+# nostrdb backend — compiled if nostrdb.h is available (uses __has_include)
+list(APPEND MARMOT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_nostrdb.c)
 
 set(MARMOT_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot.h
@@ -78,6 +98,15 @@ target_link_libraries(marmot
     PkgConfig::SODIUM
     PkgConfig::SECP256K1
 )
+
+if(SQLITE3_FOUND)
+  target_link_libraries(marmot PUBLIC PkgConfig::SQLITE3)
+  target_compile_definitions(marmot PRIVATE MARMOT_HAVE_SQLITE=1)
+endif()
+
+if(LMDB_FOUND)
+  target_link_libraries(marmot PUBLIC PkgConfig::LMDB)
+endif()
 
 # Link against sibling libraries if available as targets
 if(TARGET nostr)
@@ -195,4 +224,16 @@ if(BUILD_TESTING)
   target_link_libraries(test_protocol PRIVATE marmot)
   target_include_directories(test_protocol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_protocol COMMAND test_protocol)
+
+  # Test: Storage contract tests (all backends)
+  add_executable(test_storage_contract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_storage_contract.c)
+  target_link_libraries(test_storage_contract PRIVATE marmot)
+  target_include_directories(test_storage_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_storage_contract COMMAND test_storage_contract)
+
+  # Test: MIP-04 media encryption
+  add_executable(test_media ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_media.c)
+  target_link_libraries(test_media PRIVATE marmot)
+  target_include_directories(test_media PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_media COMMAND test_media)
 endif()

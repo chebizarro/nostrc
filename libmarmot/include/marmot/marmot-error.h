@@ -118,6 +118,10 @@ typedef enum {
     MARMOT_ERR_MLS_PROCESS_MESSAGE      = -116,
     MARMOT_ERR_MLS_FRAMING              = -117,
 
+    /* Media errors (MIP-04) */
+    MARMOT_ERR_MEDIA_DECRYPT            = -150,
+    MARMOT_ERR_MEDIA_HASH_MISMATCH      = -151,
+
     /* Snapshot errors */
     MARMOT_ERR_SNAPSHOT_FAILED          = -120,
 

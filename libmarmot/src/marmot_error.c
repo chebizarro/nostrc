@@ -106,6 +106,10 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_MLS_PROCESS_MESSAGE:     return "MLS: failed to process message";
     case MARMOT_ERR_MLS_FRAMING:             return "MLS: framing error";
 
+    /* Media (MIP-04) */
+    case MARMOT_ERR_MEDIA_DECRYPT:           return "media decryption failed";
+    case MARMOT_ERR_MEDIA_HASH_MISMATCH:     return "media file hash mismatch";
+
     /* Snapshot */
     case MARMOT_ERR_SNAPSHOT_FAILED:         return "snapshot operation failed";
 

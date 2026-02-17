@@ -29,6 +29,12 @@ openssl_dep = dependency('openssl', required: true)
 sodium_dep = dependency('libsodium', required: true)
 secp256k1_dep = dependency('libsecp256k1', required: true)
 
+# Optional: SQLite3 for persistent storage backend
+sqlite3_dep = dependency('sqlite3', required: false)
+
+# Optional: LMDB for nostrdb storage backend
+lmdb_dep = dependency('lmdb', required: false)
+
 # Sibling libraries (available when built as part of nostrc)
 nostr_dep = dependency('nostr', required: false)
 nip44_dep = dependency('nip44', required: false)
@@ -53,17 +59,36 @@ marmot_sources = files(
   'src/groups.c',
   'src/welcome.c',
   'src/messages.c',
+  'src/media.c',
+  'src/storage_nostrdb.c',
 )
+
+# Conditionally add SQLite backend
+if sqlite3_dep.found()
+  marmot_sources += files('src/storage_sqlite.c')
+endif()
 
 # Public include directories
 marmot_inc = include_directories('include')
 marmot_src_inc = include_directories('src')
 
+# Gather optional dependencies
+marmot_deps = [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep]
+marmot_c_args = []
+if sqlite3_dep.found()
+  marmot_deps += sqlite3_dep
+  marmot_c_args += '-DMARMOT_HAVE_SQLITE=1'
+endif
+if lmdb_dep.found()
+  marmot_deps += lmdb_dep
+endif
+
 # Library
 libmarmot = library('marmot',
   marmot_sources,
   include_directories: [marmot_inc, marmot_src_inc],
-  dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep],
+  c_args: marmot_c_args,
+  dependencies: marmot_deps,
   install: true,
   version: marmot_version,
   soversion: marmot_version_parts[0],
@@ -190,4 +215,22 @@ if get_option('tests')
     dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep],
   )
   test('marmot_protocol', test_protocol)
+
+  # Storage contract tests (all backends)
+  test_storage_contract = executable('test_storage_contract',
+    'tests/test_storage_contract.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: marmot_deps,
+  )
+  test('marmot_storage_contract', test_storage_contract)
+
+  # MIP-04 media encryption tests
+  test_media = executable('test_media',
+    'tests/test_media.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_media', test_media)
 endif

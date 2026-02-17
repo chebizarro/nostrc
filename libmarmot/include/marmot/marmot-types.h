@@ -570,6 +570,44 @@ typedef struct {
     size_t  relay_count;
 } MarmotGroupConfig;
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * MIP-04: Encrypted Media types
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * MarmotImetaInfo:
+ *
+ * Metadata about an encrypted media file, stored in the Nostr event's
+ * "imeta" tag (NIP-94). Used for decryption.
+ */
+typedef struct {
+    char    *mime_type;      /**< MIME type (e.g., "image/png") */
+    char    *filename;       /**< Original filename (optional) */
+    char    *url;            /**< URL where encrypted file is hosted (optional) */
+    size_t   original_size;  /**< Unencrypted file size in bytes */
+    uint8_t  file_hash[32];  /**< SHA-256 of the plaintext file */
+    uint8_t  nonce[12];      /**< ChaCha20-Poly1305 nonce used for encryption */
+    uint64_t epoch;          /**< MLS epoch when the encryption key was derived */
+} MarmotImetaInfo;
+
+/**
+ * MarmotEncryptedMedia:
+ *
+ * Result of marmot_encrypt_media(). Contains the encrypted data
+ * and metadata needed for upload and sharing.
+ */
+typedef struct {
+    uint8_t        *encrypted_data;  /**< Encrypted file bytes (caller frees) */
+    size_t          encrypted_len;   /**< Length of encrypted_data */
+    uint8_t         nonce[12];       /**< ChaCha20-Poly1305 nonce */
+    uint8_t         file_hash[32];   /**< SHA-256 of original file */
+    size_t          original_size;   /**< Original file size */
+    MarmotImetaInfo imeta;           /**< Metadata for the Nostr event tag */
+} MarmotEncryptedMedia;
+
+/** Clear and free all data within an encrypted media result */
+void marmot_encrypted_media_clear(MarmotEncryptedMedia *result);
+
 #ifdef __cplusplus
 }
 #endif
