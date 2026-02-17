@@ -132,7 +132,7 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
   }
 
   /* Count hashtag occurrences: tag_lowercase -> count */
-  GHashTable *counts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GHashTable *counts = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, NULL);
 
   for (int i = 0; i < got; i++) {
     struct ndb_note *note = qres[i].note;
@@ -217,13 +217,10 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
     if (count < 2) continue; /* Require at least 2 events to be "trending" */
 
     GnostrTrendingHashtag *ht = g_new0(GnostrTrendingHashtag, 1);
-    /* Steal the string from hash table - we take ownership, hash table won't free it */
+    /* Take the string pointer - hash table won't free it since it has no key destroy function */
     ht->tag = (char *)key;
     ht->count = count;
     g_ptr_array_add(all, ht);
-    
-    /* Remove from hash table without freeing the key (we stole it) */
-    g_hash_table_iter_steal(&ht_iter);
   }
 
   g_hash_table_destroy(counts);
