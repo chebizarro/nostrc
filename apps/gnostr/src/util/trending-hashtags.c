@@ -231,17 +231,14 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
   guint take = MIN(top_n, all->len);
   for (guint i = 0; i < take; i++) {
     g_ptr_array_add(result, g_ptr_array_index(all, i));
-    /* NULL out the pointer so we don't double-free */
-    all->pdata[i] = NULL;
   }
   
   /* Manually free items that weren't moved to result */
   for (guint i = take; i < all->len; i++) {
     gnostr_trending_hashtag_free(g_ptr_array_index(all, i));
-    all->pdata[i] = NULL;
   }
   
-  /* Free the temp array including segment (all pointers are NULL or freed) */
+  /* Free the temp array structure and segment (no free function, so items not freed) */
   g_ptr_array_free(all, TRUE);
 
   g_debug("trending: computed %u hashtags from %d events", result->len, got);
