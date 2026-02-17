@@ -9434,8 +9434,8 @@ static void on_multi_sub_event(GNostrPoolMultiSub *multi_sub,
   if (!ingest_queue_push(self, copy)) {
     g_free(copy);
   } else {
-    /* Track relay activity for monitoring */
-    g_warning("[RELAY] Event from %s (kind %d)", relay_url, kind);
+    /* Track relay activity for monitoring - only log at debug level */
+    g_debug("[RELAY] Event from %s (kind %d)", relay_url, kind);
   }
 }
 
