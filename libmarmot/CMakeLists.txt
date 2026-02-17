@@ -31,6 +31,9 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_tree.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_schedule.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_framing.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_package.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_group.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_welcome.c
 )
 
 set(MARMOT_PUBLIC_HEADERS
@@ -150,4 +153,22 @@ if(BUILD_TESTING)
   target_link_libraries(test_mls_framing PRIVATE marmot)
   target_include_directories(test_mls_framing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_mls_framing COMMAND test_mls_framing)
+
+  # Test: MLS KeyPackage
+  add_executable(test_mls_key_package ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_key_package.c)
+  target_link_libraries(test_mls_key_package PRIVATE marmot)
+  target_include_directories(test_mls_key_package PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_mls_key_package COMMAND test_mls_key_package)
+
+  # Test: MLS Group state machine
+  add_executable(test_mls_group ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_group.c)
+  target_link_libraries(test_mls_group PRIVATE marmot)
+  target_include_directories(test_mls_group PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_mls_group COMMAND test_mls_group)
+
+  # Test: MLS Welcome
+  add_executable(test_mls_welcome ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_welcome.c)
+  target_link_libraries(test_mls_welcome PRIVATE marmot)
+  target_include_directories(test_mls_welcome PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_mls_welcome COMMAND test_mls_welcome)
 endif()

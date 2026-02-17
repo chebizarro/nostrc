@@ -41,6 +41,9 @@ marmot_sources = files(
   'src/mls/mls_tree.c',
   'src/mls/mls_key_schedule.c',
   'src/mls/mls_framing.c',
+  'src/mls/mls_key_package.c',
+  'src/mls/mls_group.c',
+  'src/mls/mls_welcome.c',
 )
 
 # Public include directories
@@ -146,4 +149,28 @@ if get_option('tests')
     dependencies: [openssl_dep, sodium_dep],
   )
   test('marmot_mls_framing', test_mls_framing)
+
+  test_mls_key_package = executable('test_mls_key_package',
+    'tests/test_mls_key_package.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_mls_key_package', test_mls_key_package)
+
+  test_mls_group = executable('test_mls_group',
+    'tests/test_mls_group.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_mls_group', test_mls_group)
+
+  test_mls_welcome = executable('test_mls_welcome',
+    'tests/test_mls_welcome.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_mls_welcome', test_mls_welcome)
 endif

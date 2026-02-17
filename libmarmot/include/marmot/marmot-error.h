@@ -29,6 +29,8 @@ typedef enum {
     MARMOT_ERR_MEMORY                   = -2,
     MARMOT_ERR_NOT_IMPLEMENTED          = -3,
     MARMOT_ERR_INTERNAL                 = -4,
+    MARMOT_ERR_UNSUPPORTED              = -5,
+    MARMOT_ERR_INVALID_INPUT            = -6,  /* alias for INVALID_ARG */
 
     /* Hex / encoding errors */
     MARMOT_ERR_HEX                      = -10,

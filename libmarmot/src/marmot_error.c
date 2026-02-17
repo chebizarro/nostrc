@@ -17,6 +17,8 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_MEMORY:                  return "out of memory";
     case MARMOT_ERR_NOT_IMPLEMENTED:         return "not implemented";
     case MARMOT_ERR_INTERNAL:                return "internal error";
+    case MARMOT_ERR_UNSUPPORTED:             return "unsupported feature or version";
+    case MARMOT_ERR_INVALID_INPUT:           return "invalid input";
 
     /* Encoding */
     case MARMOT_ERR_HEX:                     return "hex encoding/decoding error";
