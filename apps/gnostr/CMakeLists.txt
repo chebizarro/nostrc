@@ -992,6 +992,11 @@ if (BUILD_TESTING)
       SOURCES tests/test_ndb_main_thread_violations.c
               src/model/gn-nostr-event-model.c
               src/model/gn-nostr-event-item.c
+              src/util/relays.c
+              src/util/relay_info.c
+              src/util/utils.c
+              src/ipc/signer_ipc.c
+              src/ipc/gnostr-signer-service.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 180
@@ -1043,6 +1048,11 @@ if (BUILD_TESTING)
       SOURCES tests/test_real_bind_latency.c
               src/model/gn-nostr-event-model.c
               src/model/gn-nostr-event-item.c
+              src/util/relays.c
+              src/util/relay_info.c
+              src/util/utils.c
+              src/ipc/signer_ipc.c
+              src/ipc/gnostr-signer-service.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 180
