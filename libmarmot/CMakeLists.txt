@@ -251,6 +251,7 @@ if(BUILD_TESTING)
   add_executable(test_marmot_interop 
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_interop.c
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/mdk_vector_loader.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/mdk_vector_stubs.c
   )
   target_link_libraries(test_marmot_interop PRIVATE marmot ${OPENSSL_LIBRARIES} PkgConfig::SODIUM)
   if(TARGET secp256k1)
