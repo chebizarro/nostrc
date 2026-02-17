@@ -79,6 +79,12 @@ compare_by_count_desc(gconstpointer a, gconstpointer b)
 {
   const GnostrTrendingHashtag *ha = *(const GnostrTrendingHashtag **)a;
   const GnostrTrendingHashtag *hb = *(const GnostrTrendingHashtag **)b;
+  
+  /* Guard against NULL pointers */
+  if (!ha && !hb) return 0;
+  if (!ha) return 1;  /* NULL sorts last */
+  if (!hb) return -1;
+  
   if (ha->count > hb->count) return -1;
   if (ha->count < hb->count) return 1;
   return strcmp(ha->tag, hb->tag);
