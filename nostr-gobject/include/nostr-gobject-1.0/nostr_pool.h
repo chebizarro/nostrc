@@ -224,6 +224,97 @@ GNostrSubscription *gnostr_pool_subscribe(GNostrPool *self,
                                            NostrFilters *filters,
                                            GError **error);
 
+/**
+ * GNostrPoolMultiSub:
+ *
+ * Opaque handle for a multi-relay subscription. Aggregates events from
+ * all connected relays in the pool. Close with gnostr_pool_multi_sub_close().
+ *
+ * Since: 1.0
+ */
+typedef struct _GNostrPoolMultiSub GNostrPoolMultiSub;
+
+/**
+ * GNostrPoolMultiSubEventFunc:
+ * @multi_sub: the #GNostrPoolMultiSub
+ * @relay_url: URL of the relay that sent the event
+ * @event_json: JSON string of the event
+ * @user_data: (closure): user data
+ *
+ * Callback invoked when any relay in the multi-subscription receives an event.
+ * Called on the main thread.
+ *
+ * Since: 1.0
+ */
+typedef void (*GNostrPoolMultiSubEventFunc)(GNostrPoolMultiSub *multi_sub,
+                                             const gchar        *relay_url,
+                                             const gchar        *event_json,
+                                             gpointer            user_data);
+
+/**
+ * GNostrPoolMultiSubEoseFunc:
+ * @multi_sub: the #GNostrPoolMultiSub
+ * @relay_url: URL of the relay that sent EOSE
+ * @user_data: (closure): user data
+ *
+ * Callback invoked when a relay in the multi-subscription sends EOSE.
+ * Called on the main thread.
+ *
+ * Since: 1.0
+ */
+typedef void (*GNostrPoolMultiSubEoseFunc)(GNostrPoolMultiSub *multi_sub,
+                                            const gchar        *relay_url,
+                                            gpointer            user_data);
+
+/**
+ * gnostr_pool_subscribe_multi:
+ * @self: a #GNostrPool
+ * @filters: (transfer none): filters for the subscription
+ * @event_func: (scope notified): callback for events from any relay
+ * @eose_func: (scope notified) (nullable): callback for EOSE from each relay
+ * @user_data: (closure): user data for callbacks
+ * @destroy: (nullable): destroy function for @user_data
+ * @error: (nullable): return location for a #GError
+ *
+ * Creates a multi-relay subscription that subscribes to all connected relays
+ * in the pool. Events from any relay are delivered via @event_func on the main
+ * thread. The subscription automatically tracks relay connections and subscribes
+ * to new relays as they connect.
+ *
+ * Returns: (transfer full) (nullable): a new #GNostrPoolMultiSub, or %NULL on error.
+ *   Close with gnostr_pool_multi_sub_close() when done.
+ *
+ * Since: 1.0
+ */
+GNostrPoolMultiSub *gnostr_pool_subscribe_multi(GNostrPool                   *self,
+                                                 NostrFilters                 *filters,
+                                                 GNostrPoolMultiSubEventFunc   event_func,
+                                                 GNostrPoolMultiSubEoseFunc    eose_func,
+                                                 gpointer                      user_data,
+                                                 GDestroyNotify                destroy,
+                                                 GError                      **error);
+
+/**
+ * gnostr_pool_multi_sub_close:
+ * @multi_sub: (transfer full): a #GNostrPoolMultiSub
+ *
+ * Closes all relay subscriptions in the multi-subscription and frees resources.
+ * After this call, @multi_sub is invalid and must not be used.
+ *
+ * Since: 1.0
+ */
+void gnostr_pool_multi_sub_close(GNostrPoolMultiSub *multi_sub);
+
+/**
+ * gnostr_pool_multi_sub_get_relay_count:
+ * @multi_sub: a #GNostrPoolMultiSub
+ *
+ * Returns: the number of relays currently subscribed in this multi-subscription
+ *
+ * Since: 1.0
+ */
+guint gnostr_pool_multi_sub_get_relay_count(GNostrPoolMultiSub *multi_sub);
+
 /* --- Cache Query API --- */
 
 /**

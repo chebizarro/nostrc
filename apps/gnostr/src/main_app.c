@@ -257,9 +257,6 @@ int main(int argc, char **argv) {
    * 4 threads handles typical NDB query concurrency. */
   go_blocking_executor_init(4);
 
-  /* Initialize nostr-gtk widget library (nostrc-lx33) */
-  nostr_gtk_init();
-
   /* Install app actions */
   static const GActionEntry app_entries[] = {
     { "quit", on_app_quit, NULL, NULL, NULL },
@@ -294,6 +291,9 @@ int main(int argc, char **argv) {
   } else {
     fprintf(stderr, "[main] storage_ndb_init SUCCESS for %s\n", dbdir);
     fflush(stderr);
+
+    /* Initialize nostr-gtk widget library AFTER storage is ready (nostrc-lx33 fix) */
+    nostr_gtk_init();
 
     if (gnostr_e2e_enabled()) {
       GError *seed_err = NULL;

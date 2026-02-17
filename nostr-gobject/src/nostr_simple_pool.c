@@ -1123,8 +1123,8 @@ static gpointer query_single_thread(gpointer user_data) {
         GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
         GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
 
-        guint64 query_start = g_get_monotonic_time();
-        const guint64 query_timeout_us = 10000000; /* 10s safety timeout */
+        /* Event-driven query - no arbitrary timeout. Relays signal completion via EOSE/CLOSED.
+         * Nostr is pub/sub, not REST. */
 
         while (!done) {
             /* Check cancellation */
@@ -1136,12 +1136,6 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Check connection state - if relay disconnected, stop waiting */
             if (!nostr_relay_is_connected(relay)) {
                 g_debug("query_single: connection dropped for %s after %u events", url, events_received);
-                break;
-            }
-
-            /* Safety timeout */
-            if ((g_get_monotonic_time() - query_start) > query_timeout_us) {
-                g_debug("query_single: timeout waiting for EOSE from %s after %u events", url, events_received);
                 break;
             }
 

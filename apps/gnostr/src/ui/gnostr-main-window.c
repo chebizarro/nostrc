@@ -191,7 +191,7 @@ struct _GnostrMainWindow {
 
   /* GNostrPool live stream */
   GNostrPool      *pool;       /* owned */
-  GNostrSubscription *live_sub; /* owned; current live subscription */
+  GNostrPoolMultiSub *live_multi_sub; /* owned; multi-relay live subscription */
   GCancellable    *pool_cancellable; /* owned */
   NostrFilters    *live_filters; /* owned; current live filter set */
   gulong           pool_events_handler; /* signal handler id */
@@ -199,6 +199,12 @@ struct _GnostrMainWindow {
   guint            health_check_source_id;   /* GLib source id for relay health check */
   const char     **live_urls;          /* owned array pointer + strings */
   size_t           live_url_count;     /* number of current live relays */
+  
+  /* Backpressure monitoring */
+  guint64          ingest_events_received;   /* total events received from relays */
+  guint64          ingest_events_dropped;    /* events dropped due to queue full */
+  guint64          ingest_events_processed;  /* events successfully ingested to NDB */
+  gint64           last_backpressure_warn_us; /* last backpressure warning timestamp */
 
   /* Sequential profile batch dispatch state */
   GNostrPool     *profile_pool;          /* owned; GObject pool for profile fetching */
@@ -398,6 +404,8 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
 static void refresh_thread_view_profiles_if_visible(GnostrMainWindow *self);
 static void on_pool_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
 static void on_pool_sub_eose(GNostrSubscription *sub, gpointer user_data);
+static void on_multi_sub_event(GNostrPoolMultiSub *multi_sub, const gchar *relay_url, const gchar *event_json, gpointer user_data);
+static void on_multi_sub_eose(GNostrPoolMultiSub *multi_sub, const gchar *relay_url, gpointer user_data);
 static void on_bg_prefetch_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
 static gboolean periodic_model_refresh(gpointer user_data);
 
@@ -7564,9 +7572,12 @@ static void initial_refresh_timeout_cb(gpointer data) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   g_warning("[STARTUP] initial_refresh_timeout_cb: starting async refresh");
 
-  /* Page already switched to SESSION in deferred_heavy_init_cb.
-   * Just trigger the full async refresh to populate profiles and metadata. */
+  /* Set initial global timeline query before refresh so cached events load */
   if (self->event_model) {
+    GNostrTimelineQuery *query = gnostr_timeline_query_new_global();
+    gn_nostr_event_model_set_timeline_query(self->event_model, query);
+    gnostr_timeline_query_free(query);
+    
     gn_nostr_event_model_refresh_async(self->event_model);
   }
 
@@ -9062,16 +9073,31 @@ on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
     }
     g_clear_error(&err);
 
-    g_debug("[RELAY] Relays connected, starting live subscription");
+    g_warning("[RELAY] First relay connected, waiting 500ms for others to connect...");
+    
+    /* Wait 500ms for other relays to finish connecting before creating multi-sub.
+     * gnostr_pool_connect_all_async returns as soon as the FIRST relay connects,
+     * but we want to give other relays time to connect so the multi-sub can
+     * subscribe to all of them immediately rather than relying on state-changed signals. */
+    g_usleep(500000);  /* 500ms */
+    
+    g_warning("[RELAY] Starting multi-relay live subscription");
 
     GError *sub_error = NULL;
-    GNostrSubscription *sub = gnostr_pool_subscribe(self->pool, filters, &sub_error);
-    /* Note: do NOT free filters here — GNostrSubscription takes ownership (nostrc-aaf0).
-     * The core subscription borrows the pointer and needs it alive for reconnect refire. */
+    GNostrPoolMultiSub *multi_sub = gnostr_pool_subscribe_multi(
+        self->pool,
+        filters,
+        on_multi_sub_event,
+        on_multi_sub_eose,
+        self,
+        NULL,  /* no destroy notify needed */
+        &sub_error);
+    
+    /* Multi-sub does NOT take ownership of filters, we must free them */
+    nostr_filters_free(filters);
 
-    if (!sub) {
-        nostr_filters_free(filters); /* subscription failed, we still own them */
-        g_warning("live: pool_subscribe failed: %s - retrying in 5 seconds",
+    if (!multi_sub) {
+        g_warning("[RELAY] pool_subscribe_multi FAILED: %s - retrying in 5 seconds",
                   sub_error ? sub_error->message : "(unknown)");
         g_clear_error(&sub_error);
         g_timeout_add_full(G_PRIORITY_DEFAULT, 5000, retry_pool_live,
@@ -9080,10 +9106,9 @@ on_pool_relays_connected(GObject      *source G_GNUC_UNUSED,
         return;
     }
 
-    self->live_sub = sub;
-    g_signal_connect(sub, "event", G_CALLBACK(on_pool_sub_event), self);
-    g_signal_connect(sub, "eose", G_CALLBACK(on_pool_sub_eose), self);
-    g_debug("[RELAY] Live subscription started successfully");
+    self->live_multi_sub = multi_sub;
+    guint relay_count = gnostr_pool_multi_sub_get_relay_count(multi_sub);
+    g_warning("[RELAY] Multi-relay live subscription started successfully (%u relays)", relay_count);
     self->reconnection_in_progress = FALSE;
 
     if (self->health_check_source_id == 0) {
@@ -9118,6 +9143,8 @@ static void start_pool_live(GnostrMainWindow *self) {
    * No limit on subscription since all events go into nostrdb - UI models handle their own windowing. */
   const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
 
+  /* Build live subscription filter with since=now to get only NEW events.
+   * Historical events are loaded from nostrdb cache, live sub is for real-time updates. */
   const int live_kinds[] = {0, 1, 5, 6, 7, 16, 1111};
   build_urls_and_filters_for_kinds(self,
                                   live_kinds,
@@ -9126,6 +9153,14 @@ static void start_pool_live(GnostrMainWindow *self) {
                                   &url_count,
                                   &filters,
                                   0);  /* No limit - nostrdb handles storage */
+  
+  /* Add since=(now - 5 minutes) to get recent events + live updates.
+   * This populates the timeline with fresh content while also receiving
+   * new events as they're published. */
+  if (filters && filters->count > 0) {
+    int64_t since = (int64_t)time(NULL) - (5 * 60);  /* 5 minutes ago */
+    nostr_filter_set_since_i64(&filters->filters[0], since);
+  }
   if (!urls || url_count == 0 || !filters) {
     g_warning("[RELAY] No relay URLs configured, skipping live subscription");
     if (filters) nostr_filters_free(filters);
@@ -9146,19 +9181,19 @@ static void start_pool_live(GnostrMainWindow *self) {
    * Profile fetch code skips relays not in pool (to avoid blocking main thread).
    * We call sync_relays() here BEFORE starting subscriptions to populate the pool.
    * This is acceptable because start_pool_live() runs early at startup, not on main loop yet. */
-  g_debug("[RELAY] Initializing %zu relays in pool", self->live_url_count);
+  g_warning("[RELAY] Initializing %zu relays in pool", self->live_url_count);
   gnostr_pool_sync_relays(self->pool, (const gchar **)self->live_urls, self->live_url_count);
-  g_debug("[RELAY] ✓ All relays initialized");
-  /* Close previous subscription if any */
-  if (self->live_sub) {
-    gnostr_subscription_close(self->live_sub);
-    g_clear_object(&self->live_sub);
+  g_warning("[RELAY] ✓ All relays initialized");
+  /* Close previous multi-subscription if any */
+  if (self->live_multi_sub) {
+    gnostr_pool_multi_sub_close(self->live_multi_sub);
+    self->live_multi_sub = NULL;
   }
 
   /* nostrc-p2f6: Connect all relays BEFORE subscribing.
    * Previously we subscribed immediately after sync_relays(), but relays
    * start disconnected — pool_subscribe requires at least one connected relay. */
-  g_debug("[RELAY] Connecting %zu relays...", self->live_url_count);
+  g_warning("[RELAY] Connecting %zu relays...", self->live_url_count);
   PoolConnectCtx *ctx = g_new0(PoolConnectCtx, 1);
   ctx->self = g_object_ref(self);
   ctx->filters = filters; /* transfer ownership to callback */
@@ -9287,14 +9322,24 @@ static gboolean retry_pool_live(gpointer user_data) {
 static gboolean
 ingest_queue_push(GnostrMainWindow *self, gchar *json)
 {
+  __atomic_fetch_add(&self->ingest_events_received, 1, __ATOMIC_RELAXED);
+  
   gint depth = g_async_queue_length(self->ingest_queue);
   if (depth >= INGEST_QUEUE_MAX) {
-    static gint64 last_warn_us = 0;
+    __atomic_fetch_add(&self->ingest_events_dropped, 1, __ATOMIC_RELAXED);
+    
     gint64 now = g_get_monotonic_time();
-    if (now - last_warn_us > 5000000) { /* warn at most every 5s */
+    if (now - self->last_backpressure_warn_us > 5000000) { /* warn at most every 5s */
+      guint64 received = __atomic_load_n(&self->ingest_events_received, __ATOMIC_RELAXED);
+      guint64 dropped = __atomic_load_n(&self->ingest_events_dropped, __ATOMIC_RELAXED);
+      guint64 processed = __atomic_load_n(&self->ingest_events_processed, __ATOMIC_RELAXED);
+      double drop_rate = received > 0 ? (100.0 * dropped / received) : 0.0;
+      
       g_warning("[INGEST] Queue full (%d items, cap %d) — dropping event "
-                "(NDB pipeline backpressure)", depth, INGEST_QUEUE_MAX);
-      last_warn_us = now;
+                "(NDB pipeline backpressure). Stats: received=%" G_GUINT64_FORMAT 
+                ", dropped=%" G_GUINT64_FORMAT " (%.1f%%), processed=%" G_GUINT64_FORMAT,
+                depth, INGEST_QUEUE_MAX, received, dropped, drop_rate, processed);
+      self->last_backpressure_warn_us = now;
     }
     return FALSE;
   }
@@ -9323,7 +9368,9 @@ ingest_thread_func(gpointer data)
     }
 
     int rc = storage_ndb_ingest_event_json(json, NULL);
-    if (rc != 0) {
+    if (rc == 0) {
+      __atomic_fetch_add(&self->ingest_events_processed, 1, __ATOMIC_RELAXED);
+    } else {
       g_debug("[INGEST-BG] Failed: rc=%d json_len=%zu", rc, strlen(json));
     }
     g_free(json);
@@ -9370,8 +9417,12 @@ extract_kind_from_json(const char *json)
 /* Live subscription event handler: filter by kind and queue for background ingestion.
  * nostrc-mzab: No longer calls storage_ndb_ingest_event_json on the main thread.
  * Uses lightweight JSON scanning instead of full NostrEvent deserialization. */
-static void on_pool_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data) {
-  (void)sub;
+/* Multi-relay subscription event handler */
+static void on_multi_sub_event(GNostrPoolMultiSub *multi_sub,
+                                const gchar        *relay_url,
+                                const gchar        *event_json,
+                                gpointer            user_data) {
+  (void)multi_sub;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
 
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_json) return;
@@ -9388,16 +9439,22 @@ static void on_pool_sub_event(GNostrSubscription *sub, const gchar *event_json, 
 
   /* Queue for background ingestion (never blocks main thread) */
   gchar *copy = g_strdup(event_json);
-  if (!ingest_queue_push(self, copy))
+  if (!ingest_queue_push(self, copy)) {
     g_free(copy);
+  } else {
+    /* Track relay activity for monitoring */
+    g_warning("[RELAY] Event from %s (kind %d)", relay_url, kind);
+  }
 }
 
-/* Live subscription EOSE handler */
-static void on_pool_sub_eose(GNostrSubscription *sub, gpointer user_data) {
-  (void)sub;
+/* Multi-relay subscription EOSE handler */
+static void on_multi_sub_eose(GNostrPoolMultiSub *multi_sub,
+                               const gchar        *relay_url,
+                               gpointer            user_data) {
+  (void)multi_sub;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  g_debug("[RELAY] Live subscription received EOSE");
+  g_debug("[RELAY] EOSE from %s", relay_url);
 }
 
 /* Background prefetch event handler: only enqueue authors for profile fetch */

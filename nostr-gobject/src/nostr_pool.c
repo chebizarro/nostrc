@@ -1046,6 +1046,313 @@ gnostr_pool_subscribe(GNostrPool   *self,
     return sub;
 }
 
+/* --- Multi-Relay Subscription Implementation --- */
+
+/**
+ * Per-relay subscription tracker for multi-relay subscriptions.
+ */
+typedef struct {
+    GNostrRelay        *relay;         /* weak ref */
+    GNostrSubscription *subscription;  /* owned */
+    gchar              *relay_url;     /* owned */
+    gulong              event_handler_id;
+    gulong              eose_handler_id;
+    gulong              closed_handler_id;
+} RelaySubTracker;
+
+struct _GNostrPoolMultiSub {
+    GNostrPool *pool;  /* weak ref */
+    NostrFilters *filters;  /* owned */
+    
+    /* User callbacks */
+    GNostrPoolMultiSubEventFunc event_func;
+    GNostrPoolMultiSubEoseFunc eose_func;
+    gpointer user_data;
+    GDestroyNotify destroy;
+    
+    /* Per-relay subscription trackers */
+    GPtrArray *relay_subs;  /* array of RelaySubTracker* */
+    
+    /* Track relay additions/removals */
+    gulong relay_added_handler_id;
+    gulong relay_state_changed_handler_id;
+    
+    gboolean closed;
+};
+
+static void
+relay_sub_tracker_free(RelaySubTracker *tracker)
+{
+    if (!tracker) return;
+    
+    if (tracker->subscription) {
+        /* Disconnect signal handlers */
+        if (tracker->event_handler_id > 0)
+            g_signal_handler_disconnect(tracker->subscription, tracker->event_handler_id);
+        if (tracker->eose_handler_id > 0)
+            g_signal_handler_disconnect(tracker->subscription, tracker->eose_handler_id);
+        if (tracker->closed_handler_id > 0)
+            g_signal_handler_disconnect(tracker->subscription, tracker->closed_handler_id);
+        
+        gnostr_subscription_close(tracker->subscription);
+        g_object_unref(tracker->subscription);
+    }
+    
+    g_free(tracker->relay_url);
+    g_free(tracker);
+}
+
+static void
+on_multi_sub_event(GNostrSubscription *sub,
+                   const gchar        *event_json,
+                   gpointer            user_data)
+{
+    RelaySubTracker *tracker = user_data;
+    GNostrPoolMultiSub *multi_sub = g_object_get_data(G_OBJECT(sub), "multi-sub");
+    
+    if (!multi_sub || multi_sub->closed || !multi_sub->event_func)
+        return;
+    
+    multi_sub->event_func(multi_sub, tracker->relay_url, event_json, multi_sub->user_data);
+}
+
+static void
+on_multi_sub_eose(GNostrSubscription *sub,
+                  gpointer            user_data)
+{
+    RelaySubTracker *tracker = user_data;
+    GNostrPoolMultiSub *multi_sub = g_object_get_data(G_OBJECT(sub), "multi-sub");
+    
+    if (!multi_sub || multi_sub->closed || !multi_sub->eose_func)
+        return;
+    
+    multi_sub->eose_func(multi_sub, tracker->relay_url, multi_sub->user_data);
+}
+
+static void
+on_multi_sub_closed(GNostrSubscription *sub,
+                    gpointer            user_data)
+{
+    RelaySubTracker *tracker = user_data;
+    g_debug("Multi-sub: relay subscription closed for %s", tracker->relay_url);
+}
+
+static gboolean
+multi_sub_subscribe_to_relay(GNostrPoolMultiSub *multi_sub, GNostrRelay *relay)
+{
+    if (multi_sub->closed)
+        return FALSE;
+    
+    if (!gnostr_relay_get_connected(relay))
+        return FALSE;
+    
+    const gchar *url = gnostr_relay_get_url(relay);
+    if (!url)
+        return FALSE;
+    
+    /* Check if already subscribed to this relay */
+    for (guint i = 0; i < multi_sub->relay_subs->len; i++) {
+        RelaySubTracker *existing = g_ptr_array_index(multi_sub->relay_subs, i);
+        if (g_strcmp0(existing->relay_url, url) == 0)
+            return TRUE;  /* already subscribed */
+    }
+    
+    /* Create subscription for this relay */
+    GError *error = NULL;
+    GNostrSubscription *sub = gnostr_subscription_new(relay, multi_sub->filters);
+    if (!sub) {
+        g_warning("Multi-sub: failed to create subscription for %s", url);
+        return FALSE;
+    }
+    
+    /* Store multi-sub reference in subscription for callbacks */
+    g_object_set_data(G_OBJECT(sub), "multi-sub", multi_sub);
+    
+    RelaySubTracker *tracker = g_new0(RelaySubTracker, 1);
+    tracker->relay = relay;
+    tracker->subscription = sub;
+    tracker->relay_url = g_strdup(url);
+    
+    /* Connect signal handlers */
+    tracker->event_handler_id = g_signal_connect(sub, "event",
+                                                  G_CALLBACK(on_multi_sub_event), tracker);
+    tracker->eose_handler_id = g_signal_connect(sub, "eose",
+                                                 G_CALLBACK(on_multi_sub_eose), tracker);
+    tracker->closed_handler_id = g_signal_connect(sub, "closed",
+                                                   G_CALLBACK(on_multi_sub_closed), tracker);
+    
+    /* Fire the subscription */
+    if (!gnostr_subscription_fire(sub, &error)) {
+        g_warning("Multi-sub: failed to fire subscription on %s: %s",
+                  url, error ? error->message : "unknown error");
+        g_clear_error(&error);
+        relay_sub_tracker_free(tracker);
+        return FALSE;
+    }
+    
+    g_ptr_array_add(multi_sub->relay_subs, tracker);
+    g_warning("Multi-sub: subscribed to relay %s (total: %u)", url, multi_sub->relay_subs->len);
+    
+    return TRUE;
+}
+
+static void
+on_multi_sub_relay_added(GNostrPool  *pool,
+                         GNostrRelay *relay,
+                         gpointer     user_data)
+{
+    GNostrPoolMultiSub *multi_sub = user_data;
+    
+    if (gnostr_relay_get_connected(relay)) {
+        multi_sub_subscribe_to_relay(multi_sub, relay);
+    }
+}
+
+static void
+on_multi_sub_relay_state_changed(GNostrPool       *pool,
+                                 GNostrRelay      *relay,
+                                 GNostrRelayState  new_state,
+                                 gpointer          user_data)
+{
+    GNostrPoolMultiSub *multi_sub = user_data;
+    
+    if (new_state == GNOSTR_RELAY_STATE_CONNECTED) {
+        multi_sub_subscribe_to_relay(multi_sub, relay);
+    }
+}
+
+GNostrPoolMultiSub *
+gnostr_pool_subscribe_multi(GNostrPool                   *pool,
+                            NostrFilters                 *filters,
+                            GNostrPoolMultiSubEventFunc   event_func,
+                            GNostrPoolMultiSubEoseFunc    eose_func,
+                            gpointer                      user_data,
+                            GDestroyNotify                destroy,
+                            GError                      **error)
+{
+    g_return_val_if_fail(GNOSTR_IS_POOL(pool), NULL);
+    g_return_val_if_fail(filters != NULL, NULL);
+    g_return_val_if_fail(event_func != NULL, NULL);
+    
+    GNostrPoolMultiSub *multi_sub = g_new0(GNostrPoolMultiSub, 1);
+    multi_sub->pool = pool;
+    
+    /* Deep copy filters for multi-sub lifetime */
+    multi_sub->filters = nostr_filters_new();
+    if (!multi_sub->filters) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                            "failed to allocate filters");
+        g_free(multi_sub);
+        return NULL;
+    }
+    
+    for (size_t i = 0; i < filters->count; i++) {
+        NostrFilter *filter_copy = nostr_filter_copy(&filters->filters[i]);
+        if (!filter_copy) {
+            g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                                "failed to copy filter");
+            nostr_filters_free(multi_sub->filters);
+            g_free(multi_sub);
+            return NULL;
+        }
+        if (!nostr_filters_add(multi_sub->filters, filter_copy)) {
+            nostr_filter_free(filter_copy);
+            g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                                "failed to add filter");
+            nostr_filters_free(multi_sub->filters);
+            g_free(multi_sub);
+            return NULL;
+        }
+    }
+    
+    multi_sub->event_func = event_func;
+    multi_sub->eose_func = eose_func;
+    multi_sub->user_data = user_data;
+    multi_sub->destroy = destroy;
+    multi_sub->relay_subs = g_ptr_array_new_with_free_func((GDestroyNotify)relay_sub_tracker_free);
+    multi_sub->closed = FALSE;
+    
+    /* Subscribe to all currently connected relays */
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(pool->relays));
+    guint subscribed_count = 0;
+    
+    for (guint i = 0; i < n; i++) {
+        g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(pool->relays), i);
+        if (multi_sub_subscribe_to_relay(multi_sub, relay)) {
+            subscribed_count++;
+        }
+    }
+    
+    if (subscribed_count == 0) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
+                            "no connected relays available for multi-subscription");
+        gnostr_pool_multi_sub_close(multi_sub);
+        return NULL;
+    }
+    
+    /* Watch for new relay connections */
+    multi_sub->relay_added_handler_id =
+        g_signal_connect(pool, "relay-added",
+                        G_CALLBACK(on_multi_sub_relay_added), multi_sub);
+    multi_sub->relay_state_changed_handler_id =
+        g_signal_connect(pool, "relay-state-changed",
+                        G_CALLBACK(on_multi_sub_relay_state_changed), multi_sub);
+    
+    g_debug("Multi-sub: created with %u/%u relay subscriptions", subscribed_count, n);
+    
+    return multi_sub;
+}
+
+void
+gnostr_pool_multi_sub_close(GNostrPoolMultiSub *multi_sub)
+{
+    if (!multi_sub)
+        return;
+    
+    if (multi_sub->closed)
+        return;
+    
+    multi_sub->closed = TRUE;
+    
+    /* Disconnect pool signal handlers */
+    if (multi_sub->pool) {
+        if (multi_sub->relay_added_handler_id > 0)
+            g_signal_handler_disconnect(multi_sub->pool, multi_sub->relay_added_handler_id);
+        if (multi_sub->relay_state_changed_handler_id > 0)
+            g_signal_handler_disconnect(multi_sub->pool, multi_sub->relay_state_changed_handler_id);
+    }
+    
+    /* Close all relay subscriptions */
+    if (multi_sub->relay_subs) {
+        g_debug("Multi-sub: closing %u relay subscriptions", multi_sub->relay_subs->len);
+        g_ptr_array_unref(multi_sub->relay_subs);
+        multi_sub->relay_subs = NULL;
+    }
+    
+    /* Clean up user data */
+    if (multi_sub->destroy && multi_sub->user_data) {
+        multi_sub->destroy(multi_sub->user_data);
+        multi_sub->user_data = NULL;
+    }
+    
+    /* Free filters */
+    if (multi_sub->filters) {
+        nostr_filters_free(multi_sub->filters);
+        multi_sub->filters = NULL;
+    }
+    
+    g_free(multi_sub);
+}
+
+guint
+gnostr_pool_multi_sub_get_relay_count(GNostrPoolMultiSub *multi_sub)
+{
+    g_return_val_if_fail(multi_sub != NULL, 0);
+    g_return_val_if_fail(!multi_sub->closed, 0);
+    
+    return multi_sub->relay_subs ? multi_sub->relay_subs->len : 0;
+}
+
 /* --- NIP-42 AUTH handler API (nostrc-kn38) --- */
 
 void

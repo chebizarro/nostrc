@@ -4463,20 +4463,18 @@ static void on_highlights_query_done(GObject *source, GAsyncResult *res, gpointe
   }
 }
 
-/* nostrc-38wc: Safety timeout for highlights query — cancels the GCancellable
- * if the query hasn't completed within 15 seconds. The pool query poll loop
- * has no built-in timeout, so a misbehaving relay that never sends EOSE
- * would cause the spinner to spin indefinitely. */
-#define HIGHLIGHTS_TIMEOUT_SECS 15
+/* nostrc-38wc: Removed arbitrary timeout - queries are event-driven via EOSE/CLOSED.
+ * Nostr is pub/sub, not REST. Relays signal completion via protocol messages. */
 
 static gboolean on_highlights_timeout(gpointer user_data) {
   NostrGtkProfilePane *self = (NostrGtkProfilePane *)user_data;
   if (!NOSTR_GTK_IS_PROFILE_PANE(self)) return G_SOURCE_REMOVE;
 
   self->highlights_timeout_id = 0;
-  g_debug("profile_pane: highlights query timed out after %ds", HIGHLIGHTS_TIMEOUT_SECS);
+  /* Timeout removed - queries complete via EOSE/CLOSED signals only */
 
   if (self->highlights_cancellable) {
+    /* This path should never be reached now */
     g_cancellable_cancel(self->highlights_cancellable);
   }
   return G_SOURCE_REMOVE;
@@ -4554,9 +4552,9 @@ static void load_highlights(NostrGtkProfilePane *self) {
     gnostr_pool_query_async(pool, _qf, self->highlights_cancellable, on_highlights_query_done, self);
   }
 
-  /* nostrc-38wc: Safety timeout — cancel query if relay never sends EOSE */
-  self->highlights_timeout_id = g_timeout_add_seconds(HIGHLIGHTS_TIMEOUT_SECS,
-                                                       on_highlights_timeout, self);
+  /* nostrc-38wc: No timeout - queries complete via EOSE/CLOSED signals only.
+   * Nostr is event-driven pub/sub, not REST with timeouts. */
+  self->highlights_timeout_id = 0;
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);

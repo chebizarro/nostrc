@@ -1563,6 +1563,7 @@ static void timeline_batch_complete_cb(GObject      *source_object,
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
   (void)subid;
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  g_warning("[MODEL] on_sub_timeline_batch: subid=%lu n_keys=%u", (unsigned long)subid, n_keys);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
   /* Allocate and populate batch data with snapshots of filter params */
