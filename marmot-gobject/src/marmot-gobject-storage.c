@@ -49,7 +49,12 @@ G_DEFINE_TYPE_WITH_CODE(MarmotGobjectMemoryStorage,
 static gpointer
 memory_storage_get_raw(MarmotGobjectStorage *self)
 {
-    return MARMOT_GOBJECT_MEMORY_STORAGE(self)->storage;
+    MarmotGobjectMemoryStorage *mem_storage = MARMOT_GOBJECT_MEMORY_STORAGE(self);
+    MarmotStorage *raw = mem_storage->storage;
+    /* Transfer ownership: marmot_new() will take ownership of this pointer.
+     * Set to NULL to prevent double-free in finalizer. */
+    mem_storage->storage = NULL;
+    return raw;
 }
 
 static void
@@ -62,6 +67,7 @@ static void
 marmot_gobject_memory_storage_finalize(GObject *object)
 {
     MarmotGobjectMemoryStorage *self = MARMOT_GOBJECT_MEMORY_STORAGE(object);
+    /* Only free if ownership wasn't transferred via get_raw_storage() */
     if (self->storage) {
         marmot_storage_free(self->storage);
         self->storage = NULL;
@@ -107,7 +113,12 @@ G_DEFINE_TYPE_WITH_CODE(MarmotGobjectSqliteStorage,
 static gpointer
 sqlite_storage_get_raw(MarmotGobjectStorage *self)
 {
-    return MARMOT_GOBJECT_SQLITE_STORAGE(self)->storage;
+    MarmotGobjectSqliteStorage *sql_storage = MARMOT_GOBJECT_SQLITE_STORAGE(self);
+    MarmotStorage *raw = sql_storage->storage;
+    /* Transfer ownership: marmot_new() will take ownership of this pointer.
+     * Set to NULL to prevent double-free in finalizer. */
+    sql_storage->storage = NULL;
+    return raw;
 }
 
 static void
@@ -120,6 +131,7 @@ static void
 marmot_gobject_sqlite_storage_finalize(GObject *object)
 {
     MarmotGobjectSqliteStorage *self = MARMOT_GOBJECT_SQLITE_STORAGE(object);
+    /* Only free if ownership wasn't transferred via get_raw_storage() */
     if (self->storage) {
         marmot_storage_free(self->storage);
         self->storage = NULL;
@@ -139,9 +151,14 @@ marmot_gobject_sqlite_storage_init(MarmotGobjectSqliteStorage *self)
     self->storage = NULL;
 }
 
-#define MARMOT_GOBJECT_ERROR (marmot_gobject_error_quark())
-static GQuark marmot_gobject_error_quark(void) {
-    return g_quark_from_static_string("marmot-gobject-error");
+#define MARMOT_GOBJECT_STORAGE_ERROR (marmot_gobject_storage_error_quark())
+
+typedef enum {
+    MARMOT_GOBJECT_STORAGE_ERROR_FAILED = 1,
+} MarmotGobjectStorageErrorCode;
+
+static GQuark marmot_gobject_storage_error_quark(void) {
+    return g_quark_from_static_string("marmot-gobject-storage-error");
 }
 
 MarmotGobjectSqliteStorage *
@@ -153,7 +170,8 @@ marmot_gobject_sqlite_storage_new(const gchar *path,
 
     MarmotStorage *storage = marmot_storage_sqlite_new(path, encryption_key);
     if (!storage) {
-        g_set_error(error, MARMOT_GOBJECT_ERROR, 0,
+        g_set_error(error, MARMOT_GOBJECT_STORAGE_ERROR,
+                    MARMOT_GOBJECT_STORAGE_ERROR_FAILED,
                     "Failed to create SQLite storage at %s", path);
         return NULL;
     }
