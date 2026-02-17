@@ -50,6 +50,7 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_PROTOCOL_GROUP_MISMATCH: return "protocol group ID mismatch";
 
     /* Key package */
+    case MARMOT_ERR_KEY_NOT_FOUND:           return "matching key not found";
     case MARMOT_ERR_KEY_PACKAGE:             return "key package error";
     case MARMOT_ERR_KEY_PACKAGE_IDENTITY:    return "key package identity mismatch";
     case MARMOT_ERR_IDENTITY_CHANGE:         return "identity change not allowed";
@@ -75,6 +76,14 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_EXTENSION_TYPE:          return "wrong extension type";
     case MARMOT_ERR_EXTENSION_VERSION:       return "unsupported extension version";
     case MARMOT_ERR_EXTENSION_FORMAT:        return "malformed extension data";
+
+    /* Serialization */
+    case MARMOT_ERR_DESERIALIZATION:          return "deserialization error";
+    case MARMOT_ERR_SERIALIZATION:           return "serialization error";
+
+    /* Validation */
+    case MARMOT_ERR_VALIDATION:              return "validation error";
+    case MARMOT_ERR_MLS:                     return "MLS protocol error";
 
     /* Image */
     case MARMOT_ERR_INVALID_IMAGE_HASH_LEN:  return "invalid image hash length (expected 32)";

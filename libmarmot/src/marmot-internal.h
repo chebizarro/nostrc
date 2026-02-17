@@ -50,6 +50,9 @@ int marmot_constant_time_eq(const uint8_t *a, const uint8_t *b, size_t n);
 /** Get current UNIX timestamp. */
 int64_t marmot_now(void);
 
+/** Ensure MLS identity is initialized. Returns 0 on success, -1 on error. */
+int marmot_ensure_identity(Marmot *m);
+
 #ifdef __cplusplus
 }
 #endif

@@ -17,6 +17,11 @@ configure_file(
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+pkg_check_modules(SECP256K1 REQUIRED IMPORTED_TARGET libsecp256k1)
+
+# Find libnostr and NIP-44 (sibling libraries in the nostrc tree)
+# These are expected to be available via the parent CMakeLists.txt
+# or via pkg-config when installed system-wide.
 
 # ─── Source files ─────────────────────────────────────────────────────────
 set(MARMOT_SOURCES
@@ -34,6 +39,10 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_package.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_group.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_welcome.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/credentials.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/messages.c
 )
 
 set(MARMOT_PUBLIC_HEADERS
@@ -67,7 +76,16 @@ target_link_libraries(marmot
   PUBLIC
     OpenSSL::Crypto
     PkgConfig::SODIUM
+    PkgConfig::SECP256K1
 )
+
+# Link against sibling libraries if available as targets
+if(TARGET nostr)
+  target_link_libraries(marmot PUBLIC nostr)
+endif()
+if(TARGET nip44)
+  target_link_libraries(marmot PUBLIC nip44)
+endif()
 
 # Warn on everything for development
 target_compile_options(marmot PRIVATE
@@ -171,4 +189,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_mls_welcome PRIVATE marmot)
   target_include_directories(test_mls_welcome PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_mls_welcome COMMAND test_mls_welcome)
+
+  # Test: Protocol layer (MIP-00 through MIP-03)
+  add_executable(test_protocol ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol.c)
+  target_link_libraries(test_protocol PRIVATE marmot)
+  target_include_directories(test_protocol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_protocol COMMAND test_protocol)
 endif()

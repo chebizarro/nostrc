@@ -62,6 +62,7 @@ typedef enum {
     MARMOT_ERR_PROTOCOL_GROUP_MISMATCH = -46,
 
     /* Key package errors */
+    MARMOT_ERR_KEY_NOT_FOUND            = -49,
     MARMOT_ERR_KEY_PACKAGE              = -50,
     MARMOT_ERR_KEY_PACKAGE_IDENTITY     = -51,
     MARMOT_ERR_IDENTITY_CHANGE          = -52,
@@ -89,10 +90,18 @@ typedef enum {
     MARMOT_ERR_EXTENSION_FORMAT         = -84,
 
     /* Image errors */
-    MARMOT_ERR_INVALID_IMAGE_HASH_LEN   = -90,
-    MARMOT_ERR_INVALID_IMAGE_KEY_LEN    = -91,
-    MARMOT_ERR_INVALID_IMAGE_NONCE_LEN  = -92,
-    MARMOT_ERR_INVALID_IMAGE_UPLOAD_LEN = -93,
+    MARMOT_ERR_INVALID_IMAGE_HASH_LEN   = -140,
+    MARMOT_ERR_INVALID_IMAGE_KEY_LEN    = -141,
+    MARMOT_ERR_INVALID_IMAGE_NONCE_LEN  = -142,
+    MARMOT_ERR_INVALID_IMAGE_UPLOAD_LEN = -143,
+
+    /* Serialization errors */
+    MARMOT_ERR_DESERIALIZATION           = -90,
+    MARMOT_ERR_SERIALIZATION             = -91,
+
+    /* Validation errors */
+    MARMOT_ERR_VALIDATION                = -95,
+    MARMOT_ERR_MLS                       = -96,
 
     /* Storage errors */
     MARMOT_ERR_STORAGE                  = -100,

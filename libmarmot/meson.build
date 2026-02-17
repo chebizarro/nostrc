@@ -27,6 +27,11 @@ marmot_version_h = configure_file(
 # Dependencies
 openssl_dep = dependency('openssl', required: true)
 sodium_dep = dependency('libsodium', required: true)
+secp256k1_dep = dependency('libsecp256k1', required: true)
+
+# Sibling libraries (available when built as part of nostrc)
+nostr_dep = dependency('nostr', required: false)
+nip44_dep = dependency('nip44', required: false)
 
 # Sources
 marmot_sources = files(
@@ -44,6 +49,10 @@ marmot_sources = files(
   'src/mls/mls_key_package.c',
   'src/mls/mls_group.c',
   'src/mls/mls_welcome.c',
+  'src/credentials.c',
+  'src/groups.c',
+  'src/welcome.c',
+  'src/messages.c',
 )
 
 # Public include directories
@@ -54,7 +63,7 @@ marmot_src_inc = include_directories('src')
 libmarmot = library('marmot',
   marmot_sources,
   include_directories: [marmot_inc, marmot_src_inc],
-  dependencies: [openssl_dep, sodium_dep],
+  dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep],
   install: true,
   version: marmot_version,
   soversion: marmot_version_parts[0],
@@ -64,7 +73,7 @@ libmarmot = library('marmot',
 marmot_dep = declare_dependency(
   include_directories: marmot_inc,
   link_with: libmarmot,
-  dependencies: [openssl_dep, sodium_dep],
+  dependencies: [openssl_dep, sodium_dep, secp256k1_dep],
 )
 
 # Install public headers
@@ -81,7 +90,7 @@ pkg = import('pkgconfig')
 pkg.generate(libmarmot,
   name: 'libmarmot',
   description: 'C implementation of the Marmot protocol (MLS + Nostr)',
-  requires: ['libsodium', 'openssl'],
+  requires: ['libsodium', 'openssl', 'libsecp256k1'],
 )
 
 # Tests
@@ -173,4 +182,12 @@ if get_option('tests')
     dependencies: [openssl_dep, sodium_dep],
   )
   test('marmot_mls_welcome', test_mls_welcome)
+
+  test_protocol = executable('test_protocol',
+    'tests/test_protocol.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep],
+  )
+  test('marmot_protocol', test_protocol)
 endif
