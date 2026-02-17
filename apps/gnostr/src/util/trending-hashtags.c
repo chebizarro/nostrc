@@ -233,13 +233,14 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
     g_ptr_array_add(result, g_ptr_array_index(all, i));
   }
   
-  /* Manually free items that weren't moved to result */
-  for (guint i = take; i < all->len; i++) {
-    gnostr_trending_hashtag_free(g_ptr_array_index(all, i));
+  /* Remove items from 'all' that we moved to result (without freeing them) */
+  if (take > 0) {
+    g_ptr_array_remove_range(all, 0, take);
   }
   
-  /* Free only the array structure, not the segment (segment contains pointers owned by result) */
-  g_ptr_array_free(all, FALSE);
+  /* Now 'all' only contains items we didn't take - set free function and unref to free them */
+  g_ptr_array_set_free_func(all, (GDestroyNotify)gnostr_trending_hashtag_free);
+  g_ptr_array_unref(all);
 
   g_debug("trending: computed %u hashtags from %d events", result->len, got);
   return result;
