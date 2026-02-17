@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "marmot-gobject-welcome.h"
+#include "marmot-gobject-1.0/marmot-gobject-welcome.h"
 
 enum {
     PROP_WEL_0,

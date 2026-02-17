@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "marmot-gobject-group.h"
+#include "marmot-gobject-1.0/marmot-gobject-group.h"
 #include <string.h>
 
 enum {

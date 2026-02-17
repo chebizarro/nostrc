@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "marmot-gobject-storage.h"
+#include "marmot-gobject-1.0/marmot-gobject-storage.h"
 #include <marmot/marmot.h>
 #include <marmot/marmot-storage.h>
 

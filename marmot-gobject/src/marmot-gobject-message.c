@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "marmot-gobject-message.h"
+#include "marmot-gobject-1.0/marmot-gobject-message.h"
 
 enum {
     PROP_MSG_0,

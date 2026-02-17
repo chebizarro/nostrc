@@ -8,7 +8,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "marmot-gobject-client.h"
+#include "marmot-gobject-1.0/marmot-gobject-client.h"
 #include <marmot/marmot.h>
 #include <string.h>
 #include <stdio.h>

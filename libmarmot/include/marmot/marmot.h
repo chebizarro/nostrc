@@ -30,6 +30,31 @@ extern "C" {
 #endif
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * Media Encryption (MIP-04)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Encrypt media file for sharing in an MLS group.
+ * Derives encryption key from group's exporter secret.
+ */
+MarmotError marmot_encrypt_media(Marmot *m,
+                                  const MarmotGroupId *mls_group_id,
+                                  const uint8_t *file_data, size_t file_len,
+                                  const char *mime_type,
+                                  const char *filename,
+                                  MarmotEncryptedMedia *result);
+
+/**
+ * Decrypt media file encrypted for an MLS group.
+ * Derives decryption key from group's exporter secret.
+ */
+MarmotError marmot_decrypt_media(Marmot *m,
+                                  const MarmotGroupId *mls_group_id,
+                                  const uint8_t *encrypted_data, size_t enc_len,
+                                  const MarmotImetaInfo *imeta,
+                                  uint8_t **plaintext_out, size_t *plaintext_len);
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Lifecycle
  * ══════════════════════════════════════════════════════════════════════════ */
 
