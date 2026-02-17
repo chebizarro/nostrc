@@ -507,54 +507,79 @@ gnostr_tray_icon_new(GtkApplication *app)
 #ifdef HAVE_DBUSMENU
   /* Create menu using libdbusmenu-glib (GTK-independent) */
   self->root_menu = dbusmenu_menuitem_new();
+  
+  if (!self->root_menu) {
+    g_warning("tray-icon: Failed to create root menu item, continuing without menu");
+  } else {
+    /* Show/Hide Window menu item */
+    self->item_show_hide = dbusmenu_menuitem_new();
+    if (self->item_show_hide) {
+      dbusmenu_menuitem_property_set(self->item_show_hide,
+                                     DBUSMENU_MENUITEM_PROP_LABEL,
+                                     "Hide Window");
+      dbusmenu_menuitem_child_append(self->root_menu, self->item_show_hide);
+      g_signal_connect(self->item_show_hide, DBUSMENU_MENUITEM_SIGNAL_ITEM_ACTIVATED,
+                       G_CALLBACK(on_menu_show_hide), self);
+    }
 
-  /* Show/Hide Window menu item */
-  self->item_show_hide = dbusmenu_menuitem_new();
-  dbusmenu_menuitem_property_set(self->item_show_hide,
-                                 DBUSMENU_MENUITEM_PROP_LABEL,
-                                 "Hide Window");
-  dbusmenu_menuitem_child_append(self->root_menu, self->item_show_hide);
-  g_signal_connect(self->item_show_hide, DBUSMENU_MENUITEM_SIGNAL_ITEM_ACTIVATED,
-                   G_CALLBACK(on_menu_show_hide), self);
+    /* Separator before relay status */
+    DbusmenuMenuitem *separator1 = dbusmenu_menuitem_new();
+    if (separator1) {
+      dbusmenu_menuitem_property_set(separator1,
+                                     DBUSMENU_MENUITEM_PROP_TYPE,
+                                     DBUSMENU_CLIENT_TYPES_SEPARATOR);
+      dbusmenu_menuitem_child_append(self->root_menu, separator1);
+    }
 
-  /* Separator before relay status */
-  DbusmenuMenuitem *separator1 = dbusmenu_menuitem_new();
-  dbusmenu_menuitem_property_set(separator1,
-                                 DBUSMENU_MENUITEM_PROP_TYPE,
-                                 DBUSMENU_CLIENT_TYPES_SEPARATOR);
-  dbusmenu_menuitem_child_append(self->root_menu, separator1);
+    /* Relay status menu item (not clickable, just informational) */
+    self->item_relay_status = dbusmenu_menuitem_new();
+    if (self->item_relay_status) {
+      dbusmenu_menuitem_property_set(self->item_relay_status,
+                                     DBUSMENU_MENUITEM_PROP_LABEL,
+                                     "Relays: Disconnected");
+      dbusmenu_menuitem_property_set_bool(self->item_relay_status,
+                                          DBUSMENU_MENUITEM_PROP_ENABLED,
+                                          FALSE);
+      dbusmenu_menuitem_child_append(self->root_menu, self->item_relay_status);
+    }
 
-  /* Relay status menu item (not clickable, just informational) */
-  self->item_relay_status = dbusmenu_menuitem_new();
-  dbusmenu_menuitem_property_set(self->item_relay_status,
-                                 DBUSMENU_MENUITEM_PROP_LABEL,
-                                 "Relays: Disconnected");
-  dbusmenu_menuitem_property_set_bool(self->item_relay_status,
-                                      DBUSMENU_MENUITEM_PROP_ENABLED,
-                                      FALSE);
-  dbusmenu_menuitem_child_append(self->root_menu, self->item_relay_status);
+    /* Separator before Quit */
+    DbusmenuMenuitem *separator2 = dbusmenu_menuitem_new();
+    if (separator2) {
+      dbusmenu_menuitem_property_set(separator2,
+                                     DBUSMENU_MENUITEM_PROP_TYPE,
+                                     DBUSMENU_CLIENT_TYPES_SEPARATOR);
+      dbusmenu_menuitem_child_append(self->root_menu, separator2);
+    }
 
-  /* Separator before Quit */
-  DbusmenuMenuitem *separator2 = dbusmenu_menuitem_new();
-  dbusmenu_menuitem_property_set(separator2,
-                                 DBUSMENU_MENUITEM_PROP_TYPE,
-                                 DBUSMENU_CLIENT_TYPES_SEPARATOR);
-  dbusmenu_menuitem_child_append(self->root_menu, separator2);
+    /* Quit menu item */
+    DbusmenuMenuitem *item_quit = dbusmenu_menuitem_new();
+    if (item_quit) {
+      dbusmenu_menuitem_property_set(item_quit,
+                                     DBUSMENU_MENUITEM_PROP_LABEL,
+                                     "Quit");
+      dbusmenu_menuitem_child_append(self->root_menu, item_quit);
+      g_signal_connect(item_quit, DBUSMENU_MENUITEM_SIGNAL_ITEM_ACTIVATED,
+                       G_CALLBACK(on_menu_quit), self);
+    }
 
-  /* Quit menu item */
-  DbusmenuMenuitem *item_quit = dbusmenu_menuitem_new();
-  dbusmenu_menuitem_property_set(item_quit,
-                                 DBUSMENU_MENUITEM_PROP_LABEL,
-                                 "Quit");
-  dbusmenu_menuitem_child_append(self->root_menu, item_quit);
-  g_signal_connect(item_quit, DBUSMENU_MENUITEM_SIGNAL_ITEM_ACTIVATED,
-                   G_CALLBACK(on_menu_quit), self);
-
-  /* Create DBus menu server */
-  self->menu_server = dbusmenu_server_new("/org/gnostr/client/menu");
-  dbusmenu_server_set_root(self->menu_server, self->root_menu);
-
-  g_debug("tray-icon: Menu server created at /org/gnostr/client/menu");
+    /* Create DBus menu server */
+    self->menu_server = dbusmenu_server_new("/org/gnostr/client/menu");
+    if (self->menu_server && self->root_menu) {
+      dbusmenu_server_set_root(self->menu_server, self->root_menu);
+      g_debug("tray-icon: Menu server created at /org/gnostr/client/menu");
+    } else {
+      g_warning("tray-icon: Failed to create menu server or root menu");
+      if (self->menu_server) {
+        g_object_unref(self->menu_server);
+        self->menu_server = NULL;
+      }
+      if (self->root_menu) {
+        g_object_unref(self->root_menu);
+        self->root_menu = NULL;
+      }
+    }
+  }
 #endif
 
   /* Own a unique bus name for this instance */
