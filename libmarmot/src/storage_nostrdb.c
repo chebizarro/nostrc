@@ -875,7 +875,7 @@ ndb_group_relays(void *ctx, const MarmotGroupId *gid,
                 char *saveptr = NULL;
                 char *tok = strtok_r(str, "\t", &saveptr);
                 while (tok && idx < count) {
-                    (*out)[idx].url = strdup(tok);
+                    (*out)[idx].relay_url = strdup(tok);
                     idx++;
                     tok = strtok_r(NULL, "\t", &saveptr);
                 }
@@ -1128,7 +1128,7 @@ ndb_mls_delete(void *ctx, const char *label,
 static bool ndb_is_persistent(void *ctx) { (void)ctx; return true; }
 
 static void
-ndb_destroy(void *ctx)
+ndb_storage_destroy(void *ctx)
 {
     NdbCtx *nc = ctx;
     if (nc->mls_env) mdb_env_close(nc->mls_env);
@@ -1219,7 +1219,7 @@ marmot_storage_nostrdb_new(void *ndb_handle, const char *mls_state_dir)
     s->mls_load = ndb_mls_load;
     s->mls_delete = ndb_mls_delete;
     s->is_persistent = ndb_is_persistent;
-    s->destroy = ndb_destroy;
+    s->destroy = ndb_storage_destroy;
 
     return s;
 }

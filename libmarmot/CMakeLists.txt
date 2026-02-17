@@ -94,9 +94,12 @@ target_include_directories(marmot
 
 target_link_libraries(marmot
   PUBLIC
+    OpenSSL::SSL
     OpenSSL::Crypto
     PkgConfig::SODIUM
     PkgConfig::SECP256K1
+    nostr
+    nostr_nip44_core
 )
 
 if(SQLITE3_FOUND)
@@ -145,11 +148,12 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/marmot.pc
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
 )
 
-install(EXPORT marmot-targets
-  FILE marmot-targets.cmake
-  NAMESPACE Marmot::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/marmot
-)
+# Commented out to allow building without export dependency issues
+# install(EXPORT marmot-targets
+#   FILE marmot-targets.cmake
+#   NAMESPACE Marmot::
+#   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/marmot
+# )
 
 # ─── Tests ───────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
@@ -244,11 +248,17 @@ if(BUILD_TESTING)
   add_test(NAME marmot_test_rfc9420_vectors COMMAND test_rfc9420_vectors)
 
   # Test: MDK interoperability
-  add_executable(test_interop ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_interop.c)
-  target_link_libraries(test_interop PRIVATE marmot ${OPENSSL_LIBRARIES} sodium)
+  add_executable(test_marmot_interop 
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_interop.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/mdk_vector_loader.c
+  )
+  target_link_libraries(test_marmot_interop PRIVATE marmot ${OPENSSL_LIBRARIES} PkgConfig::SODIUM)
   if(TARGET secp256k1)
-    target_link_libraries(test_interop PRIVATE secp256k1)
+    target_link_libraries(test_marmot_interop PRIVATE secp256k1)
   endif()
-  target_include_directories(test_interop PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  add_test(NAME marmot_test_interop COMMAND test_interop)
+  target_include_directories(test_marmot_interop PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+  )
+  add_test(NAME marmot_test_interop COMMAND test_marmot_interop)
 endif()

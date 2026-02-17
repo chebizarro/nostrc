@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 /* Forward declaration from credentials.c */
 extern MarmotError marmot_parse_key_package_event(const char *event_json,
@@ -377,7 +378,7 @@ marmot_create_group(Marmot *m,
         result->welcome_rumor_jsons[i] = build_welcome_rumor(
             add_result.welcome_data, add_result.welcome_len,
             NULL, /* kp_event_id — would need to extract from event JSON */
-            config->relay_urls, config->relay_count);
+            (const char **)config->relay_urls, config->relay_count);
 
         /* Keep the last commit (for groups with >1 new member, we only
          * publish the final commit) */

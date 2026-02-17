@@ -869,7 +869,7 @@ sql_group_relays(void *ctx, const MarmotGroupId *gid,
             arr = new_arr;
         }
         const char *url = (const char *)sqlite3_column_text(stmt, 0);
-        arr[count].url = url ? strdup(url) : NULL;
+        arr[count].relay_url = url ? strdup(url) : NULL;
         count++;
     }
 

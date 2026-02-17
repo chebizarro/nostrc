@@ -192,11 +192,12 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/marmot-gobject-1.0.pc
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
 )
 
-install(EXPORT marmot-gobject-targets
-  FILE marmot-gobject-targets.cmake
-  NAMESPACE MarmotGobject::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/marmot-gobject
-)
+# Commented out to allow building without export dependency issues
+# install(EXPORT marmot-gobject-targets
+#   FILE marmot-gobject-targets.cmake
+#   NAMESPACE MarmotGobject::
+#   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/marmot-gobject
+# )
 
 # ─── Tests ───────────────────────────────────────────────────────────────
 if(BUILD_TESTING)

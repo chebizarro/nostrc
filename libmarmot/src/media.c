@@ -16,6 +16,8 @@
 
 #include <sodium.h>
 #include <openssl/evp.h>
+#include <openssl/kdf.h>
+#include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <string.h>
 #include <stdlib.h>
