@@ -77,19 +77,17 @@ gnostr_stall_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_debug("NIP-15: Failed to parse stall JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -97,12 +95,10 @@ gnostr_stall_parse(const gchar *event_json)
 
   /* Check kind */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (kind != NIP15_KIND_STALL) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -196,7 +192,6 @@ gnostr_stall_parse(const gchar *event_json)
     }
   }
 
-  g_object_unref(parser);
 
   /* Validate: must have stall_id */
   if (!stall->stall_id || !*stall->stall_id) {
@@ -223,7 +218,7 @@ gnostr_stall_build_tags(const GnostrStall *stall)
 {
   if (!stall || !stall->stall_id) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* d tag - stall ID */
@@ -297,14 +292,12 @@ gnostr_stall_build_tags(const GnostrStall *stall)
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
@@ -396,19 +389,17 @@ gnostr_product_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_debug("NIP-15: Failed to parse product JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -416,12 +407,10 @@ gnostr_product_parse(const gchar *event_json)
 
   /* Check kind */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (kind != NIP15_KIND_PRODUCT) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -539,7 +528,6 @@ gnostr_product_parse(const gchar *event_json)
     }
   }
 
-  g_object_unref(parser);
 
   /* Validate: must have product_id */
   if (!product->product_id || !*product->product_id) {
@@ -566,7 +554,7 @@ gnostr_product_build_tags(const GnostrProduct *product)
 {
   if (!product || !product->product_id) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* d tag - product ID */
@@ -670,14 +658,12 @@ gnostr_product_build_tags(const GnostrProduct *product)
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }

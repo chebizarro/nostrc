@@ -229,7 +229,7 @@ gnostr_comment_build_tags(const GnostrComment *comment)
     }
 
     /* nostrc-3nj: Use GNostrJsonBuilder for JSON construction */
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     if (!builder) return NULL;
 
     gnostr_json_builder_begin_array(builder);
@@ -290,7 +290,6 @@ gnostr_comment_build_tags(const GnostrComment *comment)
     gnostr_json_builder_end_array(builder);
 
     gchar *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }

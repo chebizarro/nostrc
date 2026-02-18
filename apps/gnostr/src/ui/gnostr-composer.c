@@ -254,7 +254,7 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
   GError *error = NULL;
 
   /* Check result BEFORE accessing user_data - if cancelled, composer may be disposed */
-  GFile *file = gtk_file_dialog_open_finish(dialog, res, &error);
+  g_autoptr(GFile) file = gtk_file_dialog_open_finish(dialog, res, &error);
 
   if (error) {
     if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED) &&
@@ -269,17 +269,14 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
 
   /* Now safe to access user_data since dialog wasn't cancelled/dismissed */
   if (user_data == NULL) {
-    g_object_unref(file);
     return;
   }
   NostrGtkComposer *self = (NostrGtkComposer*)user_data;
   if (!NOSTR_GTK_IS_COMPOSER(self)) {
-    g_object_unref(file);
     return;
   }
 
   char *path = g_file_get_path(file);
-  g_object_unref(file);
 
   if (!path) {
     g_warning("Could not get file path");

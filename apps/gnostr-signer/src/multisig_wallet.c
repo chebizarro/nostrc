@@ -164,7 +164,7 @@ MultisigCosigner *multisig_cosigner_new_remote(const gchar *bunker_uri,
   gchar *pk_hex = g_strndup(pk_start, pk_len);
 
   /* Convert hex to npub */
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
   g_free(pk_hex);
 
   if (!nip19) {
@@ -174,7 +174,6 @@ MultisigCosigner *multisig_cosigner_new_remote(const gchar *bunker_uri,
 
   const gchar *npub = gnostr_nip19_get_bech32(nip19);
   MultisigCosigner *cs = multisig_cosigner_new(npub, label, COSIGNER_TYPE_REMOTE_NIP46);
-  g_object_unref(nip19);
 
   if (cs) {
     cs->bunker_uri = g_strdup(bunker_uri);
@@ -316,12 +315,11 @@ static void load_storage(void) {
     return;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, contents, length, &error)) {
     g_warning("multisig: failed to parse storage: %s", error ? error->message : "unknown");
     g_clear_error(&error);
     g_free(contents);
-    g_object_unref(parser);
     return;
   }
 
@@ -329,7 +327,6 @@ static void load_storage(void) {
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
     g_warning("multisig: invalid storage format");
     g_free(contents);
-    g_object_unref(parser);
     return;
   }
 
@@ -381,7 +378,6 @@ static void load_storage(void) {
   }
 
   g_free(contents);
-  g_object_unref(parser);
   g_debug("multisig: loaded %u wallets from storage",
           g_hash_table_size(storage->wallets));
 }
@@ -389,7 +385,7 @@ static void load_storage(void) {
 static void save_storage(void) {
   if (!storage || !storage->storage_path) return;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   json_builder_set_member_name(builder, "version");
@@ -471,7 +467,7 @@ static void save_storage(void) {
   json_builder_end_array(builder);
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_pretty(gen, TRUE);
   json_generator_set_root(gen, json_builder_get_root(builder));
 
@@ -481,8 +477,6 @@ static void save_storage(void) {
     g_clear_error(&error);
   }
 
-  g_object_unref(gen);
-  g_object_unref(builder);
   storage->dirty = FALSE;
 
   g_debug("multisig: saved %u wallets to storage",

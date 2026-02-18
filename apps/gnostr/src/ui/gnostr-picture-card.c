@@ -1028,10 +1028,9 @@ load_image(GnostrPictureCard *self) {
   gtk_widget_set_visible(self->image_picture, TRUE);
 #else
   /* Fallback: try GFile (requires GVfs for HTTP URIs) */
-  GFile *file = g_file_new_for_uri(url);
+  g_autoptr(GFile) file = g_file_new_for_uri(url);
   gtk_picture_set_file(GTK_PICTURE(self->image_picture), file);
   gtk_widget_set_visible(self->image_picture, TRUE);
-  g_object_unref(file);
 #endif
 }
 

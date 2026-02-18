@@ -219,7 +219,7 @@ void gnostr_cache_prune_init(void)
   g_message("cache_prune: initializing cache pruning system");
 
   /* Try to get settings from GSettings */
-  GSettings *settings = NULL;
+  g_autoptr(GSettings) settings = NULL;
   gboolean prune_on_startup = TRUE;
   int image_max_mb = 500;
   int ndb_max_mb = 1024;
@@ -236,7 +236,6 @@ void gnostr_cache_prune_init(void)
         prune_on_startup = g_settings_get_boolean(settings, "cache-prune-on-startup");
         image_max_mb = g_settings_get_int(settings, "image-cache-max-mb");
         ndb_max_mb = g_settings_get_int(settings, "ndb-cache-max-mb");
-        g_object_unref(settings);
       }
     } else {
       g_debug("cache_prune: GSettings schema not available, using defaults");

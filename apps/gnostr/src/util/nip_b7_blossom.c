@@ -54,20 +54,18 @@ gnostr_blob_parse_response(const gchar *json_data)
   if (!json_data || !*json_data)
     return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_data, -1, &error)) {
     g_debug("Failed to parse blob JSON: %s", error->message);
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
     g_debug("Blob JSON root is not an object");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -106,7 +104,6 @@ gnostr_blob_parse_response(const gchar *json_data)
     blob->created_at = json_object_get_int_member(obj, "created");
   }
 
-  g_object_unref(parser);
 
   /* Validate we at least got a sha256 */
   if (!blob->sha256) {
@@ -124,20 +121,18 @@ gnostr_blob_parse_list_response(const gchar *json_data)
   if (!json_data || !*json_data)
     return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_data, -1, &error)) {
     g_debug("Failed to parse blob list JSON: %s", error->message);
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
     g_debug("Blob list JSON root is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -189,7 +184,6 @@ gnostr_blob_parse_list_response(const gchar *json_data)
     }
   }
 
-  g_object_unref(parser);
   return blobs;
 }
 
@@ -242,20 +236,18 @@ gnostr_blob_server_list_parse(const gchar *tags_json)
   if (!tags_json || !*tags_json)
     return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_debug("Failed to parse tags JSON: %s", error->message);
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
     g_debug("Tags JSON root is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -302,7 +294,6 @@ gnostr_blob_server_list_parse(const gchar *tags_json)
     }
   }
 
-  g_object_unref(parser);
 
   /* Convert to server list struct */
   GnostrBlobServerList *list = g_new0(GnostrBlobServerList, 1);
@@ -325,20 +316,18 @@ gnostr_blob_server_list_parse_event(const gchar *event_json)
   if (!event_json || !*event_json)
     return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_debug("Failed to parse event JSON: %s", error->message);
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
     g_debug("Event JSON root is not an object");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -349,24 +338,20 @@ gnostr_blob_server_list_parse_event(const gchar *event_json)
     gint64 kind = json_object_get_int_member(event, "kind");
     if (kind != NIPB7_KIND_BLOB_SERVERS) {
       g_debug("Event kind %" G_GINT64_FORMAT " is not blob server list (10063)", kind);
-      g_object_unref(parser);
       return NULL;
     }
   }
 
   /* Get tags array */
   if (!json_object_has_member(event, "tags")) {
-    g_object_unref(parser);
     return gnostr_blob_server_list_new();  /* Empty list */
   }
 
   /* Serialize tags back to JSON for parsing */
   JsonNode *tags_node = json_object_get_member(event, "tags");
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, tags_node);
   gchar *tags_json = json_generator_to_data(gen, NULL);
-  g_object_unref(gen);
-  g_object_unref(parser);
 
   GnostrBlobServerList *list = gnostr_blob_server_list_parse(tags_json);
   g_free(tags_json);
@@ -465,7 +450,7 @@ gnostr_blob_server_list_contains(const GnostrBlobServerList *list,
 gchar *
 gnostr_blob_server_list_to_tags_json(const GnostrBlobServerList *list)
 {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   if (list && list->servers) {
@@ -481,12 +466,10 @@ gnostr_blob_server_list_to_tags_json(const GnostrBlobServerList *list)
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, json_builder_get_root(builder));
   gchar *json = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json;
 }

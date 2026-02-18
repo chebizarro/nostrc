@@ -104,7 +104,7 @@ static void on_avatar_stream_ready(GObject *source, GAsyncResult *result, gpoint
 /* Callback when file input stream is opened */
 static void on_avatar_file_opened(GObject *source, GAsyncResult *result, gpointer user_data) {
   AvatarLoadContext *ctx = user_data;
-  GFile *file = G_FILE(source);
+  g_autoptr(GFile) file = G_FILE(source);
   GError *error = NULL;
 
   /* Check if the widget was destroyed while opening */
@@ -169,10 +169,9 @@ static void load_avatar_async(GtkImage *avatar, const gchar *url) {
   g_signal_connect(avatar, "destroy", G_CALLBACK(on_avatar_widget_destroy), ctx->cancellable);
 
   /* Open the URL as a GFile (GIO supports http/https) */
-  GFile *file = g_file_new_for_uri(url);
+  g_autoptr(GFile) file = g_file_new_for_uri(url);
   g_file_read_async(file, G_PRIORITY_LOW, ctx->cancellable,
                     on_avatar_file_opened, ctx);
-  g_object_unref(file);
 }
 
 struct _SheetUserList {

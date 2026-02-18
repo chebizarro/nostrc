@@ -48,25 +48,22 @@ static void fuzz_event_free(FuzzNostrEvent *event) {
 static FuzzNostrEvent *parse_nostr_event(const char *json_str) {
     if (!json_str || !*json_str) return NULL;
 
-    JsonParser *parser = json_parser_new();
+    g_autoptr(JsonParser) parser = json_parser_new();
     GError *error = NULL;
 
     if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
         if (error) g_error_free(error);
-        g_object_unref(parser);
         return NULL;
     }
 
     JsonNode *root = json_parser_get_root(parser);
     if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-        g_object_unref(parser);
         return NULL;
     }
 
     JsonObject *obj = json_node_get_object(root);
     FuzzNostrEvent *event = calloc(1, sizeof(FuzzNostrEvent));
     if (!event) {
-        g_object_unref(parser);
         return NULL;
     }
 
@@ -118,16 +115,14 @@ static FuzzNostrEvent *parse_nostr_event(const char *json_str) {
                 JsonNode *tag_node = json_array_get_element(tags_array, i);
                 if (tag_node && JSON_NODE_HOLDS_ARRAY(tag_node)) {
                     /* Convert tag array to string representation */
-                    JsonGenerator *gen = json_generator_new();
+                    g_autoptr(JsonGenerator) gen = json_generator_new();
                     json_generator_set_root(gen, tag_node);
                     event->tags[i] = json_generator_to_data(gen, NULL);
-                    g_object_unref(gen);
                 }
             }
         }
     }
 
-    g_object_unref(parser);
     return event;
 }
 

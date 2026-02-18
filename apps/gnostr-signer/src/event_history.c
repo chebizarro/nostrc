@@ -304,13 +304,12 @@ gn_event_history_load(GnEventHistory *self)
   }
 
   /* Load JSON file */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_file(parser, self->path, &error)) {
     g_warning("event_history: failed to load %s: %s", self->path, error->message);
     g_clear_error(&error);
-    g_object_unref(parser);
     self->loaded = TRUE;
     return FALSE;
   }
@@ -318,7 +317,6 @@ gn_event_history_load(GnEventHistory *self)
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
     g_warning("event_history: invalid format in %s", self->path);
-    g_object_unref(parser);
     self->loaded = TRUE;
     return FALSE;
   }
@@ -346,7 +344,6 @@ gn_event_history_load(GnEventHistory *self)
     g_ptr_array_add(self->entries, entry);
   }
 
-  g_object_unref(parser);
   self->loaded = TRUE;
   self->dirty = FALSE;
 
@@ -359,7 +356,7 @@ gn_event_history_save(GnEventHistory *self)
 {
   g_return_val_if_fail(GN_IS_EVENT_HISTORY(self), FALSE);
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   for (guint i = 0; i < self->entries->len; i++) {
@@ -413,7 +410,7 @@ gn_event_history_save(GnEventHistory *self)
   json_builder_end_array(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, TRUE);
 
@@ -428,8 +425,6 @@ gn_event_history_save(GnEventHistory *self)
     g_debug("event_history: saved %u entries to %s", self->entries->len, self->path);
   }
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return success;
 }
@@ -671,7 +666,7 @@ gn_event_history_export_json(GnEventHistory *self,
 
   GPtrArray *to_export = entries ? entries : self->entries;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   for (guint i = 0; i < to_export->len; i++) {
@@ -720,14 +715,12 @@ gn_event_history_export_json(GnEventHistory *self,
   json_builder_end_array(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, pretty);
 
   gchar *json_str = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json_str;
 }

@@ -89,17 +89,15 @@ void relay_store_load(RelayStore *rs) {
     return;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, contents, -1, NULL)) {
     g_free(contents);
-    g_object_unref(parser);
     return;
   }
   g_free(contents);
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root_node)) {
-    g_object_unref(parser);
     return;
   }
 
@@ -132,13 +130,12 @@ void relay_store_load(RelayStore *rs) {
     g_ptr_array_add(rs->relays, entry);
   }
 
-  g_object_unref(parser);
 }
 
 void relay_store_save(RelayStore *rs) {
   if (!rs) return;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   for (guint i = 0; i < rs->relays->len; i++) {
@@ -157,14 +154,12 @@ void relay_store_save(RelayStore *rs) {
   json_builder_end_array(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_pretty(gen, TRUE);
   json_generator_set_root(gen, root);
   gchar *json_str = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
   json_node_unref(root);
-  g_object_unref(builder);
 
   GError *err = NULL;
   if (!g_file_set_contents(rs->config_path, json_str, -1, &err)) {
@@ -252,7 +247,7 @@ guint relay_store_count(RelayStore *rs) {
 gchar *relay_store_build_event_json(RelayStore *rs) {
   if (!rs) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   json_builder_set_member_name(builder, "kind");
@@ -291,13 +286,11 @@ gchar *relay_store_build_event_json(RelayStore *rs) {
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
   json_node_unref(root);
-  g_object_unref(builder);
 
   return result;
 }
@@ -305,15 +298,13 @@ gchar *relay_store_build_event_json(RelayStore *rs) {
 gboolean relay_store_parse_event(RelayStore *rs, const gchar *event_json) {
   if (!rs || !event_json) return FALSE;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -321,18 +312,15 @@ gboolean relay_store_parse_event(RelayStore *rs, const gchar *event_json) {
 
   if (!json_object_has_member(root, "kind") ||
       json_object_get_int_member(root, "kind") != 10002) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   if (!json_object_has_member(root, "tags")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *tags_node = json_object_get_member(root, "tags");
   if (!JSON_NODE_HOLDS_ARRAY(tags_node)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -373,7 +361,6 @@ gboolean relay_store_parse_event(RelayStore *rs, const gchar *event_json) {
     relay_store_add(rs, url, read, write);
   }
 
-  g_object_unref(parser);
   return TRUE;
 }
 

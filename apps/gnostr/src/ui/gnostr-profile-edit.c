@@ -278,7 +278,7 @@ char *gnostr_profile_edit_get_profile_json(GnostrProfileEdit *self) {
   g_return_val_if_fail(GNOSTR_IS_PROFILE_EDIT(self), NULL);
 
   /* Build profile JSON from form fields */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* Helper macro to add field if non-empty */
@@ -321,7 +321,6 @@ char *gnostr_profile_edit_get_profile_json(GnostrProfileEdit *self) {
 
   gnostr_json_builder_end_object(builder);
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 
@@ -459,7 +458,7 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   /* Build unsigned kind 0 event JSON with GNostrJsonBuilder */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -504,7 +503,6 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data) {
   gnostr_json_builder_end_object(builder); /* end event */
 
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to build event JSON");

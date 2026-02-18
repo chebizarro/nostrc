@@ -249,20 +249,18 @@ gnostr_code_snippet_parse(const char *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_warning("NIP-C0: Failed to parse event JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!root_node || !JSON_NODE_HOLDS_OBJECT(root_node)) {
     g_debug("NIP-C0: Invalid JSON structure");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -271,14 +269,12 @@ gnostr_code_snippet_parse(const char *event_json)
   /* Verify kind */
   if (!json_object_has_member(root, "kind")) {
     g_debug("NIP-C0: Missing kind field");
-    g_object_unref(parser);
     return NULL;
   }
 
   gint64 kind = json_object_get_int_member(root, "kind");
   if (kind != NIPC0_KIND_SNIPPET) {
     g_debug("NIP-C0: Not a code snippet event (kind=%lld)", (long long)kind);
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -364,7 +360,6 @@ gnostr_code_snippet_parse(const char *event_json)
     snippet->tag_count = t_idx;
   }
 
-  g_object_unref(parser);
 
   g_debug("NIP-C0: Parsed snippet '%s' (lang=%s, %zu tags)",
           snippet->title ? snippet->title : "(untitled)",
@@ -379,7 +374,7 @@ gnostr_code_snippet_build_tags(const GnostrCodeSnippet *snippet)
 {
   if (!snippet) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* Add title tag if present */
@@ -434,15 +429,13 @@ gnostr_code_snippet_build_tags(const GnostrCodeSnippet *snippet)
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
 
   gchar *result = json_generator_to_data(gen, NULL);
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
@@ -461,7 +454,7 @@ gnostr_code_snippet_build_event_json(const char *code,
     return NULL;
   }
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Add kind */
@@ -537,15 +530,13 @@ gnostr_code_snippet_build_event_json(const char *code,
   json_builder_end_array(builder);  /* End tags array */
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
 
   gchar *result = json_generator_to_data(gen, NULL);
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   g_debug("NIP-C0: Built snippet event (title=%s, lang=%s)",
           title ? title : "(none)",

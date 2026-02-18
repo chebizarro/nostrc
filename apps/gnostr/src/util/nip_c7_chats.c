@@ -312,7 +312,7 @@ gnostr_chat_room_create_tags(const GnostrChatRoom *room)
 {
   if (!room || !room->room_id) return NULL;
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_array(builder);
 
   /* d tag - room identifier (required) */
@@ -372,7 +372,6 @@ gnostr_chat_room_create_tags(const GnostrChatRoom *room)
 
   gnostr_json_builder_end_array(builder);
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }
@@ -713,7 +712,7 @@ gnostr_c7_chat_message_create_tags(const GnostrChatMessage *msg)
 {
   if (!msg || !msg->room_id) return NULL;
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_array(builder);
 
   /* d tag - room identifier (required) */
@@ -760,7 +759,6 @@ gnostr_c7_chat_message_create_tags(const GnostrChatMessage *msg)
 
   gnostr_json_builder_end_array(builder);
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

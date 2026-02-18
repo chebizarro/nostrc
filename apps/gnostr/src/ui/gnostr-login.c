@@ -1374,10 +1374,9 @@ static void on_connect_bunker_clicked(GtkButton *btn, gpointer user_data) {
 /* ---- Utilities ---- */
 
 static void save_npub_to_settings(const char *npub) {
-  GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
+  g_autoptr(GSettings) settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
   if (settings) {
     g_settings_set_string(settings, SETTINGS_KEY_CURRENT_NPUB, npub ? npub : "");
-    g_object_unref(settings);
   }
 }
 
@@ -1386,7 +1385,7 @@ static void save_nip46_credentials_to_settings(const char *client_secret_hex,
                                                 const char *signer_pubkey_hex,
                                                 char **relays,
                                                 size_t n_relays) {
-  GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
+  g_autoptr(GSettings) settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
   if (!settings) return;
 
   g_settings_set_string(settings, "nip46-client-secret",
@@ -1409,7 +1408,6 @@ static void save_nip46_credentials_to_settings(const char *client_secret_hex,
             signer_pubkey_hex ? signer_pubkey_hex : "(null)",
             n_relays);
 
-  g_object_unref(settings);
 }
 
 static void show_success(GnostrLogin *self, const char *npub) {

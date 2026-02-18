@@ -419,13 +419,12 @@ void gnostr_dm_file_encrypt_and_upload_async(const char *file_path,
   }
 
   /* Read the file */
-  GFile *file = g_file_new_for_path(file_path);
+  g_autoptr(GFile) file = g_file_new_for_path(file_path);
   GError *error = NULL;
   char *contents = NULL;
   gsize length = 0;
 
   if (!g_file_load_contents(file, NULL, &contents, &length, NULL, &error)) {
-    g_object_unref(file);
     GError *err = g_error_new(GNOSTR_DM_FILE_ERROR,
                                GNOSTR_DM_FILE_ERROR_READ_FAILED,
                                "Failed to read file: %s", error->message);
@@ -434,7 +433,6 @@ void gnostr_dm_file_encrypt_and_upload_async(const char *file_path,
     g_error_free(err);
     return;
   }
-  g_object_unref(file);
 
   /* Create attachment structure */
   GnostrDmFileAttachment *attachment = g_new0(GnostrDmFileAttachment, 1);
@@ -775,7 +773,7 @@ char *gnostr_dm_file_build_rumor_json(const char *sender_pubkey,
   char *key_b64 = to_base64(attachment->key, GNOSTR_DM_FILES_AES_KEY_SIZE);
   char *nonce_b64 = to_base64(attachment->nonce, GNOSTR_DM_FILES_AES_NONCE_SIZE);
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_object(builder);
 
@@ -887,12 +885,10 @@ char *gnostr_dm_file_build_rumor_json(const char *sender_pubkey,
 
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, json_builder_get_root(builder));
   char *json_str = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
   g_free(key_b64);
   g_free(nonce_b64);
 
@@ -902,15 +898,13 @@ char *gnostr_dm_file_build_rumor_json(const char *sender_pubkey,
 GnostrDmFileMessage *gnostr_dm_file_parse_message(const char *event_json) {
   if (!event_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -919,7 +913,6 @@ GnostrDmFileMessage *gnostr_dm_file_parse_message(const char *event_json) {
   /* Verify kind 15 */
   if (!json_object_has_member(obj, "kind") ||
       json_object_get_int_member(obj, "kind") != 15) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -995,6 +988,5 @@ GnostrDmFileMessage *gnostr_dm_file_parse_message(const char *event_json) {
     }
   }
 
-  g_object_unref(parser);
   return msg;
 }

@@ -173,7 +173,7 @@ void gnostr_load_index_relays_into(GPtrArray *out)
   GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.gnostr.gnostr", TRUE);
   if (!schema) return;
 
-  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.gnostr");
   g_settings_schema_unref(schema);
 
   gchar **arr = g_settings_get_strv(settings, "index-relays");
@@ -186,7 +186,6 @@ void gnostr_load_index_relays_into(GPtrArray *out)
     g_strfreev(arr);
   }
 
-  g_object_unref(settings);
   g_debug("search: loaded %u index relays", out->len);
 }
 
@@ -199,15 +198,13 @@ static GnostrSearchResult *parse_profile_event(const char *json, gboolean from_n
 {
   if (!json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, json, -1, NULL)) {
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -216,7 +213,6 @@ static GnostrSearchResult *parse_profile_event(const char *json, gboolean from_n
   /* Verify kind 0 */
   if (!json_object_has_member(event, "kind") ||
       json_object_get_int_member(event, "kind") != 0) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -226,7 +222,6 @@ static GnostrSearchResult *parse_profile_event(const char *json, gboolean from_n
     pubkey = json_object_get_string_member(event, "pubkey");
   }
   if (!pubkey || strlen(pubkey) != 64) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -250,7 +245,7 @@ static GnostrSearchResult *parse_profile_event(const char *json, gboolean from_n
 
   /* Parse profile content */
   if (content && *content) {
-    JsonParser *content_parser = json_parser_new();
+    g_autoptr(JsonParser) content_parser = json_parser_new();
     if (json_parser_load_from_data(content_parser, content, -1, NULL)) {
       JsonNode *content_root = json_parser_get_root(content_parser);
       if (JSON_NODE_HOLDS_OBJECT(content_root)) {
@@ -273,10 +268,8 @@ static GnostrSearchResult *parse_profile_event(const char *json, gboolean from_n
         }
       }
     }
-    g_object_unref(content_parser);
   }
 
-  g_object_unref(parser);
   return result;
 }
 

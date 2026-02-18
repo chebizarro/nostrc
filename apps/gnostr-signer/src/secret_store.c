@@ -93,18 +93,16 @@ static gchar *npub_to_fingerprint(const gchar *npub) {
     return NULL;
   }
 
-  GNostrNip19 *nip19 = gnostr_nip19_decode(npub, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(npub, NULL);
   if (!nip19) return NULL;
 
   const gchar *pubkey_hex = gnostr_nip19_get_pubkey(nip19);
   if (!pubkey_hex || strlen(pubkey_hex) < 8) {
-    g_object_unref(nip19);
     return NULL;
   }
 
   /* Use first 8 hex chars (4 bytes) */
   gchar *fp = g_strndup(pubkey_hex, 8);
-  g_object_unref(nip19);
   return fp;
 }
 
@@ -209,14 +207,13 @@ SecretStoreResult secret_store_add(const gchar *key,
   }
 
   /* Derive public key and npub via GNostrKeys */
-  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_hex(sk_hex, NULL);
   if (!keys) {
     gn_secure_strfree(sk_hex);
     return SECRET_STORE_ERR_BACKEND;
   }
 
   gchar *npub = gnostr_keys_get_npub(keys);
-  g_object_unref(keys);
 
   if (!npub) {
     gn_secure_strfree(sk_hex);
@@ -605,7 +602,7 @@ SecretStoreResult secret_store_generate(const gchar *label,
   }
 
   /* Derive npub to return via GNostrKeys */
-  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_hex(sk_hex, NULL);
   gn_secure_strfree(sk_hex);
 
   if (!keys) {
@@ -613,7 +610,6 @@ SecretStoreResult secret_store_generate(const gchar *label,
   }
 
   gchar *npub = gnostr_keys_get_npub(keys);
-  g_object_unref(keys);
 
   if (!npub) {
     return SECRET_STORE_ERR_BACKEND;
@@ -752,13 +748,12 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
 
   /* Convert hex to nsec via GNostrNip19 */
   if (is_hex_64(secret)) {
-    GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(secret, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_nsec(secret, NULL);
     if (nip19) {
       const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
       if (nsec_str) {
         *out_nsec = gn_secure_strdup(nsec_str);
       }
-      g_object_unref(nip19);
     }
   } else if (g_str_has_prefix(secret, "nsec1")) {
     /* Return nsec in secure memory */
@@ -797,13 +792,12 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
     if (len == 32 && bytes) {
       /* Convert raw bytes to hex, then encode via GNostrNip19 */
       gchar *sk_hex = bin_to_hex(bytes, 32);
-      GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
+      g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
       if (nip19) {
         const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
         if (nsec_str) {
           *out_nsec = g_strdup(nsec_str);
         }
-        g_object_unref(nip19);
       }
       memset(sk_hex, 0, 64);
       g_free(sk_hex);

@@ -425,12 +425,11 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
   }
 
   /* Parse event JSON */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
   if (!json_parser_load_from_data(parser, json, json_len, &error)) {
     g_warning("Failed to parse article JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     free(json);
     show_error(self, "Failed to parse article data");
     return;
@@ -439,7 +438,6 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
   JsonNode *root = json_parser_get_root(parser);
   JsonObject *obj = json_node_get_object(root);
   if (!obj) {
-    g_object_unref(parser);
     free(json);
     show_error(self, "Invalid article data");
     return;
@@ -459,13 +457,12 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
   GnostrArticleMeta *meta = NULL;
   if (json_object_has_member(obj, "tags")) {
     JsonArray *tags = json_object_get_array_member(obj, "tags");
-    JsonGenerator *gen = json_generator_new();
+    g_autoptr(JsonGenerator) gen = json_generator_new();
     JsonNode *tags_node = json_node_new(JSON_NODE_ARRAY);
     json_node_set_array(tags_node, tags);
     json_generator_set_root(gen, tags_node);
     char *tags_json = json_generator_to_data(gen, NULL);
     json_node_unref(tags_node);
-    g_object_unref(gen);
 
     meta = gnostr_article_parse_tags(tags_json);
     g_free(tags_json);
@@ -552,7 +549,6 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
 
   if (meta)
     gnostr_article_meta_free(meta);
-  g_object_unref(parser);
   free(json);
 
   show_content(self);
