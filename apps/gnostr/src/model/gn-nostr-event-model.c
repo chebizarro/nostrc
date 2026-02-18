@@ -2801,68 +2801,31 @@ void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, con
 void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
-  /* Stop drain timer to avoid concurrent mutations during clear */
-  remove_drain_timer(self);
-
-  /* Clear insertion buffer pipeline state */
-  if (self->insertion_buffer)
-    g_array_set_size(self->insertion_buffer, 0);
-  if (self->insertion_key_set)
-    g_hash_table_remove_all(self->insertion_key_set);
-  self->backpressure_active = FALSE;
-  self->unseen_count = 0;
-  self->evict_defer_counter = 0;
-
   guint old_size = self->notes->len;
-  if (old_size == 0) {
-    /* Still clear caches to be safe */
-    g_hash_table_remove_all(self->item_cache);
-    g_queue_clear(self->cache_lru);
-    g_hash_table_remove_all(self->thread_info);
-    if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
-    if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
-    if (self->skip_animation_keys) g_hash_table_remove_all(self->skip_animation_keys);
-    return;
-  }
 
-  /* nostrc-atomic-replace: Remove items in small batches from the tail to avoid
-   * the pathological GTK disposal cascade where hundreds of complex widget trees
-   * are torn down in one stack frame, causing heap corruption in CSS node
-   * finalization. Each batch removes at most CLEAR_BATCH_SIZE items and emits
-   * a separate items_changed signal, giving GTK's list item manager a chance
-   * to process each batch cleanly.
+  /* nostrc-atomic-replace: Use silent reset — NO items_changed signal.
    *
-   * Note: For refresh paths (clear + re-populate), use reset_internal_state_silent()
-   * with a single atomic items_changed(0, old, new) instead — see on_refresh_async_done. */
-#define CLEAR_BATCH_SIZE 20
-  while (self->notes->len > 0) {
-    guint remaining = self->notes->len;
-    guint batch = (remaining > CLEAR_BATCH_SIZE) ? CLEAR_BATCH_SIZE : remaining;
-    guint start_pos = remaining - batch;
+   * Emitting items_changed(0, N, 0) triggers GTK's GtkListItemManager to
+   * synchronously dispose all list item widgets in one stack frame. During
+   * mass disposal, CSS node finalization corrupts the heap's free list
+   * (tiny_free_list_remove_ptr: Internal invariant broken) because sibling
+   * widgets share CSS node parent chains and one finalization corrupts the
+   * linked list another is still traversing.
+   *
+   * The fix: clear silently and let the NEXT operation reconcile GTK state:
+   * - refresh paths emit items_changed(0, 0, new_size) → only additions
+   * - model destruction → GTK tears down the ListView naturally
+   * - new model set → GTK replaces all items via selection model change
+   *
+   * This is safe because:
+   * 1. get_n_items() returns 0 immediately (notes array is empty)
+   * 2. get_item() returns NULL for all positions (correct for empty model)
+   * 3. GTK's ListView will reconcile on the next items_changed or model swap
+   */
+  reset_internal_state_silent(self);
 
-    /* Collect keys for cache cleanup */
-    for (guint i = start_pos; i < remaining; i++) {
-      NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-      uint64_t k = entry->note_key;
-      g_hash_table_remove(self->note_key_set, &k);
-      cache_lru_remove_key(self, k);
-      g_hash_table_remove(self->thread_info, &k);
-      g_hash_table_remove(self->item_cache, &k);
-      g_hash_table_remove(self->skip_animation_keys, &k);
-    }
-
-    g_array_set_size(self->notes, start_pos);
-    g_list_model_items_changed(G_LIST_MODEL(self), start_pos, batch, 0);
-  }
-#undef CLEAR_BATCH_SIZE
-
-  /* Clear remaining caches */
-  g_hash_table_remove_all(self->item_cache);
-  g_queue_clear(self->cache_lru);
-  if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
-  if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
-
-  g_debug("[MODEL] Cleared %u items (batched)", old_size);
+  if (old_size > 0)
+    g_debug("[MODEL] Cleared %u items (silent)", old_size);
 }
 
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self) {
