@@ -639,7 +639,7 @@ update_relay_status_label(GnostrTrayIcon *self)
   if (!self->item_relay_status)
     return;
 
-  gchar *label = NULL;
+  g_autofree gchar *label = NULL;
   switch (self->relay_state) {
     case GNOSTR_TRAY_RELAY_CONNECTED:
       label = g_strdup_printf("Relays: %d/%d connected",
@@ -665,7 +665,6 @@ update_relay_status_label(GnostrTrayIcon *self)
   dbusmenu_menuitem_property_set(self->item_relay_status,
                                  DBUSMENU_MENUITEM_PROP_LABEL,
                                  label);
-  g_free(label);
 }
 
 static void

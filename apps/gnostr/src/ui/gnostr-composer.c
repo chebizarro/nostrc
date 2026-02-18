@@ -200,9 +200,8 @@ static void on_blossom_upload_complete(GnostrBlossomBlob *blob, GError *error, g
   if (error) {
     g_warning("Blossom upload failed: %s", error->message);
     /* Show error toast via main window toast overlay */
-    char *toast_msg = g_strdup_printf("Upload failed: %s", error->message);
+    g_autofree char *toast_msg = g_strdup_printf("Upload failed: %s", error->message);
     composer_show_toast(self, toast_msg);
-    g_free(toast_msg);
     return;
   }
 
@@ -541,10 +540,9 @@ static void on_draft_saved(GnostrDrafts *drafts, gboolean success,
     composer_show_toast(self, "Draft saved");
     g_signal_emit(self, signals[SIGNAL_DRAFT_SAVED], 0);
   } else {
-    char *msg = g_strdup_printf("Failed to save draft: %s",
+    g_autofree char *msg = g_strdup_printf("Failed to save draft: %s",
                                  error_message ? error_message : "unknown error");
     composer_show_toast(self, msg);
-    g_free(msg);
   }
 }
 
@@ -855,10 +853,9 @@ void nostr_gtk_composer_set_reply_context(NostrGtkComposer *self,
 
   /* Update reply indicator if present */
   if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
-    char *label = g_strdup_printf("Replying to %s",
+    g_autofree char *label = g_strdup_printf("Replying to %s",
                                    reply_to_display_name ? reply_to_display_name : "@user");
     gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
-    g_free(label);
   }
   /* Show the reply indicator box */
   if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
@@ -936,10 +933,9 @@ void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
 
   /* Update indicator to show we're quoting */
   if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
-    char *label = g_strdup_printf("Quoting %s",
+    g_autofree char *label = g_strdup_printf("Quoting %s",
                                    quoted_author_display_name ? quoted_author_display_name : "@user");
     gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
-    g_free(label);
   }
   /* Show the indicator box */
   if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
@@ -954,9 +950,8 @@ void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
   /* Pre-fill text with nostr: URI at the end */
   if (nostr_uri && self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
     GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
-    char *prefill = g_strdup_printf("\n\n%s", nostr_uri);
+    g_autofree char *prefill = g_strdup_printf("\n\n%s", nostr_uri);
     gtk_text_buffer_set_text(buf, prefill, -1);
-    g_free(prefill);
     /* Move cursor to the start for user to type their comment */
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buf, &start);
@@ -1138,10 +1133,9 @@ void nostr_gtk_composer_set_comment_context(NostrGtkComposer *self,
 
   /* Update indicator to show we're commenting */
   if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
-    char *label = g_strdup_printf("Commenting on %s",
+    g_autofree char *label = g_strdup_printf("Commenting on %s",
                                    display_name ? display_name : "@user");
     gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
-    g_free(label);
   }
   /* Show the indicator box */
   if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {

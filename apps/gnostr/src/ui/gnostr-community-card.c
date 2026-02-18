@@ -156,24 +156,21 @@ static void
 update_stats_display(GnostrCommunityCard *self)
 {
     if (GTK_IS_LABEL(self->lbl_members)) {
-        char *text = g_strdup_printf(g_dngettext(NULL, "%u member", "%u members",
+        g_autofree char *text = g_strdup_printf(g_dngettext(NULL, "%u member", "%u members",
                                                   self->member_count), self->member_count);
         gtk_label_set_text(GTK_LABEL(self->lbl_members), text);
-        g_free(text);
     }
 
     if (GTK_IS_LABEL(self->lbl_posts)) {
-        char *text = g_strdup_printf(g_dngettext(NULL, "%u post", "%u posts",
+        g_autofree char *text = g_strdup_printf(g_dngettext(NULL, "%u post", "%u posts",
                                                   self->post_count), self->post_count);
         gtk_label_set_text(GTK_LABEL(self->lbl_posts), text);
-        g_free(text);
     }
 
     if (GTK_IS_LABEL(self->lbl_moderators)) {
-        char *text = g_strdup_printf(g_dngettext(NULL, "%u moderator", "%u moderators",
+        g_autofree char *text = g_strdup_printf(g_dngettext(NULL, "%u moderator", "%u moderators",
                                                   self->moderator_count), self->moderator_count);
         gtk_label_set_text(GTK_LABEL(self->lbl_moderators), text);
-        g_free(text);
     }
 }
 
@@ -437,9 +434,8 @@ gnostr_community_card_set_community(GnostrCommunityCard *self,
 
     /* Set initials */
     if (GTK_IS_LABEL(self->image_initials)) {
-        char *initials = get_initials(display_name);
+        g_autofree char *initials = get_initials(display_name);
         gtk_label_set_text(GTK_LABEL(self->image_initials), initials);
-        g_free(initials);
     }
 
     /* Set description */
@@ -455,10 +451,9 @@ gnostr_community_card_set_community(GnostrCommunityCard *self,
     /* Set rules */
     if (GTK_IS_LABEL(self->lbl_rules)) {
         if (community->rules && *community->rules) {
-            char *rules_text = g_strdup_printf(_("Rules: %s"), community->rules);
+            g_autofree char *rules_text = g_strdup_printf(_("Rules: %s"), community->rules);
             gtk_label_set_text(GTK_LABEL(self->lbl_rules), rules_text);
             gtk_widget_set_visible(self->lbl_rules, TRUE);
-            g_free(rules_text);
         } else {
             gtk_widget_set_visible(self->lbl_rules, FALSE);
         }

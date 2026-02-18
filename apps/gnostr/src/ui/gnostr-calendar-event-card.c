@@ -201,9 +201,8 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
     self->d_tag, self->pubkey_hex, (gint)self->event_type, NULL, NULL);
 
   if (n19) {
-    char *uri = g_strdup_printf("nostr:%s", gnostr_nip19_get_bech32(n19));
+    g_autofree char *uri = g_strdup_printf("nostr:%s", gnostr_nip19_get_bech32(n19));
     g_signal_emit(self, signals[SIGNAL_SHARE_EVENT], 0, uri);
-    g_free(uri);
   }
 }
 
@@ -214,11 +213,9 @@ static void on_open_map_clicked(GtkButton *btn, gpointer user_data) {
   const gchar *location = gtk_label_get_text(GTK_LABEL(self->lbl_location));
   if (location && *location) {
     /* URL-encode the location for OpenStreetMap search */
-    gchar *encoded = g_uri_escape_string(location, NULL, TRUE);
-    gchar *url = g_strdup_printf("https://www.openstreetmap.org/search?query=%s", encoded);
+    g_autofree gchar *encoded = g_uri_escape_string(location, NULL, TRUE);
+    g_autofree gchar *url = g_strdup_printf("https://www.openstreetmap.org/search?query=%s", encoded);
     g_signal_emit(self, signals[SIGNAL_OPEN_URL], 0, url);
-    g_free(url);
-    g_free(encoded);
   }
 }
 
@@ -676,11 +673,10 @@ void gnostr_calendar_event_card_set_event(GnostrCalendarEventCard *self,
     }
 
     for (gsize i = 0; i < event->hashtags_count && event->hashtags[i]; i++) {
-      gchar *tag_text = g_strdup_printf("#%s", event->hashtags[i]);
+      g_autofree gchar *tag_text = g_strdup_printf("#%s", event->hashtags[i]);
       GtkWidget *tag_label = gtk_label_new(tag_text);
       gtk_widget_add_css_class(tag_label, "hashtag");
       gtk_flow_box_append(GTK_FLOW_BOX(self->hashtags_box), tag_label);
-      g_free(tag_text);
     }
     gtk_widget_set_visible(self->hashtags_box, TRUE);
   } else {
@@ -784,10 +780,9 @@ void gnostr_calendar_event_card_add_participant(GnostrCalendarEventCard *self,
   /* Check if we've reached max visible */
   if (self->participants_count >= MAX_VISIBLE_PARTICIPANTS) {
     self->participants_count++;
-    gchar *more_text = g_strdup_printf(_("and %u more..."), self->participants_count - MAX_VISIBLE_PARTICIPANTS);
+    g_autofree gchar *more_text = g_strdup_printf(_("and %u more..."), self->participants_count - MAX_VISIBLE_PARTICIPANTS);
     gtk_label_set_text(GTK_LABEL(self->lbl_more_participants), more_text);
     gtk_widget_set_visible(self->lbl_more_participants, TRUE);
-    g_free(more_text);
     return;
   }
 

@@ -124,10 +124,9 @@ static void add_hashtag(GnostrArticleReader *self, const char *tag) {
   /* nostrc-rdam: Escape tag content to prevent Pango markup injection.
    * Hashtag strings come from untrusted NIP-23 event "t" tags. */
   char *escaped = g_markup_escape_text(tag, -1);
-  char *markup = g_strdup_printf("<small>#%s</small>", escaped);
+  g_autofree char *markup = g_strdup_printf("<small>#%s</small>", escaped);
   g_free(escaped);
   gtk_label_set_markup(GTK_LABEL(label), markup);
-  g_free(markup);
   gtk_widget_add_css_class(label, "dim-label");
   gtk_flow_box_append(GTK_FLOW_BOX(self->hashtags_flow), label);
   gtk_widget_set_visible(self->hashtags_flow, TRUE);
@@ -166,9 +165,8 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
                                             self->pubkey_hex,
                                             self->d_tag, NULL);
   if (naddr) {
-    char *uri = g_strdup_printf("nostr:%s", naddr);
+    g_autofree char *uri = g_strdup_printf("nostr:%s", naddr);
     g_signal_emit(self, signals[SIGNAL_SHARE_ARTICLE], 0, uri);
-    g_free(uri);
     g_free(naddr);
   }
 }
@@ -182,9 +180,8 @@ static void on_open_external_clicked(GtkButton *btn, gpointer user_data) {
                                             self->pubkey_hex,
                                             self->d_tag, NULL);
   if (naddr) {
-    char *url = g_strdup_printf("https://habla.news/a/%s", naddr);
+    g_autofree char *url = g_strdup_printf("https://habla.news/a/%s", naddr);
     g_signal_emit(self, signals[SIGNAL_OPEN_URL], 0, url);
-    g_free(url);
     g_free(naddr);
   }
 }

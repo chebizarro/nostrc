@@ -737,9 +737,8 @@ void gnostr_torrent_card_set_author(GnostrTorrentCard *self,
   gtk_label_set_text(GTK_LABEL(self->lbl_author_name),
     (display_name && *display_name) ? display_name : (handle ? handle : _("Anonymous")));
 
-  gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
+  g_autofree gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
   gtk_label_set_text(GTK_LABEL(self->lbl_author_handle), handle_str);
-  g_free(handle_str);
 
   set_avatar_initials(self, display_name, handle);
 
@@ -777,9 +776,8 @@ void gnostr_torrent_card_add_file(GnostrTorrentCard *self,
     child = gtk_widget_get_next_sibling(child);
   }
 
-  gchar *count_str = g_strdup_printf(g_dngettext(NULL, "%d file", "%d files", count), count);
+  g_autofree gchar *count_str = g_strdup_printf(g_dngettext(NULL, "%d file", "%d files", count), count);
   gtk_label_set_text(GTK_LABEL(self->lbl_file_count), count_str);
-  g_free(count_str);
 
   /* Update total size */
   if (size >= 0) {
@@ -859,9 +857,8 @@ void gnostr_torrent_card_add_reference(GnostrTorrentCard *self,
   gtk_button_set_child(GTK_BUTTON(btn), box);
 
   if (url) {
-    gchar *tooltip = g_strdup_printf("%s: %s", prefix, value);
+    g_autofree gchar *tooltip = g_strdup_printf("%s: %s", prefix, value);
     gtk_widget_set_tooltip_text(btn, tooltip);
-    g_free(tooltip);
 
     g_object_set_data_full(G_OBJECT(btn), "reference-url", url, g_free);
     g_signal_connect(btn, "clicked", G_CALLBACK(on_reference_clicked), self);

@@ -208,9 +208,8 @@ static void update_time_display(GnostrPollCard *self) {
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   gint64 remaining = self->end_time - now;
 
-  gchar *time_str = format_time_remaining(remaining);
+  g_autofree gchar *time_str = format_time_remaining(remaining);
   gtk_label_set_text(GTK_LABEL(self->time_label), time_str);
-  g_free(time_str);
 
   if (remaining <= 0) {
     gtk_widget_add_css_class(self->time_label, "poll-closed");
@@ -299,18 +298,16 @@ static void update_results_display(GnostrPollCard *self) {
 
       /* Show vote count */
       if (GTK_IS_LABEL(count_label)) {
-        gchar *count_str = g_strdup_printf("%u", opt->vote_count);
+        g_autofree gchar *count_str = g_strdup_printf("%u", opt->vote_count);
         gtk_label_set_text(GTK_LABEL(count_label), count_str);
         gtk_widget_set_visible(count_label, TRUE);
-        g_free(count_str);
       }
 
       /* Show percentage */
       if (GTK_IS_LABEL(percent_label)) {
-        gchar *percent_str = g_strdup_printf("%d%%", percent);
+        g_autofree gchar *percent_str = g_strdup_printf("%d%%", percent);
         gtk_label_set_text(GTK_LABEL(percent_label), percent_str);
         gtk_widget_set_visible(percent_label, TRUE);
-        g_free(percent_str);
       }
     } else {
       /* Hide results */
@@ -328,10 +325,9 @@ static void update_results_display(GnostrPollCard *self) {
 
   /* Update total vote count label */
   if (GTK_IS_LABEL(self->vote_count_label)) {
-    gchar *count_str = g_strdup_printf(g_dngettext(NULL, "%u vote", "%u votes",
+    g_autofree gchar *count_str = g_strdup_printf(g_dngettext(NULL, "%u vote", "%u votes",
                                         self->total_votes), self->total_votes);
     gtk_label_set_text(GTK_LABEL(self->vote_count_label), count_str);
-    g_free(count_str);
   }
 
   /* Update vote button visibility and sensitivity */
@@ -727,9 +723,8 @@ void gnostr_poll_card_set_poll(GnostrPollCard *self,
 
   /* Update creation timestamp display */
   if (GTK_IS_LABEL(self->created_at_label)) {
-    gchar *ts = format_timestamp(created_at);
+    g_autofree gchar *ts = format_timestamp(created_at);
     gtk_label_set_text(GTK_LABEL(self->created_at_label), ts);
-    g_free(ts);
   }
 }
 
@@ -747,9 +742,8 @@ void gnostr_poll_card_set_author(GnostrPollCard *self,
     if (display_name && *display_name) {
       gtk_label_set_text(GTK_LABEL(self->author_name_label), display_name);
     } else if (pubkey_hex && strlen(pubkey_hex) >= 8) {
-      gchar *truncated = g_strdup_printf("%.8s...", pubkey_hex);
+      g_autofree gchar *truncated = g_strdup_printf("%.8s...", pubkey_hex);
       gtk_label_set_text(GTK_LABEL(self->author_name_label), truncated);
-      g_free(truncated);
     } else {
       gtk_label_set_text(GTK_LABEL(self->author_name_label), _("Anonymous"));
     }

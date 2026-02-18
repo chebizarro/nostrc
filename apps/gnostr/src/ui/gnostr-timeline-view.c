@@ -751,7 +751,7 @@ static void on_note_card_zap_requested_relay(NostrGtkNoteCardRow *row, const cha
   GnostrZapDialog *dialog = gnostr_zap_dialog_new(parent);
 
   /* Look up display name from profile cache, fall back to npub prefix */
-  gchar *display_name = NULL;
+  g_autofree gchar *display_name = NULL;
   GnostrProfileMeta *profile = gnostr_profile_provider_get(pubkey_hex);
   if (profile) {
     /* Prefer display_name, fall back to name */
@@ -776,7 +776,6 @@ static void on_note_card_zap_requested_relay(NostrGtkNoteCardRow *row, const cha
   }
 
   gnostr_zap_dialog_set_recipient(dialog, pubkey_hex, display_name, lud16);
-  g_free(display_name);
 
   /* Set the event being zapped */
   gnostr_zap_dialog_set_event(dialog, id_hex, 1);  /* kind 1 = text note */
@@ -1744,7 +1743,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     nostr_gtk_note_card_row_prepare_for_bind(NOSTR_GTK_NOTE_CARD_ROW(row));
 
     /* Use pubkey prefix as fallback if no profile info available */
-    gchar *display_fallback = NULL;
+    g_autofree gchar *display_fallback = NULL;
     if (!display && !handle && pubkey && strlen(pubkey) >= 8) {
       display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
@@ -2037,9 +2036,8 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
             if (orig_evt) nostr_event_free(orig_evt);
           } else {
             /* Original note not in local storage - request embed fetch */
-            gchar *nostr_uri = g_strdup_printf("nostr:note1%s", reposted_id);
+            g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", reposted_id);
             g_signal_emit_by_name(row, "request-embed", nostr_uri);
-            g_free(nostr_uri);
           }
           g_free(reposted_id);
         }
@@ -2158,7 +2156,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                        G_CALLBACK(on_event_item_profile_changed), item);
     }
 
-    g_free(display_fallback);
     /* request-embed signal connected early (before content setting) — see above. */
   }
 

@@ -332,9 +332,8 @@ void gnostr_highlight_card_set_highlight(GnostrHighlightCard *self,
   if (GTK_IS_LABEL(self->highlighted_text)) {
     if (highlighted_text && *highlighted_text) {
       gchar *escaped = g_markup_escape_text(highlighted_text, -1);
-      gchar *markup = g_strdup_printf("<i>\"%s\"</i>", escaped);
+      g_autofree gchar *markup = g_strdup_printf("<i>\"%s\"</i>", escaped);
       gtk_label_set_markup(GTK_LABEL(self->highlighted_text), markup);
-      g_free(markup);
       g_free(escaped);
     } else {
       gtk_label_set_text(GTK_LABEL(self->highlighted_text), _("(empty highlight)"));
@@ -357,10 +356,9 @@ void gnostr_highlight_card_set_highlight(GnostrHighlightCard *self,
   if (GTK_IS_LABEL(self->comment_label)) {
     if (comment && *comment) {
       gchar *escaped = g_markup_escape_text(comment, -1);
-      gchar *markup = g_strdup_printf("<b>Note:</b> %s", escaped);
+      g_autofree gchar *markup = g_strdup_printf("<b>Note:</b> %s", escaped);
       gtk_label_set_markup(GTK_LABEL(self->comment_label), markup);
       gtk_widget_set_visible(self->comment_label, TRUE);
-      g_free(markup);
       g_free(escaped);
     } else {
       gtk_widget_set_visible(self->comment_label, FALSE);
@@ -398,9 +396,8 @@ void gnostr_highlight_card_set_source_note(GnostrHighlightCard *self,
 
   if (GTK_IS_LABEL(self->source_link)) {
     if (source_event_id && strlen(source_event_id) >= 8) {
-      gchar *truncated = g_strdup_printf("From note: %.8s...", source_event_id);
+      g_autofree gchar *truncated = g_strdup_printf("From note: %.8s...", source_event_id);
       gtk_label_set_text(GTK_LABEL(self->source_link), truncated);
-      g_free(truncated);
     } else {
       gtk_label_set_text(GTK_LABEL(self->source_link), _("From a note"));
     }
@@ -433,9 +430,8 @@ void gnostr_highlight_card_set_source_article(GnostrHighlightCard *self,
     if (a_tag) {
       gchar **parts = g_strsplit(a_tag, ":", 3);
       if (parts && parts[2] && *parts[2]) {
-        gchar *text = g_strdup_printf("From article: %s", parts[2]);
+        g_autofree gchar *text = g_strdup_printf("From article: %s", parts[2]);
         gtk_label_set_text(GTK_LABEL(self->source_link), text);
-        g_free(text);
       } else {
         gtk_label_set_text(GTK_LABEL(self->source_link), _("From an article"));
       }
@@ -470,9 +466,8 @@ void gnostr_highlight_card_set_source_url(GnostrHighlightCard *self,
       GUri *uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
       if (uri) {
         const char *host = g_uri_get_host(uri);
-        gchar *text = g_strdup_printf("From: %s", host ? host : url);
+        g_autofree gchar *text = g_strdup_printf("From: %s", host ? host : url);
         gtk_label_set_text(GTK_LABEL(self->source_link), text);
-        g_free(text);
         g_uri_unref(uri);
       } else {
         gtk_label_set_text(GTK_LABEL(self->source_link), url);
@@ -495,9 +490,8 @@ void gnostr_highlight_card_set_highlighter(GnostrHighlightCard *self,
     if (display_name && *display_name) {
       gtk_label_set_text(GTK_LABEL(self->highlighter_name), display_name);
     } else if (pubkey_hex && strlen(pubkey_hex) >= 8) {
-      gchar *truncated = g_strdup_printf("%.8s...", pubkey_hex);
+      g_autofree gchar *truncated = g_strdup_printf("%.8s...", pubkey_hex);
       gtk_label_set_text(GTK_LABEL(self->highlighter_name), truncated);
-      g_free(truncated);
     }
   }
 
@@ -524,7 +518,7 @@ void gnostr_highlight_card_set_author(GnostrHighlightCard *self,
 
   if (GTK_IS_LABEL(self->author_label)) {
     if (display_name && *display_name) {
-      gchar *text = g_strdup_printf("by %s", display_name);
+      g_autofree gchar *text = g_strdup_printf("by %s", display_name);
       gtk_label_set_text(GTK_LABEL(self->author_label), text);
       gtk_widget_set_visible(self->author_label, TRUE);
 
@@ -536,13 +530,10 @@ void gnostr_highlight_card_set_author(GnostrHighlightCard *self,
       gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(author_click), GDK_BUTTON_PRIMARY);
       g_signal_connect(author_click, "released", G_CALLBACK(on_author_clicked), self);
       gtk_widget_add_controller(self->author_label, GTK_EVENT_CONTROLLER(author_click));
-
-      g_free(text);
     } else if (pubkey_hex && strlen(pubkey_hex) >= 8) {
-      gchar *text = g_strdup_printf("by %.8s...", pubkey_hex);
+      g_autofree gchar *text = g_strdup_printf("by %.8s...", pubkey_hex);
       gtk_label_set_text(GTK_LABEL(self->author_label), text);
       gtk_widget_set_visible(self->author_label, TRUE);
-      g_free(text);
     } else {
       gtk_widget_set_visible(self->author_label, FALSE);
     }

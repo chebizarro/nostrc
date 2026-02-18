@@ -764,7 +764,7 @@ update_status_label(GnostrChessGameView *self)
     gboolean is_check = engine ? chess_engine_is_check(engine) : FALSE;
 
     const gchar *turn = is_white ? "White" : "Black";
-    gchar *status;
+    g_autofree gchar *status = NULL;
 
     if (!is_human) {
         /* AI's turn */
@@ -776,7 +776,6 @@ update_status_label(GnostrChessGameView *self)
     }
 
     gtk_label_set_text(GTK_LABEL(self->status_label), status);
-    g_free(status);
 }
 
 /**
@@ -806,13 +805,12 @@ add_move_to_list(GnostrChessGameView *self, const gchar *san, gint move_number)
         gtk_widget_set_margin_bottom(row_box, 2);
 
         /* Move number */
-        gchar *num_text = g_strdup_printf("%d.", move_number);
+        g_autofree gchar *num_text = g_strdup_printf("%d.", move_number);
         GtkWidget *num_label = gtk_label_new(num_text);
         gtk_widget_add_css_class(num_label, "chess-move-number");
         gtk_widget_set_size_request(num_label, 24, -1);
         gtk_label_set_xalign(GTK_LABEL(num_label), 1.0);
         gtk_box_append(GTK_BOX(row_box), num_label);
-        g_free(num_text);
 
         /* White move pill */
         GtkWidget *white_pill = create_move_pill(san, TRUE);
@@ -1242,7 +1240,7 @@ gnostr_chess_game_view_load_game(GnostrChessGameView *self,
     }
 
     /* Update status label with game info */
-    gchar *status;
+    g_autofree gchar *status = NULL;
     if (game->result_string && game->result_string[0] != '*') {
         if (g_strcmp0(game->result_string, "1-0") == 0) {
             status = g_strdup_printf("White wins - %s vs %s",
@@ -1269,7 +1267,6 @@ gnostr_chess_game_view_load_game(GnostrChessGameView *self,
     }
 
     gtk_label_set_text(GTK_LABEL(self->status_label), status);
-    g_free(status);
 
     /* Disable game controls when viewing */
     gtk_widget_set_sensitive(self->resign_button, FALSE);

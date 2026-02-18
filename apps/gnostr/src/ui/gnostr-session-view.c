@@ -1453,11 +1453,10 @@ void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint coun
   self->pending_new_notes_count = count;
 
   if (count > 0) {
-    char *label_text = g_strdup_printf(ngettext("%u New Note", "%u New Notes", count), count);
+    g_autofree char *label_text = g_strdup_printf(ngettext("%u New Note", "%u New Notes", count), count);
     if (self->lbl_new_notes_count) {
       gtk_label_set_text(self->lbl_new_notes_count, label_text);
     }
-    g_free(label_text);
     if (self->new_notes_revealer) {
       /* Only show new notes toast on timeline view */
       const char *visible_name = self->stack ? adw_view_stack_get_visible_child_name(self->stack) : NULL;
@@ -1488,22 +1487,19 @@ void gnostr_session_view_set_relay_status(GnostrSessionView *self,
 
   /* Update the status label */
   if (self->relay_status_label) {
-    char *label = g_strdup_printf("%u/%u", connected_count, total_count);
+    g_autofree char *label = g_strdup_printf("%u/%u", connected_count, total_count);
     gtk_label_set_text(self->relay_status_label, label);
-    g_free(label);
   }
 
   /* Update the count labels in popover */
   if (self->lbl_connected_count) {
-    char *count = g_strdup_printf("%u", connected_count);
+    g_autofree char *count = g_strdup_printf("%u", connected_count);
     gtk_label_set_text(self->lbl_connected_count, count);
-    g_free(count);
   }
 
   if (self->lbl_total_count) {
-    char *count = g_strdup_printf("%u", total_count);
+    g_autofree char *count = g_strdup_printf("%u", total_count);
     gtk_label_set_text(self->lbl_total_count, count);
-    g_free(count);
   }
 
   /* Update status icon based on connection state */
@@ -1595,10 +1591,9 @@ void gnostr_session_view_set_user_profile(GnostrSessionView *self,
       gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), TRUE);
     } else if (hex && *hex) {
       /* Show truncated pubkey if no display name */
-      char *truncated = g_strdup_printf("%.8s...%.4s", hex, hex + 60);
+      g_autofree char *truncated = g_strdup_printf("%.8s...%.4s", hex, hex + 60);
       gtk_label_set_text(self->lbl_profile_name, truncated);
       gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), TRUE);
-      g_free(truncated);
     } else {
       gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), FALSE);
     }

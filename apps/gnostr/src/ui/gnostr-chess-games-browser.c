@@ -259,24 +259,22 @@ populate_games_list(GnostrChessGamesBrowser *self)
         gtk_widget_set_margin_bottom(row_box, 8);
 
         /* Players line */
-        gchar *players = g_strdup_printf("%s vs %s",
+        g_autofree gchar *players = g_strdup_printf("%s vs %s",
             game->white_player ? game->white_player : "Unknown",
             game->black_player ? game->black_player : "Unknown");
         GtkWidget *players_label = gtk_label_new(players);
         gtk_label_set_xalign(GTK_LABEL(players_label), 0);
         gtk_widget_add_css_class(players_label, "heading");
         gtk_box_append(GTK_BOX(row_box), players_label);
-        g_free(players);
 
         /* Result and moves line */
-        gchar *info = g_strdup_printf("%s - %zu moves",
+        g_autofree gchar *info = g_strdup_printf("%s - %zu moves",
             game->result_string ? game->result_string : "*",
             game->moves_count / 2);
         GtkWidget *info_label = gtk_label_new(info);
         gtk_label_set_xalign(GTK_LABEL(info_label), 0);
         gtk_widget_add_css_class(info_label, "dim-label");
         gtk_box_append(GTK_BOX(row_box), info_label);
-        g_free(info);
 
         /* Create row and store event ID */
         GtkWidget *row = gtk_list_box_row_new();

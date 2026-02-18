@@ -324,9 +324,8 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
     self->d_tag, self->pubkey_hex, 30023, NULL, NULL);
 
   if (n19) {
-    char *uri = g_strdup_printf("nostr:%s", gnostr_nip19_get_bech32(n19));
+    g_autofree char *uri = g_strdup_printf("nostr:%s", gnostr_nip19_get_bech32(n19));
     g_signal_emit(self, signals[SIGNAL_SHARE_ARTICLE], 0, uri);
-    g_free(uri);
   }
 }
 
@@ -657,9 +656,8 @@ void gnostr_article_card_set_author(GnostrArticleCard *self,
 
   /* Set handle */
   if (GTK_IS_LABEL(self->lbl_author_handle)) {
-    gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
+    g_autofree gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
     gtk_label_set_text(GTK_LABEL(self->lbl_author_handle), handle_str);
-    g_free(handle_str);
   }
 
   /* Set avatar */

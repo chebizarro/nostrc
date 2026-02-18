@@ -378,7 +378,7 @@ static void load_articles_from_nostrdb(GnostrArticlesView *self) {
   }
 
   /* Build filter JSON for both kinds */
-  char *filter_json = g_strdup_printf(
+  g_autofree char *filter_json = g_strdup_printf(
     "{\"kinds\":[%d,%d],\"limit\":%d}",
     KIND_LONG_FORM, KIND_WIKI, ARTICLES_LOAD_LIMIT
   );
@@ -412,7 +412,6 @@ static void load_articles_from_nostrdb(GnostrArticlesView *self) {
     storage_ndb_free_results(results, result_count);
   }
 
-  g_free(filter_json);
   storage_ndb_end_query(txn);
 
   g_debug("articles-view: Loaded %u articles into model",
@@ -902,14 +901,13 @@ static void update_article_count(GnostrArticlesView *self) {
   guint filtered = self->filtered_model ?
     g_list_model_get_n_items(G_LIST_MODEL(self->filtered_model)) : total;
 
-  gchar *text;
+  g_autofree gchar *text = NULL;
   if (filtered == total) {
     text = g_strdup_printf("%u articles", total);
   } else {
     text = g_strdup_printf("%u of %u articles", filtered, total);
   }
   gtk_label_set_text(GTK_LABEL(self->lbl_count), text);
-  g_free(text);
 }
 
 static void update_content_state(GnostrArticlesView *self) {

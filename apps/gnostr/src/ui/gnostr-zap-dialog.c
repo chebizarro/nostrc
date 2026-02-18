@@ -295,9 +295,8 @@ void gnostr_zap_dialog_set_recipient(GnostrZapDialog *self,
     if (display_name && *display_name) {
       gtk_label_set_text(GTK_LABEL(self->lbl_recipient), display_name);
     } else if (pubkey_hex) {
-      gchar *truncated = g_strdup_printf("%.8s...%.8s", pubkey_hex, pubkey_hex + 56);
+      g_autofree gchar *truncated = g_strdup_printf("%.8s...%.8s", pubkey_hex, pubkey_hex + 56);
       gtk_label_set_text(GTK_LABEL(self->lbl_recipient), truncated);
-      g_free(truncated);
     }
   }
 
@@ -421,7 +420,7 @@ static void update_zap_button_label(GnostrZapDialog *self) {
   if (!GTK_IS_LABEL(self->lbl_zap_button)) return;
 
   gint64 amount = get_selected_amount_sats(self);
-  gchar *label = NULL;
+  g_autofree gchar *label = NULL;
 
   if (amount > 0) {
     if (amount >= 1000) {
@@ -434,7 +433,6 @@ static void update_zap_button_label(GnostrZapDialog *self) {
   }
 
   gtk_label_set_text(GTK_LABEL(self->lbl_zap_button), label);
-  g_free(label);
 
   /* Update button sensitivity */
   if (GTK_IS_WIDGET(self->btn_zap)) {
@@ -531,9 +529,8 @@ static void show_qr_invoice(GnostrZapDialog *self, const gchar *bolt11_invoice) 
   if (GTK_IS_LABEL(self->lbl_invoice) && bolt11_invoice) {
     gsize len = strlen(bolt11_invoice);
     if (len > 20) {
-      gchar *truncated = g_strdup_printf("%.10s...%.10s", bolt11_invoice, bolt11_invoice + len - 10);
+      g_autofree gchar *truncated = g_strdup_printf("%.10s...%.10s", bolt11_invoice, bolt11_invoice + len - 10);
       gtk_label_set_text(GTK_LABEL(self->lbl_invoice), truncated);
-      g_free(truncated);
     } else {
       gtk_label_set_text(GTK_LABEL(self->lbl_invoice), bolt11_invoice);
     }
@@ -541,9 +538,8 @@ static void show_qr_invoice(GnostrZapDialog *self, const gchar *bolt11_invoice) 
 
 #ifdef HAVE_QRENCODE
   /* Generate and display QR code - uppercase for better QR density */
-  gchar *upper_invoice = g_ascii_strup(bolt11_invoice, -1);
+  g_autofree gchar *upper_invoice = g_ascii_strup(bolt11_invoice, -1);
   GdkTexture *texture = generate_qr_texture(upper_invoice);
-  g_free(upper_invoice);
 
   if (texture && GTK_IS_PICTURE(self->qr_picture)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->qr_picture), GDK_PAINTABLE(texture));
@@ -623,10 +619,9 @@ static void on_zap_request_sign_complete(GObject *source, GAsyncResult *res, gpo
 
   if (!ok || !signed_event_json) {
     set_processing(self, FALSE, NULL);
-    gchar *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
+    g_autofree gchar *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
     show_toast(self, msg);
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
-    g_free(msg);
     g_clear_error(&error);
     g_object_unref(self);
     zap_sign_context_free(ctx);
@@ -733,10 +728,9 @@ static void on_get_pubkey_for_zap(GObject *source, GAsyncResult *res, gpointer u
 
   if (!ok || !npub || !*npub) {
     set_processing(self, FALSE, NULL);
-    gchar *msg = g_strdup_printf("Failed to get pubkey: %s", error ? error->message : "unknown error");
+    g_autofree gchar *msg = g_strdup_printf("Failed to get pubkey: %s", error ? error->message : "unknown error");
     show_toast(self, msg);
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
-    g_free(msg);
     g_clear_error(&error);
     g_object_unref(self);
     return;
@@ -803,12 +797,11 @@ static void on_lnurl_info_received(GnostrLnurlPayInfo *info, GError *error, gpoi
   gint64 amount_msat = gnostr_zap_sats_to_msat(get_selected_amount_sats(self));
   if (amount_msat < info->min_sendable || amount_msat > info->max_sendable) {
     set_processing(self, FALSE, NULL);
-    gchar *msg = g_strdup_printf("Amount out of range (%lld-%lld sats)",
+    g_autofree gchar *msg = g_strdup_printf("Amount out of range (%lld-%lld sats)",
                                  (long long)(info->min_sendable / 1000),
                                  (long long)(info->max_sendable / 1000));
     show_toast(self, msg);
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
-    g_free(msg);
     g_object_unref(self);
     return;
   }
@@ -820,10 +813,9 @@ static void on_lnurl_info_received(GnostrLnurlPayInfo *info, GError *error, gpoi
   NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
   if (!proxy) {
     set_processing(self, FALSE, NULL);
-    gchar *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    g_autofree gchar *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
     show_toast(self, msg);
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
-    g_free(msg);
     g_clear_error(&proxy_err);
     g_object_unref(self);
     return;

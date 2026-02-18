@@ -297,9 +297,8 @@ static void refresh_hashtags_list(GNostrMuteListDialog *self) {
 
     for (size_t i = 0; i < count; i++) {
         /* Display with # prefix */
-        char *display = g_strdup_printf("#%s", hashtags[i]);
+        g_autofree char *display = g_strdup_printf("#%s", hashtags[i]);
         GtkWidget *row = create_list_row(self, display, 2);
-        g_free(display);
         gtk_list_box_append(GTK_LIST_BOX(self->list_hashtags), row);
     }
 
@@ -340,9 +339,8 @@ static void on_save_complete(GNostrMuteList *mute_list,
     if (success) {
         show_toast(self, "Mute list saved!");
     } else {
-        char *msg = g_strdup_printf("Save failed: %s", error_msg ? error_msg : "unknown error");
+        g_autofree char *msg = g_strdup_printf("Save failed: %s", error_msg ? error_msg : "unknown error");
         show_toast(self, msg);
-        g_free(msg);
     }
 
     update_save_button(self);

@@ -216,13 +216,12 @@ on_title_clicked(GtkButton *btn, gpointer user_data)
   GnostrClassifiedCard *self = GNOSTR_CLASSIFIED_CARD(user_data);
   (void)btn;
   if (self->event_id && *self->event_id) {
-    gchar *naddr = NULL;
+    g_autofree gchar *naddr = NULL;
     if (self->pubkey_hex && self->d_tag) {
       naddr = g_strdup_printf("%d:%s:%s", NIP99_KIND_CLASSIFIED_LISTING,
                               self->pubkey_hex, self->d_tag);
     }
     g_signal_emit(self, signals[SIGNAL_VIEW_DETAILS], 0, self->event_id, naddr);
-    g_free(naddr);
   }
 }
 
@@ -246,12 +245,10 @@ on_share_clicked(GtkButton *btn, gpointer user_data)
   if (!self->pubkey_hex || !self->d_tag) return;
 
   /* Build naddr URI */
-  gchar *naddr = g_strdup_printf("%d:%s:%s", NIP99_KIND_CLASSIFIED_LISTING,
+  g_autofree gchar *naddr = g_strdup_printf("%d:%s:%s", NIP99_KIND_CLASSIFIED_LISTING,
                                   self->pubkey_hex, self->d_tag);
-  gchar *uri = g_strdup_printf("nostr:naddr1%s", naddr); /* Simplified - should use proper bech32 */
+  g_autofree gchar *uri = g_strdup_printf("nostr:naddr1%s", naddr); /* Simplified - should use proper bech32 */
   g_signal_emit(self, signals[SIGNAL_SHARE_LISTING], 0, uri);
-  g_free(uri);
-  g_free(naddr);
 }
 
 static void
@@ -682,9 +679,8 @@ gnostr_classified_card_set_price(GnostrClassifiedCard *self,
 
   if (GTK_IS_LABEL(self->price_label)) {
     if (price) {
-      gchar *formatted = gnostr_classified_price_format(price);
+      g_autofree gchar *formatted = gnostr_classified_price_format(price);
       gtk_label_set_text(GTK_LABEL(self->price_label), formatted);
-      g_free(formatted);
     } else {
       gtk_label_set_text(GTK_LABEL(self->price_label), _("Price on request"));
     }
@@ -744,9 +740,8 @@ gnostr_classified_card_set_images(GnostrClassifiedCard *self, GPtrArray *images)
     gtk_widget_add_css_class(picture, "classified-image");
     gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
 
-    gchar *name = g_strdup_printf("image_%u", i);
+    g_autofree gchar *name = g_strdup_printf("image_%u", i);
     gtk_stack_add_named(GTK_STACK(self->image_stack), picture, name);
-    g_free(name);
 
     g_ptr_array_add(self->image_widgets, picture);
 
@@ -787,14 +782,13 @@ gnostr_classified_card_set_categories(GnostrClassifiedCard *self, GPtrArray *cat
     const gchar *cat = g_ptr_array_index(categories, i);
     if (!cat || !*cat) continue;
 
-    gchar *label = g_strdup_printf("#%s", cat);
+    g_autofree gchar *label = g_strdup_printf("#%s", cat);
     GtkWidget *btn = gtk_button_new_with_label(label);
     gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
     gtk_widget_add_css_class(btn, "pill");
     gtk_widget_add_css_class(btn, "small");
     g_signal_connect(btn, "clicked", G_CALLBACK(on_category_clicked), self);
     gtk_flow_box_append(GTK_FLOW_BOX(self->categories_box), btn);
-    g_free(label);
   }
 
   gtk_widget_set_visible(self->categories_box, TRUE);
@@ -909,9 +903,8 @@ gnostr_classified_card_set_published_at(GnostrClassifiedCard *self, gint64 publi
   self->published_at = published_at;
 
   if (GTK_IS_LABEL(self->published_label)) {
-    gchar *date_str = format_publish_date(published_at);
+    g_autofree gchar *date_str = format_publish_date(published_at);
     gtk_label_set_text(GTK_LABEL(self->published_label), date_str);
-    g_free(date_str);
   }
 }
 
@@ -976,9 +969,8 @@ update_image_carousel(GnostrClassifiedCard *self)
 
   /* Show current image */
   if (self->current_image_index < self->image_widgets->len) {
-    gchar *name = g_strdup_printf("image_%u", self->current_image_index);
+    g_autofree gchar *name = g_strdup_printf("image_%u", self->current_image_index);
     gtk_stack_set_visible_child_name(GTK_STACK(self->image_stack), name);
-    g_free(name);
   }
 
   /* Show/hide navigation buttons */
