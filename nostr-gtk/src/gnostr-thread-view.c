@@ -664,8 +664,20 @@ GtkWidget *nostr_gtk_thread_view_new(void) {
   return g_object_new(NOSTR_GTK_TYPE_THREAD_VIEW, NULL);
 }
 
-void nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView *self, const char *event_id_hex) {
+gboolean nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView *self,
+                                                const char *event_id_hex,
+                                                GError **error) {
+  g_return_val_if_fail(NOSTR_GTK_IS_THREAD_VIEW(self), FALSE);
+
+  if (!event_id_hex || strlen(event_id_hex) != 64) {
+    g_set_error(error, NOSTR_GTK_ERROR, NOSTR_GTK_ERROR_INVALID_INPUT,
+                "Invalid event ID: expected 64-char hex, got '%s'",
+                event_id_hex ? event_id_hex : "(null)");
+    return FALSE;
+  }
+
   nostr_gtk_thread_view_set_focus_event_with_json(self, event_id_hex, NULL);
+  return TRUE;
 }
 
 void nostr_gtk_thread_view_set_focus_event_with_json(NostrGtkThreadView *self,
@@ -2692,12 +2704,12 @@ static ThreadEventItem *load_event_by_id(NostrGtkThreadView *self, const char *i
   if (!hex_to_bytes_32(id_hex, id32)) return NULL;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return NULL;
 
   ThreadEventItem *item = NULL;
   char *json = NULL;
   int len = 0;
-  if (storage_ndb_get_note_by_id(txn, id32, &json, &len) == 0 && json) {
+  if (storage_ndb_get_note_by_id(txn, id32, &json, &len, NULL) == 0 && json) {
     item = add_event_from_json(self, json);
   }
   storage_ndb_end_query(txn);
@@ -2785,7 +2797,7 @@ static void load_thread(NostrGtkThreadView *self) {
 
   /* Query nostrdb for events referencing this thread root */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) == 0 && txn) {
+  if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
     const char *query_root = self->thread_root_id ? self->thread_root_id : focus_id;
 
     /* Build filter JSON to find all replies to the root (kind 1 and NIP-22 kind 1111) */
@@ -2796,7 +2808,7 @@ static void load_thread(NostrGtkThreadView *self) {
 
     char **results = NULL;
     int count = 0;
-    int query_rc = storage_ndb_query(txn, filter_json, &results, &count);
+    int query_rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
     g_message("[THREAD_VIEW] nostrdb query for root %.16s: rc=%d count=%d",
               query_root, query_rc, count);
     if (query_rc == 0 && results) {
@@ -2817,7 +2829,7 @@ static void load_thread(NostrGtkThreadView *self) {
 
       results = NULL;
       count = 0;
-      if (storage_ndb_query(txn, filter_json, &results, &count) == 0 && results) {
+      if (storage_ndb_query(txn, filter_json, &results, &count, NULL) == 0 && results) {
         for (int i = 0; i < count; i++) {
           if (results[i]) {
             add_event_from_json(self, results[i]);
@@ -2995,7 +3007,7 @@ static void on_ndb_thread_batch(uint64_t subid, const uint64_t *note_keys,
   gboolean found_new = FALSE;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return;
 
   for (guint i = 0; i < n_keys; i++) {
     uint64_t key = note_keys[i];

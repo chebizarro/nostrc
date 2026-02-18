@@ -207,14 +207,14 @@ GnostrEventLabels *gnostr_nip32_get_labels_for_event(const char *event_id_hex) {
     NOSTR_KIND_LABEL, event_id_hex);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0) {
     g_free(filter_json);
     return NULL;
   }
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
   storage_ndb_end_query(txn);
   g_free(filter_json);
 
@@ -261,14 +261,14 @@ GPtrArray *gnostr_nip32_get_labels_by_user(const char *pubkey_hex) {
     NOSTR_KIND_LABEL, pubkey_hex);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0) {
     g_free(filter_json);
     return NULL;
   }
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
   storage_ndb_end_query(txn);
   g_free(filter_json);
 

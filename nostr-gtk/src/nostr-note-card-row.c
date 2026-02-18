@@ -3334,7 +3334,7 @@ void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
   /* Render content (no cache available in this path) */
-  GnContentRenderResult *render = gnostr_render_content(content, -1);
+  GnContentRenderResult *render = gnostr_render_content(content, -1, NULL);
   nostr_gtk_note_card_row_set_content_rendered(self, content, render);
   gnostr_content_render_result_free(render);
 }
@@ -3388,7 +3388,7 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
   }
 
   /* Single-pass content render: markup + all URLs */
-  GnContentRenderResult *render = gnostr_render_content(content, -1);
+  GnContentRenderResult *render = gnostr_render_content(content, -1, NULL);
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);

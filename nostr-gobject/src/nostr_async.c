@@ -40,12 +40,12 @@ nostr_relay_connect_async_thread(GTask        *task,
                                   GCancellable *cancellable)
 {
     GNostrRelay *self = GNOSTR_RELAY(source_object);
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (gnostr_relay_connect(self, &error)) {
         g_task_return_boolean(task, TRUE);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 
@@ -87,12 +87,12 @@ nostr_relay_publish_async_thread(GTask        *task,
 {
     GNostrRelay *self = GNOSTR_RELAY(source_object);
     AsyncData *data = (AsyncData *)task_data;
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (gnostr_relay_publish(self, data->event, &error)) {
         g_task_return_boolean(task, TRUE);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 
@@ -136,13 +136,13 @@ nostr_relay_query_sync_async_thread(GTask        *task,
 {
     GNostrRelay *self = GNOSTR_RELAY(source_object);
     AsyncData *data = (AsyncData *)task_data;
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     GPtrArray *events = gnostr_relay_query_sync(self, data->filter, &error);
     if (events) {
         g_task_return_pointer(task, events, (GDestroyNotify)g_ptr_array_unref);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 

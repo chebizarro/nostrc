@@ -4721,7 +4721,7 @@ static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const ch
   /* Show listing details in thread view */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
   if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view)) {
-    nostr_gtk_thread_view_set_focus_event(NOSTR_GTK_THREAD_VIEW(thread_view), event_id);
+    nostr_gtk_thread_view_set_focus_event(NOSTR_GTK_THREAD_VIEW(thread_view), event_id, NULL);
     show_thread_panel(self);
   }
 }
@@ -5139,12 +5139,12 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
   char *display_name = NULL;
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
       uint8_t pk32[32];
       if (hex_to_bytes32(pubkey_hex, pk32)) {
         char *meta_json = NULL;
         int meta_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len, NULL) == 0 && meta_json) {
           /* Parse JSON to get display name */
           char *dn = NULL;
           dn = gnostr_json_get_string(meta_json, "display_name", NULL);
@@ -5206,12 +5206,12 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
   char *display_name = NULL;
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
       uint8_t pk32[32];
       if (hex_to_bytes32(pubkey_hex, pk32)) {
         char *meta_json = NULL;
         int meta_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len, NULL) == 0 && meta_json) {
           char *dn = NULL;
           dn = gnostr_json_get_string(meta_json, "display_name", NULL);
           if (!dn || !*dn) {
@@ -5262,12 +5262,12 @@ void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, i
   char *display_name = NULL;
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
       uint8_t pk32[32];
       if (hex_to_bytes32(pubkey_hex, pk32)) {
         char *meta_json = NULL;
         int meta_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len, NULL) == 0 && meta_json) {
           char *dn = NULL;
           dn = gnostr_json_get_string(meta_json, "display_name", NULL);
           if (!dn || !*dn) {
@@ -5668,7 +5668,7 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   /* OPTIMIZATION: Check DB first and apply cached profiles immediately */
   void *txn = NULL;
   guint cached_applied = 0;
-  if (storage_ndb_begin_query(&txn) == 0) {
+  if (storage_ndb_begin_query(&txn, NULL) == 0) {
     for (guint i = 0; i < authors->len; i++) {
       const char *pkhex = (const char*)g_ptr_array_index(authors, i);
       if (!pkhex || strlen(pkhex) != 64) continue;
@@ -5678,7 +5678,7 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
       
       char *pjson = NULL;
       int plen = 0;
-      if (storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen) == 0 && pjson && plen > 0) {
+      if (storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen, NULL) == 0 && pjson && plen > 0) {
         /* Found in DB - apply immediately for fast UI update */
         gchar *content_str = gnostr_json_get_string(pjson, "content", NULL);
         if (content_str) {
@@ -5992,14 +5992,14 @@ prepopulate_profiles_thread(GTask        *task,
                             GCancellable *cancellable G_GNUC_UNUSED)
 {
   void *txn = NULL; char **arr = NULL; int n = 0;
-  int brc = storage_ndb_begin_query(&txn);
+  int brc = storage_ndb_begin_query(&txn, NULL);
   if (brc != 0) {
     g_warning("prepopulate_profiles_thread: begin_query failed rc=%d", brc);
     g_task_return_pointer(task, NULL, NULL);
     return;
   }
   const char *filters = "[{\"kinds\":[0]}]";
-  int rc = storage_ndb_query(txn, filters, &arr, &n);
+  int rc = storage_ndb_query(txn, filters, &arr, &n, NULL);
   g_debug("prepopulate_profiles_thread: query rc=%d count=%d", rc, n);
 
   GPtrArray *items = NULL;
@@ -9450,7 +9450,7 @@ static void on_gift_wrap_batch(uint64_t subid, const uint64_t *note_keys, guint 
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !note_keys || n_keys == 0) return;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[GIFTWRAP] Failed to begin query transaction");
     return;
   }
@@ -9474,7 +9474,7 @@ static void on_gift_wrap_batch(uint64_t subid, const uint64_t *note_keys, guint 
     /* Get the JSON representation for the DM service */
     char *json = NULL;
     int json_len = 0;
-    if (storage_ndb_get_note_by_id(txn, id32, &json, &json_len) == 0 && json) {
+    if (storage_ndb_get_note_by_id(txn, id32, &json, &json_len, NULL) == 0 && json) {
       /* Send to DM service for decryption */
       if (self->dm_service) {
         gnostr_dm_service_process_gift_wrap(self->dm_service, json);

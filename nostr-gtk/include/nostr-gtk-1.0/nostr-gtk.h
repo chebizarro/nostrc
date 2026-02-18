@@ -14,6 +14,7 @@
 #include <glib.h>
 
 #include "nostr-gtk-version.h"
+#include "nostr-gtk-error.h"
 
 /* Widget headers */
 #include "content_renderer.h"

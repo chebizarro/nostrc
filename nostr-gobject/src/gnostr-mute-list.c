@@ -8,6 +8,7 @@
 
 #include "gnostr-mute-list.h"
 #include "gnostr-relays.h"
+#include "nostr-error.h"
 #include <glib.h>
 #include <string.h>
 #include <time.h>
@@ -449,7 +450,7 @@ static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpo
     if (!ctx) return;
 
     NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     char *decrypted_json = NULL;
 
     gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
@@ -459,7 +460,6 @@ static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpo
         /* Not an error - just means no private entries or decryption failed */
         g_debug("mute_list: no private entries to decrypt or decryption failed: %s",
                 error ? error->message : "empty result");
-        g_clear_error(&error);
         decrypt_private_ctx_free(ctx);
         return;
     }
@@ -477,12 +477,11 @@ static void decrypt_private_entries_async(GNostrMuteList *self,
                                            const char *user_pubkey) {
     if (!self || !encrypted_content || !*encrypted_content || !user_pubkey) return;
 
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
     if (!proxy) {
         g_debug("mute_list: cannot decrypt private entries - signer not available: %s",
                 error ? error->message : "unknown");
-        g_clear_error(&error);
         return;
     }
 
@@ -1115,7 +1114,7 @@ static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpoin
     (void)source;
     if (!ctx) return;
 
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     char *signed_event_json = NULL;
 
     gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
@@ -1127,7 +1126,6 @@ static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpoin
                          error ? error->message : "Signing failed",
                          ctx->user_data);
         }
-        g_clear_error(&error);
         save_context_free(ctx);
         return;
     }
@@ -1236,7 +1234,7 @@ static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpoint
     if (!ctx) return;
 
     NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     char *encrypted_content = NULL;
 
     gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
@@ -1245,7 +1243,6 @@ static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpoint
     if (!ok || !encrypted_content) {
         g_warning("mute_list: failed to encrypt private entries: %s",
                   error ? error->message : "unknown");
-        g_clear_error(&error);
         /* Proceed without private entries - still save public ones */
         proceed_to_sign(ctx, "");
         return;
@@ -1500,4 +1497,69 @@ gboolean gnostr_mute_list_is_dirty(GNostrMuteList *self) {
     gboolean result = self->dirty;
     g_mutex_unlock(&self->lock);
     return result;
+}
+
+/* ============== GTask-based Async API (R3: GIR-friendly) ============== */
+
+/* Bridge callback: adapts old fetch callback to GTask completion */
+static void fetch_gtask_bridge_cb(GNostrMuteList *self,
+                                   gboolean success,
+                                   gpointer user_data) {
+    GTask *task = G_TASK(user_data);
+    if (success) {
+        g_task_return_boolean(task, TRUE);
+    } else {
+        g_task_return_new_error(task, NOSTR_ERROR, NOSTR_ERROR_RELAY_ERROR,
+                                "Mute list fetch failed");
+    }
+    g_object_unref(task);
+}
+
+void gnostr_mute_list_fetch_gtask_async(GNostrMuteList *self,
+                                         const char *pubkey_hex,
+                                         const char * const *relays,
+                                         GCancellable *cancellable,
+                                         GAsyncReadyCallback callback,
+                                         gpointer user_data) {
+    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+    gnostr_mute_list_fetch_async(self, pubkey_hex, relays,
+                                  fetch_gtask_bridge_cb, task);
+}
+
+gboolean gnostr_mute_list_fetch_gtask_finish(GNostrMuteList *self,
+                                              GAsyncResult *result,
+                                              GError **error) {
+    (void)self;
+    return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+/* Bridge callback: adapts old save callback to GTask completion */
+static void save_gtask_bridge_cb(GNostrMuteList *self,
+                                  gboolean success,
+                                  const char *error_msg,
+                                  gpointer user_data) {
+    (void)self;
+    GTask *task = G_TASK(user_data);
+    if (success) {
+        g_task_return_boolean(task, TRUE);
+    } else {
+        g_task_return_new_error(task, NOSTR_ERROR, NOSTR_ERROR_RELAY_ERROR,
+                                "%s", error_msg ? error_msg : "Mute list save failed");
+    }
+    g_object_unref(task);
+}
+
+void gnostr_mute_list_save_gtask_async(GNostrMuteList *self,
+                                        GCancellable *cancellable,
+                                        GAsyncReadyCallback callback,
+                                        gpointer user_data) {
+    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+    gnostr_mute_list_save_async(self, save_gtask_bridge_cb, task);
+}
+
+gboolean gnostr_mute_list_save_gtask_finish(GNostrMuteList *self,
+                                             GAsyncResult *result,
+                                             GError **error) {
+    (void)self;
+    return g_task_propagate_boolean(G_TASK(result), error);
 }

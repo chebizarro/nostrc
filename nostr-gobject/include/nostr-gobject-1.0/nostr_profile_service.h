@@ -149,6 +149,42 @@ typedef struct {
  */
 void gnostr_profile_service_get_stats(gpointer service, GnostrProfileServiceStats *stats);
 
+/* ---- GTask-based Async API (R3: GIR-friendly) ---- */
+
+/**
+ * gnostr_profile_service_request_gtask_async:
+ * @service: the profile service instance
+ * @pubkey_hex: 64-character hex pubkey to fetch
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback when profile is ready
+ * @user_data: user data for callback
+ *
+ * GTask-based async version of gnostr_profile_service_request.
+ * Returns profile metadata via GTask. Use
+ * gnostr_profile_service_request_gtask_finish() in the callback.
+ */
+void gnostr_profile_service_request_gtask_async(gpointer service,
+                                                 const char *pubkey_hex,
+                                                 GCancellable *cancellable,
+                                                 GAsyncReadyCallback callback,
+                                                 gpointer user_data);
+
+/**
+ * gnostr_profile_service_request_gtask_finish:
+ * @service: the profile service instance
+ * @result: the #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Finishes the async profile request.
+ *
+ * Returns: (transfer none) (nullable): the profile metadata, or %NULL if
+ *          not found. The returned pointer is owned by the service.
+ */
+const GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
+    gpointer service,
+    GAsyncResult *result,
+    GError **error);
+
 /* Shutdown the profile service and free all resources.
  * Safe to call multiple times. After this call, gnostr_profile_service_get_default()
  * will create a new instance.

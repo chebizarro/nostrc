@@ -27,7 +27,7 @@ struct _GnTestNdb {
 /* Forward declare storage_ndb functions — these come from nostr-gobject.
  * We declare them here to avoid pulling the full header, keeping
  * testkit's header dependency minimal. */
-extern int storage_ndb_init(const char *db_dir, const char *opts_json);
+extern int storage_ndb_init(const char *db_dir, const char *opts_json, GError **error);
 extern void storage_ndb_shutdown(void);
 extern int storage_ndb_ingest_event_json(const char *json, const char *relay_opt);
 
@@ -50,7 +50,7 @@ gn_test_ndb_new(const char *opts_json)
     const char *opts = opts_json ? opts_json :
         "{\"mapsize\": 67108864, \"ingester_threads\": 1, \"ingest_skip_validation\": 1}";
 
-    int ret = storage_ndb_init(ndb->dir, opts);
+    int ret = storage_ndb_init(ndb->dir, opts, NULL);
     if (ret == 0) {
         g_warning("gn_test_ndb_new: storage_ndb_init failed with %d", ret);
         g_free(ndb->dir);

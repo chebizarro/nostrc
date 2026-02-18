@@ -1504,11 +1504,11 @@ gnostr_dm_service_load_history_async(GnostrDmService *self,
             self->user_pubkey);
 
         void *txn = NULL;
-        if (storage_ndb_begin_query(&txn) == 0 && txn) {
+        if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
             char **results = NULL;
             int count = 0;
 
-            if (storage_ndb_query(txn, filter_json, &results, &count) == 0 && count > 0) {
+            if (storage_ndb_query(txn, filter_json, &results, &count, NULL) == 0 && count > 0) {
                 g_message("[DM_SERVICE] Loading %d historical gift wraps from nostrdb", count);
 
                 for (int i = 0; i < count; i++) {

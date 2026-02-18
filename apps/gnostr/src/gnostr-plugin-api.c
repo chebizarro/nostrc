@@ -778,7 +778,7 @@ gnostr_plugin_context_query_events(GnostrPluginContext *context,
   g_return_val_if_fail(filter_json != NULL, NULL);
 
   void *txn = NULL;
-  int rc = storage_ndb_begin_query(&txn);
+  int rc = storage_ndb_begin_query(&txn, NULL);
   if (rc != 0 || !txn) {
     g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_STORAGE,
                 "Failed to begin storage query");
@@ -787,7 +787,7 @@ gnostr_plugin_context_query_events(GnostrPluginContext *context,
 
   char **results = NULL;
   int count = 0;
-  rc = storage_ndb_query(txn, filter_json, &results, &count);
+  rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
   storage_ndb_end_query(txn);
 
   if (rc != 0) {

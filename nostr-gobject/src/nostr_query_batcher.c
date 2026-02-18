@@ -12,6 +12,7 @@
 #include "nostr-subscription.h"
 #include "nostr-event.h"
 #include "nostr-simple-pool.h"  /* Core pool API */
+#include "nostr-error.h"          /* NOSTR_ERROR domain */
 #include "json.h"               /* nostr_event_serialize */
 #include "error.h"              /* Error, free_error */
 #include "channel.h"            /* go_channel_try_receive */
@@ -366,7 +367,7 @@ static void fire_batch(NostrQueryBatcher *batcher, RelayBatch *batch) {
     pthread_mutex_unlock(&core_pool->pool_mutex);
 
     if (!relay) {
-        GError *gerr = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+        g_autoptr(GError) gerr = g_error_new(NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
                                     "Relay %s not found in pool after ensure",
                                     batch->relay_url);
 
@@ -374,8 +375,6 @@ static void fire_batch(NostrQueryBatcher *batcher, RelayBatch *batch) {
         complete_all_requests(batch, gerr);
         g_hash_table_remove(batcher->pending_batches, batch->relay_url);
         g_mutex_unlock(&batcher->mutex);
-
-        g_error_free(gerr);
         return;
     }
 
@@ -384,20 +383,19 @@ static void fire_batch(NostrQueryBatcher *batcher, RelayBatch *batch) {
     batch->subscription = nostr_relay_prepare_subscription(relay, bg, batch->combined_filters);
 
     if (!batch->subscription) {
-        GError *gerr = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
+        g_autoptr(GError) gerr = g_error_new_literal(NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                                             "Failed to prepare subscription");
         g_mutex_lock(&batcher->mutex);
         complete_all_requests(batch, gerr);
         g_hash_table_remove(batcher->pending_batches, batch->relay_url);
         g_mutex_unlock(&batcher->mutex);
-        g_error_free(gerr);
         return;
     }
 
     /* Fire the subscription */
     Error *err = NULL;
     if (!nostr_subscription_fire(batch->subscription, &err)) {
-        GError *gerr = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+        g_autoptr(GError) gerr = g_error_new(NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
                                     "Failed to fire subscription: %s",
                                     err ? err->message : "unknown error");
         if (err) free_error(err);
@@ -409,8 +407,6 @@ static void fire_batch(NostrQueryBatcher *batcher, RelayBatch *batch) {
         complete_all_requests(batch, gerr);
         g_hash_table_remove(batcher->pending_batches, batch->relay_url);
         g_mutex_unlock(&batcher->mutex);
-
-        g_error_free(gerr);
         return;
     }
 
@@ -526,10 +522,9 @@ void nostr_query_batcher_free(NostrQueryBatcher *batcher) {
             g_ptr_array_add(threads_to_join, g_thread_ref(batch->drain_thread));
         }
         /* Complete all pending requests with cancellation */
-        GError *err = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
+        g_autoptr(GError) gerr2 = g_error_new_literal(NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                                            "Batcher disposed");
-        complete_all_requests(batch, err);
-        g_error_free(err);
+        complete_all_requests(batch, gerr2);
     }
     g_mutex_unlock(&batcher->mutex);
 

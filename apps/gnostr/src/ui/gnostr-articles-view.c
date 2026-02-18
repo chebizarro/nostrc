@@ -185,7 +185,7 @@ static void populate_author_info(GnostrArticleItem *item, void *txn) {
   char *profile_json = NULL;
   int profile_len = 0;
 
-  if (storage_ndb_get_profile_by_pubkey(txn, pubkey_bytes, &profile_json, &profile_len) != 0 || !profile_json) {
+  if (storage_ndb_get_profile_by_pubkey(txn, pubkey_bytes, &profile_json, &profile_len, NULL) != 0 || !profile_json) {
     /* No profile found - use short pubkey as fallback */
     item->author_name = g_strndup(item->pubkey_hex, 8);
     item->author_handle = g_strdup_printf("@%s...", item->author_name);
@@ -372,7 +372,7 @@ static void load_articles_from_nostrdb(GnostrArticlesView *self) {
   g_debug("articles-view: Loading articles from nostrdb");
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("articles-view: Failed to begin nostrdb query");
     return;
   }
@@ -386,7 +386,7 @@ static void load_articles_from_nostrdb(GnostrArticlesView *self) {
   char **results = NULL;
   int result_count = 0;
 
-  if (storage_ndb_query(txn, filter_json, &results, &result_count) == 0 && results) {
+  if (storage_ndb_query(txn, filter_json, &results, &result_count, NULL) == 0 && results) {
     g_debug("articles-view: Found %d articles in nostrdb", result_count);
 
     /* Use a hash set to deduplicate by event ID */
@@ -449,7 +449,7 @@ static void on_relay_fetch_complete(GObject *source, GAsyncResult *res, gpointer
     g_debug("articles-view: Fetched %u articles from relays", results->len);
 
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
       /* Get existing event IDs to avoid duplicates */
       GHashTable *existing_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
       guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));

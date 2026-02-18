@@ -149,14 +149,14 @@ GPtrArray *gnostr_follow_list_get_cached(const gchar *pubkey_hex)
     pubkey_hex);
 
   void *txn = NULL;
-  int rc = storage_ndb_begin_query(&txn);
+  int rc = storage_ndb_begin_query(&txn, NULL);
   if (rc != 0 || !txn) {
     return NULL;
   }
 
   char **results = NULL;
   int count = 0;
-  rc = storage_ndb_query(txn, filter, &results, &count);
+  rc = storage_ndb_query(txn, filter, &results, &count, NULL);
 
   if (rc != 0 || count == 0 || !results) {
     storage_ndb_end_query(txn);

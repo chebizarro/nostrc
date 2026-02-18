@@ -508,14 +508,14 @@ gboolean gnostr_contact_list_load_from_ndb(GnostrContactList *self,
         pubkey_hex);
 
     void *txn = NULL;
-    int rc = storage_ndb_begin_query(&txn);
+    int rc = storage_ndb_begin_query(&txn, NULL);
     if (rc != 0 || !txn) {
         return FALSE;
     }
 
     char **results = NULL;
     int count = 0;
-    rc = storage_ndb_query(txn, filter_json, &results, &count);
+    rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
 
     if (rc != 0 || count == 0 || !results) {
         storage_ndb_end_query(txn);

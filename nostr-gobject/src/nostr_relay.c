@@ -190,11 +190,10 @@ auth_challenge_on_main_thread(gpointer user_data)
 
     /* Auto-authenticate if handler is configured */
     if (self->auth_sign_func) {
-        GError *error = NULL;
+        g_autoptr(GError) error = NULL;
         if (!gnostr_relay_authenticate(self, &error)) {
             g_warning("NIP-42 auto-auth failed for %s: %s",
                       self->url, error ? error->message : "unknown");
-            if (error) g_error_free(error);
         }
     }
 
@@ -711,21 +710,21 @@ connect_async_thread(GTask        *task,
                      GCancellable *cancellable)
 {
     GNostrRelay *self = GNOSTR_RELAY(source_object);
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     /* Check for cancellation */
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
         /* nostrc-blk2: Do NOT call gnostr_relay_set_state_internal from worker
          * thread — it emits GObject signals that freeze GTK. State hasn't
          * changed since we haven't called connect yet. */
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
         return;
     }
 
     if (gnostr_relay_connect(self, &error)) {
         g_task_return_boolean(task, TRUE);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 

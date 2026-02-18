@@ -549,7 +549,7 @@ static void
 execute_local_search(GnostrSearchResultsView *self, const char *query)
 {
     void *txn = NULL;
-    int rc = storage_ndb_begin_query(&txn);
+    int rc = storage_ndb_begin_query(&txn, NULL);
     if (rc != 0 || !txn) {
         g_warning("[SEARCH] Failed to begin nostrdb query transaction");
         gnostr_search_results_view_set_loading(self, FALSE);
@@ -566,7 +566,7 @@ execute_local_search(GnostrSearchResultsView *self, const char *query)
     char **results = NULL;
     int count = 0;
 
-    rc = storage_ndb_text_search(txn, query, config_json, &results, &count);
+    rc = storage_ndb_text_search(txn, query, config_json, &results, &count, NULL);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {

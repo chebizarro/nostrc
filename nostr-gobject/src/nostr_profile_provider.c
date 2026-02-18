@@ -209,10 +209,10 @@ static GnostrProfileMeta *meta_from_db(const char *pk) {
     pk32[i] = (unsigned char)b;
   }
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return NULL;
 
   StorageNdbProfileMeta fb = {0};
-  int rc = storage_ndb_get_profile_meta_direct(txn, pk32, &fb);
+  int rc = storage_ndb_get_profile_meta_direct(txn, pk32, &fb, NULL);
   storage_ndb_end_query(txn);
 
   if (rc != 0) {

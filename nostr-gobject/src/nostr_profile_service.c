@@ -133,11 +133,11 @@ static GnostrProfileMeta *check_ndb_cache(const char *pubkey_hex) {
   if (!hex_to_pk32(pubkey_hex, pk32)) return NULL;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return NULL;
 
   char *json = NULL;
   int json_len = 0;
-  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len);
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len, NULL);
   storage_ndb_end_query(txn);
 
   if (rc != 0 || !json || json_len <= 0) return NULL;
@@ -211,13 +211,12 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
   GnostrProfileService *svc = ctx->svc;
   GPtrArray *batch = ctx->batch;
 
-  GError *error = NULL;
+  g_autoptr(GError) error = NULL;
   GPtrArray *jsons = gnostr_pool_query_finish(
       GNOSTR_POOL(source), res, &error);
 
   if (error) {
     g_warning("[PROFILE_SERVICE] Fetch error: %s", error->message);
-    g_clear_error(&error);
   }
 
   if (jsons) {
@@ -813,4 +812,35 @@ void gnostr_profile_service_shutdown(void) {
   g_free(svc);
 
   g_message("[PROFILE_SERVICE] Shutdown complete");
+}
+
+/* ============== GTask-based Async API (R3: GIR-friendly) ============== */
+
+/* Bridge: old callback → GTask completion */
+static void profile_request_gtask_bridge_cb(const char *pubkey_hex,
+                                             const GnostrProfileMeta *meta,
+                                             gpointer user_data) {
+    (void)pubkey_hex;
+    GTask *task = G_TASK(user_data);
+    /* Return the meta pointer (owned by service cache, not by us) */
+    g_task_return_pointer(task, (gpointer)meta, NULL);
+    g_object_unref(task);
+}
+
+void gnostr_profile_service_request_gtask_async(gpointer service,
+                                                 const char *pubkey_hex,
+                                                 GCancellable *cancellable,
+                                                 GAsyncReadyCallback callback,
+                                                 gpointer user_data) {
+    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+    gnostr_profile_service_request(service, pubkey_hex,
+                                    profile_request_gtask_bridge_cb, task);
+}
+
+const GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
+    gpointer service,
+    GAsyncResult *result,
+    GError **error) {
+    (void)service;
+    return g_task_propagate_pointer(G_TASK(result), error);
 }

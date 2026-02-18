@@ -534,7 +534,7 @@ on_dm_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("Failed to begin query for DM notifications");
     return;
   }
@@ -656,7 +656,7 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("Failed to begin query for mention notifications");
     return;
   }
@@ -747,7 +747,7 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("Failed to begin query for zap notifications");
     return;
   }
@@ -770,7 +770,7 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
         /* Get the note JSON to parse zap receipt details */
         char *note_json = NULL;
         int json_len = 0;
-        int rc = storage_ndb_get_note_by_id(txn, id_bin, &note_json, &json_len);
+        int rc = storage_ndb_get_note_by_id(txn, id_bin, &note_json, &json_len, NULL);
 
         if (rc == 0 && note_json && json_len > 0) {
           /* Make a null-terminated copy for parsing */
@@ -836,7 +836,7 @@ on_repost_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("Failed to begin query for repost notifications");
     return;
   }
@@ -888,7 +888,7 @@ on_reaction_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("Failed to begin query for reaction notifications");
     return;
   }
@@ -942,7 +942,7 @@ on_list_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("Failed to begin query for list notifications");
     return;
   }
@@ -1012,7 +1012,7 @@ on_follower_events(uint64_t subid, const uint64_t *note_keys,
 
   /* Get transaction to access notes */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("Failed to begin query for follower notifications");
     return;
   }
@@ -1486,7 +1486,7 @@ history_load_thread_func(GTask *task, gpointer source_object,
       (GDestroyNotify)gnostr_notification_free);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_debug("[HISTORY] Failed to begin NDB query for history loading");
     g_task_return_pointer(task, data, NULL);
     return;
@@ -1499,7 +1499,7 @@ history_load_thread_func(GTask *task, gpointer source_object,
         KIND_TEXT_NOTE, KIND_COMMENT, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
     char **results = NULL;
     int count = 0;
-    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+    if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
       history_process_mentions(data, txn, results, count);
     }
     if (results) storage_ndb_free_results(results, count);
@@ -1513,7 +1513,7 @@ history_load_thread_func(GTask *task, gpointer source_object,
         KIND_REACTION, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
     char **results = NULL;
     int count = 0;
-    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+    if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
       history_process_reactions(data, results, count);
     }
     if (results) storage_ndb_free_results(results, count);
@@ -1527,7 +1527,7 @@ history_load_thread_func(GTask *task, gpointer source_object,
         KIND_REPOST, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
     char **results = NULL;
     int count = 0;
-    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+    if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
       history_process_reposts(data, results, count);
     }
     if (results) storage_ndb_free_results(results, count);
@@ -1541,7 +1541,7 @@ history_load_thread_func(GTask *task, gpointer source_object,
         KIND_ZAP_RECEIPT, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
     char **results = NULL;
     int count = 0;
-    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+    if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
       history_process_zaps(data, results, count);
     }
     if (results) storage_ndb_free_results(results, count);
@@ -1555,7 +1555,7 @@ history_load_thread_func(GTask *task, gpointer source_object,
         KIND_CONTACT_LIST, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
     char **results = NULL;
     int count = 0;
-    if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+    if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
       history_process_followers(data, results, count);
     }
     if (results) storage_ndb_free_results(results, count);

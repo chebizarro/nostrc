@@ -526,10 +526,10 @@ static void do_local_search(SearchContext *ctx)
     }
 
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
       char *json = NULL;
       int json_len = 0;
-      if (storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len) == 0 && json) {
+      if (storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len, NULL) == 0 && json) {
         GnostrSearchResult *result = parse_profile_event(json, FALSE);
         if (result) {
           search_add_result(ctx, result);
@@ -541,11 +541,11 @@ static void do_local_search(SearchContext *ctx)
   } else {
     /* Profile search using NDB's indexed profile search (prefix-matching on name/display_name) */
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
       char **results_arr = NULL;
       int results_count = 0;
 
-      if (storage_ndb_search_profile(txn, search_text, ctx->limit, &results_arr, &results_count) == 0 &&
+      if (storage_ndb_search_profile(txn, search_text, ctx->limit, &results_arr, &results_count, NULL) == 0 &&
           results_count > 0) {
         g_debug("search: NDB profile search found %d results", results_count);
         for (int i = 0; i < results_count; i++) {
@@ -565,7 +565,7 @@ static void do_local_search(SearchContext *ctx)
         char **text_arr = NULL;
         int text_count = 0;
 
-        if (storage_ndb_text_search(txn, search_text, config_json, &text_arr, &text_count) == 0) {
+        if (storage_ndb_text_search(txn, search_text, config_json, &text_arr, &text_count, NULL) == 0) {
           g_debug("search: local text search fallback found %d results", text_count);
           for (int i = 0; i < text_count; i++) {
             if (text_arr[i]) {

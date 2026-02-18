@@ -4,6 +4,7 @@
 #include "nostr_query_batcher.h"  /* nostrc-ozlp: query batching */
 #include "nostr_event_bus.h"      /* nostrc-7typ: EventBus integration */
 #include "nostr_relay.h"
+#include "nostr-error.h"          /* NOSTR_ERROR domain */
 #include "nostr-subscription.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
@@ -1329,7 +1330,7 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GNostrSimplePool *self,
     // Get the task data
     gpointer data = g_task_get_task_data(G_TASK(res));
     if (!data) {
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                           "Invalid task data in query_single_finish");
         return NULL;
     }
@@ -1342,7 +1343,7 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GNostrSimplePool *self,
     } else {
         // On failure, ensure we have an error set
         if (error && *error == NULL) {
-            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+            g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_RELAY_ERROR,
                               "Failed to complete query_single operation");
         }
         return NULL;
@@ -1486,7 +1487,7 @@ gint64 gnostr_simple_pool_count_finish(GNostrSimplePool *self,
 
     gpointer data = g_task_get_task_data(G_TASK(res));
     if (!data) {
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                             "Invalid task data in count_finish");
         return -1;
     }
@@ -1496,7 +1497,7 @@ gint64 gnostr_simple_pool_count_finish(GNostrSimplePool *self,
         return ctx->result_count;
     } else {
         if (error && *error == NULL) {
-            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+            g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_RELAY_ERROR,
                                 "Failed to complete count operation");
         }
         return -1;
@@ -2070,7 +2071,7 @@ void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx) {
     if (!ctx || !ctx->self_obj) {
         g_critical("PROFILE_FETCH_GOROUTINE: Invalid context!");
         if (ctx && ctx->task) {
-            g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED, "Invalid context");
+            g_task_return_new_error(ctx->task, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE, "Invalid context");
         }
         return;
     }
@@ -2090,7 +2091,7 @@ void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx) {
     /* Launch main goroutine */
     if (go_fiber_compat(fetch_profiles_goroutine, ctx) != 0) {
         g_critical("PROFILE_FETCH_GOROUTINE: Failed to launch goroutine!");
-        g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to launch goroutine");
+        g_task_return_new_error(ctx->task, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE, "Failed to launch goroutine");
         return;
     }
     
@@ -2152,7 +2153,7 @@ GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GNostrSimplePool 
     g_return_val_if_fail(g_task_is_valid(res, self), NULL);
     FetchProfilesCtx *ctx = g_task_get_task_data(G_TASK(res));
     if (!ctx) {
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Invalid task data for fetch_profiles_finish");
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE, "Invalid task data for fetch_profiles_finish");
         return NULL;
     }
     if (!g_task_propagate_boolean(G_TASK(res), error)) {

@@ -316,12 +316,11 @@ gnostr_keys_new(void)
         return self;
     }
 
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     if (gnostr_keys_load_privkey_hex(self, privkey_hex, &error)) {
         g_signal_emit(self, gnostr_keys_signals[SIGNAL_KEY_GENERATED], 0);
     } else {
         g_warning("gnostr_keys_new: %s", error->message);
-        g_error_free(error);
     }
 
     /* Securely wipe the temporary */

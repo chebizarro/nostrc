@@ -1015,7 +1015,7 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
   (void)source;
   if (!ctx) return;
 
-  GError *error = NULL;
+  g_autoptr(GError) error = NULL;
   gchar *signed_event_json = NULL;
 
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
@@ -1025,7 +1025,6 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
     if (ctx->callback) {
       ctx->callback(FALSE, error ? error->message : "Signing failed", ctx->user_data);
     }
-    g_clear_error(&error);
     nip65_publish_ctx_free(ctx);
     return;
   }
