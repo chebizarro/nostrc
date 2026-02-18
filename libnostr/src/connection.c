@@ -461,15 +461,29 @@ static void deferred_cleanup_process(void) {
  * lws_client_connect_via_info() without blocking other mutex users. */
 static void service_loop_process_connect_request(ConnectionRequest *req,
                                                   struct lws_context *ctx) {
+    if (!req || !req->conn || !req->conn->priv) {
+        if (req && req->result) {
+            go_channel_send(req->result, (void *)(intptr_t)0);
+        }
+        return;
+    }
+
+    /* Persist connect parameters on the connection private state so pointers
+     * passed into libwebsockets outlive the transient ConnectionRequest. */
+    snprintf(req->conn->priv->connect_host, sizeof(req->conn->priv->connect_host), "%s", req->host);
+    snprintf(req->conn->priv->connect_path, sizeof(req->conn->priv->connect_path), "%s", req->path);
+    req->conn->priv->connect_port = req->port;
+    req->conn->priv->connect_use_ssl = req->use_ssl;
+
     struct lws_client_connect_info ci;
     memset(&ci, 0, sizeof(ci));
     ci.context = ctx;
-    ci.address = req->host;
-    ci.port = req->port;
-    ci.path = req->path;
-    ci.host = req->host;
-    ci.origin = req->host;
-    ci.ssl_connection = req->use_ssl ? LCCSCF_USE_SSL : 0;
+    ci.address = req->conn->priv->connect_host;
+    ci.port = req->conn->priv->connect_port;
+    ci.path = req->conn->priv->connect_path;
+    ci.host = req->conn->priv->connect_host;
+    ci.origin = req->conn->priv->connect_host;
+    ci.ssl_connection = req->conn->priv->connect_use_ssl ? LCCSCF_USE_SSL : 0;
     ci.protocol = "wss";
     ci.pwsi = &req->conn->priv->wsi;
     ci.userdata = req->conn;

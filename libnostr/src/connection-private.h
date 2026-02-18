@@ -28,6 +28,13 @@ struct _NostrConnectionPrivate {
     char *rx_reassembly_buf;       /* Dynamically allocated reassembly buffer */
     size_t rx_reassembly_len;      /* Current bytes accumulated */
     size_t rx_reassembly_alloc;    /* Allocated size of reassembly buffer */
+
+    /* Persisted connect parameters (nostrc-dns-lifetime): pointers passed to
+     * lws_client_connect_via_info() must outlive the transient request object. */
+    char connect_host[256];
+    char connect_path[512];
+    int connect_port;
+    int connect_use_ssl;
 };
 
 // Struct to hold WebSocket message

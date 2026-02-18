@@ -67,7 +67,7 @@ struct _GNostrPool {
     GListStore *relays;          /* GListStore of GNostrRelay* */
 
     /* Internal: track state-changed signal handlers per relay */
-    GHashTable *relay_handler_ids; /* url -> GUINT_TO_POINTER(handler_id) */
+    GHashTable *relay_handler_ids; /* url -> GSIZE_TO_POINTER(handler_id) */
 
     /* NIP-42 AUTH: pool-wide auth handler applied to all relays (nostrc-kn38) */
     GNostrRelayAuthSignFunc auth_sign_func;
@@ -133,7 +133,7 @@ watch_relay(GNostrPool *self, GNostrRelay *relay)
                                          G_CALLBACK(on_relay_state_changed), self);
     g_hash_table_insert(self->relay_handler_ids,
                         g_strdup(url),
-                        GUINT_TO_POINTER((guint)handler_id));
+                        GSIZE_TO_POINTER((gsize)handler_id));
 }
 
 /**
@@ -147,7 +147,7 @@ unwatch_relay(GNostrPool *self, GNostrRelay *relay)
 
     gpointer val = NULL;
     if (g_hash_table_lookup_extended(self->relay_handler_ids, url, NULL, &val)) {
-        gulong handler_id = (gulong)GPOINTER_TO_UINT(val);
+        gulong handler_id = (gulong)GPOINTER_TO_SIZE(val);
         if (handler_id > 0 && g_signal_handler_is_connected(relay, handler_id)) {
             g_signal_handler_disconnect(relay, handler_id);
         }

@@ -1705,7 +1705,7 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
                                             G_CALLBACK(on_thread_row_mapped_tier2),
                                             item);
   g_object_set_data(G_OBJECT(item), "tier2-map-handler-id",
-                    GUINT_TO_POINTER(map_handler_id));
+                    GSIZE_TO_POINTER((gsize)map_handler_id));
 
   /* If already mapped, run Tier 2 immediately */
   if (gtk_widget_get_mapped(row)) {
@@ -1726,7 +1726,7 @@ static void thread_factory_unbind_cb(GtkSignalListItemFactory *factory,
   /* nostrc-sbqe.3: Disconnect Tier 2 map handler */
   gpointer map_handler_ptr = g_object_get_data(G_OBJECT(item), "tier2-map-handler-id");
   if (map_handler_ptr) {
-    gulong map_handler_id = GPOINTER_TO_UINT(map_handler_ptr);
+    gulong map_handler_id = (gulong)GPOINTER_TO_SIZE(map_handler_ptr);
     if (map_handler_id > 0 && GTK_IS_WIDGET(row)) {
       g_signal_handler_disconnect(row, map_handler_id);
     }
