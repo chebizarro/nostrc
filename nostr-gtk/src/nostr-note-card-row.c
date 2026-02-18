@@ -512,10 +512,7 @@ do_template_dispose:
   self->reactions_popover = NULL;
   /* NIP-25: Clean up reaction breakdown */
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
-  if (self->reactors) {
-    g_ptr_array_unref(self->reactors);
-    self->reactors = NULL;
-  }
+  g_clear_pointer(&self->reactors, g_ptr_array_unref);
   
   /* nostrc-pgo6: Defensive label clearing to prevent Pango SEGV during
    * gtk_widget_dispose_template.
@@ -612,10 +609,7 @@ do_template_dispose:
   self->ots_badge = NULL;
   /* NIP-73 external content IDs */
   self->external_ids_box = NULL;
-  if (self->external_ids) {
-    g_ptr_array_unref(self->external_ids);
-    self->external_ids = NULL;
-  }
+  g_clear_pointer(&self->external_ids, g_ptr_array_unref);
   G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -6173,26 +6167,15 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
 
   /* Create fresh cancellable since the old one was cancelled during unbind.
    * GCancellable cannot be reused after cancellation. */
-  if (self->async_cancellable) {
-    g_object_unref(self->async_cancellable);
-  }
+  g_clear_object(&self->async_cancellable);
   self->async_cancellable = g_cancellable_new();
 
   /* Reset legacy cancellables too */
-  if (self->nip05_cancellable) {
-    g_object_unref(self->nip05_cancellable);
-    self->nip05_cancellable = NULL;
-  }
+  g_clear_object(&self->nip05_cancellable);
 
 #ifdef HAVE_SOUP3
-  if (self->avatar_cancellable) {
-    g_object_unref(self->avatar_cancellable);
-    self->avatar_cancellable = NULL;
-  }
-  if (self->article_image_cancellable) {
-    g_object_unref(self->article_image_cancellable);
-    self->article_image_cancellable = NULL;
-  }
+  g_clear_object(&self->avatar_cancellable);
+  g_clear_object(&self->article_image_cancellable);
   /* Clear media cancellables - they'll be created on demand */
   if (self->media_cancellables) {
     g_hash_table_remove_all(self->media_cancellables);

@@ -114,9 +114,9 @@ gnostr_dm_service_finalize(GObject *object)
 {
     GnostrDmService *self = GNOSTR_DM_SERVICE(object);
 
-    g_free(self->user_pubkey);
-    g_hash_table_destroy(self->conversations);
-    g_hash_table_destroy(self->pending_decrypts);
+    g_clear_pointer(&self->user_pubkey, g_free);
+    g_clear_pointer(&self->conversations, g_hash_table_destroy);
+    g_clear_pointer(&self->pending_decrypts, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_dm_service_parent_class)->finalize(object);
 }

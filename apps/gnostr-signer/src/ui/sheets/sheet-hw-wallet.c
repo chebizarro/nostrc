@@ -457,8 +457,7 @@ sheet_hw_wallet_finalize(GObject *object)
   if (self->refresh_source_id)
     g_source_remove(self->refresh_source_id);
 
-  if (self->devices)
-    g_ptr_array_unref(self->devices);
+  g_clear_pointer(&self->devices, g_ptr_array_unref);
 
   if (self->selected_device)
     gn_hw_wallet_device_info_free(self->selected_device);

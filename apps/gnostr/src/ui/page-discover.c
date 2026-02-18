@@ -687,14 +687,8 @@ clear_live_activities(GnostrPageDiscover *self)
     clear_live_flow_boxes(self);
 
     /* Free activity arrays */
-    if (self->live_activities) {
-        g_ptr_array_unref(self->live_activities);
-        self->live_activities = NULL;
-    }
-    if (self->scheduled_activities) {
-        g_ptr_array_unref(self->scheduled_activities);
-        self->scheduled_activities = NULL;
-    }
+    g_clear_pointer(&self->live_activities, g_ptr_array_unref);
+    g_clear_pointer(&self->scheduled_activities, g_ptr_array_unref);
 }
 
 static void
@@ -1052,14 +1046,8 @@ gnostr_page_discover_dispose(GObject *object)
         self->live_sub_id = 0;
     }
 
-    if (self->live_activities) {
-        g_ptr_array_unref(self->live_activities);
-        self->live_activities = NULL;
-    }
-    if (self->scheduled_activities) {
-        g_ptr_array_unref(self->scheduled_activities);
-        self->scheduled_activities = NULL;
-    }
+    g_clear_pointer(&self->live_activities, g_ptr_array_unref);
+    g_clear_pointer(&self->scheduled_activities, g_ptr_array_unref);
 
     /* Disconnect signal handlers before clearing model to prevent use-after-free */
     if (self->profile_model) {

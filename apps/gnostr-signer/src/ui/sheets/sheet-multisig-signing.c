@@ -504,10 +504,7 @@ static void sheet_multisig_signing_dispose(GObject *object) {
     self->final_signature = NULL;
   }
 
-  if (self->signer_rows) {
-    g_hash_table_destroy(self->signer_rows);
-    self->signer_rows = NULL;
-  }
+  g_clear_pointer(&self->signer_rows, g_hash_table_destroy);
 
   G_OBJECT_CLASS(sheet_multisig_signing_parent_class)->dispose(object);
 }

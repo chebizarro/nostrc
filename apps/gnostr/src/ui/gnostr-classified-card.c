@@ -132,8 +132,8 @@ gnostr_classified_card_finalize(GObject *obj)
   g_clear_pointer(&self->seller_lud16, g_free);
   g_clear_pointer(&self->nip05, g_free);
 
-  if (self->images) g_ptr_array_unref(self->images);
-  if (self->image_widgets) g_ptr_array_unref(self->image_widgets);
+  g_clear_pointer(&self->images, g_ptr_array_unref);
+  g_clear_pointer(&self->image_widgets, g_ptr_array_unref);
 
   G_OBJECT_CLASS(gnostr_classified_card_parent_class)->finalize(obj);
 }

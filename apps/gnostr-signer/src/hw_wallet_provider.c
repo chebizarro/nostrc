@@ -472,10 +472,9 @@ gn_hw_wallet_manager_finalize(GObject *object)
   gn_hw_wallet_manager_stop_monitoring(self);
 
   g_mutex_lock(&self->lock);
-  g_list_free_full(self->providers, g_object_unref);
-  self->providers = NULL;
-  g_hash_table_unref(self->device_providers);
-  g_hash_table_unref(self->previous_devices);
+  g_clear_list(&self->providers, g_object_unref);
+  g_clear_pointer(&self->device_providers, g_hash_table_unref);
+  g_clear_pointer(&self->previous_devices, g_hash_table_unref);
   g_mutex_unlock(&self->lock);
 
   g_mutex_clear(&self->lock);
