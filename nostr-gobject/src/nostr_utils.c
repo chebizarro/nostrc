@@ -26,12 +26,11 @@ gnostr_ensure_hex_pubkey(const char *input)
 
   /* Bech32 path: npub1... or nprofile1... */
   if (g_str_has_prefix(input, "npub1") || g_str_has_prefix(input, "nprofile1")) {
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     GNostrNip19 *nip19 = gnostr_nip19_decode(input, &error);
     if (!nip19) {
       g_warning("gnostr_ensure_hex_pubkey: failed to decode '%.*s...': %s",
                 10, input, error ? error->message : "unknown");
-      g_clear_error(&error);
       return NULL;
     }
     const gchar *hex = gnostr_nip19_get_pubkey(nip19);

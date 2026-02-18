@@ -112,7 +112,7 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
 
   /* Open read transaction */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0) {
+  if (storage_ndb_begin_query_retry(&txn, 3, 10, NULL) != 0) {
     g_warning("trending: failed to open NDB read transaction");
     ndb_filter_destroy(&filter);
     return result;

@@ -243,10 +243,10 @@ listen_thread(GTask        *task,
 {
     GNostrNip46Bunker *self = GNOSTR_NIP46_BUNKER(source_object);
     ListenAsyncData *d = task_data;
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
         return;
     }
 
@@ -254,7 +254,7 @@ listen_thread(GTask        *task,
                                     d->n_relays, &error)) {
         g_task_return_boolean(task, TRUE);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 

@@ -284,7 +284,7 @@ int main(int argc, char **argv) {
   const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":1}";
   fprintf(stderr, "[main] About to call storage_ndb_init(dbdir=%s, opts=%s)\n", dbdir, opts);
   fflush(stderr);
-  if (!storage_ndb_init(dbdir, opts)) {
+  if (!storage_ndb_init(dbdir, opts, NULL)) {
     fprintf(stderr, "[main] storage_ndb_init FAILED for %s\n", dbdir);
     fflush(stderr);
     g_warning("Failed to initialize storage at %s", dbdir);

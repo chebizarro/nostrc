@@ -90,7 +90,7 @@ ndb_cache_query(NostrFilters *filters, gpointer user_data G_GNUC_UNUSED)
 
     /* Query nostrdb */
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
     if (rc != 0 || !txn) {
         g_string_free(json, TRUE);
         return NULL;
@@ -98,7 +98,7 @@ ndb_cache_query(NostrFilters *filters, gpointer user_data G_GNUC_UNUSED)
 
     char **results = NULL;
     int count = 0;
-    rc = storage_ndb_query(txn, json->str, &results, &count);
+    rc = storage_ndb_query(txn, json->str, &results, &count, NULL);
     g_string_free(json, TRUE);
     storage_ndb_end_query(txn);
 

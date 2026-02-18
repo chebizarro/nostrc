@@ -346,9 +346,9 @@ static void on_row_request_embed(NostrGtkNoteCardRow *row, const char *target, g
     unsigned char id32[32];
     if (!hex32_from_string(event_id_hex, id32)) { nostr_gtk_note_card_row_set_embed(row, "Reference", ref); return; }
     /* Query local store */
-    void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    void *txn = NULL; if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
       char *json = NULL; int jlen = 0;
-      if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen) == 0 && json) {
+      if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen, NULL) == 0 && json) {
         NostrEvent *evt = nostr_event_new();
         if (evt && nostr_event_deserialize(evt, json) == 0) {
           const char *content = nostr_event_get_content(evt);
@@ -421,9 +421,9 @@ done_note_fetch:
     if (!event_id_hex) { nostr_gtk_note_card_row_set_embed(row, "Reference", ref); return; }
     unsigned char id32[32];
     if (hex32_from_string(event_id_hex, id32)) {
-      void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
+      void *txn = NULL; if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
         char *json = NULL; int jlen = 0;
-        if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen) == 0 && json) {
+        if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen, NULL) == 0 && json) {
           NostrEvent *evt = nostr_event_new();
           if (evt && nostr_event_deserialize(evt, json) == 0) {
             const char *content = nostr_event_get_content(evt);
@@ -1979,12 +1979,12 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
               /* Try to get original author's profile */
               if (orig_pubkey && strlen(orig_pubkey) == 64) {
                 void *txn = NULL;
-                if (storage_ndb_begin_query(&txn) == 0 && txn) {
+                if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
                   unsigned char pk_bytes[32];
                   if (hex32_from_string(orig_pubkey, pk_bytes)) {
                     char *profile_json = NULL;
                     int profile_len = 0;
-                    if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len) == 0 && profile_json) {
+                    if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len, NULL) == 0 && profile_json) {
                       /* Parse profile JSON to get display name */
                       if (gnostr_json_is_valid(profile_json)) {
                         /* Profile is stored as event - need to parse content */

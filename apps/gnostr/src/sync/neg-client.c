@@ -106,7 +106,7 @@ build_kind_datasource(const int *kinds, size_t kind_count,
   g_string_append(filt, "]}]");
 
   void *txn = NULL;
-  int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+  int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
   if (rc != 0 || !txn) {
     g_string_free(filt, TRUE);
     return FALSE;
@@ -114,7 +114,7 @@ build_kind_datasource(const int *kinds, size_t kind_count,
 
   char **results = NULL;
   int count = 0;
-  rc = storage_ndb_query(txn, filt->str, &results, &count);
+  rc = storage_ndb_query(txn, filt->str, &results, &count, NULL);
   g_string_free(filt, TRUE);
 
   if (rc != 0) {

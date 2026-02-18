@@ -5,9 +5,14 @@
  */
 
 #include "nostr-gtk.h"
+#include "nostr-gtk-error.h"
 
 #include <gio/gio.h>
 #include <gtk/gtk.h>
+
+/* --- Error domain --- */
+
+G_DEFINE_QUARK(nostr-gtk-error-quark, nostr_gtk_error)
 
 /* Generated resource accessor (from nostr-gtk-resources.c) */
 extern GResource *nostr_gtk_get_resource(void);

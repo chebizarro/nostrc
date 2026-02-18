@@ -191,14 +191,14 @@ static void import_nsec_thread(GTask *task,
   (void)cancellable;
 
   ImportAsyncData *data = task_data;
-  GError *error = NULL;
+  g_autoptr(GError) error = NULL;
 
   char *npub = gnostr_identity_import_nsec(data->nsec, data->label, &error);
 
   if (npub) {
     g_task_return_pointer(task, npub, g_free);
   } else {
-    g_task_return_error(task, error);
+    g_task_return_error(task, g_steal_pointer(&error));
   }
 }
 
@@ -246,14 +246,14 @@ static void get_nsec_thread(GTask *task,
   (void)cancellable;
 
   GetNsecAsyncData *data = task_data;
-  GError *error = NULL;
+  g_autoptr(GError) error = NULL;
 
   char *nsec = gnostr_identity_get_nsec(data->npub, &error);
 
   if (nsec) {
     g_task_return_pointer(task, nsec, g_free);
   } else {
-    g_task_return_error(task, error);
+    g_task_return_error(task, g_steal_pointer(&error));
   }
 }
 

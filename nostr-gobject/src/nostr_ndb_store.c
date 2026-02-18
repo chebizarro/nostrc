@@ -80,7 +80,7 @@ ndb_store_query(GNostrStore *store, NostrFilter *filter, GError **error)
 
     /* Begin read transaction */
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
     if (rc != 0 || !txn) {
         g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                     "Failed to begin NDB query transaction (rc=%d)", rc);
@@ -90,7 +90,7 @@ ndb_store_query(GNostrStore *store, NostrFilter *filter, GError **error)
     /* Execute query */
     char **results = NULL;
     int count = 0;
-    rc = storage_ndb_query(txn, query_json, &results, &count);
+    rc = storage_ndb_query(txn, query_json, &results, &count, NULL);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {
@@ -154,7 +154,7 @@ ndb_store_count(GNostrStore *store, NostrFilter *filter, GError **error)
     free(filter_json);
 
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
     if (rc != 0 || !txn) {
         g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                     "Failed to begin NDB query transaction (rc=%d)", rc);
@@ -163,7 +163,7 @@ ndb_store_count(GNostrStore *store, NostrFilter *filter, GError **error)
 
     char **results = NULL;
     int count = 0;
-    rc = storage_ndb_query(txn, query_json, &results, &count);
+    rc = storage_ndb_query(txn, query_json, &results, &count, NULL);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {
@@ -235,7 +235,7 @@ ndb_store_get_profile_by_pubkey(GNostrStore *store, const gchar *pubkey_hex, GEr
     }
 
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
     if (rc != 0 || !txn) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                             "Failed to begin NDB query transaction");
@@ -244,7 +244,7 @@ ndb_store_get_profile_by_pubkey(GNostrStore *store, const gchar *pubkey_hex, GEr
 
     char *json = NULL;
     int json_len = 0;
-    rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len);
+    rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len, NULL);
 
     /* Copy before ending txn — json may reference txn-scoped memory */
     gchar *result = NULL;
@@ -269,7 +269,7 @@ ndb_store_text_search(GNostrStore *store, const gchar *query, gint limit, GError
     (void)store;
 
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
     if (rc != 0 || !txn) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                             "Failed to begin NDB query transaction");
@@ -282,7 +282,7 @@ ndb_store_text_search(GNostrStore *store, const gchar *query, gint limit, GError
 
     char **results = NULL;
     int count = 0;
-    rc = storage_ndb_text_search(txn, query, config, &results, &count);
+    rc = storage_ndb_text_search(txn, query, config, &results, &count, NULL);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {
@@ -311,7 +311,7 @@ ndb_store_search_profile(GNostrStore *store, const gchar *query, gint limit, GEr
     (void)store;
 
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
     if (rc != 0 || !txn) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                             "Failed to begin NDB query transaction");
@@ -320,7 +320,7 @@ ndb_store_search_profile(GNostrStore *store, const gchar *query, gint limit, GEr
 
     char **results = NULL;
     int count = 0;
-    rc = storage_ndb_search_profile(txn, query, limit > 0 ? limit : 20, &results, &count);
+    rc = storage_ndb_search_profile(txn, query, limit > 0 ? limit : 20, &results, &count, NULL);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {
@@ -378,7 +378,7 @@ ndb_store_get_note_counts(GNostrStore *store, const gchar *id_hex, GNostrNoteCou
         return FALSE;
 
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
     if (rc != 0 || !txn)
         return FALSE;
 

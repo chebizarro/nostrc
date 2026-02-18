@@ -949,12 +949,11 @@ connect_one_relay_cb(GObject      *source,
     GTask *task = G_TASK(user_data);
     ConnectAllData *data = g_task_get_task_data(task);
 
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     if (gnostr_relay_connect_finish(relay, result, &error)) {
         data->succeeded++;
     } else {
         g_debug("Relay connect failed: %s", error ? error->message : "unknown");
-        g_clear_error(&error);
     }
 
     data->completed++;
@@ -1228,7 +1227,7 @@ multi_sub_subscribe_to_relay(GNostrPoolMultiSub *multi_sub, GNostrRelay *relay)
     }
     
     /* Create subscription for this relay */
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     GNostrSubscription *sub = gnostr_subscription_new(relay, filters_copy);
     if (!sub) {
         nostr_filters_free(filters_copy);

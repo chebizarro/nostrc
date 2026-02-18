@@ -219,7 +219,7 @@ static void on_ndb_batch(uint64_t subid, const uint64_t *note_keys,
     if (self->disposed) return;
 
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+    if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return;
 
     for (guint i = 0; i < n_keys; i++) {
         uint64_t key = note_keys[i];
@@ -403,7 +403,7 @@ void gnostr_thread_subscription_start(GNostrThreadSubscription *self) {
     /* Set up nostrdb subscription for local storage events.
      * Guard with begin_query to check if NDB is initialized. */
     void *txn_check = NULL;
-    if (storage_ndb_begin_query(&txn_check) == 0 && txn_check) {
+    if (storage_ndb_begin_query(&txn_check, NULL) == 0 && txn_check) {
         storage_ndb_end_query(txn_check);
 
         char filter_json[256];

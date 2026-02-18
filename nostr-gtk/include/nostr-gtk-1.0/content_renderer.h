@@ -2,6 +2,7 @@
 #define APPS_GNOSTR_UTIL_CONTENT_RENDERER_H
 
 #include <glib.h>
+#include "nostr-gtk-error.h"
 
 /**
  * Content Renderer - NDB content block-based rendering
@@ -28,13 +29,15 @@ typedef struct GnContentRenderResult {
  * gnostr_render_content:
  * @content: raw note content string
  * @content_len: length of content (-1 for strlen)
+ * @error: (nullable): return location for a #GError, or %NULL
  *
  * Single-pass NDB block iteration producing markup + extracted URLs.
  *
- * Returns: (transfer full): newly allocated result. Caller must free with
- *          gnostr_content_render_result_free().
+ * Returns: (transfer full) (nullable): newly allocated result, or %NULL on
+ *          error. Caller must free with gnostr_content_render_result_free().
  */
-GnContentRenderResult *gnostr_render_content(const char *content, int content_len);
+GnContentRenderResult *gnostr_render_content(const char *content, int content_len,
+                                              GError **error);
 
 /**
  * gnostr_content_render_result_free:
@@ -48,25 +51,31 @@ void gnostr_content_render_result_free(GnContentRenderResult *result);
  * gnostr_render_content_markup:
  * @content: raw note content string
  * @content_len: length of content (-1 for strlen)
+ * @error: (nullable): return location for a #GError, or %NULL
  *
  * Convenience wrapper: returns only the Pango markup string.
  * Equivalent to calling gnostr_render_content() and extracting ->markup.
  *
- * Returns: newly allocated Pango markup string. Caller must g_free().
+ * Returns: (nullable): newly allocated Pango markup string, or %NULL on
+ *          error. Caller must g_free().
  */
-char *gnostr_render_content_markup(const char *content, int content_len);
+char *gnostr_render_content_markup(const char *content, int content_len,
+                                    GError **error);
 
 /**
  * gnostr_extract_media_urls:
  * @content: raw note content string
  * @content_len: length of content (-1 for strlen)
+ * @error: (nullable): return location for a #GError, or %NULL
  *
  * Convenience wrapper: returns only image/video URLs.
  *
- * Returns: (transfer full): GPtrArray of URL strings (g_free each + g_ptr_array_unref).
- *          NULL if no media found.
+ * Returns: (transfer full) (nullable): GPtrArray of URL strings
+ *          (g_free each + g_ptr_array_unref), or %NULL if no media found
+ *          or on error.
  */
-GPtrArray *gnostr_extract_media_urls(const char *content, int content_len);
+GPtrArray *gnostr_extract_media_urls(const char *content, int content_len,
+                                      GError **error);
 
 /**
  * gnostr_strip_zwsp:

@@ -1414,7 +1414,7 @@ gnostr_nip7d_thread_view_load_thread(GnostrNip7dThreadView *self,
 
     /* Try to load from nostrdb first */
     void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
         unsigned char id32[32];
         gboolean valid_id = TRUE;
 
@@ -1431,7 +1431,7 @@ gnostr_nip7d_thread_view_load_thread(GnostrNip7dThreadView *self,
         if (valid_id) {
             char *json = NULL;
             int len = 0;
-            if (storage_ndb_get_note_by_id(txn, id32, &json, &len) == 0 && json) {
+            if (storage_ndb_get_note_by_id(txn, id32, &json, &len, NULL) == 0 && json) {
                 GnostrThread *thread = gnostr_thread_parse_from_json(json);
                 if (thread) {
                     gnostr_nip7d_thread_view_set_thread(self, thread);

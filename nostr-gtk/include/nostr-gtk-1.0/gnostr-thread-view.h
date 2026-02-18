@@ -2,6 +2,7 @@
 #define NOSTR_GTK_THREAD_VIEW_H
 
 #include <gtk/gtk.h>
+#include "nostr-gtk-error.h"
 
 G_BEGIN_DECLS
 
@@ -43,11 +44,16 @@ GtkWidget *nostr_gtk_thread_view_new(void);
  * nostr_gtk_thread_view_set_focus_event:
  * @self: a #NostrGtkThreadView
  * @event_id_hex: the 64-character hex event ID to focus on
+ * @error: (nullable): return location for a #GError, or %NULL
  *
  * Sets the focus event for the thread view. This triggers loading of
  * the full thread context: parent notes above and replies below.
+ *
+ * Returns: %TRUE on success, %FALSE if the event ID is invalid
  */
-void nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView *self, const char *event_id_hex);
+gboolean nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView *self,
+                                                const char *event_id_hex,
+                                                GError **error);
 
 /**
  * nostr_gtk_thread_view_set_focus_event_with_json:

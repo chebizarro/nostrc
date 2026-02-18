@@ -2,6 +2,7 @@
 #define NOSTR_GTK_PROFILE_PANE_H
 
 #include <gtk/gtk.h>
+#include "nostr-gtk-error.h"
 
 G_BEGIN_DECLS
 
@@ -11,7 +12,19 @@ G_DECLARE_FINAL_TYPE(NostrGtkProfilePane, nostr_gtk_profile_pane, NOSTR_GTK, PRO
 NostrGtkProfilePane *nostr_gtk_profile_pane_new(void);
 void nostr_gtk_profile_pane_set_pubkey(NostrGtkProfilePane *self, const char *pubkey_hex);
 void nostr_gtk_profile_pane_clear(NostrGtkProfilePane *self);
-void nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self, const char *profile_json_str);
+/**
+ * nostr_gtk_profile_pane_update_from_json:
+ * @self: the profile pane
+ * @profile_json_str: JSON string with profile metadata
+ * @error: (nullable): return location for a #GError, or %NULL
+ *
+ * Updates the profile pane from a JSON metadata string.
+ *
+ * Returns: %TRUE on success, %FALSE if the JSON is invalid or parsing failed
+ */
+gboolean nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self,
+                                                  const char *profile_json_str,
+                                                  GError **error);
 
 /**
  * nostr_gtk_profile_pane_get_current_pubkey:

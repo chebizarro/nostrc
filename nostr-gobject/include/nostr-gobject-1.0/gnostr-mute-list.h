@@ -341,6 +341,69 @@ const char **gnostr_mute_list_get_events(GNostrMuteList *self, size_t *count);
  */
 gboolean gnostr_mute_list_is_dirty(GNostrMuteList *self);
 
+/* ---- GTask-based Async API (R3) ---- */
+
+/**
+ * gnostr_mute_list_fetch_gtask_async:
+ * @self: mute list instance
+ * @pubkey_hex: user's public key (64 hex chars)
+ * @relays: NULL-terminated array of relay URLs
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback when fetch completes
+ * @user_data: user data for callback
+ *
+ * GTask-based async version of gnostr_mute_list_fetch_async.
+ * Uses standard GAsyncReadyCallback pattern for GIR introspection.
+ */
+void gnostr_mute_list_fetch_gtask_async(GNostrMuteList *self,
+                                         const char *pubkey_hex,
+                                         const char * const *relays,
+                                         GCancellable *cancellable,
+                                         GAsyncReadyCallback callback,
+                                         gpointer user_data);
+
+/**
+ * gnostr_mute_list_fetch_gtask_finish:
+ * @self: mute list instance
+ * @result: the #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Finishes the async fetch operation.
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ */
+gboolean gnostr_mute_list_fetch_gtask_finish(GNostrMuteList *self,
+                                              GAsyncResult *result,
+                                              GError **error);
+
+/**
+ * gnostr_mute_list_save_gtask_async:
+ * @self: mute list instance
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback when save completes
+ * @user_data: user data for callback
+ *
+ * GTask-based async version of gnostr_mute_list_save_async.
+ */
+void gnostr_mute_list_save_gtask_async(GNostrMuteList *self,
+                                        GCancellable *cancellable,
+                                        GAsyncReadyCallback callback,
+                                        gpointer user_data);
+
+/**
+ * gnostr_mute_list_save_gtask_finish:
+ * @self: mute list instance
+ * @result: the #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Finishes the async save operation.
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ */
+gboolean gnostr_mute_list_save_gtask_finish(GNostrMuteList *self,
+                                             GAsyncResult *result,
+                                             GError **error);
+
 /* ---- Signals ---- */
 
 /**

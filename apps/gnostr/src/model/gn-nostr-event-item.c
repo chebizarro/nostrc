@@ -110,7 +110,7 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
    * with retry+sleep stalls the entire UI.  If NDB is busy the data will
    * be populated later when the item is re-bound or metadata batch runs. */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     return FALSE;
   }
 
@@ -544,7 +544,7 @@ const char * const *gn_nostr_event_item_get_relay_urls(GnNostrEventItem *self) {
   if (self->note_key == 0) return NULL;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn)
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn)
     return NULL;
 
   self->cached_relay_urls = storage_ndb_note_get_relays(txn, self->note_key);
@@ -844,7 +844,7 @@ const GnContentRenderResult *gn_nostr_event_item_get_render_result(GnNostrEventI
   if (!self->cached_content)
     return NULL;
 
-  self->cached_render = gnostr_render_content(self->cached_content, -1);
+  self->cached_render = gnostr_render_content(self->cached_content, -1, NULL);
   /* Strip ZWS from markup to prevent Pango SEGV (see gnostr_strip_zwsp docs) */
   if (self->cached_render && self->cached_render->markup)
     gnostr_strip_zwsp(self->cached_render->markup);

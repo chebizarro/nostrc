@@ -720,7 +720,7 @@ static void on_profile_saved(GnostrProfileEdit *edit_dialog, const char *profile
 
   /* Update the profile pane with new data */
   if (profile_json && *profile_json) {
-    nostr_gtk_profile_pane_update_from_json(self, profile_json);
+  nostr_gtk_profile_pane_update_from_json(self, profile_json, NULL);
   }
 }
 
@@ -2909,7 +2909,7 @@ static guint load_posts_from_cache(NostrGtkProfilePane *self) {
 
   /* Begin query transaction */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("profile_pane: failed to begin nostrdb query");
     g_string_free(filter_json, TRUE);
     return 0;
@@ -2918,7 +2918,7 @@ static guint load_posts_from_cache(NostrGtkProfilePane *self) {
   /* Execute query */
   char **json_results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json->str, &json_results, &count);
+  int rc = storage_ndb_query(txn, filter_json->str, &json_results, &count, NULL);
   g_string_free(filter_json, TRUE);
 
   if (rc != 0) {
@@ -3898,7 +3898,7 @@ static guint load_media_from_cache(NostrGtkProfilePane *self) {
 
   /* Begin query transaction */
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("profile_pane: failed to begin nostrdb query for media");
     g_string_free(filter_json, TRUE);
     return 0;
@@ -3907,7 +3907,7 @@ static guint load_media_from_cache(NostrGtkProfilePane *self) {
   /* Execute query */
   char **json_results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json->str, &json_results, &count);
+  int rc = storage_ndb_query(txn, filter_json->str, &json_results, &count, NULL);
   g_string_free(filter_json, TRUE);
 
   if (rc != 0) {
@@ -4219,7 +4219,7 @@ static void on_profile_service_result(const char *pubkey_hex,
   g_object_unref(jb);
 
   if (json && *json) {
-    nostr_gtk_profile_pane_update_from_json(self, json);
+    nostr_gtk_profile_pane_update_from_json(self, json, NULL);
     self->profile_loaded_from_cache = TRUE;
   }
   g_free(json);
@@ -4678,12 +4678,15 @@ void nostr_gtk_profile_pane_set_pubkey(NostrGtkProfilePane *self, const char *pu
 }
 
 /* Public API to update profile from JSON (called by main window) */
-void nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self, const char *profile_json_str) {
-  g_return_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self));
+gboolean nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self,
+                                                  const char *profile_json_str,
+                                                  GError **error) {
+  g_return_val_if_fail(NOSTR_GTK_IS_PROFILE_PANE(self), FALSE);
 
   if (!profile_json_str || !*profile_json_str) {
-    g_debug("ProfilePane: empty profile JSON");
-    return;
+    g_set_error_literal(error, NOSTR_GTK_ERROR, NOSTR_GTK_ERROR_INVALID_INPUT,
+                        "Profile JSON string is NULL or empty");
+    return FALSE;
   }
 
   /* Store raw JSON for edit dialog */
@@ -4699,6 +4702,8 @@ void nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self, const ch
   if (!self->badges_loaded && self->current_pubkey) {
     load_badges(self);
   }
+
+  return TRUE;
 }
 
 void nostr_gtk_profile_pane_set_own_pubkey(NostrGtkProfilePane *self, const char *own_pubkey_hex) {

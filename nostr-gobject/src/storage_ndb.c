@@ -9,6 +9,7 @@
 #include "json.h"
 #include "libnostr_store.h"
 #include "storage_ndb.h"
+#include "nostr-error.h"
 #include "nostr/metrics.h"
 #include "nostr/metrics_schema.h"
 
@@ -149,7 +150,7 @@ static struct ndb *get_ndb(void)
   return impl ? (struct ndb *)impl->db : NULL;
 }
 
-int storage_ndb_init(const char *dbdir, const char *opts_json)
+int storage_ndb_init(const char *dbdir, const char *opts_json, GError **error)
 {
   fprintf(stderr, "[storage_ndb_init] ENTER: dbdir=%s opts=%s\n", dbdir, opts_json);
   fflush(stderr);
@@ -166,7 +167,11 @@ int storage_ndb_init(const char *dbdir, const char *opts_json)
                          &s);
   fprintf(stderr, "[storage_ndb_init] ln_store_open returned rc=%d (LN_OK=%d)\n", rc, LN_OK);
   fflush(stderr);
-  if (rc != LN_OK) return 0;
+  if (rc != LN_OK) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "NDB store open failed: ln_store_open returned %d", rc);
+    return 0;
+  }
   g_store = s;
   fprintf(stderr, "[storage_ndb_init] SUCCESS, g_store=%p\n", (void*)g_store);
   fflush(stderr);
@@ -349,13 +354,22 @@ void storage_ndb_ingest_events_async(GPtrArray *jsons)
   g_object_unref(task);
 }
 
-int storage_ndb_begin_query(void **txn_out)
+int storage_ndb_begin_query(void **txn_out, GError **error)
 {
-   if (!g_store || !txn_out) return LN_ERR_DB_TXN;
+   if (!g_store || !txn_out) {
+     g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                         "NDB store not initialized or NULL txn_out");
+     return LN_ERR_DB_TXN;
+   }
 #ifdef GNOSTR_TESTING
    gn_test_record_violation("storage_ndb_begin_query", 0);
 #endif
-   return ln_store_begin_query(g_store, txn_out);
+   int rc = ln_store_begin_query(g_store, txn_out);
+   if (rc != LN_OK) {
+     g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                 "NDB begin_query failed: rc=%d", rc);
+   }
+   return rc;
 }
 
 int storage_ndb_end_query(void *txn)
@@ -364,9 +378,13 @@ int storage_ndb_end_query(void *txn)
   return ln_store_end_query(g_store, txn);
 }
 
-int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms)
+int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms, GError **error)
 {
-  if (!txn_out) return LN_ERR_DB_TXN;
+  if (!txn_out) {
+    g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                        "NULL txn_out in begin_query_retry");
+    return LN_ERR_DB_TXN;
+  }
 #ifdef GNOSTR_TESTING
   gn_test_record_violation("storage_ndb_begin_query_retry", attempts);
 #endif
@@ -391,17 +409,20 @@ int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms)
   if (attempts <= 0) attempts = 1;
   (void)sleep_ms; /* no longer used — no sleeping */
   for (int i = 0; i < attempts; i++) {
-    rc = storage_ndb_begin_query(&txn);
+    rc = storage_ndb_begin_query(&txn, NULL);
     if (rc == 0 && txn) { *txn_out = txn; return 0; }
     /* Yield to other threads/fibers but don't block.
      * sched_yield is ~1µs vs usleep's ~1ms minimum. */
     sched_yield();
   }
   *txn_out = NULL;
-  return rc != 0 ? rc : LN_ERR_DB_TXN;
+  int final_rc = rc != 0 ? rc : LN_ERR_DB_TXN;
+  g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+              "NDB begin_query_retry exhausted %d attempts (rc=%d)", attempts, final_rc);
+  return final_rc;
 }
 
-int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count)
+int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count, GError **error)
 {
   if (!g_store || !txn || !filters_json || !out_arr || !out_count) return LN_ERR_QUERY;
   void *results = NULL; int count = 0;
@@ -411,8 +432,9 @@ int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int 
   return LN_OK;
 }
 
-int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count)
+int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count, GError **error)
 {
+  (void)error; /* TODO: populate on failure */
   if (!g_store || !txn || !q || !out_arr || !out_count) return LN_ERR_TEXTSEARCH;
   void *results = NULL; int count = 0;
   int rc = ln_store_text_search(g_store, txn, q, config_json, &results, &count);
@@ -421,8 +443,9 @@ int storage_ndb_text_search(void *txn, const char *q, const char *config_json, c
   return LN_OK;
 }
 
-int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count)
+int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count, GError **error)
 {
+  (void)error; /* TODO: populate on failure */
   if (!g_store || !txn || !query || !out_arr || !out_count) return LN_ERR_QUERY;
   void *results = NULL; int count = 0;
   int rc = ln_store_search_profile(g_store, txn, query, limit, &results, &count);
@@ -431,8 +454,9 @@ int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***
   return LN_OK;
 }
 
-int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len)
+int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len, GError **error)
 {
+  (void)error; /* TODO: populate on failure */
   if (!g_store || !txn || !id32 || !json_out) return LN_ERR_QUERY;
   const char *json = NULL; int len = 0;
   int rc = ln_store_get_note_by_id(g_store, txn, id32, &json, &len);
@@ -441,8 +465,9 @@ int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **j
   return LN_OK;
 }
 
-int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], char **json_out, int *json_len)
+int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], char **json_out, int *json_len, GError **error)
 {
+  (void)error; /* TODO: populate on failure */
   if (!g_store || !txn || !pk32 || !json_out) return LN_ERR_QUERY;
   const char *json = NULL; int len = 0;
   int rc = ln_store_get_profile_by_pubkey(g_store, txn, pk32, &json, &len);
@@ -463,8 +488,10 @@ gdup_fb_str(flatbuffers_string_t s)
 
 int storage_ndb_get_profile_meta_direct(void *txn,
                                         const unsigned char pk32[32],
-                                        StorageNdbProfileMeta *out)
+                                        StorageNdbProfileMeta *out,
+                                        GError **error)
 {
+  (void)error; /* TODO: populate on failure */
   if (!txn || !pk32 || !out) return LN_ERR_QUERY;
   memset(out, 0, sizeof(*out));
 
@@ -587,14 +614,14 @@ int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *
 
   /* Try to get note with internal transaction management */
   void *txn = NULL;
-  int rc = storage_ndb_begin_query(&txn);
+  int rc = storage_ndb_begin_query(&txn, NULL);
 
   if (rc != 0 || !txn) {
     return rc != 0 ? rc : LN_ERR_DB_TXN;
   }
 
   char *json_ptr = NULL;
-  rc = storage_ndb_get_note_by_id(txn, id32, &json_ptr, json_len);
+  rc = storage_ndb_get_note_by_id(txn, id32, &json_ptr, json_len, NULL);
 
   if (rc == 0 && json_ptr && json_len && *json_len > 0) {
     /* Copy the JSON before ending transaction */
@@ -616,7 +643,7 @@ int storage_ndb_get_note_json_by_key(uint64_t note_key, char **json_out, int *js
   if (note_key == 0 || !json_out) return LN_ERR_QUERY;
 
   void *txn = NULL;
-  int rc = storage_ndb_begin_query(&txn);
+  int rc = storage_ndb_begin_query(&txn, NULL);
   if (rc != 0 || !txn) {
     return rc != 0 ? rc : LN_ERR_DB_TXN;
   }
@@ -1006,7 +1033,7 @@ int storage_ndb_increment_note_meta(const unsigned char id32[32], const char *fi
   memset(&counts, 0, sizeof(counts));
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) == 0 && txn) {
+  if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
     storage_ndb_read_note_counts(txn, id32, &counts);
     storage_ndb_end_query(txn);
   }
@@ -1035,7 +1062,7 @@ GHashTable *storage_ndb_count_replies_batch(const char * const *event_ids, guint
   if (!event_ids || n_ids == 0) return counts;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return counts;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return counts;
 
   for (guint i = 0; i < n_ids; i++) {
     if (!event_ids[i] || strlen(event_ids[i]) != 64) continue;
@@ -1086,7 +1113,7 @@ guint storage_ndb_count_reactions(const char *event_id_hex)
   if (!hex_to_id32(event_id_hex, id32)) return 0;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return 0;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return 0;
 
   guint reaction_count = 0;
   struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
@@ -1110,7 +1137,7 @@ GHashTable *storage_ndb_count_reposts_batch(const char * const *event_ids, guint
   if (!event_ids || n_ids == 0) return counts;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return counts;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return counts;
 
   for (guint i = 0; i < n_ids; i++) {
     if (!event_ids[i] || strlen(event_ids[i]) != 64) continue;
@@ -1153,7 +1180,7 @@ gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
 
   storage_ndb_end_query(txn);
 
@@ -1222,7 +1249,7 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
       g_autofree gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
       char **results = NULL;
       int count = 0;
-      int rc = storage_ndb_query(txn2, filter_json, &results, &count);
+      int rc = storage_ndb_query(txn2, filter_json, &results, &count, NULL);
 
       if (rc == 0 && results) {
         for (int i = 0; i < count; i++) {
@@ -1258,7 +1285,7 @@ guint storage_ndb_count_zaps(const char *event_id_hex)
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
 
   storage_ndb_end_query(txn);
 
@@ -1315,7 +1342,7 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
 
   storage_ndb_end_query(txn);
 
@@ -1451,13 +1478,13 @@ GHashTable *storage_ndb_count_reactions_batch(const char * const *event_ids, gui
   if (!event_ids || n_ids == 0) return counts;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return counts;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return counts;
 
   gchar *filter_json = storage_ndb_build_batch_filter(7, event_ids, n_ids, NULL);
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
   g_free(filter_json);
 
   storage_ndb_end_query(txn);
@@ -1499,7 +1526,7 @@ GHashTable *storage_ndb_user_has_reacted_batch(const char * const *event_ids, gu
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
   g_free(filter_json);
 
   storage_ndb_end_query(txn);
@@ -1528,13 +1555,13 @@ GHashTable *storage_ndb_get_zap_stats_batch(const char * const *event_ids, guint
   if (!event_ids || n_ids == 0) return stats;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return stats;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return stats;
 
   gchar *filter_json = storage_ndb_build_batch_filter(9735, event_ids, n_ids, NULL);
 
   char **results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  int rc = storage_ndb_query(txn, filter_json, &results, &count, NULL);
   g_free(filter_json);
 
   storage_ndb_end_query(txn);
@@ -1647,7 +1674,7 @@ gboolean storage_ndb_is_event_expired(uint64_t note_key)
   if (note_key == 0) return FALSE;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return FALSE;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return FALSE;
 
   storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
   gboolean expired = storage_ndb_note_is_expired(note);
@@ -1988,7 +2015,7 @@ gboolean storage_ndb_is_profile_stale(const char *pubkey_hex, uint64_t stale_sec
   if (!hex_to_id32(pubkey_hex, pk32)) return TRUE;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return TRUE;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return TRUE;
 
   uint64_t last_fetch = storage_ndb_read_last_profile_fetch(txn, pk32);
   storage_ndb_end_query(txn);
@@ -2048,7 +2075,7 @@ char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex)
 
   char **results = NULL;
   int count = 0;
-  rc = storage_ndb_query(txn, filter, &results, &count);
+  rc = storage_ndb_query(txn, filter, &results, &count, NULL);
 
   if (rc != 0 || count == 0 || !results) {
     storage_ndb_end_query(txn);
@@ -2150,8 +2177,10 @@ StorageNdbCursor *storage_ndb_cursor_new(const char *filter_json, guint batch_si
 
 int storage_ndb_cursor_next(StorageNdbCursor *cursor,
                             const StorageNdbCursorEntry **entries_out,
-                            guint *count_out)
+                            guint *count_out,
+                            GError **error)
 {
+  (void)error; /* TODO: populate on failure */
   if (!cursor || !entries_out || !count_out) return -1;
   *entries_out = NULL;
   *count_out = 0;

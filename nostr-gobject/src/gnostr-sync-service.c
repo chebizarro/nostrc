@@ -267,7 +267,7 @@ on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data)
   (void)source;
   GNostrSyncService *self = GNOSTR_SYNC_SERVICE(user_data);
 
-  GError *error = NULL;
+  g_autoptr(GError) error = NULL;
   GnostrNegSyncStats stats = {0};
   gboolean ok = gnostr_neg_sync_kinds_finish(res, &stats, &error);
 
@@ -322,7 +322,6 @@ on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data)
     g_debug("[SYNC] Failed: %s", msg);
 
     emit_bus_event(GNOSTR_SYNC_TOPIC_ERROR, msg);
-    g_clear_error(&error);
 
     /* Keep current interval on error (don't punish transient failures) */
   }

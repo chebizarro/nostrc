@@ -307,17 +307,17 @@ start_thread(GTask        *task,
              GCancellable *cancellable)
 {
     GNostrNip46Client *self = GNOSTR_NIP46_CLIENT(source_object);
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
         return;
     }
 
     if (gnostr_nip46_client_start(self, &error)) {
         g_task_return_boolean(task, TRUE);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 
@@ -572,10 +572,10 @@ connect_rpc_thread(GTask        *task,
 {
     GNostrNip46Client *self = GNOSTR_NIP46_CLIENT(source_object);
     ConnectRpcAsyncData *d = task_data;
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
         return;
     }
 
@@ -584,7 +584,7 @@ connect_rpc_thread(GTask        *task,
                                          &result, &error)) {
         g_task_return_pointer(task, result, g_free);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 
@@ -630,10 +630,10 @@ get_pubkey_rpc_thread(GTask        *task,
                       GCancellable *cancellable)
 {
     GNostrNip46Client *self = GNOSTR_NIP46_CLIENT(source_object);
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
         return;
     }
 
@@ -641,7 +641,7 @@ get_pubkey_rpc_thread(GTask        *task,
     if (gnostr_nip46_client_get_public_key_rpc(self, &pubkey, &error)) {
         g_task_return_pointer(task, pubkey, g_free);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 
@@ -692,10 +692,10 @@ sign_event_thread(GTask        *task,
 {
     GNostrNip46Client *self = GNOSTR_NIP46_CLIENT(source_object);
     SignEventAsyncData *d = task_data;
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
         return;
     }
 
@@ -703,7 +703,7 @@ sign_event_thread(GTask        *task,
     if (gnostr_nip46_client_sign_event(self, d->event_json, &signed_json, &error)) {
         g_task_return_pointer(task, signed_json, g_free);
     } else {
-        g_task_return_error(task, error);
+        g_task_return_error(task, g_steal_pointer(&error));
     }
 }
 

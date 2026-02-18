@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <glib.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,8 +17,17 @@ typedef struct ndb_note storage_ndb_note;
 /* Subscription callback - called from writer thread when notes match subscription */
 typedef void (*storage_ndb_notify_fn)(void *ctx, uint64_t subid);
 
-/* Initialize the store. Returns 1 on success, 0 on failure. */
-int storage_ndb_init(const char *dbdir, const char *opts_json);
+/**
+ * storage_ndb_init:
+ * @dbdir: (nullable): database directory path, or NULL for default
+ * @opts_json: (nullable): JSON options string, or NULL for defaults
+ * @error: (nullable): return location for a #GError, or %NULL
+ *
+ * Initialize the NDB store.
+ *
+ * Returns: 1 on success, 0 on failure
+ */
+int storage_ndb_init(const char *dbdir, const char *opts_json, GError **error);
 
 /* Shutdown and free resources. Safe to call multiple times. */
 void storage_ndb_shutdown(void);
@@ -37,22 +47,39 @@ int storage_ndb_ingest_event_json_sync(const char *json);
  * storage_ndb_ingest_event_json in a loop on the main thread. */
 void storage_ndb_ingest_events_async(GPtrArray *jsons);
 
-/* Query transaction helpers */
-int storage_ndb_begin_query(void **txn_out);
+/**
+ * storage_ndb_begin_query:
+ * @txn_out: (out): location to store the transaction handle
+ * @error: (nullable): return location for a #GError, or %NULL
+ *
+ * Begin a read query transaction.
+ *
+ * Returns: 0 on success, nonzero on failure
+ */
+int storage_ndb_begin_query(void **txn_out, GError **error);
 int storage_ndb_end_query(void *txn);
 
-/* Convenience: begin a read query with bounded retries to tolerate transient contention.
- * Returns 0 on success and sets *txn_out, nonzero on failure. Attempts times with sleep_ms between. */
-int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms);
+/**
+ * storage_ndb_begin_query_retry:
+ * @txn_out: (out): location to store the transaction handle
+ * @attempts: number of retry attempts
+ * @sleep_ms: milliseconds to sleep between retries
+ * @error: (nullable): return location for a #GError, or %NULL
+ *
+ * Begin a read query with bounded retries for transient contention.
+ *
+ * Returns: 0 on success, nonzero on failure
+ */
+int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms, GError **error);
 
 /* Queries */
-int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count);
-int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count);
-int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count);
+int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count, GError **error);
+int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count, GError **error);
+int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count, GError **error);
 
 /* Getters */
-int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len);
-int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], char **json_out, int *json_len);
+int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len, GError **error);
+int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], char **json_out, int *json_len, GError **error);
 
 /* ============== Direct Profile FlatBuffer API (hq-cgnhh) ============== */
 
@@ -79,7 +106,8 @@ typedef struct {
  * Returns nonzero on failure (not found, txn error, etc.). */
 int storage_ndb_get_profile_meta_direct(void *txn,
 					const unsigned char pk32[32],
-					StorageNdbProfileMeta *out);
+					StorageNdbProfileMeta *out,
+					GError **error);
 
 /* Free the string fields inside a StorageNdbProfileMeta.
  * Does NOT free the struct itself (it is typically stack-allocated). */
@@ -420,7 +448,8 @@ StorageNdbCursor *storage_ndb_cursor_new(const char *filter_json, guint batch_si
  * Returns 0 on success, nonzero on failure. */
 int storage_ndb_cursor_next(StorageNdbCursor *cursor,
 			    const StorageNdbCursorEntry **entries_out,
-			    guint *count_out);
+			    guint *count_out,
+			    GError **error);
 
 /* Check if cursor has more results.
  * Returns TRUE if there may be more results, FALSE if exhausted. */

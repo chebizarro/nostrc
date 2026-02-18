@@ -746,7 +746,7 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
      * Don't pre-truncate - let the label's lines/ellipsize handle visual truncation
      * so URLs and nostr: refs are properly formatted before being cut off. */
     if (content && *content) {
-      GnContentRenderResult *render = gnostr_render_content(content, -1);
+      GnContentRenderResult *render = gnostr_render_content(content, -1, NULL);
       gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
       gnostr_content_render_result_free(render);
     } else {
@@ -818,14 +818,14 @@ gboolean gnostr_note_embed_is_profile(GnostrNoteEmbed *self) {
 /* Local database fetch for events */
 static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id32[32]) {
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     fetch_event_from_relays(self, self->target_id);
     return;
   }
 
   char *json = NULL;
   int json_len = 0;
-  if (storage_ndb_get_note_by_id(txn, id32, &json, &json_len) == 0 && json) {
+  if (storage_ndb_get_note_by_id(txn, id32, &json, &json_len, NULL) == 0 && json) {
     /* Parse and display */
     NostrEvent *evt = nostr_event_new();
     if (evt && nostr_event_deserialize(evt, json) == 0) {
@@ -844,7 +844,7 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
       if (author_hex && hex_to_bytes_32(author_hex, author_pk)) {
         char *profile_event_json = NULL;
         int profile_event_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, author_pk, &profile_event_json, &profile_event_len) == 0 && profile_event_json) {
+        if (storage_ndb_get_profile_by_pubkey(txn, author_pk, &profile_event_json, &profile_event_len, NULL) == 0 && profile_event_json) {
           /* Parse kind-0 event to get profile content JSON */
           NostrEvent *profile_evt = nostr_event_new();
           if (profile_evt && nostr_event_deserialize(profile_evt, profile_event_json) == 0) {
@@ -1339,7 +1339,7 @@ static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubk
 /* Local database fetch for profiles */
 static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char pk32[32]) {
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     /* Try relays since local query failed */
     fetch_profile_from_relays(self, self->target_id);
     return;
@@ -1347,7 +1347,7 @@ static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char 
 
   char *event_json = NULL;
   int event_json_len = 0;
-  if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_json_len) == 0 && event_json) {
+  if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_json_len, NULL) == 0 && event_json) {
     /* Parse kind-0 event to get profile content JSON */
     char *display_name = NULL;
     char *handle = NULL;

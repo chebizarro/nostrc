@@ -201,10 +201,17 @@ void gnostr_content_render_result_free(GnContentRenderResult *result) {
   g_free(result);
 }
 
-GnContentRenderResult *gnostr_render_content(const char *content, int content_len) {
+GnContentRenderResult *gnostr_render_content(const char *content, int content_len,
+                                              GError **error) {
+  if (!content) {
+    g_set_error_literal(error, NOSTR_GTK_ERROR, NOSTR_GTK_ERROR_INVALID_INPUT,
+                        "Content string is NULL");
+    return NULL;
+  }
+
   GnContentRenderResult *res = g_new0(GnContentRenderResult, 1);
 
-  if (!content || !*content) {
+  if (!*content) {
     res->markup = g_strdup("");
     return res;
   }
@@ -452,15 +459,19 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
 
 /* Convenience wrappers — delegate to unified gnostr_render_content() */
 
-char *gnostr_render_content_markup(const char *content, int content_len) {
-  GnContentRenderResult *res = gnostr_render_content(content, content_len);
+char *gnostr_render_content_markup(const char *content, int content_len,
+                                    GError **error) {
+  GnContentRenderResult *res = gnostr_render_content(content, content_len, error);
+  if (!res) return NULL;
   gchar *markup = g_strdup(res->markup);
   gnostr_content_render_result_free(res);
   return markup;
 }
 
-GPtrArray *gnostr_extract_media_urls(const char *content, int content_len) {
-  GnContentRenderResult *res = gnostr_render_content(content, content_len);
+GPtrArray *gnostr_extract_media_urls(const char *content, int content_len,
+                                      GError **error) {
+  GnContentRenderResult *res = gnostr_render_content(content, content_len, error);
+  if (!res) return NULL;
   GPtrArray *urls = res->media_urls ? g_ptr_array_ref(res->media_urls) : NULL;
   gnostr_content_render_result_free(res);
   return urls;

@@ -365,7 +365,7 @@ static gboolean db_has_profile_event_for_pubkey(void *txn, const unsigned char p
   if (!txn || !pk32) return FALSE;
   char *evt_json = NULL;
   int evt_len = 0;
-  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len);
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len, NULL);
   if (rc != 0 || !evt_json || evt_len <= 0) {
     if (evt_json) free(evt_json);
     return FALSE;
@@ -392,7 +392,7 @@ static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void
 
   char *evt_json = NULL;
   int evt_len = 0;
-  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len);
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len, NULL);
   if (rc != 0 || !evt_json || evt_len <= 0) {
     if (evt_json) free(evt_json);
     return NULL;
@@ -1286,7 +1286,7 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return;
 
   for (guint i = 0; i < n_keys; i++) {
     uint64_t note_key = note_keys[i];
@@ -1337,7 +1337,7 @@ static void timeline_batch_thread_func(GTask        *task,
   GHashTable *pk_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_hash_table_destroy(pk_set);
     g_task_return_pointer(task, bp, NULL);
     return;
@@ -1452,7 +1452,7 @@ static void timeline_batch_complete_cb(GObject      *source_object,
 
   /* Open short NDB txn for profile caching and item precaching */
   void *txn = NULL;
-  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
+  gboolean have_txn = (storage_ndb_begin_query(&txn, NULL) == 0 && txn != NULL);
 
   guint inserted_count = 0;
   guint direct_inserted = 0;
@@ -1622,7 +1622,7 @@ static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guin
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return;
 
   for (guint i = 0; i < n_keys; i++) {
     uint64_t del_key = note_keys[i];
@@ -1642,7 +1642,7 @@ static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guin
     char **arr = NULL;
     int n = 0;
     char *filter = g_strdup_printf("[{\"ids\":[\"%s\"]}]", id_hex);
-    int qrc = storage_ndb_query(txn, filter, &arr, &n);
+    int qrc = storage_ndb_query(txn, filter, &arr, &n, NULL);
     g_free(filter);
 
     if (qrc == 0 && arr && n > 0 && arr[0]) {
@@ -1707,7 +1707,7 @@ static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, gu
   if (!self->reaction_cache) return;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return;
 
   /* Track which event IDs we need to update */
   GHashTable *events_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -1773,7 +1773,7 @@ static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n
   if (!self->zap_stats_cache) return;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return;
 
   /* Track which event IDs we need to update */
   GHashTable *events_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -2110,7 +2110,7 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
       guint count = 0;
       guint total = 0;
 
-      while (storage_ndb_cursor_next(cursor, &entries, &count) == 0 && count > 0) {
+      while (storage_ndb_cursor_next(cursor, &entries, &count, NULL) == 0 && count > 0) {
         for (guint i = 0; i < count; i++) {
           insert_note_silent(self, entries[i].note_key,
                              (gint64)entries[i].created_at, NULL, NULL, 0);
@@ -2194,7 +2194,7 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   g_string_append_printf(filter, "\"limit\":%u}]", qlimit);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[MODEL] Failed to begin query");
     g_string_free(filter, TRUE);
     return;
@@ -2202,7 +2202,7 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
 
   char **json_results = NULL;
   int count = 0;
-  int query_rc = storage_ndb_query(txn, filter->str, &json_results, &count);
+  int query_rc = storage_ndb_query(txn, filter->str, &json_results, &count, NULL);
 
   guint added = 0;
   if (query_rc == 0 && json_results && count > 0) {
@@ -2414,7 +2414,7 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
   char *filter_str = refresh_build_filter(snap);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[MODEL] refresh_thread: begin_query failed");
     g_free(filter_str);
     g_task_return_pointer(task, entries, (GDestroyNotify)g_ptr_array_unref);
@@ -2423,7 +2423,7 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
 
   char **json_results = NULL;
   int count = 0;
-  int rc = storage_ndb_query(txn, filter_str, &json_results, &count);
+  int rc = storage_ndb_query(txn, filter_str, &json_results, &count, NULL);
   g_free(filter_str);
 
   guint ready = 0;
@@ -2845,7 +2845,7 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
   }
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     nostr_event_free(evt);
     return;
   }
@@ -2981,7 +2981,7 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
   g_string_append_printf(filter, "\"limit\":%u}]", count);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[MODEL] load_older: Failed to begin query");
     g_string_free(filter, TRUE);
     return 0;
@@ -2989,7 +2989,7 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
 
   char **json_results = NULL;
   int result_count = 0;
-  int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count);
+  int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count, NULL);
 
   guint old_len = self->notes->len;
   guint added = 0;
@@ -3193,7 +3193,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[MODEL] load_newer: Failed to begin query");
     g_string_free(filter, TRUE);
     return 0;
@@ -3201,7 +3201,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
   char **json_results = NULL;
   int result_count = 0;
-  int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count);
+  int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count, NULL);
 
   guint old_len = self->notes->len;
   guint added = 0;

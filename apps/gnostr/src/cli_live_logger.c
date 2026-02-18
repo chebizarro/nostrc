@@ -56,11 +56,11 @@ static void on_event(GNostrSubscription *sub, const gchar *event_json, gpointer 
         /* verify event presence for author/kind=0 */
         {
           void *txn = NULL;
-          if (storage_ndb_begin_query(&txn) == 0) {
+          if (storage_ndb_begin_query(&txn, NULL) == 0) {
             char filt[256];
             snprintf(filt, sizeof(filt), "{\"kinds\":[0],\"authors\":[\"%s\"],\"limit\":1}", pk);
             char **arr = NULL; int n = 0;
-            int qrc = storage_ndb_query(txn, filt, &arr, &n);
+            int qrc = storage_ndb_query(txn, filt, &arr, &n, NULL);
             g_message("ndb_events_by_author(profile_sub): pk=%s qrc=%d count=%d present=%s", pk, qrc, n, (qrc==0 && n>0)?"yes":"no");
             if (qrc == 0 && arr) storage_ndb_free_results(arr, n);
             storage_ndb_end_query(txn);
@@ -70,9 +70,9 @@ static void on_event(GNostrSubscription *sub, const gchar *event_json, gpointer 
          * so it may not be available yet — that's fine for diagnostics. */
         {
           void *txn = NULL;
-          if (storage_ndb_begin_query(&txn) == 0) {
+          if (storage_ndb_begin_query(&txn, NULL) == 0) {
             char *pjson = NULL; int plen = 0;
-            int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
+            int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen, NULL);
             g_message("ndb_profile_readback(profile_sub): pk=%s rc=%d len=%d present=%s", pk, prc, plen, pjson?"yes":"no");
             storage_ndb_end_query(txn);
             if (pjson) { free(pjson); }
@@ -146,7 +146,7 @@ int main(int argc, char **argv) {
   gchar *dbdir = g_build_filename(g_get_user_cache_dir(), "gnostr", "ndb", NULL);
   g_mkdir_with_parents(dbdir, 0700);
   const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":1}";
-  if (!storage_ndb_init(dbdir, opts)) {
+  if (!storage_ndb_init(dbdir, opts, NULL)) {
     g_warning("Failed to initialize storage at %s", dbdir);
   }
   g_free(dbdir);

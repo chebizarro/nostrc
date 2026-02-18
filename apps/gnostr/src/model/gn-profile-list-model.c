@@ -420,7 +420,7 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
 
     /* Query nostrdb for all kind:0 events */
     void *txn = NULL;
-    int rc = storage_ndb_begin_query_retry(&txn, 5, 10);
+    int rc = storage_ndb_begin_query_retry(&txn, 5, 10, NULL);
     if (rc != 0 || !txn) {
         g_warning("profile-list-model: Failed to begin nostrdb query for profiles");
         g_task_return_pointer(task, data, (GDestroyNotify)load_profiles_data_free);
@@ -435,7 +435,7 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
     int result_count = 0;
 
     g_message("profile-list-model: querying nostrdb with filter: %s", filter_json);
-    rc = storage_ndb_query(txn, filter_json, &results, &result_count);
+    rc = storage_ndb_query(txn, filter_json, &results, &result_count, NULL);
     g_message("profile-list-model: query returned rc=%d, result_count=%d", rc, result_count);
 
     if (rc == 0 && results && result_count > 0) {
