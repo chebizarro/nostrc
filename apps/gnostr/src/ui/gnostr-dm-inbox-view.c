@@ -51,8 +51,8 @@ gnostr_dm_inbox_view_finalize(GObject *object)
 {
     GnostrDmInboxView *self = GNOSTR_DM_INBOX_VIEW(object);
 
-    g_free(self->user_pubkey);
-    g_hash_table_destroy(self->conversations);
+    g_clear_pointer(&self->user_pubkey, g_free);
+    g_clear_pointer(&self->conversations, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_dm_inbox_view_parent_class)->finalize(object);
 }

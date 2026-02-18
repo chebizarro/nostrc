@@ -301,7 +301,7 @@ static void nostr_gtk_timeline_tabs_dispose(GObject *object) {
 static void nostr_gtk_timeline_tabs_finalize(GObject *object) {
   NostrGtkTimelineTabs *self = NOSTR_GTK_TIMELINE_TABS(object);
 
-  g_ptr_array_unref(self->tabs);
+  g_clear_pointer(&self->tabs, g_ptr_array_unref);
 
   G_OBJECT_CLASS(nostr_gtk_timeline_tabs_parent_class)->finalize(object);
 }

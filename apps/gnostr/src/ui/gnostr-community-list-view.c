@@ -52,8 +52,8 @@ gnostr_community_list_view_finalize(GObject *object)
 {
     GnostrCommunityListView *self = GNOSTR_COMMUNITY_LIST_VIEW(object);
 
-    g_free(self->user_pubkey);
-    g_hash_table_destroy(self->communities);
+    g_clear_pointer(&self->user_pubkey, g_free);
+    g_clear_pointer(&self->communities, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_community_list_view_parent_class)->finalize(object);
 }

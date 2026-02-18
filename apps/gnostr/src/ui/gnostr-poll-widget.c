@@ -78,18 +78,14 @@ static void gnostr_poll_widget_finalize(GObject *obj) {
       g_free(opt->text);
       g_free(opt);
     }
-    g_ptr_array_free(self->options, TRUE);
-    self->options = NULL;
   }
+  g_clear_pointer(&self->options, g_ptr_array_unref);
 
   g_clear_pointer(&self->option_buttons, g_ptr_array_unref);
   g_clear_pointer(&self->option_bars, g_ptr_array_unref);
   g_clear_pointer(&self->option_count_labels, g_ptr_array_unref);
 
-  if (self->user_vote_indices) {
-    g_array_unref(self->user_vote_indices);
-    self->user_vote_indices = NULL;
-  }
+  g_clear_pointer(&self->user_vote_indices, g_array_unref);
 
   G_OBJECT_CLASS(gnostr_poll_widget_parent_class)->finalize(obj);
 }

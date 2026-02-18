@@ -198,10 +198,7 @@ static void nostr_gtk_timeline_view_dispose(GObject *obj) {
     g_source_remove(self->metadata_batch_idle_id);
     self->metadata_batch_idle_id = 0;
   }
-  if (self->pending_metadata_items) {
-    g_ptr_array_unref(self->pending_metadata_items);
-    self->pending_metadata_items = NULL;
-  }
+  g_clear_pointer(&self->pending_metadata_items, g_ptr_array_unref);
 
   gtk_widget_dispose_template(GTK_WIDGET(obj), NOSTR_GTK_TYPE_TIMELINE_VIEW);
   self->root_scroller = NULL;

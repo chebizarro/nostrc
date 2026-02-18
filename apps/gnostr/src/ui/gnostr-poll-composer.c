@@ -74,10 +74,7 @@ static void gnostr_poll_composer_dispose(GObject *obj) {
 static void gnostr_poll_composer_finalize(GObject *obj) {
   GnostrPollComposer *self = GNOSTR_POLL_COMPOSER(obj);
 
-  if (self->option_entries) {
-    g_ptr_array_free(self->option_entries, TRUE);
-    self->option_entries = NULL;
-  }
+  g_clear_pointer(&self->option_entries, g_ptr_array_unref);
 
   G_OBJECT_CLASS(gnostr_poll_composer_parent_class)->finalize(obj);
 }

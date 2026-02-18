@@ -225,8 +225,7 @@ gn_event_history_finalize(GObject *object)
   if (self->dirty)
     gn_event_history_save(self);
 
-  if (self->entries)
-    g_ptr_array_unref(self->entries);
+  g_clear_pointer(&self->entries, g_ptr_array_unref);
   g_free(self->path);
 
   G_OBJECT_CLASS(gn_event_history_parent_class)->finalize(object);

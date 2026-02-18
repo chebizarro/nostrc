@@ -52,8 +52,8 @@ gnostr_channel_list_view_finalize(GObject *object)
 {
     GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(object);
 
-    g_free(self->user_pubkey);
-    g_hash_table_destroy(self->channels);
+    g_clear_pointer(&self->user_pubkey, g_free);
+    g_clear_pointer(&self->channels, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_channel_list_view_parent_class)->finalize(object);
 }

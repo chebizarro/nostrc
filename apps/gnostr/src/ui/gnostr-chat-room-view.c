@@ -72,12 +72,12 @@ gnostr_chat_room_view_finalize(GObject *object)
 {
     GnostrChatRoomView *self = GNOSTR_CHAT_ROOM_VIEW(object);
 
-    gnostr_channel_free(self->channel);
-    g_free(self->user_pubkey);
-    g_free(self->reply_to_id);
-    g_hash_table_destroy(self->messages);
-    g_hash_table_destroy(self->author_names);
-    g_hash_table_destroy(self->author_avatars);
+    g_clear_pointer(&self->channel, gnostr_channel_free);
+    g_clear_pointer(&self->user_pubkey, g_free);
+    g_clear_pointer(&self->reply_to_id, g_free);
+    g_clear_pointer(&self->messages, g_hash_table_destroy);
+    g_clear_pointer(&self->author_names, g_hash_table_destroy);
+    g_clear_pointer(&self->author_avatars, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_chat_room_view_parent_class)->finalize(object);
 }
