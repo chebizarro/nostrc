@@ -144,8 +144,10 @@ queue_message:
             int retries = 10;
             while (retries-- > 0) {
                 sched_yield();
-                // Re-validate channel on each retry in case of shutdown
-                recv_chan = conn->recv_channel;
+                /* nostrc-uaf: Do NOT re-read conn->recv_channel here - conn may have
+                 * been freed during the retry loop. Just validate the channel pointer
+                 * we already captured at line 136. If the channel was closed, the
+                 * magic check will fail and we'll bail out safely. */
                 if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
                     free(msg->data);
                     free(msg);
