@@ -79,11 +79,11 @@ marmot_gobject_group_finalize(GObject *object)
 {
     MarmotGobjectGroup *self = MARMOT_GOBJECT_GROUP(object);
 
-    g_free(self->mls_group_id_hex);
-    g_free(self->nostr_group_id_hex);
-    g_free(self->name);
-    g_free(self->description);
-    g_strfreev(self->admin_pubkey_hexes);
+    g_clear_pointer(&self->mls_group_id_hex, g_free);
+    g_clear_pointer(&self->nostr_group_id_hex, g_free);
+    g_clear_pointer(&self->name, g_free);
+    g_clear_pointer(&self->description, g_free);
+    g_clear_pointer(&self->admin_pubkey_hexes, g_strfreev);
 
     G_OBJECT_CLASS(marmot_gobject_group_parent_class)->finalize(object);
 }

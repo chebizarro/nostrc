@@ -7466,9 +7466,9 @@ static void gnostr_main_window_dispose(GObject *object) {
     self->health_check_source_id = 0;
   }
 
-  if (self->profile_fetch_cancellable) { g_object_unref(self->profile_fetch_cancellable); self->profile_fetch_cancellable = NULL; }
-  if (self->bg_prefetch_cancellable) { g_object_unref(self->bg_prefetch_cancellable); self->bg_prefetch_cancellable = NULL; }
-  if (self->pool_cancellable) { g_object_unref(self->pool_cancellable); self->pool_cancellable = NULL; }
+  g_clear_object(&self->profile_fetch_cancellable);
+  g_clear_object(&self->bg_prefetch_cancellable);
+  g_clear_object(&self->pool_cancellable);
   if (self->live_urls) {
     free_urls_owned(self->live_urls, self->live_url_count);
     self->live_urls = NULL;
@@ -7492,10 +7492,7 @@ static void gnostr_main_window_dispose(GObject *object) {
     nostr_filters_free(self->profile_batch_filters);
     self->profile_batch_filters = NULL;
   }
-  if (self->profile_pool) {
-    g_object_unref(self->profile_pool);
-    self->profile_pool = NULL;
-  }
+  g_clear_object(&self->profile_pool);
   if (self->pool) {
     /* Disconnect signal handlers BEFORE unreffing to prevent use-after-free
      * when pending main loop callbacks try to emit on the freed pool */
@@ -7508,10 +7505,10 @@ static void gnostr_main_window_dispose(GObject *object) {
     g_object_unref(self->pool);
     self->pool = NULL;
   }
-  if (self->seen_texts) { g_hash_table_unref(self->seen_texts); self->seen_texts = NULL; }
-  if (self->event_model) { g_object_unref(self->event_model); self->event_model = NULL; }
+  g_clear_pointer(&self->seen_texts, g_hash_table_unref);
+  g_clear_object(&self->event_model);
   /* Avatar texture cache cleanup is handled by gnostr-avatar-cache module */
-  if (self->liked_events) { g_hash_table_unref(self->liked_events); self->liked_events = NULL; }
+  g_clear_pointer(&self->liked_events, g_hash_table_unref);
 
   /* Stop gift wrap subscription */
   stop_gift_wrap_subscription(self);
@@ -7523,8 +7520,7 @@ static void gnostr_main_window_dispose(GObject *object) {
   /* Stop and cleanup DM service */
   if (self->dm_service) {
     gnostr_dm_service_stop(self->dm_service);
-    g_object_unref(self->dm_service);
-    self->dm_service = NULL;
+    g_clear_object(&self->dm_service);
   }
 
   /* Shutdown profile provider */
