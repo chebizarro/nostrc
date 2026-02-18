@@ -23,7 +23,14 @@ typedef void (*storage_ndb_notify_fn)(void *ctx, uint64_t subid);
  * @opts_json: (nullable): JSON options string, or NULL for defaults
  * @error: (nullable): return location for a #GError, or %NULL
  *
- * Initialize the NDB store.
+ * Initialize the NDB store. This function uses inverted return semantics
+ * compared to other storage_ndb functions for historical compatibility:
+ *
+ * - Returns 1 (TRUE) on success
+ * - Returns 0 (FALSE) on failure (check @error for details)
+ *
+ * Note: Other storage_ndb_* functions return 0 on success and nonzero on failure.
+ * This inconsistency is preserved for API stability.
  *
  * Returns: 1 on success, 0 on failure
  */

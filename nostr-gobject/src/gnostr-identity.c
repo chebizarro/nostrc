@@ -129,14 +129,13 @@ static char *derive_npub_from_nsec(const char *nsec, GError **error) {
     return NULL;
   }
 
-  GError *key_error = NULL;
+  g_autoptr(GError) key_error = NULL;
   g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_nsec(nsec, &key_error);
   if (!keys) {
     g_set_error(error, GNOSTR_KEYSTORE_ERROR,
                 GNOSTR_KEYSTORE_ERROR_INVALID_KEY,
                 "Failed to import nsec: %s",
                 key_error ? key_error->message : "unknown error");
-    g_clear_error(&key_error);
     return NULL;
   }
 

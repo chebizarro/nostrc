@@ -506,7 +506,7 @@ static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer
     FetchContext *ctx = (FetchContext *)user_data;
     if (!ctx) return;
 
-    GError *err = NULL;
+    g_autoptr(GError) err = NULL;
     GPtrArray *results = gnostr_pool_query_finish(
         GNOSTR_POOL(source), res, &err);
 
@@ -517,7 +517,6 @@ static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer
         if (ctx->callback) {
             ctx->callback(ctx->mute_list, FALSE, ctx->user_data);
         }
-        g_error_free(err);
         fetch_context_free(ctx);
         return;
     }
@@ -1375,7 +1374,7 @@ void gnostr_mute_list_save_async(GNostrMuteList *self,
     /* Note: Private entry encryption still uses the D-Bus proxy directly
      * because the unified signer service doesn't yet support NIP-44 encrypt.
      * This is a separate issue to address in a future task. */
-    GError *proxy_err = NULL;
+    g_autoptr(GError) proxy_err = NULL;
     NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
 
     /* If there are private entries and we have user pubkey and proxy, encrypt them first */
@@ -1391,7 +1390,6 @@ void gnostr_mute_list_save_async(GNostrMuteList *self,
             ctx
         );
     } else {
-        g_clear_error(&proxy_err);
         /* No private entries or no pubkey/proxy - proceed directly to sign */
         proceed_to_sign(ctx, "");
     }

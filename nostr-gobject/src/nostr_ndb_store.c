@@ -108,14 +108,13 @@ ndb_store_query(GNostrStore *store, NostrFilter *filter, GError **error)
         if (!results[i])
             continue;
 
-        GError *parse_err = NULL;
+        g_autoptr(GError) parse_err = NULL;
         GNostrEvent *ev = gnostr_event_new_from_json(results[i], &parse_err);
         if (ev) {
             g_ptr_array_add(events, ev);
         } else {
             g_debug("nostr_ndb_store: failed to parse event %d: %s",
                     i, parse_err ? parse_err->message : "unknown");
-            g_clear_error(&parse_err);
         }
     }
 

@@ -186,12 +186,10 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   }
 
   /* Extract created_at from kind-0 event if available */
-  GError *err = NULL;
+  g_autoptr(GError) err = NULL;
   gint64 created_at = gnostr_json_get_int64(json_str, "created_at", &err);
   if (!err) {
     m->created_at = created_at;
-  } else {
-    g_clear_error(&err);
   }
 
   g_free(content_str);
