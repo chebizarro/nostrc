@@ -411,9 +411,8 @@ static GtkWidget *create_log_entry_row(GnEventHistoryEntry *entry) {
   /* Build title: kind and method */
   gint kind = gn_event_history_entry_get_event_kind(entry);
   const gchar *method = gn_event_history_entry_get_method(entry);
-  gchar *title = g_strdup_printf("Kind %d - %s", kind, method);
+  g_autofree gchar *title = g_strdup_printf("Kind %d - %s", kind, method);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-  g_free(title);
 
   /* Build subtitle: time, result, client app */
   const gchar *client_app = gn_event_history_entry_get_client_app(entry);
@@ -422,12 +421,11 @@ static GtkWidget *create_log_entry_row(GnEventHistoryEntry *entry) {
                             result == GN_EVENT_HISTORY_DENIED ? "Denied" :
                             result == GN_EVENT_HISTORY_TIMEOUT ? "Timeout" : "Error";
 
-  gchar *subtitle = g_strdup_printf("%s | %s%s%s",
+  g_autofree gchar *subtitle = g_strdup_printf("%s | %s%s%s",
                                     time_str, result_str,
                                     client_app ? " | " : "",
                                     client_app ? client_app : "");
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
   g_free(time_str);
 
   /* Add result icon */
@@ -525,7 +523,7 @@ static GtkWidget *create_policy_entry_row(PolicyEntry *entry, PolicyStore *store
 
   /* Subtitle: decision and expiration */
   const gchar *decision_str = entry->decision ? "Allowed" : "Denied";
-  gchar *subtitle;
+  g_autofree gchar *subtitle = NULL;
   if (entry->expires_at == 0) {
     subtitle = g_strdup_printf("%s (permanent)", decision_str);
   } else {
@@ -538,7 +536,6 @@ static GtkWidget *create_policy_entry_row(PolicyEntry *entry, PolicyStore *store
     }
   }
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
 
   /* Decision icon */
   const gchar *icon_name = entry->decision ? "emblem-ok-symbolic" : "action-unavailable-symbolic";
@@ -721,9 +718,8 @@ static void on_user_list_publish(UserListType type, const gchar *event_json, gpo
   }
 
   /* The secret_store_sign_event returns the full signed event JSON */
-  gchar *event_type = g_strdup_printf("%s list (kind:%d)", list_name, kind);
+  g_autofree gchar *event_type = g_strdup_printf("%s list (kind:%d)", list_name, kind);
   publish_signed_event_to_relays(signature, event_type);
-  g_free(event_type);
 
   g_free(signature);
   g_free(npub);

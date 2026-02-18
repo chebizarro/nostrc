@@ -170,7 +170,7 @@ GPtrArray *multisig_store_list_partials(MultisigStore *store,
     return arr;
   }
 
-  gchar *prefix = g_strdup_printf("%s:", session_id);
+  g_autofree gchar *prefix = g_strdup_printf("%s:", session_id);
 
   GHashTableIter iter;
   gpointer key, value;
@@ -183,7 +183,6 @@ GPtrArray *multisig_store_list_partials(MultisigStore *store,
     }
   }
 
-  g_free(prefix);
   return arr;
 }
 
@@ -193,7 +192,7 @@ guint multisig_store_count_partials(MultisigStore *store,
     return 0;
   }
 
-  gchar *prefix = g_strdup_printf("%s:", session_id);
+  g_autofree gchar *prefix = g_strdup_printf("%s:", session_id);
   guint count = 0;
 
   GHashTableIter iter;
@@ -206,7 +205,6 @@ guint multisig_store_count_partials(MultisigStore *store,
     }
   }
 
-  g_free(prefix);
   return count;
 }
 
@@ -236,7 +234,7 @@ guint multisig_store_clear_session(MultisigStore *store,
     return 0;
   }
 
-  gchar *prefix = g_strdup_printf("%s:", session_id);
+  g_autofree gchar *prefix = g_strdup_printf("%s:", session_id);
   GPtrArray *keys_to_remove = g_ptr_array_new_with_free_func(g_free);
 
   GHashTableIter iter;
@@ -258,7 +256,6 @@ guint multisig_store_clear_session(MultisigStore *store,
   }
 
   g_ptr_array_unref(keys_to_remove);
-  g_free(prefix);
 
   if (removed > 0) {
     store->dirty = TRUE;

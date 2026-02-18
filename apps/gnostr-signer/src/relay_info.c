@@ -260,7 +260,7 @@ static void on_connection_complete(GObject *source, GAsyncResult *result, gpoint
   const gchar *path = g_uri_get_path(uri);
   if (!path || !*path) path = "/";
 
-  gchar *request = g_strdup_printf(
+  g_autofree gchar *request = g_strdup_printf(
     "GET %s HTTP/1.1\r\n"
     "Host: %s\r\n"
     "Accept: application/nostr+json\r\n"
@@ -278,12 +278,10 @@ static void on_connection_complete(GObject *source, GAsyncResult *result, gpoint
       ctx->callback(NULL, err ? err->message : "Write failed", ctx->user_data);
     }
     g_clear_error(&err);
-    g_free(request);
     g_object_unref(conn);
     fetch_context_free(ctx);
     return;
   }
-  g_free(request);
 
   /* Read response */
   ctx->input_stream = g_object_ref(g_io_stream_get_input_stream(G_IO_STREAM(conn)));

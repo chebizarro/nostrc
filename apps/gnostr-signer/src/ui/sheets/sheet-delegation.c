@@ -262,9 +262,8 @@ void sheet_delegation_set_account(SheetDelegation *self, const gchar *npub) {
   if (npub && *npub) {
     AccountsStore *as = accounts_store_get_default();
     gchar *name = accounts_store_get_display_name(as, npub);
-    gchar *desc = g_strdup_printf("Manage delegations for %s", name ? name : npub);
+    g_autofree gchar *desc = g_strdup_printf("Manage delegations for %s", name ? name : npub);
     adw_status_page_set_description(self->status_header, desc);
-    g_free(desc);
     g_free(name);
   }
 
@@ -343,16 +342,14 @@ static GtkWidget *create_delegation_row(const GnDelegation *d) {
 
   /* Subtitle: kinds and validity */
   gchar *kinds = format_kinds(d->allowed_kinds);
-  gchar *subtitle;
+  g_autofree gchar *subtitle = NULL;
   if (d->valid_until > 0) {
-    gchar *until = format_timestamp(d->valid_until);
+    g_autofree gchar *until = format_timestamp(d->valid_until);
     subtitle = g_strdup_printf("%s | Expires: %s", kinds, until);
-    g_free(until);
   } else {
     subtitle = g_strdup_printf("%s | No expiry", kinds);
   }
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
   g_free(kinds);
 
   /* Status indicator */
@@ -470,11 +467,9 @@ static void show_details_page(SheetDelegation *self, const gchar *delegation_id)
 
   /* Status */
   if (d->revoked) {
-    gchar *revoked_at = format_timestamp(d->revoked_at);
-    gchar *status = g_strdup_printf("Revoked (%s)", revoked_at);
+    g_autofree gchar *revoked_at = format_timestamp(d->revoked_at);
+    g_autofree gchar *status = g_strdup_printf("Revoked (%s)", revoked_at);
     gtk_label_set_text(self->lbl_detail_status, status);
-    g_free(status);
-    g_free(revoked_at);
     gtk_widget_set_sensitive(self->btn_revoke, FALSE);
   } else if (!gn_delegation_is_valid(d, 0, 0)) {
     gtk_label_set_text(self->lbl_detail_status, "Expired");
@@ -669,11 +664,9 @@ static void on_create(GtkButton *btn, gpointer user_data) {
   g_free(kinds);
 
   if (valid_until > 0) {
-    gchar *until = format_timestamp(valid_until);
-    gchar *validity = g_strdup_printf("Expires: %s", until);
+    g_autofree gchar *until = format_timestamp(valid_until);
+    g_autofree gchar *validity = g_strdup_printf("Expires: %s", until);
     gtk_label_set_text(self->lbl_result_validity, validity);
-    g_free(validity);
-    g_free(until);
   } else {
     gtk_label_set_text(self->lbl_result_validity, "No expiration");
   }

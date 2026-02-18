@@ -64,7 +64,7 @@ void gnostr_permissions_page_refresh(GtkWidget *page, PolicyStore *ps) {
       g_signal_connect(sw, "notify::active", G_CALLBACK(on_switch_active_notify), pp);
       gtk_widget_set_margin_end(sw, 8);
 
-      gchar *label_text = g_strdup_printf("%s — %s", e->identity, e->app_id);
+      g_autofree gchar *label_text = g_strdup_printf("%s — %s", e->identity, e->app_id);
       GtkWidget *lbl = gtk_label_new(label_text);
       gtk_widget_set_hexpand(lbl, TRUE);
       gtk_widget_set_halign(lbl, GTK_ALIGN_START);
@@ -76,7 +76,6 @@ void gnostr_permissions_page_refresh(GtkWidget *page, PolicyStore *ps) {
       gtk_box_append(GTK_BOX(row), lbl);
       gtk_box_append(GTK_BOX(row), btn);
       gtk_list_box_append(GTK_LIST_BOX(pp->list), row);
-      g_free(label_text);
       /* Free entry */
       g_free(e->identity); g_free(e->app_id); g_free(e);
     }

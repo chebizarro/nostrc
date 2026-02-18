@@ -146,7 +146,7 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
       g_signal_connect(check, "toggled", G_CALLBACK(on_radio_toggled), ui);
       gtk_widget_set_margin_end(check, 8);
 
-      gchar *label_text = NULL;
+      g_autofree gchar *label_text = NULL;
       if (e->label && *e->label)
         label_text = g_strdup_printf("%s — %s", e->label, e->id);
       else
@@ -163,7 +163,6 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
       gtk_box_append(GTK_BOX(row), lbl);
       gtk_box_append(GTK_BOX(row), btn);
       gtk_list_box_append(GTK_LIST_BOX(ui->list), row);
-      g_free(label_text);
       g_free(e->id); g_free(e->label); g_free(e);
     }
     g_ptr_array_free(items, TRUE);

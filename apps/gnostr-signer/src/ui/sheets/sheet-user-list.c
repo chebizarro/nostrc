@@ -221,11 +221,10 @@ static void user_row_data_free(UserRowData *data) {
 
 static void update_count_label(SheetUserList *self) {
   guint count = user_list_store_count(self->store);
-  gchar *text = g_strdup_printf("%u %s",
+  g_autofree gchar *text = g_strdup_printf("%u %s",
     count,
     self->type == USER_LIST_FOLLOWS ? "following" : "muted");
   gtk_label_set_text(self->lbl_count, text);
-  g_free(text);
 }
 
 static void on_cancel(GtkButton *btn, gpointer user_data) {
@@ -289,7 +288,7 @@ static GtkWidget *create_user_row(SheetUserList *self, const gchar *pubkey,
 
   /* Determine title: petname > display_name > truncated pubkey */
   const gchar *title = NULL;
-  gchar *title_owned = NULL;
+  g_autofree gchar *title_owned = NULL;
   if (petname && *petname) {
     title = petname;
   } else if (display_name && *display_name) {
@@ -301,15 +300,13 @@ static GtkWidget *create_user_row(SheetUserList *self, const gchar *pubkey,
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
 
   /* Build subtitle: nip05 if available, else truncated pubkey */
-  gchar *subtitle = NULL;
+  g_autofree gchar *subtitle = NULL;
   if (nip05 && *nip05) {
     subtitle = g_strdup(nip05);
   } else {
     subtitle = g_strdup_printf("%.12s...", pubkey);
   }
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
-  g_free(title_owned);
 
   /* Avatar - start with default, load async if URL available */
   GtkImage *avatar = GTK_IMAGE(gtk_image_new_from_icon_name("avatar-default-symbolic"));
@@ -493,11 +490,10 @@ static void on_sync_complete(gpointer user_data) {
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
   if (root) {
     const gchar *list_name = (self->type == USER_LIST_FOLLOWS) ? "follows" : "mutes";
-    gchar *msg = g_strdup_printf("Your %s list has been synced.", list_name);
+    g_autofree gchar *msg = g_strdup_printf("Your %s list has been synced.", list_name);
     GtkAlertDialog *dlg = gtk_alert_dialog_new("%s", msg);
     gtk_alert_dialog_show(dlg, GTK_WINDOW(root));
     g_object_unref(dlg);
-    g_free(msg);
   }
 
   sync_context_free(ctx);
@@ -715,23 +711,21 @@ void sheet_user_list_update_user_profile(SheetUserList *self,
     /* Determine new title */
     const gchar *title = data->petname;
     if (!title || !*title) title = display_name;
-    gchar *title_owned = NULL;
+    g_autofree gchar *title_owned = NULL;
     if (!title || !*title) {
       title_owned = g_strdup_printf("%.16s...", pubkey);
       title = title_owned;
     }
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-    g_free(title_owned);
 
     /* Update subtitle */
-    gchar *subtitle = NULL;
+    g_autofree gchar *subtitle = NULL;
     if (nip05 && *nip05) {
       subtitle = g_strdup(nip05);
     } else {
       subtitle = g_strdup_printf("%.12s...", pubkey);
     }
     adw_action_row_set_subtitle(row, subtitle);
-    g_free(subtitle);
 
     break;
   }

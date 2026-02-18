@@ -939,10 +939,9 @@ static gchar *get_config_dir(void) {
 static gchar *get_config_path(const gchar *owner_npub) {
   gchar *dir = get_config_dir();
   /* Use truncated npub for filename */
-  gchar *filename = g_strdup_printf("%.16s.json", owner_npub + 5);  /* Skip "npub1" prefix */
+  g_autofree gchar *filename = g_strdup_printf("%.16s.json", owner_npub + 5);  /* Skip "npub1" prefix */
   gchar *path = g_build_filename(dir, filename, NULL);
   g_free(dir);
-  g_free(filename);
   return path;
 }
 

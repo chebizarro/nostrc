@@ -130,7 +130,7 @@ void sheet_key_rotation_set_account(SheetKeyRotation *self, const gchar *npub) {
   }
 
   /* Display current npub (truncated) */
-  gchar *display_npub = NULL;
+  g_autofree gchar *display_npub = NULL;
   gsize len = strlen(npub);
   if (len > 20) {
     display_npub = g_strdup_printf("%.12s...%.8s", npub, npub + len - 8);
@@ -138,7 +138,6 @@ void sheet_key_rotation_set_account(SheetKeyRotation *self, const gchar *npub) {
     display_npub = g_strdup(npub);
   }
   gtk_label_set_text(self->lbl_current_npub, display_npub);
-  g_free(display_npub);
 
   /* Get and display label */
   AccountsStore *as = accounts_store_get_default();
@@ -224,7 +223,7 @@ static void rotation_complete_cb(KeyRotation *kr,
 
     /* Display new npub */
     if (new_npub && *new_npub) {
-      gchar *display = NULL;
+      g_autofree gchar *display = NULL;
       gsize len = strlen(new_npub);
       if (len > 20) {
         display = g_strdup_printf("%.16s...%.8s", new_npub, new_npub + len - 8);
@@ -232,7 +231,6 @@ static void rotation_complete_cb(KeyRotation *kr,
         display = g_strdup(new_npub);
       }
       gtk_label_set_text(self->lbl_new_npub, display);
-      g_free(display);
     }
 
     /* Display migration event for manual publishing */
@@ -256,11 +254,10 @@ static void rotation_complete_cb(KeyRotation *kr,
     adw_status_page_set_icon_name(self->status_result, "dialog-error-symbolic");
     adw_status_page_set_title(self->status_result, "Key Rotation Failed");
 
-    gchar *desc = g_strdup_printf("%s\n\n%s",
+    g_autofree gchar *desc = g_strdup_printf("%s\n\n%s",
         key_rotation_result_to_string(result),
         error_message ? error_message : "");
     adw_status_page_set_description(self->status_result, desc);
-    g_free(desc);
 
     gtk_label_set_text(self->lbl_new_npub, "");
     gtk_label_set_text(self->lbl_migration_event, "");
