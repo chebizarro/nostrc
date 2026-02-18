@@ -384,6 +384,7 @@ static guint signals[N_SIGNALS];
 
 static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
+  gboolean was_prepared_for_unbind = self->disposed;
 
   /* If already disposed (e.g., by prepare_for_unbind), skip cleanup that was already done.
    * We still need to call parent dispose and dispose_template though. */
@@ -514,58 +515,39 @@ do_template_dispose:
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
   g_clear_pointer(&self->reactors, g_ptr_array_unref);
   
-  /* nostrc-pgo6: Defensive label clearing to prevent Pango SEGV during
-   * gtk_widget_dispose_template.
-   *
-   * PROBLEM: gtk_label_set_text("") unrefs the old PangoLayout. If the layout
-   * has corrupt line entries (NULL lines from ZWS or other Unicode issues),
-   * pango_layout_line_unref(NULL) SEGVs. This happens when the native surface
-   * is gone — prepare_for_unbind skipped clearing, and the layout is still
-   * corrupt from relay-sourced content.
-   *
-   * FIX: Use GNOSTR_LABEL_SAFE (checks native surface). When native is valid,
-   * gtk_label_set_text safely replaces the layout. When native is gone AND the
-   * label has non-empty text (i.e. prepare_for_unbind didn't clear it), add
-   * g_object_ref to prevent gtk_widget_dispose_template from finalizing the
-   * label (which would crash in pango_layout_clear_lines). The label leaks
-   * ~1KB — acceptable to prevent SEGV. Empty labels (already cleared by
-   * prepare_for_unbind) are safe to finalize. */
-
-/* Safe dispose helper: clear if native available, ref-leak if not and non-empty */
+  /* Clear labels only on the first dispose pass.
+   * If prepare_for_unbind already ran, labels were already cleared while native
+   * was valid. Re-running aggressive cleanup here can re-enter GTK teardown
+   * paths and corrupt widget lifecycle accounting. */
+  if (!was_prepared_for_unbind) {
 #define DISPOSE_LABEL(lbl) \
-  do { \
-    if (GNOSTR_LABEL_SAFE(lbl)) { \
-      gtk_label_set_text(GTK_LABEL(lbl), ""); \
-    } else if (GTK_IS_LABEL(lbl)) { \
-      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
-      if (_t && *_t) g_object_ref(lbl); \
-    } \
-  } while (0)
+    do { if (GNOSTR_LABEL_SAFE(lbl)) gtk_label_set_text(GTK_LABEL(lbl), ""); } while (0)
 
-  DISPOSE_LABEL(self->content_label);
-  DISPOSE_LABEL(self->lbl_display);
-  DISPOSE_LABEL(self->lbl_handle);
-  DISPOSE_LABEL(self->lbl_relay);
-  DISPOSE_LABEL(self->lbl_timestamp);
-  DISPOSE_LABEL(self->lbl_nip05);
-  DISPOSE_LABEL(self->lbl_nip05_separator);
-  DISPOSE_LABEL(self->lbl_timestamp_separator);
-  DISPOSE_LABEL(self->reply_indicator_label);
-  DISPOSE_LABEL(self->reply_count_label);
-  DISPOSE_LABEL(self->lbl_like_count);
-  DISPOSE_LABEL(self->lbl_zap_count);
-  DISPOSE_LABEL(self->repost_indicator_label);
-  DISPOSE_LABEL(self->lbl_repost_count);
-  DISPOSE_LABEL(self->zap_indicator_label);
-  DISPOSE_LABEL(self->sensitive_warning_label);
-  DISPOSE_LABEL(self->subject_label);
-  DISPOSE_LABEL(self->article_title_label);
-  DISPOSE_LABEL(self->article_reading_time);
-  DISPOSE_LABEL(self->video_title_label);
-  DISPOSE_LABEL(self->video_duration_badge);
-  DISPOSE_LABEL(self->avatar_initials);
+    DISPOSE_LABEL(self->content_label);
+    DISPOSE_LABEL(self->lbl_display);
+    DISPOSE_LABEL(self->lbl_handle);
+    DISPOSE_LABEL(self->lbl_relay);
+    DISPOSE_LABEL(self->lbl_timestamp);
+    DISPOSE_LABEL(self->lbl_nip05);
+    DISPOSE_LABEL(self->lbl_nip05_separator);
+    DISPOSE_LABEL(self->lbl_timestamp_separator);
+    DISPOSE_LABEL(self->reply_indicator_label);
+    DISPOSE_LABEL(self->reply_count_label);
+    DISPOSE_LABEL(self->lbl_like_count);
+    DISPOSE_LABEL(self->lbl_zap_count);
+    DISPOSE_LABEL(self->repost_indicator_label);
+    DISPOSE_LABEL(self->lbl_repost_count);
+    DISPOSE_LABEL(self->zap_indicator_label);
+    DISPOSE_LABEL(self->sensitive_warning_label);
+    DISPOSE_LABEL(self->subject_label);
+    DISPOSE_LABEL(self->article_title_label);
+    DISPOSE_LABEL(self->article_reading_time);
+    DISPOSE_LABEL(self->video_title_label);
+    DISPOSE_LABEL(self->video_duration_badge);
+    DISPOSE_LABEL(self->avatar_initials);
 
 #undef DISPOSE_LABEL
+  }
 
   /* Part 2: NULL the layout manager to prevent the BoxLayout from trying to
    * measure remaining children while others are being disposed. */
