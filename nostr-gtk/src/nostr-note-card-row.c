@@ -6249,10 +6249,50 @@ void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
    * mismatch and bail out before modifying the widget. */
   self->binding_id = 0;
 
-  /* Do NOT call gtk_picture_set_paintable(NULL) here - it can trigger
-   * gtk_image_definition_unref crashes if the GtkPicture is already in
-   * an invalid state during rapid widget recycling. Let GTK handle
-   * cleanup automatically during disposal. */
+  /* nostrc-hbz: CRITICAL - Clear ALL GtkPicture widgets to reset their internal
+   * GtkImageDefinition references. Without this, gtk_widget_dispose_template
+   * tries to unref image definitions that are in an invalid state, causing
+   * "code should not be reached" assertion failures in gtk_image_definition_unref.
+   * 
+   * This MUST be done during unbind when the widget is still valid, not during
+   * dispose when GTK's internal state may already be corrupted. */
+#define UNBIND_CLEAR_PICTURE(pic) \
+  do { if (pic && GTK_IS_PICTURE(pic)) gtk_picture_set_paintable(GTK_PICTURE(pic), NULL); } while (0)
+
+  UNBIND_CLEAR_PICTURE(self->avatar_image);
+  UNBIND_CLEAR_PICTURE(self->article_image);
+  
+  /* Clear all media pictures in media_box */
+  if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      /* Handle both old structure (direct GtkPicture) and new structure (GtkOverlay container) */
+      if (GTK_IS_PICTURE(child)) {
+        gtk_picture_set_paintable(GTK_PICTURE(child), NULL);
+      } else if (GTK_IS_OVERLAY(child)) {
+        GtkWidget *pic = g_object_get_data(G_OBJECT(child), "media-picture");
+        if (pic && GTK_IS_PICTURE(pic)) {
+          gtk_picture_set_paintable(GTK_PICTURE(pic), NULL);
+        }
+      }
+      child = next;
+    }
+  }
+  
+  /* Clear emoji pictures in emoji_box */
+  if (self->emoji_box && GTK_IS_BOX(self->emoji_box)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->emoji_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      if (GTK_IS_PICTURE(child)) {
+        gtk_picture_set_paintable(GTK_PICTURE(child), NULL);
+      }
+      child = next;
+    }
+  }
+
+#undef UNBIND_CLEAR_PICTURE
 
   /* nostrc-dqwq.2: Disconnect deferred media map handler to prevent stale
    * callbacks on recycled widgets. Also clear any pending items that were
