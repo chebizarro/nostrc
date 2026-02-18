@@ -837,7 +837,7 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
 
       /* Try to get author profile */
       unsigned char author_pk[32];
-      char *author_display = NULL;
+      g_autofree char *author_display = NULL;
       char *author_handle = NULL;
       char *avatar_url = NULL;
 
@@ -890,7 +890,6 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
                                      content, ts, avatar_url);
 
       g_free(ts);
-      g_free(author_display);
       g_free(author_handle);
       g_free(avatar_url);
     } else {
@@ -982,7 +981,7 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
     gint64 created_at = (gint64)nostr_event_get_created_at(evt);
 
     char *ts = format_timestamp(created_at);
-    char *author_display = NULL;
+    g_autofree char *author_display = NULL;
     if (author_hex && strlen(author_hex) >= 8) {
       author_display = g_strdup_printf("%.8s...", author_hex);
     }
@@ -990,7 +989,6 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
     gnostr_note_embed_set_content(self, author_display, NULL, content, ts, NULL);
 
     g_free(ts);
-    g_free(author_display);
   } else {
     gnostr_note_embed_set_error(self, "Failed to parse");
   }

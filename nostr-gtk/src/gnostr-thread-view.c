@@ -906,11 +906,10 @@ static void update_missing_events_banner(NostrGtkThreadView *self, gboolean fetc
                                   self->missing_events_icon);
     }
     if (self->missing_events_label) {
-      char *msg = g_strdup_printf(
+      g_autofree char *msg = g_strdup_printf(
         "Some messages in this thread could not be found (%u missing)",
         missing_count);
       gtk_label_set_text(GTK_LABEL(self->missing_events_label), msg);
-      g_free(msg);
     }
     /* Add warning style */
     gtk_widget_add_css_class(self->missing_events_banner, "warning");
@@ -1500,11 +1499,10 @@ static GtkWidget *create_collapse_indicator(NostrGtkThreadView *self, ThreadNode
   GtkWidget *icon = gtk_image_new_from_icon_name("go-down-symbolic");
   gtk_box_append(GTK_BOX(box), icon);
 
-  char *label_text = g_strdup_printf("%u more replies", node->child_count);
+  g_autofree char *label_text = g_strdup_printf("%u more replies", node->child_count);
   GtkWidget *label = gtk_label_new(label_text);
   gtk_widget_add_css_class(label, "dim-label");
   gtk_box_append(GTK_BOX(box), label);
-  g_free(label_text);
 
   /* Set margin based on depth */
   gtk_widget_set_margin_start(btn, 24 * (node->depth + 1));

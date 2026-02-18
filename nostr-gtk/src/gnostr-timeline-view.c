@@ -517,12 +517,11 @@ void nostr_gtk_timeline_view_add_hashtag_tab(NostrGtkTimelineView *self, const c
 
   gtk_widget_set_visible(self->tabs, TRUE);
 
-  char *label = g_strdup_printf("#%s", hashtag);
+  g_autofree char *label = g_strdup_printf("#%s", hashtag);
   guint index = nostr_gtk_timeline_tabs_add_tab(NOSTR_GTK_TIMELINE_TABS(self->tabs),
                                           GN_TIMELINE_TAB_HASHTAG,
                                           label,
                                           hashtag);
-  g_free(label);
 
   nostr_gtk_timeline_tabs_set_selected(NOSTR_GTK_TIMELINE_TABS(self->tabs), index);
 }

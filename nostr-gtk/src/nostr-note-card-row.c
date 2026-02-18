@@ -698,9 +698,8 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
   if (g_str_has_prefix(uri, "nostr:") || g_str_has_prefix(uri, "note1") || g_str_has_prefix(uri, "npub1") ||
       g_str_has_prefix(uri, "nevent1") || g_str_has_prefix(uri, "nprofile1") || g_str_has_prefix(uri, "naddr1")) {
     /* Check if this is an npub or nprofile - emit dm-requested signal */
-    gchar *nostr_uri = g_str_has_prefix(uri, "nostr:") ? g_strdup(uri) : g_strdup_printf("nostr:%s", uri);
+    g_autofree gchar *nostr_uri = g_str_has_prefix(uri, "nostr:") ? g_strdup(uri) : g_strdup_printf("nostr:%s", uri);
     GnostrUri *parsed = gnostr_uri_parse(nostr_uri);
-    g_free(nostr_uri);
     if (parsed) {
       if ((parsed->type == GNOSTR_URI_TYPE_NPUB || parsed->type == GNOSTR_URI_TYPE_NPROFILE) &&
           parsed->pubkey_hex && *parsed->pubkey_hex) {
@@ -1646,11 +1645,10 @@ static void on_like_count_clicked(GtkGestureClick *gesture, gint n_press, gdoubl
   while (g_hash_table_iter_next(&iter, &key, &value)) {
     const char *emoji = (const char *)key;
     guint count = GPOINTER_TO_UINT(value);
-    char *text = g_strdup_printf("%s  %u", emoji, count);
+    g_autofree char *text = g_strdup_printf("%s  %u", emoji, count);
     GtkWidget *row = gtk_label_new(text);
     gtk_label_set_xalign(GTK_LABEL(row), 0.0);
     gtk_box_append(GTK_BOX(box), row);
-    g_free(text);
   }
 
   gtk_popover_set_child(GTK_POPOVER(self->reactions_popover), box);
@@ -3557,12 +3555,11 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
               gtk_box_append(GTK_BOX(emoji_item), picture);
 
               /* Add shortcode label */
-              gchar *label_text = g_strdup_printf(":%s:", shortcode);
+              g_autofree gchar *label_text = g_strdup_printf(":%s:", shortcode);
               GtkWidget *label = gtk_label_new(label_text);
               gtk_widget_add_css_class(label, "custom-emoji-label");
               gtk_label_set_xalign(GTK_LABEL(label), 0);
               gtk_box_append(GTK_BOX(emoji_item), label);
-              g_free(label_text);
 
               /* Set tooltip with full URL */
               gtk_widget_set_tooltip_text(emoji_item, emoji->url);
@@ -3686,16 +3683,14 @@ void nostr_gtk_note_card_row_set_depth(NostrGtkNoteCardRow *self, guint depth) {
 
   /* Remove existing depth classes */
   for (guint i = 1; i <= 4; i++) {
-    gchar *class_name = g_strdup_printf("thread-depth-%u", i);
+    g_autofree gchar *class_name = g_strdup_printf("thread-depth-%u", i);
     gtk_widget_remove_css_class(widget, class_name);
-    g_free(class_name);
   }
-  
+
   /* Add appropriate depth class */
   if (depth > 0 && depth <= 4) {
-    gchar *class_name = g_strdup_printf("thread-depth-%u", depth);
+    g_autofree gchar *class_name = g_strdup_printf("thread-depth-%u", depth);
     gtk_widget_add_css_class(widget, class_name);
-    g_free(class_name);
   }
   
   /* Add thread-reply class for any depth > 0 */
@@ -3734,14 +3729,13 @@ void nostr_gtk_note_card_row_set_thread_info(NostrGtkNoteCardRow *self,
   }
 
   if (is_reply && GTK_IS_LABEL(self->reply_indicator_label)) {
-    char *indicator_text = NULL;
+    g_autofree char *indicator_text = NULL;
     if (parent_author_name && *parent_author_name) {
       indicator_text = g_strdup_printf("In reply to %s", parent_author_name);
     } else {
       indicator_text = g_strdup("In reply to...");
     }
     gtk_label_set_text(GTK_LABEL(self->reply_indicator_label), indicator_text);
-    g_free(indicator_text);
   }
 
   /* Show/hide view thread button - visible if this is a reply or has a root */
@@ -3989,10 +3983,9 @@ void nostr_gtk_note_card_row_set_like_count(NostrGtkNoteCardRow *self, guint cou
   /* Update the like count label */
   if (GTK_IS_LABEL(self->lbl_like_count)) {
     if (count > 0) {
-      gchar *text = g_strdup_printf("%u", count);
+      g_autofree gchar *text = g_strdup_printf("%u", count);
       gtk_label_set_text(GTK_LABEL(self->lbl_like_count), text);
       gtk_widget_set_visible(self->lbl_like_count, TRUE);
-      g_free(text);
     } else {
       gtk_widget_set_visible(self->lbl_like_count, FALSE);
     }
@@ -4126,12 +4119,10 @@ void nostr_gtk_note_card_row_set_zap_stats(NostrGtkNoteCardRow *self, guint zap_
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_zap), "zapped");
 
       /* Set tooltip showing total sats received */
-      gchar *formatted = gnostr_zap_format_amount(total_msat);
-      gchar *tooltip = g_strdup_printf("%u zap%s: %s received",
+      g_autofree gchar *formatted = gnostr_zap_format_amount(total_msat);
+      g_autofree gchar *tooltip = g_strdup_printf("%u zap%s: %s received",
                                        zap_count, zap_count == 1 ? "" : "s", formatted);
       gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_zap), tooltip);
-      g_free(tooltip);
-      g_free(formatted);
     } else {
       /* Remove "zapped" CSS class */
       gtk_widget_remove_css_class(GTK_WIDGET(self->btn_zap), "zapped");
@@ -4161,14 +4152,13 @@ void nostr_gtk_note_card_row_set_reply_count(NostrGtkNoteCardRow *self, guint co
   }
 
   if (count > 0 && GTK_IS_LABEL(self->reply_count_label)) {
-    gchar *text = NULL;
+    g_autofree gchar *text = NULL;
     if (count == 1) {
       text = g_strdup("1 reply");
     } else {
       text = g_strdup_printf("%u replies", count);
     }
     gtk_label_set_text(GTK_LABEL(self->reply_count_label), text);
-    g_free(text);
   }
 
   /* Also show the thread button when there are replies */
@@ -4283,9 +4273,8 @@ void nostr_gtk_note_card_row_set_repost_info(NostrGtkNoteCardRow *self,
   if (GTK_IS_LABEL(self->repost_indicator_label)) {
     const char *display = reposter_display_name && *reposter_display_name
                           ? reposter_display_name : "Someone";
-    gchar *text = g_strdup_printf("Reposted by %s", display);
+    g_autofree gchar *text = g_strdup_printf("Reposted by %s", display);
     gtk_label_set_text(GTK_LABEL(self->repost_indicator_label), text);
-    g_free(text);
   }
 
   /* Show the indicator */
@@ -4323,10 +4312,9 @@ void nostr_gtk_note_card_row_set_repost_count(NostrGtkNoteCardRow *self, guint c
   /* Update the repost count label if it exists */
   if (GTK_IS_LABEL(self->lbl_repost_count)) {
     if (count > 0) {
-      gchar *text = g_strdup_printf("%u", count);
+      g_autofree gchar *text = g_strdup_printf("%u", count);
       gtk_label_set_text(GTK_LABEL(self->lbl_repost_count), text);
       gtk_widget_set_visible(self->lbl_repost_count, TRUE);
-      g_free(text);
     } else {
       gtk_widget_set_visible(self->lbl_repost_count, FALSE);
     }
@@ -4384,7 +4372,7 @@ void nostr_gtk_note_card_row_set_zap_receipt_info(NostrGtkNoteCardRow *self,
 
   /* Format amount */
   gint64 sats = amount_msat / 1000;
-  gchar *amount_str;
+  g_autofree gchar *amount_str = NULL;
   if (sats >= 1000000) {
     amount_str = g_strdup_printf("%.1fM sats", sats / 1000000.0);
   } else if (sats >= 1000) {
@@ -4397,7 +4385,7 @@ void nostr_gtk_note_card_row_set_zap_receipt_info(NostrGtkNoteCardRow *self,
   const char *sender_name = sender_display_name && *sender_display_name ? sender_display_name : "Someone";
   const char *recipient_name = recipient_display_name && *recipient_display_name ? recipient_display_name : "someone";
 
-  gchar *text;
+  g_autofree gchar *text = NULL;
   if (target_event_id && *target_event_id) {
     text = g_strdup_printf("%s zapped %s's note %s", sender_name, recipient_name, amount_str);
   } else {
@@ -4407,9 +4395,6 @@ void nostr_gtk_note_card_row_set_zap_receipt_info(NostrGtkNoteCardRow *self,
   if (GTK_IS_LABEL(self->zap_indicator_label)) {
     gtk_label_set_text(GTK_LABEL(self->zap_indicator_label), text);
   }
-
-  g_free(amount_str);
-  g_free(text);
 
   /* Show the indicator */
   if (GTK_IS_WIDGET(self->zap_indicator_box)) {
@@ -4489,9 +4474,8 @@ void nostr_gtk_note_card_row_set_quote_info(NostrGtkNoteCardRow *self,
     if (GTK_IS_LABEL(author_label)) {
       const char *author = quoted_author_name && *quoted_author_name
                            ? quoted_author_name : "Unknown";
-      gchar *author_text = g_strdup_printf("Quoting %s", author);
+      g_autofree gchar *author_text = g_strdup_printf("Quoting %s", author);
       gtk_label_set_text(GTK_LABEL(author_label), author_text);
-      g_free(author_text);
     }
 
     if (GTK_IS_LABEL(content_label)) {
@@ -4532,9 +4516,8 @@ void nostr_gtk_note_card_row_set_content_warning(NostrGtkNoteCardRow *self,
     /* Update the warning label with the reason if provided */
     if (GTK_IS_LABEL(self->sensitive_warning_label)) {
       if (content_warning_reason && *content_warning_reason) {
-        gchar *label_text = g_strdup_printf("Sensitive Content: %s", content_warning_reason);
+        g_autofree gchar *label_text = g_strdup_printf("Sensitive Content: %s", content_warning_reason);
         gtk_label_set_text(GTK_LABEL(self->sensitive_warning_label), label_text);
-        g_free(label_text);
       } else {
         gtk_label_set_text(GTK_LABEL(self->sensitive_warning_label), "Sensitive Content");
       }
@@ -4634,9 +4617,8 @@ static GtkWidget *create_label_chip(const char *namespace, const char *label) {
 
   /* Set tooltip with full namespace:label */
   if (namespace && *namespace) {
-    char *tooltip = g_strdup_printf("%s:%s", namespace, label);
+    g_autofree char *tooltip = g_strdup_printf("%s:%s", namespace, label);
     gtk_widget_set_tooltip_text(chip, tooltip);
-    g_free(tooltip);
   }
 
   return chip;
@@ -4725,9 +4707,8 @@ static GtkWidget *create_hashtag_chip(const char *hashtag) {
   gtk_widget_add_css_class(btn, "pill");
   gtk_widget_add_css_class(btn, "note-hashtag");
 
-  gchar *label_text = g_strdup_printf("#%s", hashtag);
+  g_autofree gchar *label_text = g_strdup_printf("#%s", hashtag);
   gtk_button_set_label(GTK_BUTTON(btn), label_text);
-  g_free(label_text);
 
   /* GTK4: Ensure widget is visible */
   gtk_widget_set_visible(btn, TRUE);
@@ -4805,14 +4786,13 @@ void nostr_gtk_note_card_row_set_relay_info(NostrGtkNoteCardRow *self,
   for (int i = 0; relay_urls[i]; i++)
     n_relays++;
 
-  gchar *label_text;
+  g_autofree gchar *label_text = NULL;
   if (n_relays == 1) {
     label_text = g_strdup_printf("via %s", display);
   } else {
     label_text = g_strdup_printf("via %s +%d", display, n_relays - 1);
   }
   gtk_label_set_text(GTK_LABEL(self->lbl_relay), label_text);
-  g_free(label_text);
   g_free(display);
 
   /* Build tooltip with full relay list */
@@ -4952,9 +4932,8 @@ static GtkWidget *create_article_hashtag_chip(const char *hashtag) {
   gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
   gtk_widget_add_css_class(btn, "article-hashtag");
 
-  gchar *label_text = g_strdup_printf("#%s", hashtag);
+  g_autofree gchar *label_text = g_strdup_printf("#%s", hashtag);
   gtk_button_set_label(GTK_BUTTON(btn), label_text);
-  g_free(label_text);
 
   return btn;
 }
@@ -5288,9 +5267,8 @@ static GtkWidget *create_video_hashtag_chip(const char *hashtag) {
   gtk_widget_add_css_class(btn, "pill");
   gtk_widget_add_css_class(btn, "video-hashtag");
 
-  gchar *label_text = g_strdup_printf("#%s", hashtag);
+  g_autofree gchar *label_text = g_strdup_printf("#%s", hashtag);
   gtk_button_set_label(GTK_BUTTON(btn), label_text);
-  g_free(label_text);
 
   return btn;
 }
@@ -5997,7 +5975,7 @@ void nostr_gtk_note_card_row_set_proxy_info(NostrGtkNoteCardRow *self,
   gtk_box_append(GTK_BOX(self->proxy_indicator_box), icon);
 
   /* Add "via Protocol" text */
-  gchar *source_text = g_strdup_printf("via %s", display_name);
+  g_autofree gchar *source_text = g_strdup_printf("via %s", display_name);
 
   if (is_linkable) {
     /* Make it a clickable link */
@@ -6013,12 +5991,9 @@ void nostr_gtk_note_card_row_set_proxy_info(NostrGtkNoteCardRow *self,
     gtk_box_append(GTK_BOX(self->proxy_indicator_box), label);
   }
 
-  g_free(source_text);
-
   /* Set tooltip with full source ID */
-  gchar *tooltip = g_strdup_printf("Bridged from: %s", proxy_id);
+  g_autofree gchar *tooltip = g_strdup_printf("Bridged from: %s", proxy_id);
   gtk_widget_set_tooltip_text(self->proxy_indicator_box, tooltip);
-  g_free(tooltip);
 
   /* Show the indicator */
   gtk_widget_set_visible(self->proxy_indicator_box, TRUE);

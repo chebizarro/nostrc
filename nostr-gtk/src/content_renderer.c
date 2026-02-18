@@ -239,7 +239,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         /* Create truncated display and link */
         gchar *url = g_strndup(url_start, url_len);
         gchar *esc_url = g_markup_escape_text(url, -1);
-        gchar *display;
+        g_autofree gchar *display = NULL;
         if (url_len > 40) {
           display = g_strdup_printf("%.35s...", url);
         } else {
@@ -248,7 +248,6 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         gchar *esc_display = g_markup_escape_text(display, -1);
         g_string_append_printf(fallback, "<a href=\"%s\">%s</a>", esc_url, esc_display);
         g_free(esc_display);
-        g_free(display);
         g_free(esc_url);
         g_free(url);
         
@@ -342,12 +341,12 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         }
 
         /* Render markup */
-        gchar *href = g_str_has_prefix(url, "www.")
+        g_autofree gchar *href = g_str_has_prefix(url, "www.")
                        ? g_strdup_printf("https://%s", url)
                        : g_strdup(url);
         gchar *esc_href = g_markup_escape_text(href, -1);
 
-        gchar *display;
+        g_autofree gchar *display = NULL;
         if (len > 40) {
           display = g_strdup_printf("%.35s...", url);
         } else {
@@ -359,9 +358,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
           "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
 
         g_free(esc_display);
-        g_free(display);
         g_free(esc_href);
-        g_free(href);
         g_free(url);
         break;
       }
@@ -373,7 +370,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         struct nostr_bech32 *bech32 = ndb_bech32_block(block);
 
         gchar *bech32_str = g_strndup(str_ptr, str_len);
-        gchar *href = g_strdup_printf("nostr:%s", bech32_str);
+        g_autofree gchar *href = g_strdup_printf("nostr:%s", bech32_str);
         gchar *esc_href = g_markup_escape_text(href, -1);
 
         /* Collect first nostr: ref for NIP-21 embed */
@@ -401,7 +398,6 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         g_free(esc_display);
         g_free(display);
         g_free(esc_href);
-        g_free(href);
         g_free(bech32_str);
         break;
       }
@@ -413,7 +409,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         gchar *inv_str = g_strndup(ptr, len);
         gchar *esc = g_markup_escape_text(inv_str, -1);
 
-        gchar *display;
+        g_autofree gchar *display = NULL;
         if (len > 20) {
           display = g_strdup_printf("\xe2\x9a\xa1%.12s\xe2\x80\xa6", inv_str);
         } else {
@@ -424,7 +420,6 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
           "<a href=\"lightning:%s\">%s</a>", esc, esc_display);
 
         g_free(esc_display);
-        g_free(display);
         g_free(esc);
         g_free(inv_str);
         break;
