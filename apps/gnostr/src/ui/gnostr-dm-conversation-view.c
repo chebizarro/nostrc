@@ -205,7 +205,7 @@ on_file_save_response(GObject *source, GAsyncResult *res, gpointer user_data)
     GnostrDmFileMessage *file_msg = user_data;
     GError *error = NULL;
 
-    GFile *file = gtk_file_dialog_save_finish(dialog, res, &error);
+    g_autoptr(GFile) file = gtk_file_dialog_save_finish(dialog, res, &error);
     if (file) {
         char *path = g_file_get_path(file);
         if (path) {
@@ -215,7 +215,6 @@ on_file_save_response(GObject *source, GAsyncResult *res, gpointer user_data)
                                                        on_file_save_downloaded,
                                                        ctx, NULL);
         }
-        g_object_unref(file);
     } else {
         gnostr_dm_file_message_free(file_msg);
     }
@@ -467,14 +466,13 @@ on_attach_file_chosen(GObject *source, GAsyncResult *res, gpointer user_data)
     GnostrDmConversationView *self = GNOSTR_DM_CONVERSATION_VIEW(user_data);
 
     GError *error = NULL;
-    GFile *file = gtk_file_dialog_open_finish(dialog, res, &error);
+    g_autoptr(GFile) file = gtk_file_dialog_open_finish(dialog, res, &error);
     if (file) {
         char *path = g_file_get_path(file);
         if (path) {
             g_signal_emit(self, signals[SIGNAL_SEND_FILE], 0, path);
             g_free(path);
         }
-        g_object_unref(file);
     }
     g_clear_error(&error);
 }

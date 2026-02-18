@@ -796,7 +796,7 @@ gboolean
 gn_rate_limiter_save(GnRateLimiter *self) {
   if (!self || !self->state_file_path) return FALSE;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Version for future compatibility */
@@ -836,7 +836,7 @@ gn_rate_limiter_save(GnRateLimiter *self) {
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, TRUE);
 
@@ -852,8 +852,6 @@ gn_rate_limiter_save(GnRateLimiter *self) {
   }
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return success;
 }
@@ -866,20 +864,18 @@ gn_rate_limiter_load(GnRateLimiter *self) {
     return FALSE;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_file(parser, self->state_file_path, &error)) {
     g_warning("Failed to load rate limit state: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
     g_warning("Invalid rate limit state file format");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -889,7 +885,6 @@ gn_rate_limiter_load(GnRateLimiter *self) {
   gint64 version = json_object_get_int_member_with_default(obj, "version", 0);
   if (version != 1) {
     g_warning("Unknown rate limit state version: %" G_GINT64_FORMAT, version);
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -932,7 +927,6 @@ gn_rate_limiter_load(GnRateLimiter *self) {
             g_hash_table_size(self->client_states), self->state_file_path);
   }
 
-  g_object_unref(parser);
   self->dirty = FALSE;
   return TRUE;
 }

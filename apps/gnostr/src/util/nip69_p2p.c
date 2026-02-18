@@ -68,20 +68,18 @@ gboolean gnostr_p2p_order_parse_tags(GnostrP2pOrder *order,
                                       const gchar *tags_json) {
   if (!order || !tags_json || !*tags_json) return FALSE;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_debug("NIP-69: Failed to parse tags JSON: %s",
             error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -191,7 +189,6 @@ gboolean gnostr_p2p_order_parse_tags(GnostrP2pOrder *order,
     g_ptr_array_free(pm_arr, TRUE);
   }
 
-  g_object_unref(parser);
 
   /* Order ID is required */
   return order->order_id != NULL;
@@ -200,20 +197,18 @@ gboolean gnostr_p2p_order_parse_tags(GnostrP2pOrder *order,
 GnostrP2pOrder *gnostr_p2p_order_parse(const gchar *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
     g_debug("NIP-69: Failed to parse order JSON: %s",
             error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -221,12 +216,10 @@ GnostrP2pOrder *gnostr_p2p_order_parse(const gchar *json_str) {
 
   /* Check kind */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (kind != NIP69_KIND_ORDER) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -354,7 +347,6 @@ GnostrP2pOrder *gnostr_p2p_order_parse(const gchar *json_str) {
     }
   }
 
-  g_object_unref(parser);
 
   /* Validate: must have order_id (d tag) */
   if (!order->order_id) {
@@ -381,7 +373,7 @@ gchar *gnostr_p2p_build_order_tags(const gchar *order_id,
     return NULL;
   }
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* d tag - order identifier (required) */
@@ -474,14 +466,12 @@ gchar *gnostr_p2p_build_order_tags(const gchar *order_id,
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }

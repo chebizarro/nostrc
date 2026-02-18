@@ -766,7 +766,7 @@ gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
   /* Parse input: can be npub or 64-char hex */
   if (g_str_has_prefix(pubkey, "npub1")) {
     /* Validate npub by decoding, then re-encode to normalize */
-    GNostrNip19 *nip19 = gnostr_nip19_decode(pubkey, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(pubkey, NULL);
     if (!nip19 || gnostr_nip19_get_entity_type(nip19) != GNOSTR_BECH32_NPUB) {
       if (nip19) g_object_unref(nip19);
       g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
@@ -775,25 +775,22 @@ gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
     }
     /* Re-encode from decoded hex pubkey to normalize */
     const gchar *pk_hex = gnostr_nip19_get_pubkey(nip19);
-    GNostrNip19 *encoded = gnostr_nip19_encode_npub(pk_hex, NULL);
-    g_object_unref(nip19);
+    g_autoptr(GNostrNip19) encoded = gnostr_nip19_encode_npub(pk_hex, NULL);
     if (!encoded) {
       g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_CRYPTO_FAILED,
                           "Failed to encode npub");
       return FALSE;
     }
     npub = g_strdup(gnostr_nip19_get_bech32(encoded));
-    g_object_unref(encoded);
   } else if (is_hex64(pubkey)) {
     /* Encode hex pubkey as npub via GNostrNip19 */
-    GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pubkey, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(pubkey, NULL);
     if (!nip19) {
       g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_CRYPTO_FAILED,
                           "Failed to encode npub from hex");
       return FALSE;
     }
     npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-    g_object_unref(nip19);
   } else {
     g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
                         "Unrecognized format: expected npub1... or 64-character hex");

@@ -974,7 +974,7 @@ gchar *gnostr_nip66_build_relay_meta_filter(const gchar **relay_urls,
                                              gsize n_urls,
                                              gint limit)
 {
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kinds");
@@ -996,13 +996,12 @@ gchar *gnostr_nip66_build_relay_meta_filter(const gchar **relay_urls,
 
   gnostr_json_builder_end_object(builder);
   gchar *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 
 gchar *gnostr_nip66_build_monitor_filter(const gchar **monitor_pubkeys, gsize n_pubkeys)
 {
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kinds");
@@ -1024,7 +1023,6 @@ gchar *gnostr_nip66_build_monitor_filter(const gchar **monitor_pubkeys, gsize n_
 
   gnostr_json_builder_end_object(builder);
   gchar *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 

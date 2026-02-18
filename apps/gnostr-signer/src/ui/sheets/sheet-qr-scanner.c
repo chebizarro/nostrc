@@ -182,7 +182,7 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
   GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
 
   GError *error = NULL;
-  GFile *file = gtk_file_dialog_open_finish(dialog, result, &error);
+  g_autoptr(GFile) file = gtk_file_dialog_open_finish(dialog, result, &error);
 
   if (error) {
     if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED)) {
@@ -196,7 +196,6 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
 
   /* Load the image */
   gchar *path = g_file_get_path(file);
-  g_object_unref(file);
 
   if (!path) {
     gtk_label_set_text(GTK_LABEL(self->status_label), "Could not get file path");

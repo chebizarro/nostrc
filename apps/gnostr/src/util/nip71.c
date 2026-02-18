@@ -46,20 +46,18 @@ void gnostr_video_meta_free(GnostrVideoMeta *meta) {
 GnostrVideoMeta *gnostr_video_parse_tags(const char *tags_json, int kind) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_warning("NIP-71: Failed to parse tags JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
     g_warning("NIP-71: Tags is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -157,7 +155,6 @@ GnostrVideoMeta *gnostr_video_parse_tags(const char *tags_json, int kind) {
   }
   g_ptr_array_free(hashtags_arr, FALSE);
 
-  g_object_unref(parser);
 
   /* Validate required fields - URL is required */
   if (!meta->url || !*meta->url) {
@@ -219,7 +216,7 @@ char *gnostr_video_build_a_tag(int kind, const char *pubkey_hex,
 char *gnostr_video_event_create_tags(const GnostrVideoMeta *meta) {
   if (!meta || !meta->url) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* URL tag (required) */
@@ -326,15 +323,13 @@ char *gnostr_video_event_create_tags(const GnostrVideoMeta *meta) {
 
   json_builder_end_array(builder);
 
-  JsonGenerator *generator = json_generator_new();
+  g_autoptr(JsonGenerator) generator = json_generator_new();
   JsonNode *root_node = json_builder_get_root(builder);
   json_generator_set_root(generator, root_node);
 
   char *tags_json = json_generator_to_data(generator, NULL);
 
   json_node_free(root_node);
-  g_object_unref(generator);
-  g_object_unref(builder);
 
   return tags_json;
 }

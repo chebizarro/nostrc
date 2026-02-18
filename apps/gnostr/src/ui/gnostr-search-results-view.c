@@ -26,10 +26,9 @@
 /* Check if user is logged in by checking GSettings current-npub.
  * Returns TRUE if logged in, FALSE otherwise. */
 static gboolean is_user_logged_in(void) {
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (!settings) return FALSE;
   char *npub = g_settings_get_string(settings, "current-npub");
-  g_object_unref(settings);
   gboolean logged_in = (npub && *npub);
   g_free(npub);
   return logged_in;

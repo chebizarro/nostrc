@@ -481,7 +481,7 @@ gchar *gnostr_user_status_build_event_json(GnostrUserStatusType type,
                                             const gchar *content,
                                             const gchar *link_url,
                                             gint64 expiration_seconds) {
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -527,7 +527,6 @@ gchar *gnostr_user_status_build_event_json(GnostrUserStatusType type,
   gnostr_json_builder_end_object(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

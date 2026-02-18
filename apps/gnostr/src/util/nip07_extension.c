@@ -220,10 +220,9 @@ GnostrNip07Response *gnostr_nip07_sign_event(const char *unsigned_event_json,
   }
 
   /* Validate JSON before sending */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *parse_error = NULL;
   if (!json_parser_load_from_data(parser, unsigned_event_json, -1, &parse_error)) {
-    g_object_unref(parser);
     if (error) {
       *error = g_error_new(GNOSTR_NIP07_ERROR,
                            GNOSTR_NIP07_ERROR_INVALID_EVENT,
@@ -232,7 +231,6 @@ GnostrNip07Response *gnostr_nip07_sign_event(const char *unsigned_event_json,
     g_error_free(parse_error);
     return NULL;
   }
-  g_object_unref(parser);
 
   GDBusConnection *conn = get_session_bus(error);
   if (!conn) {
@@ -728,7 +726,7 @@ char *gnostr_nip07_format_unsigned_event(gint kind,
                                           const char *content,
                                           const char *tags_json,
                                           gint64 created_at) {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_object(builder);
 
@@ -752,7 +750,7 @@ char *gnostr_nip07_format_unsigned_event(gint kind,
   json_builder_set_member_name(builder, "tags");
   if (tags_json && *tags_json) {
     /* Parse provided tags JSON */
-    JsonParser *parser = json_parser_new();
+    g_autoptr(JsonParser) parser = json_parser_new();
     GError *error = NULL;
     if (json_parser_load_from_data(parser, tags_json, -1, &error)) {
       JsonNode *tags_node = json_parser_get_root(parser);
@@ -769,7 +767,6 @@ char *gnostr_nip07_format_unsigned_event(gint kind,
       json_builder_begin_array(builder);
       json_builder_end_array(builder);
     }
-    g_object_unref(parser);
   } else {
     /* Empty tags array */
     json_builder_begin_array(builder);
@@ -779,15 +776,13 @@ char *gnostr_nip07_format_unsigned_event(gint kind,
   json_builder_end_object(builder);
 
   /* Generate JSON string */
-  JsonGenerator *generator = json_generator_new();
+  g_autoptr(JsonGenerator) generator = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(generator, root);
 
   char *result = json_generator_to_data(generator, NULL);
 
   json_node_unref(root);
-  g_object_unref(generator);
-  g_object_unref(builder);
 
   return result;
 }
@@ -802,19 +797,17 @@ gboolean gnostr_nip07_parse_signed_event(const char *signed_event_json,
     return FALSE;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, signed_event_json, -1, &error)) {
     g_warning("nip07: Failed to parse signed event: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -843,7 +836,6 @@ gboolean gnostr_nip07_parse_signed_event(const char *signed_event_json,
     *out_created_at = json_object_get_int_member_with_default(obj, "created_at", 0);
   }
 
-  g_object_unref(parser);
   return TRUE;
 }
 
@@ -852,19 +844,17 @@ GList *gnostr_nip07_parse_relays(const char *relays_json) {
     return NULL;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, relays_json, -1, &error)) {
     g_warning("nip07: Failed to parse relays JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -890,7 +880,6 @@ GList *gnostr_nip07_parse_relays(const char *relays_json) {
   }
   g_list_free(members);
 
-  g_object_unref(parser);
 
   /* Reverse to maintain original order */
   return g_list_reverse(relays);

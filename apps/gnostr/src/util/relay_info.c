@@ -214,18 +214,16 @@ static gchar **json_array_to_string_array(JsonArray *arr, gsize *out_count) {
 GnostrRelayInfo *gnostr_relay_info_parse_json(const gchar *json, const gchar *url) {
   if (!json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *err = NULL;
   if (!json_parser_load_from_data(parser, json, -1, &err)) {
     g_warning("relay_info: JSON parse error: %s", err ? err->message : "unknown");
     g_clear_error(&err);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || JSON_NODE_TYPE(root) != JSON_NODE_OBJECT) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -285,7 +283,6 @@ GnostrRelayInfo *gnostr_relay_info_parse_json(const gchar *json, const gchar *ur
     info->tags = json_array_to_string_array(arr, &info->tags_count);
   }
 
-  g_object_unref(parser);
   return info;
 }
 

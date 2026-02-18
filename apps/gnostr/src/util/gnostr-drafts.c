@@ -134,7 +134,7 @@ char *gnostr_draft_generate_d_tag(void) {
 char *gnostr_draft_to_json(const GnostrDraft *draft) {
   if (!draft) return NULL;
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* Required fields */
@@ -233,7 +233,6 @@ char *gnostr_draft_to_json(const GnostrDraft *draft) {
   gnostr_json_builder_end_object(builder);  /* end root */
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 

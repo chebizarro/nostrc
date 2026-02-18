@@ -903,7 +903,7 @@ static void on_save_response(GObject *source, GAsyncResult *result, gpointer use
   GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
 
   GError *error = NULL;
-  GFile *file = gtk_file_dialog_save_finish(dialog, result, &error);
+  g_autoptr(GFile) file = gtk_file_dialog_save_finish(dialog, result, &error);
 
   if (error) {
     if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
@@ -927,7 +927,6 @@ static void on_save_response(GObject *source, GAsyncResult *result, gpointer use
     }
   }
 
-  g_object_unref(file);
 }
 
 static void on_copy_link_clicked(GtkButton *button, gpointer user_data) {

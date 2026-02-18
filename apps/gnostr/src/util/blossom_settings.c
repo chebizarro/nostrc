@@ -232,19 +232,17 @@ gboolean gnostr_blossom_settings_remove_server(const char *url) {
 gboolean gnostr_blossom_settings_from_event(const char *event_json) {
   if (!event_json) return FALSE;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_warning("Failed to parse kind 10063 event: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -252,26 +250,22 @@ gboolean gnostr_blossom_settings_from_event(const char *event_json) {
 
   /* Verify kind */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (kind != NOSTR_KIND_USER_SERVER_LIST) {
     g_warning("Event is not kind 10063, got kind %" G_GINT64_FORMAT, kind);
-    g_object_unref(parser);
     return FALSE;
   }
 
   /* Parse tags for server entries */
   if (!json_object_has_member(obj, "tags")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonArray *tags = json_object_get_array_member(obj, "tags");
   if (!tags) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -298,7 +292,6 @@ gboolean gnostr_blossom_settings_from_event(const char *event_json) {
     g_ptr_array_add(cached_servers, server);
   }
 
-  g_object_unref(parser);
 
   /* Update default server to first one if list changed */
   if (cached_servers->len > 0) {
@@ -315,7 +308,7 @@ char *gnostr_blossom_settings_to_event(void) {
     load_servers_from_gsettings();
   }
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_object(builder);
 
@@ -349,12 +342,10 @@ char *gnostr_blossom_settings_to_event(void) {
 
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, json_builder_get_root(builder));
   char *json_str = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json_str;
 }
@@ -399,7 +390,7 @@ blossom_publish_thread(GTask *task, gpointer source_object,
 
   for (guint i = 0; i < d->relay_urls->len; i++) {
     const gchar *url = (const gchar *)g_ptr_array_index(d->relay_urls, i);
-    GNostrRelay *relay = gnostr_relay_new(url);
+    g_autoptr(GNostrRelay) relay = gnostr_relay_new(url);
     if (!relay) { d->fail_count++; continue; }
 
     GError *conn_err = NULL;
@@ -407,7 +398,6 @@ blossom_publish_thread(GTask *task, gpointer source_object,
       g_debug("blossom: failed to connect to %s: %s", url,
               conn_err ? conn_err->message : "unknown");
       g_clear_error(&conn_err);
-      g_object_unref(relay);
       d->fail_count++;
       continue;
     }
@@ -422,7 +412,6 @@ blossom_publish_thread(GTask *task, gpointer source_object,
       g_clear_error(&pub_err);
       d->fail_count++;
     }
-    g_object_unref(relay);
   }
 
   g_task_return_boolean(task, d->success_count > 0);
@@ -562,7 +551,7 @@ static void on_blossom_fetch_complete(GObject *source, GAsyncResult *res, gpoint
       if (!json) continue;
 
       /* Parse to check kind and created_at */
-      JsonParser *parser = json_parser_new();
+      g_autoptr(JsonParser) parser = json_parser_new();
       if (json_parser_load_from_data(parser, json, -1, NULL)) {
         JsonNode *root = json_parser_get_root(parser);
         if (root && JSON_NODE_HOLDS_OBJECT(root)) {
@@ -582,7 +571,6 @@ static void on_blossom_fetch_complete(GObject *source, GAsyncResult *res, gpoint
           }
         }
       }
-      g_object_unref(parser);
     }
   }
 
@@ -641,7 +629,7 @@ void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
   }
 
   /* Create pool and query */
-  GNostrPool *pool = gnostr_pool_new();
+  g_autoptr(GNostrPool) pool = gnostr_pool_new();
 
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_arr->len);
   {
@@ -653,7 +641,6 @@ void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
 
   g_ptr_array_unref(relay_arr);
   g_free(urls);
-  g_object_unref(pool);
   nostr_filter_free(filter);
 }
 

@@ -65,20 +65,18 @@ gnostr_public_message_parse(const gchar *json_str)
 {
     if (!json_str || !*json_str) return NULL;
 
-    JsonParser *parser = json_parser_new();
+    g_autoptr(JsonParser) parser = json_parser_new();
     GError *error = NULL;
 
     if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
         g_debug("NIP-A4: Failed to parse public message JSON: %s",
                 error ? error->message : "unknown");
         g_clear_error(&error);
-        g_object_unref(parser);
         return NULL;
     }
 
     JsonNode *root = json_parser_get_root(parser);
     if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-        g_object_unref(parser);
         return NULL;
     }
 
@@ -86,12 +84,10 @@ gnostr_public_message_parse(const gchar *json_str)
 
     /* Check kind */
     if (!json_object_has_member(obj, "kind")) {
-        g_object_unref(parser);
         return NULL;
     }
     gint64 kind = json_object_get_int_member(obj, "kind");
     if (kind != NIPA4_KIND_PUBLIC_MESSAGE) {
-        g_object_unref(parser);
         return NULL;
     }
 
@@ -194,7 +190,6 @@ gnostr_public_message_parse(const gchar *json_str)
         g_ptr_array_free(recipients_arr, TRUE);
     }
 
-    g_object_unref(parser);
 
     return msg;
 }
@@ -264,7 +259,7 @@ gnostr_public_message_build_tags(const GnostrPublicMessage *msg)
 {
     if (!msg) return NULL;
 
-    JsonBuilder *builder = json_builder_new();
+    g_autoptr(JsonBuilder) builder = json_builder_new();
     json_builder_begin_array(builder);
 
     /* Subject tag */
@@ -323,14 +318,12 @@ gnostr_public_message_build_tags(const GnostrPublicMessage *msg)
 
     json_builder_end_array(builder);
 
-    JsonGenerator *gen = json_generator_new();
+    g_autoptr(JsonGenerator) gen = json_generator_new();
     JsonNode *root = json_builder_get_root(builder);
     json_generator_set_root(gen, root);
     json_generator_set_pretty(gen, FALSE);
     gchar *result = json_generator_to_data(gen, NULL);
 
-    g_object_unref(gen);
-    g_object_unref(builder);
 
     return result;
 }
@@ -340,7 +333,7 @@ gnostr_public_message_build_event(const GnostrPublicMessage *msg)
 {
     if (!msg) return NULL;
 
-    JsonBuilder *builder = json_builder_new();
+    g_autoptr(JsonBuilder) builder = json_builder_new();
     json_builder_begin_object(builder);
 
     /* Kind 164 - public message */
@@ -416,14 +409,12 @@ gnostr_public_message_build_event(const GnostrPublicMessage *msg)
     json_builder_end_array(builder);  /* tags */
     json_builder_end_object(builder);
 
-    JsonGenerator *gen = json_generator_new();
+    g_autoptr(JsonGenerator) gen = json_generator_new();
     JsonNode *root = json_builder_get_root(builder);
     json_generator_set_root(gen, root);
     json_generator_set_pretty(gen, FALSE);
     gchar *result = json_generator_to_data(gen, NULL);
 
-    g_object_unref(gen);
-    g_object_unref(builder);
 
     return result;
 }

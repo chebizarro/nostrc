@@ -478,7 +478,7 @@ on_publish_clicked(GtkButton *btn, gpointer user_data)
     g_debug("[NIP-64] Exporting PGN:\n%s", pgn);
 
     /* Build unsigned kind 64 event JSON */
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_object(builder);
 
     gnostr_json_builder_set_key(builder, "kind");
@@ -510,7 +510,6 @@ on_publish_clicked(GtkButton *btn, gpointer user_data)
     gnostr_json_builder_end_object(builder);
 
     char *event_json = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     if (!event_json) {
         show_toast(self, _("Failed to create event"));

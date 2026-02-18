@@ -64,20 +64,18 @@ GnostrVanishRequest *gnostr_vanish_request_parse(const gchar *event_json) {
     return NULL;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_debug("nip62: failed to parse JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!root_node || !JSON_NODE_HOLDS_OBJECT(root_node)) {
     g_debug("nip62: root is not an object");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -86,14 +84,12 @@ GnostrVanishRequest *gnostr_vanish_request_parse(const gchar *event_json) {
   /* Verify this is kind 62 */
   if (!json_object_has_member(root, "kind")) {
     g_debug("nip62: missing kind field");
-    g_object_unref(parser);
     return NULL;
   }
 
   gint64 kind = json_object_get_int_member(root, "kind");
   if (kind != NIP62_KIND_VANISH) {
     g_debug("nip62: wrong kind %" G_GINT64_FORMAT ", expected %d", kind, NIP62_KIND_VANISH);
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -173,7 +169,6 @@ GnostrVanishRequest *gnostr_vanish_request_parse(const gchar *event_json) {
   }
 
   g_ptr_array_unref(relay_array);
-  g_object_unref(parser);
 
   g_debug("nip62: parsed vanish request with %zu relays, reason: %s",
           request->relay_count,
@@ -183,7 +178,7 @@ GnostrVanishRequest *gnostr_vanish_request_parse(const gchar *event_json) {
 }
 
 gchar *gnostr_vanish_build_request_tags(const gchar **relays, gsize relay_count) {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_array(builder);
 
@@ -208,13 +203,11 @@ gchar *gnostr_vanish_build_request_tags(const gchar **relays, gsize relay_count)
   json_builder_end_array(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   gchar *json_str = json_generator_to_data(gen, NULL);
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json_str;
 }
@@ -222,7 +215,7 @@ gchar *gnostr_vanish_build_request_tags(const gchar **relays, gsize relay_count)
 gchar *gnostr_vanish_build_unsigned_event(const gchar *reason,
                                            const gchar **relays,
                                            gsize relay_count) {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_object(builder);
 
@@ -264,13 +257,11 @@ gchar *gnostr_vanish_build_unsigned_event(const gchar *reason,
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   gchar *json_str = json_generator_to_data(gen, NULL);
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   g_debug("nip62: built unsigned vanish event with %zu relays", relay_count);
 

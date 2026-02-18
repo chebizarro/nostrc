@@ -75,7 +75,7 @@ static void on_export_file_save_cb(GObject *source, GAsyncResult *result, gpoint
   GtkFileDialog *dlg = GTK_FILE_DIALOG(source);
   GError *error = NULL;
 
-  GFile *file = gtk_file_dialog_save_finish(dlg, result, &error);
+  g_autoptr(GFile) file = gtk_file_dialog_save_finish(dlg, result, &error);
   if (file) {
     gchar *path = g_file_get_path(file);
 
@@ -95,7 +95,6 @@ static void on_export_file_save_cb(GObject *source, GAsyncResult *result, gpoint
     }
 
     g_free(path);
-    g_object_unref(file);
   }
 
   if (error) {

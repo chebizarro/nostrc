@@ -785,7 +785,7 @@ static void save_context_free(SaveContext *ctx) {
 
 /* Helper to build JSON array of private bookmark tags using GNostrJsonBuilder */
 static char *build_private_tags_json(GnostrBookmarks *self) {
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     GHashTableIter iter;
     gpointer key, value;
     int tag_count = 0;
@@ -812,12 +812,10 @@ static char *build_private_tags_json(GnostrBookmarks *self) {
 
     /* Return NULL if no private tags */
     if (tag_count == 0) {
-        g_object_unref(builder);
         return NULL;
     }
 
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
     return result;
 }
 

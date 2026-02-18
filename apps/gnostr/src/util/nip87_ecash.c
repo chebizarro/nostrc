@@ -492,7 +492,7 @@ gnostr_ecash_build_recommendation_tags(const GnostrEcashMint *mint)
     return NULL;
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_array(builder);
 
   /* d tag - unique identifier (mint URL) */
@@ -534,7 +534,6 @@ gnostr_ecash_build_recommendation_tags(const GnostrEcashMint *mint)
   gnostr_json_builder_end_array(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }
@@ -589,7 +588,7 @@ gnostr_ecash_build_mint_filter(const gchar **pubkeys,
                                 gsize n_pubkeys,
                                 gint limit)
 {
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* Set kind */
@@ -617,7 +616,6 @@ gnostr_ecash_build_mint_filter(const gchar **pubkeys,
   gnostr_json_builder_end_object(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

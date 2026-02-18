@@ -61,20 +61,18 @@ void gnostr_wiki_article_free(GnostrWikiArticle *article) {
 GnostrWikiArticle *gnostr_wiki_article_parse_json(const char *event_json) {
   if (!event_json || !*event_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_warning("NIP-54: Failed to parse event JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
     g_warning("NIP-54: Event is not an object");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -84,7 +82,6 @@ GnostrWikiArticle *gnostr_wiki_article_parse_json(const char *event_json) {
   gint64 kind = json_object_get_int_member(event, "kind");
   if (kind != NOSTR_KIND_WIKI) {
     g_warning("NIP-54: Expected kind 30818, got %" G_GINT64_FORMAT, kind);
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -191,7 +188,6 @@ GnostrWikiArticle *gnostr_wiki_article_parse_json(const char *event_json) {
     g_ptr_array_free(forks_arr, FALSE);
   }
 
-  g_object_unref(parser);
   return article;
 }
 
@@ -199,20 +195,18 @@ GnostrWikiArticle *gnostr_wiki_article_parse_tags(const char *tags_json,
                                                     const char *content) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_warning("NIP-54: Failed to parse tags JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
     g_warning("NIP-54: Tags is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -295,7 +289,6 @@ GnostrWikiArticle *gnostr_wiki_article_parse_tags(const char *tags_json,
   }
   g_ptr_array_free(forks_arr, FALSE);
 
-  g_object_unref(parser);
   return article;
 }
 
@@ -413,7 +406,7 @@ char *gnostr_wiki_build_event_json(const char *d_tag,
                                     const char **topics) {
   if (!d_tag || !content) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_object(builder);
 
@@ -483,15 +476,13 @@ char *gnostr_wiki_build_event_json(const char *d_tag,
   json_builder_end_array(builder);  /* end tags */
   json_builder_end_object(builder);
 
-  JsonGenerator *generator = json_generator_new();
+  g_autoptr(JsonGenerator) generator = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(generator, root);
 
   gchar *json_str = json_generator_to_data(generator, NULL);
 
   json_node_unref(root);
-  g_object_unref(generator);
-  g_object_unref(builder);
 
   return json_str;
 }

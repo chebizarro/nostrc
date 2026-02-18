@@ -62,19 +62,17 @@ gboolean gnostr_nip52_is_time_based(gint kind) {
 GnostrNip52CalendarEvent *gnostr_nip52_calendar_event_parse(const gchar *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
     g_debug("NIP-52: Failed to parse calendar event JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -82,13 +80,11 @@ GnostrNip52CalendarEvent *gnostr_nip52_calendar_event_parse(const gchar *json_st
 
   /* Check kind */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
 
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (!gnostr_nip52_is_calendar_kind((gint)kind)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -273,7 +269,6 @@ GnostrNip52CalendarEvent *gnostr_nip52_calendar_event_parse(const gchar *json_st
     g_ptr_array_free(references_arr, TRUE);
   }
 
-  g_object_unref(parser);
 
   /* Validate: must have start time and d-tag */
   if (event->start <= 0 || !event->d_tag || !*event->d_tag) {
@@ -511,7 +506,7 @@ gchar *gnostr_nip52_build_calendar_event(GnostrCalendarEventType type,
     return NULL;
   }
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Kind */
@@ -616,14 +611,12 @@ gchar *gnostr_nip52_build_calendar_event(GnostrCalendarEventType type,
   json_builder_end_array(builder);  /* tags */
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
