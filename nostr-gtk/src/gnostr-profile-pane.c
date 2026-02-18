@@ -2250,10 +2250,8 @@ static void add_nip05_row(NostrGtkProfilePane *self, const char *nip05, const ch
   /* Start async verification if we have pubkey */
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
     /* Cancel any previous verification */
-    if (self->nip05_cancellable) {
-      g_cancellable_cancel(self->nip05_cancellable);
-      g_object_unref(self->nip05_cancellable);
-    }
+    g_cancellable_cancel(self->nip05_cancellable);
+    g_clear_object(&self->nip05_cancellable);
     self->nip05_cancellable = g_cancellable_new();
 
     /* Check cache first for immediate display */

@@ -1843,8 +1843,8 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   if (self->sub_zaps > 0)       { gn_ndb_unsubscribe(self->sub_zaps);       self->sub_zaps = 0;       }
 
   /* NIP-25/57: Clean up reaction and zap caches */
-  if (self->reaction_cache) g_hash_table_unref(self->reaction_cache);
-  if (self->zap_stats_cache) g_hash_table_unref(self->zap_stats_cache);
+  g_clear_pointer(&self->reaction_cache, g_hash_table_unref);
+  g_clear_pointer(&self->zap_stats_cache, g_hash_table_unref);
 
   /* Free timeline query */
   if (self->timeline_query) {
@@ -1856,27 +1856,27 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   g_strfreev(self->authors);
   g_free(self->root_event_id);
 
-  if (self->notes) g_array_unref(self->notes);
-  if (self->note_key_set) g_hash_table_unref(self->note_key_set);
-  if (self->item_cache) g_hash_table_unref(self->item_cache);
-  if (self->cache_lru) g_queue_free(self->cache_lru);
-  if (self->profile_cache) g_hash_table_unref(self->profile_cache);
+  g_clear_pointer(&self->notes, g_array_unref);
+  g_clear_pointer(&self->note_key_set, g_hash_table_unref);
+  g_clear_pointer(&self->item_cache, g_hash_table_unref);
+  g_clear_pointer(&self->cache_lru, g_queue_free);
+  g_clear_pointer(&self->profile_cache, g_hash_table_unref);
   if (self->profile_cache_lru) {
     g_queue_free_full(self->profile_cache_lru, g_free);
   }
-  if (self->authors_ready) g_hash_table_unref(self->authors_ready);
+  g_clear_pointer(&self->authors_ready, g_hash_table_unref);
   if (self->authors_ready_lru) {
     g_queue_free_full(self->authors_ready_lru, g_free);
   }
-  if (self->thread_info) g_hash_table_unref(self->thread_info);
+  g_clear_pointer(&self->thread_info, g_hash_table_unref);
 
   /* nostrc-7o7: Clean up animation skip tracking */
-  if (self->skip_animation_keys) g_hash_table_unref(self->skip_animation_keys);
+  g_clear_pointer(&self->skip_animation_keys, g_hash_table_unref);
 
   /* Clean up pipeline drain timer and insertion buffer */
   remove_drain_timer(self);
-  if (self->insertion_buffer) g_array_unref(self->insertion_buffer);
-  if (self->insertion_key_set) g_hash_table_unref(self->insertion_key_set);
+  g_clear_pointer(&self->insertion_buffer, g_array_unref);
+  g_clear_pointer(&self->insertion_key_set, g_hash_table_unref);
 
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }

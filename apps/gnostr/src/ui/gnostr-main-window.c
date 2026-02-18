@@ -7502,8 +7502,7 @@ static void gnostr_main_window_dispose(GObject *object) {
     }
     /* Disconnect all remaining handlers from this instance (e.g., bg prefetch) */
     g_signal_handlers_disconnect_by_data(self->pool, self);
-    g_object_unref(self->pool);
-    self->pool = NULL;
+    g_clear_object(&self->pool);
   }
   g_clear_pointer(&self->seen_texts, g_hash_table_unref);
   g_clear_object(&self->event_model);
@@ -8995,8 +8994,7 @@ static void on_relay_config_changed(gpointer user_data) {
   if (self->pool_cancellable) {
     g_debug("[LIVE_RELAY] Restarting live subscription with updated relays");
     g_cancellable_cancel(self->pool_cancellable);
-    g_object_unref(self->pool_cancellable);
-    self->pool_cancellable = NULL;
+    g_clear_object(&self->pool_cancellable);
 
     /* Timeout-audit: Use idle instead of 100ms timeout — the restart runs
      * on the next main loop iteration, after cleanup signals propagate. */
@@ -9124,11 +9122,8 @@ static void start_pool_live(GnostrMainWindow *self) {
   if (!self->pool) self->pool = gnostr_pool_new();
 
   /* Cancel any existing subscription before starting a new one to prevent FD leak */
-  if (self->pool_cancellable) {
-    g_cancellable_cancel(self->pool_cancellable);
-    g_object_unref(self->pool_cancellable);
-    self->pool_cancellable = NULL;
-  }
+  g_cancellable_cancel(self->pool_cancellable);
+  g_clear_object(&self->pool_cancellable);
   self->pool_cancellable = g_cancellable_new();
 
   /* Build live URLs and filters: subscribe to all required kinds for persistence-first operation.

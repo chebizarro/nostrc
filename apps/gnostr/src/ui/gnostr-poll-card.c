@@ -132,10 +132,7 @@ static void gnostr_poll_card_finalize(GObject *obj) {
   g_clear_pointer(&self->option_count_labels, g_ptr_array_unref);
   g_clear_pointer(&self->option_percent_labels, g_ptr_array_unref);
 
-  if (self->user_vote_indices) {
-    g_array_unref(self->user_vote_indices);
-    self->user_vote_indices = NULL;
-  }
+  g_clear_pointer(&self->user_vote_indices, g_array_unref);
 
   G_OBJECT_CLASS(gnostr_poll_card_parent_class)->finalize(obj);
 }
@@ -891,10 +888,7 @@ void gnostr_poll_card_set_user_votes(GnostrPollCard *self,
                                       gsize count) {
   g_return_if_fail(GNOSTR_IS_POLL_CARD(self));
 
-  if (self->user_vote_indices) {
-    g_array_unref(self->user_vote_indices);
-    self->user_vote_indices = NULL;
-  }
+  g_clear_pointer(&self->user_vote_indices, g_array_unref);
 
   if (indices && count > 0) {
     self->user_vote_indices = g_array_sized_new(FALSE, FALSE, sizeof(int), count);

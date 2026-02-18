@@ -361,9 +361,7 @@ apply_filter(GnFollowListModel *self)
 {
     guint old_len = self->filtered_items ? self->filtered_items->len : 0;
 
-    if (self->filtered_items) {
-        g_ptr_array_unref(self->filtered_items);
-    }
+    g_clear_pointer(&self->filtered_items, g_ptr_array_unref);
     self->filtered_items = g_ptr_array_new();
 
     if (self->all_items) {

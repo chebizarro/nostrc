@@ -126,11 +126,8 @@ static void nostr_gtk_composer_finalize(GObject *obj) {
   g_clear_pointer(&self->comment_root_id, g_free);
   g_clear_pointer(&self->comment_root_pubkey, g_free);
   g_clear_pointer(&self->current_draft_d_tag, g_free);
-  if (self->upload_cancellable) {
-    g_cancellable_cancel(self->upload_cancellable);
-    g_object_unref(self->upload_cancellable);
-    self->upload_cancellable = NULL;
-  }
+  g_cancellable_cancel(self->upload_cancellable);
+  g_clear_object(&self->upload_cancellable);
   if (self->uploaded_media) {
     g_ptr_array_free(self->uploaded_media, TRUE);
     self->uploaded_media = NULL;
@@ -209,9 +206,7 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
   }
 
   /* Create cancellable for this upload */
-  if (self->upload_cancellable) {
-    g_object_unref(self->upload_cancellable);
-  }
+  g_clear_object(&self->upload_cancellable);
   self->upload_cancellable = g_cancellable_new();
 
   /* Emit signal for app to handle the actual upload */

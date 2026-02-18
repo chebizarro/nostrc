@@ -123,9 +123,9 @@ static void
 gnostr_picture_grid_finalize(GObject *object) {
   GnostrPictureGrid *self = GNOSTR_PICTURE_GRID(object);
 
-  g_hash_table_destroy(self->pictures);
-  g_hash_table_destroy(self->cards);
-  g_hash_table_destroy(self->author_cache);
+  g_clear_pointer(&self->pictures, g_hash_table_destroy);
+  g_clear_pointer(&self->cards, g_hash_table_destroy);
+  g_clear_pointer(&self->author_cache, g_hash_table_destroy);
   g_list_free_full(self->picture_order, g_free);
   g_free(self->empty_message);
 

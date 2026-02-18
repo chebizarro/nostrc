@@ -903,8 +903,7 @@ gn_hsm_provider_mock_finalize(GObject *object)
   GnHsmProviderMock *self = GN_HSM_PROVIDER_MOCK(object);
 
   g_mutex_lock(&self->lock);
-  g_hash_table_unref(self->devices);
-  self->devices = NULL;
+  g_clear_pointer(&self->devices, g_hash_table_unref);
   g_mutex_unlock(&self->lock);
 
   g_mutex_clear(&self->lock);

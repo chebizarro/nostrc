@@ -34,10 +34,7 @@ static void gnostr_drafts_finalize(GObject *obj) {
   g_mutex_lock(&self->lock);
   g_free(self->user_pubkey);
   self->user_pubkey = NULL;
-  if (self->cache) {
-    g_hash_table_destroy(self->cache);
-    self->cache = NULL;
-  }
+  g_clear_pointer(&self->cache, g_hash_table_destroy);
   g_mutex_unlock(&self->lock);
   g_mutex_clear(&self->lock);
 

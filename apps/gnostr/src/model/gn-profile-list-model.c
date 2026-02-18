@@ -302,15 +302,9 @@ gn_profile_list_model_finalize(GObject *object)
     if (self->filtered_profiles) {
         g_ptr_array_free(self->filtered_profiles, TRUE);
     }
-    if (self->following_set) {
-        g_hash_table_destroy(self->following_set);
-    }
-    if (self->muted_set) {
-        g_hash_table_destroy(self->muted_set);
-    }
-    if (self->blocked_set) {
-        g_hash_table_destroy(self->blocked_set);
-    }
+    g_clear_pointer(&self->following_set, g_hash_table_destroy);
+    g_clear_pointer(&self->muted_set, g_hash_table_destroy);
+    g_clear_pointer(&self->blocked_set, g_hash_table_destroy);
     g_free(self->filter_text);
 
     G_OBJECT_CLASS(gn_profile_list_model_parent_class)->finalize(object);

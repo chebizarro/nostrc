@@ -58,7 +58,7 @@ gnostr_notifications_view_finalize(GObject *object)
     GnostrNotificationsView *self = GNOSTR_NOTIFICATIONS_VIEW(object);
 
     g_free(self->user_pubkey);
-    g_hash_table_destroy(self->notifications);
+    g_clear_pointer(&self->notifications, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_notifications_view_parent_class)->finalize(object);
 }

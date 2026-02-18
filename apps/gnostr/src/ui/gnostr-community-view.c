@@ -234,11 +234,10 @@ gnostr_community_view_finalize(GObject *object)
     g_free(self->creator_pubkey);
     g_free(self->user_pubkey);
 
-    if (self->moderators)
-        g_ptr_array_unref(self->moderators);
+    g_clear_pointer(&self->moderators, g_ptr_array_unref);
 
-    g_hash_table_destroy(self->author_profiles);
-    g_hash_table_destroy(self->author_avatars);
+    g_clear_pointer(&self->author_profiles, g_hash_table_destroy);
+    g_clear_pointer(&self->author_avatars, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_community_view_parent_class)->finalize(object);
 }

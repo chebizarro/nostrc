@@ -161,7 +161,7 @@ gn_rate_limiter_finalize(GObject *object) {
   }
 
   /* Free client states */
-  g_hash_table_destroy(self->client_states);
+  g_clear_pointer(&self->client_states, g_hash_table_destroy);
 
   /* Free state file path */
   g_free(self->state_file_path);

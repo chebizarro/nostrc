@@ -194,10 +194,7 @@ gnostr_nip7d_thread_view_finalize(GObject *obj)
         self->thread = NULL;
     }
 
-    if (self->replies) {
-        g_ptr_array_unref(self->replies);
-        self->replies = NULL;
-    }
+    g_clear_pointer(&self->replies, g_ptr_array_unref);
 
     g_clear_pointer(&self->reply_parent_id, g_free);
 

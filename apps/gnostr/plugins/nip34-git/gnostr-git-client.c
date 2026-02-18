@@ -444,8 +444,7 @@ refresh_status(GnostrGitClient *self)
     return;
 
   /* Clear old statuses */
-  if (self->file_statuses)
-    g_ptr_array_unref(self->file_statuses);
+  g_clear_pointer(&self->file_statuses, g_ptr_array_unref);
 
   self->file_statuses = g_ptr_array_new_with_free_func(
       (GDestroyNotify)file_status_entry_free);
@@ -496,8 +495,7 @@ refresh_history(GnostrGitClient *self)
     return;
 
   /* Clear old commits */
-  if (self->commits)
-    g_ptr_array_unref(self->commits);
+  g_clear_pointer(&self->commits, g_ptr_array_unref);
 
   self->commits = g_ptr_array_new_with_free_func(
       (GDestroyNotify)commit_entry_free);
@@ -615,8 +613,7 @@ refresh_branches(GnostrGitClient *self)
     return;
 
   /* Clear old branches */
-  if (self->branches)
-    g_ptr_array_unref(self->branches);
+  g_clear_pointer(&self->branches, g_ptr_array_unref);
 
   self->branches = g_ptr_array_new_with_free_func(
       (GDestroyNotify)branch_entry_free);

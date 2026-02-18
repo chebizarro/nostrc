@@ -553,9 +553,7 @@ update_filter_models(GnPageHistory *self)
       gtk_string_list_remove(self->kind_model, 0);
   }
 
-  if (self->kind_values) {
-    g_array_unref(self->kind_values);
-  }
+  g_clear_pointer(&self->kind_values, g_array_unref);
   self->kind_values = g_array_new(FALSE, FALSE, sizeof(gint));
 
   gtk_string_list_append(self->kind_model, "All Kinds");
@@ -577,9 +575,7 @@ update_filter_models(GnPageHistory *self)
       gtk_string_list_remove(self->client_model, 0);
   }
 
-  if (self->client_values) {
-    g_ptr_array_unref(self->client_values);
-  }
+  g_clear_pointer(&self->client_values, g_ptr_array_unref);
   self->client_values = g_ptr_array_new_with_free_func(g_free);
 
   gtk_string_list_append(self->client_model, "All Clients");
@@ -610,15 +606,8 @@ gn_page_history_dispose(GObject *object)
   g_free(self->filter_client);
   self->filter_client = NULL;
 
-  if (self->kind_values) {
-    g_array_unref(self->kind_values);
-    self->kind_values = NULL;
-  }
-
-  if (self->client_values) {
-    g_ptr_array_unref(self->client_values);
-    self->client_values = NULL;
-  }
+  g_clear_pointer(&self->kind_values, g_array_unref);
+  g_clear_pointer(&self->client_values, g_ptr_array_unref);
 
   G_OBJECT_CLASS(gn_page_history_parent_class)->dispose(object);
 }
