@@ -768,7 +768,6 @@ gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
     /* Validate npub by decoding, then re-encode to normalize */
     g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(pubkey, NULL);
     if (!nip19 || gnostr_nip19_get_entity_type(nip19) != GNOSTR_BECH32_NPUB) {
-      if (nip19) g_object_unref(nip19);
       g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
                           "Invalid npub format");
       return FALSE;
