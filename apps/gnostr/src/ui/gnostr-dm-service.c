@@ -1108,7 +1108,7 @@ dm_publish_thread(GTask *task, gpointer source_object,
 
     for (guint i = 0; i < d->relay_urls->len; i++) {
         const char *url = (const char *)g_ptr_array_index(d->relay_urls, i);
-        GNostrRelay *relay = gnostr_relay_new(url);
+        g_autoptr(GNostrRelay) relay = gnostr_relay_new(url);
         if (!relay) { d->fail_count++; continue; }
 
         GError *conn_err = NULL;
@@ -1116,7 +1116,6 @@ dm_publish_thread(GTask *task, gpointer source_object,
             g_debug("[DM_SERVICE] Failed to connect to %s: %s",
                     url, conn_err ? conn_err->message : "unknown");
             g_clear_error(&conn_err);
-            g_object_unref(relay);
             d->fail_count++;
             continue;
         }
@@ -1131,7 +1130,6 @@ dm_publish_thread(GTask *task, gpointer source_object,
             g_clear_error(&pub_err);
             d->fail_count++;
         }
-        g_object_unref(relay);
     }
 
     g_task_return_boolean(task, d->success_count > 0);

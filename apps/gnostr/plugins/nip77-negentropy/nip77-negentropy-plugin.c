@@ -135,10 +135,9 @@ static void
 load_settings(Nip77NegentropyPlugin *self)
 {
   /* hq-cnkj3: Read from GSettings instead of plugin context storage */
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   self->auto_sync_enabled = g_settings_get_boolean(settings, "negentropy-auto-sync");
   self->auto_sync_interval_sec = g_settings_get_uint(settings, "negentropy-sync-interval");
-  g_object_unref(settings);
 
   g_debug("[NIP-77] Loaded settings: auto_sync=%d, interval=%u sec",
           self->auto_sync_enabled, self->auto_sync_interval_sec);
@@ -148,10 +147,9 @@ static void
 save_settings(Nip77NegentropyPlugin *self)
 {
   /* hq-cnkj3: Write to GSettings instead of plugin context storage */
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   g_settings_set_boolean(settings, "negentropy-auto-sync", self->auto_sync_enabled);
   g_settings_set_uint(settings, "negentropy-sync-interval", self->auto_sync_interval_sec);
-  g_object_unref(settings);
 }
 
 /* ============================================================================

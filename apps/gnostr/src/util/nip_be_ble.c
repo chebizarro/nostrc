@@ -49,20 +49,18 @@ GnostrBleMessage *gnostr_ble_message_parse(const char *tags_json,
                                             const char *content) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_warning("NIP-BE: Failed to parse tags JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
     g_warning("NIP-BE: Tags is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -126,7 +124,6 @@ GnostrBleMessage *gnostr_ble_message_parse(const char *tags_json,
     }
   }
 
-  g_object_unref(parser);
 
   /* Validate required fields - device UUID is required */
   if (!msg->device_uuid || !*msg->device_uuid) {
@@ -148,7 +145,7 @@ GnostrBleMessage *gnostr_ble_message_parse(const char *tags_json,
 char *gnostr_ble_message_build_tags(const GnostrBleMessage *msg) {
   if (!msg || !msg->device_uuid) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* ble-id tag (required) */
@@ -201,15 +198,13 @@ char *gnostr_ble_message_build_tags(const GnostrBleMessage *msg) {
 
   json_builder_end_array(builder);
 
-  JsonGenerator *generator = json_generator_new();
+  g_autoptr(JsonGenerator) generator = json_generator_new();
   JsonNode *root_node = json_builder_get_root(builder);
   json_generator_set_root(generator, root_node);
 
   char *tags_json = json_generator_to_data(generator, NULL);
 
   json_node_free(root_node);
-  g_object_unref(generator);
-  g_object_unref(builder);
 
   return tags_json;
 }

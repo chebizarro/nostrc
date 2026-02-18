@@ -235,7 +235,7 @@ gchar *gnostr_zap_goal_create_event(const gchar *title,
     return NULL;
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* Kind 9041 - zap goal */
@@ -310,7 +310,6 @@ gchar *gnostr_zap_goal_create_event(const gchar *title,
   gnostr_json_builder_end_object(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

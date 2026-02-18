@@ -160,18 +160,16 @@ GnostrProxyInfo *gnostr_proxy_parse_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
 
   GError *error = NULL;
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_debug("nip48: Failed to parse tags JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -205,7 +203,6 @@ GnostrProxyInfo *gnostr_proxy_parse_tags_json(const char *tags_json) {
     g_free(values);
   }
 
-  g_object_unref(parser);
   return result;
 }
 

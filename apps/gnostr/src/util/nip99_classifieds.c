@@ -313,7 +313,7 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
 {
   if (!classified || !classified->d_tag) return NULL;
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -408,7 +408,6 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
   gnostr_json_builder_end_object(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

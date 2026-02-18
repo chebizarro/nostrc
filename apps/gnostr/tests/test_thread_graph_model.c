@@ -86,16 +86,15 @@ static void sigctx_clear(SigCtx *ctx) {
 /* ========== Tests ========== */
 
 static void test_new_model(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
     g_assert_nonnull(model);
     g_assert_cmpstr(gnostr_thread_graph_model_get_root_id(model), ==, ROOT_ID);
     g_assert_cmpuint(gnostr_thread_graph_model_get_node_count(model), ==, 0);
     g_assert_cmpuint(gnostr_thread_graph_model_get_reply_count(model), ==, 0);
-    g_object_unref(model);
 }
 
 static void test_add_root_event(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
     char *json = make_note(ROOT_ID, 1, NULL, NULL);
 
     gboolean added = gnostr_thread_graph_model_add_event_json(model, json);
@@ -112,11 +111,10 @@ static void test_add_root_event(void) {
     g_assert_false(gnostr_thread_graph_model_add_event_json(model, json));
 
     g_free(json);
-    g_object_unref(model);
 }
 
 static void test_reply_links_to_parent(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
     SigCtx ctx = {0};
     g_signal_connect(model, "reply-added", G_CALLBACK(on_reply_added), &ctx);
 
@@ -145,11 +143,10 @@ static void test_reply_links_to_parent(void) {
     g_free(root_json);
     g_free(reply_json);
     sigctx_clear(&ctx);
-    g_object_unref(model);
 }
 
 static void test_nested_reply_depth(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
 
     char *root_json = make_note(ROOT_ID, 1, NULL, NULL);
     char *r1_json = make_note(REPLY1_ID, 1, ROOT_ID, NULL);
@@ -172,11 +169,10 @@ static void test_nested_reply_depth(void) {
     g_free(root_json);
     g_free(r1_json);
     g_free(nested_json);
-    g_object_unref(model);
 }
 
 static void test_reaction_increments_count(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
     SigCtx ctx = {0};
     g_signal_connect(model, "reaction-added", G_CALLBACK(on_reaction_added), &ctx);
     g_signal_connect(model, "event-updated", G_CALLBACK(on_event_updated), &ctx);
@@ -197,11 +193,10 @@ static void test_reaction_increments_count(void) {
     g_free(root_json);
     g_free(react_json);
     sigctx_clear(&ctx);
-    g_object_unref(model);
 }
 
 static void test_orphan_relinks_when_parent_arrives(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
 
     /* Add child before parent (out-of-order arrival) */
     char *reply_json = make_note(REPLY1_ID, 1, ROOT_ID, NULL);
@@ -226,11 +221,10 @@ static void test_orphan_relinks_when_parent_arrives(void) {
 
     g_free(root_json);
     g_free(reply_json);
-    g_object_unref(model);
 }
 
 static void test_render_order(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
 
     char *root_json = make_note(ROOT_ID, 1, NULL, NULL);
     char *r1_json = make_note(REPLY1_ID, 1, ROOT_ID, NULL);
@@ -251,11 +245,10 @@ static void test_render_order(void) {
     g_free(root_json);
     g_free(r1_json);
     g_free(r2_json);
-    g_object_unref(model);
 }
 
 static void test_clear(void) {
-    GNostrThreadGraphModel *model = gnostr_thread_graph_model_new(ROOT_ID);
+    g_autoptr(GNostrThreadGraphModel) model = gnostr_thread_graph_model_new(ROOT_ID);
 
     char *json = make_note(ROOT_ID, 1, NULL, NULL);
     gnostr_thread_graph_model_add_event_json(model, json);
@@ -266,7 +259,6 @@ static void test_clear(void) {
     g_assert_cmpuint(gnostr_thread_graph_model_get_reply_count(model), ==, 0);
 
     g_free(json);
-    g_object_unref(model);
 }
 
 int main(int argc, char *argv[]) {

@@ -1283,7 +1283,7 @@ tpm_sign_hash(GnHsmProvider *provider,
   gchar *sk_hex = bytes_to_hex(private_key, 32);
   memset(private_key, 0, sizeof(private_key));
 
-  GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
   if (!gkeys) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
@@ -1301,7 +1301,6 @@ tpm_sign_hash(GnHsmProvider *provider,
   nostr_event_set_created_at(event, time(NULL));
   nostr_event_set_content(event, "");
 
-  g_object_unref(gkeys);
 
   /* Set the event id to our hash */
   gchar *hash_hex = bytes_to_hex(hash, 32);

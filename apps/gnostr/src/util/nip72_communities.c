@@ -189,7 +189,7 @@ gnostr_community_create_tags(const GnostrCommunity *community)
 {
     if (!community || !community->d_tag) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_array(builder);
 
     /* d tag (required) */
@@ -248,7 +248,6 @@ gnostr_community_create_tags(const GnostrCommunity *community)
 
     gnostr_json_builder_end_array(builder);
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }
@@ -394,7 +393,7 @@ gnostr_approved_post_create_tags(const char *community_a_tag,
 {
     if (!community_a_tag || !post_event_id || !post_author) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_array(builder);
 
     /* "a" tag for community reference */
@@ -429,7 +428,6 @@ gnostr_approved_post_create_tags(const char *community_a_tag,
 
     gnostr_json_builder_end_array(builder);
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }
@@ -539,7 +537,7 @@ gnostr_community_post_create_tags(const char *community_a_tag,
 {
     if (!community_a_tag) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_array(builder);
 
     /* "a" tag for community reference */
@@ -552,7 +550,6 @@ gnostr_community_post_create_tags(const char *community_a_tag,
 
     gnostr_json_builder_end_array(builder);
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }

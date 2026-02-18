@@ -44,7 +44,7 @@ static gchar *parse_private_key_hex(const gchar *input, GError **error) {
   if (g_str_has_prefix(input, "nsec1")) {
     /* Decode bech32 nsec via GNostrNip19 */
     GError *decode_error = NULL;
-    GNostrNip19 *nip19 = gnostr_nip19_decode(input, &decode_error);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(input, &decode_error);
     if (!nip19) {
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
                   "Invalid nsec format: %s",
@@ -54,7 +54,6 @@ static gchar *parse_private_key_hex(const gchar *input, GError **error) {
     }
 
     if (gnostr_nip19_get_entity_type(nip19) != GNOSTR_BECH32_NSEC) {
-      g_object_unref(nip19);
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
                   "Expected nsec but got different bech32 type");
       return NULL;
@@ -63,7 +62,6 @@ static gchar *parse_private_key_hex(const gchar *input, GError **error) {
     /* GNostrNip19 stores the decoded key as hex in the pubkey field for nsec */
     const gchar *hex = gnostr_nip19_get_pubkey(nip19);
     gchar *result = hex ? g_strdup(hex) : NULL;
-    g_object_unref(nip19);
 
     if (!result) {
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
@@ -83,26 +81,24 @@ static gchar *parse_private_key_hex(const gchar *input, GError **error) {
 /* Helper: Convert hex private key to nsec string via GNostrNip19 */
 static gchar *hex_to_nsec(const gchar *hex_key) {
   GError *error = NULL;
-  GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(hex_key, &error);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_nsec(hex_key, &error);
   if (!nip19) {
     g_clear_error(&error);
     return NULL;
   }
   gchar *nsec = g_strdup(gnostr_nip19_get_bech32(nip19));
-  g_object_unref(nip19);
   return nsec;
 }
 
 /* Helper: Convert hex public key to npub string via GNostrNip19 */
 static gchar *hex_to_npub(const gchar *hex_pubkey) {
   GError *error = NULL;
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(hex_pubkey, &error);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(hex_pubkey, &error);
   if (!nip19) {
     g_clear_error(&error);
     return NULL;
   }
   gchar *npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-  g_object_unref(nip19);
   return npub;
 }
 
@@ -130,7 +126,7 @@ gboolean gn_backup_export_nip49(const gchar *nsec,
     return FALSE;
 
   /* Use GNostrNip49 for encryption */
-  GNostrNip49 *nip49 = gnostr_nip49_new();
+  g_autoptr(GNostrNip49) nip49 = gnostr_nip49_new();
   GError *nip49_error = NULL;
   gchar *ncryptsec = gnostr_nip49_encrypt(nip49,
                                             privkey_hex,
@@ -142,7 +138,6 @@ gboolean gn_backup_export_nip49(const gchar *nsec,
   /* Securely clear the hex key */
   secure_clear(privkey_hex, strlen(privkey_hex));
   g_free(privkey_hex);
-  g_object_unref(nip49);
 
   if (!ncryptsec) {
     if (nip49_error) {
@@ -186,10 +181,9 @@ gboolean gn_backup_import_nip49(const gchar *encrypted,
   }
 
   /* Use GNostrNip49 for decryption - returns hex string */
-  GNostrNip49 *nip49 = gnostr_nip49_new();
+  g_autoptr(GNostrNip49) nip49 = gnostr_nip49_new();
   GError *nip49_error = NULL;
   gchar *privkey_hex = gnostr_nip49_decrypt(nip49, encrypted, password, &nip49_error);
-  g_object_unref(nip49);
 
   if (!privkey_hex) {
     if (nip49_error) {
@@ -270,7 +264,7 @@ gboolean gn_backup_import_mnemonic(const gchar *mnemonic,
   /* For account index 0, use GNostrKeys directly (NIP-06 derivation) */
   if (account == 0) {
     GError *key_error = NULL;
-    GNostrKeys *keys = gnostr_keys_new_from_mnemonic(normalized, passphrase, &key_error);
+    g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_mnemonic(normalized, passphrase, &key_error);
     if (!keys) {
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
                   "Failed to derive key from mnemonic: %s",
@@ -278,15 +272,13 @@ gboolean gn_backup_import_mnemonic(const gchar *mnemonic,
       g_clear_error(&key_error);
       return FALSE;
     }
-    g_object_unref(keys);
   }
 
   /* Use GNostrBip39 for seed derivation (supports non-zero account indices) */
-  GNostrBip39 *bip39 = gnostr_bip39_new();
+  g_autoptr(GNostrBip39) bip39 = gnostr_bip39_new();
   GError *bip39_error = NULL;
 
   if (!gnostr_bip39_set_mnemonic(bip39, normalized, &bip39_error)) {
-    g_object_unref(bip39);
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_MNEMONIC,
                 "Invalid mnemonic: %s",
                 bip39_error ? bip39_error->message : "validation failed");
@@ -297,14 +289,12 @@ gboolean gn_backup_import_mnemonic(const gchar *mnemonic,
   /* Derive seed via PBKDF2 */
   guint8 *seed = NULL;
   if (!gnostr_bip39_to_seed(bip39, passphrase, &seed, &bip39_error)) {
-    g_object_unref(bip39);
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
                 "Failed to derive seed from mnemonic: %s",
                 bip39_error ? bip39_error->message : "PBKDF2 failed");
     g_clear_error(&bip39_error);
     return FALSE;
   }
-  g_object_unref(bip39);
 
   /* Derive private key from seed using NIP-06 path m/44'/1237'/account'/0/0
    * Note: For non-zero accounts we still need the core NIP-06 function.
@@ -347,12 +337,11 @@ gboolean gn_backup_generate_mnemonic(gint word_count,
   *out_nsec = NULL;
 
   /* Use GNostrBip39 to generate mnemonic */
-  GNostrBip39 *bip39 = gnostr_bip39_new();
+  g_autoptr(GNostrBip39) bip39 = gnostr_bip39_new();
   GError *gen_error = NULL;
   const gchar *mnemonic = gnostr_bip39_generate(bip39, word_count, &gen_error);
 
   if (!mnemonic) {
-    g_object_unref(bip39);
     if (gen_error) {
       g_propagate_error(error, gen_error);
     } else {
@@ -364,7 +353,6 @@ gboolean gn_backup_generate_mnemonic(gint word_count,
 
   /* Copy mnemonic before we use it (owned by bip39) */
   gchar *mnemonic_copy = g_strdup(mnemonic);
-  g_object_unref(bip39);
 
   /* Derive key from mnemonic */
   gchar *nsec = NULL;
@@ -497,7 +485,7 @@ gboolean gn_backup_get_npub(const gchar *nsec,
 
   /* Derive public key via GNostrKeys */
   GError *key_error = NULL;
-  GNostrKeys *keys = gnostr_keys_new_from_hex(privkey_hex, &key_error);
+  g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_hex(privkey_hex, &key_error);
   secure_clear(privkey_hex, strlen(privkey_hex));
   g_free(privkey_hex);
 
@@ -511,7 +499,6 @@ gboolean gn_backup_get_npub(const gchar *nsec,
 
   const gchar *pubkey_hex = gnostr_keys_get_pubkey(keys);
   if (!pubkey_hex) {
-    g_object_unref(keys);
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
                 "Failed to derive public key");
     return FALSE;
@@ -519,7 +506,6 @@ gboolean gn_backup_get_npub(const gchar *nsec,
 
   /* Encode as npub via GNostrNip19 */
   gchar *npub = hex_to_npub(pubkey_hex);
-  g_object_unref(keys);
 
   if (!npub) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
@@ -604,7 +590,7 @@ gboolean gn_backup_create_metadata_json(const gchar *nsec,
   gchar *created_at = get_iso8601_timestamp();
 
   /* Build JSON object */
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   json_builder_set_member_name(builder, "version");
@@ -633,7 +619,7 @@ gboolean gn_backup_create_metadata_json(const gchar *nsec,
   json_builder_end_object(builder);
 
   /* Generate JSON string */
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_pretty(gen, TRUE);
   json_generator_set_indent(gen, 2);
   JsonNode *root = json_builder_get_root(builder);
@@ -643,8 +629,6 @@ gboolean gn_backup_create_metadata_json(const gchar *nsec,
 
   /* Cleanup */
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
   g_free(created_at);
   g_free(npub);
 
@@ -668,14 +652,13 @@ gboolean gn_backup_parse_metadata_json(const gchar *json,
   }
 
   /* Parse JSON */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *parse_error = NULL;
 
   if (!json_parser_load_from_data(parser, json, -1, &parse_error)) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
                 "Invalid JSON: %s", parse_error->message);
     g_error_free(parse_error);
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -683,7 +666,6 @@ gboolean gn_backup_parse_metadata_json(const gchar *json,
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
                 "Invalid backup format: expected JSON object");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -697,7 +679,6 @@ gboolean gn_backup_parse_metadata_json(const gchar *json,
   if (!format || g_strcmp0(format, "gnostr-backup") != 0) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
                 "Invalid backup format: expected 'gnostr-backup'");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -705,7 +686,6 @@ gboolean gn_backup_parse_metadata_json(const gchar *json,
   if (!json_object_has_member(obj, "ncryptsec")) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
                 "Invalid backup: missing 'ncryptsec' field");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -713,7 +693,6 @@ gboolean gn_backup_parse_metadata_json(const gchar *json,
   if (!ncryptsec || !gn_backup_validate_ncryptsec(ncryptsec)) {
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
                 "Invalid backup: invalid 'ncryptsec' format");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -747,7 +726,6 @@ gboolean gn_backup_parse_metadata_json(const gchar *json,
     meta->security_level = GN_BACKUP_SECURITY_NORMAL;
   }
 
-  g_object_unref(parser);
   *out_metadata = meta;
   return TRUE;
 }

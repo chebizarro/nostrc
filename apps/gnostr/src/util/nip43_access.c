@@ -136,19 +136,17 @@ static GnostrRelayFee *parse_fee_array(JsonArray *arr, gsize *out_count) {
 GnostrRelayFees *gnostr_relay_fees_parse(const gchar *fees_json) {
   if (!fees_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *err = NULL;
 
   if (!json_parser_load_from_data(parser, fees_json, -1, &err)) {
     g_warning("nip43: fees JSON parse error: %s", err ? err->message : "unknown");
     g_clear_error(&err);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || JSON_NODE_TYPE(root) != JSON_NODE_OBJECT) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -173,7 +171,6 @@ GnostrRelayFees *gnostr_relay_fees_parse(const gchar *fees_json) {
     fees->publication = parse_fee_array(publication_arr, &fees->publication_count);
   }
 
-  g_object_unref(parser);
   return fees;
 }
 
@@ -236,26 +233,23 @@ GnostrRelayAccess *gnostr_relay_access_parse_info_object(gpointer root_object) {
 GnostrRelayAccess *gnostr_relay_access_parse_info(const gchar *info_json) {
   if (!info_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *err = NULL;
 
   if (!json_parser_load_from_data(parser, info_json, -1, &err)) {
     g_warning("nip43: info JSON parse error: %s", err ? err->message : "unknown");
     g_clear_error(&err);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || JSON_NODE_TYPE(root) != JSON_NODE_OBJECT) {
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonObject *obj = json_node_get_object(root);
   GnostrRelayAccess *access = gnostr_relay_access_parse_info_object(obj);
 
-  g_object_unref(parser);
   return access;
 }
 

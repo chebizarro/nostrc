@@ -175,7 +175,7 @@ char *gnostr_app_data_build_event_json_full(const char *app_id,
     g_autofree char *d_tag_value = gnostr_app_data_build_d_tag(app_id, data_key);
     if (!d_tag_value) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_object(builder);
 
     /* kind */
@@ -212,7 +212,6 @@ char *gnostr_app_data_build_event_json_full(const char *app_id,
     gnostr_json_builder_end_object(builder);
 
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }
@@ -649,7 +648,7 @@ nip78_publish_thread(GTask *task, gpointer source_object,
 
   for (guint i = 0; i < d->relay_urls->len; i++) {
     const char *url = g_ptr_array_index(d->relay_urls, i);
-    GNostrRelay *relay = gnostr_relay_new(url);
+    g_autoptr(GNostrRelay) relay = gnostr_relay_new(url);
     if (!relay) { d->fail_count++; continue; }
 
     GError *conn_err = NULL;
@@ -657,7 +656,6 @@ nip78_publish_thread(GTask *task, gpointer source_object,
       g_debug("nip78: failed to connect to %s: %s", url,
               conn_err ? conn_err->message : "unknown");
       g_clear_error(&conn_err);
-      g_object_unref(relay);
       d->fail_count++;
       continue;
     }
@@ -672,7 +670,6 @@ nip78_publish_thread(GTask *task, gpointer source_object,
       g_clear_error(&pub_err);
       d->fail_count++;
     }
-    g_object_unref(relay);
   }
 
   g_task_return_boolean(task, d->success_count > 0);

@@ -207,7 +207,7 @@ struct _GnostrMainWindow {
   gint64           last_backpressure_warn_us; /* last backpressure warning timestamp */
 
   /* Sequential profile batch dispatch state */
-  GNostrPool     *profile_pool;          /* owned; GObject pool for profile fetching */
+  GNostrPool      *profile_pool;          /* owned; GObject pool for profile fetching */
   NostrFilters   *profile_batch_filters; /* owned; kept alive during async query */
   GPtrArray      *profile_batches;       /* owned; elements: GPtrArray* of char* authors */
   guint           profile_batch_pos;     /* next batch index */
@@ -1944,7 +1944,6 @@ static void relay_manager_on_discover_clicked(GtkButton *btn, gpointer user_data
 
   GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "relay_discovery_window"));
   if (!win) {
-    g_object_unref(builder);
     return;
   }
 
@@ -2348,7 +2347,6 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
 
   GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "relay_manager_window"));
   if (!win) {
-    g_object_unref(builder);
     show_toast(self, "Relay manager window missing");
     return;
   }
@@ -2461,9 +2459,8 @@ static void on_negentropy_sync_changed(GtkSwitch *sw, GParamSpec *pspec, gpointe
   (void)user_data;
   gboolean enabled = gtk_switch_get_active(sw);
 
-  GSettings *client = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) client = g_settings_new("org.gnostr.Client");
   g_settings_set_boolean(client, "negentropy-auto-sync", enabled);
-  g_object_unref(client);
 
   GNostrSyncService *svc = gnostr_sync_service_get_default();
   if (enabled)
@@ -2502,7 +2499,7 @@ static void on_background_mode_changed(GtkSwitch *sw, GParamSpec *pspec, gpointe
 static void settings_dialog_setup_general_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder) return;
 
-  GSettings *client_settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) client_settings = g_settings_new("org.gnostr.Client");
   if (!client_settings) return;
 
   /* Background mode switch */
@@ -2512,14 +2509,13 @@ static void settings_dialog_setup_general_panel(SettingsDialogCtx *ctx) {
     g_signal_connect(w_background_mode, "notify::active", G_CALLBACK(on_background_mode_changed), ctx);
   }
 
-  g_object_unref(client_settings);
 }
 
 /* Update Display settings panel from GSettings */
 static void settings_dialog_setup_display_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder) return;
 
-  GSettings *display_settings = g_settings_new("org.gnostr.Display");
+  g_autoptr(GSettings) display_settings = g_settings_new("org.gnostr.Display");
   if (!display_settings) return;
 
   /* Color scheme dropdown (System=0, Light=1, Dark=2) */
@@ -2559,7 +2555,6 @@ static void settings_dialog_setup_display_panel(SettingsDialogCtx *ctx) {
   GtkSwitch *w_anim = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_enable_animations"));
   if (w_anim) gtk_switch_set_active(w_anim, g_settings_get_boolean(display_settings, "enable-animations"));
 
-  g_object_unref(display_settings);
 }
 
 /* Update Account settings panel */
@@ -2609,10 +2604,9 @@ static void settings_dialog_setup_account_panel(SettingsDialogCtx *ctx) {
   /* hq-cnkj3: Negentropy background sync toggle */
   GtkSwitch *w_neg = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_negentropy_sync_enabled"));
   if (w_neg) {
-    GSettings *client = g_settings_new("org.gnostr.Client");
+    g_autoptr(GSettings) client = g_settings_new("org.gnostr.Client");
     gtk_switch_set_active(w_neg, g_settings_get_boolean(client, "negentropy-auto-sync"));
     g_signal_connect(w_neg, "notify::active", G_CALLBACK(on_negentropy_sync_changed), NULL);
-    g_object_unref(client);
   }
 }
 
@@ -2690,12 +2684,11 @@ static void on_index_relay_remove(GtkButton *btn, gpointer user_data) {
   if (!row_ctx || !row_ctx->dialog_ctx) return;
 
   /* Load current index relays from GSettings */
-  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.gnostr");
   if (!settings) return;
 
   gchar **relays = g_settings_get_strv(settings, "index-relays");
   if (!relays) {
-    g_object_unref(settings);
     return;
   }
 
@@ -2714,7 +2707,6 @@ static void on_index_relay_remove(GtkButton *btn, gpointer user_data) {
 
   g_ptr_array_free(new_relays, TRUE);
   g_strfreev(relays);
-  g_object_unref(settings);
 
   settings_dialog_refresh_index_relay_list(row_ctx->dialog_ctx);
 
@@ -2746,7 +2738,7 @@ static void on_index_relay_add(GtkButton *btn, gpointer user_data) {
   }
 
   /* Load current index relays from GSettings */
-  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.gnostr");
   if (!settings) return;
 
   gchar **relays = g_settings_get_strv(settings, "index-relays");
@@ -2764,7 +2756,6 @@ static void on_index_relay_add(GtkButton *btn, gpointer user_data) {
 
   if (exists) {
     g_strfreev(relays);
-    g_object_unref(settings);
     if (ctx->main_window) show_toast(ctx->main_window, "Relay already in list");
     return;
   }
@@ -2782,7 +2773,6 @@ static void on_index_relay_add(GtkButton *btn, gpointer user_data) {
 
   g_strfreev(new_relays);
   g_strfreev(relays);
-  g_object_unref(settings);
 
   gtk_entry_buffer_set_text(buffer, "", 0);
   settings_dialog_refresh_index_relay_list(ctx);
@@ -2803,11 +2793,10 @@ static void settings_dialog_refresh_index_relay_list(SettingsDialogCtx *ctx) {
   }
 
   /* Load index relays from GSettings */
-  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.gnostr");
   if (!settings) return;
 
   gchar **relays = g_settings_get_strv(settings, "index-relays");
-  g_object_unref(settings);
 
   if (!relays) return;
 
@@ -3138,9 +3127,8 @@ static void on_background_mode_changed(GtkSwitch *sw, GParamSpec *pspec, gpointe
   gboolean active = gtk_switch_get_active(sw);
 
   /* Save to GSettings */
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   g_settings_set_boolean(settings, "background-mode", active);
-  g_object_unref(settings);
 
   /* Update the main window's background_mode_enabled flag live */
   if (ctx && ctx->main_window && GNOSTR_IS_MAIN_WINDOW(ctx->main_window)) {
@@ -3853,7 +3841,6 @@ static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpoi
 
   GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "about_window"));
   if (!win) {
-    g_object_unref(builder);
     show_toast(self, "About window missing");
     return;
   }
@@ -3946,7 +3933,7 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
     /* Parse the first profile event using GNostrEvent */
     const char *evt_json = g_ptr_array_index(jsons, 0);
     if (evt_json) {
-      GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+      g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
       if (evt) {
         const char *content = gnostr_event_get_content(evt);
         if (content && *content) {
@@ -3976,7 +3963,6 @@ static void on_user_profile_fetched(GObject *source, GAsyncResult *res, gpointer
             }
           }
         }
-        g_object_unref(evt);
       }
     }
     g_ptr_array_unref(jsons);
@@ -4049,7 +4035,7 @@ static void on_nip65_loaded_for_profile(GPtrArray *nip65_relays, gpointer user_d
     }
 
     /* Create a GNostrPool, sync relays, build kind-0 filter */
-    GNostrPool *profile_pool = gnostr_pool_new();
+    g_autoptr(GNostrPool) profile_pool = gnostr_pool_new();
     gnostr_pool_sync_relays(profile_pool, urls, relay_urls->len);
 
     NostrFilter *f = nostr_filter_new();
@@ -4072,7 +4058,6 @@ static void on_nip65_loaded_for_profile(GPtrArray *nip65_relays, gpointer user_d
                             on_user_profile_fetched,
                             self); /* self already has a ref from caller */
 
-    g_object_unref(profile_pool); /* the GTask holds a ref during the query */
     g_free(urls);
   } else {
     g_object_unref(self);
@@ -4161,7 +4146,7 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
   /* Add npub to known-accounts for multi-account support */
   if (npub && *npub) {
-    GSettings *settings = g_settings_new("org.gnostr.Client");
+    g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
     if (settings) {
       char **accounts = g_settings_get_strv(settings, "known-accounts");
       gboolean found = FALSE;
@@ -4190,7 +4175,6 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
       }
 
       g_strfreev(accounts);
-      g_object_unref(settings);
     }
 
     /* Refresh account list in session view */
@@ -4261,12 +4245,11 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
     /* hq-cnkj3: Start negentropy sync service if enabled */
     {
-      GSettings *client = g_settings_new("org.gnostr.Client");
+      g_autoptr(GSettings) client = g_settings_new("org.gnostr.Client");
       if (g_settings_get_boolean(client, "negentropy-auto-sync")) {
         GNostrSyncService *svc = gnostr_sync_service_get_default();
         if (svc) gnostr_sync_service_start(svc);
       }
-      g_object_unref(client);
     }
   }
 
@@ -4327,11 +4310,10 @@ static void on_signer_state_changed(GnostrSignerService *signer,
   if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
     /* Only set authenticated to TRUE if we also have a valid npub */
     if (is_connected) {
-      GSettings *settings = g_settings_new("org.gnostr.Client");
+      g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
       if (settings) {
         g_autofree char *npub = g_settings_get_string(settings, "current-npub");
         gnostr_session_view_set_authenticated(self->session_view, npub && *npub);
-        g_object_unref(settings);
       }
     } else {
       gnostr_session_view_set_authenticated(self->session_view, FALSE);
@@ -4353,10 +4335,9 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
   gnostr_badge_manager_set_event_callback(badge_mgr, NULL, NULL, NULL);
 
   /* Clear the current npub from settings */
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (settings) {
     g_settings_set_string(settings, "current-npub", "");
-    g_object_unref(settings);
   }
 
   /* Clear user pubkey */
@@ -4455,10 +4436,9 @@ static void on_account_switch_requested(GnostrSessionView *view, const char *npu
   gnostr_signer_service_clear(gnostr_signer_service_get_default());
 
   /* Set target npub - login dialog can use this as a hint */
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (settings) {
     g_settings_set_string(settings, "current-npub", npub);
-    g_object_unref(settings);
   }
 
   /* Update UI first */
@@ -4474,11 +4454,10 @@ static void on_account_switch_requested(GnostrSessionView *view, const char *npu
 static void update_login_ui_state(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (!settings) return;
 
   char *npub = g_settings_get_string(settings, "current-npub");
-  g_object_unref(settings);
 
   /* User is signed in only if both npub exists AND signer is ready */
   gboolean has_npub = (npub && *npub);
@@ -5868,11 +5847,10 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (evt_json) {
         /* Track unique pubkeys */
-        GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+        g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
         if (evt) {
           const char *pk = gnostr_event_get_pubkey(evt);
           if (pk) g_hash_table_add(unique_pks, g_strdup(pk));
-          g_object_unref(evt);
         }
       }
     }
@@ -5923,7 +5901,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (!evt_json) continue;
-      GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+      g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
       if (evt) {
         const char *pk_hex = gnostr_event_get_pubkey(evt);
         const char *content = gnostr_event_get_content(evt);
@@ -5944,7 +5922,6 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
           }
         }
         deserialized++;
-        g_object_unref(evt);
       } else {
         /* Surface parse problem with a short snippet (first 120 chars) */
         size_t len = strlen(evt_json);
@@ -6028,7 +6005,7 @@ prepopulate_profiles_thread(GTask        *task,
     for (int i = 0; i < n; i++) {
       const char *evt_json = arr[i];
       if (!evt_json) continue;
-      GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
+      g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
       if (evt) {
         if (gnostr_event_get_kind(evt) == 0) {
           const char *pk_hex = gnostr_event_get_pubkey(evt);
@@ -6040,7 +6017,6 @@ prepopulate_profiles_thread(GTask        *task,
             g_ptr_array_add(items, pctx);
           }
         }
-        g_object_unref(evt);
       }
     }
     if (items->len == 0) {
@@ -7579,7 +7555,7 @@ static void gnostr_load_settings(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
   /* nostrc-61s.6: Load background mode setting */
-  GSettings *client_settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) client_settings = g_settings_new("org.gnostr.Client");
   if (client_settings) {
     self->background_mode_enabled = g_settings_get_boolean(client_settings, "background-mode");
     g_debug("[SETTINGS] background_mode_enabled=%d", self->background_mode_enabled);
@@ -7592,7 +7568,6 @@ static void gnostr_load_settings(GnostrMainWindow *self) {
         g_debug("[SETTINGS] Application held for background mode");
       }
     }
-    g_object_unref(client_settings);
   }
 }
 
@@ -7686,13 +7661,12 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
       gnostr_relay_info_free(relay_info);
     }
 
-    GNostrRelay *relay = gnostr_relay_new(url);
+    g_autoptr(GNostrRelay) relay = gnostr_relay_new(url);
     if (!relay) { r->fail_count++; continue; }
 
     GError *conn_err = NULL;
     if (!gnostr_relay_connect(relay, &conn_err)) {
       g_clear_error(&conn_err);
-      g_object_unref(relay);
       r->fail_count++;
       continue;
     }
@@ -7721,7 +7695,6 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
      * workers exit) was fixed in nostrc-ws1: channels now close BEFORE
      * go_wait_group_wait.  And for shared relays, other refs keep the
      * relay alive — unref just decrements. */
-    g_object_unref(relay);
   }
 
   r->limit_warnings = g_string_free(warnings, FALSE);
@@ -7855,7 +7828,7 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
   show_toast(self, "Reposting...");
 
   /* Build unsigned kind 6 repost event JSON using GNostrJsonBuilder */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -7889,7 +7862,6 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
 
   /* Serialize */
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize repost event");
@@ -7955,7 +7927,7 @@ void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_he
   show_toast(self, "Deleting note...");
 
   /* Build unsigned kind 5 deletion event JSON per NIP-09 using GNostrJsonBuilder */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -7989,7 +7961,6 @@ void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_he
 
   /* Serialize */
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize deletion event");
@@ -8087,7 +8058,7 @@ void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex
   }
 
   /* Build unsigned kind 1985 label event JSON per NIP-32 using GNostrJsonBuilder */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -8137,7 +8108,6 @@ void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex
   gnostr_json_builder_end_object(builder);
 
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to create label event");
@@ -8320,7 +8290,7 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
   }
 
   /* Build unsigned kind 7 reaction event JSON (NIP-25) using GNostrJsonBuilder */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -8361,7 +8331,6 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
 
   /* Serialize */
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize reaction event");
@@ -8408,7 +8377,7 @@ static void on_composer_post_requested(NostrGtkComposer *composer, const char *t
   show_toast(self, "Signing...");
 
   /* Build unsigned event JSON using GNostrJsonBuilder */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* NIP-22: Check if this is a comment (kind 1111) - takes precedence over reply/quote */
@@ -8476,7 +8445,6 @@ static void on_composer_post_requested(NostrGtkComposer *composer, const char *t
     gnostr_json_builder_end_object(builder);
 
     char *event_json = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     if (!event_json) {
       show_toast(self, "Failed to build event JSON");
@@ -8674,7 +8642,6 @@ static void on_composer_post_requested(NostrGtkComposer *composer, const char *t
   gnostr_json_builder_end_object(builder);
 
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to build event JSON");
@@ -9220,7 +9187,7 @@ static gboolean check_relay_health(gpointer user_data) {
   guint connected_count = 0;
 
   for (guint i = 0; i < n_relays; i++) {
-    GNostrRelay *relay = g_list_model_get_item(G_LIST_MODEL(relay_store), i);
+    g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(relay_store), i);
     if (!relay) continue;
     /* Check if relay is present (added to pool = considered "connected" for health check) */
     if (gnostr_pool_get_relay(self->pool, gnostr_relay_get_url(relay)) != NULL) {
@@ -9228,7 +9195,6 @@ static gboolean check_relay_health(gpointer user_data) {
     } else {
       disconnected_count++;
     }
-    g_object_unref(relay);
   }
 
   /* Update tray icon with current relay status */
@@ -9440,10 +9406,9 @@ static void on_bg_prefetch_event(GNostrSubscription *sub, const gchar *event_jso
 
 /* Get the current user's npub from GSettings */
 static char *client_settings_get_current_npub(void) {
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (!settings) return NULL;
   char *npub = g_settings_get_string(settings, "current-npub");
-  g_object_unref(settings);
   /* Return NULL if empty string */
   if (npub && !*npub) {
     g_free(npub);

@@ -163,7 +163,7 @@ gnostr_nip37_draft_build_tags(const GnostrNip37Draft *draft)
 {
   if (!draft) return g_strdup("[]");
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_array(builder);
 
   /* "d" tag - required */
@@ -203,7 +203,6 @@ gnostr_nip37_draft_build_tags(const GnostrNip37Draft *draft)
   gnostr_json_builder_end_array(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 

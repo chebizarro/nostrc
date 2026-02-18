@@ -186,7 +186,7 @@ static gboolean parse_bunker_uri(const gchar *bunker_uri,
   gchar *pk_hex = g_strndup(pk_start, pk_len);
 
   /* Convert hex to npub */
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
   g_free(pk_hex);
 
   if (!nip19) {
@@ -194,7 +194,6 @@ static gboolean parse_bunker_uri(const gchar *bunker_uri,
   }
 
   if (out_npub) *out_npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-  g_object_unref(nip19);
 
   /* Parse query parameters */
   GPtrArray *relays = g_ptr_array_new_with_free_func(g_free);

@@ -309,7 +309,7 @@ char *gnostr_nip32_build_label_event_json(const char *namespace,
   if (!namespace || !label || !event_id_hex) return NULL;
 
   /* nostrc-3nj: Use GNostrJsonBuilder for JSON construction */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   if (!builder) return NULL;
 
   gnostr_json_builder_begin_object(builder);
@@ -357,7 +357,6 @@ char *gnostr_nip32_build_label_event_json(const char *namespace,
   gnostr_json_builder_end_object(builder);
 
   char *json_str = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return json_str;
 }
@@ -368,7 +367,7 @@ char *gnostr_nip32_build_profile_label_event_json(const char *namespace,
   if (!namespace || !label || !pubkey_hex) return NULL;
 
   /* nostrc-3nj: Use GNostrJsonBuilder for JSON construction */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   if (!builder) return NULL;
 
   gnostr_json_builder_begin_object(builder);
@@ -408,7 +407,6 @@ char *gnostr_nip32_build_profile_label_event_json(const char *namespace,
   gnostr_json_builder_end_object(builder);
 
   char *json_str = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return json_str;
 }
@@ -417,7 +415,7 @@ uint64_t gnostr_nip32_subscribe_labels(const char **event_ids, size_t count) {
   if (!event_ids || count == 0) return 0;
 
   /* nostrc-3nj: Use GNostrJsonBuilder for filter construction */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   if (!builder) return 0;
 
   gnostr_json_builder_begin_object(builder);
@@ -444,7 +442,6 @@ uint64_t gnostr_nip32_subscribe_labels(const char **event_ids, size_t count) {
   gnostr_json_builder_end_object(builder);
 
   char *filter_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!filter_json) return 0;
 

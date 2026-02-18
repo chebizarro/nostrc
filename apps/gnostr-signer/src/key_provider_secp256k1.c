@@ -201,7 +201,7 @@ secp256k1_derive_public_key(GnKeyProvider  *self,
     return FALSE;
   }
 
-  GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
   gn_secure_strfree(sk_hex);
 
   if (!gkeys) {
@@ -212,13 +212,11 @@ secp256k1_derive_public_key(GnKeyProvider  *self,
 
   const gchar *pk_hex = gnostr_keys_get_pubkey(gkeys);
   if (!hex_to_bin(pk_hex, public_key_out, GN_SECP256K1_PUBLIC_KEY_SIZE)) {
-    g_object_unref(gkeys);
     g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INTERNAL,
                 "Failed to decode public key");
     return FALSE;
   }
 
-  g_object_unref(gkeys);
 
   if (public_key_len_out) {
     *public_key_len_out = GN_SECP256K1_PUBLIC_KEY_SIZE;

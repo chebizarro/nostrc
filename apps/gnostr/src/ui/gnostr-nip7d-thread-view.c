@@ -1010,14 +1010,13 @@ fetch_thread_from_relays(GnostrNip7dThreadView *self)
       GNostrPool *_pool = gnostr_get_shared_query_pool();
       gnostr_pool_sync_relays(_pool, (const gchar **)urls, relay_arr->len);
 
-      GNostrFilter *gf = gnostr_filter_new();
+      g_autoptr(GNostrFilter) gf = gnostr_filter_new();
       gint kinds[1] = { NIP7D_KIND_THREAD_REPLY };
       gnostr_filter_set_kinds(gf, kinds, 1);
       /* NIP-22: Use uppercase E tag for root event reference */
       gnostr_filter_tags_append(gf, "E", self->thread->event_id);
       gnostr_filter_set_limit(gf, DEFAULT_REPLY_LIMIT);
       NostrFilter *filter = gnostr_filter_build(gf);
-      g_object_unref(gf);
 
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
@@ -1029,13 +1028,12 @@ fetch_thread_from_relays(GnostrNip7dThreadView *self)
     {
       GNostrPool *_pool2 = gnostr_get_shared_query_pool();
 
-      GNostrFilter *gf = gnostr_filter_new();
+      g_autoptr(GNostrFilter) gf = gnostr_filter_new();
       gint kinds[1] = { NIP7D_KIND_THREAD_REPLY };
       gnostr_filter_set_kinds(gf, kinds, 1);
       gnostr_filter_tags_append(gf, "e", self->thread->event_id);
       gnostr_filter_set_limit(gf, DEFAULT_REPLY_LIMIT);
       NostrFilter *filter2 = gnostr_filter_build(gf);
-      g_object_unref(gf);
 
       NostrFilters *_qf2 = nostr_filters_new();
       nostr_filters_add(_qf2, filter2);
@@ -1214,7 +1212,7 @@ fetch_missing_ancestors(GnostrNip7dThreadView *self)
     }
 
     /* Build filter with missing IDs - include both kind 11 (thread root) and 1111 (replies) */
-    GNostrFilter *gf = gnostr_filter_new();
+    g_autoptr(GNostrFilter) gf = gnostr_filter_new();
     gint kinds[2] = { NIP7D_KIND_THREAD_ROOT, NIP7D_KIND_THREAD_REPLY };
     gnostr_filter_set_kinds(gf, kinds, 2);
 
@@ -1223,7 +1221,6 @@ fetch_missing_ancestors(GnostrNip7dThreadView *self)
     }
     gnostr_filter_set_limit(gf, DEFAULT_REPLY_LIMIT);
     NostrFilter *filter = gnostr_filter_build(gf);
-    g_object_unref(gf);
 
     g_ptr_array_unref(missing_ids);
 
@@ -1468,13 +1465,12 @@ gnostr_nip7d_thread_view_load_thread(GnostrNip7dThreadView *self,
     }
 
     {
-      GNostrFilter *gf = gnostr_filter_new();
+      g_autoptr(GNostrFilter) gf = gnostr_filter_new();
       gint kinds[1] = { NIP7D_KIND_THREAD_ROOT };
       gnostr_filter_set_kinds(gf, kinds, 1);
       gnostr_filter_add_id(gf, event_id_hex);
       gnostr_filter_set_limit(gf, 1);
       NostrFilter *filter = gnostr_filter_build(gf);
-      g_object_unref(gf);
 
       GNostrPool *_pool = gnostr_get_shared_query_pool();
       gnostr_pool_sync_relays(_pool, (const gchar **)urls, relay_arr->len);
@@ -1710,7 +1706,7 @@ gnostr_nip7d_thread_view_load_more_replies(GnostrNip7dThreadView *self,
     }
 
     {
-      GNostrFilter *gf = gnostr_filter_new();
+      g_autoptr(GNostrFilter) gf = gnostr_filter_new();
       gint kinds[1] = { NIP7D_KIND_THREAD_REPLY };
       gnostr_filter_set_kinds(gf, kinds, 1);
       gnostr_filter_tags_append(gf, "E", self->thread->event_id);
@@ -1719,7 +1715,6 @@ gnostr_nip7d_thread_view_load_more_replies(GnostrNip7dThreadView *self,
           gnostr_filter_set_until(gf, oldest - 1);
       }
       NostrFilter *filter = gnostr_filter_build(gf);
-      g_object_unref(gf);
 
       GNostrPool *_pool = gnostr_get_shared_query_pool();
       gnostr_pool_sync_relays(_pool, (const gchar **)urls, relay_arr->len);

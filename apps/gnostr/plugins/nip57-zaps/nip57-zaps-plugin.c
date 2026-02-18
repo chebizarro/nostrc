@@ -148,13 +148,12 @@ on_zap_receipt_received(GnostrPluginContext *context G_GNUC_UNUSED,
   g_debug("[NIP-57] Received zap receipt: %.64s...", event_json);
 
   /* Parse the receipt to extract zap amount and target event */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_warning("[NIP-57] Failed to parse zap receipt: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return;
   }
 
@@ -195,7 +194,6 @@ on_zap_receipt_received(GnostrPluginContext *context G_GNUC_UNUSED,
             target_event_id, stats->total_msats, stats->zap_count);
   }
 
-  g_object_unref(parser);
 }
 
 static void

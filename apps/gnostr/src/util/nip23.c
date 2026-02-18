@@ -41,20 +41,18 @@ void gnostr_article_meta_free(GnostrArticleMeta *meta) {
 GnostrArticleMeta *gnostr_article_parse_tags(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_warning("NIP-23: Failed to parse tags JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
     g_warning("NIP-23: Tags is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -119,7 +117,6 @@ GnostrArticleMeta *gnostr_article_parse_tags(const char *tags_json) {
   }
   g_ptr_array_free(hashtags_arr, FALSE);
 
-  g_object_unref(parser);
   return meta;
 }
 

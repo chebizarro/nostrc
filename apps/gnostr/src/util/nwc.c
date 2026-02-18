@@ -353,7 +353,7 @@ static NostrEvent *build_signed_nwc_request(GnostrNwcService *self,
   }
 
   /* Build request body JSON */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
   gnostr_json_builder_set_key(builder, "method");
   gnostr_json_builder_add_string(builder, method);
@@ -366,7 +366,6 @@ static NostrEvent *build_signed_nwc_request(GnostrNwcService *self,
   }
   gnostr_json_builder_end_object(builder);
   gchar *body_str = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!body_str) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
@@ -854,7 +853,7 @@ void gnostr_nwc_service_pay_invoice_async(GnostrNwcService *self,
   g_return_if_fail(bolt11 != NULL);
 
   /* Build params JSON */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
   gnostr_json_builder_set_key(builder, "invoice");
   gnostr_json_builder_add_string(builder, bolt11);
@@ -864,7 +863,6 @@ void gnostr_nwc_service_pay_invoice_async(GnostrNwcService *self,
   }
   gnostr_json_builder_end_object(builder);
   gchar *params_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   g_message("[NWC] Initiating pay_invoice for: %.40s...", bolt11);
 
@@ -908,7 +906,7 @@ void gnostr_nwc_service_make_invoice_async(GnostrNwcService *self,
   g_return_if_fail(GNOSTR_IS_NWC_SERVICE(self));
 
   /* Build params JSON */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
   gnostr_json_builder_set_key(builder, "amount");
   gnostr_json_builder_add_int(builder, amount_msat);
@@ -922,7 +920,6 @@ void gnostr_nwc_service_make_invoice_async(GnostrNwcService *self,
   }
   gnostr_json_builder_end_object(builder);
   gchar *params_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   g_message("[NWC] Initiating make_invoice for %ld msat", (long)amount_msat);
 

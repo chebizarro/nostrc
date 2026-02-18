@@ -171,20 +171,18 @@ void gnostr_torrent_add_category(GnostrTorrent *torrent, const char *category) {
 GnostrTorrent *gnostr_torrent_parse_from_json(const char *event_json) {
   if (!event_json || !*event_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_warning("NIP-35: Failed to parse event JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
     g_warning("NIP-35: Event is not a JSON object");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -194,7 +192,6 @@ GnostrTorrent *gnostr_torrent_parse_from_json(const char *event_json) {
   gint64 kind = json_object_get_int_member(event, "kind");
   if (kind != NOSTR_KIND_TORRENT) {
     g_warning("NIP-35: Event kind %lld is not a torrent event", (long long)kind);
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -274,7 +271,6 @@ GnostrTorrent *gnostr_torrent_parse_from_json(const char *event_json) {
     }
   }
 
-  g_object_unref(parser);
   return torrent;
 }
 
@@ -312,7 +308,7 @@ gboolean gnostr_torrent_build_event(const GnostrTorrent *torrent,
     return FALSE;
   }
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* Title tag */
@@ -387,7 +383,7 @@ gboolean gnostr_torrent_build_event(const GnostrTorrent *torrent,
   json_builder_end_array(builder);
 
   /* Generate JSON string */
-  JsonGenerator *generator = json_generator_new();
+  g_autoptr(JsonGenerator) generator = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(generator, root);
 
@@ -400,8 +396,6 @@ gboolean gnostr_torrent_build_event(const GnostrTorrent *torrent,
   }
 
   json_node_unref(root);
-  g_object_unref(generator);
-  g_object_unref(builder);
 
   return TRUE;
 }

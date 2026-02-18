@@ -245,20 +245,18 @@ void sheet_event_details_set_event_json(SheetEventDetails *self,
     return;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_warning("Failed to parse event JSON: %s", error->message);
     g_clear_error(&error);
-    g_object_unref(parser);
     sheet_event_details_set_event(self, 0, 0, NULL, NULL, NULL, "(parse error)", "[]");
     return;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     sheet_event_details_set_event(self, 0, 0, NULL, NULL, NULL, "(not an object)", "[]");
     return;
   }
@@ -293,14 +291,12 @@ void sheet_event_details_set_event_json(SheetEventDetails *self,
   }
   if (json_object_has_member(obj, "tags")) {
     JsonNode *tags_node = json_object_get_member(obj, "tags");
-    JsonGenerator *gen = json_generator_new();
+    g_autoptr(JsonGenerator) gen = json_generator_new();
     json_generator_set_root(gen, tags_node);
     tags_json = json_generator_to_data(gen, NULL);
-    g_object_unref(gen);
   }
 
   sheet_event_details_set_event(self, kind, created_at, pubkey, event_id, sig, content, tags_json);
 
   g_free(tags_json);
-  g_object_unref(parser);
 }

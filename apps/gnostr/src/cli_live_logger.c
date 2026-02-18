@@ -152,7 +152,7 @@ int main(int argc, char **argv) {
   g_free(dbdir);
 
   GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-  GNostrPool *pool = gnostr_pool_new();
+  g_autoptr(GNostrPool) pool = gnostr_pool_new();
 
   const char **urls = NULL; size_t url_count = 0; build_defaults(&urls, &url_count);
   fprintf(stdout, "gnostr-live-log: urls(%zu):\n", url_count);
@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
   NostrFilters *filters = build_filters();
 
   GError *sub_error = NULL;
-  GNostrSubscription *sub = gnostr_pool_subscribe(pool, filters, &sub_error);
+  g_autoptr(GNostrSubscription) sub = gnostr_pool_subscribe(pool, filters, &sub_error);
   /* gnostr_pool_subscribe takes ownership of filters on success */
   if (!sub) {
     nostr_filters_free(filters); /* caller retains ownership on failure */
@@ -172,7 +172,6 @@ int main(int argc, char **argv) {
     g_clear_error(&sub_error);
     for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
     g_free((void*)urls);
-    g_object_unref(pool);
     g_main_loop_unref(loop);
     return 1;
   }
@@ -194,8 +193,6 @@ int main(int argc, char **argv) {
   g_cancellable_cancel(canc);
   g_clear_object(&canc);
   gnostr_subscription_close(sub);
-  g_object_unref(sub);
-  g_object_unref(pool);
   g_main_loop_unref(loop);
   fprintf(stdout, "gnostr-live-log: exit\n"); fflush(stdout);
   return 0;

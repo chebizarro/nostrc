@@ -52,20 +52,18 @@ GnostrVoiceMessage *gnostr_voice_message_parse_tags(const char *tags_json,
                                                      const char *content) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_warning("NIP-A0: Failed to parse tags JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
     g_warning("NIP-A0: Tags is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -149,7 +147,6 @@ GnostrVoiceMessage *gnostr_voice_message_parse_tags(const char *tags_json,
     }
   }
 
-  g_object_unref(parser);
 
   /* Validate required fields - URL is required */
   if (!msg->audio_url || !*msg->audio_url) {
@@ -171,7 +168,7 @@ GnostrVoiceMessage *gnostr_voice_message_parse_tags(const char *tags_json,
 char *gnostr_voice_message_build_tags(const GnostrVoiceMessage *msg) {
   if (!msg || !msg->audio_url) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* URL tag (required) */
@@ -247,15 +244,13 @@ char *gnostr_voice_message_build_tags(const GnostrVoiceMessage *msg) {
 
   json_builder_end_array(builder);
 
-  JsonGenerator *generator = json_generator_new();
+  g_autoptr(JsonGenerator) generator = json_generator_new();
   JsonNode *root_node = json_builder_get_root(builder);
   json_generator_set_root(generator, root_node);
 
   char *tags_json = json_generator_to_data(generator, NULL);
 
   json_node_free(root_node);
-  g_object_unref(generator);
-  g_object_unref(builder);
 
   return tags_json;
 }

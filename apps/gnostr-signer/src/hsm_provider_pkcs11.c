@@ -788,10 +788,9 @@ pkcs11_get_public_key(GnHsmProvider *provider,
   info->pubkey_hex = bytes_to_hex(xonly_pk, 32);
 
   /* Generate npub */
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(info->pubkey_hex, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(info->pubkey_hex, NULL);
   if (nip19) {
     info->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-    g_object_unref(nip19);
   } else {
     info->npub = g_strdup_printf("npub1%s", info->pubkey_hex);
   }
@@ -1003,7 +1002,7 @@ pkcs11_sign_hash(GnHsmProvider *provider,
         NostrEvent *temp_event = nostr_event_new();
         if (temp_event) {
           /* Get public key */
-          GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
+          g_autoptr(GNostrKeys) gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
           if (gkeys) {
             const gchar *pk_hex = gnostr_keys_get_pubkey(gkeys);
             nostr_event_set_pubkey(temp_event, pk_hex);
@@ -1022,14 +1021,12 @@ pkcs11_sign_hash(GnHsmProvider *provider,
                 memset(sk_hex, 0, strlen(sk_hex));
                 g_free(sk_hex);
                 g_free(hash_hex);
-                g_object_unref(gkeys);
                 if (own_session)
                   mod->functions->C_CloseSession(session);
                 g_mutex_unlock(&self->lock);
                 return TRUE;
               }
             }
-            g_object_unref(gkeys);
           }
           nostr_event_free(temp_event);
         }
@@ -1287,7 +1284,7 @@ pkcs11_generate_key(GnHsmProvider *provider,
       return NULL;
     }
 
-    GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
+    g_autoptr(GNostrKeys) gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
     if (!gkeys) {
       memset(sk_hex, 0, strlen(sk_hex));
       g_free(sk_hex);
@@ -1306,7 +1303,6 @@ pkcs11_generate_key(GnHsmProvider *provider,
     hex_to_bytes(pk_hex, public_key, 32);
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
-    g_object_unref(gkeys);
     generated_in_software = TRUE;
 
     /* Build EC point (uncompressed: 0x04 || x || y) */
@@ -1390,10 +1386,9 @@ pkcs11_generate_key(GnHsmProvider *provider,
   info->pubkey_hex = bytes_to_hex(public_key, 32);
 
   /* Generate npub */
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(info->pubkey_hex, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(info->pubkey_hex, NULL);
   if (nip19) {
     info->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-    g_object_unref(nip19);
   } else {
     info->npub = g_strdup_printf("npub1%s", info->pubkey_hex);
   }
@@ -1452,7 +1447,7 @@ pkcs11_import_key(GnHsmProvider *provider,
 
   /* Derive public key from private key */
   gchar *sk_hex = bytes_to_hex(private_key, 32);
-  GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
 
   if (!gkeys) {
     memset(sk_hex, 0, strlen(sk_hex));
@@ -1468,7 +1463,6 @@ pkcs11_import_key(GnHsmProvider *provider,
   hex_to_bytes(pk_hex, public_key, 32);
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
-  g_object_unref(gkeys);
 
   /* Check for existing session or open a new one */
   SlotSession *sess = g_hash_table_lookup(self->sessions,
@@ -1575,10 +1569,9 @@ pkcs11_import_key(GnHsmProvider *provider,
 
     info->pubkey_hex = bytes_to_hex(public_key, 32);
 
-    GNostrNip19 *nip19 = gnostr_nip19_encode_npub(info->pubkey_hex, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(info->pubkey_hex, NULL);
     if (nip19) {
       info->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-      g_object_unref(nip19);
     } else {
       info->npub = g_strdup_printf("npub1%s", info->pubkey_hex);
     }

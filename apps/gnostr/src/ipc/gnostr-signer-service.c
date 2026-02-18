@@ -636,7 +636,7 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
 {
   g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), FALSE);
 
-  GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
+  g_autoptr(GSettings) settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
   if (!settings) {
     g_warning("[SIGNER_SERVICE] Failed to open GSettings");
     return FALSE;
@@ -654,7 +654,6 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
     relay_urls = g_variant_get_strv(relays_variant, &n_relays);
   }
 
-  g_object_unref(settings);
 
   /* Check if we have valid credentials */
   if (!client_secret || !*client_secret || !signer_pubkey || !*signer_pubkey) {
@@ -736,7 +735,7 @@ gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self)
 {
   (void)self;  /* Unused but kept for API consistency */
 
-  GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
+  g_autoptr(GSettings) settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
   if (!settings) return;
 
   g_settings_set_string(settings, "nip46-client-secret", "");
@@ -746,7 +745,6 @@ gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self)
   g_variant_builder_init(&builder, G_VARIANT_TYPE_STRING_ARRAY);
   g_settings_set_value(settings, "nip46-relays", g_variant_builder_end(&builder));
 
-  g_object_unref(settings);
 
   g_debug("[SIGNER_SERVICE] Cleared saved NIP-46 credentials");
 }

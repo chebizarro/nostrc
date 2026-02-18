@@ -113,16 +113,15 @@ static void signal_ctx_clear(SignalCtx *ctx) {
 /* ========== Tests ========== */
 
 static void test_new_and_properties(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
     g_assert_nonnull(sub);
     g_assert_cmpstr(gnostr_thread_subscription_get_root_id(sub), ==, ROOT_ID);
     g_assert_false(gnostr_thread_subscription_is_active(sub));
     g_assert_cmpuint(gnostr_thread_subscription_get_seen_count(sub), ==, 0);
-    g_object_unref(sub);
 }
 
 static void test_start_stop(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
 
     gnostr_thread_subscription_start(sub);
     g_assert_true(gnostr_thread_subscription_is_active(sub));
@@ -138,11 +137,10 @@ static void test_start_stop(void) {
     gnostr_thread_subscription_stop(sub);
     g_assert_false(gnostr_thread_subscription_is_active(sub));
 
-    g_object_unref(sub);
 }
 
 static void test_reply_signal_via_eventbus(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -164,11 +162,10 @@ static void test_reply_signal_via_eventbus(void) {
 
     nostr_event_free(ev);
     signal_ctx_clear(&ctx);
-    g_object_unref(sub);
 }
 
 static void test_reaction_signal_via_eventbus(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reaction-received", G_CALLBACK(on_reaction), &ctx);
@@ -183,11 +180,10 @@ static void test_reaction_signal_via_eventbus(void) {
 
     nostr_event_free(ev);
     signal_ctx_clear(&ctx);
-    g_object_unref(sub);
 }
 
 static void test_comment_signal_via_eventbus(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "comment-received", G_CALLBACK(on_comment), &ctx);
@@ -204,11 +200,10 @@ static void test_comment_signal_via_eventbus(void) {
 
     nostr_event_free(ev);
     signal_ctx_clear(&ctx);
-    g_object_unref(sub);
 }
 
 static void test_unrelated_event_filtered(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -223,11 +218,10 @@ static void test_unrelated_event_filtered(void) {
 
     nostr_event_free(ev);
     signal_ctx_clear(&ctx);
-    g_object_unref(sub);
 }
 
 static void test_add_monitored_id(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -256,11 +250,10 @@ static void test_add_monitored_id(void) {
 
     nostr_event_free(ev);
     signal_ctx_clear(&ctx);
-    g_object_unref(sub);
 }
 
 static void test_no_signals_after_stop(void) {
-    GNostrThreadSubscription *sub = gnostr_thread_subscription_new(ROOT_ID);
+    g_autoptr(GNostrThreadSubscription) sub = gnostr_thread_subscription_new(ROOT_ID);
     SignalCtx ctx = {0};
 
     g_signal_connect(sub, "reply-received", G_CALLBACK(on_reply), &ctx);
@@ -276,7 +269,6 @@ static void test_no_signals_after_stop(void) {
 
     nostr_event_free(ev);
     signal_ctx_clear(&ctx);
-    g_object_unref(sub);
 }
 
 /* ========== Main ========== */

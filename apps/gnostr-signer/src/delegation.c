@@ -355,11 +355,10 @@ gchar *gn_delegation_build_tag(const GnDelegation *delegation) {
   /* Get delegator pubkey as hex */
   gchar *delegator_hex = NULL;
   if (g_str_has_prefix(delegation->delegator_npub, "npub1")) {
-    GNostrNip19 *nip19 = gnostr_nip19_decode(delegation->delegator_npub, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(delegation->delegator_npub, NULL);
     if (nip19) {
       const gchar *pubkey = gnostr_nip19_get_pubkey(nip19);
       if (pubkey) delegator_hex = g_strdup(pubkey);
-      g_object_unref(nip19);
     }
   } else {
     delegator_hex = g_strdup(delegation->delegator_npub);
@@ -499,19 +498,17 @@ GPtrArray *gn_delegation_load_all(const gchar *delegator_npub) {
   }
   g_free(path);
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, contents, -1, &error)) {
     g_warning("delegation: failed to parse JSON: %s", error->message);
     g_error_free(error);
     g_free(contents);
-    g_object_unref(parser);
     return delegations;
   }
   g_free(contents);
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
     return delegations;
   }
 
@@ -524,7 +521,6 @@ GPtrArray *gn_delegation_load_all(const gchar *delegator_npub) {
     }
   }
 
-  g_object_unref(parser);
   return delegations;
 }
 
@@ -568,7 +564,7 @@ GnDelegationResult gn_delegation_save(const gchar *delegator_npub,
   JsonNode *root = json_node_new(JSON_NODE_ARRAY);
   json_node_set_array(root, arr);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, TRUE);
 
@@ -576,7 +572,6 @@ GnDelegationResult gn_delegation_save(const gchar *delegator_npub,
   GError *error = NULL;
   gboolean ok = json_generator_to_file(gen, path, &error);
 
-  g_object_unref(gen);
   json_node_free(root);
   g_ptr_array_unref(all);
 
@@ -672,7 +667,7 @@ GnDelegationResult gn_delegation_delete(const gchar *delegator_npub,
   JsonNode *root = json_node_new(JSON_NODE_ARRAY);
   json_node_set_array(root, arr);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, TRUE);
 
@@ -680,7 +675,6 @@ GnDelegationResult gn_delegation_delete(const gchar *delegator_npub,
   GError *error = NULL;
   gboolean ok = json_generator_to_file(gen, path, &error);
 
-  g_object_unref(gen);
   json_node_free(root);
   g_ptr_array_unref(all);
 

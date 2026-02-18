@@ -466,7 +466,7 @@ static void load_preferences_from_settings(void)
   }
   g_settings_schema_unref(schema);
 
-  GSettings *settings = g_settings_new(NIP89_SETTINGS_SCHEMA);
+  g_autoptr(GSettings) settings = g_settings_new(NIP89_SETTINGS_SCHEMA);
   if (!settings) return;
 
   gchar **prefs = g_settings_get_strv(settings, NIP89_SETTINGS_KEY_PREFERENCES);
@@ -488,7 +488,6 @@ static void load_preferences_from_settings(void)
     g_strfreev(prefs);
   }
 
-  g_object_unref(settings);
 }
 
 /* Save preferences from hash table to GSettings */
@@ -504,7 +503,7 @@ static void save_preferences_to_settings(void)
   }
   g_settings_schema_unref(schema);
 
-  GSettings *settings = g_settings_new(NIP89_SETTINGS_SCHEMA);
+  g_autoptr(GSettings) settings = g_settings_new(NIP89_SETTINGS_SCHEMA);
   if (!settings) return;
 
   /* Build string array from hash table */
@@ -526,7 +525,6 @@ static void save_preferences_to_settings(void)
   g_debug("nip89: saved %u preferences to settings", n_prefs);
 
   g_strfreev(prefs);
-  g_object_unref(settings);
 }
 
 void gnostr_nip89_cache_init(void)
@@ -779,7 +777,7 @@ void gnostr_nip89_clear_all_preferences(void)
 
 char *gnostr_nip89_build_handler_filter(const guint *kinds, gsize n_kinds)
 {
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* kinds: [31989] */
@@ -806,7 +804,6 @@ char *gnostr_nip89_build_handler_filter(const guint *kinds, gsize n_kinds)
 
   gnostr_json_builder_end_object(builder);
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 
@@ -814,7 +811,7 @@ char *gnostr_nip89_build_recommendation_filter(guint event_kind,
                                                 const char **followed_pubkeys,
                                                 gsize n_pubkeys)
 {
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* kinds: [31990] */
@@ -847,7 +844,6 @@ char *gnostr_nip89_build_recommendation_filter(guint event_kind,
 
   gnostr_json_builder_end_object(builder);
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 

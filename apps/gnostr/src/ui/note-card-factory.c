@@ -363,7 +363,6 @@ on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
                  "picture-url", &avatar_url,
                  "nip05", &nip05,
                  NULL);
-    g_object_unref(profile);
 
     /* Update card with new profile data */
     nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
@@ -425,7 +424,7 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
     guint depth = gn_nostr_event_item_get_reply_depth(event_item);
 
     /* Avatar loading */
-    GNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+    g_autoptr(GNostrProfile) profile = gn_nostr_event_item_get_profile(event_item);
     if (profile) {
       const gchar *avatar_url = gnostr_profile_get_picture_url(profile);
       nostr_gtk_note_card_row_set_avatar(card, avatar_url);
@@ -510,7 +509,7 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     const gchar *root_id = gn_nostr_event_item_get_thread_root_id(event_item);
 
     /* Tier 1: Author name + handle (NO avatar) */
-    GNostrProfile *profile = gn_nostr_event_item_get_profile(event_item);
+    g_autoptr(GNostrProfile) profile = gn_nostr_event_item_get_profile(event_item);
     const gchar *display_name = NULL, *handle = NULL;
     if (profile) {
       display_name = gnostr_profile_get_display_name(profile);

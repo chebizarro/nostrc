@@ -995,7 +995,7 @@ static const SecretSchema CLIENT_SESSION_SCHEMA = {
 static gchar *
 serialize_sessions_to_json(GnClientSessionManager *self)
 {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_object(builder);
   json_builder_set_member_name(builder, "version");
@@ -1049,14 +1049,12 @@ serialize_sessions_to_json(GnClientSessionManager *self)
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
 
   gchar *json_str = json_generator_to_data(gen, NULL);
 
   json_node_free(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json_str;
 }
@@ -1068,19 +1066,17 @@ deserialize_sessions_from_json(GnClientSessionManager *self, const gchar *json_s
   if (!json_str || !*json_str)
     return;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *err = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &err)) {
     g_warning("client-session: Failed to parse session JSON: %s", err->message);
     g_clear_error(&err);
-    g_object_unref(parser);
     return;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return;
   }
 
@@ -1090,13 +1086,11 @@ deserialize_sessions_from_json(GnClientSessionManager *self, const gchar *json_s
   gint64 version = json_object_get_int_member(obj, "version");
   if (version != 1) {
     g_warning("client-session: Unknown session data version: %ld", (long)version);
-    g_object_unref(parser);
     return;
   }
 
   JsonArray *sessions = json_object_get_array_member(obj, "sessions");
   if (!sessions) {
-    g_object_unref(parser);
     return;
   }
 
@@ -1147,7 +1141,6 @@ deserialize_sessions_from_json(GnClientSessionManager *self, const gchar *json_s
             client_pubkey, app_name ? app_name : "unknown");
   }
 
-  g_object_unref(parser);
 }
 
 #endif /* GNOSTR_HAVE_LIBSECRET */

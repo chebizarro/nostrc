@@ -122,18 +122,16 @@ static gint *json_array_to_int_array(JsonArray *arr, gsize *out_count) {
 RelayInfo *relay_info_parse_json(const gchar *json, const gchar *url) {
   if (!json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *err = NULL;
   if (!json_parser_load_from_data(parser, json, -1, &err)) {
     g_warning("relay_info: JSON parse error: %s", err ? err->message : "unknown");
     g_clear_error(&err);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || JSON_NODE_TYPE(root) != JSON_NODE_OBJECT) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -164,7 +162,6 @@ RelayInfo *relay_info_parse_json(const gchar *json, const gchar *url) {
     }
   }
 
-  g_object_unref(parser);
   return info;
 }
 
@@ -378,13 +375,12 @@ void relay_info_fetch_async(const gchar *relay_url,
   ctx->callback = callback;
   ctx->user_data = user_data;
 
-  GSocketClient *client = g_socket_client_new();
+  g_autoptr(GSocketClient) client = g_socket_client_new();
   g_socket_client_set_tls(client, g_str_has_prefix(http_url, "https://"));
 
   g_socket_client_connect_to_uri_async(client, http_url, 443,
                                         NULL, on_connection_complete, ctx);
 
-  g_object_unref(client);
   g_free(http_url);
 }
 

@@ -646,14 +646,13 @@ char *gnostr_nip73_build_tag_json(const GnostrExternalContentId *content_id) {
     return NULL;
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_array(builder);
   gnostr_json_builder_add_string(builder, "i");
   gnostr_json_builder_add_string(builder, content_id->raw_value);
   gnostr_json_builder_end_array(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

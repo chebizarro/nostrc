@@ -310,7 +310,7 @@ gchar *gnostr_web_bookmark_build_tags(const GnostrWebBookmark *bookmark) {
     return NULL;
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_array(builder);
 
   /* Add URL tag (required) */
@@ -367,7 +367,6 @@ gchar *gnostr_web_bookmark_build_tags(const GnostrWebBookmark *bookmark) {
 
   gnostr_json_builder_end_array(builder);
   char *tags_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return tags_json;
 }
@@ -391,7 +390,7 @@ gchar *gnostr_web_bookmark_build_event_json(const GnostrWebBookmark *bookmark) {
   }
 
   /* Build the unsigned event using GNostrJsonBuilder */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* kind */
@@ -413,7 +412,6 @@ gchar *gnostr_web_bookmark_build_event_json(const GnostrWebBookmark *bookmark) {
 
   gnostr_json_builder_end_object(builder);
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return event_json;
 }

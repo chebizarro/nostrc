@@ -74,17 +74,15 @@ void user_list_store_load(UserListStore *store) {
     return;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, contents, -1, NULL)) {
     g_free(contents);
-    g_object_unref(parser);
     return;
   }
   g_free(contents);
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root_node)) {
-    g_object_unref(parser);
     return;
   }
 
@@ -112,13 +110,12 @@ void user_list_store_load(UserListStore *store) {
     g_ptr_array_add(store->entries, entry);
   }
 
-  g_object_unref(parser);
 }
 
 void user_list_store_save(UserListStore *store) {
   if (!store) return;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   for (guint i = 0; i < store->entries->len; i++) {
@@ -143,7 +140,7 @@ void user_list_store_save(UserListStore *store) {
   json_builder_end_array(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_pretty(gen, TRUE);
   json_generator_set_root(gen, root);
   gchar *json_str = json_generator_to_data(gen, NULL);
@@ -157,9 +154,7 @@ void user_list_store_save(UserListStore *store) {
   }
 
   g_free(json_str);
-  g_object_unref(gen);
   json_node_unref(root);
-  g_object_unref(builder);
 }
 
 static gint find_entry_by_pubkey(UserListStore *store, const gchar *pubkey) {
@@ -245,7 +240,7 @@ gchar *user_list_store_build_event_json(UserListStore *store) {
   gint kind = user_list_store_get_kind(store);
 
   /* Build tags array */
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   json_builder_set_member_name(builder, "kind");
@@ -287,13 +282,11 @@ gchar *user_list_store_build_event_json(UserListStore *store) {
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
   json_node_unref(root);
-  g_object_unref(builder);
 
   return result;
 }
@@ -301,15 +294,13 @@ gchar *user_list_store_build_event_json(UserListStore *store) {
 gboolean user_list_store_parse_event(UserListStore *store, const gchar *event_json) {
   if (!store || !event_json) return FALSE;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -317,25 +308,21 @@ gboolean user_list_store_parse_event(UserListStore *store, const gchar *event_js
 
   /* Verify kind */
   if (!json_object_has_member(root, "kind")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   gint kind = (gint)json_object_get_int_member(root, "kind");
   gint expected_kind = user_list_store_get_kind(store);
   if (kind != expected_kind) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   if (!json_object_has_member(root, "tags")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *tags_node = json_object_get_member(root, "tags");
   if (!JSON_NODE_HOLDS_ARRAY(tags_node)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -380,7 +367,6 @@ gboolean user_list_store_parse_event(UserListStore *store, const gchar *event_js
     g_ptr_array_add(store->entries, entry);
   }
 
-  g_object_unref(parser);
   return TRUE;
 }
 
@@ -449,15 +435,13 @@ void user_list_store_set_last_sync(UserListStore *store, gint64 timestamp) {
 guint user_list_store_merge_event(UserListStore *store, const gchar *event_json) {
   if (!store || !event_json) return 0;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
-    g_object_unref(parser);
     return 0;
   }
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
-    g_object_unref(parser);
     return 0;
   }
 
@@ -465,25 +449,21 @@ guint user_list_store_merge_event(UserListStore *store, const gchar *event_json)
 
   /* Verify kind */
   if (!json_object_has_member(root, "kind")) {
-    g_object_unref(parser);
     return 0;
   }
 
   gint kind = (gint)json_object_get_int_member(root, "kind");
   gint expected_kind = user_list_store_get_kind(store);
   if (kind != expected_kind) {
-    g_object_unref(parser);
     return 0;
   }
 
   if (!json_object_has_member(root, "tags")) {
-    g_object_unref(parser);
     return 0;
   }
 
   JsonNode *tags_node = json_object_get_member(root, "tags");
   if (!JSON_NODE_HOLDS_ARRAY(tags_node)) {
-    g_object_unref(parser);
     return 0;
   }
 
@@ -530,7 +510,6 @@ guint user_list_store_merge_event(UserListStore *store, const gchar *event_json)
     added++;
   }
 
-  g_object_unref(parser);
   return added;
 }
 
@@ -614,7 +593,7 @@ gchar *user_list_store_build_fetch_filter(UserListStore *store, const gchar *pub
   /* Build REQ filter for fetching user's list from relay:
    * {"kinds":[<kind>],"authors":["<pubkey>"],"limit":1}
    */
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   json_builder_set_member_name(builder, "kinds");
@@ -633,13 +612,11 @@ gchar *user_list_store_build_fetch_filter(UserListStore *store, const gchar *pub
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
   json_node_unref(root);
-  g_object_unref(builder);
 
   return result;
 }

@@ -212,7 +212,7 @@ test_auth_event_upload(void)
   g_assert_nonnull(json);
 
   /* Parse and verify */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
   gboolean parsed = json_parser_load_from_data(parser, json, -1, &error);
   g_assert_no_error(error);
@@ -265,7 +265,6 @@ test_auth_event_upload(void)
   g_assert_true(has_size);
   g_assert_true(has_type);
 
-  g_object_unref(parser);
   g_free(json);
 }
 
@@ -279,7 +278,7 @@ test_auth_event_delete(void)
   g_assert_nonnull(json);
 
   /* Parse and verify */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   gboolean parsed = json_parser_load_from_data(parser, json, -1, NULL);
   g_assert_true(parsed);
 
@@ -302,7 +301,6 @@ test_auth_event_delete(void)
   }
   g_assert_true(has_t);
 
-  g_object_unref(parser);
   g_free(json);
 }
 
@@ -315,7 +313,7 @@ test_auth_event_list(void)
   g_assert_nonnull(json);
 
   /* Parse and verify */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   gboolean parsed = json_parser_load_from_data(parser, json, -1, NULL);
   g_assert_true(parsed);
 
@@ -341,7 +339,6 @@ test_auth_event_list(void)
   g_assert_true(has_t);
   g_assert_false(has_x); /* No hash for list action */
 
-  g_object_unref(parser);
   g_free(json);
 }
 
@@ -351,7 +348,7 @@ test_auth_event_expiration(void)
   char *json = gnostr_blossom_build_auth_event("upload", "abc123", "https://test.com", 0, NULL);
   g_assert_nonnull(json);
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   json_parser_load_from_data(parser, json, -1, NULL);
   JsonObject *obj = json_node_get_object(json_parser_get_root(parser));
 
@@ -375,7 +372,6 @@ test_auth_event_expiration(void)
   }
   g_assert_true(has_expiration);
 
-  g_object_unref(parser);
   g_free(json);
 }
 

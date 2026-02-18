@@ -152,7 +152,7 @@ normalize_key_and_derive_npub(const gchar *input_key,
   }
 
   /* Derive public key and npub via GNostrKeys */
-  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_hex(sk_hex, NULL);
   if (!keys) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
@@ -164,7 +164,6 @@ normalize_key_and_derive_npub(const gchar *input_key,
   }
 
   gchar *npub = gnostr_keys_get_npub(keys);
-  g_object_unref(keys);
 
   if (!npub) {
     memset(sk_hex, 0, strlen(sk_hex));
@@ -506,11 +505,10 @@ gn_secret_storage_retrieve_key(const gchar *label, GError **error)
 
   /* Convert hex to nsec using GNostrNip19 */
   if (is_hex_64(secret)) {
-    GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(secret, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_nsec(secret, NULL);
     if (nip19) {
       const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
       if (nsec_str) nsec = gn_secure_strdup(nsec_str);
-      g_object_unref(nip19);
     }
   }
 
@@ -576,11 +574,10 @@ gn_secret_storage_retrieve_key(const gchar *label, GError **error)
         sk_hex[2*i+1] = hexd[bytes[i] & 0xF];
       }
       sk_hex[64] = '\0';
-      GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
+      g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
       if (nip19) {
         const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
         if (nsec_str) nsec = gn_secure_strdup(nsec_str);
-        g_object_unref(nip19);
       }
       memset(sk_hex, 0, sizeof(sk_hex));
     }

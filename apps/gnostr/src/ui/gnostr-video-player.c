@@ -1022,9 +1022,8 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
        * on_media_prepared / on_media_error handle the outcome — no timeout. */
       show_loading_state(self, TRUE);
 
-      GFile *file = g_file_new_for_uri(uri);
+      g_autoptr(GFile) file = g_file_new_for_uri(uri);
       gtk_media_file_set_file(self->media_file, file);
-      g_object_unref(file);
 
       /* Apply settings to media stream */
       GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);

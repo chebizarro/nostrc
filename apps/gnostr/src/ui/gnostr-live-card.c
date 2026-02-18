@@ -599,7 +599,6 @@ load_cover_image(GnostrLiveCard *self)
     }
 
     /* Load image from URL - gtk_picture_set_file handles async loading */
-    GFile *file = g_file_new_for_uri(self->activity->image);
+    g_autoptr(GFile) file = g_file_new_for_uri(self->activity->image);
     gtk_picture_set_file(self->cover_image, file);
-    g_object_unref(file);
 }

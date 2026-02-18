@@ -142,7 +142,7 @@ static gchar *build_profile_json(SheetProfileEditor *self) {
   const gchar *website = gtk_editable_get_text(GTK_EDITABLE(self->entry_website));
 
   /* Build content object */
-  JsonBuilder *content_builder = json_builder_new();
+  g_autoptr(JsonBuilder) content_builder = json_builder_new();
   json_builder_begin_object(content_builder);
 
   if (name && *name) {
@@ -176,15 +176,13 @@ static gchar *build_profile_json(SheetProfileEditor *self) {
 
   json_builder_end_object(content_builder);
   JsonNode *content_node = json_builder_get_root(content_builder);
-  JsonGenerator *content_gen = json_generator_new();
+  g_autoptr(JsonGenerator) content_gen = json_generator_new();
   json_generator_set_root(content_gen, content_node);
   gchar *content_str = json_generator_to_data(content_gen, NULL);
-  g_object_unref(content_gen);
   json_node_unref(content_node);
-  g_object_unref(content_builder);
 
   /* Build event */
-  JsonBuilder *event_builder = json_builder_new();
+  g_autoptr(JsonBuilder) event_builder = json_builder_new();
   json_builder_begin_object(event_builder);
 
   json_builder_set_member_name(event_builder, "kind");
@@ -203,13 +201,11 @@ static gchar *build_profile_json(SheetProfileEditor *self) {
   json_builder_end_object(event_builder);
 
   JsonNode *event_node = json_builder_get_root(event_builder);
-  JsonGenerator *event_gen = json_generator_new();
+  g_autoptr(JsonGenerator) event_gen = json_generator_new();
   json_generator_set_root(event_gen, event_node);
   gchar *result = json_generator_to_data(event_gen, NULL);
 
-  g_object_unref(event_gen);
   json_node_unref(event_node);
-  g_object_unref(event_builder);
   g_free(content_str);
 
   return result;

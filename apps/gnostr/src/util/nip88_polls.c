@@ -24,19 +24,17 @@ static void poll_option_free(gpointer p) {
 GnostrNip88Poll *gnostr_nip88_poll_parse(const char *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
     g_warning("NIP-88: Failed to parse poll JSON: %s", error ? error->message : "unknown");
     if (error) g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -44,12 +42,10 @@ GnostrNip88Poll *gnostr_nip88_poll_parse(const char *json_str) {
 
   /* Check kind */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (kind != NIP88_KIND_POLL) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -121,7 +117,6 @@ GnostrNip88Poll *gnostr_nip88_poll_parse(const char *json_str) {
     }
   }
 
-  g_object_unref(parser);
 
   /* Validate: must have at least 2 options */
   if (poll->options->len < 2) {
@@ -135,19 +130,17 @@ GnostrNip88Poll *gnostr_nip88_poll_parse(const char *json_str) {
 GnostrNip88Response *gnostr_nip88_response_parse(const char *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
     g_warning("NIP-88: Failed to parse response JSON: %s", error ? error->message : "unknown");
     if (error) g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -155,12 +148,10 @@ GnostrNip88Response *gnostr_nip88_response_parse(const char *json_str) {
 
   /* Check kind */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (kind != NIP88_KIND_RESPONSE) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -215,7 +206,6 @@ GnostrNip88Response *gnostr_nip88_response_parse(const char *json_str) {
     }
   }
 
-  g_object_unref(parser);
 
   /* Validate: must have poll_id and at least one selection */
   if (!response->poll_id || response->selected_indices->len == 0) {
@@ -244,7 +234,7 @@ char *gnostr_nip88_build_poll_tags(GPtrArray *options,
                                     gboolean multiple_choice) {
   if (!options || options->len < 2) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* Add poll_option tags */
@@ -281,13 +271,11 @@ char *gnostr_nip88_build_poll_tags(GPtrArray *options,
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   char *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
@@ -298,7 +286,7 @@ char *gnostr_nip88_build_response_tags(const char *poll_id,
                                         gsize num_indices) {
   if (!poll_id || !selected_indices || num_indices == 0) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* Add event reference to poll */
@@ -329,13 +317,11 @@ char *gnostr_nip88_build_response_tags(const char *poll_id,
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   char *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }

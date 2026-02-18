@@ -407,7 +407,7 @@ static void on_submit_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   /* Build unsigned kind 1984 report event JSON per NIP-56 */
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   gnostr_json_builder_set_key(builder, "kind");
@@ -447,7 +447,6 @@ static void on_submit_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Serialize */
   char *event_json = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize report event");

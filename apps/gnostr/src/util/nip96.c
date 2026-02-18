@@ -68,21 +68,18 @@ static GnostrNip96ServerInfo *parse_server_info(const char *data, gsize len)
 {
   if (!data || len == 0) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, data, len, NULL)) {
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonObject *obj = json_node_get_object(root);
   if (!json_object_has_member(obj, "api_url")) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -120,7 +117,6 @@ static GnostrNip96ServerInfo *parse_server_info(const char *data, gsize len)
     }
   }
 
-  g_object_unref(parser);
   return info;
 }
 
@@ -142,15 +138,13 @@ static GnostrBlossomBlob *parse_upload_response(const char *data, gsize len,
 {
   if (!data || len == 0) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, data, len, NULL)) {
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -160,7 +154,6 @@ static GnostrBlossomBlob *parse_upload_response(const char *data, gsize len,
   if (json_object_has_member(obj, "status")) {
     const char *status = json_object_get_string_member(obj, "status");
     if (status && g_strcmp0(status, "success") != 0 && g_strcmp0(status, "processing") != 0) {
-      g_object_unref(parser);
       return NULL;
     }
   }
@@ -203,7 +196,6 @@ static GnostrBlossomBlob *parse_upload_response(const char *data, gsize len,
     }
   }
 
-  g_object_unref(parser);
 
   /* Must have a URL to be useful */
   if (!blob->url || !*blob->url) {
@@ -227,7 +219,7 @@ static char *nip96_build_auth_event(const char *url,
                                      const char *method,
                                      const char *payload_sha256)
 {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   json_builder_begin_object(builder);
 
@@ -269,12 +261,10 @@ static char *nip96_build_auth_event(const char *url,
   json_builder_end_array(builder); /* End tags */
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, json_builder_get_root(builder));
   char *json_str = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json_str;
 }
@@ -635,13 +625,12 @@ void gnostr_nip96_upload_async(const char *server_url,
   }
 
   /* Read file */
-  GFile *file = g_file_new_for_path(file_path);
+  g_autoptr(GFile) file = g_file_new_for_path(file_path);
   GError *error = NULL;
   char *contents = NULL;
   gsize length = 0;
 
   if (!g_file_load_contents(file, NULL, &contents, &length, NULL, &error)) {
-    g_object_unref(file);
     GError *err = g_error_new(GNOSTR_NIP96_ERROR,
                                GNOSTR_NIP96_ERROR_FILE_READ,
                                "Failed to read file: %s", error->message);
@@ -650,7 +639,6 @@ void gnostr_nip96_upload_async(const char *server_url,
     g_error_free(err);
     return;
   }
-  g_object_unref(file);
 
   /* Compute SHA-256 */
   char sha256[65];

@@ -123,7 +123,7 @@ gnostr_channel_create_metadata_json(const GnostrChannel *channel)
 {
     if (!channel) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     if (!builder) return NULL;
 
     gnostr_json_builder_begin_object(builder);
@@ -144,7 +144,6 @@ gnostr_channel_create_metadata_json(const GnostrChannel *channel)
     gnostr_json_builder_end_object(builder);
 
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }
@@ -238,7 +237,7 @@ gnostr_chat_message_create_tags(const char *channel_id,
 {
     if (!channel_id) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     if (!builder) return NULL;
 
     gnostr_json_builder_begin_array(builder);
@@ -264,7 +263,6 @@ gnostr_chat_message_create_tags(const char *channel_id,
     gnostr_json_builder_end_array(builder);
 
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }
@@ -282,7 +280,7 @@ gnostr_channel_metadata_create_tags(const char *channel_id,
 {
     if (!channel_id) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     if (!builder) return NULL;
 
     gnostr_json_builder_begin_array(builder);
@@ -299,7 +297,6 @@ gnostr_channel_metadata_create_tags(const char *channel_id,
     gnostr_json_builder_end_array(builder);
 
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }

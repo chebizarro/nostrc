@@ -290,7 +290,7 @@ char *gnostr_nip39_build_tags_json(GPtrArray *identities) {
     return g_strdup("[]");
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   if (!builder) {
     return g_strdup("[]");
   }
@@ -323,7 +323,6 @@ char *gnostr_nip39_build_tags_json(GPtrArray *identities) {
   gnostr_json_builder_end_array(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
   return result;
 }
 

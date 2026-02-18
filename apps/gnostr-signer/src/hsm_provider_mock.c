@@ -602,7 +602,7 @@ mock_generate_key(GnHsmProvider *provider,
     return NULL;
   }
 
-  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_hex(sk_hex, NULL);
   if (!keys) {
     memset(sk_hex, 0, strlen(sk_hex));
     g_free(sk_hex);
@@ -627,10 +627,9 @@ mock_generate_key(GnHsmProvider *provider,
   mkey->pubkey_hex = g_strdup(pk_hex);
 
   /* Generate npub */
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
   if (nip19) {
     mkey->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-    g_object_unref(nip19);
   } else {
     mkey->npub = g_strdup_printf("npub1%s", pk_hex); /* Fallback */
   }
@@ -638,7 +637,6 @@ mock_generate_key(GnHsmProvider *provider,
   /* Clear sensitive data */
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
-  g_object_unref(keys);
 
   /* Store in device */
   g_hash_table_insert(dev->keys, g_strdup(mkey->key_id), mkey);
@@ -705,7 +703,7 @@ mock_import_key(GnHsmProvider *provider,
 
   /* Derive public key */
   gchar *sk_hex = bytes_to_hex(private_key, 32);
-  GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_hex(sk_hex, NULL);
 
   if (!keys) {
     memset(sk_hex, 0, strlen(sk_hex));
@@ -730,17 +728,15 @@ mock_import_key(GnHsmProvider *provider,
   mkey->pubkey_hex = g_strdup(pk_hex);
 
   /* Generate npub */
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
   if (nip19) {
     mkey->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-    g_object_unref(nip19);
   } else {
     mkey->npub = g_strdup_printf("npub1%s", pk_hex);
   }
 
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
-  g_object_unref(keys);
 
   /* Store in device */
   g_hash_table_insert(dev->keys, g_strdup(mkey->key_id), mkey);

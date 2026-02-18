@@ -763,7 +763,7 @@ gchar *gnostr_zap_create_request_event(const GnostrZapRequest *req,
     return NULL;
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* Kind 9734 - zap request */
@@ -849,7 +849,6 @@ gchar *gnostr_zap_create_request_event(const GnostrZapRequest *req,
   gnostr_json_builder_end_object(builder); /* end event */
 
   gchar *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

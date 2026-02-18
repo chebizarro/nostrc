@@ -205,7 +205,7 @@ NativeMessagingError native_messaging_write_json(const gchar *json) {
 NativeMessagingError native_messaging_write_response(const NativeMessagingResponse *resp) {
   if (!resp) return NM_ERR_INVALID_REQUEST;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Always include id if present */
@@ -218,7 +218,7 @@ NativeMessagingError native_messaging_write_response(const NativeMessagingRespon
     /* Success response */
     if (resp->result_json) {
       /* Parse and embed JSON result */
-      JsonParser *parser = json_parser_new();
+      g_autoptr(JsonParser) parser = json_parser_new();
       if (json_parser_load_from_data(parser, resp->result_json, -1, NULL)) {
         json_builder_set_member_name(builder, "result");
         json_builder_add_value(builder, json_node_copy(json_parser_get_root(parser)));
@@ -227,7 +227,6 @@ NativeMessagingError native_messaging_write_response(const NativeMessagingRespon
         json_builder_set_member_name(builder, "result");
         json_builder_add_string_value(builder, resp->result_json);
       }
-      g_object_unref(parser);
     } else if (resp->result_str) {
       json_builder_set_member_name(builder, "result");
       json_builder_add_string_value(builder, resp->result_str);
@@ -252,12 +251,10 @@ NativeMessagingError native_messaging_write_response(const NativeMessagingRespon
 
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, json_builder_get_root(builder));
   gchar *json_str = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   NativeMessagingError rc = native_messaging_write_json(json_str);
   g_free(json_str);
@@ -293,18 +290,16 @@ NativeMessagingError native_messaging_parse_request(const gchar *json,
   if (!json || !out_req) return NM_ERR_INVALID_REQUEST;
   *out_req = NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json, -1, &error)) {
     g_clear_error(&error);
-    g_object_unref(parser);
     return NM_ERR_INVALID_JSON;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NM_ERR_INVALID_JSON;
   }
 
@@ -312,7 +307,6 @@ NativeMessagingError native_messaging_parse_request(const gchar *json,
 
   /* Required: method */
   if (!json_object_has_member(obj, "method")) {
-    g_object_unref(parser);
     return NM_ERR_INVALID_REQUEST;
   }
 
@@ -364,16 +358,14 @@ NativeMessagingError native_messaging_parse_request(const gchar *json,
       if (params) {
         if (json_object_has_member(params, "event")) {
           JsonNode *event_node = json_object_get_member(params, "event");
-          JsonGenerator *gen = json_generator_new();
+          g_autoptr(JsonGenerator) gen = json_generator_new();
           json_generator_set_root(gen, event_node);
           req->params.sign_event.event_json = json_generator_to_data(gen, NULL);
-          g_object_unref(gen);
         } else {
           /* params IS the event */
-          JsonGenerator *gen = json_generator_new();
+          g_autoptr(JsonGenerator) gen = json_generator_new();
           json_generator_set_root(gen, json_object_get_member(obj, "params"));
           req->params.sign_event.event_json = json_generator_to_data(gen, NULL);
-          g_object_unref(gen);
         }
       }
       break;
@@ -406,7 +398,6 @@ NativeMessagingError native_messaging_parse_request(const gchar *json,
       break;
   }
 
-  g_object_unref(parser);
   *out_req = req;
   return NM_OK;
 }
@@ -493,15 +484,13 @@ static gboolean should_auto_approve(NativeMessagingContext *ctx, gint kind) {
 static gint extract_event_kind(const gchar *event_json) {
   if (!event_json) return -1;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
-    g_object_unref(parser);
     return -1;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return -1;
   }
 
@@ -511,7 +500,6 @@ static gint extract_event_kind(const gchar *event_json) {
     kind = (gint)json_object_get_int_member(obj, "kind");
   }
 
-  g_object_unref(parser);
   return kind;
 }
 
@@ -621,17 +609,15 @@ static NativeMessagingResponse *handle_sign_event(NativeMessagingContext *ctx,
 
   /* Build signed event JSON
    * Parse original event, add id, pubkey, sig */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, req->params.sign_event.event_json, -1, NULL)) {
     free(signature);
-    g_object_unref(parser);
     return native_messaging_response_error(req->id, NM_ERR_INVALID_REQUEST,
                                            "Invalid event JSON");
   }
 
   JsonNode *root = json_parser_get_root(parser);
   JsonObject *event_obj = json_node_dup_object(root);
-  g_object_unref(parser);
 
   /* Get public key */
   gchar *npub = NULL;
@@ -663,11 +649,10 @@ static NativeMessagingResponse *handle_sign_event(NativeMessagingContext *ctx,
   JsonNode *result_node = json_node_new(JSON_NODE_OBJECT);
   json_node_set_object(result_node, event_obj);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, result_node);
   gchar *result_json = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
   json_node_free(result_node);
 
   NativeMessagingResponse *resp = native_messaging_response_success_json(req->id, result_json);

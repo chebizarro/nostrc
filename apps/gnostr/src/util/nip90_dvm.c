@@ -147,7 +147,7 @@ void gnostr_dvm_job_request_add_relay(GnostrDvmJobRequest *request,
 gchar *gnostr_dvm_build_request_tags(const GnostrDvmJobRequest *request) {
   if (!request) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   /* Input tags: ["i", "<data>", "<type>", "<relay>", "<marker>"] */
@@ -219,14 +219,12 @@ gchar *gnostr_dvm_build_request_tags(const GnostrDvmJobRequest *request) {
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
@@ -239,7 +237,7 @@ gchar *gnostr_dvm_build_request_event(const GnostrDvmJobRequest *request) {
     return NULL;
   }
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Kind: 5000 + job_type */
@@ -329,14 +327,12 @@ gchar *gnostr_dvm_build_request_event(const GnostrDvmJobRequest *request) {
   json_builder_end_array(builder);  /* tags */
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
@@ -412,19 +408,17 @@ const gchar *gnostr_dvm_status_to_string(GnostrDvmJobStatus status) {
 GnostrDvmJobRequest *gnostr_dvm_job_request_parse(const gchar *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
     g_debug("NIP-90: Failed to parse request JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -432,13 +426,11 @@ GnostrDvmJobRequest *gnostr_dvm_job_request_parse(const gchar *json_str) {
 
   /* Check kind is in request range */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
 
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (!gnostr_dvm_is_request_kind((gint)kind)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -576,7 +568,6 @@ GnostrDvmJobRequest *gnostr_dvm_job_request_parse(const gchar *json_str) {
   }
   g_ptr_array_free(relays_arr, TRUE);
 
-  g_object_unref(parser);
 
   return request;
 }
@@ -584,19 +575,17 @@ GnostrDvmJobRequest *gnostr_dvm_job_request_parse(const gchar *json_str) {
 GnostrDvmJobResult *gnostr_dvm_job_result_parse(const gchar *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
     g_debug("NIP-90: Failed to parse result JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -604,13 +593,11 @@ GnostrDvmJobResult *gnostr_dvm_job_result_parse(const gchar *json_str) {
 
   /* Check kind is in result range */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
 
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (!gnostr_dvm_is_result_kind((gint)kind)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -693,7 +680,6 @@ GnostrDvmJobResult *gnostr_dvm_job_result_parse(const gchar *json_str) {
     }
   }
 
-  g_object_unref(parser);
 
   return result;
 }
@@ -701,19 +687,17 @@ GnostrDvmJobResult *gnostr_dvm_job_result_parse(const gchar *json_str) {
 GnostrDvmJobFeedback *gnostr_dvm_job_feedback_parse(const gchar *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
     g_debug("NIP-90: Failed to parse feedback JSON: %s", error ? error->message : "unknown");
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -721,13 +705,11 @@ GnostrDvmJobFeedback *gnostr_dvm_job_feedback_parse(const gchar *json_str) {
 
   /* Check kind is feedback (7000) */
   if (!json_object_has_member(obj, "kind")) {
-    g_object_unref(parser);
     return NULL;
   }
 
   gint64 kind = json_object_get_int_member(obj, "kind");
   if (!gnostr_dvm_is_feedback_kind((gint)kind)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -811,7 +793,6 @@ GnostrDvmJobFeedback *gnostr_dvm_job_feedback_parse(const gchar *json_str) {
     }
   }
 
-  g_object_unref(parser);
 
   return feedback;
 }
@@ -869,7 +850,7 @@ const gchar *gnostr_dvm_get_job_type_name(gint job_type) {
 /* ============== Filter Building ============== */
 
 gchar *gnostr_dvm_build_request_filter(gint job_type, gint64 since, gint limit) {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Kinds */
@@ -900,14 +881,12 @@ gchar *gnostr_dvm_build_request_filter(gint job_type, gint64 since, gint limit) 
 
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
@@ -916,7 +895,7 @@ gchar *gnostr_dvm_build_result_filter(const gchar *request_id,
                                        gint job_type,
                                        gint64 since,
                                        gint limit) {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Kinds */
@@ -954,14 +933,12 @@ gchar *gnostr_dvm_build_result_filter(const gchar *request_id,
 
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
@@ -969,7 +946,7 @@ gchar *gnostr_dvm_build_result_filter(const gchar *request_id,
 gchar *gnostr_dvm_build_feedback_filter(const gchar *request_id,
                                          gint64 since,
                                          gint limit) {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* Kind 7000 */
@@ -1000,14 +977,12 @@ gchar *gnostr_dvm_build_feedback_filter(const gchar *request_id,
 
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return result;
 }
