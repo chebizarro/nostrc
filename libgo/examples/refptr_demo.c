@@ -11,7 +11,7 @@ static void free_buf(void *p){
 
 int main(void){
     // Create a ref-counted buffer
-    go_autoptr(Buffer) r = make_go_refptr(malloc(128), free_buf);
+    go_auto(GoRefPtr) r = make_go_refptr(malloc(128), free_buf);
     strcpy((char*)r.ptr, "hello refptr");
     printf("%s\n", (char*)r.ptr);
 

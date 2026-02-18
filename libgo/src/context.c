@@ -6,6 +6,7 @@
 
 #include "context.h"
 #include "channel.h"
+#include "go_auto.h"
 #include "nostr/metrics.h"
 #include <errno.h>
 #include <nsync.h>

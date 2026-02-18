@@ -1,5 +1,8 @@
 #include "counter.h"
+#include "go_auto.h"
 #include <unistd.h> // For sysconf
+
+GO_DEFINE_AUTOPTR_CLEANUP_FUNC(LongAdder, long_adder_destroy)
 
 LongAdder *long_adder_create(void) {
     int num_threads = sysconf(_SC_NPROCESSORS_ONLN); // Get the number of available processors
@@ -7,15 +10,15 @@ LongAdder *long_adder_create(void) {
         num_threads = 1; // Fallback to at least 1 counter
     }
 
-    LongAdder *adder = malloc(sizeof(LongAdder));
+    go_autoptr(LongAdder) adder = malloc(sizeof(LongAdder));
     if (adder == NULL) {
         return NULL; // Handle allocation failure
     }
+    adder->counters = NULL; // Init before potential early return
 
     adder->counters = malloc(sizeof(atomic_long) * num_threads);
     if (adder->counters == NULL) {
-        free(adder);
-        return NULL; // Handle allocation failure
+        return NULL; // adder auto-freed
     }
 
     adder->num_counters = num_threads;
@@ -23,7 +26,7 @@ LongAdder *long_adder_create(void) {
         atomic_init(&adder->counters[i], 0); // Initialize all counters to 0
     }
 
-    return adder;
+    return go_steal_pointer(&adder); // Transfer ownership to caller
 }
 
 void long_adder_increment(LongAdder *adder) {

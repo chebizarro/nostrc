@@ -247,15 +247,46 @@ Header: `libgo/include/refptr.h`
 - `GoRefPtr make_go_refptr(void *ptr, void (*destructor)(void *));`
 - `void go_refptr_retain(GoRefPtr *ref);`
 - `void go_refptr_release(GoRefPtr *ref);`
-- Auto-cleanup helpers (GCC/Clang): `go_autoptr(Type)`, `go_autostr`.
+- Auto-cleanup helpers (GCC/Clang): `go_auto(GoRefPtr)`, `go_autostr`, `go_autofree`.
 
-Example (reference counting a malloc’d buffer):
+Example (reference counting a malloc'd buffer):
 ```c
 void free_buf(void *p){ free(p); }
-go_autoptr(Buffer) GoRefPtr r = make_go_refptr(malloc(128), free_buf);
+go_auto(GoRefPtr) r = make_go_refptr(malloc(128), free_buf);
 go_refptr_retain(&r); // ...share...
 // automatically released at end of scope (or call go_refptr_release manually)
 ```
+
+### Auto-Cleanup System (`go_auto.h`)
+
+Header: `libgo/include/go_auto.h`
+
+GLib-style `__attribute__((cleanup))` macros for scope-based resource management.
+**Internal use only** — do NOT expose in public API headers.
+
+| Macro | Purpose | Example |
+|-------|---------|---------|
+| `go_autofree` | Free any malloc'd pointer | `go_autofree char *s = malloc(64);` |
+| `go_autostr` | Alias for `go_autofree char *` | `go_autostr s = strdup("hello");` |
+| `go_autoptr(Type)` | Auto-free heap pointer (needs registration) | `go_autoptr(NostrEvent) e = ...;` |
+| `go_auto(Type)` | Auto-clear stack value (needs registration) | `go_auto(GoRefPtr) r = ...;` |
+| `go_steal_pointer(&p)` | Transfer ownership out of scope | `return go_steal_pointer(&s);` |
+| `go_clear_pointer(&p, fn)` | NULL-safe destroy and clear | `go_clear_pointer(&ev, nostr_event_free);` |
+
+Type registration (in internal headers):
+```c
+// For heap-allocated types (pointer, freed with free/unref):
+GO_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrEvent, nostr_event_free)
+
+// For stack-allocated types (value, cleared with destroy func):
+GO_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(GoWaitGroup, go_wait_group_destroy)
+```
+
+Built-in registration in `refptr.h`: GoRefPtr.
+Additional registrations in `go-auto-internal.h`: GoChannel, GoContext,
+GoHashMap, Error, Ticker, GoWaitGroup, IntArray, StringArray.
+Libnostr registrations in `nostr-auto-internal.h`: NostrEvent, NostrTags,
+NostrTag, NostrFilter, nostr_secure_buf.
 
 ## Hash Map
 

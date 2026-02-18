@@ -1,11 +1,14 @@
 #include "error.h"
+#include "go_auto.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
 
+GO_DEFINE_AUTOPTR_CLEANUP_FUNC(Error, free_error)
+
 // Creates a new error with a code and message
 Error *new_error(int code, const char *format, ...) {
-    Error *err = (Error *)malloc(sizeof(Error));
+    go_autoptr(Error) err = (Error *)calloc(1, sizeof(Error));
     if (err == NULL) {
         return NULL;  // Allocation failure
     }
@@ -15,20 +18,24 @@ Error *new_error(int code, const char *format, ...) {
     // Create a formatted error message (similar to printf)
     va_list args;
     va_start(args, format);
-    size_t message_length = vsnprintf(NULL, 0, format, args) + 1;
+    int len = vsnprintf(NULL, 0, format, args);
     va_end(args);
     
+    if (len < 0) {
+        return NULL;  // err auto-freed via go_autoptr
+    }
+    
+    size_t message_length = (size_t)len + 1;
     err->message = (char *)malloc(message_length);
     if (err->message == NULL) {
-        free(err);
-        return NULL;  // Allocation failure
+        return NULL;  // err auto-freed via go_autoptr
     }
     
     va_start(args, format);
     vsnprintf(err->message, message_length, format, args);
     va_end(args);
 
-    return err;
+    return go_steal_pointer(&err);  // Transfer ownership to caller
 }
 
 // Frees the memory allocated for the error

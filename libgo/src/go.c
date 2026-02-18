@@ -1,4 +1,5 @@
 #include "go.h"
+#include "go_auto.h"
 #include <nsync.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -86,7 +87,7 @@ int go_fiber_compat(void *(*start_routine)(void *), void *arg) {
 
 // Wrapper function to create a new thread
 int go(void *(*start_routine)(void *), void *arg) {
-    GoWrapper *w = (GoWrapper *)malloc(sizeof(GoWrapper));
+    go_autofree GoWrapper *w = (GoWrapper *)malloc(sizeof(GoWrapper));
     if (!w) {
         fprintf(stderr, "Failed to allocate goroutine wrapper\n");
         return -1;
@@ -98,9 +99,10 @@ int go(void *(*start_routine)(void *), void *arg) {
     int result = pthread_create(&thread, NULL, go_wrapper_func, w);
     if (result != 0) {
         fprintf(stderr, "Failed to create thread: %d\n", result);
-        free(w);
-        return result;
+        return result; /* w still valid, auto-freed at scope exit */
     }
+    /* Only steal the pointer after pthread_create succeeds */
+    go_steal_pointer(&w);
     // Detach the thread to allow it to clean up resources automatically upon completion
     result = pthread_detach(thread);
     if (result != 0) {
