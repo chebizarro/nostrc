@@ -217,16 +217,17 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
     if (count < 2) continue; /* Require at least 2 events to be "trending" */
 
     GnostrTrendingHashtag *ht = g_new0(GnostrTrendingHashtag, 1);
-    /* Take the string pointer - hash table won't free it since it has no key destroy function */
-    ht->tag = (char *)key;
+    /* Duplicate the string so it survives hash table destruction */
+    ht->tag = g_strdup((const char *)key);
     ht->count = count;
     g_ptr_array_add(all, ht);
   }
 
-  g_hash_table_destroy(counts);
-
-  /* Sort by count descending */
+  /* Sort by count descending BEFORE destroying counts hash table */
   g_ptr_array_sort(all, compare_by_count_desc);
+
+  /* Now safe to destroy counts - we've duplicated all the strings */
+  g_hash_table_destroy(counts);
 
   /* Take top N and move to result */
   guint take = MIN(top_n, all->len);
