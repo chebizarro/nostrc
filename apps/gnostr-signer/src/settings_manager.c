@@ -490,7 +490,7 @@ gulong settings_manager_connect_changed(SettingsManager *sm,
   data->cb = cb;
   data->user_data = user_data;
 
-  gchar *signal_name;
+  g_autofree gchar *signal_name = NULL;
   if (key) {
     signal_name = g_strdup_printf("changed::%s", key);
   } else {
@@ -500,8 +500,6 @@ gulong settings_manager_connect_changed(SettingsManager *sm,
   gulong id = g_signal_connect_data(sm->settings, signal_name,
                                     G_CALLBACK(on_settings_changed), data,
                                     (GClosureNotify)changed_callback_data_free, 0);
-
-  g_free(signal_name);
   return id;
 }
 

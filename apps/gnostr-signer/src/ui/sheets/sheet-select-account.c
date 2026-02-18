@@ -103,36 +103,32 @@ static GtkWidget *create_account_row(SheetSelectAccount *self, const gchar *npub
   if (label && *label) {
     /* Add watch-only indicator to title if applicable */
     if (watch_only) {
-      gchar *title = g_strdup_printf("%s (Watch Only)", label);
+      g_autofree gchar *title = g_strdup_printf("%s (Watch Only)", label);
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-      g_free(title);
     } else {
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), label);
     }
     /* Show truncated npub as subtitle */
     if (npub && strlen(npub) > 16) {
-      gchar *sub = g_strdup_printf("%.12s...%.4s", npub, npub + strlen(npub) - 4);
+      g_autofree gchar *sub = g_strdup_printf("%.12s...%.4s", npub, npub + strlen(npub) - 4);
       adw_action_row_set_subtitle(row, sub);
-      g_free(sub);
     } else {
       adw_action_row_set_subtitle(row, npub);
     }
   } else {
     /* Show truncated npub as title */
     if (npub && strlen(npub) > 20) {
-      gchar *display;
+      g_autofree gchar *display = NULL;
       if (watch_only) {
         display = g_strdup_printf("%.12s...%.4s (Watch Only)", npub, npub + strlen(npub) - 4);
       } else {
         display = g_strdup_printf("%.12s...%.4s", npub, npub + strlen(npub) - 4);
       }
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), display);
-      g_free(display);
     } else {
       if (watch_only) {
-        gchar *display = g_strdup_printf("%s (Watch Only)", npub ? npub : "Unknown");
+        g_autofree gchar *display = g_strdup_printf("%s (Watch Only)", npub ? npub : "Unknown");
         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), display);
-        g_free(display);
       } else {
         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), npub ? npub : "Unknown");
       }
@@ -459,13 +455,12 @@ static void on_import_pubkey_submit(GtkButton *btn, gpointer user_data) {
     }
 
     /* Show success message */
-    gchar *display_npub = (npub && strlen(npub) > 20) ?
+    g_autofree gchar *display_npub = (npub && strlen(npub) > 20) ?
         g_strdup_printf("%.12s...%.8s", npub, npub + strlen(npub) - 8) : g_strdup(npub);
     GtkAlertDialog *success = gtk_alert_dialog_new("Watch-only account added!\n\nPublic key: %s\n\nThis account can view events but cannot sign them.",
                                                     display_npub);
     gtk_alert_dialog_show(success, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(success);
-    g_free(display_npub);
   } else {
     adw_dialog_close(dialog);
 

@@ -204,12 +204,11 @@ static GnDelegationResult sign_delegation(const gchar *delegator_npub,
    * For now, we'll use the raw signing approach if available. */
 
   /* Construct event JSON - the signature will be computed over the event id */
-  gchar *event_json = g_strdup_printf(
+  g_autofree gchar *event_json = g_strdup_printf(
     "{\"id\":\"%s\",\"pubkey\":\"\",\"created_at\":0,\"kind\":0,\"tags\":[],\"content\":\"\"}",
     hash_hex);
 
   SecretStoreResult rc = secret_store_sign_event(event_json, delegator_npub, &signature);
-  g_free(event_json);
   g_free(hash_hex);
 
   if (rc != SECRET_STORE_OK || !signature) {
@@ -391,9 +390,9 @@ gchar *gn_delegation_get_storage_path(const gchar *delegator_npub) {
   }
   fingerprint[16] = '\0';
 
-  gchar *dir = g_build_filename(g_get_user_data_dir(), "gnostr-signer", "delegations", NULL);
-  gchar *path = g_build_filename(dir, g_strdup_printf("%s.json", fingerprint), NULL);
-  g_free(dir);
+  g_autofree gchar *dir = g_build_filename(g_get_user_data_dir(), "gnostr-signer", "delegations", NULL);
+  g_autofree gchar *filename = g_strdup_printf("%s.json", fingerprint);
+  gchar *path = g_build_filename(dir, filename, NULL);
 
   return path;
 }

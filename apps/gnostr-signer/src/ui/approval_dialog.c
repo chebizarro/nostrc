@@ -439,16 +439,14 @@ void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind)
   const char *icon_name = get_event_type_icon(kind);
 
   /* Format: "4 (Encrypted Direct Message)" */
-  gchar *display = g_strdup_printf("%d (%s)", kind, type_name);
+  g_autofree gchar *display = g_strdup_printf("%d (%s)", kind, type_name);
   gtk_label_set_text(self->label_event_kind, display);
 
   /* Update accessibility description for screen readers */
-  gchar *accessible_desc = g_strdup_printf("Event type: %s, kind number %d", type_name, kind);
+  g_autofree gchar *accessible_desc = g_strdup_printf("Event type: %s, kind number %d", type_name, kind);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_event_kind),
                                  GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                  -1);
-  g_free(accessible_desc);
-  g_free(display);
 
   gtk_image_set_from_icon_name(self->header_icon, icon_name);
 }
@@ -468,19 +466,17 @@ void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self,
   gtk_label_set_text(self->label_from, display_name);
 
   /* Update accessibility for screen readers */
-  gchar *accessible_desc = g_strdup_printf("Requesting application: %s", display_name);
+  g_autofree gchar *accessible_desc = g_strdup_printf("Requesting application: %s", display_name);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_from),
                                  GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                  -1);
 
   /* Update dialog accessible label to include app name for screen reader context */
-  gchar *dialog_label = g_strdup_printf("Signature approval request from %s", display_name);
+  g_autofree gchar *dialog_label = g_strdup_printf("Signature approval request from %s", display_name);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, dialog_label,
                                  -1);
 
-  g_free(accessible_desc);
-  g_free(dialog_label);
 }
 
 /**
@@ -497,20 +493,18 @@ void gnostr_approval_dialog_set_identity(GnostrApprovalDialog *self,
   if (identity_npub && *identity_npub) {
     /* Truncate long npub for display */
     if (strlen(identity_npub) > 20) {
-      gchar *truncated = g_strdup_printf("%.12s...%.8s", identity_npub,
+      g_autofree gchar *truncated = g_strdup_printf("%.12s...%.8s", identity_npub,
                                          identity_npub + strlen(identity_npub) - 8);
       gtk_label_set_text(self->label_identity, truncated);
-      g_free(truncated);
     } else {
       gtk_label_set_text(self->label_identity, identity_npub);
     }
 
     /* Update accessibility with full identity for screen readers */
-    gchar *accessible_desc = g_strdup_printf("Signing identity: %s", identity_npub);
+    g_autofree gchar *accessible_desc = g_strdup_printf("Signing identity: %s", identity_npub);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_identity),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                    -1);
-    g_free(accessible_desc);
   } else {
     gtk_label_set_text(self->label_identity, "Not specified");
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_identity),
@@ -567,26 +561,23 @@ void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
 
   if (strlen(content) > PREVIEW_MAX_CHARS) {
     gchar *truncated = g_strndup(content, PREVIEW_MAX_CHARS);
-    gchar *display = g_strdup_printf("%s...", truncated);
+    g_autofree gchar *display = g_strdup_printf("%s...", truncated);
     gtk_label_set_text(self->content_preview, display);
     g_free(truncated);
-    g_free(display);
 
     /* Update accessibility for truncated content */
-    gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total)", strlen(content));
+    g_autofree gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total)", strlen(content));
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                    -1);
-    g_free(accessible_desc);
   } else {
     gtk_label_set_text(self->content_preview, content);
 
     /* Update accessibility for full content */
-    gchar *accessible_desc = g_strdup_printf("Event content: %s", content);
+    g_autofree gchar *accessible_desc = g_strdup_printf("Event content: %s", content);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                    -1);
-    g_free(accessible_desc);
   }
 }
 
@@ -661,11 +652,10 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
 
   /* Update accessibility for the identity dropdown (nostrc-qfdg) */
   if (count > 1) {
-    gchar *accessible_desc = g_strdup_printf("Select signing identity. %u accounts available.", count);
+    g_autofree gchar *accessible_desc = g_strdup_printf("Select signing identity. %u accounts available.", count);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->identity_dropdown),
                                    GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
                                    -1);
-    g_free(accessible_desc);
   }
 
   /* Update approve button accessibility based on state (nostrc-qfdg) */

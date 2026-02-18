@@ -232,7 +232,7 @@ static GtkWidget *create_guardian_row(SheetSocialRecovery *self,
 
   /* Title: label or truncated npub */
   const gchar *title = label;
-  gchar *title_owned = NULL;
+  g_autofree gchar *title_owned = NULL;
   if (!title || !*title) {
     title_owned = g_strdup_printf("Guardian %u (%.12s...)", index + 1, npub + 5);
     title = title_owned;
@@ -240,18 +240,15 @@ static GtkWidget *create_guardian_row(SheetSocialRecovery *self,
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
 
   /* Subtitle: truncated npub */
-  gchar *subtitle = g_strdup_printf("%.16s...", npub);
+  g_autofree gchar *subtitle = g_strdup_printf("%.16s...", npub);
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
-  g_free(title_owned);
 
   /* Index icon */
-  gchar *index_label = g_strdup_printf("%u", index + 1);
+  g_autofree gchar *index_label = g_strdup_printf("%u", index + 1);
   GtkLabel *idx_widget = GTK_LABEL(gtk_label_new(index_label));
   gtk_widget_add_css_class(GTK_WIDGET(idx_widget), "dim-label");
   gtk_widget_add_css_class(GTK_WIDGET(idx_widget), "caption");
   adw_action_row_add_prefix(row, GTK_WIDGET(idx_widget));
-  g_free(index_label);
 
   /* Remove button */
   GtkButton *btn_remove = GTK_BUTTON(gtk_button_new_from_icon_name("list-remove-symbolic"));
@@ -323,7 +320,7 @@ static GtkWidget *create_share_row(SheetSocialRecovery *self,
 
   /* Title */
   const gchar *title = guardian_label;
-  gchar *title_owned = NULL;
+  g_autofree gchar *title_owned = NULL;
   if (!title || !*title) {
     title_owned = g_strdup_printf("Guardian %u", index + 1);
     title = title_owned;
@@ -331,10 +328,8 @@ static GtkWidget *create_share_row(SheetSocialRecovery *self,
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
 
   /* Subtitle */
-  gchar *subtitle = g_strdup_printf("%.16s...", guardian_npub);
+  g_autofree gchar *subtitle = g_strdup_printf("%.16s...", guardian_npub);
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
-  g_free(title_owned);
 
   /* Copy button */
   GtkButton *btn_copy = GTK_BUTTON(gtk_button_new_from_icon_name("edit-copy-symbolic"));
@@ -381,13 +376,11 @@ static GtkWidget *create_collected_share_row(SheetSocialRecovery *self,
                                              guint list_index) {
   AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
 
-  gchar *title = g_strdup_printf("Share #%u", share->index);
+  g_autofree gchar *title = g_strdup_printf("Share #%u", share->index);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-  g_free(title);
 
-  gchar *subtitle = g_strdup_printf("%zu bytes", share->data_len);
+  g_autofree gchar *subtitle = g_strdup_printf("%zu bytes", share->data_len);
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
 
   /* Remove button */
   GtkButton *btn_remove = GTK_BUTTON(gtk_button_new_from_icon_name("list-remove-symbolic"));
@@ -411,11 +404,10 @@ static void update_guardian_list(SheetSocialRecovery *self) {
   if (!self) return;
 
   guint count = self->pending_guardians ? self->pending_guardians->len : 0;
-  gchar *text = g_strdup_printf("%u guardian%s", count, count == 1 ? "" : "s");
+  g_autofree gchar *text = g_strdup_printf("%u guardian%s", count, count == 1 ? "" : "s");
   if (self->lbl_guardian_count) {
     gtk_label_set_text(self->lbl_guardian_count, text);
   }
-  g_free(text);
 
   /* Enable/disable setup button */
   if (self->btn_setup_recovery) {
@@ -445,12 +437,11 @@ static void update_threshold_ui(SheetSocialRecovery *self) {
   /* Update info label */
   if (self->lbl_threshold_info && count >= 2) {
     guint8 threshold = (guint8)adw_spin_row_get_value(self->spin_threshold);
-    gchar *info = g_strdup_printf(
+    g_autofree gchar *info = g_strdup_printf(
       "%u of %u guardians required for recovery",
       threshold, count
     );
     gtk_label_set_text(self->lbl_threshold_info, info);
-    g_free(info);
   }
 }
 
@@ -461,9 +452,8 @@ static void update_share_count(SheetSocialRecovery *self) {
   guint8 threshold = (guint8)adw_spin_row_get_value(self->spin_recover_threshold);
 
   if (self->lbl_share_count) {
-    gchar *text = g_strdup_printf("%u of %u shares collected", count, threshold);
+    g_autofree gchar *text = g_strdup_printf("%u of %u shares collected", count, threshold);
     gtk_label_set_text(self->lbl_share_count, text);
-    g_free(text);
   }
 
   /* Enable recover button if threshold met */
@@ -617,13 +607,12 @@ static void on_setup_recovery(GtkButton *btn, gpointer user_data) {
   gtk_widget_set_visible(GTK_WIDGET(self->group_shares), TRUE);
 
   if (self->lbl_setup_status) {
-    gchar *status = g_strdup_printf(
+    g_autofree gchar *status = g_strdup_printf(
       "Social recovery configured: %u-of-%u threshold.\n"
       "Send the encrypted shares below to each guardian.",
       threshold, (guint)self->pending_guardians->len
     );
     gtk_label_set_text(self->lbl_setup_status, status);
-    g_free(status);
   }
 
   /* Populate share distribution list */
@@ -675,13 +664,12 @@ static void load_existing_config(SheetSocialRecovery *self) {
 
   /* Update threshold display */
   if (self->row_config_threshold) {
-    gchar *threshold_text = g_strdup_printf(
+    g_autofree gchar *threshold_text = g_strdup_printf(
       "%u of %u guardians",
       self->loaded_config->threshold,
       self->loaded_config->total_shares
     );
     adw_action_row_set_subtitle(self->row_config_threshold, threshold_text);
-    g_free(threshold_text);
   }
 
   /* Update created date */
@@ -703,17 +691,15 @@ static void load_existing_config(SheetSocialRecovery *self) {
     AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
 
     const gchar *title = g->label;
-    gchar *title_owned = NULL;
+    g_autofree gchar *title_owned = NULL;
     if (!title || !*title) {
       title_owned = g_strdup_printf("Guardian %u", i + 1);
       title = title_owned;
     }
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
 
-    gchar *subtitle = g_strdup_printf("Share #%u - %.12s...", g->share_index, g->npub + 5);
+    g_autofree gchar *subtitle = g_strdup_printf("Share #%u - %.12s...", g->share_index, g->npub + 5);
     adw_action_row_set_subtitle(row, subtitle);
-    g_free(subtitle);
-    g_free(title_owned);
 
     /* Status icon */
     const gchar *icon = g->confirmed ? "emblem-ok-symbolic" : "emblem-important-symbolic";
@@ -1106,26 +1092,24 @@ void sheet_social_recovery_set_account(SheetSocialRecovery *self, const gchar *n
 
   /* Update account display in setup mode */
   if (self->row_setup_account && npub) {
-    gchar *truncated = NULL;
+    g_autofree gchar *truncated = NULL;
     if (strlen(npub) > 20) {
       truncated = g_strdup_printf("%.12s...%.8s", npub, npub + strlen(npub) - 8);
     } else {
       truncated = g_strdup(npub);
     }
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_setup_account), truncated);
-    g_free(truncated);
   }
 
   /* Update manage mode */
   if (self->row_manage_account && npub) {
-    gchar *truncated = NULL;
+    g_autofree gchar *truncated = NULL;
     if (strlen(npub) > 20) {
       truncated = g_strdup_printf("%.12s...%.8s", npub, npub + strlen(npub) - 8);
     } else {
       truncated = g_strdup(npub);
     }
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_manage_account), truncated);
-    g_free(truncated);
   }
 
   /* Load existing config if in manage mode */

@@ -343,7 +343,7 @@ gn_secret_storage_store_key(const gchar *label,
   }
 
   /* Store the key */
-  gchar *display_name = g_strdup_printf("Nostr Key: %s", label);
+  g_autofree gchar *display_name = g_strdup_printf("Nostr Key: %s", label);
 
   result = secret_password_store_sync(&GN_KEY_SCHEMA,
                                       SECRET_COLLECTION_DEFAULT,
@@ -358,7 +358,6 @@ gn_secret_storage_store_key(const gchar *label,
                                       "created_at", created_at,
                                       NULL);
 
-  g_free(display_name);
 
   if (local_error) {
     g_propagate_prefixed_error(error, local_error,
@@ -424,10 +423,9 @@ gn_secret_storage_store_key(const gchar *label,
   CFDictionarySetValue(query, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlock);
 
   /* Store comment with npub and creation time */
-  gchar *comment = g_strdup_printf("npub:%s;created:%s;type:%s", npub, created_at, GN_KEY_TYPE);
+  g_autofree gchar *comment = g_strdup_printf("npub:%s;created:%s;type:%s", npub, created_at, GN_KEY_TYPE);
   CFStringRef commentCF = CFStringCreateWithCString(NULL, comment, kCFStringEncodingUTF8);
   CFDictionarySetValue(query, kSecAttrComment, commentCF);
-  g_free(comment);
 
   OSStatus status = SecItemAdd(query, NULL);
 

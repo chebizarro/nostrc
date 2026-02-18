@@ -114,9 +114,8 @@ static GtkWidget *create_signer_row(const gchar *label, const gchar *npub,
 
   /* Show truncated npub as subtitle */
   if (npub && strlen(npub) > 20) {
-    gchar *truncated = g_strdup_printf("%.12s...%.6s", npub, npub + strlen(npub) - 6);
+    g_autofree gchar *truncated = g_strdup_printf("%.12s...%.6s", npub, npub + strlen(npub) - 6);
     adw_action_row_set_subtitle(row, truncated);
-    g_free(truncated);
   } else if (npub) {
     adw_action_row_set_subtitle(row, npub);
   }
@@ -142,9 +141,8 @@ static GtkWidget *create_remote_signer_row(const gchar *bunker_uri, const gchar 
 
   /* Show truncated bunker URI as subtitle */
   if (bunker_uri && strlen(bunker_uri) > 40) {
-    gchar *truncated = g_strdup_printf("%.30s...", bunker_uri);
+    g_autofree gchar *truncated = g_strdup_printf("%.30s...", bunker_uri);
     adw_action_row_set_subtitle(row, truncated);
-    g_free(truncated);
   } else if (bunker_uri) {
     adw_action_row_set_subtitle(row, bunker_uri);
   }
@@ -205,11 +203,10 @@ static void update_threshold_summary(SheetCreateMultisig *self) {
   guint m = (guint)gtk_spin_button_get_value_as_int(self->spin_threshold_m);
   guint n = (guint)gtk_spin_button_get_value_as_int(self->spin_threshold_n);
 
-  gchar *summary = g_strdup_printf(
+  g_autofree gchar *summary = g_strdup_printf(
       "This wallet will require %u of %u signatures to sign transactions.",
       m, n);
   gtk_label_set_text(self->lbl_threshold_summary, summary);
-  g_free(summary);
 
   self->threshold_m = m;
   self->threshold_n = n;
@@ -371,10 +368,9 @@ static void update_local_count(SheetCreateMultisig *self) {
   guint needed = self->threshold_n;
   guint remote = self->remote_uris->len;
 
-  gchar *text = g_strdup_printf("%u local + %u remote = %u of %u signers",
+  g_autofree gchar *text = g_strdup_printf("%u local + %u remote = %u of %u signers",
                                 count, remote, count + remote, needed);
   gtk_label_set_text(self->lbl_local_count, text);
-  g_free(text);
 }
 
 static void validate_step2(SheetCreateMultisig *self) {
@@ -420,9 +416,8 @@ static void update_remote_list(SheetCreateMultisig *self) {
     for (guint i = 0; i < self->remote_uris->len; i++) {
       const gchar *uri = g_ptr_array_index(self->remote_uris, i);
 
-      gchar *label = g_strdup_printf("Remote Signer %u", i + 1);
+      g_autofree gchar *label = g_strdup_printf("Remote Signer %u", i + 1);
       GtkWidget *row = create_remote_signer_row(uri, label);
-      g_free(label);
 
       /* Connect remove button */
       GtkWidget *btn_remove = g_object_get_data(G_OBJECT(row), "remove_button");
@@ -447,10 +442,9 @@ static void update_remote_count(SheetCreateMultisig *self) {
   guint remote = self->remote_uris->len;
   guint needed = self->threshold_n;
 
-  gchar *text = g_strdup_printf("%u local + %u remote = %u of %u signers",
+  g_autofree gchar *text = g_strdup_printf("%u local + %u remote = %u of %u signers",
                                 local, remote, local + remote, needed);
   gtk_label_set_text(self->lbl_remote_count, text);
-  g_free(text);
 }
 
 static void on_add_remote_clicked(GtkButton *btn, gpointer user_data) {
@@ -542,20 +536,18 @@ static void populate_review(SheetCreateMultisig *self) {
   }
 
   if (self->lbl_review_threshold) {
-    gchar *threshold = g_strdup_printf("%u of %u signatures required",
+    g_autofree gchar *threshold = g_strdup_printf("%u of %u signatures required",
                                        self->threshold_m, self->threshold_n);
     gtk_label_set_text(self->lbl_review_threshold, threshold);
-    g_free(threshold);
   }
 
   if (self->lbl_review_signers) {
     guint total = self->selected_local->len + self->remote_uris->len;
-    gchar *signers = g_strdup_printf("%u signers (%u local, %u remote)",
+    g_autofree gchar *signers = g_strdup_printf("%u signers (%u local, %u remote)",
                                      total,
                                      self->selected_local->len,
                                      self->remote_uris->len);
     gtk_label_set_text(self->lbl_review_signers, signers);
-    g_free(signers);
   }
 
   /* Populate signer list */
@@ -587,9 +579,8 @@ static void populate_review(SheetCreateMultisig *self) {
 
       AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
 
-      gchar *title = g_strdup_printf("Remote Signer %u", i + 1);
+      g_autofree gchar *title = g_strdup_printf("Remote Signer %u", i + 1);
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-      g_free(title);
 
       adw_action_row_set_subtitle(row, "NIP-46 Bunker");
 
@@ -685,9 +676,8 @@ static gboolean create_wallet(SheetCreateMultisig *self) {
   for (guint i = 0; i < self->remote_uris->len; i++) {
     const gchar *uri = g_ptr_array_index(self->remote_uris, i);
 
-    gchar *label = g_strdup_printf("Remote Signer %u", i + 1);
+    g_autofree gchar *label = g_strdup_printf("Remote Signer %u", i + 1);
     MultisigCosigner *cs = multisig_cosigner_new_remote(uri, label);
-    g_free(label);
 
     if (cs) {
       rc = multisig_wallet_add_cosigner(wallet_id, cs, &error);

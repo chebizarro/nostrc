@@ -236,9 +236,8 @@ on_export_clicked(GtkButton *btn, gpointer user_data)
   gtk_file_dialog_set_title(dialog, "Export History");
 
   /* Default filename with timestamp */
-  gchar *default_name = g_strdup_printf("gnostr_history_%ld.json", (long)time(NULL));
+  g_autofree gchar *default_name = g_strdup_printf("gnostr_history_%ld.json", (long)time(NULL));
   gtk_file_dialog_set_initial_name(dialog, default_name);
-  g_free(default_name);
 
   /* Set filters */
   GtkFileFilter *json_filter = gtk_file_filter_new();
@@ -375,15 +374,14 @@ create_history_row(GnEventHistoryEntry *entry)
 
   /* Title: event kind and method */
   const gchar *kind_name = get_kind_name(kind);
-  gchar *title = g_strdup_printf("%s - %s", kind_name, method ? method : "sign_event");
+  g_autofree gchar *title = g_strdup_printf("%s - %s", kind_name, method ? method : "sign_event");
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-  g_free(title);
 
   /* Subtitle: client app/pubkey, timestamp, preview */
   gchar *formatted_time = gn_event_history_entry_format_timestamp(entry);
   gchar *truncated_id = gn_event_history_entry_get_truncated_event_id(entry);
 
-  gchar *client_display;
+  g_autofree gchar *client_display = NULL;
   if (client_app && *client_app) {
     client_display = g_strdup(client_app);
   } else if (client_pubkey && strlen(client_pubkey) > 12) {
@@ -416,7 +414,6 @@ create_history_row(GnEventHistoryEntry *entry)
   adw_action_row_set_subtitle_lines(row, 2);
 
   g_string_free(subtitle, TRUE);
-  g_free(client_display);
   g_free(formatted_time);
   g_free(truncated_id);
 
@@ -507,9 +504,8 @@ populate_history_list(GnPageHistory *self)
 static void
 update_page_info(GnPageHistory *self)
 {
-  gchar *text = g_strdup_printf("Page %u of %u", self->current_page + 1, self->total_pages);
+  g_autofree gchar *text = g_strdup_printf("Page %u of %u", self->current_page + 1, self->total_pages);
   gtk_label_set_text(self->lbl_page_info, text);
-  g_free(text);
 
   /* Enable/disable pagination buttons */
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_prev_page), self->current_page > 0);
@@ -524,7 +520,7 @@ update_entry_count(GnPageHistory *self)
   GnEventHistory *history = gn_event_history_get_default();
   guint total = gn_event_history_get_entry_count(history);
 
-  gchar *text;
+  g_autofree gchar *text = NULL;
   if (self->filter_kind >= 0 || self->filter_client) {
     text = g_strdup_printf("%u matching / %u total entries", self->total_entries, total);
   } else {
@@ -532,7 +528,6 @@ update_entry_count(GnPageHistory *self)
   }
 
   gtk_label_set_text(self->lbl_entry_count, text);
-  g_free(text);
 
   /* Enable/disable action buttons */
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_clear_history), total > 0);
@@ -588,7 +583,7 @@ update_filter_models(GnPageHistory *self)
   if (clients) {
     for (gchar **c = clients; *c; c++) {
       /* Truncate for display */
-      gchar *display;
+      g_autofree gchar *display = NULL;
       if (strlen(*c) > 16) {
         display = g_strdup_printf("%.8s...%.4s", *c, *c + strlen(*c) - 4);
       } else {
@@ -596,7 +591,6 @@ update_filter_models(GnPageHistory *self)
       }
       gtk_string_list_append(self->client_model, display);
       g_ptr_array_add(self->client_values, g_strdup(*c));
-      g_free(display);
     }
     g_strfreev(clients);
   }

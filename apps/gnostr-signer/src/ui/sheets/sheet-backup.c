@@ -365,11 +365,10 @@ static void on_save_to_file(GtkButton *btn, gpointer user_data) {
   } else {
     npub_short = g_strdup("key");
   }
-  gchar *suggested_name = g_strdup_printf("nostr-backup-%s.json", npub_short);
+  g_autofree gchar *suggested_name = g_strdup_printf("nostr-backup-%s.json", npub_short);
   g_free(npub_short);
 
   gtk_file_dialog_set_initial_name(dialog, suggested_name);
-  g_free(suggested_name);
 
   /* Add file filter - use JSON for new format with metadata */
   GtkFileFilter *filter = gtk_file_filter_new();
@@ -554,13 +553,11 @@ static void on_load_file_response(GObject *source, GAsyncResult *result, gpointe
 
       /* Show info about loaded backup */
       if (meta->identity_name && *meta->identity_name) {
-        gchar *info = g_strdup_printf("Loaded backup for: %s", meta->identity_name);
+        g_autofree gchar *info = g_strdup_printf("Loaded backup for: %s", meta->identity_name);
         show_toast(self, info);
-        g_free(info);
       } else if (meta->npub) {
-        gchar *info = g_strdup_printf("Loaded backup for: %.12s...", meta->npub);
+        g_autofree gchar *info = g_strdup_printf("Loaded backup for: %.12s...", meta->npub);
         show_toast(self, info);
-        g_free(info);
       }
 
       gn_backup_metadata_free(meta);
@@ -902,11 +899,10 @@ void sheet_backup_set_account(SheetBackup *self, const gchar *npub) {
   if (self->row_account && npub) {
     /* Truncate npub for display */
     if (strlen(npub) > 20) {
-      gchar *truncated = g_strdup_printf("%.*s...%s",
+      g_autofree gchar *truncated = g_strdup_printf("%.*s...%s",
                                           12, npub,
                                           npub + strlen(npub) - 8);
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_account), truncated);
-      g_free(truncated);
     } else {
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_account), npub);
     }

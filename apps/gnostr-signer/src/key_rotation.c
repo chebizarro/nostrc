@@ -170,7 +170,7 @@ gchar *key_rotation_build_migration_event(const gchar *old_pubkey_hex,
   }
 
   /* Build default content if not provided */
-  gchar *content_str = NULL;
+  g_autofree gchar *content_str = NULL;
   if (content && *content) {
     content_str = g_strdup(content);
   } else {
@@ -236,7 +236,6 @@ gchar *key_rotation_build_migration_event(const gchar *old_pubkey_hex,
   g_object_unref(gen);
   json_node_unref(root);
   g_object_unref(builder);
-  g_free(content_str);
 
   return result;
 }
@@ -430,7 +429,7 @@ static gboolean rotation_step(gpointer user_data) {
 
     case KEY_ROTATION_STATE_STORING: {
       /* Determine label for new key */
-      gchar *label = NULL;
+      g_autofree gchar *label = NULL;
       if (kr->new_label && *kr->new_label) {
         label = g_strdup(kr->new_label);
       } else {
@@ -453,7 +452,6 @@ static gboolean rotation_step(gpointer user_data) {
       kr->new_nsec = NULL;
 
       if (rc != SECRET_STORE_OK) {
-        g_free(label);
         emit_complete(kr, KEY_ROTATION_ERR_STORE_FAILED,
                       "Failed to store new key in secure storage");
         return G_SOURCE_REMOVE;
@@ -462,15 +460,13 @@ static gboolean rotation_step(gpointer user_data) {
       /* Add to accounts store */
       AccountsStore *as = accounts_store_get_default();
       accounts_store_add(as, kr->new_npub, label, NULL);
-      g_free(label);
 
       /* Optionally update old key label */
       if (kr->keep_old) {
         gchar *old_display = accounts_store_get_display_name(as, kr->old_npub);
         if (old_display) {
-          gchar *new_old_label = g_strdup_printf("%s (migrated)", old_display);
+          g_autofree gchar *new_old_label = g_strdup_printf("%s (migrated)", old_display);
           accounts_store_set_label(as, kr->old_npub, new_old_label, NULL);
-          g_free(new_old_label);
           g_free(old_display);
         }
       }

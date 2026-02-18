@@ -65,13 +65,12 @@ void policy_store_load(PolicyStore *ps) {
       if (dot && g_strcmp0(dot, ".expires") == 0) continue;
       gboolean val = g_key_file_get_boolean(kf, group, app_key, NULL);
       /* Try to read optional expires */
-      gchar *expkey = g_strdup_printf("%s.expires", app_key);
+      g_autofree gchar *expkey = g_strdup_printf("%s.expires", app_key);
       guint64 expires_at = 0;
       if (g_key_file_has_key(kf, group, expkey, NULL)) {
         gchar *s = g_key_file_get_string(kf, group, expkey, NULL);
         if (s) { expires_at = g_ascii_strtoull(s, NULL, 10); g_free(s); }
       }
-      g_free(expkey);
       gchar *ckey = g_strdup_printf("%s|%s", group, app_key);
       PolicyVal *pv = g_new0(PolicyVal, 1);
       pv->decision = val ? TRUE : FALSE;
@@ -101,10 +100,9 @@ void policy_store_save(PolicyStore *ps) {
     PolicyVal *pv = vptr;
     g_key_file_set_boolean(kf, identity, app, pv ? pv->decision : FALSE);
     if (pv && pv->expires_at != 0) {
-      gchar *expkey = g_strdup_printf("%s.expires", app);
+      g_autofree gchar *expkey = g_strdup_printf("%s.expires", app);
       gchar buf[32]; g_snprintf(buf, sizeof(buf), "%" G_GUINT64_FORMAT, pv->expires_at);
       g_key_file_set_string(kf, identity, expkey, buf);
-      g_free(expkey);
     }
     g_free(identity);
   }

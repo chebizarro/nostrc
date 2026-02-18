@@ -200,10 +200,9 @@ create_session_row(GnClientSession *session)
   } else {
     /* Truncate pubkey for display */
     gchar *short_pk = g_strndup(client_pubkey, 16);
-    gchar *title = g_strdup_printf("%s...", short_pk);
+    g_autofree gchar *title = g_strdup_printf("%s...", short_pk);
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     g_free(short_pk);
-    g_free(title);
   }
 
   /* Subtitle: identity and status */
@@ -227,7 +226,7 @@ create_session_row(GnClientSession *session)
   }
 
   /* Truncate identity for display */
-  gchar *short_identity = NULL;
+  g_autofree gchar *short_identity = NULL;
   if (identity && strlen(identity) > 20) {
     short_identity = g_strdup_printf("%.12s...%.4s",
                                      identity,
@@ -236,7 +235,7 @@ create_session_row(GnClientSession *session)
     short_identity = g_strdup(identity ? identity : "Unknown");
   }
 
-  gchar *subtitle = g_strdup_printf("%s | %s | %s | %u requests | Last: %s",
+  g_autofree gchar *subtitle = g_strdup_printf("%s | %s | %s | %u requests | Last: %s",
                                     short_identity,
                                     state_str,
                                     remaining_str,
@@ -245,10 +244,8 @@ create_session_row(GnClientSession *session)
 
   adw_action_row_set_subtitle(row, subtitle);
 
-  g_free(short_identity);
   g_free(remaining_str);
   g_free(activity_str);
-  g_free(subtitle);
 
   /* Add status icon */
   GtkWidget *status_icon = gtk_image_new();
@@ -338,9 +335,8 @@ update_active_count(GnPageSessions *self)
   guint active = gn_client_session_manager_get_active_count(mgr);
   guint total = gn_client_session_manager_get_session_count(mgr);
 
-  gchar *text = g_strdup_printf("%u active / %u total", active, total);
+  g_autofree gchar *text = g_strdup_printf("%u active / %u total", active, total);
   gtk_label_set_text(self->lbl_active_count, text);
-  g_free(text);
 
   /* Enable/disable revoke all button */
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_revoke_all), active > 0);

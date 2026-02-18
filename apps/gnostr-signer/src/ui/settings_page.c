@@ -146,7 +146,7 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
       g_signal_connect(check, "toggled", G_CALLBACK(on_radio_toggled), ui);
       gtk_widget_set_margin_end(check, 8);
 
-      gchar *label_text = NULL;
+      g_autofree gchar *label_text = NULL;
       if (e->label && *e->label)
         label_text = g_strdup_printf("%s — %s", e->label, e->id);
       else

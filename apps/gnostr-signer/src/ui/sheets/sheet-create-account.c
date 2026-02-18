@@ -512,17 +512,14 @@ static void select_verification_words(SheetCreateAccount *self) {
   }
 
   /* Update labels */
-  gchar *lbl1 = g_strdup_printf("Word #%d", self->verify_indices[0] + 1);
-  gchar *lbl2 = g_strdup_printf("Word #%d", self->verify_indices[1] + 1);
-  gchar *lbl3 = g_strdup_printf("Word #%d", self->verify_indices[2] + 1);
+  g_autofree gchar *lbl1 = g_strdup_printf("Word #%d", self->verify_indices[0] + 1);
+  g_autofree gchar *lbl2 = g_strdup_printf("Word #%d", self->verify_indices[1] + 1);
+  g_autofree gchar *lbl3 = g_strdup_printf("Word #%d", self->verify_indices[2] + 1);
 
   if (self->lbl_word1_position) gtk_label_set_text(self->lbl_word1_position, lbl1);
   if (self->lbl_word2_position) gtk_label_set_text(self->lbl_word2_position, lbl2);
   if (self->lbl_word3_position) gtk_label_set_text(self->lbl_word3_position, lbl3);
 
-  g_free(lbl1);
-  g_free(lbl2);
-  g_free(lbl3);
 
   /* Clear entry fields */
   if (self->entry_verify_word1)
@@ -644,11 +641,10 @@ static void on_step4_next(GtkButton *btn, gpointer user_data) {
   if (self->lbl_npub && self->npub) {
     /* Truncate npub for display */
     if (strlen(self->npub) > 40) {
-      gchar *truncated = g_strdup_printf("%.*s...%s",
+      g_autofree gchar *truncated = g_strdup_printf("%.*s...%s",
                                           16, self->npub,
                                           self->npub + strlen(self->npub) - 8);
       gtk_label_set_text(self->lbl_npub, truncated);
-      g_free(truncated);
     } else {
       gtk_label_set_text(self->lbl_npub, self->npub);
     }

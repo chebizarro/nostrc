@@ -237,11 +237,10 @@ on_lockout_timer_tick(gpointer user_data)
   /* Update accessibility value for screen readers (nostrc-qfdg)
    * Only announce at key intervals to avoid spam */
   if (remaining == 60 || remaining == 30 || remaining == 10 || remaining <= 5) {
-    gchar *accessible_value = g_strdup_printf("%s remaining", time_str);
+    g_autofree gchar *accessible_value = g_strdup_printf("%s remaining", time_str);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_countdown),
                                    GTK_ACCESSIBLE_PROPERTY_VALUE_TEXT, accessible_value,
                                    -1);
-    g_free(accessible_value);
   }
 
   g_free(time_str);
@@ -293,12 +292,11 @@ update_rate_limit_ui(GnLockScreen *self)
     guint attempts_remaining = gn_rate_limiter_get_attempts_remaining(limiter);
     guint max_attempts = GN_RATE_LIMITER_DEFAULT_MAX_ATTEMPTS;
     if (attempts_remaining < max_attempts && attempts_remaining > 0) {
-      gchar *msg = g_strdup_printf("%u attempt%s remaining",
+      g_autofree gchar *msg = g_strdup_printf("%u attempt%s remaining",
                                    attempts_remaining, attempts_remaining == 1 ? "" : "s");
       gtk_label_set_text(self->lbl_rate_limit_message, msg);
       gtk_label_set_text(self->lbl_rate_limit_countdown, "");
       gtk_widget_set_visible(GTK_WIDGET(self->box_rate_limit), TRUE);
-      g_free(msg);
     }
   }
 }

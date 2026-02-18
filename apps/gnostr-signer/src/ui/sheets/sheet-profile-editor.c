@@ -419,9 +419,8 @@ void sheet_profile_editor_set_npub(SheetProfileEditor *self, const gchar *npub) 
   if (self->lbl_npub) {
     /* Show truncated npub */
     if (npub && strlen(npub) > 20) {
-      gchar *display = g_strdup_printf("%.12s...%.6s", npub, npub + strlen(npub) - 6);
+      g_autofree gchar *display = g_strdup_printf("%.12s...%.6s", npub, npub + strlen(npub) - 6);
       gtk_label_set_text(self->lbl_npub, display);
-      g_free(display);
     } else {
       gtk_label_set_text(self->lbl_npub, npub ? npub : "");
     }
