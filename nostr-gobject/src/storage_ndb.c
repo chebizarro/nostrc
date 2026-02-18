@@ -406,10 +406,12 @@ int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms, GE
    * Callers on worker threads can retry at their own cadence. */
   int rc = 0;
   void *txn = NULL;
+  g_autoptr(GError) first_error = NULL;
   if (attempts <= 0) attempts = 1;
   (void)sleep_ms; /* no longer used — no sleeping */
   for (int i = 0; i < attempts; i++) {
-    rc = storage_ndb_begin_query(&txn, NULL);
+    g_clear_error(&first_error);
+    rc = storage_ndb_begin_query(&txn, &first_error);
     if (rc == 0 && txn) { *txn_out = txn; return 0; }
     /* Yield to other threads/fibers but don't block.
      * sched_yield is ~1µs vs usleep's ~1ms minimum. */
@@ -417,61 +419,103 @@ int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms, GE
   }
   *txn_out = NULL;
   int final_rc = rc != 0 ? rc : LN_ERR_DB_TXN;
-  g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
-              "NDB begin_query_retry exhausted %d attempts (rc=%d)", attempts, final_rc);
+  /* Propagate the actual error from the last attempt if available */
+  if (first_error) {
+    g_propagate_error(error, g_steal_pointer(&first_error));
+  } else {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "NDB begin_query_retry exhausted %d attempts (rc=%d)", attempts, final_rc);
+  }
   return final_rc;
 }
 
 int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count, GError **error)
 {
-  if (!g_store || !txn || !filters_json || !out_arr || !out_count) return LN_ERR_QUERY;
+  if (!g_store || !txn || !filters_json || !out_arr || !out_count) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_query (store=%p txn=%p)",
+                (void*)g_store, txn);
+    return LN_ERR_QUERY;
+  }
   void *results = NULL; int count = 0;
   int rc = ln_store_query(g_store, txn, filters_json, &results, &count);
-  if (rc != LN_OK) return rc;
+  if (rc != LN_OK) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "NDB query failed with rc=%d", rc);
+    return rc;
+  }
   *out_arr = (char**)results; *out_count = count;
   return LN_OK;
 }
 
 int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count, GError **error)
 {
-  (void)error; /* TODO: populate on failure */
-  if (!g_store || !txn || !q || !out_arr || !out_count) return LN_ERR_TEXTSEARCH;
+  if (!g_store || !txn || !q || !out_arr || !out_count) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_text_search");
+    return LN_ERR_TEXTSEARCH;
+  }
   void *results = NULL; int count = 0;
   int rc = ln_store_text_search(g_store, txn, q, config_json, &results, &count);
-  if (rc != LN_OK) return rc;
+  if (rc != LN_OK) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "NDB text search failed with rc=%d for query '%s'", rc, q);
+    return rc;
+  }
   *out_arr = (char**)results; *out_count = count;
   return LN_OK;
 }
 
 int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count, GError **error)
 {
-  (void)error; /* TODO: populate on failure */
-  if (!g_store || !txn || !query || !out_arr || !out_count) return LN_ERR_QUERY;
+  if (!g_store || !txn || !query || !out_arr || !out_count) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_search_profile");
+    return LN_ERR_QUERY;
+  }
   void *results = NULL; int count = 0;
   int rc = ln_store_search_profile(g_store, txn, query, limit, &results, &count);
-  if (rc != LN_OK) return rc;
+  if (rc != LN_OK) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "NDB profile search failed with rc=%d for query '%s'", rc, query);
+    return rc;
+  }
   *out_arr = (char**)results; *out_count = count;
   return LN_OK;
 }
 
 int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len, GError **error)
 {
-  (void)error; /* TODO: populate on failure */
-  if (!g_store || !txn || !id32 || !json_out) return LN_ERR_QUERY;
+  if (!g_store || !txn || !id32 || !json_out) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_get_note_by_id");
+    return LN_ERR_QUERY;
+  }
   const char *json = NULL; int len = 0;
   int rc = ln_store_get_note_by_id(g_store, txn, id32, &json, &len);
-  if (rc != LN_OK) return rc;
+  if (rc != LN_OK) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "Note not found in NDB (rc=%d)", rc);
+    return rc;
+  }
   *json_out = (char*)json; if (json_len) *json_len = len;
   return LN_OK;
 }
 
 int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], char **json_out, int *json_len, GError **error)
 {
-  (void)error; /* TODO: populate on failure */
-  if (!g_store || !txn || !pk32 || !json_out) return LN_ERR_QUERY;
+  if (!g_store || !txn || !pk32 || !json_out) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_get_profile_by_pubkey");
+    return LN_ERR_QUERY;
+  }
   const char *json = NULL; int len = 0;
   int rc = ln_store_get_profile_by_pubkey(g_store, txn, pk32, &json, &len);
-  if (rc != LN_OK) return rc;
+  if (rc != LN_OK) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "Profile not found in NDB (rc=%d)", rc);
+    return rc;
+  }
   *json_out = (char*)json; if (json_len) *json_len = len;
   return LN_OK;
 }
@@ -491,19 +535,30 @@ int storage_ndb_get_profile_meta_direct(void *txn,
                                         StorageNdbProfileMeta *out,
                                         GError **error)
 {
-  (void)error; /* TODO: populate on failure */
-  if (!txn || !pk32 || !out) return LN_ERR_QUERY;
+  if (!txn || !pk32 || !out) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_get_profile_meta_direct");
+    return LN_ERR_QUERY;
+  }
   memset(out, 0, sizeof(*out));
 
   struct ndb_txn *ntxn = (struct ndb_txn *)txn;
   size_t record_len = 0;
   uint64_t prim = 0;
   void *root = ndb_get_profile_by_pubkey(ntxn, pk32, &record_len, &prim);
-  if (!root || record_len == 0) return LN_ERR_NOT_FOUND;
+  if (!root || record_len == 0) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "Profile not found in NDB FlatBuffer store");
+    return LN_ERR_NOT_FOUND;
+  }
 
   NdbProfileRecord_table_t record = NdbProfileRecord_as_root(root);
   NdbProfile_table_t profile = NdbProfileRecord_profile(record);
-  if (!profile) return LN_ERR_NOT_FOUND;
+  if (!profile) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "Profile record exists but profile data is NULL");
+    return LN_ERR_NOT_FOUND;
+  }
 
   /* Read fields directly from the FlatBuffer -- zero-copy pointers
    * that are valid for the lifetime of the read transaction.
@@ -1171,7 +1226,7 @@ gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user
   if (!user_pubkey_hex || strlen(user_pubkey_hex) != 64) return FALSE;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10, NULL) != 0 || !txn) return FALSE;
 
   /* Build filter: {"kinds":[7],"authors":["<pubkey>"],"#e":["<event_id>"],"limit":1} */
   g_autofree gchar *filter_json = g_strdup_printf(
@@ -1214,7 +1269,7 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
   if (!hex_to_id32(event_id_hex, id32)) return breakdown;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return breakdown;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10, NULL) != 0 || !txn) return breakdown;
 
   struct ndb_note_meta *meta = ndb_get_note_meta((struct ndb_txn *)txn, id32);
   if (meta) {
@@ -1245,7 +1300,7 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
     *reactor_pubkeys = g_ptr_array_new_with_free_func(g_free);
 
     void *txn2 = NULL;
-    if (storage_ndb_begin_query_retry(&txn2, 3, 10) == 0 && txn2) {
+    if (storage_ndb_begin_query_retry(&txn2, 3, 10, NULL) == 0 && txn2) {
       g_autofree gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
       char **results = NULL;
       int count = 0;
@@ -1278,7 +1333,7 @@ guint storage_ndb_count_zaps(const char *event_id_hex)
   if (!event_id_hex || strlen(event_id_hex) != 64) return 0;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return 0;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10, NULL) != 0 || !txn) return 0;
 
   /* Build filter: {"kinds":[9735],"#e":["<event_id>"]} */
   g_autofree gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
@@ -1335,7 +1390,7 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
   if (!event_id_hex || strlen(event_id_hex) != 64) return FALSE;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10, NULL) != 0 || !txn) return FALSE;
 
   /* Build filter: {"kinds":[9735],"#e":["<event_id>"]} */
   g_autofree gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
@@ -1518,7 +1573,7 @@ GHashTable *storage_ndb_user_has_reacted_batch(const char * const *event_ids, gu
     return reacted;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return reacted;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10, NULL) != 0 || !txn) return reacted;
 
   /* Build filter with author constraint */
   g_autofree gchar *author_frag = g_strdup_printf("\"authors\":[\"%s\"],", user_pubkey_hex);
@@ -2068,7 +2123,7 @@ char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex)
     user_pubkey_hex);
 
   void *txn = NULL;
-  int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+  int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
   if (rc != 0 || !txn) {
     return NULL;
   }
@@ -2180,15 +2235,22 @@ int storage_ndb_cursor_next(StorageNdbCursor *cursor,
                             guint *count_out,
                             GError **error)
 {
-  (void)error; /* TODO: populate on failure */
-  if (!cursor || !entries_out || !count_out) return -1;
+  if (!cursor || !entries_out || !count_out) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_cursor_next");
+    return -1;
+  }
   *entries_out = NULL;
   *count_out = 0;
 
   if (cursor->exhausted) return 0;
 
   struct ndb *ndb = get_ndb();
-  if (!ndb) return -1;
+  if (!ndb) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "NDB not initialized in cursor_next");
+    return -1;
+  }
 
   /* Build paginated filter JSON */
   char *query_json;
@@ -2203,14 +2265,25 @@ int storage_ndb_cursor_next(StorageNdbCursor *cursor,
     query_json = nostr_json_merge_objects(cursor->filter_json, override);
   }
 
-  if (!query_json) return -1;
+  if (!query_json) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_PARSE_FAILED,
+                "Failed to build paginated filter JSON");
+    return -1;
+  }
 
   /* Parse filter from JSON */
   struct ndb_filter filter;
   unsigned char *tmpbuf = malloc(4096);
-  if (!tmpbuf) { g_free(query_json); return -1; }
+  if (!tmpbuf) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Out of memory allocating filter buffer");
+    g_free(query_json);
+    return -1;
+  }
 
   if (!ndb_filter_init(&filter)) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Failed to initialize NDB filter");
     free(tmpbuf);
     g_free(query_json);
     return -1;
@@ -2218,6 +2291,8 @@ int storage_ndb_cursor_next(StorageNdbCursor *cursor,
 
   int json_len = (int)strlen(query_json);
   if (!ndb_filter_from_json(query_json, json_len, &filter, tmpbuf, 4096)) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_PARSE_FAILED,
+                "Failed to parse filter from JSON: %s", query_json);
     ndb_filter_destroy(&filter);
     free(tmpbuf);
     g_free(query_json);
@@ -2226,7 +2301,7 @@ int storage_ndb_cursor_next(StorageNdbCursor *cursor,
 
   /* Open read transaction */
   void *txn = NULL;
-  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0) {
+  if (storage_ndb_begin_query_retry(&txn, 3, 10, error) != 0) {
     ndb_filter_destroy(&filter);
     free(tmpbuf);
     g_free(query_json);
@@ -2240,6 +2315,8 @@ int storage_ndb_cursor_next(StorageNdbCursor *cursor,
   int cap = MIN((int)cursor->batch_size * 2, QUERY_CAP); /* fetch extra for dedup headroom */
 
   if (!ndb_query((struct ndb_txn *)txn, &filter, 1, qres, cap, &got)) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "NDB cursor query execution failed");
     storage_ndb_end_query(txn);
     ndb_filter_destroy(&filter);
     free(tmpbuf);

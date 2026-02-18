@@ -241,10 +241,43 @@ Replace `G_IO_ERROR` usage in `nostr_query_batcher.c` with `NOSTR_ERROR`.
 | # | Recommendation | Impact | Effort | Status |
 |---|----------------|--------|--------|--------|
 | R1 | nostr-gtk GError domain + 6 API additions | HIGH | 2-3 days | ✅ DONE |
-| R2 | storage_ndb GError support | HIGH | 3-5 days | ✅ DONE |
+| R2 | storage_ndb GError support | HIGH | 3-5 days | ✅ DONE (full error propagation) |
 | R3 | Service GTask migration | MEDIUM | 4-6 days | ✅ DONE |
-| R4 | g_autoptr(GError) adoption | LOW | 0.5 days | ✅ DONE |
-| R5 | Error domain standardization | LOW | 0.5 hours | ✅ DONE |
+| R4 | g_autoptr(GError) adoption | LOW | 0.5 days | ✅ DONE (all 33+ declarations converted) |
+| R5 | Error domain standardization | LOW | 0.5 hours | ✅ DONE (G_IO_ERROR kept for cancellation only) |
+
+## Implementation Notes (2026-02-17)
+
+### R2: storage_ndb GError Support - Complete
+
+All storage_ndb functions now properly populate `GError **error` on failure:
+
+- `storage_ndb_init()` - sets error on ln_store_open failure
+- `storage_ndb_begin_query()` - sets error on invalid state or txn failure
+- `storage_ndb_begin_query_retry()` - propagates actual error from last attempt
+- `storage_ndb_query()` - sets error on invalid args or query failure
+- `storage_ndb_text_search()` - sets error on invalid args or search failure
+- `storage_ndb_search_profile()` - sets error on invalid args or search failure
+- `storage_ndb_get_note_by_id()` - sets error on invalid args or not found
+- `storage_ndb_get_profile_by_pubkey()` - sets error on invalid args or not found
+- `storage_ndb_get_profile_meta_direct()` - sets error on invalid args or not found
+- `storage_ndb_cursor_next()` - sets error on all failure paths
+
+### R4: g_autoptr(GError) Adoption - Complete
+
+All bare `GError *error = NULL` declarations converted to `g_autoptr(GError)`:
+
+- `gnostr-identity.c` - key_error
+- `nostr_ndb_store.c` - parse_err
+- `nostr_relay.c` - auth_err, g_err
+- `nostr_profile_provider.c` - err
+- `gnostr-mute-list.c` - err, proxy_err
+- `gnostr-relays.c` - all err, load_err, write_err declarations
+
+### R5: Error Domain Standardization - Complete
+
+G_IO_ERROR usage reviewed - all instances are for checking `G_IO_ERROR_CANCELLED`
+which is the correct GLib pattern for cancellation. No changes needed.
 
 ---
 

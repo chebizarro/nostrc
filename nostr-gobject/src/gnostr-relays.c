@@ -61,9 +61,9 @@ gboolean gnostr_is_valid_relay_url(const char *url) {
   if (!url || !*url) return FALSE;
   /* Basic check: must be ws:// or wss:// and a valid URI */
   if (!g_str_has_prefix(url, "ws://") && !g_str_has_prefix(url, "wss://")) return FALSE;
-  GError *err = NULL;
+  g_autoptr(GError) err = NULL;
   GUri *uri = g_uri_parse(url, G_URI_FLAGS_NONE, &err);
-  if (!uri) { g_clear_error(&err); return FALSE; }
+  if (!uri) { return FALSE; }
   const char *host = g_uri_get_host(uri);
   gboolean ok = (host && *host);
   g_uri_unref(uri);
@@ -75,10 +75,10 @@ gchar *gnostr_normalize_relay_url(const char *url) {
   /* Trim whitespace */
   gchar *trimmed = g_strstrip(g_strdup(url));
   if (!gnostr_is_valid_relay_url(trimmed)) { g_free(trimmed); return NULL; }
-  GError *err = NULL;
+  g_autoptr(GError) err = NULL;
   GUri *uri = g_uri_parse(trimmed, G_URI_FLAGS_NONE, &err);
   g_free(trimmed);
-  if (!uri) { g_clear_error(&err); return NULL; }
+  if (!uri) { return NULL; }
   const char *scheme = g_uri_get_scheme(uri);
   const char *host = g_uri_get_host(uri);
   int port = g_uri_get_port(uri);
@@ -129,7 +129,7 @@ void gnostr_load_relays_into(GPtrArray *out) {
     /* Fallback: keyfile */
     gchar *cfg = gnostr_config_path();
     GKeyFile *kf = g_key_file_new();
-    GError *err = NULL;
+    g_autoptr(GError) err = NULL;
     if (g_key_file_load_from_file(kf, cfg, G_KEY_FILE_NONE, &err)) {
       gsize n = 0;
       gchar **urls = g_key_file_get_string_list(kf, "relays", "urls", &n, NULL);
@@ -142,8 +142,6 @@ void gnostr_load_relays_into(GPtrArray *out) {
         loaded = (out->len > 0);
         g_debug("relays: loaded %u from keyfile %s", loaded ? (guint)out->len : 0, cfg);
       }
-    } else {
-      g_clear_error(&err);
     }
     g_key_file_free(kf);
     g_free(cfg);
@@ -185,17 +183,15 @@ void gnostr_save_relays_from(GPtrArray *list) {
   g_auto(GStrv) arr = g_new0(gchar*, list->len + 1);
   for (guint i = 0; i < list->len; i++) arr[i] = g_strdup((const gchar*)list->pdata[i]);
   g_key_file_set_string_list(kf, "relays", "urls", (const gchar* const*)arr, list->len);
-  GError *err = NULL;
+  g_autoptr(GError) err = NULL;
   gchar *data = g_key_file_to_data(kf, NULL, &err);
   if (data) {
-    if (!g_file_set_contents(cfg, data, -1, &err)) {
-      g_warning("failed to write %s: %s", cfg, err ? err->message : "(unknown)");
-      g_clear_error(&err);
+    g_autoptr(GError) write_err = NULL;
+    if (!g_file_set_contents(cfg, data, -1, &write_err)) {
+      g_warning("failed to write %s: %s", cfg, write_err ? write_err->message : "(unknown)");
     }
     g_debug("relays: wrote %u to keyfile %s", list->len, cfg);
     g_free(data);
-  } else {
-    g_clear_error(&err);
   }
   g_key_file_free(kf);
   g_free(cfg);
@@ -354,14 +350,13 @@ static void on_nip65_query_done(GObject *source, GAsyncResult *res, gpointer use
   Nip65FetchCtx *ctx = (Nip65FetchCtx*)user_data;
   if (!ctx) return;
 
-  GError *err = NULL;
+  g_autoptr(GError) err = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_warning("nip65: query failed: %s", err->message);
     }
-    g_error_free(err);
     if (ctx->callback) ctx->callback(NULL, ctx->user_data);
     nip65_fetch_ctx_free(ctx);
     return;
@@ -493,7 +488,7 @@ void gnostr_load_dm_relays_into(GPtrArray *out) {
     /* Fallback: keyfile */
     gchar *cfg = gnostr_config_path();
     GKeyFile *kf = g_key_file_new();
-    GError *err = NULL;
+    g_autoptr(GError) err = NULL;
     if (g_key_file_load_from_file(kf, cfg, G_KEY_FILE_NONE, &err)) {
       gsize n = 0;
       gchar **urls = g_key_file_get_string_list(kf, "dm-relays", "urls", &n, NULL);
@@ -506,8 +501,6 @@ void gnostr_load_dm_relays_into(GPtrArray *out) {
         loaded = (out->len > 0);
         g_debug("dm-relays: loaded %u from keyfile %s", loaded ? (guint)out->len : 0, cfg);
       }
-    } else {
-      g_clear_error(&err);
     }
     g_key_file_free(kf);
     g_free(cfg);
@@ -538,30 +531,27 @@ void gnostr_save_dm_relays_from(GPtrArray *list) {
   GKeyFile *kf = g_key_file_new();
   /* Load existing config to preserve other sections.
    * File may not exist on first run (G_FILE_ERROR_NOENT), which is normal. */
-  GError *load_err = NULL;
+  g_autoptr(GError) load_err = NULL;
   if (!g_key_file_load_from_file(kf, cfg, G_KEY_FILE_NONE, &load_err)) {
     if (!g_error_matches(load_err, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
       g_warning("dm-relays: failed to load config %s: %s", cfg, load_err->message);
     }
-    g_clear_error(&load_err);
   }
   g_auto(GStrv) arr = g_new0(gchar*, list->len + 1);
   for (guint i = 0; i < list->len; i++) arr[i] = g_strdup((const gchar*)list->pdata[i]);
   g_key_file_set_string_list(kf, "dm-relays", "urls", (const gchar* const*)arr, list->len);
-  GError *err = NULL;
+  g_autoptr(GError) err = NULL;
   gchar *data = g_key_file_to_data(kf, NULL, &err);
   if (data) {
     gchar *dir = g_path_get_dirname(cfg);
     g_mkdir_with_parents(dir, 0700);
     g_free(dir);
-    if (!g_file_set_contents(cfg, data, -1, &err)) {
-      g_warning("failed to write dm-relays to %s: %s", cfg, err ? err->message : "(unknown)");
-      g_clear_error(&err);
+    g_autoptr(GError) write_err = NULL;
+    if (!g_file_set_contents(cfg, data, -1, &write_err)) {
+      g_warning("failed to write dm-relays to %s: %s", cfg, write_err ? write_err->message : "(unknown)");
     }
     g_debug("dm-relays: wrote %u to keyfile %s", list->len, cfg);
     g_free(data);
-  } else {
-    g_clear_error(&err);
   }
   g_key_file_free(kf);
   g_free(cfg);
@@ -677,14 +667,13 @@ static void on_nip17_dm_query_done(GObject *source, GAsyncResult *res, gpointer 
   Nip17DmFetchCtx *ctx = (Nip17DmFetchCtx*)user_data;
   if (!ctx) return;
 
-  GError *err = NULL;
+  g_autoptr(GError) err = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_warning("nip17-dm: query failed: %s", err->message);
     }
-    g_error_free(err);
     if (ctx->callback) ctx->callback(NULL, ctx->user_data);
     nip17_dm_fetch_ctx_free(ctx);
     return;

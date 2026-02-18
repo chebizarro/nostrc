@@ -799,12 +799,11 @@ gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error)
         if (lim->auth_required && !self->authenticated) {
             /* Try auto-auth if handler is configured (nostrc-7og) */
             if (self->auth_sign_func) {
-                GError *auth_err = NULL;
+                g_autoptr(GError) auth_err = NULL;
                 if (!gnostr_relay_authenticate(self, &auth_err)) {
                     g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
                                 "relay %s requires auth and auto-auth failed: %s",
                                 self->url, auth_err ? auth_err->message : "unknown");
-                    if (auth_err) g_error_free(auth_err);
                     return FALSE;
                 }
                 /* Auth succeeded, fall through to publish */
@@ -914,11 +913,11 @@ auth_sign_bridge(NostrEvent *event, Error **err)
         return;
     }
 
-    GError *g_err = NULL;
+    g_autoptr(GError) g_err = NULL;
     adapter->func(event, &g_err, adapter->user_data);
     if (g_err) {
         if (err) *err = new_error(1, "%s", g_err->message);
-        adapter->g_error = g_err;
+        adapter->g_error = g_steal_pointer(&g_err);
     }
 }
 
