@@ -560,10 +560,9 @@ void nostr_gtk_composer_set_reply_context(NostrGtkComposer *self,
   self->reply_to_pubkey = g_strdup(reply_to_pubkey);
 
   if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
-    char *label = g_strdup_printf("Replying to %s",
+    g_autofree char *label = g_strdup_printf("Replying to %s",
                                    reply_to_display_name ? reply_to_display_name : "@user");
     gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
-    g_free(label);
   }
   if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
     gtk_widget_set_visible(self->reply_indicator_box, TRUE);
@@ -626,10 +625,9 @@ void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
   self->quote_nostr_uri = g_strdup(nostr_uri);
 
   if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
-    char *label = g_strdup_printf("Quoting %s",
+    g_autofree char *label = g_strdup_printf("Quoting %s",
                                    quoted_author_display_name ? quoted_author_display_name : "@user");
     gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
-    g_free(label);
   }
   if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
     gtk_widget_set_visible(self->reply_indicator_box, TRUE);
@@ -640,9 +638,8 @@ void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
 
   if (nostr_uri && self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
     GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
-    char *prefill = g_strdup_printf("\n\n%s", nostr_uri);
+    g_autofree char *prefill = g_strdup_printf("\n\n%s", nostr_uri);
     gtk_text_buffer_set_text(buf, prefill, -1);
-    g_free(prefill);
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buf, &start);
     gtk_text_buffer_place_cursor(buf, &start);
@@ -799,10 +796,9 @@ void nostr_gtk_composer_set_comment_context(NostrGtkComposer *self,
   self->comment_root_pubkey = g_strdup(root_pubkey);
 
   if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
-    char *label = g_strdup_printf("Commenting on %s",
+    g_autofree char *label = g_strdup_printf("Commenting on %s",
                                    display_name ? display_name : "@user");
     gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
-    g_free(label);
   }
   if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
     gtk_widget_set_visible(self->reply_indicator_box, TRUE);
@@ -919,9 +915,8 @@ void nostr_gtk_composer_upload_failed(NostrGtkComposer *self,
     gtk_widget_set_sensitive(self->btn_attach, TRUE);
   }
 
-  char *toast_msg = g_strdup_printf("Upload failed: %s", message ? message : "unknown error");
+  g_autofree char *toast_msg = g_strdup_printf("Upload failed: %s", message ? message : "unknown error");
   composer_show_toast(self, toast_msg);
-  g_free(toast_msg);
 }
 
 /* ---- NIP-37: Draft management ---- */
@@ -1112,10 +1107,9 @@ void nostr_gtk_composer_draft_save_complete(NostrGtkComposer *self,
     composer_show_toast(self, "Draft saved");
     g_signal_emit(self, signals[SIGNAL_DRAFT_SAVED], 0);
   } else {
-    char *msg = g_strdup_printf("Failed to save draft: %s",
+    g_autofree char *msg = g_strdup_printf("Failed to save draft: %s",
                                  error_message ? error_message : "unknown error");
     composer_show_toast(self, msg);
-    g_free(msg);
   }
 }
 

@@ -2656,12 +2656,11 @@ static bool profile_extra_fields_cb(const char *key, const char *value_json, voi
   /* Parse the string value from JSON */
   char *str_val = NULL;
   /* Use nostr_json_get_string on a wrapper object */
-  char *wrapper = g_strdup_printf("{\"v\":%s}", value_json);
+  g_autofree char *wrapper = g_strdup_printf("{\"v\":%s}", value_json);
   if ((str_val = gnostr_json_get_string(wrapper, "v", NULL)) != NULL && str_val && *str_val) {
     add_metadata_row(ctx->self, "text-x-generic-symbolic", key, str_val, FALSE);
     g_free(str_val);
   }
-  g_free(wrapper);
 
   return true; /* continue iteration */
 }
@@ -2731,7 +2730,7 @@ static void update_profile_ui(NostrGtkProfilePane *self, const char *profile_jso
   }
   
   /* Update display name - NIP-24: display_name > name > shortened hex key */
-  char *shortened_key = NULL;
+  g_autofree char *shortened_key = NULL;
   const char *final_display = NULL;
   if (display_name && *display_name) {
     final_display = display_name;
@@ -2766,7 +2765,7 @@ static void update_profile_ui(NostrGtkProfilePane *self, const char *profile_jso
   /* Note: shortened_key freed below after all uses of final_display */
 
   /* Update handle - show nip-05 if available, otherwise @name or truncated npub */
-  char *handle_text = NULL;
+  g_autofree char *handle_text = NULL;
   if (nip05 && *nip05) {
     handle_text = g_strdup(nip05);
   } else if (name && *name) {
@@ -2780,7 +2779,6 @@ static void update_profile_ui(NostrGtkProfilePane *self, const char *profile_jso
     /* Store handle for posts (don't free, we need it) */
     g_free(self->current_handle);
     self->current_handle = g_strdup(handle_text);
-    g_free(handle_text);
   }
 
   /* Store avatar URL for posts */
@@ -2820,9 +2818,6 @@ static void update_profile_ui(NostrGtkProfilePane *self, const char *profile_jso
       gtk_label_set_text(GTK_LABEL(self->avatar_initials), initials);
     }
   }
-
-  /* Free shortened_key now that final_display is no longer needed */
-  g_free(shortened_key);
 
   /* Load images */
 #ifdef HAVE_SOUP3
@@ -4645,9 +4640,8 @@ void nostr_gtk_profile_pane_set_pubkey(NostrGtkProfilePane *self, const char *pu
 
   /* Show temporary handle while loading */
   if (self->lbl_handle) {
-    char *temp_handle = g_strdup_printf("npub1%.8s...", hex);
+    g_autofree char *temp_handle = g_strdup_printf("npub1%.8s...", hex);
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), temp_handle);
-    g_free(temp_handle);
   }
   if (self->lbl_display_name) {
     gtk_label_set_text(GTK_LABEL(self->lbl_display_name), "Loading...");
@@ -4857,12 +4851,11 @@ build_badges_display(NostrGtkProfilePane *self)
 
   /* If there are more badges, show a "more" indicator */
   if (self->profile_badges->len > MAX_VISIBLE_BADGES) {
-    gchar *more_text = g_strdup_printf("+%u", self->profile_badges->len - MAX_VISIBLE_BADGES);
+    g_autofree gchar *more_text = g_strdup_printf("+%u", self->profile_badges->len - MAX_VISIBLE_BADGES);
     GtkWidget *more_label = gtk_label_new(more_text);
     gtk_widget_add_css_class(more_label, "dim-label");
     gtk_widget_set_margin_start(more_label, 4);
     gtk_box_append(GTK_BOX(self->badges_box), more_label);
-    g_free(more_text);
   }
 
   /* Insert badges box into about_content after bio but before metadata */
