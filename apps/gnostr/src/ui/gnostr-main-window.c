@@ -1944,6 +1944,7 @@ static void relay_manager_on_discover_clicked(GtkButton *btn, gpointer user_data
 
   GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "relay_discovery_window"));
   if (!win) {
+    g_object_unref(builder);
     return;
   }
 
@@ -2347,6 +2348,7 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
 
   GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "relay_manager_window"));
   if (!win) {
+    g_object_unref(builder);
     show_toast(self, "Relay manager window missing");
     return;
   }
@@ -3841,6 +3843,7 @@ static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpoi
 
   GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "about_window"));
   if (!win) {
+    g_object_unref(builder);
     show_toast(self, "About window missing");
     return;
   }
