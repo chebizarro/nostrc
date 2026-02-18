@@ -1284,10 +1284,10 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
     g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
 
     /* Disconnect Tier 2 map handler if still active (not yet fired) */
-    gulong map_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
+    gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
     if (map_id > 0) {
       g_signal_handler_disconnect(row, map_id);
-      g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GUINT_TO_POINTER(0));
+      g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
     }
   }
 
@@ -1656,10 +1656,10 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
   }
 
   /* One-shot: disconnect after first run */
-  gulong map_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
+  gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
   if (map_id > 0) {
     g_signal_handler_disconnect(row, map_id);
-    g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GUINT_TO_POINTER(0));
+    g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
   }
 }
 
@@ -1893,7 +1893,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         /* Connect Tier 2 map handler for deferred embed/media/OG creation */
         gulong map_id = g_signal_connect(row, "map",
                                           G_CALLBACK(on_tv_row_mapped_tier2), item);
-        g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GUINT_TO_POINTER(map_id));
+        g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER((gsize)map_id));
         if (gtk_widget_get_mapped(row)) {
           on_tv_row_mapped_tier2(row, item);
         }

@@ -486,9 +486,9 @@ bind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user
     gulong h3 = g_signal_connect(row, "zap-requested", G_CALLBACK(on_note_zap_requested), self);
 
     /* Store handler IDs on the list_item for cleanup in unbind */
-    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", GUINT_TO_POINTER(h1));
-    g_object_set_data(G_OBJECT(list_item), "handler-view-thread", GUINT_TO_POINTER(h2));
-    g_object_set_data(G_OBJECT(list_item), "handler-zap", GUINT_TO_POINTER(h3));
+    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", GSIZE_TO_POINTER((gsize)h1));
+    g_object_set_data(G_OBJECT(list_item), "handler-view-thread", GSIZE_TO_POINTER((gsize)h2));
+    g_object_set_data(G_OBJECT(list_item), "handler-zap", GSIZE_TO_POINTER((gsize)h3));
 }
 
 static void
@@ -505,9 +505,9 @@ unbind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
     nostr_gtk_note_card_row_prepare_for_unbind(row);
 
     /* Disconnect signal handlers */
-    gulong h1 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
-    gulong h2 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-view-thread"));
-    gulong h3 = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-zap"));
+    gulong h1 = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
+    gulong h2 = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(list_item), "handler-view-thread"));
+    gulong h3 = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(list_item), "handler-zap"));
 
     if (h1 > 0) g_signal_handler_disconnect(row, h1);
     if (h2 > 0) g_signal_handler_disconnect(row, h2);
@@ -613,9 +613,9 @@ bind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     /* Connect signals (store handler IDs for unbind cleanup) */
     gulong h_profile = g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
 
-    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", GUINT_TO_POINTER(h_profile));
-    g_object_set_data(G_OBJECT(list_item), "handler-approve", GUINT_TO_POINTER(h_approve));
-    g_object_set_data(G_OBJECT(list_item), "handler-reject", GUINT_TO_POINTER(h_reject));
+    g_object_set_data(G_OBJECT(list_item), "handler-open-profile", GSIZE_TO_POINTER((gsize)h_profile));
+    g_object_set_data(G_OBJECT(list_item), "handler-approve", GSIZE_TO_POINTER((gsize)h_approve));
+    g_object_set_data(G_OBJECT(list_item), "handler-reject", GSIZE_TO_POINTER((gsize)h_reject));
 }
 
 static void
@@ -637,9 +637,9 @@ unbind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer
         nostr_gtk_note_card_row_prepare_for_unbind(row);
 
     /* Disconnect signal handlers */
-    gulong h_profile = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
-    gulong h_approve = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-approve"));
-    gulong h_reject = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(list_item), "handler-reject"));
+    gulong h_profile = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
+    gulong h_approve = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(list_item), "handler-approve"));
+    gulong h_reject = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(list_item), "handler-reject"));
 
     if (row && h_profile > 0) g_signal_handler_disconnect(row, h_profile);
     if (btn_approve && h_approve > 0) g_signal_handler_disconnect(btn_approve, h_approve);

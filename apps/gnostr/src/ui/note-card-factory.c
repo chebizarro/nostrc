@@ -456,11 +456,11 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
   }
 
   /* Profile signal connection (deferred from Tier 1) */
-  gulong existing = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
+  gulong existing = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
   if (existing == 0) {
     gulong handler_id = g_signal_connect(obj, "notify::profile",
                                           G_CALLBACK(on_item_profile_changed), row);
-    g_object_set_data(G_OBJECT(row), "profile-handler-id", GUINT_TO_POINTER(handler_id));
+    g_object_set_data(G_OBJECT(row), "profile-handler-id", GSIZE_TO_POINTER((gsize)handler_id));
   }
 }
 
@@ -484,7 +484,7 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   g_object_set_data(G_OBJECT(row), "bound-item", obj);
   g_object_set_data(G_OBJECT(row), "ncf-factory", self);
   /* Initialize profile handler as unset — Tier 2 will connect it */
-  g_object_set_data(G_OBJECT(row), "profile-handler-id", GUINT_TO_POINTER(0));
+  g_object_set_data(G_OBJECT(row), "profile-handler-id", GSIZE_TO_POINTER(0));
 
   /* If custom bind callback is set, use it instead of default binding.
    * Custom callbacks handle their own tiering (or do full bind). */
@@ -585,7 +585,7 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
                                             G_CALLBACK(on_ncf_row_mapped_tier2),
                                             item);
   g_object_set_data(G_OBJECT(row), "tier2-map-handler-id",
-                    GUINT_TO_POINTER(map_handler_id));
+                    GSIZE_TO_POINTER((gsize)map_handler_id));
 
   /* If already mapped, run Tier 2 immediately */
   if (gtk_widget_get_mapped(row)) {
@@ -603,14 +603,14 @@ factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 
   if (row) {
     /* nostrc-sbqe.3: Disconnect Tier 2 map handler */
-    gulong map_handler_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "tier2-map-handler-id"));
+    gulong map_handler_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tier2-map-handler-id"));
     if (map_handler_id > 0 && GTK_IS_WIDGET(row)) {
       g_signal_handler_disconnect(row, map_handler_id);
     }
     g_object_set_data(G_OBJECT(row), "tier2-map-handler-id", NULL);
 
     /* Disconnect profile change handler to prevent callbacks to stale row */
-    gulong handler_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
+    gulong handler_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
     GObject *bound_item = g_object_get_data(G_OBJECT(row), "bound-item");
     if (handler_id > 0 && bound_item && G_IS_OBJECT(bound_item)) {
       g_signal_handler_disconnect(bound_item, handler_id);

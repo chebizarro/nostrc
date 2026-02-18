@@ -382,64 +382,79 @@ enum {
 };
 static guint signals[N_SIGNALS];
 
-static void nostr_gtk_note_card_row_dispose(GObject *obj) {
-  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
-  gboolean was_prepared_for_unbind = self->disposed;
-
-  /* If already disposed (e.g., by prepare_for_unbind), skip cleanup that was already done.
-   * We still need to call parent dispose and dispose_template though. */
-  if (self->disposed) {
-    goto do_template_dispose;
-  }
-
-  /* Mark as disposed FIRST to prevent async callbacks from accessing widget */
+/* Centralized teardown quiesce path used by both unbind and dispose.
+ * Keep this strictly non-visual: do NOT mutate labels, CSS state, or
+ * child widget trees here. Those operations can re-enter GTK internals while
+ * list-item recycling is already tearing down children. */
+static void
+nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
+                                gboolean clear_cancellable_refs)
+{
+  /* Mark as inactive first so async callbacks bail out immediately. */
   self->disposed = TRUE;
+  self->binding_id = 0;
 
-  /* Cancel the shared async_cancellable - this stops ALL child async operations
-   * (avatar downloads, og-preview fetches, note-embed queries, etc.) */
-  if (self->async_cancellable) {
-    g_cancellable_cancel(self->async_cancellable);
-    g_clear_object(&self->async_cancellable);
-  }
-
-  /* Remove timestamp timer */
+  /* Remove timestamp timer to prevent callbacks during teardown. */
   if (self->timestamp_timer_id > 0) {
     g_source_remove(self->timestamp_timer_id);
     self->timestamp_timer_id = 0;
   }
 
-  /* Cancel NIP-05 verification (legacy - will migrate to shared cancellable) */
+  /* Cancel all async operations immediately. */
+  if (self->async_cancellable) {
+    g_cancellable_cancel(self->async_cancellable);
+    if (clear_cancellable_refs) {
+      g_clear_object(&self->async_cancellable);
+    }
+  }
+
   if (self->nip05_cancellable) {
     g_cancellable_cancel(self->nip05_cancellable);
-    g_clear_object(&self->nip05_cancellable);
+    if (clear_cancellable_refs) {
+      g_clear_object(&self->nip05_cancellable);
+    }
   }
 
 #ifdef HAVE_SOUP3
-  if (self->avatar_cancellable) { g_cancellable_cancel(self->avatar_cancellable); g_clear_object(&self->avatar_cancellable); }
-  /* Cancel all media fetches */
+  if (self->avatar_cancellable) {
+    g_cancellable_cancel(self->avatar_cancellable);
+    if (clear_cancellable_refs) {
+      g_clear_object(&self->avatar_cancellable);
+    }
+  }
+
+  if (self->article_image_cancellable) {
+    g_cancellable_cancel(self->article_image_cancellable);
+    if (clear_cancellable_refs) {
+      g_clear_object(&self->article_image_cancellable);
+    }
+  }
+
+  if (self->video_thumb_cancellable) {
+    g_cancellable_cancel(self->video_thumb_cancellable);
+    if (clear_cancellable_refs) {
+      g_clear_object(&self->video_thumb_cancellable);
+    }
+  }
+
   if (self->media_cancellables) {
     GHashTableIter iter;
     gpointer key, value;
     g_hash_table_iter_init(&iter, self->media_cancellables);
     while (g_hash_table_iter_next(&iter, &key, &value)) {
       GCancellable *cancellable = G_CANCELLABLE(value);
-      if (cancellable) g_cancellable_cancel(cancellable);
+      if (cancellable) {
+        g_cancellable_cancel(cancellable);
+      }
     }
-    g_clear_pointer(&self->media_cancellables, g_hash_table_unref);
+    if (clear_cancellable_refs) {
+      g_clear_pointer(&self->media_cancellables, g_hash_table_unref);
+      g_clear_object(&self->media_session);
+    }
   }
-  g_clear_object(&self->media_session);
 #endif
-  /* Cancel og_preview async operations BEFORE template disposal.
-   * The og_preview_widget has async soup fetches that can corrupt Pango layouts
-   * if they complete during disposal. Mark it disposed and cancel operations. */
-  if (self->og_preview && OG_IS_PREVIEW_WIDGET(self->og_preview)) {
-    og_preview_widget_prepare_for_unbind(self->og_preview);
-  }
-  self->og_preview = NULL;
-  
-  /* nostrc-dqwq.2: Disconnect deferred media map handler and free pending items
-   * before template disposal. Must happen before video player stop since those
-   * players may not have been created yet if the row was never mapped. */
+
+  /* Disconnect deferred media map handler and clear pending deferred items. */
   if (self->media_map_handler_id > 0 && self->media_box && GTK_IS_BOX(self->media_box)) {
     g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
     self->media_map_handler_id = 0;
@@ -447,18 +462,12 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
   self->media_widgets_created = FALSE;
 
-  /* NIP-71: Stop ALL video players BEFORE template disposal to prevent GStreamer from
-   * accessing Pango layouts while the widget is being disposed. This fixes crashes
-   * when many items are removed at once (e.g., clicking "New Notes" toast).
-   * Video players can be in:
-   * 1. self->video_player (NIP-71 dedicated video events)
-   * 2. self->media_box (inline videos from note content) */
+  /* Stop video players before child widgets are disposed. */
   if (self->video_player && GNOSTR_IS_VIDEO_PLAYER(self->video_player)) {
     gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(self->video_player));
   }
   self->video_player = NULL;
-  
-  /* Stop any video players in media_box (inline videos from note content) */
+
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
     while (child) {
@@ -468,92 +477,31 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
       child = gtk_widget_get_next_sibling(child);
     }
   }
-  
-#ifdef HAVE_SOUP3
-  /* Cancel video thumbnail fetch */
-  if (self->video_thumb_cancellable) {
-    g_cancellable_cancel(self->video_thumb_cancellable);
-    g_clear_object(&self->video_thumb_cancellable);
-  }
-#endif
-  
-  /* Disconnect signal handlers from note_embed to prevent invalid closure notify.
-   * Do NOT call gtk_frame_set_child(NULL) - let GTK handle cleanup automatically.
-   * Check GNOSTR_IS_NOTE_EMBED to ensure the widget hasn't been freed already. */
-  if (self->note_embed && GNOSTR_IS_NOTE_EMBED(self->note_embed)) {
-    g_signal_handlers_disconnect_by_data(self->note_embed, self);
-  }
+
+  /* Never dereference cached child pointers during teardown. */
+  self->og_preview = NULL;
   self->note_embed = NULL;
+}
 
-do_template_dispose:
+static void nostr_gtk_note_card_row_dispose(GObject *obj) {
+  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
+  /* Single teardown path for dispose: quiesce external activity and release
+   * cancellable refs, then let template disposal own widget subtree cleanup. */
+  nostr_gtk_note_card_row_quiesce(self, TRUE);
 
-  /* nostrc-ft4e: Close (popdown) popovers BEFORE unparenting to properly
-   * clean up GTK's active state tracking. When a popover is open, its anchor
-   * button has :active state. Unparenting without closing first causes
-   * "Broken accounting of active state" warnings as GTK can't update the
-   * state chain properly. */
-  if (self->repost_popover && GTK_IS_POPOVER(self->repost_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->repost_popover));
-  }
+  /* nostrc-css-stability: Do not mutate popover visibility/state in dispose.
+   * Let gtk_widget_dispose_template() own child teardown order; forcing
+   * popdown here can race with style node destruction under heavy recycling. */
   self->repost_popover = NULL;
 
-  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
-  }
   self->menu_popover = NULL;
 
-  if (self->emoji_picker_popover && GTK_IS_POPOVER(self->emoji_picker_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->emoji_picker_popover));
-  }
   self->emoji_picker_popover = NULL;
 
-  if (self->reactions_popover && GTK_IS_POPOVER(self->reactions_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->reactions_popover));
-  }
   self->reactions_popover = NULL;
   /* NIP-25: Clean up reaction breakdown */
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
   g_clear_pointer(&self->reactors, g_ptr_array_unref);
-  
-  /* Clear labels only on the first dispose pass.
-   * If prepare_for_unbind already ran, labels were already cleared while native
-   * was valid. Re-running aggressive cleanup here can re-enter GTK teardown
-   * paths and corrupt widget lifecycle accounting. */
-  if (!was_prepared_for_unbind) {
-#define DISPOSE_LABEL(lbl) \
-    do { if (GNOSTR_LABEL_SAFE(lbl)) gtk_label_set_text(GTK_LABEL(lbl), ""); } while (0)
-
-    DISPOSE_LABEL(self->content_label);
-    DISPOSE_LABEL(self->lbl_display);
-    DISPOSE_LABEL(self->lbl_handle);
-    DISPOSE_LABEL(self->lbl_relay);
-    DISPOSE_LABEL(self->lbl_timestamp);
-    DISPOSE_LABEL(self->lbl_nip05);
-    DISPOSE_LABEL(self->lbl_nip05_separator);
-    DISPOSE_LABEL(self->lbl_timestamp_separator);
-    DISPOSE_LABEL(self->reply_indicator_label);
-    DISPOSE_LABEL(self->reply_count_label);
-    DISPOSE_LABEL(self->lbl_like_count);
-    DISPOSE_LABEL(self->lbl_zap_count);
-    DISPOSE_LABEL(self->repost_indicator_label);
-    DISPOSE_LABEL(self->lbl_repost_count);
-    DISPOSE_LABEL(self->zap_indicator_label);
-    DISPOSE_LABEL(self->sensitive_warning_label);
-    DISPOSE_LABEL(self->subject_label);
-    DISPOSE_LABEL(self->article_title_label);
-    DISPOSE_LABEL(self->article_reading_time);
-    DISPOSE_LABEL(self->video_title_label);
-    DISPOSE_LABEL(self->video_duration_badge);
-    DISPOSE_LABEL(self->avatar_initials);
-
-#undef DISPOSE_LABEL
-  }
-
-  /* Part 2: NULL the layout manager to prevent the BoxLayout from trying to
-   * measure remaining children while others are being disposed. */
-  /* DISABLED: This may cause GTK to access freed memory during template disposal.
-   * Let GTK handle layout manager cleanup automatically. */
-  // gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
   gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
@@ -6178,188 +6126,15 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
 void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
   g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
 
-  /* nostrc-pgo6 + nostrc-hbz: Clear ALL labels that might contain content
-   * WHILE the widget still has a native surface. This resets PangoLayouts
-   * to a clean state before disposal. Without this, dispose() reaches
-   * gtk_widget_dispose_template with potentially-corrupt PangoLayouts.
-   *
-   * CRITICAL: This list MUST match the DISPOSE_LABEL list in dispose().
-   * Missing labels here cause hb_segment_properties_equal NULL deref when
-   * GTK re-measures stale PangoLayouts during the frame clock layout pass
-   * after mass unbind.
-   *
-   * At unbind time the widget is usually still parented with a valid native
-   * surface, so gtk_label_set_text is safe. When native IS gone (hidden
-   * view eviction), the GNOSTR_LABEL_SAFE check skips the clear and
-   * dispose() handles it via the ref-leak safety net.
-   *
-   * nostrc-css-guard: Disable CSS updates during unbind to prevent GTK from
-   * triggering CSS node validation which can corrupt the CSS tree during
-   * rapid widget recycling. This prevents malloc heap corruption crashes. */
-  gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
-
-#define UNBIND_CLEAR_LABEL(lbl) \
-  do { if (GNOSTR_LABEL_SAFE(lbl)) gtk_label_set_text(GTK_LABEL(lbl), ""); } while (0)
-
-  UNBIND_CLEAR_LABEL(self->content_label);
-  UNBIND_CLEAR_LABEL(self->lbl_display);
-  UNBIND_CLEAR_LABEL(self->lbl_handle);
-  UNBIND_CLEAR_LABEL(self->lbl_relay);
-  UNBIND_CLEAR_LABEL(self->lbl_timestamp);
-  UNBIND_CLEAR_LABEL(self->lbl_nip05);
-  UNBIND_CLEAR_LABEL(self->lbl_nip05_separator);
-  UNBIND_CLEAR_LABEL(self->lbl_timestamp_separator);
-  UNBIND_CLEAR_LABEL(self->reply_indicator_label);
-  UNBIND_CLEAR_LABEL(self->reply_count_label);
-  UNBIND_CLEAR_LABEL(self->lbl_like_count);
-  UNBIND_CLEAR_LABEL(self->lbl_zap_count);
-  UNBIND_CLEAR_LABEL(self->repost_indicator_label);
-  UNBIND_CLEAR_LABEL(self->lbl_repost_count);
-  UNBIND_CLEAR_LABEL(self->zap_indicator_label);
-  UNBIND_CLEAR_LABEL(self->sensitive_warning_label);
-  UNBIND_CLEAR_LABEL(self->subject_label);
-  UNBIND_CLEAR_LABEL(self->article_title_label);
-  UNBIND_CLEAR_LABEL(self->article_reading_time);
-  UNBIND_CLEAR_LABEL(self->video_title_label);
-  UNBIND_CLEAR_LABEL(self->video_duration_badge);
-  UNBIND_CLEAR_LABEL(self->avatar_initials);
-
-#undef UNBIND_CLEAR_LABEL
-
-  if (self->lbl_relay && GTK_IS_WIDGET(self->lbl_relay))
-    gtk_widget_set_visible(self->lbl_relay, FALSE);
-
-  /* Mark as disposed FIRST to prevent any async callbacks from running */
-  self->disposed = TRUE;
-
-  /* Clear binding ID (nostrc-534d) - marks row as unbound.
-   * Any in-flight async callbacks with a captured binding_id will see the
-   * mismatch and bail out before modifying the widget. */
-  self->binding_id = 0;
-
-  /* nostrc-hbz: CRITICAL - Clear ALL GtkPicture widgets to reset their internal
-   * GtkImageDefinition references. Without this, gtk_widget_dispose_template
-   * tries to unref image definitions that are in an invalid state, causing
-   * "code should not be reached" assertion failures in gtk_image_definition_unref.
-   * 
-   * This MUST be done during unbind when the widget is still valid, not during
-   * dispose when GTK's internal state may already be corrupted. */
-#define UNBIND_CLEAR_PICTURE(pic) \
-  do { if (pic && GTK_IS_PICTURE(pic)) gtk_picture_set_paintable(GTK_PICTURE(pic), NULL); } while (0)
-
-  UNBIND_CLEAR_PICTURE(self->avatar_image);
-  UNBIND_CLEAR_PICTURE(self->article_image);
-  
-  /* Clear all media pictures in media_box */
-  if (self->media_box && GTK_IS_BOX(self->media_box)) {
-    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
-    while (child) {
-      GtkWidget *next = gtk_widget_get_next_sibling(child);
-      /* Handle both old structure (direct GtkPicture) and new structure (GtkOverlay container) */
-      if (GTK_IS_PICTURE(child)) {
-        gtk_picture_set_paintable(GTK_PICTURE(child), NULL);
-      } else if (GTK_IS_OVERLAY(child)) {
-        GtkWidget *pic = g_object_get_data(G_OBJECT(child), "media-picture");
-        if (pic && GTK_IS_PICTURE(pic)) {
-          gtk_picture_set_paintable(GTK_PICTURE(pic), NULL);
-        }
-      }
-      child = next;
-    }
-  }
-  
-  /* Clear emoji pictures in emoji_box */
-  if (self->emoji_box && GTK_IS_BOX(self->emoji_box)) {
-    GtkWidget *child = gtk_widget_get_first_child(self->emoji_box);
-    while (child) {
-      GtkWidget *next = gtk_widget_get_next_sibling(child);
-      if (GTK_IS_PICTURE(child)) {
-        gtk_picture_set_paintable(GTK_PICTURE(child), NULL);
-      }
-      child = next;
-    }
+  /* Must be idempotent: GTK can trigger unbind/teardown more than once for
+   * the same recycled row. Re-running cleanup risks dereferencing stale child
+   * pointers after template teardown has started. */
+  if (self->disposed) {
+    return;
   }
 
-#undef UNBIND_CLEAR_PICTURE
-
-  /* nostrc-dqwq.2: Disconnect deferred media map handler to prevent stale
-   * callbacks on recycled widgets. Also clear any pending items that were
-   * never realized (row was buffered but never scrolled into view). */
-  if (self->media_map_handler_id > 0 && self->media_box && GTK_IS_BOX(self->media_box)) {
-    g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
-  }
-  self->media_map_handler_id = 0;
-  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
-  self->media_widgets_created = FALSE;
-
-  /* NIP-71: Stop ALL video players IMMEDIATELY to prevent GStreamer from
-   * accessing Pango layouts or other widget memory while the widget is being
-   * disposed. This is CRITICAL - if dispose() is called with disposed==TRUE
-   * (from a prior prepare_for_unbind call), it will jump to do_template_dispose
-   * and skip the video player stopping code, causing memory corruption and crashes
-   * like gtk_image_definition_unref when GStreamer writes to freed memory.
-   * nostrc-7lv: Fix ASAN crash when clicking "New Notes" toast. */
-  if (self->video_player && GNOSTR_IS_VIDEO_PLAYER(self->video_player)) {
-    gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(self->video_player));
-  }
-  /* Stop any video players in media_box (inline videos from note content) */
-  if (self->media_box && GTK_IS_BOX(self->media_box)) {
-    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
-    while (child) {
-      if (GNOSTR_IS_VIDEO_PLAYER(child)) {
-        gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(child));
-      }
-      child = gtk_widget_get_next_sibling(child);
-    }
-  }
-
-  /* OG Preview and Note Embed: These child widgets manage their own disposal.
-   * nostrc-csj2: CRITICAL FIX - Do NOT call prepare_for_unbind on cached widget pointers.
-   * The cached pointers (self->og_preview, self->note_embed) can become stale when:
-   * 1. The widget was destroyed during a prior set_content() call
-   * 2. Memory was reused for other allocations (e.g., signal handler data)
-   * 3. We then try to write to freed memory -> heap-buffer-overflow
-   *
-   * Since these widgets use the parent's async_cancellable (which we cancel below),
-   * their async operations will be cancelled automatically. Their own dispose()
-   * methods will handle final cleanup. Just clear the cached pointers. */
-  self->og_preview = NULL;
-  self->note_embed = NULL;
-
-  /* Cancel all async operations immediately */
-  if (self->async_cancellable) {
-    g_cancellable_cancel(self->async_cancellable);
-  }
-
-  /* Cancel legacy cancellables */
-  if (self->nip05_cancellable) {
-    g_cancellable_cancel(self->nip05_cancellable);
-  }
-
-#ifdef HAVE_SOUP3
-  if (self->avatar_cancellable) {
-    g_cancellable_cancel(self->avatar_cancellable);
-  }
-  if (self->article_image_cancellable) {
-    g_cancellable_cancel(self->article_image_cancellable);
-  }
-  /* Cancel all media fetches */
-  if (self->media_cancellables) {
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, self->media_cancellables);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-      GCancellable *cancellable = G_CANCELLABLE(value);
-      if (cancellable) g_cancellable_cancel(cancellable);
-    }
-  }
-#endif
-
-  /* Remove timestamp timer to prevent it from firing during disposal */
-  if (self->timestamp_timer_id > 0) {
-    g_source_remove(self->timestamp_timer_id);
-    self->timestamp_timer_id = 0;
-  }
+  /* Single, non-visual unbind path shared with dispose. */
+  nostr_gtk_note_card_row_quiesce(self, FALSE);
 }
 
 /**
