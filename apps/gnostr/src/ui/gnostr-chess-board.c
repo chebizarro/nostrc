@@ -282,7 +282,7 @@ static void on_promotion_selected(GtkButton *button, gpointer user_data) {
 
   if (chess_engine_make_move(self->engine, from_sq, to_sq, promotion)) {
     /* Update game state */
-    gchar *uci = g_strdup_printf("%s%s%c", from_sq, to_sq, promotion);
+    g_autofree gchar *uci = g_strdup_printf("%s%s%c", from_sq, to_sq, promotion);
 
     /* Apply move to our game state */
     gint from_idx = gnostr_chess_square_to_index(self->pending_promotion_from_file,
@@ -314,10 +314,8 @@ static void on_promotion_selected(GtkButton *button, gpointer user_data) {
     self->game->current_ply++;
 
     /* Emit move-made signal */
-    gchar *san = g_strdup_printf("%s=%c", to_sq, g_ascii_toupper(promotion));
+    g_autofree gchar *san = g_strdup_printf("%s=%c", to_sq, g_ascii_toupper(promotion));
     g_signal_emit(self, signals[SIGNAL_MOVE_MADE], 0, san, uci);
-    g_free(san);
-    g_free(uci);
 
     /* Check for game over */
     sync_engine_position(self);
@@ -441,7 +439,7 @@ static gboolean try_make_move(GnostrChessBoard *self, gint to_file, gint to_rank
 
   if (success) {
     /* Update game state */
-    gchar *uci = g_strdup_printf("%s%s", from_sq, to_sq);
+    g_autofree gchar *uci = g_strdup_printf("%s%s", from_sq, to_sq);
 
     gint from_idx = gnostr_chess_square_to_index(self->selected_file, self->selected_rank);
     gint to_idx = gnostr_chess_square_to_index(to_file, to_rank);
@@ -507,7 +505,6 @@ static gboolean try_make_move(GnostrChessBoard *self, gint to_file, gint to_rank
     g_signal_emit(self, signals[SIGNAL_MOVE_MADE], 0, san, uci);
 
     g_free(san);
-    g_free(uci);
 
     /* Check for game over */
     sync_engine_position(self);

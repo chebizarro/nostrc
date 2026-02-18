@@ -322,9 +322,8 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
   /* Build naddr for NIP-33 addressable event */
   char *naddr = gnostr_wiki_build_naddr(self->pubkey_hex, self->d_tag, NULL);
   if (naddr) {
-    char *uri = g_strdup_printf("nostr:%s", naddr);
+    g_autofree char *uri = g_strdup_printf("nostr:%s", naddr);
     g_signal_emit(self, signals[SIGNAL_SHARE_ARTICLE], 0, uri);
-    g_free(uri);
     free(naddr);
   }
 }
@@ -839,7 +838,7 @@ void gnostr_wiki_card_set_article(GnostrWikiCard *self,
   if (GTK_IS_LABEL(self->lbl_updated_date)) {
     gint64 display_time = created_at > 0 ? created_at : published_at;
     gchar *date_str = format_date(display_time);
-    gchar *updated_text = g_strdup_printf(_("Updated %s"), date_str);
+    g_autofree gchar *updated_text = g_strdup_printf(_("Updated %s"), date_str);
     gtk_label_set_text(GTK_LABEL(self->lbl_updated_date), updated_text);
 
     /* Set tooltip with full date */
@@ -853,7 +852,6 @@ void gnostr_wiki_card_set_article(GnostrWikiCard *self,
       }
     }
     g_free(date_str);
-    g_free(updated_text);
   }
 }
 
@@ -875,9 +873,8 @@ void gnostr_wiki_card_set_author(GnostrWikiCard *self,
 
   /* Set handle */
   if (GTK_IS_LABEL(self->lbl_author_handle)) {
-    gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
+    g_autofree gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
     gtk_label_set_text(GTK_LABEL(self->lbl_author_handle), handle_str);
-    g_free(handle_str);
   }
 
   /* Set avatar */

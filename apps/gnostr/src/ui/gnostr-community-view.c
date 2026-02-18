@@ -320,17 +320,15 @@ static void
 update_stats_display(GnostrCommunityView *self)
 {
     if (GTK_IS_LABEL(self->lbl_members)) {
-        char *text = g_strdup_printf(g_dngettext(NULL, "%u member", "%u members",
+        g_autofree char *text = g_strdup_printf(g_dngettext(NULL, "%u member", "%u members",
                                                   self->member_count), self->member_count);
         gtk_label_set_text(GTK_LABEL(self->lbl_members), text);
-        g_free(text);
     }
 
     if (GTK_IS_LABEL(self->lbl_posts)) {
-        char *text = g_strdup_printf(g_dngettext(NULL, "%u post", "%u posts",
+        g_autofree char *text = g_strdup_printf(g_dngettext(NULL, "%u post", "%u posts",
                                                   self->post_count), self->post_count);
         gtk_label_set_text(GTK_LABEL(self->lbl_posts), text);
-        g_free(text);
     }
 }
 
@@ -475,11 +473,9 @@ bind_post_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user
         nostr_gtk_note_card_row_set_author(row, author_name, NULL, author_avatar);
     } else {
         /* Fallback to truncated pubkey */
-        char *short_pubkey = g_strndup(post->author_pubkey, 8);
-        char *handle = g_strdup_printf("@%s...", short_pubkey);
+        g_autofree char *short_pubkey = g_strndup(post->author_pubkey, 8);
+        g_autofree char *handle = g_strdup_printf("@%s...", short_pubkey);
         nostr_gtk_note_card_row_set_author(row, _("Anonymous"), handle, NULL);
-        g_free(short_pubkey);
-        g_free(handle);
     }
 
     /* Set login state */
@@ -597,11 +593,9 @@ bind_pending_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     if (author_name) {
         nostr_gtk_note_card_row_set_author(row, author_name, NULL, author_avatar);
     } else {
-        char *short_pubkey = g_strndup(post->author_pubkey, 8);
-        char *handle = g_strdup_printf("@%s...", short_pubkey);
+        g_autofree char *short_pubkey = g_strndup(post->author_pubkey, 8);
+        g_autofree char *handle = g_strdup_printf("@%s...", short_pubkey);
         nostr_gtk_note_card_row_set_author(row, _("Anonymous"), handle, NULL);
-        g_free(short_pubkey);
-        g_free(handle);
     }
 
     /* Configure approve/reject buttons */
