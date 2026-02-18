@@ -73,12 +73,14 @@ normalize_hashtag(const char *raw)
   return lower;
 }
 
-/* Comparison for sorting by count descending */
+/* Comparison for sorting by count descending
+ * NOTE: g_ptr_array_sort passes pointers to array elements (which are themselves pointers),
+ * so we need to dereference twice: a -> *a -> struct */
 static gint
 compare_by_count_desc(gconstpointer a, gconstpointer b)
 {
-  const GnostrTrendingHashtag *ha = (const GnostrTrendingHashtag *)a;
-  const GnostrTrendingHashtag *hb = (const GnostrTrendingHashtag *)b;
+  const GnostrTrendingHashtag *ha = *(const GnostrTrendingHashtag **)a;
+  const GnostrTrendingHashtag *hb = *(const GnostrTrendingHashtag **)b;
   
   /* Guard against NULL pointers */
   if (!ha && !hb) return 0;
