@@ -2801,31 +2801,59 @@ void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, con
 void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
+  /* Stop drain timer to avoid concurrent mutations during clear */
+  remove_drain_timer(self);
+
+  /* Clear insertion buffer pipeline state */
+  if (self->insertion_buffer)
+    g_array_set_size(self->insertion_buffer, 0);
+  if (self->insertion_key_set)
+    g_hash_table_remove_all(self->insertion_key_set);
+  self->backpressure_active = FALSE;
+  self->unseen_count = 0;
+  self->evict_defer_counter = 0;
+
   guint old_size = self->notes->len;
+  if (old_size == 0) {
+    /* Still clear caches to be safe */
+    g_hash_table_remove_all(self->item_cache);
+    g_queue_clear(self->cache_lru);
+    g_hash_table_remove_all(self->thread_info);
+    if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
+    if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
+    if (self->skip_animation_keys) g_hash_table_remove_all(self->skip_animation_keys);
+    return;
+  }
 
-  /* nostrc-atomic-replace: Use silent reset — NO items_changed signal.
+  /* nostrc-atomic-replace: Emit items_changed FIRST while data is still valid,
+   * then clean up caches AFTER GTK has finished unbinding widgets.
    *
-   * Emitting items_changed(0, N, 0) triggers GTK's GtkListItemManager to
-   * synchronously dispose all list item widgets in one stack frame. During
-   * mass disposal, CSS node finalization corrupts the heap's free list
-   * (tiny_free_list_remove_ptr: Internal invariant broken) because sibling
-   * widgets share CSS node parent chains and one finalization corrupts the
-   * linked list another is still traversing.
+   * Why this order matters:
+   * - GTK processes items_changed synchronously: unbind callbacks fire during
+   *   this call, and they may call get_item() or access cached GnNostrEventItem
+   *   objects. The notes array and caches MUST be valid during the signal.
+   * - After the signal returns, GTK has unbound all widgets from the old items.
+   *   It is now safe to free the cached data.
    *
-   * The fix: clear silently and let the NEXT operation reconcile GTK state:
-   * - refresh paths emit items_changed(0, 0, new_size) → only additions
-   * - model destruction → GTK tears down the ListView naturally
-   * - new model set → GTK replaces all items via selection model change
-   *
-   * This is safe because:
-   * 1. get_n_items() returns 0 immediately (notes array is empty)
-   * 2. get_item() returns NULL for all positions (correct for empty model)
-   * 3. GTK's ListView will reconcile on the next items_changed or model swap
+   * Why a single signal (not batched):
+   * - One items_changed(0, N, 0) → one pass through GtkListItemManager →
+   *   widgets are unbound in order, no interleaved cache mutation.
+   * - Batched removal interleaved cache cleanup with signals, causing
+   *   use-after-free when GTK accessed items from a previous batch.
    */
-  reset_internal_state_silent(self);
+  g_array_set_size(self->notes, 0);
+  g_hash_table_remove_all(self->note_key_set);
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
 
-  if (old_size > 0)
-    g_debug("[MODEL] Cleared %u items (silent)", old_size);
+  /* NOW safe to clean caches — GTK has finished with all widgets */
+  g_hash_table_remove_all(self->item_cache);
+  g_queue_clear(self->cache_lru);
+  g_hash_table_remove_all(self->thread_info);
+  if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
+  if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
+  if (self->skip_animation_keys) g_hash_table_remove_all(self->skip_animation_keys);
+
+  g_debug("[MODEL] Cleared %u items (single signal, deferred cache cleanup)", old_size);
 }
 
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self) {
