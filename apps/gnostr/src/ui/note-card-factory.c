@@ -341,15 +341,17 @@ factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
 }
 
 /* Callback for when profile property changes on a bound item.
- * nostrc-NEW: Updates card when profile is fetched asynchronously. */
+ * nostrc-NEW: Updates card when profile is fetched asynchronously.
+ * nostrc-ncr-lifecycle: user_data is a ref'd NoteCardBindingContext, not raw row ptr.
+ * Uses note_card_binding_context_get_row() for safe row access. */
 static void
 on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
 {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row)) return;
-  if (nostr_gtk_note_card_row_is_disposed(NOSTR_GTK_NOTE_CARD_ROW(row))) return;
+  NoteCardBindingContext *ctx = (NoteCardBindingContext *)user_data;
+  GObject *row_obj = note_card_binding_context_get_row(ctx);
+  if (!row_obj) return; /* Context cancelled (row recycled) or row finalized */
+  GtkWidget *row = GTK_WIDGET(row_obj);
 
   /* Get updated profile from model item */
   GObject *profile = NULL;
@@ -383,6 +385,7 @@ on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
     g_free(avatar_url);
     g_free(nip05);
   }
+  g_object_unref(row_obj); /* nostrc-ncr-lifecycle: release strong ref from get_row() */
 }
 
 /*
@@ -455,12 +458,22 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
     nostr_gtk_note_card_row_set_relay_info(card, relay_urls);
   }
 
-  /* Profile signal connection (deferred from Tier 1) */
+  /* Profile signal connection (deferred from Tier 1).
+   * nostrc-ncr-lifecycle: Pass a ref'd NoteCardBindingContext as user_data
+   * instead of the raw row pointer. The GClosureNotify releases the ref
+   * when the signal handler is disconnected or the source object is finalized. */
   gulong existing = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
   if (existing == 0) {
-    gulong handler_id = g_signal_connect(obj, "notify::profile",
-                                          G_CALLBACK(on_item_profile_changed), row);
-    g_object_set_data(G_OBJECT(row), "profile-handler-id", GSIZE_TO_POINTER((gsize)handler_id));
+    NoteCardBindingContext *bind_ctx = nostr_gtk_note_card_row_get_binding_ctx(card);
+    if (bind_ctx) {
+      gulong handler_id = g_signal_connect_data(
+          obj, "notify::profile",
+          G_CALLBACK(on_item_profile_changed),
+          note_card_binding_context_ref(bind_ctx),
+          (GClosureNotify)note_card_binding_context_unref,
+          0);
+      g_object_set_data(G_OBJECT(row), "profile-handler-id", GSIZE_TO_POINTER((gsize)handler_id));
+    }
   }
 }
 
@@ -480,8 +493,11 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
    * and creates fresh cancellable. Must be called BEFORE populating the row. */
   nostr_gtk_note_card_row_prepare_for_bind(NOSTR_GTK_NOTE_CARD_ROW(row));
 
-  /* Store item reference for Tier 2 and profile handler cleanup */
-  g_object_set_data(G_OBJECT(row), "bound-item", obj);
+  /* Store item reference for Tier 2 and profile handler cleanup.
+   * nostrc-ncr-lifecycle: Take a ref on the item so it can't be freed while
+   * the row is still bound. Release on unbind via g_object_set_data_full. */
+  g_object_set_data_full(G_OBJECT(row), "bound-item",
+                         g_object_ref(obj), g_object_unref);
   g_object_set_data(G_OBJECT(row), "ncf-factory", self);
   /* Initialize profile handler as unset — Tier 2 will connect it */
   g_object_set_data(G_OBJECT(row), "profile-handler-id", GSIZE_TO_POINTER(0));
