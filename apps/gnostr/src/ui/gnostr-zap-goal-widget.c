@@ -203,9 +203,8 @@ void gnostr_zap_goal_widget_set_creator(GnostrZapGoalWidget *self,
       gtk_label_set_text(GTK_LABEL(self->creator_label), display_name);
     } else if (pubkey_hex) {
       /* Show truncated pubkey */
-      gchar *truncated = g_strdup_printf("%.8s...%.4s", pubkey_hex, pubkey_hex + 60);
+      g_autofree gchar *truncated = g_strdup_printf("%.8s...%.4s", pubkey_hex, pubkey_hex + 60);
       gtk_label_set_text(GTK_LABEL(self->creator_label), truncated);
-      g_free(truncated);
     }
   }
 
@@ -234,9 +233,8 @@ void gnostr_zap_goal_widget_set_target(GnostrZapGoalWidget *self,
   /* Update title with target */
   if (GTK_IS_LABEL(self->title_label)) {
     gchar *target_str = gnostr_nip75_format_target(target_msat);
-    gchar *title = g_strdup_printf("Zap Goal: %s", target_str);
+    g_autofree gchar *title = g_strdup_printf("Zap Goal: %s", target_str);
     gtk_label_set_text(GTK_LABEL(self->title_label), title);
-    g_free(title);
     g_free(target_str);
   }
 
@@ -337,19 +335,17 @@ static void update_progress_display(GnostrZapGoalWidget *self) {
     gchar *progress_str = gnostr_nip75_format_progress(self->received_msat,
                                                         self->target_msat);
     gdouble percent = gnostr_zap_goal_widget_get_progress_percent(self);
-    gchar *full_str = g_strdup_printf("%s (%.0f%%)", progress_str, percent);
+    g_autofree gchar *full_str = g_strdup_printf("%s (%.0f%%)", progress_str, percent);
     gtk_label_set_text(GTK_LABEL(self->progress_label), full_str);
-    g_free(full_str);
     g_free(progress_str);
   }
 
   /* Update zap count */
   if (GTK_IS_LABEL(self->zap_count_label)) {
-    gchar *count_str = g_strdup_printf("%u zap%s",
+    g_autofree gchar *count_str = g_strdup_printf("%u zap%s",
                                        self->zap_count,
                                        self->zap_count == 1 ? "" : "s");
     gtk_label_set_text(GTK_LABEL(self->zap_count_label), count_str);
-    g_free(count_str);
   }
 }
 
@@ -359,9 +355,8 @@ static void update_deadline_display(GnostrZapGoalWidget *self) {
   if (self->closed_at > 0) {
     gchar *remaining = gnostr_nip75_format_time_remaining(self->closed_at);
     if (remaining) {
-      gchar *deadline_text = g_strdup_printf("%s remaining", remaining);
+      g_autofree gchar *deadline_text = g_strdup_printf("%s remaining", remaining);
       gtk_label_set_text(GTK_LABEL(self->deadline_label), deadline_text);
-      g_free(deadline_text);
       g_free(remaining);
     } else {
       gtk_label_set_text(GTK_LABEL(self->deadline_label), "Ended");

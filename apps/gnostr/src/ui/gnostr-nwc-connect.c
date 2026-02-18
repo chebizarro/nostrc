@@ -175,9 +175,8 @@ static void update_ui_for_state(GnostrNwcConnect *self) {
     const gchar *pubkey = gnostr_nwc_service_get_wallet_pubkey(nwc);
     if (pubkey) {
       /* Show truncated pubkey */
-      gchar *truncated = g_strdup_printf("%.8s...%.8s", pubkey, pubkey + 56);
+      g_autofree gchar *truncated = g_strdup_printf("%.8s...%.8s", pubkey, pubkey + 56);
       gtk_label_set_text(GTK_LABEL(self->lbl_wallet_pubkey), truncated);
-      g_free(truncated);
     }
 
     const gchar *relay = gnostr_nwc_service_get_relay(nwc);

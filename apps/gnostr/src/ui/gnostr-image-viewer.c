@@ -310,9 +310,8 @@ static void update_zoom_display(GnostrImageViewer *self) {
   if (!GTK_IS_LABEL(self->zoom_label)) return;
 
   double display_zoom = (self->zoom_level == FIT_ZOOM) ? self->actual_zoom : self->zoom_level;
-  char *text = g_strdup_printf("%.0f%%", display_zoom * 100);
+  g_autofree char *text = g_strdup_printf("%.0f%%", display_zoom * 100);
   gtk_label_set_text(GTK_LABEL(self->zoom_label), text);
-  g_free(text);
 }
 
 static void apply_zoom(GnostrImageViewer *self) {
@@ -819,9 +818,8 @@ static void update_nav_display(GnostrImageViewer *self) {
   if (nav_box) gtk_widget_set_visible(nav_box, TRUE);
 
   /* Update label */
-  char *text = g_strdup_printf("%u / %u", self->gallery_index + 1, self->gallery_count);
+  g_autofree char *text = g_strdup_printf("%u / %u", self->gallery_index + 1, self->gallery_count);
   gtk_label_set_text(GTK_LABEL(self->nav_label), text);
-  g_free(text);
 
   /* Update button sensitivity */
   gtk_widget_set_sensitive(self->prev_button, self->gallery_index > 0);

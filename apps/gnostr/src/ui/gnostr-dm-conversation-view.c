@@ -253,9 +253,8 @@ on_file_bubble_clicked(GtkButton *button, gpointer user_data)
         else if (g_str_has_prefix(fm->file_type, "audio/mp3") ||
                  g_str_has_prefix(fm->file_type, "audio/mpeg")) ext = "mp3";
     }
-    char *suggested = g_strdup_printf("dm-file.%s", ext);
+    g_autofree char *suggested = g_strdup_printf("dm-file.%s", ext);
     gtk_file_dialog_set_initial_name(dialog, suggested);
-    g_free(suggested);
 
     GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(button));
     gtk_file_dialog_save(dialog, GTK_WINDOW(root), NULL,

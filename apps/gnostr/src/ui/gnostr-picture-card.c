@@ -858,10 +858,9 @@ update_display(GnostrPictureCard *self) {
 
   /* Gallery indicator */
   if (self->picture->image_count > 1) {
-    gchar *count_str = g_strdup_printf("%zu", self->picture->image_count);
+    g_autofree gchar *count_str = g_strdup_printf("%zu", self->picture->image_count);
     gtk_label_set_text(GTK_LABEL(self->gallery_count_label), count_str);
     gtk_widget_set_visible(self->gallery_indicator, TRUE);
-    g_free(count_str);
   } else {
     gtk_widget_set_visible(self->gallery_indicator, FALSE);
   }
@@ -892,7 +891,7 @@ update_display(GnostrPictureCard *self) {
 
   if (self->picture->hashtags && self->picture->hashtag_count > 0 && !self->is_compact) {
     for (size_t i = 0; i < self->picture->hashtag_count && i < 5; i++) {
-      gchar *tag_text = g_strdup_printf("#%s", self->picture->hashtags[i]);
+      g_autofree gchar *tag_text = g_strdup_printf("#%s", self->picture->hashtags[i]);
       GtkWidget *tag_btn = gtk_button_new_with_label(tag_text);
       gtk_button_set_has_frame(GTK_BUTTON(tag_btn), FALSE);
       gtk_widget_add_css_class(tag_btn, "flat");
@@ -903,7 +902,6 @@ update_display(GnostrPictureCard *self) {
       g_signal_connect(tag_btn, "clicked", G_CALLBACK(on_hashtag_clicked), self);
 
       gtk_flow_box_insert(GTK_FLOW_BOX(self->hashtags_box), tag_btn, -1);
-      g_free(tag_text);
     }
     gtk_widget_set_visible(self->hashtags_box, TRUE);
   } else {
@@ -1052,7 +1050,7 @@ update_reaction_display(GnostrPictureCard *self) {
 
   /* Zaps */
   if (self->picture->zap_count > 0) {
-    gchar *count;
+    g_autofree gchar *count = NULL;
     if (self->picture->zap_amount >= 1000000) {
       count = g_strdup_printf("%.1fM", self->picture->zap_amount / 1000000.0);
     } else if (self->picture->zap_amount >= 1000) {
@@ -1062,7 +1060,6 @@ update_reaction_display(GnostrPictureCard *self) {
     }
     gtk_label_set_text(GTK_LABEL(self->zap_count_label), count);
     gtk_widget_set_visible(self->zap_count_label, TRUE);
-    g_free(count);
   } else {
     gtk_widget_set_visible(self->zap_count_label, FALSE);
   }

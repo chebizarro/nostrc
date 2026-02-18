@@ -516,14 +516,13 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
       display_name = gnostr_profile_get_display_name(profile);
       handle = gnostr_profile_get_name(profile);
     }
-    gchar *display_fallback = NULL;
+    g_autofree gchar *display_fallback = NULL;
     if (!display_name && !handle && pubkey && strlen(pubkey) >= 8) {
       display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
     nostr_gtk_note_card_row_set_author_name_only(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                display_name ? display_name : display_fallback,
                                                handle);
-    g_free(display_fallback);
 
     /* Tier 1: Timestamp */
     nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, NULL);
@@ -562,7 +561,7 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     if (g_object_class_find_property(klass, "avatar-url"))
       g_object_get(obj, "avatar-url", &avatar_url, NULL);
 
-    gchar *display_fallback = NULL;
+    g_autofree gchar *display_fallback = NULL;
     if (!display_name && !handle && pubkey && strlen(pubkey) >= 8) {
       display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
@@ -580,7 +579,6 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     g_free(display_name);
     g_free(handle);
     g_free(avatar_url);
-    g_free(display_fallback);
   }
 
   /* Connect Tier 2 map handler on the NoteCardRow widget */

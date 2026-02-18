@@ -357,11 +357,10 @@ on_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
     gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
     if (!ok || !signed_event_json) {
-        gchar *msg = g_strdup_printf(_("Signing failed: %s"),
+        g_autofree gchar *msg = g_strdup_printf(_("Signing failed: %s"),
                                      error ? error->message : _("unknown error"));
         show_toast(self, msg);
         g_signal_emit(self, signals[SIGNAL_PUBLISH_FAILED], 0, msg);
-        g_free(msg);
         g_clear_error(&error);
         set_publishing_state(self, FALSE, NULL);
         publish_context_free(ctx);

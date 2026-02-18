@@ -382,9 +382,8 @@ static void on_profile_sign_complete(GObject *source, GAsyncResult *res, gpointe
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
-    char *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
+    g_autofree char *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
     show_toast(self, msg);
-    g_free(msg);
     g_clear_error(&error);
     set_ui_sensitive(self, TRUE);
     self->saving = FALSE;
@@ -487,9 +486,8 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data) {
       gnostr_json_builder_add_string(builder, "i");
 
       /* Build "platform:identity" string */
-      char *tag_value = g_strdup_printf("%s:%s", identity->platform_name, identity->identity);
+      g_autofree char *tag_value = g_strdup_printf("%s:%s", identity->platform_name, identity->identity);
       gnostr_json_builder_add_string(builder, tag_value);
-      g_free(tag_value);
 
       /* Add proof URL if present */
       if (identity->proof_url && *identity->proof_url) {
@@ -653,9 +651,8 @@ static void on_add_identity_response(GtkDialog *dialog, int response, gpointer u
 
     if (identity && *identity) {
       /* Build tag value */
-      char *tag_value = g_strdup_printf("%s:%s", platform_str, identity);
+      g_autofree char *tag_value = g_strdup_printf("%s:%s", platform_str, identity);
       GnostrExternalIdentity *new_identity = gnostr_nip39_parse_identity(tag_value, proof && *proof ? proof : NULL);
-      g_free(tag_value);
 
       if (new_identity) {
         if (!ctx->self->external_identities) {
