@@ -26,9 +26,18 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     (void)user; // not used; use opaque user data API
     NostrConnection *conn = (NostrConnection *)lws_get_opaque_user_data(wsi);
 
+    /* nostrc-uaf: CRITICAL - Check conn validity BEFORE switch to prevent
+     * heap-use-after-free. During connection close, nostr_connection_close()
+     * calls lws_set_opaque_user_data(wsi, NULL) to detach, but callbacks
+     * can still fire in the race window before LWS processes the detachment.
+     * Without this check, we dereference freed memory at line 139. */
+    if (!conn) {
+        return 0; /* Connection detached, ignore callback */
+    }
+
     switch (reason) {
     case LWS_CALLBACK_CLIENT_RECEIVE: {
-        if (!conn || !conn->priv) break;
+        if (!conn->priv) break;
         // Enforce hard frame cap (check total accumulated size for fragmented messages)
         size_t total_len = conn->priv->rx_reassembly_len + len;
         if (total_len > (size_t)nostr_limit_max_frame_len()) {
