@@ -58,13 +58,13 @@ static void
 marmot_gobject_welcome_finalize(GObject *object)
 {
     MarmotGobjectWelcome *self = MARMOT_GOBJECT_WELCOME(object);
-    g_free(self->event_id_hex);
-    g_free(self->group_name);
-    g_free(self->group_description);
-    g_free(self->welcomer_hex);
-    g_free(self->mls_group_id_hex);
-    g_free(self->nostr_group_id_hex);
-    g_strfreev(self->relay_urls);
+    g_clear_pointer(&self->event_id_hex, g_free);
+    g_clear_pointer(&self->group_name, g_free);
+    g_clear_pointer(&self->group_description, g_free);
+    g_clear_pointer(&self->welcomer_hex, g_free);
+    g_clear_pointer(&self->mls_group_id_hex, g_free);
+    g_clear_pointer(&self->nostr_group_id_hex, g_free);
+    g_clear_pointer(&self->relay_urls, g_strfreev);
     G_OBJECT_CLASS(marmot_gobject_welcome_parent_class)->finalize(object);
 }
 

@@ -1147,14 +1147,13 @@ gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user
   if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
 
   /* Build filter: {"kinds":[7],"authors":["<pubkey>"],"#e":["<event_id>"],"limit":1} */
-  gchar *filter_json = g_strdup_printf(
+  g_autofree gchar *filter_json = g_strdup_printf(
     "{\"kinds\":[7],\"authors\":[\"%s\"],\"#e\":[\"%s\"],\"limit\":1}",
     user_pubkey_hex, event_id_hex);
 
   char **results = NULL;
   int count = 0;
   int rc = storage_ndb_query(txn, filter_json, &results, &count);
-  g_free(filter_json);
 
   storage_ndb_end_query(txn);
 
@@ -1220,11 +1219,10 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
 
     void *txn2 = NULL;
     if (storage_ndb_begin_query_retry(&txn2, 3, 10) == 0 && txn2) {
-      gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
+      g_autofree gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
       char **results = NULL;
       int count = 0;
       int rc = storage_ndb_query(txn2, filter_json, &results, &count);
-      g_free(filter_json);
 
       if (rc == 0 && results) {
         for (int i = 0; i < count; i++) {
@@ -1256,12 +1254,11 @@ guint storage_ndb_count_zaps(const char *event_id_hex)
   if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return 0;
 
   /* Build filter: {"kinds":[9735],"#e":["<event_id>"]} */
-  gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
+  g_autofree gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
 
   char **results = NULL;
   int count = 0;
   int rc = storage_ndb_query(txn, filter_json, &results, &count);
-  g_free(filter_json);
 
   storage_ndb_end_query(txn);
 
@@ -1314,12 +1311,11 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
   if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
 
   /* Build filter: {"kinds":[9735],"#e":["<event_id>"]} */
-  gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
+  g_autofree gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
 
   char **results = NULL;
   int count = 0;
   int rc = storage_ndb_query(txn, filter_json, &results, &count);
-  g_free(filter_json);
 
   storage_ndb_end_query(txn);
 
@@ -1498,9 +1494,8 @@ GHashTable *storage_ndb_user_has_reacted_batch(const char * const *event_ids, gu
   if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return reacted;
 
   /* Build filter with author constraint */
-  gchar *author_frag = g_strdup_printf("\"authors\":[\"%s\"],", user_pubkey_hex);
+  g_autofree gchar *author_frag = g_strdup_printf("\"authors\":[\"%s\"],", user_pubkey_hex);
   gchar *filter_json = storage_ndb_build_batch_filter(7, event_ids, n_ids, author_frag);
-  g_free(author_frag);
 
   char **results = NULL;
   int count = 0;
@@ -2041,21 +2036,19 @@ char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex)
   if (!user_pubkey_hex || strlen(user_pubkey_hex) != 64) return NULL;
 
   /* Query for kind 3 (contact list) from this author, limit 1 (most recent) */
-  gchar *filter = g_strdup_printf(
+  g_autofree gchar *filter = g_strdup_printf(
     "[{\"kinds\":[3],\"authors\":[\"%s\"],\"limit\":1}]",
     user_pubkey_hex);
 
   void *txn = NULL;
   int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
   if (rc != 0 || !txn) {
-    g_free(filter);
     return NULL;
   }
 
   char **results = NULL;
   int count = 0;
   rc = storage_ndb_query(txn, filter, &results, &count);
-  g_free(filter);
 
   if (rc != 0 || count == 0 || !results) {
     storage_ndb_end_query(txn);
@@ -2172,15 +2165,13 @@ int storage_ndb_cursor_next(StorageNdbCursor *cursor,
   char *query_json;
   if (cursor->first_call) {
     /* First call: merge in just the limit */
-    char *override = g_strdup_printf("{\"limit\":%u}", cursor->batch_size);
+    g_autofree char *override = g_strdup_printf("{\"limit\":%u}", cursor->batch_size);
     query_json = nostr_json_merge_objects(cursor->filter_json, override);
-    g_free(override);
   } else {
     /* Subsequent calls: merge in until + limit for pagination */
-    char *override = g_strdup_printf("{\"until\":%" G_GINT64_FORMAT ",\"limit\":%u}",
+    g_autofree char *override = g_strdup_printf("{\"until\":%" G_GINT64_FORMAT ",\"limit\":%u}",
                                      cursor->until, cursor->batch_size);
     query_json = nostr_json_merge_objects(cursor->filter_json, override);
-    g_free(override);
   }
 
   if (!query_json) return -1;

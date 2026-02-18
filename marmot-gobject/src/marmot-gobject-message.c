@@ -63,11 +63,11 @@ static void
 marmot_gobject_message_finalize(GObject *object)
 {
     MarmotGobjectMessage *self = MARMOT_GOBJECT_MESSAGE(object);
-    g_free(self->event_id_hex);
-    g_free(self->pubkey_hex);
-    g_free(self->content);
-    g_free(self->mls_group_id_hex);
-    g_free(self->event_json);
+    g_clear_pointer(&self->event_id_hex, g_free);
+    g_clear_pointer(&self->pubkey_hex, g_free);
+    g_clear_pointer(&self->content, g_free);
+    g_clear_pointer(&self->mls_group_id_hex, g_free);
+    g_clear_pointer(&self->event_json, g_free);
     G_OBJECT_CLASS(marmot_gobject_message_parent_class)->finalize(object);
 }
 
