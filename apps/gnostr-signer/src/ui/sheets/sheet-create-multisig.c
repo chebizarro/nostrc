@@ -729,14 +729,8 @@ static void sheet_create_multisig_dispose(GObject *object) {
   g_free(self->wallet_name);
   g_free(self->created_wallet_id);
 
-  if (self->selected_local) {
-    g_ptr_array_unref(self->selected_local);
-    self->selected_local = NULL;
-  }
-  if (self->remote_uris) {
-    g_ptr_array_unref(self->remote_uris);
-    self->remote_uris = NULL;
-  }
+  g_clear_pointer(&self->selected_local, g_ptr_array_unref);
+  g_clear_pointer(&self->remote_uris, g_ptr_array_unref);
 
   G_OBJECT_CLASS(sheet_create_multisig_parent_class)->dispose(object);
 }

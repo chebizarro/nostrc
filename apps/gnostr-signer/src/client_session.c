@@ -433,7 +433,7 @@ gn_client_session_manager_finalize(GObject *object)
   /* Save persistent sessions before shutdown */
   gn_client_session_manager_save_persistent(self);
 
-  g_hash_table_destroy(self->sessions);
+  g_clear_pointer(&self->sessions, g_hash_table_destroy);
   g_clear_object(&self->settings);
 
   if (default_manager == self) {

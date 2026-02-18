@@ -570,14 +570,8 @@ gnostr_tray_icon_new(GtkApplication *app)
       g_debug("tray-icon: Menu server created at /org/gnostr/client/menu");
     } else {
       g_warning("tray-icon: Failed to create menu server or root menu");
-      if (self->menu_server) {
-        g_object_unref(self->menu_server);
-        self->menu_server = NULL;
-      }
-      if (self->root_menu) {
-        g_object_unref(self->root_menu);
-        self->root_menu = NULL;
-      }
+      g_clear_object(&self->menu_server);
+      g_clear_object(&self->root_menu);
     }
   }
 #endif
