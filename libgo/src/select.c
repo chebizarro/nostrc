@@ -33,7 +33,6 @@ void go_select_waiter_init(GoSelectWaiter *w) {
     nsync_cv_init(&w->cond);
     atomic_store_explicit(&w->signaled, 0, memory_order_relaxed);
     w->fiber_handle = NULL;
-    w->next = NULL;
 }
 
 void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
@@ -42,17 +41,26 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     /* Must hold chan->mutex — caller is responsible (we take it here for safety) */
     nsync_mu_lock(&chan->mutex);
     /* Avoid double-registration: check if w is already in the list */
-    GoSelectWaiter *cur = (GoSelectWaiter *)chan->select_waiters;
+    GoSelectWaiterNode *cur = (GoSelectWaiterNode *)chan->select_waiters;
     while (cur) {
-        if (cur == w) {
+        if (cur->waiter == w) {
             nsync_mu_unlock(&chan->mutex);
             return; /* already registered */
         }
         cur = cur->next;
     }
-    /* Prepend to linked list (O(1)) */
-    w->next = (GoSelectWaiter *)chan->select_waiters;
-    chan->select_waiters = (struct GoSelectWaiter *)w;
+
+    /* Prepend per-channel registration node (O(1)).
+     * Do NOT store linkage in GoSelectWaiter itself: one waiter can be
+     * registered on multiple channels concurrently. */
+    GoSelectWaiterNode *node = (GoSelectWaiterNode *)malloc(sizeof(GoSelectWaiterNode));
+    if (!node) {
+        nsync_mu_unlock(&chan->mutex);
+        return;
+    }
+    node->waiter = w;
+    node->next = (GoSelectWaiterNode *)chan->select_waiters;
+    chan->select_waiters = node;
     nsync_mu_unlock(&chan->mutex);
 }
 
@@ -60,11 +68,12 @@ void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (!chan || !w) return;
     if (chan->magic != GO_CHANNEL_MAGIC) return;
     nsync_mu_lock(&chan->mutex);
-    GoSelectWaiter **pp = (GoSelectWaiter **)&chan->select_waiters;
+    GoSelectWaiterNode **pp = (GoSelectWaiterNode **)&chan->select_waiters;
     while (*pp) {
-        if (*pp == w) {
-            *pp = w->next;
-            w->next = NULL;
+        GoSelectWaiterNode *node = *pp;
+        if (node->waiter == w) {
+            *pp = node->next;
+            free(node);
             break;
         }
         pp = &(*pp)->next;
@@ -99,11 +108,16 @@ void go_channel_signal_select_waiters(GoChannel *chan) {
     if (!chan) return;
     /* Walk the select_waiters list and signal each one.
      * The list is protected by chan->mutex which the caller holds.
-     * Cache w->next before signaling to prevent use-after-free if the
+     * Cache node->next before signaling to prevent use-after-free if the
      * waiter wakes and unregisters before we advance. */
-    GoSelectWaiter *w = (GoSelectWaiter *)chan->select_waiters;
-    while (w) {
-        GoSelectWaiter *next = w->next;  /* Cache before signaling */
+    GoSelectWaiterNode *node = (GoSelectWaiterNode *)chan->select_waiters;
+    while (node) {
+        GoSelectWaiterNode *next = node->next;  /* Cache before signaling */
+        GoSelectWaiter *w = node->waiter;
+        if (!w) {
+            node = next;
+            continue;
+        }
         /* Set signaled flag atomically — waiter checks this in cv_wait loop */
         atomic_store_explicit(&w->signaled, 1, memory_order_release);
         /* Wake the waiter — either fiber or OS thread */
@@ -117,7 +131,7 @@ void go_channel_signal_select_waiters(GoChannel *chan) {
              * acquire the mutex and re-check the predicate. */
             nsync_cv_signal(&w->cond);
         }
-        w = next;
+        node = next;
     }
 }
 
