@@ -87,7 +87,7 @@ gchar *gnostr_normalize_relay_url(const char *url) {
   gchar *lscheme = g_ascii_strdown(scheme ? scheme : "wss", -1);
   gchar *lhost = g_ascii_strdown(host ? host : "", -1);
   gboolean drop_trailing = (path && g_strcmp0(path, "/") == 0);
-  gchar *norm = NULL;
+  g_autofree gchar *norm = NULL;
   if (port > 0) {
     norm = g_strdup_printf("%s://%s:%d", lscheme, lhost, port);
   } else {
@@ -102,7 +102,7 @@ gchar *gnostr_normalize_relay_url(const char *url) {
   g_free(lscheme);
   g_free(lhost);
   g_uri_unref(uri);
-  return norm;
+  return g_steal_pointer(&norm);
 }
 
 void gnostr_load_relays_into(GPtrArray *out) {

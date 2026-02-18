@@ -90,11 +90,10 @@ static void G_GNUC_UNUSED event_bus_emit_ok(const char *event_id, gboolean succe
     gchar *topic = gnostr_event_bus_format_ok_topic(event_id);
     if (topic) {
         /* Build simple JSON payload for OK response */
-        gchar *payload = g_strdup_printf("{\"success\":%s,\"message\":\"%s\"}",
+        g_autofree gchar *payload = g_strdup_printf("{\"success\":%s,\"message\":\"%s\"}",
                                           success ? "true" : "false",
                                           message ? message : "");
         gnostr_event_bus_emit(bus, topic, (gpointer)payload);
-        g_free(payload);
         g_free(topic);
     }
 }
@@ -114,10 +113,9 @@ static void G_GNUC_UNUSED event_bus_emit_notice(const char *relay_url, const cha
     GNostrEventBus *bus = gnostr_event_bus_get_default();
     if (!bus) return;
 
-    gchar *topic = g_strdup_printf("notice::%s", relay_url);
+    g_autofree gchar *topic = g_strdup_printf("notice::%s", relay_url);
     if (topic) {
         gnostr_event_bus_emit(bus, topic, (gpointer)message);
-        g_free(topic);
     }
 }
 
@@ -137,15 +135,13 @@ static void event_bus_emit_closed(const char *relay_url, const char *subscriptio
     if (!bus) return;
 
     /* Build message for CLOSED notification */
-    gchar *message = g_strdup_printf("{\"type\":\"closed\",\"subscription_id\":\"%s\",\"reason\":\"%s\"}",
+    g_autofree gchar *message = g_strdup_printf("{\"type\":\"closed\",\"subscription_id\":\"%s\",\"reason\":\"%s\"}",
                                       subscription_id ? subscription_id : "",
                                       reason ? reason : "");
-    gchar *topic = g_strdup_printf("notice::%s", relay_url);
+    g_autofree gchar *topic = g_strdup_printf("notice::%s", relay_url);
     if (topic) {
         gnostr_event_bus_emit(bus, topic, (gpointer)message);
-        g_free(topic);
     }
-    g_free(message);
 }
 
 /* ========================================================================

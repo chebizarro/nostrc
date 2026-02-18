@@ -75,7 +75,7 @@ ndb_store_query(GNostrStore *store, NostrFilter *filter, GError **error)
     }
 
     /* Wrap in array brackets for storage_ndb_query */
-    gchar *query_json = g_strdup_printf("[%s]", filter_json);
+    g_autofree gchar *query_json = g_strdup_printf("[%s]", filter_json);
     free(filter_json);
 
     /* Begin read transaction */
@@ -84,7 +84,6 @@ ndb_store_query(GNostrStore *store, NostrFilter *filter, GError **error)
     if (rc != 0 || !txn) {
         g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                     "Failed to begin NDB query transaction (rc=%d)", rc);
-        g_free(query_json);
         return NULL;
     }
 
@@ -92,7 +91,6 @@ ndb_store_query(GNostrStore *store, NostrFilter *filter, GError **error)
     char **results = NULL;
     int count = 0;
     rc = storage_ndb_query(txn, query_json, &results, &count);
-    g_free(query_json);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {
@@ -152,7 +150,7 @@ ndb_store_count(GNostrStore *store, NostrFilter *filter, GError **error)
         return -1;
     }
 
-    gchar *query_json = g_strdup_printf("[%s]", filter_json);
+    g_autofree gchar *query_json = g_strdup_printf("[%s]", filter_json);
     free(filter_json);
 
     void *txn = NULL;
@@ -160,14 +158,12 @@ ndb_store_count(GNostrStore *store, NostrFilter *filter, GError **error)
     if (rc != 0 || !txn) {
         g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                     "Failed to begin NDB query transaction (rc=%d)", rc);
-        g_free(query_json);
         return -1;
     }
 
     char **results = NULL;
     int count = 0;
     rc = storage_ndb_query(txn, query_json, &results, &count);
-    g_free(query_json);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {
@@ -280,14 +276,13 @@ ndb_store_text_search(GNostrStore *store, const gchar *query, gint limit, GError
         return NULL;
     }
 
-    gchar *config = NULL;
+    g_autofree gchar *config = NULL;
     if (limit > 0)
         config = g_strdup_printf("{\"limit\":%d}", limit);
 
     char **results = NULL;
     int count = 0;
     rc = storage_ndb_text_search(txn, query, config, &results, &count);
-    g_free(config);
     storage_ndb_end_query(txn);
 
     if (rc != 0) {
