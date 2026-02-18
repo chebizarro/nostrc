@@ -10,6 +10,7 @@
  */
 #include "blocking_executor.h"
 #include "fiber_hooks.h"
+#include "go_auto.h"
 #include <nsync.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -195,15 +196,15 @@ void *go_blocking_submit(void *(*fn)(void *arg), void *arg) {
         return fn(arg);
     }
 
-    /* Allocate work item on stack-ish: we block until it completes,
-     * so a stack allocation is safe for the fiber case.
-     * But fiber stacks may be small, so use heap to be safe. */
-    GoBlockingWork *w = malloc(sizeof(GoBlockingWork));
+    /* Allocate work item on heap (fiber stacks may be small).
+     * NOTE: Do NOT use go_autofree here — the worker thread accesses w->result
+     * after setting w->done, creating a race. We must manually free after
+     * confirming the worker is done with the struct. */
+    GoBlockingWork *w = calloc(1, sizeof(GoBlockingWork));
     if (!w) {
         /* Fallback: run synchronously */
         return fn(arg);
     }
-    memset(w, 0, sizeof(*w));
     w->fn     = fn;
     w->arg    = arg;
     w->fiber  = fiber;

@@ -4,33 +4,28 @@
  */
 
 #include "nostr/nip19/nip19.h"
+#include "go_auto.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
 static int encode32(const char *hrp, const uint8_t in[32], char **out_bech) {
-    uint8_t *data5 = NULL; size_t data5_len = 0;
+    go_autofree uint8_t *data5 = NULL; size_t data5_len = 0;
     if (nostr_b32_to_5bit(in, 32, &data5, &data5_len) != 0) return -1;
-    int rc = nostr_b32_encode(hrp, data5, data5_len, out_bech);
-    free(data5);
-    return rc;
+    return nostr_b32_encode(hrp, data5, data5_len, out_bech);
 }
 
 static int decode32_expect_hrp(const char *expected_hrp, const char *bech, uint8_t out[32]) {
-    char *hrp = NULL; uint8_t *data5 = NULL; size_t data5_len = 0;
+    go_autofree char *hrp = NULL;
+    go_autofree uint8_t *data5 = NULL; size_t data5_len = 0;
     if (nostr_b32_decode(bech, &hrp, &data5, &data5_len) != 0) return -1;
-    int rc = -1;
-    if (strcmp(hrp, expected_hrp) == 0) {
-        uint8_t *data8 = NULL; size_t data8_len = 0;
-        if (nostr_b32_to_8bit(data5, data5_len, &data8, &data8_len) == 0 && data8_len == 32) {
-            memcpy(out, data8, 32);
-            rc = 0;
-        }
-        if (data8) { memset(data8, 0, data8_len); free(data8); }
-    }
-    free(hrp);
-    if (data5) free(data5);
-    return rc;
+    if (strcmp(hrp, expected_hrp) != 0) return -1;
+    go_autofree uint8_t *data8 = NULL; size_t data8_len = 0;
+    if (nostr_b32_to_8bit(data5, data5_len, &data8, &data8_len) != 0 || data8_len != 32)
+        return -1;
+    memcpy(out, data8, 32);
+    memset(data8, 0, data8_len); /* wipe sensitive material before auto-free */
+    return 0;
 }
 
 int nostr_nip19_encode_npub(const uint8_t pubkey[32], char **out_bech) {

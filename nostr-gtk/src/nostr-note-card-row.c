@@ -6196,33 +6196,50 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
 void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
   g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
 
-  /* nostrc-pgo6: Clear ALL labels that might contain relay-sourced content
+  /* nostrc-pgo6 + nostrc-hbz: Clear ALL labels that might contain content
    * WHILE the widget still has a native surface. This resets PangoLayouts
    * to a clean state before disposal. Without this, dispose() reaches
    * gtk_widget_dispose_template with potentially-corrupt PangoLayouts.
+   *
+   * CRITICAL: This list MUST match the DISPOSE_LABEL list in dispose().
+   * Missing labels here cause hb_segment_properties_equal NULL deref when
+   * GTK re-measures stale PangoLayouts during the frame clock layout pass
+   * after mass unbind.
    *
    * At unbind time the widget is usually still parented with a valid native
    * surface, so gtk_label_set_text is safe. When native IS gone (hidden
    * view eviction), the GNOSTR_LABEL_SAFE check skips the clear and
    * dispose() handles it via the ref-leak safety net. */
-  if (GNOSTR_LABEL_SAFE(self->content_label))
-    gtk_label_set_text(GTK_LABEL(self->content_label), "");
-  if (GNOSTR_LABEL_SAFE(self->lbl_display))
-    gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
-  if (GNOSTR_LABEL_SAFE(self->lbl_handle))
-    gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
-  if (GNOSTR_LABEL_SAFE(self->lbl_relay)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_relay), "");
+#define UNBIND_CLEAR_LABEL(lbl) \
+  do { if (GNOSTR_LABEL_SAFE(lbl)) gtk_label_set_text(GTK_LABEL(lbl), ""); } while (0)
+
+  UNBIND_CLEAR_LABEL(self->content_label);
+  UNBIND_CLEAR_LABEL(self->lbl_display);
+  UNBIND_CLEAR_LABEL(self->lbl_handle);
+  UNBIND_CLEAR_LABEL(self->lbl_relay);
+  UNBIND_CLEAR_LABEL(self->lbl_timestamp);
+  UNBIND_CLEAR_LABEL(self->lbl_nip05);
+  UNBIND_CLEAR_LABEL(self->lbl_nip05_separator);
+  UNBIND_CLEAR_LABEL(self->lbl_timestamp_separator);
+  UNBIND_CLEAR_LABEL(self->reply_indicator_label);
+  UNBIND_CLEAR_LABEL(self->reply_count_label);
+  UNBIND_CLEAR_LABEL(self->lbl_like_count);
+  UNBIND_CLEAR_LABEL(self->lbl_zap_count);
+  UNBIND_CLEAR_LABEL(self->repost_indicator_label);
+  UNBIND_CLEAR_LABEL(self->lbl_repost_count);
+  UNBIND_CLEAR_LABEL(self->zap_indicator_label);
+  UNBIND_CLEAR_LABEL(self->sensitive_warning_label);
+  UNBIND_CLEAR_LABEL(self->subject_label);
+  UNBIND_CLEAR_LABEL(self->article_title_label);
+  UNBIND_CLEAR_LABEL(self->article_reading_time);
+  UNBIND_CLEAR_LABEL(self->video_title_label);
+  UNBIND_CLEAR_LABEL(self->video_duration_badge);
+  UNBIND_CLEAR_LABEL(self->avatar_initials);
+
+#undef UNBIND_CLEAR_LABEL
+
+  if (self->lbl_relay && GTK_IS_WIDGET(self->lbl_relay))
     gtk_widget_set_visible(self->lbl_relay, FALSE);
-  }
-  if (GNOSTR_LABEL_SAFE(self->subject_label))
-    gtk_label_set_text(GTK_LABEL(self->subject_label), "");
-  if (GNOSTR_LABEL_SAFE(self->lbl_nip05))
-    gtk_label_set_text(GTK_LABEL(self->lbl_nip05), "");
-  if (GNOSTR_LABEL_SAFE(self->article_title_label))
-    gtk_label_set_text(GTK_LABEL(self->article_title_label), "");
-  if (GNOSTR_LABEL_SAFE(self->video_title_label))
-    gtk_label_set_text(GTK_LABEL(self->video_title_label), "");
 
   /* Mark as disposed FIRST to prevent any async callbacks from running */
   self->disposed = TRUE;

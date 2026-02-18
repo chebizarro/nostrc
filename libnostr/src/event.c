@@ -1,4 +1,5 @@
 #include "nostr-event.h"
+#include "nostr-auto-internal.h"
 #include "json.h"
 #include "nostr-tag.h"
 #include "nostr-utils.h"
@@ -27,36 +28,33 @@ static char *nostr_event_serialize_nip01_array(const NostrEvent *event) {
     if (!event) return NULL;
     /* pubkey */
     const char *pk = event->pubkey ? event->pubkey : "";
-    char *pk_esc = nostr_escape_string(pk);
+    go_autofree char *pk_esc = nostr_escape_string(pk);
     if (!pk_esc) return NULL;
     /* content */
     const char *ct = event->content ? event->content : "";
-    char *ct_esc = nostr_escape_string(ct);
-    if (!ct_esc) { free(pk_esc); return NULL; }
+    go_autofree char *ct_esc = nostr_escape_string(ct);
+    if (!ct_esc) return NULL;
     /* tags */
-    char *tags_json = NULL;
+    go_autofree char *tags_json = NULL;
     if (event->tags) {
         tags_json = nostr_tags_to_json(event->tags);
-        if (!tags_json) { free(pk_esc); free(ct_esc); return NULL; }
+        if (!tags_json) return NULL;
     } else {
         tags_json = strdup("[]");
-        if (!tags_json) { free(pk_esc); free(ct_esc); return NULL; }
+        if (!tags_json) return NULL;
     }
     /* size rough estimate */
     size_t cap = strlen(pk_esc) + strlen(ct_esc) + strlen(tags_json) + 64;
-    char *out = (char *)malloc(cap);
-    if (!out) { free(pk_esc); free(ct_esc); free(tags_json); return NULL; }
+    go_autofree char *out = (char *)malloc(cap);
+    if (!out) return NULL;
     int n = snprintf(out, cap, "[0,\"%s\",%lld,%d,%s,\"%s\"]",
                      pk_esc,
                      (long long)event->created_at,
                      event->kind,
                      tags_json,
                      ct_esc);
-    free(pk_esc);
-    free(ct_esc);
-    free(tags_json);
-    if (n < 0 || (size_t)n >= cap) { free(out); return NULL; }
-    return out;
+    if (n < 0 || (size_t)n >= cap) return NULL;
+    return go_steal_pointer(&out);
 }
 
 /* Secure variant: accepts a 32-byte private key inside nostr_secure_buf. */
@@ -396,14 +394,13 @@ char *nostr_event_get_id(NostrEvent *event) {
     }
 
     // ID not cached - compute it from the canonical NIP-01 array preimage
-    char *serialized = nostr_event_serialize_nip01_array(event);
+    go_autofree char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized)
         return NULL;
 
     // Hash the serialized event using SHA-256
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256((unsigned char *)serialized, strlen(serialized), hash);
-    free(serialized);
 
     // Convert the binary hash to a hex string
     char *id = nostr_bin2hex(hash, SHA256_DIGEST_LENGTH);
@@ -453,14 +450,13 @@ bool nostr_event_check_signature(NostrEvent *event) {
 
     // Always recompute the 32-byte message hash from NIP-01 canonical array.
     unsigned char hash[32];
-    char *serialized = nostr_event_serialize_nip01_array(event);
+    go_autofree char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized) {
         fprintf(stderr, "Failed to serialize canonical preimage\n");
         secp256k1_context_destroy(ctx);
         return false;
     }
     SHA256((unsigned char *)serialized, strlen(serialized), hash);
-    free(serialized);
 
     /*** Verification ***/
 
@@ -532,13 +528,12 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
     }
 
     /* Now compute the hash with the correct pubkey set */
-    char *serialized = nostr_event_serialize_nip01_array(event);
+    go_autofree char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized) {
         secp256k1_context_destroy(ctx);
         return -1;
     }
     SHA256((unsigned char *)serialized, strlen(serialized), hash);
-    free(serialized);
 
     // Generate 32 bytes of randomness for Schnorr signing
     if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) {

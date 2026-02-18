@@ -16,6 +16,11 @@
 #include "nostr-utils.h"
 #include "nostr-keys.h"
 #include "../include/secure_buf.h"
+#include "nostr-auto-internal.h"
+
+/* secp256k1_context auto-cleanup */
+typedef secp256k1_context secp256k1_ctx_t;
+GO_DEFINE_AUTOPTR_CLEANUP_FUNC(secp256k1_ctx_t, secp256k1_context_destroy)
 
 static int rand_bytes_portable(unsigned char *out, size_t n) {
 #if defined(HAVE_OPENSSL_RAND)
@@ -36,48 +41,40 @@ static int rand_bytes_portable(unsigned char *out, size_t n) {
 
 // Get the compressed SEC1 public key (33 bytes -> 66 hex)
 char *nostr_key_get_public_sec1_compressed(const char *sk) {
-    secp256k1_context *ctx = NULL;
-    nostr_secure_buf sb = secure_alloc(32);
+    go_auto(nostr_secure_buf) sb = secure_alloc(32);
     unsigned char *privkey = (unsigned char*)sb.ptr;
     secp256k1_pubkey pubkey;
     unsigned char pubkey_bin[33];
     size_t pubkey_len = sizeof(pubkey_bin);
-    char *pubkey_hex = (char*)malloc(2 * pubkey_len + 1);
-    if (!pubkey_hex) { secure_free(&sb); return NULL; }
-    if (!nostr_hex2bin(privkey, sk, 32)) { free(pubkey_hex); secure_free(&sb); return NULL; }
-    ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-    if (!ctx) { free(pubkey_hex); secure_free(&sb); return NULL; }
-    if (!secp256k1_ec_pubkey_create(ctx, &pubkey, privkey)) { secp256k1_context_destroy(ctx); free(pubkey_hex); secure_free(&sb); return NULL; }
+    go_autofree char *pubkey_hex = (char*)malloc(2 * pubkey_len + 1);
+    if (!pubkey_hex) return NULL;
+    if (!nostr_hex2bin(privkey, sk, 32)) return NULL;
+    go_autoptr(secp256k1_ctx_t) ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    if (!ctx) return NULL;
+    if (!secp256k1_ec_pubkey_create(ctx, &pubkey, privkey)) return NULL;
     /* Serialize compressed */
-    if (!secp256k1_ec_pubkey_serialize(ctx, pubkey_bin, &pubkey_len, &pubkey, SECP256K1_EC_COMPRESSED)) {
-        secp256k1_context_destroy(ctx); free(pubkey_hex); secure_free(&sb); return NULL;
-    }
+    if (!secp256k1_ec_pubkey_serialize(ctx, pubkey_bin, &pubkey_len, &pubkey, SECP256K1_EC_COMPRESSED))
+        return NULL;
     for (size_t i = 0; i < pubkey_len; i++) snprintf(&pubkey_hex[i*2], 3, "%02x", pubkey_bin[i]);
     pubkey_hex[2*pubkey_len] = '\0';
-    secp256k1_context_destroy(ctx);
-    secure_free(&sb);
-    return pubkey_hex;
+    return go_steal_pointer(&pubkey_hex);
 }
 
 // Generate a private key using libsecp256k1
 char *nostr_key_generate_private(void) {
-    secp256k1_context *ctx;
-    nostr_secure_buf sb = secure_alloc(32); // Private key (32 bytes for secp256k1)
+    go_auto(nostr_secure_buf) sb = secure_alloc(32); // Private key (32 bytes for secp256k1)
     unsigned char *privkey = (unsigned char*)sb.ptr;
-    char *privkey_hex = malloc(65); // Hex representation of private key (64 chars + null terminator)
+    go_autofree char *privkey_hex = malloc(65); // 64 hex chars + null
 
     if (!privkey_hex) {
         fprintf(stderr, "Memory allocation failed\n");
-        secure_free(&sb);
         return NULL;
     }
 
     // Create a secp256k1 context for key generation
-    ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    go_autoptr(secp256k1_ctx_t) ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
     if (!ctx) {
         fprintf(stderr, "Failed to create secp256k1 context\n");
-        free(privkey_hex);
-        secure_free(&sb);
         return NULL;
     }
 
@@ -86,9 +83,6 @@ char *nostr_key_generate_private(void) {
         // Generate 32 random bytes
         if (rand_bytes_portable(privkey, 32) != 0) {
             fprintf(stderr, "Failed to generate random bytes\n");
-            secp256k1_context_destroy(ctx);
-            free(privkey_hex);
-            secure_free(&sb);
             return NULL;
         }
 
@@ -102,24 +96,19 @@ char *nostr_key_generate_private(void) {
     for (size_t i = 0; i < 32; i++) {
         snprintf(&privkey_hex[i * 2], 3, "%02x", privkey[i]);
     }
-    privkey_hex[64] = '\0'; // Null-terminate the string
+    privkey_hex[64] = '\0';
 
-    // Clean up secp256k1 context
-    secp256k1_context_destroy(ctx);
-    secure_free(&sb);
-
-    return privkey_hex;
+    return go_steal_pointer(&privkey_hex);
 }
 
 // Get the public key from a private key using libsecp256k1
 char *nostr_key_get_public(const char *sk) {
-    secp256k1_context *ctx;
-    nostr_secure_buf sb = secure_alloc(32); // Private key (32 bytes)
+    go_auto(nostr_secure_buf) sb = secure_alloc(32); // Private key (32 bytes)
     unsigned char *privkey = (unsigned char*)sb.ptr;
     secp256k1_pubkey pubkey;
     secp256k1_xonly_pubkey xonly_pubkey;
-    unsigned char pubkey_bin[32];  // Compressed public key (32 bytes)
-    char *pubkey_hex = malloc(65); // Hex representation of public key (64 chars + null terminator)
+    unsigned char pubkey_bin[32];
+    go_autofree char *pubkey_hex = malloc(65); // 64 hex chars + null
 
     if (!pubkey_hex) {
         fprintf(stderr, "Memory allocation failed\n");
@@ -129,35 +118,25 @@ char *nostr_key_get_public(const char *sk) {
     // Convert hex-encoded private key to binary
     if (!nostr_hex2bin(privkey, sk, 32)) {
         fprintf(stderr, "Invalid private key hex\n");
-        free(pubkey_hex);
-        secure_free(&sb);
         return NULL;
     }
 
     // Create a secp256k1 context
-    ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    go_autoptr(secp256k1_ctx_t) ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
     if (!ctx) {
         fprintf(stderr, "Failed to create secp256k1 context\n");
-        free(pubkey_hex);
-        secure_free(&sb);
         return NULL;
     }
 
     // Create a public key from the private key
     if (!secp256k1_ec_pubkey_create(ctx, &pubkey, privkey)) {
         fprintf(stderr, "Failed to create public key from private key\n");
-        secp256k1_context_destroy(ctx);
-        free(pubkey_hex);
-        secure_free(&sb);
         return NULL;
     }
 
     // Convert the public key to an x-only public key
     if (!secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_pubkey, NULL, &pubkey)) {
         fprintf(stderr, "Failed to convert to x-only public key\n");
-        secp256k1_context_destroy(ctx);
-        free(pubkey_hex);
-        secure_free(&sb);
         return NULL;
     }
 
@@ -168,13 +147,9 @@ char *nostr_key_get_public(const char *sk) {
     for (size_t i = 0; i < 32; i++) {
         snprintf(&pubkey_hex[i * 2], 3, "%02x", pubkey_bin[i]);
     }
-    pubkey_hex[64] = '\0'; // Null-terminate the string
+    pubkey_hex[64] = '\0';
 
-    // Clean up secp256k1 context
-    secp256k1_context_destroy(ctx);
-    secure_free(&sb);
-
-    return pubkey_hex;
+    return go_steal_pointer(&pubkey_hex);
 }
 
 // Validate if a public key is a valid 32-byte x-only hex string (64 chars)

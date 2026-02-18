@@ -8,6 +8,7 @@
 #include "nostr/nip59/nip59.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr-event.h"
+#include "nostr-auto-internal.h"
 #include "nostr-tag.h"
 #include "nostr-kinds.h"
 #include "nostr-keys.h"
@@ -59,20 +60,15 @@ int nostr_nip59_create_ephemeral_key(char **sk_hex_out, char **pk_hex_out) {
     *pk_hex_out = NULL;
 
     /* Generate ephemeral secret key */
-    char *sk = nostr_key_generate_private();
-    if (!sk) {
-        return NIP59_ERR_KEY_GENERATION;
-    }
+    go_autofree char *sk = nostr_key_generate_private();
+    if (!sk) return NIP59_ERR_KEY_GENERATION;
 
     /* Derive public key */
-    char *pk = nostr_key_get_public(sk);
-    if (!pk) {
-        free(sk);
-        return NIP59_ERR_KEY_GENERATION;
-    }
+    go_autofree char *pk = nostr_key_get_public(sk);
+    if (!pk) return NIP59_ERR_KEY_GENERATION;
 
-    *sk_hex_out = sk;
-    *pk_hex_out = pk;
+    *sk_hex_out = go_steal_pointer(&sk);
+    *pk_hex_out = go_steal_pointer(&pk);
     return NIP59_OK;
 }
 
@@ -119,87 +115,52 @@ NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
     }
 
     /* Serialize inner event to JSON */
-    char *inner_json = nostr_event_serialize_compact(inner_event);
-    if (!inner_json) {
-        return NULL;
-    }
+    go_autofree char *inner_json = nostr_event_serialize_compact(inner_event);
+    if (!inner_json) return NULL;
 
     /* Encrypt with NIP-44 */
-    char *encrypted = NULL;
+    go_autofree char *encrypted = NULL;
     int rc = nostr_nip44_encrypt_v2(ephemeral_sk_bin, recipient_pk_bin,
                                      (const uint8_t *)inner_json,
                                      strlen(inner_json),
                                      &encrypted);
-    free(inner_json);
-
-    if (rc != 0 || !encrypted) {
-        return NULL;
-    }
+    if (rc != 0 || !encrypted) return NULL;
 
     /* Get ephemeral pubkey */
-    char *eph_sk_hex = nostr_bin2hex(ephemeral_sk_bin, 32);
-    if (!eph_sk_hex) {
-        free(encrypted);
-        return NULL;
-    }
+    go_autofree char *eph_sk_hex = nostr_bin2hex(ephemeral_sk_bin, 32);
+    if (!eph_sk_hex) return NULL;
 
-    char *eph_pk_hex = nostr_key_get_public(eph_sk_hex);
-    if (!eph_pk_hex) {
-        free(eph_sk_hex);
-        free(encrypted);
-        return NULL;
-    }
+    go_autofree char *eph_pk_hex = nostr_key_get_public(eph_sk_hex);
+    if (!eph_pk_hex) return NULL;
 
     /* Create gift wrap event */
-    NostrEvent *gift_wrap = nostr_event_new();
-    if (!gift_wrap) {
-        free(eph_sk_hex);
-        free(eph_pk_hex);
-        free(encrypted);
-        return NULL;
-    }
+    go_autoptr(NostrEvent) gift_wrap = nostr_event_new();
+    if (!gift_wrap) return NULL;
 
     nostr_event_set_kind(gift_wrap, NOSTR_KIND_GIFT_WRAP);
     nostr_event_set_pubkey(gift_wrap, eph_pk_hex);
     nostr_event_set_content(gift_wrap, encrypted);
     nostr_event_set_created_at(gift_wrap, nostr_nip59_randomize_timestamp(0, 0));
 
-    free(encrypted);
-
     /* Add p-tag for recipient */
     NostrTag *ptag = nostr_tag_new("p", recipient_pubkey_hex, NULL);
-    if (!ptag) {
-        free(eph_sk_hex);
-        free(eph_pk_hex);
-        nostr_event_free(gift_wrap);
-        return NULL;
-    }
+    if (!ptag) return NULL;
 
     NostrTags *tags = nostr_tags_new(1, ptag);
     if (!tags) {
         nostr_tag_free(ptag);
-        free(eph_sk_hex);
-        free(eph_pk_hex);
-        nostr_event_free(gift_wrap);
         return NULL;
     }
 
     nostr_event_set_tags(gift_wrap, tags);
 
     /* Sign with ephemeral key */
-    if (nostr_event_sign(gift_wrap, eph_sk_hex) != 0) {
-        free(eph_sk_hex);
-        free(eph_pk_hex);
-        nostr_event_free(gift_wrap);
-        return NULL;
-    }
+    if (nostr_event_sign(gift_wrap, eph_sk_hex) != 0) return NULL;
 
     /* Clear ephemeral secret key */
     memset(eph_sk_hex, 0, strlen(eph_sk_hex));
-    free(eph_sk_hex);
-    free(eph_pk_hex);
 
-    return gift_wrap;
+    return go_steal_pointer(&gift_wrap);
 }
 
 NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
@@ -270,42 +231,27 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
     }
 
     /* Decrypt with NIP-44 */
-    uint8_t *decrypted = NULL;
+    go_autofree uint8_t *decrypted = NULL;
     size_t decrypted_len = 0;
 
     int rc = nostr_nip44_decrypt_v2(recipient_sk_bin, sender_pk_bin,
                                      encrypted, &decrypted, &decrypted_len);
-
-    if (rc != 0 || !decrypted) {
-        return NULL;
-    }
+    if (rc != 0 || !decrypted) return NULL;
 
     /* Parse inner event from JSON */
-    NostrEvent *inner_event = nostr_event_new();
-    if (!inner_event) {
-        free(decrypted);
-        return NULL;
-    }
+    go_autoptr(NostrEvent) inner_event = nostr_event_new();
+    if (!inner_event) return NULL;
 
     /* Null-terminate the decrypted content */
-    char *json = malloc(decrypted_len + 1);
-    if (!json) {
-        free(decrypted);
-        nostr_event_free(inner_event);
-        return NULL;
-    }
+    go_autofree char *json = malloc(decrypted_len + 1);
+    if (!json) return NULL;
     memcpy(json, decrypted, decrypted_len);
     json[decrypted_len] = '\0';
-    free(decrypted);
 
-    if (!nostr_event_deserialize_compact(inner_event, json, NULL)) {
-        free(json);
-        nostr_event_free(inner_event);
+    if (!nostr_event_deserialize_compact(inner_event, json, NULL))
         return NULL;
-    }
 
-    free(json);
-    return inner_event;
+    return go_steal_pointer(&inner_event);
 }
 
 NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,

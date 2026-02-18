@@ -10,6 +10,8 @@ target_include_directories(nostr_nip59_core
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/libnostr/include
         ${CMAKE_SOURCE_DIR}/nips/nip44/include
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/libnostr/src
 )
 
 target_link_libraries(nostr_nip59_core

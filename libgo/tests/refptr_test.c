@@ -28,7 +28,7 @@ static void *retainer(void *arg){
 
 int main(void){
     // make a refptr and share across threads
-    go_autoptr(Buffer) r = make_go_refptr(malloc(64), dtor);
+    go_auto(GoRefPtr) r = make_go_refptr(malloc(64), dtor);
     strcpy((char*)r.ptr, "refptr");
 
     GoWaitGroup wg; go_wait_group_init(&wg);
