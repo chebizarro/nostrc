@@ -34,6 +34,8 @@
 #include "markdown_pango.h"
 #include "nip21_uri.h"
 #include "content_renderer.h"
+#include "note-card-binding-ctx.h"
+#include "note-card-data.h"
 
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -345,6 +347,20 @@ struct _NostrGtkNoteCardRow {
   /* Shared cancellable for ALL async operations (avatar, og-preview, note-embed, etc.)
    * When this widget is disposed, cancelling this single cancellable stops all child operations */
   GCancellable *async_cancellable;
+
+  /* nostrc-ncr-lifecycle: Ref-counted binding context for safe async callbacks.
+   * Each bind cycle gets its own context. Async callbacks hold refs to the
+   * context (not raw self pointers). When the context is cancelled during
+   * unbind, callbacks bail out safely even if the widget was recycled.
+   * This is the durable replacement for the fragile disposed+binding_id pattern. */
+  NoteCardBindingContext *binding_ctx;
+
+  /* nostrc-ncr-lifecycle Phase 5: Ref-counted data bucket.
+   * Owns all string/scalar state for the currently-bound event.
+   * Can be shared with async callbacks via note_card_data_ref()
+   * so they can safely read event data even after the row is recycled.
+   * Swapped atomically in prepare_for_bind(). */
+  NoteCardData *data;
 };
 
 G_DEFINE_TYPE(NostrGtkNoteCardRow, nostr_gtk_note_card_row, GTK_TYPE_WIDGET)
@@ -393,6 +409,12 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
   /* Mark as inactive first so async callbacks bail out immediately. */
   self->disposed = TRUE;
   self->binding_id = 0;
+
+  /* nostrc-ncr-lifecycle: Cancel the binding context. In-flight callbacks
+   * that hold refs to this context will get NULL from get_row(). */
+  if (self->binding_ctx) {
+    note_card_binding_context_cancel(self->binding_ctx);
+  }
 
   /* Remove timestamp timer to prevent callbacks during teardown. */
   if (self->timestamp_timer_id > 0) {
@@ -578,6 +600,19 @@ static void nostr_gtk_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->video_title, g_free);
   /* nostrc-dqwq.2: deferred media cleanup */
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  /* nostrc-ncr-lifecycle: Release our ref on the binding context.
+   * Any in-flight callbacks still holding refs will keep it alive until
+   * they complete and call unref. The GWeakRef inside the context will
+   * return NULL since our GObject is being finalized. */
+  if (self->binding_ctx) {
+    note_card_binding_context_unref(self->binding_ctx);
+    self->binding_ctx = NULL;
+  }
+  /* nostrc-ncr-lifecycle Phase 5: Release data bucket ref. */
+  if (self->data) {
+    note_card_data_unref(self->data);
+    self->data = NULL;
+  }
   G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -2293,10 +2328,13 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url
   g_object_unref(msg);
 }
 
-/* Lazy loading context for deferred media loading */
+/* Lazy loading context for deferred media loading.
+ * nostrc-ncr-lifecycle: Uses NoteCardBindingContext instead of raw self pointer,
+ * and GWeakRef instead of raw picture pointer, to prevent use-after-free
+ * during GtkListView recycling. */
 typedef struct {
-  NostrGtkNoteCardRow *self;
-  GtkPicture *picture;
+  NoteCardBindingContext *ctx;  /* ref-counted binding context (replaces raw self) */
+  GWeakRef picture_ref;         /* weak ref to GtkPicture (replaces raw pointer) */
   char *url;
   guint timeout_id;
   gulong map_handler_id;
@@ -2312,55 +2350,63 @@ static void lazy_load_context_free(LazyLoadContext *ctx) {
   }
   /* nostrc-img1: Disconnect signal handlers to prevent stale callbacks
    * on recycled widgets. Without this, map/unmap handlers fire on
-   * dead contexts after the picture widget is reused. */
-  if (ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
+   * dead contexts after the picture widget is reused.
+   * nostrc-ncr-lifecycle: Use GWeakRef to safely get the picture. */
+  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+  if (picture) {
     if (ctx->map_handler_id > 0)
-      g_signal_handler_disconnect(ctx->picture, ctx->map_handler_id);
+      g_signal_handler_disconnect(picture, ctx->map_handler_id);
     if (ctx->unmap_handler_id > 0)
-      g_signal_handler_disconnect(ctx->picture, ctx->unmap_handler_id);
+      g_signal_handler_disconnect(picture, ctx->unmap_handler_id);
+    g_object_unref(picture);
   }
+  g_weak_ref_clear(&ctx->picture_ref);
+  if (ctx->ctx)
+    note_card_binding_context_unref(ctx->ctx);
   g_free(ctx->url);
   g_free(ctx);
 }
 
-/* Timeout callback - actually load the image after delay */
+/* Timeout callback - actually load the image after delay.
+ * nostrc-ncr-lifecycle: Uses NoteCardBindingContext for safe row access
+ * and GWeakRef for safe picture access. No raw pointer dereferences. */
 static gboolean on_lazy_load_timeout(gpointer user_data) {
   LazyLoadContext *ctx = (LazyLoadContext *)user_data;
 
   if (!ctx || ctx->loaded) return G_SOURCE_REMOVE;
 
-  /* CRITICAL: Check for stale pointer BEFORE using type-check macros.
-   * Type-check macros (NOSTR_GTK_IS_NOTE_CARD_ROW) dereference the pointer,
-   * which crashes if the widget was recycled and ctx->self points to freed memory.
-   * nostrc-ofq: Fix crash during fast scrolling in timeline. */
-  if (ctx->self == NULL) {
+  /* Get row via binding context — returns NULL if context was cancelled
+   * (row recycled/unbound) or row was finalized. No dangling pointer risk. */
+  GObject *row_obj = note_card_binding_context_get_row(ctx->ctx);
+  if (!row_obj) {
     ctx->timeout_id = 0;
     return G_SOURCE_REMOVE;
   }
+  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)row_obj;
 
-  /* Check disposed flag before type-check - if disposed, widget is being torn down */
-  NostrGtkNoteCardRow *self = ctx->self;
-  if (self->disposed) {
-    ctx->timeout_id = 0;
-    return G_SOURCE_REMOVE;
-  }
-
-  /* Now safe to use type-check since disposed==FALSE means widget is valid */
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_PICTURE(ctx->picture)) {
+  /* Get picture via GWeakRef — returns NULL if picture was destroyed */
+  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+  if (!picture || !GTK_IS_PICTURE(picture)) {
+    g_object_unref(row_obj);
+    if (picture) g_object_unref(picture);
     ctx->timeout_id = 0;
     return G_SOURCE_REMOVE;
   }
 
   /* Check if widget is still mapped (visible) */
-  if (!gtk_widget_get_mapped(GTK_WIDGET(ctx->picture))) {
+  if (!gtk_widget_get_mapped(picture)) {
+    g_object_unref(picture);
+    g_object_unref(row_obj);
     ctx->timeout_id = 0;
     return G_SOURCE_REMOVE;
   }
 
   g_debug("Media: Lazy loading image: %s", ctx->url);
   ctx->loaded = TRUE;
-  load_media_image_internal(self, ctx->url, ctx->picture);
+  load_media_image_internal(self, ctx->url, GTK_PICTURE(picture));
 
+  g_object_unref(picture);
+  g_object_unref(row_obj);
   ctx->timeout_id = 0;
   return G_SOURCE_REMOVE;
 }
@@ -2403,28 +2449,32 @@ static void on_picture_unmapped(GtkWidget *widget, gpointer user_data) {
   }
 }
 
-/* Called when the picture widget is destroyed */
+/* Called when the picture widget is destroyed.
+ * nostrc-ncr-lifecycle: GWeakRef handles the pointer invalidation automatically,
+ * so we just need to clear handler IDs and free the context. */
 static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_the_object_was) {
   LazyLoadContext *ctx = (LazyLoadContext *)user_data;
   (void)where_the_object_was;
   /* nostrc-img2: The picture is being finalized — GtkWidget::dispose already
-   * cleared all signal handlers.  NULL out picture so lazy_load_context_free
-   * skips the g_signal_handler_disconnect calls (which would warn
-   * "instance has no handler with id" for the map/unmap handlers). */
-  ctx->picture = NULL;
+   * cleared all signal handlers.  Clear the weak ref (it will return NULL
+   * from g_weak_ref_get anyway since the object is being finalized).
+   * Zero out handler IDs so lazy_load_context_free skips disconnect. */
+  g_weak_ref_set(&ctx->picture_ref, NULL);
   ctx->map_handler_id = 0;
   ctx->unmap_handler_id = 0;
   lazy_load_context_free(ctx);
 }
 
-/* Load media image with lazy loading - defers actual loading until widget is visible */
+/* Load media image with lazy loading - defers actual loading until widget is visible.
+ * nostrc-ncr-lifecycle: Uses NoteCardBindingContext + GWeakRef for safe async access. */
 static void load_media_image(NostrGtkNoteCardRow *self, const char *url, GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
+  if (!self->binding_ctx) return; /* Not bound — skip */
 
-  /* Create lazy loading context */
+  /* Create lazy loading context with ref-counted ownership */
   LazyLoadContext *ctx = g_new0(LazyLoadContext, 1);
-  ctx->self = self;
-  ctx->picture = picture;
+  ctx->ctx = note_card_binding_context_ref(self->binding_ctx);
+  g_weak_ref_init(&ctx->picture_ref, picture);
   ctx->url = g_strdup(url);
   ctx->loaded = FALSE;
   ctx->timeout_id = 0;
@@ -3632,6 +3682,14 @@ void nostr_gtk_note_card_row_set_ids(NostrGtkNoteCardRow *self, const char *id_h
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
   g_free(self->pubkey_hex); self->pubkey_hex = hex ? g_strdup(hex) : NULL;
+  /* nostrc-ncr-lifecycle Phase 5: Dual-write to data bucket for async safety.
+   * Async callbacks that hold a ref to NoteCardData can safely read identity
+   * fields even after the row has been recycled. */
+  if (self->data) {
+    g_free(self->data->id_hex); self->data->id_hex = g_strdup(id_hex);
+    g_free(self->data->root_id); self->data->root_id = g_strdup(root_id);
+    g_free(self->data->pubkey_hex); self->data->pubkey_hex = hex ? g_strdup(hex) : g_strdup(self->pubkey_hex);
+  }
 }
 
 void nostr_gtk_note_card_row_set_thread_info(NostrGtkNoteCardRow *self,
@@ -4774,10 +4832,9 @@ static gchar *format_article_date(gint64 timestamp) {
 #ifdef HAVE_SOUP3
 /* Callback for article header image loading */
 static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
-
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || self->disposed) return;
-
+  /* nostrc-ncr-lifecycle: user_data is a ref'd NoteCardBindingContext, not a raw self pointer.
+   * This eliminates the recycling race where disposed could be FALSE after re-bind. */
+  NoteCardBindingContext *ctx = (NoteCardBindingContext *)user_data;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
@@ -4785,33 +4842,37 @@ static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer
     if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_debug("NIP-23: Failed to load article image: %s", error->message);
     }
-    if (error) g_error_free(error);
-    return;
-  }
-
-  /* Re-check disposed before accessing widget members */
-  if (self->disposed) {
-    g_bytes_unref(bytes);
+    g_clear_error(&error);
+    note_card_binding_context_unref(ctx);
     return;
   }
 
   GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
 
-  if (!texture || error) {
+  if (!texture) {
     if (error) {
       g_debug("NIP-23: Failed to create texture: %s", error->message);
       g_error_free(error);
     }
+    note_card_binding_context_unref(ctx);
     return;
   }
 
-  if (!self->disposed && GTK_IS_PICTURE(self->article_image)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->article_image), GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(self->article_image_box, TRUE);
+  /* Safe row access: returns NULL if context was cancelled (row recycled) or row finalized */
+  GObject *row_obj = note_card_binding_context_get_row(ctx);
+  if (row_obj) {
+    NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)row_obj;
+    if (GTK_IS_PICTURE(self->article_image)) {
+      gtk_picture_set_paintable(GTK_PICTURE(self->article_image), GDK_PAINTABLE(texture));
+      if (self->article_image_box)
+        gtk_widget_set_visible(self->article_image_box, TRUE);
+    }
+    g_object_unref(row_obj);
   }
 
   g_object_unref(texture);
+  note_card_binding_context_unref(ctx);
 }
 
 /* Load article header image asynchronously */
@@ -4835,13 +4896,16 @@ static void load_article_header_image(NostrGtkNoteCardRow *self, const char *url
     return;
   }
 
+  /* nostrc-ncr-lifecycle: Pass a ref'd binding context instead of raw self.
+   * If row is recycled before HTTP completes, the callback sees a cancelled
+   * context and bails out safely — no dangling pointer dereference. */
   soup_session_send_and_read_async(
     session,
     msg,
     G_PRIORITY_DEFAULT,
     self->article_image_cancellable,
     on_article_image_loaded,
-    self
+    self->binding_ctx ? note_card_binding_context_ref(self->binding_ctx) : NULL
   );
 
   g_object_unref(msg);
@@ -6095,6 +6159,22 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
   }
   self->og_preview = NULL;
 
+  /* nostrc-ncr-lifecycle: Cancel old binding context (if any) and create a
+   * fresh one for this binding cycle. In-flight callbacks from the previous
+   * cycle hold refs to the OLD context (which is now cancelled), so they
+   * will bail out safely when they call note_card_binding_context_get_row(). */
+  if (self->binding_ctx) {
+    note_card_binding_context_cancel(self->binding_ctx);
+    note_card_binding_context_unref(self->binding_ctx);
+  }
+  self->binding_ctx = note_card_binding_context_new(G_OBJECT(self));
+
+  /* nostrc-ncr-lifecycle Phase 5: Swap in a fresh NoteCardData for this bind.
+   * The old data is unref'd; any async callbacks holding refs keep it alive. */
+  if (self->data)
+    note_card_data_unref(self->data);
+  self->data = note_card_data_new();
+
   /* Create fresh cancellable since the old one was cancelled during unbind.
    * GCancellable cannot be reused after cancellation. */
   g_clear_object(&self->async_cancellable);
@@ -6142,10 +6222,17 @@ void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
  *
  * Returns TRUE if the row is being disposed or has been prepared for unbind.
  * Use this to check before updating the row from async callbacks.
- * nostrc-ipp: Prevent Pango crash during profile updates.
+ *
+ * nostrc-ncr-lifecycle: Now delegates to the binding context as the source
+ * of truth. The `disposed` field is kept as a fast-path cache for synchronous
+ * setter guards on the main thread.
  */
 gboolean nostr_gtk_note_card_row_is_disposed(NostrGtkNoteCardRow *self) {
   g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), TRUE);
+  /* Primary: check binding context (authoritative) */
+  if (self->binding_ctx)
+    return note_card_binding_context_is_cancelled(self->binding_ctx);
+  /* Fallback: no context means never bound or already finalized */
   return self->disposed;
 }
 
@@ -6155,9 +6242,12 @@ gboolean nostr_gtk_note_card_row_is_disposed(NostrGtkNoteCardRow *self) {
  * Returns TRUE if the row is currently bound to a list item.
  * A row is bound between prepare_for_bind() and prepare_for_unbind() calls.
  * nostrc-534d: Binding lifecycle tracking.
+ * nostrc-ncr-lifecycle: Now also checks binding context.
  */
 gboolean nostr_gtk_note_card_row_is_bound(NostrGtkNoteCardRow *self) {
   g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
+  if (self->binding_ctx)
+    return !note_card_binding_context_is_cancelled(self->binding_ctx);
   return self->binding_id != 0;
 }
 
@@ -6172,4 +6262,38 @@ gboolean nostr_gtk_note_card_row_is_bound(NostrGtkNoteCardRow *self) {
 guint64 nostr_gtk_note_card_row_get_binding_id(NostrGtkNoteCardRow *self) {
   g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), 0);
   return self->binding_id;
+}
+
+/**
+ * nostr_gtk_note_card_row_get_binding_ctx:
+ *
+ * Returns the current binding context, or NULL if unbound.
+ * Async callbacks should call note_card_binding_context_ref() on this
+ * to hold their own ref, then use note_card_binding_context_get_row()
+ * in the callback to safely check if the row is still valid and active.
+ *
+ * nostrc-ncr-lifecycle: Ref-counted async safety.
+ *
+ * Returns: (transfer none) (nullable): The current binding context
+ */
+NoteCardBindingContext *nostr_gtk_note_card_row_get_binding_ctx(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
+  return self->binding_ctx;
+}
+
+/**
+ * nostr_gtk_note_card_row_get_data:
+ *
+ * Returns the current data bucket, or NULL if unbound.
+ * Callers that need the data to survive beyond the current scope
+ * (e.g., async callbacks) should call note_card_data_ref() on the
+ * returned pointer.
+ *
+ * nostrc-ncr-lifecycle Phase 5: Ref-counted data sharing.
+ *
+ * Returns: (transfer none) (nullable): The current data bucket
+ */
+NoteCardData *nostr_gtk_note_card_row_get_data(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
+  return self->data;
 }

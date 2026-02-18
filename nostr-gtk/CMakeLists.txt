@@ -90,6 +90,8 @@ set(NOSTR_GTK_SOURCES
   src/gnostr-composer.c
   src/gnostr-profile-pane.c
   src/nostr-note-card-row.c
+  src/note-card-binding-ctx.c
+  src/note-card-data.c
   src/gn-timeline-tabs.c
   src/gnostr-timeline-view.c
   src/gnostr-note-embed.c
