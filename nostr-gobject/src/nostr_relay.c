@@ -45,9 +45,10 @@ static guint nostr_relay_signals[NOSTR_RELAY_SIGNALS_COUNT] = { 0 };
 /* nostrc-kw9r: Shared relay registry — deduplicates WebSocket connections.
  * Multiple GNostrPool instances that connect to the same relay URL share a
  * single GNostrRelay (and thus a single NostrRelay / NostrConnection).
- * The registry stores weak references — relays remove themselves on finalize. */
+ * The registry stores STRONG references to keep relays alive across pool
+ * removals, ensuring websocket connections are reused for subsequent subscriptions. */
 G_LOCK_DEFINE_STATIC(relay_registry);
-static GHashTable *g_relay_registry = NULL; /* URL → GNostrRelay* (NOT ref'd) */
+static GHashTable *g_relay_registry = NULL; /* URL → GNostrRelay* (strong ref via destroy notify) */
 
 struct _GNostrRelay {
     GObject parent_instance;
@@ -309,7 +310,9 @@ gnostr_relay_finalize(GObject *object)
 {
     GNostrRelay *self = GNOSTR_RELAY(object);
 
-    /* Remove from shared relay registry before cleanup */
+    /* nostrc-kw9r: Remove from registry when finalized. With weak references,
+     * this happens when all pools release the relay. Clean removal prevents
+     * stale pointers in the registry. */
     if (self->url) {
         G_LOCK(relay_registry);
         if (g_relay_registry) {
