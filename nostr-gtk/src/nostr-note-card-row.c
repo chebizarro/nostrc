@@ -6209,7 +6209,13 @@ void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
    * At unbind time the widget is usually still parented with a valid native
    * surface, so gtk_label_set_text is safe. When native IS gone (hidden
    * view eviction), the GNOSTR_LABEL_SAFE check skips the clear and
-   * dispose() handles it via the ref-leak safety net. */
+   * dispose() handles it via the ref-leak safety net.
+   *
+   * nostrc-css-guard: Disable CSS updates during unbind to prevent GTK from
+   * triggering CSS node validation which can corrupt the CSS tree during
+   * rapid widget recycling. This prevents malloc heap corruption crashes. */
+  gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
+
 #define UNBIND_CLEAR_LABEL(lbl) \
   do { if (GNOSTR_LABEL_SAFE(lbl)) gtk_label_set_text(GTK_LABEL(lbl), ""); } while (0)
 
