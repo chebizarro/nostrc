@@ -265,7 +265,7 @@ gnostr_nutzap_prefs_build_event_json(const GnostrNutzapPrefs *prefs,
   g_return_val_if_fail(prefs != NULL, NULL);
   g_return_val_if_fail(pubkey != NULL && strlen(pubkey) == 64, NULL);
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* Kind 10019 - nutzap preferences */
@@ -323,7 +323,6 @@ gnostr_nutzap_prefs_build_event_json(const GnostrNutzapPrefs *prefs,
   gnostr_json_builder_end_object(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }
@@ -715,7 +714,7 @@ gnostr_nutzap_build_event_json(const gchar *proofs_json,
   g_return_val_if_fail(recipient_pubkey != NULL, NULL);
   g_return_val_if_fail(sender_pubkey != NULL && strlen(sender_pubkey) == 64, NULL);
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   gnostr_json_builder_begin_object(builder);
 
   /* Kind 9321 - nutzap */
@@ -779,7 +778,6 @@ gnostr_nutzap_build_event_json(const gchar *proofs_json,
   gnostr_json_builder_end_object(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

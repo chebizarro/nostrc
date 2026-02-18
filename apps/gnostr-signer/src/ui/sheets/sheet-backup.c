@@ -271,7 +271,7 @@ static void on_save_file_response(GObject *source, GAsyncResult *result, gpointe
   GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
 
   GError *error = NULL;
-  GFile *file = gtk_file_dialog_save_finish(dialog, result, &error);
+  g_autoptr(GFile) file = gtk_file_dialog_save_finish(dialog, result, &error);
 
   if (error) {
     if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
@@ -289,13 +289,11 @@ static void on_save_file_response(GObject *source, GAsyncResult *result, gpointe
 
   if (!password || !*password) {
     show_error(self, "Password Required", "Please enter a password for encryption.");
-    g_object_unref(file);
     return;
   }
 
   if (g_strcmp0(password, confirm) != 0) {
     show_error(self, "Password Mismatch", "The passwords do not match.");
-    g_object_unref(file);
     return;
   }
 
@@ -304,13 +302,11 @@ static void on_save_file_response(GObject *source, GAsyncResult *result, gpointe
   if (!nsec) {
     show_error(self, "Key Not Found",
                "Could not retrieve secret key from secure storage.");
-    g_object_unref(file);
     return;
   }
 
   /* Export to file with metadata */
   gchar *filepath = g_file_get_path(file);
-  g_object_unref(file);
 
   GError *export_error = NULL;
   GnBackupSecurityLevel security = get_security_level(self);
@@ -510,7 +506,7 @@ static void on_load_file_response(GObject *source, GAsyncResult *result, gpointe
   GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
 
   GError *error = NULL;
-  GFile *file = gtk_file_dialog_open_finish(dialog, result, &error);
+  g_autoptr(GFile) file = gtk_file_dialog_open_finish(dialog, result, &error);
 
   if (error) {
     if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
@@ -528,7 +524,6 @@ static void on_load_file_response(GObject *source, GAsyncResult *result, gpointe
   GError *read_error = NULL;
 
   gchar *filepath = g_file_get_path(file);
-  g_object_unref(file);
 
   if (!g_file_get_contents(filepath, &contents, &length, &read_error)) {
     show_error(self, "Read Failed", read_error->message);

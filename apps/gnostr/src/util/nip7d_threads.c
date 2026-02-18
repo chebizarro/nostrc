@@ -426,13 +426,12 @@ gnostr_thread_parse_from_json(const char *json_str)
     if (!json_str) return NULL;
 
     /* Parse event using GNostrEvent API */
-    GNostrEvent *event = gnostr_event_new_from_json(json_str, NULL);
+    g_autoptr(GNostrEvent) event = gnostr_event_new_from_json(json_str, NULL);
     if (!event) return NULL;
 
     /* Verify it's a kind-11 event */
     guint kind = gnostr_event_get_kind(event);
     if (kind != NIP7D_KIND_THREAD_ROOT) {
-        g_object_unref(event);
         return NULL;
     }
 
@@ -489,7 +488,6 @@ gnostr_thread_parse_from_json(const char *json_str)
     thread->last_activity = thread->created_at;
     thread->replies_count = 0;
 
-    g_object_unref(event);
     return thread;
 }
 
@@ -499,13 +497,12 @@ gnostr_thread_reply_parse_from_json(const char *json_str)
     if (!json_str) return NULL;
 
     /* Parse event using GNostrEvent API */
-    GNostrEvent *event = gnostr_event_new_from_json(json_str, NULL);
+    g_autoptr(GNostrEvent) event = gnostr_event_new_from_json(json_str, NULL);
     if (!event) return NULL;
 
     /* Verify it's a kind-1111 event */
     guint kind = gnostr_event_get_kind(event);
     if (kind != NIP7D_KIND_THREAD_REPLY) {
-        g_object_unref(event);
         return NULL;
     }
 
@@ -539,7 +536,6 @@ gnostr_thread_reply_parse_from_json(const char *json_str)
 
     reply->depth = 0; /* Will be calculated later */
 
-    g_object_unref(event);
     return reply;
 }
 
@@ -550,7 +546,7 @@ gnostr_thread_reply_parse_from_json(const char *json_str)
 char *
 gnostr_thread_create_tags(const char *subject, const char * const *hashtags)
 {
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_array(builder);
 
     /* Add subject tag */
@@ -573,7 +569,6 @@ gnostr_thread_create_tags(const char *subject, const char * const *hashtags)
 
     gnostr_json_builder_end_array(builder);
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
     return result;
 }
 
@@ -585,7 +580,7 @@ gnostr_thread_reply_create_tags(const char *thread_root_id,
 {
     if (!thread_root_id) return NULL;
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_array(builder);
 
     /* Add "K" tag indicating the root event kind (NIP-22) */
@@ -632,7 +627,6 @@ gnostr_thread_reply_create_tags(const char *thread_root_id,
 
     gnostr_json_builder_end_array(builder);
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
     return result;
 }
 

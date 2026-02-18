@@ -382,12 +382,11 @@ static void rebuild_account_list(GnostrSessionView *self) {
   }
 
   /* Get known accounts from GSettings */
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (!settings) return;
 
   char *current_npub = g_settings_get_string(settings, "current-npub");
   char **accounts = g_settings_get_strv(settings, "known-accounts");
-  g_object_unref(settings);
 
   /* Add rows for each account */
   gboolean has_accounts = FALSE;

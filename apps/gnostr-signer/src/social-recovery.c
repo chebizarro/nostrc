@@ -744,7 +744,7 @@ gboolean gn_social_recovery_encrypt_share(const GnSSSShare *share,
   }
 
   /* Wrap in JSON with metadata */
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
   json_builder_set_member_name(builder, "type");
   json_builder_add_string_value(builder, "social_recovery_share");
@@ -754,14 +754,12 @@ gboolean gn_social_recovery_encrypt_share(const GnSSSShare *share,
   json_builder_add_string_value(builder, ciphertext);
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   *out_encrypted = json_generator_to_data(gen, NULL);
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
   free(ciphertext);
 
   return TRUE;
@@ -777,14 +775,13 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   *out_share = NULL;
 
   /* Parse JSON wrapper */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *parse_error = NULL;
 
   if (!json_parser_load_from_data(parser, encrypted, -1, &parse_error)) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
                 "Invalid JSON: %s", parse_error->message);
     g_error_free(parse_error);
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -792,7 +789,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
                 "Expected JSON object");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -803,7 +799,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
       g_strcmp0(json_object_get_string_member(obj, "type"), "social_recovery_share") != 0) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
                 "Invalid share type");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -811,7 +806,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   if (!json_object_has_member(obj, "content")) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
                 "Missing encrypted content");
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -820,7 +814,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   /* Parse guardian private key */
   guint8 privkey[32];
   if (!parse_private_key(guardian_nsec, privkey, error)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -829,7 +822,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   if (!g_str_has_prefix(owner_npub, "npub1")) {
     if (!nostr_hex2bin(owner_pubkey, owner_npub, 32)) {
       gnostr_secure_clear(privkey, 32);
-      g_object_unref(parser);
       g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
                   "Invalid owner npub format");
       return FALSE;
@@ -837,7 +829,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   } else {
     if (nostr_nip19_decode_npub(owner_npub, owner_pubkey) != 0) {
       gnostr_secure_clear(privkey, 32);
-      g_object_unref(parser);
       g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
                   "Failed to decode owner npub");
       return FALSE;
@@ -852,7 +843,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   if (!sk_hex || !pk_hex) {
     g_free(sk_hex);
     g_free(pk_hex);
-    g_object_unref(parser);
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
                 "Failed to convert keys to hex");
     return FALSE;
@@ -866,7 +856,6 @@ gboolean gn_social_recovery_decrypt_share(const gchar *encrypted,
   gnostr_secure_clear(sk_hex, 64);
   free(sk_hex);
   g_free(pk_hex);
-  g_object_unref(parser);
 
   if (nip04_result != 0 || !plaintext) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_DECRYPTION,
@@ -948,7 +937,7 @@ static gchar *get_config_path(const gchar *owner_npub) {
 gchar *gn_recovery_config_to_json(GnRecoveryConfig *config) {
   if (!config) return NULL;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   json_builder_set_member_name(builder, "version");
@@ -999,7 +988,7 @@ gchar *gn_recovery_config_to_json(GnRecoveryConfig *config) {
 
   json_builder_end_object(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_pretty(gen, TRUE);
   json_generator_set_indent(gen, 2);
   JsonNode *root = json_builder_get_root(builder);
@@ -1007,8 +996,6 @@ gchar *gn_recovery_config_to_json(GnRecoveryConfig *config) {
   gchar *json = json_generator_to_data(gen, NULL);
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json;
 }
@@ -1020,14 +1007,13 @@ GnRecoveryConfig *gn_recovery_config_from_json(const gchar *json, GError **error
     return NULL;
   }
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *parse_error = NULL;
 
   if (!json_parser_load_from_data(parser, json, -1, &parse_error)) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_STORAGE,
                 "Invalid JSON: %s", parse_error->message);
     g_error_free(parse_error);
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -1035,7 +1021,6 @@ GnRecoveryConfig *gn_recovery_config_from_json(const gchar *json, GError **error
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_STORAGE,
                 "Expected JSON object");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -1045,7 +1030,6 @@ GnRecoveryConfig *gn_recovery_config_from_json(const gchar *json, GError **error
   if (!json_object_has_member(obj, "owner_npub")) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_STORAGE,
                 "Missing owner_npub field");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -1098,7 +1082,6 @@ GnRecoveryConfig *gn_recovery_config_from_json(const gchar *json, GError **error
     }
   }
 
-  g_object_unref(parser);
   return config;
 }
 
@@ -1174,12 +1157,11 @@ gboolean gn_recovery_config_delete(const gchar *owner_npub, GError **error) {
   g_return_val_if_fail(owner_npub != NULL, FALSE);
 
   gchar *path = get_config_path(owner_npub);
-  GFile *file = g_file_new_for_path(path);
+  g_autoptr(GFile) file = g_file_new_for_path(path);
   g_free(path);
 
   GError *delete_error = NULL;
   gboolean ok = g_file_delete(file, NULL, &delete_error);
-  g_object_unref(file);
 
   if (!ok && !g_error_matches(delete_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
     g_set_error(error, GN_SOCIAL_RECOVERY_ERROR, GN_SOCIAL_RECOVERY_ERROR_STORAGE,

@@ -139,21 +139,19 @@ parse_repository_event(const gchar *event_json)
   if (!event_json || *event_json == '\0')
     return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error))
     {
       g_warning("[NIP-34] Failed to parse event JSON: %s", error->message);
       g_error_free(error);
-      g_object_unref(parser);
       return NULL;
     }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root))
     {
-      g_object_unref(parser);
       return NULL;
     }
 
@@ -175,7 +173,6 @@ parse_repository_event(const gchar *event_json)
   /* Parse tags array */
   if (!json_object_has_member(event, "tags"))
     {
-      g_object_unref(parser);
       repo_info_free(info);
       return NULL;
     }
@@ -269,7 +266,6 @@ parse_repository_event(const gchar *event_json)
 
   info->updated_at = info->created_at;
 
-  g_object_unref(parser);
 
   /* Must have at least a d-tag to be valid */
   if (!info->d_tag)
@@ -435,7 +431,7 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
    * NOT the full NIP-34 event format with tags array.
    * nostrc-FIX: Previously called parse_repository_event which expected
    * tags array format, causing all cached repos to fail parsing. */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (json_parser_load_from_data(parser, json, size, NULL))
     {
       JsonNode *root = json_parser_get_root(parser);
@@ -485,7 +481,6 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
                   g_hash_table_size(self->repositories));
         }
     }
-  g_object_unref(parser);
   g_bytes_unref(data);
 }
 
@@ -715,7 +710,7 @@ save_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
     return;
 
   /* Build JSON array of repository d-tags for cache */
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   GHashTableIter iter;
@@ -768,7 +763,7 @@ save_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   gsize len;
@@ -790,8 +785,6 @@ save_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
 
   g_bytes_unref(data);
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 }
 
 static void

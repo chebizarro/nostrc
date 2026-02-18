@@ -52,7 +52,7 @@ static void mock_repo_info_free(MockRepoInfo *info)
 /* Build cache JSON using the same format as save_cached_repositories */
 static char *build_cache_json(GPtrArray *repos)
 {
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
 
   for (guint i = 0; i < repos->len; i++)
@@ -101,14 +101,12 @@ static char *build_cache_json(GPtrArray *repos)
 
   json_builder_end_array(builder);
 
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   JsonNode *root = json_builder_get_root(builder);
   json_generator_set_root(gen, root);
   char *json = json_generator_to_data(gen, NULL);
 
   json_node_unref(root);
-  g_object_unref(gen);
-  g_object_unref(builder);
 
   return json;
 }
@@ -118,17 +116,15 @@ static GPtrArray *parse_cache_json(const char *json)
 {
   GPtrArray *repos = g_ptr_array_new_with_free_func((GDestroyNotify)mock_repo_info_free);
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, json, -1, NULL))
     {
-      g_object_unref(parser);
       return repos;
     }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root))
     {
-      g_object_unref(parser);
       return repos;
     }
 
@@ -167,7 +163,6 @@ static GPtrArray *parse_cache_json(const char *json)
         mock_repo_info_free(info);
     }
 
-  g_object_unref(parser);
   return repos;
 }
 
@@ -176,17 +171,15 @@ static GPtrArray *parse_cache_json_broken(const char *json)
 {
   GPtrArray *repos = g_ptr_array_new_with_free_func((GDestroyNotify)mock_repo_info_free);
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, json, -1, NULL))
     {
-      g_object_unref(parser);
       return repos;
     }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root))
     {
-      g_object_unref(parser);
       return repos;
     }
 
@@ -214,7 +207,6 @@ static GPtrArray *parse_cache_json_broken(const char *json)
       g_ptr_array_add(repos, info);
     }
 
-  g_object_unref(parser);
   return repos;
 }
 

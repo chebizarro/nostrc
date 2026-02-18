@@ -535,14 +535,13 @@ gnostr_plugin_context_publish_event(GnostrPluginContext *context,
 
   for (guint i = 0; i < relay_urls->len; i++) {
     const char *url = g_ptr_array_index(relay_urls, i);
-    GNostrRelay *relay = gnostr_relay_new(url);
+    g_autoptr(GNostrRelay) relay = gnostr_relay_new(url);
     if (!relay) continue;
 
     GError *conn_err = NULL;
     if (!gnostr_relay_connect(relay, &conn_err)) {
       g_clear_error(&last_error);
       last_error = conn_err;
-      g_object_unref(relay);
       continue;
     }
 
@@ -553,7 +552,6 @@ gnostr_plugin_context_publish_event(GnostrPluginContext *context,
       g_clear_error(&last_error);
       last_error = pub_err;
     }
-    g_object_unref(relay);
   }
 
   g_ptr_array_unref(relay_urls);

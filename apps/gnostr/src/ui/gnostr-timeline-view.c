@@ -122,10 +122,9 @@ static void free_urls_owned(char **urls, size_t count) {
 /* NIP-09: Get current user's pubkey as 64-char hex from GSettings.
  * Returns newly allocated string or NULL if not signed in. Caller must free. */
 static char *get_current_user_pubkey_hex(void) {
-  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (!settings) return NULL;
   char *npub = g_settings_get_string(settings, "current-npub");
-  g_object_unref(settings);
   if (!npub || !*npub) {
     g_free(npub);
     return NULL;

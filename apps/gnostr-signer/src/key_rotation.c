@@ -56,12 +56,11 @@ struct _KeyRotation {
 static gchar *npub_to_hex(const gchar *npub) {
   if (!npub || !g_str_has_prefix(npub, "npub1")) return NULL;
 
-  GNostrNip19 *nip19 = gnostr_nip19_decode(npub, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(npub, NULL);
   if (!nip19) return NULL;
 
   const gchar *pubkey = gnostr_nip19_get_pubkey(nip19);
   gchar *hex = pubkey ? g_strdup(pubkey) : NULL;
-  g_object_unref(nip19);
   return hex;
 }
 
@@ -175,19 +174,18 @@ gchar *key_rotation_build_migration_event(const gchar *old_pubkey_hex,
     content_str = g_strdup(content);
   } else {
     /* Encode new pubkey as npub for content */
-    GNostrNip19 *nip19 = gnostr_nip19_encode_npub(new_pubkey_hex, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(new_pubkey_hex, NULL);
     if (nip19) {
       const gchar *new_npub = gnostr_nip19_get_bech32(nip19);
       if (new_npub)
         content_str = g_strdup_printf("Migrating to new key: %s", new_npub);
-      g_object_unref(nip19);
     }
     if (!content_str) {
       content_str = g_strdup_printf("Migrating to new key: %s", new_pubkey_hex);
     }
   }
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   /* kind: 1776 (migration announcement) */
@@ -229,13 +227,11 @@ gchar *key_rotation_build_migration_event(const gchar *old_pubkey_hex,
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, root);
   gchar *result = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
   json_node_unref(root);
-  g_object_unref(builder);
   g_free(content_str);
 
   return result;
@@ -301,7 +297,7 @@ static gboolean rotation_step(gpointer user_data) {
       }
 
       /* Derive public key and npub using GNostrKeys */
-      GNostrKeys *keys = gnostr_keys_new_from_hex(sk_hex, NULL);
+      g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_hex(sk_hex, NULL);
       if (!keys) {
         gn_secure_strfree(sk_hex);
         emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
@@ -313,7 +309,6 @@ static gboolean rotation_step(gpointer user_data) {
       kr->new_pubkey_hex = g_strdup(pk_hex);
       gchar *npub = gnostr_keys_get_npub(keys);
       kr->new_npub = npub;  /* transfer full */
-      g_object_unref(keys);
 
       if (!kr->new_pubkey_hex || !kr->new_npub) {
         gn_secure_strfree(sk_hex);
@@ -323,7 +318,7 @@ static gboolean rotation_step(gpointer user_data) {
       }
 
       /* Convert sk_hex to nsec for storage using GNostrNip19 */
-      GNostrNip19 *nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
+      g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_nsec(sk_hex, NULL);
       gn_secure_strfree(sk_hex);
 
       if (!nip19) {
@@ -334,7 +329,6 @@ static gboolean rotation_step(gpointer user_data) {
 
       const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
       kr->new_nsec = nsec_str ? gn_secure_strdup(nsec_str) : NULL;
-      g_object_unref(nip19);
 
       if (!kr->new_nsec) {
         emit_complete(kr, KEY_ROTATION_ERR_GENERATE_FAILED,
@@ -386,29 +380,26 @@ static gboolean rotation_step(gpointer user_data) {
       }
 
       /* Add signature to event */
-      JsonParser *parser = json_parser_new();
+      g_autoptr(JsonParser) parser = json_parser_new();
       if (!json_parser_load_from_data(parser, kr->migration_event, -1, NULL)) {
         g_free(signature);
-        g_object_unref(parser);
         emit_complete(kr, KEY_ROTATION_ERR_SIGN_FAILED,
                       "Failed to parse migration event");
         return G_SOURCE_REMOVE;
       }
 
       JsonNode *root = json_parser_steal_root(parser);
-      g_object_unref(parser);
 
       JsonObject *obj = json_node_get_object(root);
       json_object_set_string_member(obj, "sig", signature);
       json_object_set_string_member(obj, "id", "");  /* Will be computed */
 
       /* Regenerate JSON with signature */
-      JsonGenerator *gen = json_generator_new();
+      g_autoptr(JsonGenerator) gen = json_generator_new();
       json_generator_set_root(gen, root);
       g_free(kr->migration_event);
       kr->migration_event = json_generator_to_data(gen, NULL);
 
-      g_object_unref(gen);
       json_node_unref(root);
       g_free(signature);
 
@@ -542,15 +533,13 @@ gboolean key_rotation_verify_migration(const gchar *event_json,
                                         gchar **out_new_pubkey) {
   if (!event_json) return FALSE;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -559,20 +548,17 @@ gboolean key_rotation_verify_migration(const gchar *event_json,
   /* Verify kind */
   if (!json_object_has_member(obj, "kind") ||
       json_object_get_int_member(obj, "kind") != KEY_MIGRATION_EVENT_KIND) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   /* Get old pubkey */
   if (!json_object_has_member(obj, "pubkey")) {
-    g_object_unref(parser);
     return FALSE;
   }
   const gchar *old_pk = json_object_get_string_member(obj, "pubkey");
 
   /* Find new pubkey in p tag */
   if (!json_object_has_member(obj, "tags")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -595,20 +581,17 @@ gboolean key_rotation_verify_migration(const gchar *event_json,
   }
 
   if (!new_pk) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   /* Verify signature exists (actual verification would need crypto) */
   if (!json_object_has_member(obj, "sig")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   if (out_old_pubkey) *out_old_pubkey = g_strdup(old_pk);
   if (out_new_pubkey) *out_new_pubkey = g_strdup(new_pk);
 
-  g_object_unref(parser);
   return TRUE;
 }
 

@@ -368,10 +368,9 @@ static void request_remote_signature(MultisigCoordinator *coordinator,
     conn->state = REMOTE_SIGNER_CONNECTING;
 
     /* Convert hex to npub for storage key */
-    GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
     if (nip19) {
       conn->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
-      g_object_unref(nip19);
       g_hash_table_replace(coordinator->remote_connections, g_strdup(conn->npub), conn);
     } else {
       conn->npub = g_strdup(pk_hex);
@@ -671,7 +670,7 @@ gboolean multisig_coordinator_connect_remote(MultisigCoordinator *coordinator,
     return FALSE;
   }
 
-  GNostrNip19 *nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
+  g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(pk_hex, NULL);
   g_free(pk_hex);
 
   if (!nip19) {
@@ -693,7 +692,6 @@ gboolean multisig_coordinator_connect_remote(MultisigCoordinator *coordinator,
 
   conn->last_contact = (gint64)time(NULL);
 
-  g_object_unref(nip19);
 
   /* Create NIP-46 client session and connect to bunker */
   if (!conn->nip46_session) {

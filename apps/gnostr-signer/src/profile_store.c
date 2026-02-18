@@ -111,18 +111,16 @@ NostrProfile *profile_store_parse_event(const gchar *event_json) {
   if (!event_json) return NULL;
 
   /* Parse JSON - looking for content field which is itself JSON */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_clear_error(&error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -147,7 +145,7 @@ NostrProfile *profile_store_parse_event(const gchar *event_json) {
   if (json_object_has_member(root, "content")) {
     const gchar *content_str = json_object_get_string_member(root, "content");
     if (content_str && *content_str) {
-      JsonParser *meta_parser = json_parser_new();
+      g_autoptr(JsonParser) meta_parser = json_parser_new();
       if (json_parser_load_from_data(meta_parser, content_str, -1, NULL)) {
         JsonNode *meta_node = json_parser_get_root(meta_parser);
         if (JSON_NODE_HOLDS_OBJECT(meta_node)) {
@@ -176,11 +174,9 @@ NostrProfile *profile_store_parse_event(const gchar *event_json) {
           }
         }
       }
-      g_object_unref(meta_parser);
     }
   }
 
-  g_object_unref(parser);
   return p;
 }
 
@@ -188,7 +184,7 @@ gchar *profile_store_build_event_json(const NostrProfile *profile) {
   if (!profile) return NULL;
 
   /* Build content object */
-  JsonBuilder *content_builder = json_builder_new();
+  g_autoptr(JsonBuilder) content_builder = json_builder_new();
   json_builder_begin_object(content_builder);
 
   if (profile->name && *profile->name) {
@@ -222,15 +218,13 @@ gchar *profile_store_build_event_json(const NostrProfile *profile) {
 
   json_builder_end_object(content_builder);
   JsonNode *content_node = json_builder_get_root(content_builder);
-  JsonGenerator *content_gen = json_generator_new();
+  g_autoptr(JsonGenerator) content_gen = json_generator_new();
   json_generator_set_root(content_gen, content_node);
   gchar *content_str = json_generator_to_data(content_gen, NULL);
-  g_object_unref(content_gen);
   json_node_unref(content_node);
-  g_object_unref(content_builder);
 
   /* Build event object */
-  JsonBuilder *event_builder = json_builder_new();
+  g_autoptr(JsonBuilder) event_builder = json_builder_new();
   json_builder_begin_object(event_builder);
 
   json_builder_set_member_name(event_builder, "kind");
@@ -249,13 +243,11 @@ gchar *profile_store_build_event_json(const NostrProfile *profile) {
   json_builder_end_object(event_builder);
 
   JsonNode *event_node = json_builder_get_root(event_builder);
-  JsonGenerator *event_gen = json_generator_new();
+  g_autoptr(JsonGenerator) event_gen = json_generator_new();
   json_generator_set_root(event_gen, event_node);
   gchar *result = json_generator_to_data(event_gen, NULL);
 
-  g_object_unref(event_gen);
   json_node_unref(event_node);
-  g_object_unref(event_builder);
   g_free(content_str);
 
   return result;
@@ -287,17 +279,15 @@ gboolean profile_store_load_cached(ProfileStore *ps, const gchar *npub,
   g_free(path);
 
   /* Parse cached JSON */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, contents, -1, NULL)) {
     g_free(contents);
-    g_object_unref(parser);
     return FALSE;
   }
   g_free(contents);
 
   JsonNode *root_node = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -330,7 +320,6 @@ gboolean profile_store_load_cached(ProfileStore *ps, const gchar *npub,
     p->created_at = json_object_get_int_member(root, "created_at");
   }
 
-  g_object_unref(parser);
 
   *out_profile = p;
   return TRUE;
@@ -339,7 +328,7 @@ gboolean profile_store_load_cached(ProfileStore *ps, const gchar *npub,
 void profile_store_save_cached(ProfileStore *ps, const NostrProfile *profile) {
   if (!ps || !profile || !profile->npub) return;
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
 
   if (profile->name) {
@@ -376,14 +365,12 @@ void profile_store_save_cached(ProfileStore *ps, const NostrProfile *profile) {
   json_builder_end_object(builder);
 
   JsonNode *root = json_builder_get_root(builder);
-  JsonGenerator *gen = json_generator_new();
+  g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_pretty(gen, TRUE);
   json_generator_set_root(gen, root);
   gchar *json_str = json_generator_to_data(gen, NULL);
 
-  g_object_unref(gen);
   json_node_unref(root);
-  g_object_unref(builder);
 
   /* Build cache file path */
   gchar *safe_npub = g_strdup(profile->npub);

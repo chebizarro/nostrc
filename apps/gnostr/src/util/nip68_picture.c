@@ -173,20 +173,18 @@ GnostrPictureMeta *gnostr_picture_parse_event(const char *event_id,
                                                gint64 created_at) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_warning("NIP-68: Failed to parse tags JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
     g_warning("NIP-68: Tags is not an array");
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -311,7 +309,6 @@ GnostrPictureMeta *gnostr_picture_parse_event(const char *event_id,
   }
   g_ptr_array_free(mentions_arr, FALSE);
 
-  g_object_unref(parser);
 
   /* Picture events should have at least one image */
   if (meta->image_count == 0) {

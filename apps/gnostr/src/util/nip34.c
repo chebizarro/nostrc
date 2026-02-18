@@ -68,19 +68,17 @@ static gchar **finish_strv(GPtrArray *arr, gsize *out_count) {
 GnostrRepoMeta *gnostr_repo_parse_tags(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_warning("[NIP34] Failed to parse tags JSON: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -136,7 +134,6 @@ GnostrRepoMeta *gnostr_repo_parse_tags(const char *tags_json) {
   meta->relays = finish_strv(relays, &meta->relays_count);
   meta->topics = finish_strv(topics, &meta->topics_count);
 
-  g_object_unref(parser);
   return meta;
 }
 
@@ -186,18 +183,16 @@ static char *extract_patch_title(const char *content) {
 GnostrPatchMeta *gnostr_patch_parse_tags(const char *tags_json, const char *content) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -240,7 +235,6 @@ GnostrPatchMeta *gnostr_patch_parse_tags(const char *tags_json, const char *cont
     meta->title = extract_patch_title(content);
   }
 
-  g_object_unref(parser);
   return meta;
 }
 
@@ -271,18 +265,16 @@ static char *extract_issue_title(const char *content) {
 GnostrIssueMeta *gnostr_issue_parse_tags(const char *tags_json, const char *content) {
   if (!tags_json || !*tags_json) return NULL;
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
     g_error_free(error);
-    g_object_unref(parser);
     return NULL;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
     return NULL;
   }
 
@@ -321,7 +313,6 @@ GnostrIssueMeta *gnostr_issue_parse_tags(const char *tags_json, const char *cont
     meta->title = extract_issue_title(content);
   }
 
-  g_object_unref(parser);
   return meta;
 }
 

@@ -163,7 +163,7 @@ test_generate_kind_10063_event(void)
   g_assert_nonnull(event_json);
 
   /* Parse and verify */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
   gboolean parsed = json_parser_load_from_data(parser, event_json, -1, &error);
   g_assert_no_error(error);
@@ -197,7 +197,6 @@ test_generate_kind_10063_event(void)
   }
   g_assert_cmpuint(server_count, ==, 2);
 
-  g_object_unref(parser);
   g_free(event_json);
 }
 
@@ -225,7 +224,7 @@ test_event_roundtrip(void)
   g_assert_nonnull(generated);
 
   /* Parse generated event back and compare servers */
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   json_parser_load_from_data(parser, generated, -1, NULL);
   JsonObject *obj = json_node_get_object(json_parser_get_root(parser));
   JsonArray *tags = json_object_get_array_member(obj, "tags");
@@ -259,7 +258,6 @@ test_event_roundtrip(void)
   g_assert_true(has_server3);
 
   g_ptr_array_free(urls, TRUE);
-  g_object_unref(parser);
   g_free(generated);
 }
 

@@ -539,7 +539,7 @@ hw_keystore_manager_get_public_key(HwKeystoreManager *self,
   gchar *sk_hex = bytes_to_hex(private_key, 32);
   memset(private_key, 0, sizeof(private_key));
 
-  GNostrKeys *gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
+  g_autoptr(GNostrKeys) gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
   memset(sk_hex, 0, strlen(sk_hex));
   g_free(sk_hex);
 
@@ -552,7 +552,6 @@ hw_keystore_manager_get_public_key(HwKeystoreManager *self,
   const gchar *pk_hex = gnostr_keys_get_pubkey(gkeys);
   gsize pk_len = strlen(pk_hex);
   if (pk_len != 64) {
-    g_object_unref(gkeys);
     g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
                 "Invalid public key length");
     return FALSE;
@@ -564,7 +563,6 @@ hw_keystore_manager_get_public_key(HwKeystoreManager *self,
     public_key_out[i] = val;
   }
 
-  g_object_unref(gkeys);
   return TRUE;
 }
 

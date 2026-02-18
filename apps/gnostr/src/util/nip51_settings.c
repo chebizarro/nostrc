@@ -82,7 +82,7 @@ static void set_last_sync(gint64 timestamp) {
 gchar *gnostr_nip51_settings_build_event_json(void) {
   ensure_settings();
 
-  JsonBuilder *builder = json_builder_new();
+  g_autoptr(JsonBuilder) builder = json_builder_new();
 
   /* Build the content object containing all settings */
   json_builder_begin_object(builder);
@@ -152,12 +152,10 @@ gchar *gnostr_nip51_settings_build_event_json(void) {
 
   /* Generate content JSON string */
   JsonNode *content_node = json_builder_get_root(builder);
-  JsonGenerator *content_gen = json_generator_new();
+  g_autoptr(JsonGenerator) content_gen = json_generator_new();
   json_generator_set_root(content_gen, content_node);
   gchar *content_str = json_generator_to_data(content_gen, NULL);
   json_node_unref(content_node);
-  g_object_unref(content_gen);
-  g_object_unref(builder);
 
   /* Build the event */
   builder = json_builder_new();
@@ -191,13 +189,11 @@ gchar *gnostr_nip51_settings_build_event_json(void) {
 
   /* Generate event JSON */
   JsonNode *event_node = json_builder_get_root(builder);
-  JsonGenerator *event_gen = json_generator_new();
+  g_autoptr(JsonGenerator) event_gen = json_generator_new();
   json_generator_set_root(event_gen, event_node);
   gchar *event_str = json_generator_to_data(event_gen, NULL);
 
   json_node_unref(event_node);
-  g_object_unref(event_gen);
-  g_object_unref(builder);
   g_free(content_str);
 
   return event_str;
@@ -208,19 +204,17 @@ gboolean gnostr_nip51_settings_from_event(const gchar *event_json) {
 
   ensure_settings();
 
-  JsonParser *parser = json_parser_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
 
   if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
     g_warning("nip51_settings: failed to parse event: %s", error->message);
     g_error_free(error);
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -231,35 +225,28 @@ gboolean gnostr_nip51_settings_from_event(const gchar *event_json) {
     gint64 kind = json_object_get_int_member(event, "kind");
     if (kind != GNOSTR_KIND_APP_SPECIFIC_DATA) {
       g_warning("nip51_settings: wrong kind %" G_GINT64_FORMAT ", expected %d", kind, GNOSTR_KIND_APP_SPECIFIC_DATA);
-      g_object_unref(parser);
       return FALSE;
     }
   }
 
   /* Get content */
   if (!json_object_has_member(event, "content")) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   const gchar *content_str = json_object_get_string_member(event, "content");
   if (!content_str || !*content_str) {
-    g_object_unref(parser);
     return FALSE;
   }
 
   /* Parse content JSON */
-  JsonParser *content_parser = json_parser_new();
+  g_autoptr(JsonParser) content_parser = json_parser_new();
   if (!json_parser_load_from_data(content_parser, content_str, -1, NULL)) {
-    g_object_unref(content_parser);
-    g_object_unref(parser);
     return FALSE;
   }
 
   JsonNode *content_root = json_parser_get_root(content_parser);
   if (!content_root || !JSON_NODE_HOLDS_OBJECT(content_root)) {
-    g_object_unref(content_parser);
-    g_object_unref(parser);
     return FALSE;
   }
 
@@ -319,8 +306,6 @@ gboolean gnostr_nip51_settings_from_event(const gchar *event_json) {
     }
   }
 
-  g_object_unref(content_parser);
-  g_object_unref(parser);
 
   /* Update last sync timestamp */
   set_last_sync((gint64)time(NULL));
@@ -372,7 +357,7 @@ static void on_nip51_query_done(GObject *source, GAsyncResult *res, gpointer use
       const gchar *json = g_ptr_array_index(results, i);
 
       /* Parse to check created_at and d-tag */
-      JsonParser *parser = json_parser_new();
+      g_autoptr(JsonParser) parser = json_parser_new();
       if (json_parser_load_from_data(parser, json, -1, NULL)) {
         JsonNode *root = json_parser_get_root(parser);
         if (root && JSON_NODE_HOLDS_OBJECT(root)) {
@@ -407,7 +392,6 @@ static void on_nip51_query_done(GObject *source, GAsyncResult *res, gpointer use
           }
         }
       }
-      g_object_unref(parser);
     }
   }
 
@@ -505,7 +489,7 @@ nip51_publish_thread(GTask *task, gpointer source_object,
 
   for (guint i = 0; i < d->relay_urls->len; i++) {
     const gchar *url = (const gchar *)g_ptr_array_index(d->relay_urls, i);
-    GNostrRelay *relay = gnostr_relay_new(url);
+    g_autoptr(GNostrRelay) relay = gnostr_relay_new(url);
     if (!relay) { d->fail_count++; continue; }
 
     GError *conn_err = NULL;
@@ -513,7 +497,6 @@ nip51_publish_thread(GTask *task, gpointer source_object,
       g_debug("nip51_settings: failed to connect to %s: %s", url,
               conn_err ? conn_err->message : "unknown");
       g_clear_error(&conn_err);
-      g_object_unref(relay);
       d->fail_count++;
       continue;
     }
@@ -528,7 +511,6 @@ nip51_publish_thread(GTask *task, gpointer source_object,
       g_clear_error(&pub_err);
       d->fail_count++;
     }
-    g_object_unref(relay);
   }
 
   g_task_return_boolean(task, d->success_count > 0);

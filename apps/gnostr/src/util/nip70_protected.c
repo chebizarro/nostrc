@@ -150,7 +150,7 @@ char *gnostr_nip70_add_protection_tag(const char *tags_json) {
     }
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   if (!builder) {
     return g_strdup("[]");
   }
@@ -171,7 +171,6 @@ char *gnostr_nip70_add_protection_tag(const char *tags_json) {
   gnostr_json_builder_end_array(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   g_debug("nip70: added protection tag to event");
   return result;
@@ -219,7 +218,7 @@ char *gnostr_nip70_remove_protection_tag(const char *tags_json) {
     return g_strdup(tags_json);
   }
 
-  GNostrJsonBuilder *builder = gnostr_json_builder_new();
+  g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
   if (!builder) {
     return g_strdup(tags_json);
   }
@@ -232,7 +231,6 @@ char *gnostr_nip70_remove_protection_tag(const char *tags_json) {
   gnostr_json_builder_end_array(builder);
 
   char *result = gnostr_json_builder_finish(builder);
-  g_object_unref(builder);
 
   return result;
 }

@@ -243,7 +243,7 @@ char *gnostr_app_data_manager_build_preferences_json(GnostrAppDataManager *self)
 
     ensure_settings(self);
 
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
+    g_autoptr(GNostrJsonBuilder) builder = gnostr_json_builder_new();
     gnostr_json_builder_begin_object(builder);
 
     /* Version for migration */
@@ -311,7 +311,6 @@ char *gnostr_app_data_manager_build_preferences_json(GnostrAppDataManager *self)
     gnostr_json_builder_end_object(builder);
 
     char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
 
     return result;
 }
