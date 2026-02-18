@@ -775,10 +775,9 @@ static void relay_manager_update_status(RelayManagerCtx *ctx) {
   GtkLabel *status = GTK_LABEL(gtk_builder_get_object(ctx->builder, "status_label"));
   if (!status) return;
   guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
-  gchar *text = g_strdup_printf("<small>%u relay%s%s</small>", n, n == 1 ? "" : "s",
+  g_autofree gchar *text = g_strdup_printf("<small>%u relay%s%s</small>", n, n == 1 ? "" : "s",
                                  ctx->modified ? " (modified)" : "");
   gtk_label_set_markup(status, text);
-  g_free(text);
 }
 
 /* Helper to clear all children from a container */
@@ -806,9 +805,8 @@ static void relay_manager_clear_container(GtkWidget *container) {
 
 /* Helper to create a NIP badge button */
 static GtkWidget *relay_manager_create_nip_badge(gint nip_num) {
-  gchar *label = g_strdup_printf("NIP-%02d", nip_num);
+  g_autofree gchar *label = g_strdup_printf("NIP-%02d", nip_num);
   GtkWidget *btn = gtk_button_new_with_label(label);
-  g_free(label);
 
   gtk_widget_add_css_class(btn, "pill");
   gtk_widget_add_css_class(btn, "flat");
@@ -854,9 +852,8 @@ static GtkWidget *relay_manager_create_nip_badge(gint nip_num) {
     case 99: tooltip = "Classified Listings"; break;
   }
   if (tooltip) {
-    gchar *full_tooltip = g_strdup_printf("NIP-%02d: %s", nip_num, tooltip);
+    g_autofree gchar *full_tooltip = g_strdup_printf("NIP-%02d: %s", nip_num, tooltip);
     gtk_widget_set_tooltip_text(btn, full_tooltip);
-    g_free(full_tooltip);
   }
 
   return btn;
@@ -916,11 +913,10 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
   if (desc) gtk_label_set_text(desc, info->description ? info->description : "(not provided)");
 
   if (software) {
-    gchar *sw_text = info->software && info->version
+    g_autofree gchar *sw_text = info->software && info->version
       ? g_strdup_printf("%s v%s", info->software, info->version)
       : (info->software ? g_strdup(info->software) : g_strdup("(not provided)"));
     gtk_label_set_text(software, sw_text);
-    g_free(sw_text);
   }
 
   /* Contact with clickable link */
@@ -935,10 +931,9 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
       gtk_widget_set_visible(contact_link, TRUE);
     } else if (info->contact && strchr(info->contact, '@')) {
       /* Looks like an email without mailto: prefix */
-      gchar *mailto = g_strdup_printf("mailto:%s", info->contact);
+      g_autofree gchar *mailto = g_strdup_printf("mailto:%s", info->contact);
       gtk_link_button_set_uri(GTK_LINK_BUTTON(contact_link), mailto);
       gtk_widget_set_visible(contact_link, TRUE);
-      g_free(mailto);
     } else {
       gtk_widget_set_visible(contact_link, FALSE);
     }
@@ -949,11 +944,10 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
     if (info->pubkey) {
       /* Truncate display but keep full value for copy */
       gchar *truncated = g_strndup(info->pubkey, 16);
-      gchar *display = g_strdup_printf("%s...", truncated);
+      g_autofree gchar *display = g_strdup_printf("%s...", truncated);
       gtk_label_set_text(pubkey, display);
       gtk_widget_set_tooltip_text(GTK_WIDGET(pubkey), info->pubkey);
       g_free(truncated);
-      g_free(display);
     } else {
       gtk_label_set_text(pubkey, "(not provided)");
       gtk_widget_set_tooltip_text(GTK_WIDGET(pubkey), NULL);
@@ -1110,9 +1104,8 @@ static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointe
   if (err) {
     GtkLabel *error_label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_error_label"));
     if (error_label) {
-      gchar *msg = g_strdup_printf("Failed to fetch relay info:\n%s", err->message);
+      g_autofree gchar *msg = g_strdup_printf("Failed to fetch relay info:\n%s", err->message);
       gtk_label_set_text(error_label, msg);
-      g_free(msg);
     }
     gtk_stack_set_visible_child_name(stack, "error");
     g_clear_error(&err);
@@ -1383,9 +1376,8 @@ static void relay_discovery_apply_filter(RelayDiscoveryCtx *ctx);
 static void relay_discovery_update_results_label(RelayDiscoveryCtx *ctx, guint count) {
   GtkLabel *label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "results_label"));
   if (label) {
-    gchar *text = g_strdup_printf("<small>Found %u relay%s</small>", count, count == 1 ? "" : "s");
+    g_autofree gchar *text = g_strdup_printf("<small>Found %u relay%s</small>", count, count == 1 ? "" : "s");
     gtk_label_set_markup(label, text);
-    g_free(text);
   }
 }
 
@@ -1533,18 +1525,16 @@ static void relay_discovery_bind_factory_cb(GtkSignalListItemFactory *factory, G
   gtk_label_set_text(GTK_LABEL(widgets->url_label), meta->relay_url ? meta->relay_url : "");
 
   /* Region */
-  gchar *region_text = g_strdup_printf("%s%s%s",
+  g_autofree gchar *region_text = g_strdup_printf("%s%s%s",
     meta->region ? meta->region : "",
     (meta->region && meta->country_code) ? " " : "",
     meta->country_code ? meta->country_code : "");
   gtk_label_set_text(GTK_LABEL(widgets->region_label), region_text);
-  g_free(region_text);
 
   /* NIPs summary */
   if (meta->supported_nips_count > 0) {
-    gchar *nips_text = g_strdup_printf("%zu NIPs", meta->supported_nips_count);
+    g_autofree gchar *nips_text = g_strdup_printf("%zu NIPs", meta->supported_nips_count);
     gtk_label_set_text(GTK_LABEL(widgets->nips_label), nips_text);
-    g_free(nips_text);
   } else {
     gtk_label_set_text(GTK_LABEL(widgets->nips_label), "");
   }
@@ -1614,9 +1604,8 @@ static void on_discovery_check_toggled(GtkCheckButton *check, gpointer user_data
   if (btn) {
     guint count = g_hash_table_size(ctx->selected_urls);
     gtk_widget_set_sensitive(btn, count > 0);
-    gchar *label = count > 0 ? g_strdup_printf("_Add %u Selected", count) : g_strdup("_Add Selected");
+    g_autofree gchar *label = count > 0 ? g_strdup_printf("_Add %u Selected", count) : g_strdup("_Add Selected");
     gtk_button_set_label(GTK_BUTTON(btn), label);
-    g_free(label);
   }
 }
 
@@ -2130,18 +2119,16 @@ static gchar *relay_manager_extract_hostname(const gchar *url) {
 
 /* Add a small NIP badge to the nips box */
 static void relay_manager_add_small_nip_badge(GtkWidget *box, gint nip) {
-  gchar *text = g_strdup_printf("%d", nip);
+  g_autofree gchar *text = g_strdup_printf("%d", nip);
   GtkWidget *badge = gtk_label_new(text);
-  g_free(text);
 
   gtk_widget_add_css_class(badge, "caption");
   gtk_widget_add_css_class(badge, "pill");
   gtk_widget_add_css_class(badge, "accent");
 
   /* Tooltip for NIP description */
-  gchar *tooltip = g_strdup_printf("NIP-%02d", nip);
+  g_autofree gchar *tooltip = g_strdup_printf("NIP-%02d", nip);
   gtk_widget_set_tooltip_text(badge, tooltip);
-  g_free(tooltip);
 
   gtk_box_append(GTK_BOX(box), badge);
 }
@@ -2324,9 +2311,8 @@ static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, Gtk
     }
     /* If we have more NIPs, show count */
     if (info->supported_nips_count > 4) {
-      gchar *more = g_strdup_printf("+%zu", info->supported_nips_count - shown);
+      g_autofree gchar *more = g_strdup_printf("+%zu", info->supported_nips_count - shown);
       GtkWidget *more_label = gtk_label_new(more);
-      g_free(more);
       gtk_widget_add_css_class(more_label, "dim-label");
       gtk_widget_add_css_class(more_label, "caption");
       gtk_box_append(GTK_BOX(widgets->nips_box), more_label);
@@ -2980,10 +2966,9 @@ static void on_blossom_publish_complete(gboolean success, GError *error, gpointe
   if (success) {
     show_toast(ctx->main_window, "Server list published to relays");
   } else {
-    char *msg = g_strdup_printf("Publish failed: %s",
+    g_autofree char *msg = g_strdup_printf("Publish failed: %s",
                                  error ? error->message : "unknown error");
     show_toast(ctx->main_window, msg);
-    g_free(msg);
   }
 }
 
@@ -3741,9 +3726,8 @@ static void settings_dialog_setup_wallet_panel(SettingsDialogCtx *ctx) {
     if (lbl_wallet) {
       const gchar *pk = gnostr_nwc_service_get_wallet_pubkey(nwc);
       if (pk && strlen(pk) >= 64) {
-        gchar *trunc = g_strdup_printf("%.8s...%.8s", pk, pk + 56);
+        g_autofree gchar *trunc = g_strdup_printf("%.8s...%.8s", pk, pk + 56);
         gtk_label_set_text(lbl_wallet, trunc);
-        g_free(trunc);
       }
     }
 
@@ -4925,7 +4909,7 @@ static void on_dm_conversation_send_file(GnostrDmConversationView *view,
 
     /* Optimistic "Sending file..." bubble */
     char *basename = g_path_get_basename(file_path);
-    char *preview = g_strdup_printf("Sending %s...", basename);
+    g_autofree char *preview = g_strdup_printf("Sending %s...", basename);
     GnostrDmMessage msg = {
         .event_id = NULL,
         .content = preview,
@@ -4934,7 +4918,6 @@ static void on_dm_conversation_send_file(GnostrDmConversationView *view,
     };
     gnostr_dm_conversation_view_add_message(view, &msg);
     gnostr_dm_conversation_view_scroll_to_bottom(view);
-    g_free(preview);
     g_free(basename);
 
     /* Send via encrypt + upload + gift wrap */
@@ -7761,9 +7744,8 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
-    char *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
+    g_autofree char *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
     show_toast(self, msg);
-    g_free(msg);
     g_clear_error(&error);
     publish_context_free(ctx);
     return;
@@ -7811,7 +7793,7 @@ static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpoin
   GnostrMainWindow *self = ctx->self;
 
   if (r->success_count > 0) {
-    char *msg;
+    g_autofree char *msg = NULL;
     if (r->limit_skip_count > 0) {
       msg = g_strdup_printf("Published to %u relay%s (%u skipped due to limits)",
                             r->success_count, r->success_count == 1 ? "" : "s", r->limit_skip_count);
@@ -7819,7 +7801,6 @@ static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpoin
       msg = g_strdup_printf("Published to %u relay%s", r->success_count, r->success_count == 1 ? "" : "s");
     }
     show_toast(self, msg);
-    g_free(msg);
 
     if (ctx->composer && NOSTR_GTK_IS_COMPOSER(ctx->composer)) {
       AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(ctx->composer), "compose-dialog"));
@@ -7834,9 +7815,8 @@ static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpoin
     }
   } else {
     if (r->limit_skip_count > 0 && r->limit_warnings && *r->limit_warnings) {
-      char *msg = g_strdup_printf("Event exceeds relay limits:\n%s", r->limit_warnings);
+      g_autofree char *msg = g_strdup_printf("Event exceeds relay limits:\n%s", r->limit_warnings);
       show_toast(self, msg);
-      g_free(msg);
     } else {
       show_toast(self, "Failed to publish to any relay");
     }
@@ -8213,9 +8193,8 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
-    char *msg = g_strdup_printf("Like signing failed: %s", error ? error->message : "unknown error");
+    g_autofree char *msg = g_strdup_printf("Like signing failed: %s", error ? error->message : "unknown error");
     show_toast(self, msg);
-    g_free(msg);
     g_clear_error(&error);
     like_context_free(ctx);
     return;
@@ -8263,9 +8242,8 @@ static void on_like_publish_done(GObject *source, GAsyncResult *res, gpointer us
 
   if (r->success_count > 0) {
     if (r->limit_skip_count > 0) {
-      char *msg = g_strdup_printf("Liked! (%u relays skipped)", r->limit_skip_count);
+      g_autofree char *msg = g_strdup_printf("Liked! (%u relays skipped)", r->limit_skip_count);
       show_toast(self, msg);
-      g_free(msg);
     } else {
       show_toast(self, "Liked!");
     }
@@ -8337,9 +8315,8 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
   } else if (strcmp(reaction_content, "-") == 0) {
     show_toast(self, "Reacting...");
   } else {
-    char *msg = g_strdup_printf("Reacting with %s...", reaction_content);
+    g_autofree char *msg = g_strdup_printf("Reacting with %s...", reaction_content);
     show_toast(self, msg);
-    g_free(msg);
   }
 
   /* Build unsigned kind 7 reaction event JSON (NIP-25) using GNostrJsonBuilder */
@@ -8638,29 +8615,25 @@ static void on_composer_post_requested(NostrGtkComposer *composer, const char *t
         gnostr_json_builder_add_string(builder, "imeta");
 
         /* url field (required) */
-        char *url_field = g_strdup_printf("url %s", m->url);
+        g_autofree char *url_field = g_strdup_printf("url %s", m->url);
         gnostr_json_builder_add_string(builder, url_field);
-        g_free(url_field);
 
         /* m field (MIME type) */
         if (m->mime_type && *m->mime_type) {
-          char *mime_field = g_strdup_printf("m %s", m->mime_type);
+          g_autofree char *mime_field = g_strdup_printf("m %s", m->mime_type);
           gnostr_json_builder_add_string(builder, mime_field);
-          g_free(mime_field);
         }
 
         /* x field (SHA-256 hash) */
         if (m->sha256 && *m->sha256) {
-          char *hash_field = g_strdup_printf("x %s", m->sha256);
+          g_autofree char *hash_field = g_strdup_printf("x %s", m->sha256);
           gnostr_json_builder_add_string(builder, hash_field);
-          g_free(hash_field);
         }
 
         /* size field */
         if (m->size > 0) {
-          char *size_field = g_strdup_printf("size %" G_GINT64_FORMAT, m->size);
+          g_autofree char *size_field = g_strdup_printf("size %" G_GINT64_FORMAT, m->size);
           gnostr_json_builder_add_string(builder, size_field);
-          g_free(size_field);
         }
 
         gnostr_json_builder_end_array(builder);
@@ -9594,7 +9567,7 @@ static void start_gift_wrap_subscription(GnostrMainWindow *self) {
   /* Build filter JSON for kind 1059 with p-tag matching current user.
    * Filter format: {"kinds":[1059],"#p":["<pubkey>"]}
    * This ensures we only receive gift wraps addressed to us. */
-  char *filter_json = g_strdup_printf(
+  g_autofree char *filter_json = g_strdup_printf(
     "{\"kinds\":[%d],\"#p\":[\"%s\"]}",
     NOSTR_KIND_GIFT_WRAP,
     pubkey_hex
@@ -9609,8 +9582,6 @@ static void start_gift_wrap_subscription(GnostrMainWindow *self) {
   } else {
     g_warning("[GIFTWRAP] Failed to subscribe to gift wrap events");
   }
-
-  g_free(filter_json);
 }
 
 /* Stop the gift wrap subscription (e.g., on logout or window dispose) */

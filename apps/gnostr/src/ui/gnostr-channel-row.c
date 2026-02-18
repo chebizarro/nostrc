@@ -229,9 +229,8 @@ gnostr_channel_row_set_channel(GnostrChannelRow *self,
     if (!display_name || !*display_name) {
         /* Fallback to truncated channel ID */
         if (channel->channel_id && strlen(channel->channel_id) >= 8) {
-            char *truncated = g_strdup_printf("#%.8s...", channel->channel_id);
+            g_autofree char *truncated = g_strdup_printf("#%.8s...", channel->channel_id);
             gtk_label_set_text(self->lbl_name, truncated);
-            g_free(truncated);
         } else {
             gtk_label_set_text(self->lbl_name, "Unnamed Channel");
         }
@@ -249,19 +248,16 @@ gnostr_channel_row_set_channel(GnostrChannelRow *self,
     }
 
     /* Set statistics */
-    char *stats = g_strdup_printf("%u members, %u messages",
+    g_autofree char *stats = g_strdup_printf("%u members, %u messages",
                                    channel->member_count,
                                    channel->message_count);
     gtk_label_set_text(self->lbl_stats, stats);
-    g_free(stats);
 
     /* Set created time */
     if (channel->created_at > 0) {
-        char *created = format_relative_time(channel->created_at);
-        char *created_text = g_strdup_printf("Created %s", created);
+        g_autofree char *created = format_relative_time(channel->created_at);
+        g_autofree char *created_text = g_strdup_printf("Created %s", created);
         gtk_label_set_text(self->lbl_created, created_text);
-        g_free(created);
-        g_free(created_text);
         gtk_widget_set_visible(GTK_WIDGET(self->lbl_created), TRUE);
     } else {
         gtk_widget_set_visible(GTK_WIDGET(self->lbl_created), FALSE);

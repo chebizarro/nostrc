@@ -303,10 +303,9 @@ static void on_sign_report_complete(GObject *source, GAsyncResult *res, gpointer
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
-    char *msg = g_strdup_printf("Report signing failed: %s", error ? error->message : "unknown error");
+    g_autofree char *msg = g_strdup_printf("Report signing failed: %s", error ? error->message : "unknown error");
     show_toast(self, msg);
     g_signal_emit(self, signals[SIGNAL_REPORT_FAILED], 0, msg);
-    g_free(msg);
     g_clear_error(&error);
     set_processing(self, FALSE, NULL);
     report_context_free(ctx);

@@ -234,9 +234,8 @@ create_hashtag_pill(GnostrThreadCard *self, const char *hashtag)
     gtk_widget_add_css_class(btn, "hashtag-pill");
     gtk_widget_add_css_class(btn, "flat");
 
-    char *label_text = g_strdup_printf("#%s", hashtag);
+    g_autofree char *label_text = g_strdup_printf("#%s", hashtag);
     gtk_button_set_label(GTK_BUTTON(btn), label_text);
-    g_free(label_text);
 
     g_object_set_data_full(G_OBJECT(btn), "hashtag", g_strdup(hashtag), g_free);
     g_signal_connect(btn, "clicked", G_CALLBACK(on_hashtag_clicked), self);
@@ -504,10 +503,9 @@ gnostr_thread_card_set_thread(GnostrThreadCard *self,
             /* Truncate if too long */
             if (strlen(content_preview) > MAX_PREVIEW_LENGTH) {
                 char *truncated = g_strndup(content_preview, MAX_PREVIEW_LENGTH);
-                char *preview_text = g_strdup_printf("%s...", truncated);
+                g_autofree char *preview_text = g_strdup_printf("%s...", truncated);
                 gtk_label_set_text(GTK_LABEL(self->lbl_content_preview), preview_text);
                 g_free(truncated);
-                g_free(preview_text);
             } else {
                 gtk_label_set_text(GTK_LABEL(self->lbl_content_preview), content_preview);
             }
@@ -558,10 +556,9 @@ gnostr_thread_card_set_author(GnostrThreadCard *self,
     /* Set handle */
     if (GTK_IS_LABEL(self->lbl_author_handle)) {
         if (handle && *handle) {
-            char *handle_text = g_strdup_printf("@%s", handle);
+            g_autofree char *handle_text = g_strdup_printf("@%s", handle);
             gtk_label_set_text(GTK_LABEL(self->lbl_author_handle), handle_text);
             gtk_widget_set_visible(self->lbl_author_handle, TRUE);
-            g_free(handle_text);
         } else {
             gtk_widget_set_visible(self->lbl_author_handle, FALSE);
         }
@@ -596,9 +593,8 @@ gnostr_thread_card_set_reply_count(GnostrThreadCard *self,
     self->reply_count = count;
 
     if (GTK_IS_LABEL(self->lbl_reply_count)) {
-        char *count_str = g_strdup_printf("%u", count);
+        g_autofree char *count_str = g_strdup_printf("%u", count);
         gtk_label_set_text(GTK_LABEL(self->lbl_reply_count), count_str);
-        g_free(count_str);
     }
 }
 

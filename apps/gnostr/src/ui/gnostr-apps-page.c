@@ -224,12 +224,11 @@ on_prefer_handler_clicked(GtkButton *btn, gpointer user_data)
   if (h && h->handled_kinds && h->n_handled_kinds > 0) {
     /* Set as preferred for first handled kind */
     guint kind = h->handled_kinds[0];
-    char *a_tag = g_strdup_printf("%d:%s:%s",
+    g_autofree char *a_tag = g_strdup_printf("%d:%s:%s",
                                    GNOSTR_NIP89_KIND_HANDLER_INFO,
                                    h->pubkey_hex, h->d_tag);
     gnostr_nip89_set_preferred_handler(kind, a_tag);
     g_signal_emit(page, signals[SIGNAL_PREFERENCE_CHANGED], 0, kind, a_tag);
-    g_free(a_tag);
     gnostr_apps_page_refresh(page);
   }
 }
@@ -463,9 +462,8 @@ update_handler_list(GnostrAppsPage *self)
   }
 
   /* Update count label */
-  char *count_text = g_strdup_printf("%u app%s", visible_count, visible_count == 1 ? "" : "s");
+  g_autofree char *count_text = g_strdup_printf("%u app%s", visible_count, visible_count == 1 ? "" : "s");
   gtk_label_set_text(self->count_label, count_text);
-  g_free(count_text);
 }
 
 static gboolean

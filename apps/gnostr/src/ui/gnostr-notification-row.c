@@ -317,9 +317,8 @@ gnostr_notification_row_set_notification(GnostrNotificationRow *self,
     if (!name || !*name) {
         /* Fallback to truncated pubkey */
         if (notif->actor_pubkey && strlen(notif->actor_pubkey) >= 8) {
-            char *truncated = g_strdup_printf("%.8s...", notif->actor_pubkey);
+            g_autofree char *truncated = g_strdup_printf("%.8s...", notif->actor_pubkey);
             gtk_label_set_text(self->lbl_actor, truncated);
-            g_free(truncated);
         } else {
             gtk_label_set_text(self->lbl_actor, "Unknown");
         }
@@ -343,9 +342,8 @@ gnostr_notification_row_set_notification(GnostrNotificationRow *self,
     }
 
     /* Set timestamp */
-    char *ts = format_relative_time(notif->created_at);
+    g_autofree char *ts = format_relative_time(notif->created_at);
     gtk_label_set_text(self->lbl_timestamp, ts);
-    g_free(ts);
 
     /* Set tooltip with full date/time */
     if (notif->created_at > 0) {
