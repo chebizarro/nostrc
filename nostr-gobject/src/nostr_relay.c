@@ -346,7 +346,22 @@ gnostr_relay_finalize(GObject *object)
          * relay_free_impl blocks in go_wait_group_wait() waiting for worker
          * goroutines to exit.  If finalize runs on the GTK main thread
          * (e.g., sync_relays → remove_relay → last unref → finalize),
-         * this blocks the main loop and freezes the app. */
+         * this blocks the main loop and freezes the app.
+         *
+         * CRITICAL: Close send/recv channels BEFORE dispatching free.
+         * If we free while libsoup is still doing I/O, g_weak_ref_get crashes
+         * with double-free. Closing channels is non-blocking and signals
+         * workers to stop I/O. The blocking go_wait_group_wait() happens
+         * in relay_free_impl on the background thread.
+         *
+         * NOTE: Do NOT call nostr_relay_close() here - it blocks waiting for
+         * workers, which would freeze the main thread. */
+        if (self->relay->connection) {
+            NostrConnection *conn = self->relay->connection;
+            if (conn->recv_channel) go_channel_close(conn->recv_channel);
+            if (conn->send_channel) go_channel_close(conn->send_channel);
+        }
+
         NostrRelay *relay = self->relay;
         self->relay = NULL;
 
