@@ -837,7 +837,7 @@ GnDeleteResult gn_secure_delete_identity_files(const char *npub) {
   g_free(profile_cache);
 
   /* Delete any backup files matching this identity */
-  gchar *backup_pattern = g_strdup_printf("%s.backup", npub);
+  g_autofree gchar *backup_pattern = g_strdup_printf("%s.backup", npub);
   gchar *backups_dir = g_build_filename(config_dir, "gnostr-signer",
                                          "backups", NULL);
 
@@ -859,7 +859,6 @@ GnDeleteResult gn_secure_delete_identity_files(const char *npub) {
     }
   }
 
-  g_free(backup_pattern);
   g_free(backups_dir);
 
   /* Delete identity-specific settings (if stored separately) */
@@ -1271,20 +1270,18 @@ GnDeleteResult gn_secure_delete_key_files(const char *npub) {
   /* Delete key backup files */
   gchar *backups_dir = g_build_filename(config_dir, "gnostr-signer", "backups", NULL);
   if (g_file_test(backups_dir, G_FILE_TEST_IS_DIR)) {
-    gchar *pattern = g_strdup_printf("%s*", npub);
+    g_autofree gchar *pattern = g_strdup_printf("%s*", npub);
     guint deleted = gn_secure_delete_pattern(backups_dir, pattern, &opts, NULL, NULL);
     LOG_DEBUG("Deleted %u key backup files", deleted);
-    g_free(pattern);
   }
   g_free(backups_dir);
 
   /* Delete encrypted exports */
   gchar *exports_dir = g_build_filename(config_dir, "gnostr-signer", "exports", NULL);
   if (g_file_test(exports_dir, G_FILE_TEST_IS_DIR)) {
-    gchar *pattern = g_strdup_printf("%s*.ncryptsec", npub);
+    g_autofree gchar *pattern = g_strdup_printf("%s*.ncryptsec", npub);
     guint deleted = gn_secure_delete_pattern(exports_dir, pattern, &opts, NULL, NULL);
     LOG_DEBUG("Deleted %u encrypted export files", deleted);
-    g_free(pattern);
   }
   g_free(exports_dir);
 

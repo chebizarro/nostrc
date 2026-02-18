@@ -225,16 +225,14 @@ update_ui_for_severity(GnConfirmDeleteDialog *self) {
       gtk_widget_set_visible(GTK_WIDGET(self->confirm_entry_box), TRUE);
 
       if (self->confirm_text) {
-        gchar *hint = g_strdup_printf("Type \"%s\" to confirm", self->confirm_text);
+        g_autofree gchar *hint = g_strdup_printf("Type \"%s\" to confirm", self->confirm_text);
         gtk_label_set_text(self->confirm_hint, hint);
 
         /* Update accessibility for confirm entry (nostrc-qfdg) */
-        gchar *entry_desc = g_strdup_printf("Type exactly %s to enable the delete button", self->confirm_text);
+        g_autofree gchar *entry_desc = g_strdup_printf("Type exactly %s to enable the delete button", self->confirm_text);
         gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
                                        GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, entry_desc,
                                        -1);
-        g_free(entry_desc);
-        g_free(hint);
       } else {
         gtk_label_set_text(self->confirm_hint, "Type \"DELETE\" to confirm");
         gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
@@ -256,16 +254,14 @@ update_ui_for_severity(GnConfirmDeleteDialog *self) {
       gtk_widget_set_visible(GTK_WIDGET(self->password_box), TRUE);
 
       if (self->confirm_text) {
-        gchar *hint = g_strdup_printf("Type \"%s\" to confirm", self->confirm_text);
+        g_autofree gchar *hint = g_strdup_printf("Type \"%s\" to confirm", self->confirm_text);
         gtk_label_set_text(self->confirm_hint, hint);
 
         /* Update accessibility for confirm entry (nostrc-qfdg) */
-        gchar *entry_desc = g_strdup_printf("Type exactly %s to enable the delete button", self->confirm_text);
+        g_autofree gchar *entry_desc = g_strdup_printf("Type exactly %s to enable the delete button", self->confirm_text);
         gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
                                        GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, entry_desc,
                                        -1);
-        g_free(entry_desc);
-        g_free(hint);
       } else {
         gtk_label_set_text(self->confirm_hint, "Type \"DELETE ALL DATA\" to confirm");
         gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
@@ -591,18 +587,16 @@ gn_show_delete_key_confirmation(GtkWidget *parent,
                                  gpointer user_data) {
   GnConfirmDeleteDialog *dialog = gn_confirm_delete_dialog_new();
 
-  gchar *title = g_strdup_printf("Delete Private Key");
+  g_autofree gchar *title = g_strdup_printf("Delete Private Key");
   gn_confirm_delete_dialog_set_title(dialog, title);
-  g_free(title);
 
-  gchar *message;
+  g_autofree gchar *message = NULL;
   if (label && *label) {
     message = g_strdup_printf("Are you sure you want to permanently delete the private key for \"%s\"?", label);
   } else {
     message = g_strdup("Are you sure you want to permanently delete this private key?");
   }
   gn_confirm_delete_dialog_set_message(dialog, message);
-  g_free(message);
 
   gn_confirm_delete_dialog_set_detail(dialog,
     "This action cannot be undone. The private key will be securely wiped "
@@ -632,11 +626,9 @@ gn_show_delete_backup_confirmation(GtkWidget *parent,
 
   gn_confirm_delete_dialog_set_title(dialog, "Delete Backup File");
 
-  gchar *basename = g_path_get_basename(filepath);
-  gchar *message = g_strdup_printf("Delete backup file \"%s\"?", basename);
+  g_autofree gchar *basename = g_path_get_basename(filepath);
+  g_autofree gchar *message = g_strdup_printf("Delete backup file \"%s\"?", basename);
   gn_confirm_delete_dialog_set_message(dialog, message);
-  g_free(message);
-  g_free(basename);
 
   gn_confirm_delete_dialog_set_detail(dialog,
     "The backup file will be securely wiped to prevent recovery.");
@@ -655,10 +647,9 @@ gn_show_delete_session_confirmation(GtkWidget *parent,
 
   gn_confirm_delete_dialog_set_title(dialog, "Revoke Session");
 
-  gchar *message = g_strdup_printf("Revoke session for \"%s\"?",
+  g_autofree gchar *message = g_strdup_printf("Revoke session for \"%s\"?",
                                     client_name ? client_name : "Unknown Client");
   gn_confirm_delete_dialog_set_message(dialog, message);
-  g_free(message);
 
   gn_confirm_delete_dialog_set_detail(dialog,
     "The application will need to request permission again to sign events.");
@@ -711,10 +702,9 @@ gn_show_delete_logs_confirmation(GtkWidget *parent,
 
   gn_confirm_delete_dialog_set_title(dialog, "Delete Log Files");
 
-  gchar *message = g_strdup_printf("Delete %u log file%s?",
+  g_autofree gchar *message = g_strdup_printf("Delete %u log file%s?",
                                     log_count, log_count == 1 ? "" : "s");
   gn_confirm_delete_dialog_set_message(dialog, message);
-  g_free(message);
 
   gn_confirm_delete_dialog_set_detail(dialog,
     "Log files will be securely wiped to remove any sensitive data they may contain.");

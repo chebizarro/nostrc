@@ -224,9 +224,8 @@ static GtkWidget *create_seed_word_widget(int index, const gchar *word) {
   gtk_widget_add_css_class(box, "seed-word-box");
 
   /* Index label */
-  gchar *idx_text = g_strdup_printf("%d.", index);
+  g_autofree gchar *idx_text = g_strdup_printf("%d.", index);
   GtkWidget *idx_label = gtk_label_new(idx_text);
-  g_free(idx_text);
   gtk_widget_add_css_class(idx_label, "dim-label");
   gtk_widget_add_css_class(idx_label, "caption");
   gtk_widget_set_size_request(idx_label, 24, -1);

@@ -468,9 +468,8 @@ static gboolean rotation_step(gpointer user_data) {
       if (kr->keep_old) {
         gchar *old_display = accounts_store_get_display_name(as, kr->old_npub);
         if (old_display) {
-          gchar *new_old_label = g_strdup_printf("%s (migrated)", old_display);
+          g_autofree gchar *new_old_label = g_strdup_printf("%s (migrated)", old_display);
           accounts_store_set_label(as, kr->old_npub, new_old_label, NULL);
-          g_free(new_old_label);
           g_free(old_display);
         }
       }

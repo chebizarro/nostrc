@@ -39,8 +39,8 @@ void identity_row_set_identity(IdentityRow *self, const char *label, const char 
   adw_action_row_set_subtitle(ADW_ACTION_ROW(self), npub ? npub : "");
 
   /* Update accessibility properties for screen readers (nostrc-qfdg) */
-  gchar *accessible_label = g_strdup_printf("Identity: %s", label ? label : "Unnamed");
-  gchar *accessible_desc = NULL;
+  g_autofree gchar *accessible_label = g_strdup_printf("Identity: %s", label ? label : "Unnamed");
+  g_autofree gchar *accessible_desc = NULL;
 
   if (npub) {
     if (is_active) {
@@ -73,14 +73,10 @@ void identity_row_set_identity(IdentityRow *self, const char *label, const char 
                                      -1);
     } else {
       gtk_widget_set_sensitive(GTK_WIDGET(self->btn_select), TRUE);
-      gchar *btn_desc = g_strdup_printf("Select %s as the active signing identity", label ? label : "this identity");
+      g_autofree gchar *btn_desc = g_strdup_printf("Select %s as the active signing identity", label ? label : "this identity");
       gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_select),
                                      GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, btn_desc,
                                      -1);
-      g_free(btn_desc);
     }
   }
-
-  g_free(accessible_label);
-  g_free(accessible_desc);
 }

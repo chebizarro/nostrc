@@ -28,9 +28,8 @@ static gchar *build_config_path(const gchar *identity) {
     /* Per-identity relay config: relays/<npub>.json */
     gchar *relays_dir = g_build_filename(dir, "relays", NULL);
     g_mkdir_with_parents(relays_dir, 0700);
-    gchar *filename = g_strdup_printf("%s.json", identity);
+    g_autofree gchar *filename = g_strdup_printf("%s.json", identity);
     path = g_build_filename(relays_dir, filename, NULL);
-    g_free(filename);
     g_free(relays_dir);
   } else {
     /* Global relay config: relays.json */

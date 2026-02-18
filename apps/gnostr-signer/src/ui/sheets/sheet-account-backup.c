@@ -286,10 +286,9 @@ static void on_create_ncrypt(GtkButton *btn, gpointer user_data) {
                                         &error);
 
   if (!ok) {
-    gchar *msg = g_strdup_printf("Encryption failed: %s",
+    g_autofree gchar *msg = g_strdup_printf("Encryption failed: %s",
                                   error ? error->message : "Unknown error");
     show_alert(self, msg);
-    g_free(msg);
     if (error) g_error_free(error);
     return;
   }
@@ -299,12 +298,11 @@ static void on_create_ncrypt(GtkButton *btn, gpointer user_data) {
   self->cached_ncryptsec = ncryptsec;
 
   /* Show the result */
-  gchar *display = g_strdup_printf("Encrypted backup created!\n\n%s\n\n"
+  g_autofree gchar *display = g_strdup_printf("Encrypted backup created!\n\n%s\n\n"
                                     "Save this string and your password securely.\n"
                                     "You can use it to recover your key with any NIP-49 compatible app.",
                                     ncryptsec);
   show_result(self, display, TRUE);
-  g_free(display);
 
   /* Copy to clipboard */
   copy_to_clipboard(self, ncryptsec);

@@ -205,9 +205,8 @@ void sheet_event_details_set_event(SheetEventDetails *self,
 
   /* Update kind display (combined format: "Kind 1 - Note") */
   if (self->lbl_kind) {
-    gchar *kind_str = g_strdup_printf("Kind %d - %s", kind, get_kind_name(kind));
+    g_autofree gchar *kind_str = g_strdup_printf("Kind %d - %s", kind, get_kind_name(kind));
     gtk_label_set_text(self->lbl_kind, kind_str);
-    g_free(kind_str);
   }
 
   /* Update pubkey with truncation */

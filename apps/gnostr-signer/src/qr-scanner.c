@@ -381,7 +381,7 @@ gboolean gn_qr_scanner_start(GnQrScanner *self,
   source_element = "autovideosrc";
 #endif
 
-  gchar *pipeline_desc = g_strdup_printf(
+  g_autofree gchar *pipeline_desc = g_strdup_printf(
     "%s name=source ! videoconvert ! videoscale ! "
     "video/x-raw,width=640,height=480 ! "
     "gtksink name=sink",
@@ -390,7 +390,6 @@ gboolean gn_qr_scanner_start(GnQrScanner *self,
 
   GError *parse_error = NULL;
   self->pipeline = gst_parse_launch(pipeline_desc, &parse_error);
-  g_free(pipeline_desc);
 
   if (!self->pipeline) {
     g_propagate_error(error, parse_error);

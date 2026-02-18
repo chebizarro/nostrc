@@ -94,11 +94,10 @@ create_device_row(GnHwWalletDeviceInfo *info)
 
   /* Subtitle: Status and type */
   const gchar *state_str = gn_hw_wallet_state_to_string(info->state);
-  gchar *subtitle = g_strdup_printf("%s - %s",
+  g_autofree gchar *subtitle = g_strdup_printf("%s - %s",
                                      gn_hw_wallet_type_to_string(info->type),
                                      state_str);
   adw_action_row_set_subtitle(row, subtitle);
-  g_free(subtitle);
 
   /* Icon based on device type */
   const gchar *icon_name = "security-high-symbolic";

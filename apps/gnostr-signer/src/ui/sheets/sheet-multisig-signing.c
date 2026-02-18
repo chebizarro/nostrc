@@ -215,7 +215,7 @@ static void populate_signer_list(SheetMultisigSigning *self) {
   for (guint i = 0; i < wallet->cosigners->len; i++) {
     MultisigCosigner *cs = g_ptr_array_index(wallet->cosigners, i);
 
-    gchar *label = NULL;
+    g_autofree gchar *label = NULL;
     if (cs->label && *cs->label) {
       label = g_strdup(cs->label);
     } else if (cs->type == COSIGNER_TYPE_LOCAL) {
@@ -226,7 +226,6 @@ static void populate_signer_list(SheetMultisigSigning *self) {
 
     GtkWidget *row = create_signer_status_row(label, cs->npub, cs->type,
                                                COSIGNER_STATUS_PENDING);
-    g_free(label);
 
     gtk_list_box_append(self->list_signers, row);
 
@@ -625,12 +624,11 @@ SheetMultisigSigning *sheet_multisig_signing_new(const gchar *wallet_id,
   MultisigWallet *wallet = NULL;
   if (multisig_wallet_get(wallet_id, &wallet) == MULTISIG_OK && wallet) {
     if (self->lbl_wallet_name) {
-      gchar *subtitle = g_strdup_printf("Wallet: %s (%u-of-%u)",
+      g_autofree gchar *subtitle = g_strdup_printf("Wallet: %s (%u-of-%u)",
                                         wallet->name,
                                         wallet->threshold_m,
                                         wallet->total_n);
       gtk_label_set_text(self->lbl_wallet_name, subtitle);
-      g_free(subtitle);
     }
     multisig_wallet_free(wallet);
   }
@@ -646,10 +644,9 @@ SheetMultisigSigning *sheet_multisig_signing_new(const gchar *wallet_id,
         gint kind = (gint)g_ascii_strtoll(kind_str, NULL, 10);
 
         if (self->lbl_event_kind) {
-          gchar *kind_text = g_strdup_printf("Event type: %s (kind %d)",
+          g_autofree gchar *kind_text = g_strdup_printf("Event type: %s (kind %d)",
                                               get_event_kind_name(kind), kind);
           gtk_label_set_text(self->lbl_event_kind, kind_text);
-          g_free(kind_text);
         }
       }
     }
