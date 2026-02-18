@@ -453,22 +453,14 @@ gnostr_pool_sync_relays(GNostrPool *self, const gchar **urls, gsize url_count)
 {
     g_return_if_fail(GNOSTR_IS_POOL(self));
 
-    /* Build a set of desired URLs for O(1) lookup */
-    GHashTable *desired = g_hash_table_new(g_str_hash, g_str_equal);
-    for (gsize i = 0; i < url_count; i++) {
-        if (urls[i])
-            g_hash_table_add(desired, (gpointer)urls[i]);
-    }
-
-    /* Remove relays not in the desired set (iterate in reverse for safe removal) */
-    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
-    for (gint i = (gint)n - 1; i >= 0; i--) {
-        g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
-        const gchar *url = gnostr_relay_get_url(relay);
-        if (url && !g_hash_table_contains(desired, url)) {
-            gnostr_pool_remove_relay(self, url);
-        }
-    }
+    /* nostrc-kw9r: Make sync_relays additive (union) instead of destructive (exact match).
+     * The shared query pool is synced before every query with that query's relay list.
+     * Removing relays not in the current query causes constant connection churn as
+     * different queries use different relay sets. Instead, accumulate all relays used
+     * by any query and keep their connections alive for reuse.
+     * 
+     * For pools that need exact sync (e.g., user's main pool when settings change),
+     * call gnostr_pool_clear() first, then sync_relays to get exact replacement. */
 
     /* Add relays that aren't already present */
     for (gsize i = 0; i < url_count; i++) {
@@ -476,8 +468,6 @@ gnostr_pool_sync_relays(GNostrPool *self, const gchar **urls, gsize url_count)
             gnostr_pool_add_relay(self, urls[i]);
         }
     }
-
-    g_hash_table_destroy(desired);
 }
 
 /* --- Async query implementation --- */
