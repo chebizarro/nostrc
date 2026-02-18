@@ -452,10 +452,9 @@ gnostr_chess_session_request_ai_move(GnostrChessSession *self)
     }
 
     /* Create cancellable */
-    if (self->ai_cancellable) {
+    if (self->ai_cancellable)
         g_cancellable_cancel(self->ai_cancellable);
-        g_object_unref(self->ai_cancellable);
-    }
+    g_clear_object(&self->ai_cancellable);
     self->ai_cancellable = g_cancellable_new();
 
     /* Set thinking state and emit signal */

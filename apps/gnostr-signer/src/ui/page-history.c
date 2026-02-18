@@ -610,15 +610,8 @@ gn_page_history_dispose(GObject *object)
   g_free(self->filter_client);
   self->filter_client = NULL;
 
-  if (self->kind_values) {
-    g_array_unref(self->kind_values);
-    self->kind_values = NULL;
-  }
-
-  if (self->client_values) {
-    g_ptr_array_unref(self->client_values);
-    self->client_values = NULL;
-  }
+  g_clear_pointer(&self->kind_values, g_array_unref);
+  g_clear_pointer(&self->client_values, g_ptr_array_unref);
 
   G_OBJECT_CLASS(gn_page_history_parent_class)->dispose(object);
 }

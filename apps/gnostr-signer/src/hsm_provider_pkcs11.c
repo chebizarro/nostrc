@@ -1824,7 +1824,7 @@ gn_hsm_provider_pkcs11_finalize(GObject *object)
     self->pin_callback_destroy(self->pin_callback_data);
   }
 
-  g_hash_table_unref(self->sessions);
+  g_clear_pointer(&self->sessions, g_hash_table_unref);
   g_mutex_clear(&self->lock);
 
   G_OBJECT_CLASS(gn_hsm_provider_pkcs11_parent_class)->finalize(object);

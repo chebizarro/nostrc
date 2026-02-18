@@ -709,7 +709,7 @@ gn_hw_wallet_trezor_provider_finalize(GObject *object)
   GnHwWalletTrezorProvider *self = GN_HW_WALLET_TREZOR_PROVIDER(object);
 
   g_mutex_lock(&self->lock);
-  g_hash_table_unref(self->open_devices);
+  g_clear_pointer(&self->open_devices, g_hash_table_unref);
   g_mutex_unlock(&self->lock);
   g_mutex_clear(&self->lock);
 

@@ -107,10 +107,10 @@ gnostr_classifieds_view_finalize(GObject *obj)
   g_clear_pointer(&self->price_currency, g_free);
   g_clear_pointer(&self->user_pubkey, g_free);
 
-  g_hash_table_destroy(self->listings);
-  g_ptr_array_unref(self->listing_data);
-  g_ptr_array_unref(self->visible_cards);
-  g_ptr_array_unref(self->available_categories);
+  g_clear_pointer(&self->listings, g_hash_table_destroy);
+  g_clear_pointer(&self->listing_data, g_ptr_array_unref);
+  g_clear_pointer(&self->visible_cards, g_ptr_array_unref);
+  g_clear_pointer(&self->available_categories, g_ptr_array_unref);
 
   G_OBJECT_CLASS(gnostr_classifieds_view_parent_class)->finalize(obj);
 }

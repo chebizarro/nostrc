@@ -158,9 +158,7 @@ static void gnostr_torrent_card_finalize(GObject *obj) {
   g_clear_pointer(&self->author_lud16, g_free);
   g_clear_pointer(&self->nip05, g_free);
 
-  if (self->trackers) {
-    g_ptr_array_free(self->trackers, TRUE);
-  }
+  g_clear_pointer(&self->trackers, g_ptr_array_unref);
 
   G_OBJECT_CLASS(gnostr_torrent_card_parent_class)->finalize(obj);
 }

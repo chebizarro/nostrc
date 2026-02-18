@@ -189,15 +189,8 @@ gnostr_nip7d_thread_view_finalize(GObject *obj)
 {
     GnostrNip7dThreadView *self = GNOSTR_NIP7D_THREAD_VIEW(obj);
 
-    if (self->thread) {
-        gnostr_thread_free(self->thread);
-        self->thread = NULL;
-    }
-
-    if (self->replies) {
-        g_ptr_array_unref(self->replies);
-        self->replies = NULL;
-    }
+    g_clear_pointer(&self->thread, gnostr_thread_free);
+    g_clear_pointer(&self->replies, g_ptr_array_unref);
 
     g_clear_pointer(&self->reply_parent_id, g_free);
 

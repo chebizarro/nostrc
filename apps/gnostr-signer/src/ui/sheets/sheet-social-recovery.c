@@ -132,15 +132,8 @@ static void clear_sensitive_data(SheetSocialRecovery *self) {
     self->setup_config = NULL;
   }
 
-  if (self->encrypted_shares) {
-    g_ptr_array_unref(self->encrypted_shares);
-    self->encrypted_shares = NULL;
-  }
-
-  if (self->collected_shares) {
-    g_ptr_array_unref(self->collected_shares);
-    self->collected_shares = NULL;
-  }
+  g_clear_pointer(&self->encrypted_shares, g_ptr_array_unref);
+  g_clear_pointer(&self->collected_shares, g_ptr_array_unref);
 }
 
 static const gchar *get_nsec(SheetSocialRecovery *self) {
@@ -987,10 +980,7 @@ static void sheet_social_recovery_dispose(GObject *obj) {
   g_free(self->current_npub);
   self->current_npub = NULL;
 
-  if (self->pending_guardians) {
-    g_ptr_array_unref(self->pending_guardians);
-    self->pending_guardians = NULL;
-  }
+  g_clear_pointer(&self->pending_guardians, g_ptr_array_unref);
 
   if (self->loaded_config) {
     gn_recovery_config_free(self->loaded_config);

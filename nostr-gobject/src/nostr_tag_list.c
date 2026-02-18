@@ -84,7 +84,7 @@ static void
 gnostr_tag_list_finalize(GObject *object)
 {
     GNostrTagList *self = GNOSTR_TAG_LIST(object);
-    g_ptr_array_unref(self->tags);
+    g_clear_pointer(&self->tags, g_ptr_array_unref);
     G_OBJECT_CLASS(gnostr_tag_list_parent_class)->finalize(object);
 }
 

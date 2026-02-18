@@ -228,17 +228,16 @@ gnostr_community_view_finalize(GObject *object)
 {
     GnostrCommunityView *self = GNOSTR_COMMUNITY_VIEW(object);
 
-    g_free(self->a_tag);
-    g_free(self->d_tag);
-    g_free(self->name);
-    g_free(self->creator_pubkey);
-    g_free(self->user_pubkey);
+    g_clear_pointer(&self->a_tag, g_free);
+    g_clear_pointer(&self->d_tag, g_free);
+    g_clear_pointer(&self->name, g_free);
+    g_clear_pointer(&self->creator_pubkey, g_free);
+    g_clear_pointer(&self->user_pubkey, g_free);
 
-    if (self->moderators)
-        g_ptr_array_unref(self->moderators);
+    g_clear_pointer(&self->moderators, g_ptr_array_unref);
 
-    g_hash_table_destroy(self->author_profiles);
-    g_hash_table_destroy(self->author_avatars);
+    g_clear_pointer(&self->author_profiles, g_hash_table_destroy);
+    g_clear_pointer(&self->author_avatars, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_community_view_parent_class)->finalize(object);
 }
