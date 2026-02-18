@@ -682,6 +682,39 @@ static void insertion_buffer_sorted_insert(GArray *buf, PendingEntry *entry) {
 }
 
 /**
+ * reset_internal_state_silent:
+ * Reset all internal data structures WITHOUT emitting any GListModel signal.
+ * Used by refresh paths that will emit a single atomic items_changed(0, old, new)
+ * to avoid the pathological mass-disposal cascade that causes heap corruption
+ * when GTK tears down hundreds of complex widget trees in one stack frame.
+ *
+ * nostrc-atomic-replace: This is the key fix for the persistent timeline crash.
+ */
+static void reset_internal_state_silent(GnNostrEventModel *self) {
+  /* Stop drain timer to avoid concurrent mutations */
+  remove_drain_timer(self);
+
+  /* Clear insertion buffer pipeline state */
+  if (self->insertion_buffer)
+    g_array_set_size(self->insertion_buffer, 0);
+  if (self->insertion_key_set)
+    g_hash_table_remove_all(self->insertion_key_set);
+  self->backpressure_active = FALSE;
+  self->unseen_count = 0;
+  self->evict_defer_counter = 0;
+
+  /* Clear notes array and all caches - no signal emitted */
+  g_array_set_size(self->notes, 0);
+  g_hash_table_remove_all(self->note_key_set);
+  g_hash_table_remove_all(self->item_cache);
+  g_queue_clear(self->cache_lru);
+  g_hash_table_remove_all(self->thread_info);
+  if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
+  if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
+  if (self->skip_animation_keys) g_hash_table_remove_all(self->skip_animation_keys);
+}
+
+/**
  * enforce_window_inline:
  * Evict oldest items from the tail of the newest-first notes array when
  * exceeding MODEL_MAX_ITEMS. Returns the number of items evicted.
@@ -2156,8 +2189,10 @@ void gn_nostr_event_model_set_thread_root(GnNostrEventModel *self, const char *r
 void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
-  /* Clear current window */
-  gn_nostr_event_model_clear(self);
+  /* nostrc-atomic-replace: Record old size, then reset silently.
+   * We emit a single items_changed(0, old, new) at the end. */
+  guint old_size = self->notes->len;
+  reset_internal_state_silent(self);
 
   /* Build filter JSON for kinds (default to 1/6) */
   GString *filter = g_string_new("[{");
@@ -2290,12 +2325,15 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   GArray *evicted_keys_refresh = NULL;
   enforce_window_inline(self, &evicted_keys_refresh);
 
-  /* ONE batched signal for all insertions (model was cleared above, so old=0) */
-  if (self->notes->len > 0)
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+  /* nostrc-atomic-replace: ONE atomic replace signal instead of clear + add.
+   * GTK rebinds existing widget slots instead of mass teardown + recreation. */
+  guint new_size = self->notes->len;
+  if (old_size > 0 || new_size > 0)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, new_size);
   cleanup_evicted_keys(self, evicted_keys_refresh);
 
-  g_debug("[MODEL] Refresh complete: %u total items (%u added)", self->notes->len, added);
+  g_debug("[MODEL] Refresh complete: %u total items (%u added, %u replaced)",
+          self->notes->len, added, old_size);
 }
 
 /* --- Async refresh: moves NDB I/O + JSON deserialization off main thread --- */
@@ -2494,10 +2532,15 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   if (!entries) return;
   if (!GN_IS_NOSTR_EVENT_MODEL(self)) { g_ptr_array_unref(entries); return; }
 
-  /* Clear model - this triggers items_changed which disposes widgets.
-   * The two-phase approach in gn_nostr_event_model_clear ensures caches
-   * are cleaned up AFTER GTK finishes disposing widgets. */
-  gn_nostr_event_model_clear(self);
+  /* nostrc-atomic-replace: Record old size BEFORE clearing internal state.
+   * We will emit a single items_changed(0, old_size, new_size) instead of
+   * separate clear + add signals. This avoids the pathological GTK disposal
+   * cascade where hundreds of complex widget trees are torn down in one
+   * stack frame, causing heap corruption in CSS node finalization. */
+  guint old_size = self->notes->len;
+
+  /* Reset all internal state WITHOUT emitting any signal */
+  reset_internal_state_silent(self);
 
   guint added = 0;
   for (guint i = 0; i < entries->len; i++) {
@@ -2523,12 +2566,15 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GArray *evicted_keys_async = NULL;
   enforce_window_inline(self, &evicted_keys_async);
 
-  /* ONE batched signal for all insertions (model was cleared, so old=0) */
-  if (self->notes->len > 0)
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+  /* ONE atomic replace signal: GTK rebinds existing widget slots instead of
+   * tearing them all down and recreating them. This is the key fix. */
+  guint new_size = self->notes->len;
+  if (old_size > 0 || new_size > 0)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, new_size);
   cleanup_evicted_keys(self, evicted_keys_async);
 
-  g_debug("[MODEL] Async refresh complete: %u total items (%u added)", self->notes->len, added);
+  g_debug("[MODEL] Async refresh complete: %u total items (%u added, %u replaced)",
+          self->notes->len, added, old_size);
 
   g_ptr_array_unref(entries);
 }
@@ -2779,23 +2825,44 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
     return;
   }
 
-  /* Resize array and emit items_changed FIRST so GTK can tear down widgets
-   * while cached items are still valid.
-   * nostrc-css-fix: Single signal is safer than batched approach which can
-   * trigger async callbacks during clear and corrupt heap state. */
-  g_array_set_size(self->notes, 0);
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
+  /* nostrc-atomic-replace: Remove items in small batches from the tail to avoid
+   * the pathological GTK disposal cascade where hundreds of complex widget trees
+   * are torn down in one stack frame, causing heap corruption in CSS node
+   * finalization. Each batch removes at most CLEAR_BATCH_SIZE items and emits
+   * a separate items_changed signal, giving GTK's list item manager a chance
+   * to process each batch cleanly.
+   *
+   * Note: For refresh paths (clear + re-populate), use reset_internal_state_silent()
+   * with a single atomic items_changed(0, old, new) instead — see on_refresh_async_done. */
+#define CLEAR_BATCH_SIZE 20
+  while (self->notes->len > 0) {
+    guint remaining = self->notes->len;
+    guint batch = (remaining > CLEAR_BATCH_SIZE) ? CLEAR_BATCH_SIZE : remaining;
+    guint start_pos = remaining - batch;
 
-  /* NOW clear caches after GTK has finished with widgets */
-  g_hash_table_remove_all(self->note_key_set);
+    /* Collect keys for cache cleanup */
+    for (guint i = start_pos; i < remaining; i++) {
+      NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+      uint64_t k = entry->note_key;
+      g_hash_table_remove(self->note_key_set, &k);
+      cache_lru_remove_key(self, k);
+      g_hash_table_remove(self->thread_info, &k);
+      g_hash_table_remove(self->item_cache, &k);
+      g_hash_table_remove(self->skip_animation_keys, &k);
+    }
+
+    g_array_set_size(self->notes, start_pos);
+    g_list_model_items_changed(G_LIST_MODEL(self), start_pos, batch, 0);
+  }
+#undef CLEAR_BATCH_SIZE
+
+  /* Clear remaining caches */
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
-  g_hash_table_remove_all(self->thread_info);
   if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
   if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
-  if (self->skip_animation_keys) g_hash_table_remove_all(self->skip_animation_keys);
 
-  g_debug("[MODEL] Cleared %u items", old_size);
+  g_debug("[MODEL] Cleared %u items (batched)", old_size);
 }
 
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self) {
