@@ -20,8 +20,9 @@
 // Magic number to detect valid vs freed/garbage channel pointers
 #define GO_CHANNEL_MAGIC 0xC4A77E10  // "CHANNEL0"
 
-/* Forward declaration for select waiter */
+/* Forward declarations for select waiters */
 struct GoSelectWaiter;
+struct GoSelectWaiterNode;
 
 /* Forward declaration for fiber waiter (used by fiber-aware CV_WAIT) */
 struct GoFiberWaiter;
@@ -49,8 +50,8 @@ typedef struct GoChannel {
     // Reference count for shared ownership (hq-e3ach). Starts at 1.
     // When refs drops to 0 the channel is destroyed.
     _Atomic int refs;
-    // Linked list of select waiters (protected by mutex)
-    struct GoSelectWaiter *select_waiters;
+    // Linked list of select waiter registrations (protected by mutex)
+    struct GoSelectWaiterNode *select_waiters;
     // Linked list of fiber waiters on cond_full (protected by mutex)
     struct GoFiberWaiter *fiber_waiters_full;
     // Linked list of fiber waiters on cond_empty (protected by mutex)
