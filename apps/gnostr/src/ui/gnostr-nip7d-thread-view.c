@@ -353,9 +353,8 @@ create_hashtag_pill(GnostrNip7dThreadView *self, const char *hashtag)
     gtk_widget_add_css_class(btn, "hashtag-pill");
     gtk_widget_add_css_class(btn, "flat");
 
-    char *label_text = g_strdup_printf("#%s", hashtag);
+    g_autofree char *label_text = g_strdup_printf("#%s", hashtag);
     gtk_button_set_label(GTK_BUTTON(btn), label_text);
-    g_free(label_text);
 
     g_object_set_data_full(G_OBJECT(btn), "hashtag", g_strdup(hashtag), g_free);
     g_signal_connect(btn, "clicked", G_CALLBACK(on_hashtag_clicked), self);

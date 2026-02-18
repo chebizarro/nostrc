@@ -366,9 +366,8 @@ gnostr_profile_row_set_profile(GnostrProfileRow *self,
     if (!shown_name || !*shown_name) {
         /* Fallback to truncated pubkey */
         if (pubkey_hex && strlen(pubkey_hex) >= 8) {
-            char *truncated = g_strdup_printf("%.8s...", pubkey_hex);
+            g_autofree char *truncated = g_strdup_printf("%.8s...", pubkey_hex);
             gtk_label_set_text(self->lbl_display, truncated);
-            g_free(truncated);
         } else {
             gtk_label_set_text(self->lbl_display, "Unknown");
         }

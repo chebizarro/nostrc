@@ -155,7 +155,7 @@ static void update_time_display(GnostrPollWidget *self) {
     return;
   }
 
-  char *time_str;
+  g_autofree char *time_str = NULL;
   if (remaining < 60) {
     time_str = g_strdup_printf("%"G_GINT64_FORMAT"s remaining", remaining);
   } else if (remaining < 3600) {
@@ -167,7 +167,6 @@ static void update_time_display(GnostrPollWidget *self) {
   }
 
   gtk_label_set_text(GTK_LABEL(self->time_label), time_str);
-  g_free(time_str);
 }
 
 static void update_results_display(GnostrPollWidget *self) {
@@ -194,7 +193,7 @@ static void update_results_display(GnostrPollWidget *self) {
       gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(bar), fraction);
 
       /* Update count label */
-      char *count_str;
+      g_autofree char *count_str = NULL;
       if (self->total_votes > 0) {
         int percent = (int)(fraction * 100.0 + 0.5);
         count_str = g_strdup_printf("%u (%d%%)", opt->vote_count, percent);
@@ -202,7 +201,6 @@ static void update_results_display(GnostrPollWidget *self) {
         count_str = g_strdup_printf("%u", opt->vote_count);
       }
       gtk_label_set_text(GTK_LABEL(count_label), count_str);
-      g_free(count_str);
 
       /* Highlight user's choice */
       if (self->user_vote_indices) {
@@ -222,11 +220,10 @@ static void update_results_display(GnostrPollWidget *self) {
 
   /* Update status label */
   if (self->status_label && GTK_IS_LABEL(self->status_label)) {
-    char *status_str = g_strdup_printf("%u vote%s",
+    g_autofree char *status_str = g_strdup_printf("%u vote%s",
                                         self->total_votes,
                                         self->total_votes == 1 ? "" : "s");
     gtk_label_set_text(GTK_LABEL(self->status_label), status_str);
-    g_free(status_str);
   }
 
   /* Disable vote button if already voted or closed */

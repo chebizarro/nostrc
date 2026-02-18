@@ -260,12 +260,10 @@ gnostr_chat_message_row_set_message(GnostrChatMessageRow *self,
     /* Set author name (fallback to truncated pubkey) */
     if (!self->author_name || !*self->author_name) {
         if (msg->author_pubkey && strlen(msg->author_pubkey) >= 8) {
-            char *truncated = g_strdup_printf("%.8s...", msg->author_pubkey);
+            g_autofree char *truncated = g_strdup_printf("%.8s...", msg->author_pubkey);
             gtk_label_set_text(self->lbl_author, truncated);
-            char *initials = get_initials(truncated);
+            g_autofree char *initials = get_initials(truncated);
             gtk_label_set_text(self->avatar_initials, initials);
-            g_free(initials);
-            g_free(truncated);
         } else {
             gtk_label_set_text(self->lbl_author, "Anonymous");
             gtk_label_set_text(self->avatar_initials, "?");

@@ -777,9 +777,8 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
 
   if (self->event_id) {
-    gchar *uri = g_strdup_printf("nostr:note1%s", self->event_id);
+    g_autofree gchar *uri = g_strdup_printf("nostr:note1%s", self->event_id);
     g_signal_emit(self, signals[SIGNAL_SHARE_GAME], 0, uri);
-    g_free(uri);
   }
 }
 
@@ -981,9 +980,8 @@ void gnostr_chess_card_set_author(GnostrChessCard *self,
   gtk_label_set_text(GTK_LABEL(self->lbl_author_name),
     (display_name && *display_name) ? display_name : (handle ? handle : _("Anonymous")));
 
-  gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
+  g_autofree gchar *handle_str = g_strdup_printf("@%s", (handle && *handle) ? handle : "anon");
   gtk_label_set_text(GTK_LABEL(self->lbl_author_handle), handle_str);
-  g_free(handle_str);
 
   set_avatar_initials(self, display_name, handle);
 

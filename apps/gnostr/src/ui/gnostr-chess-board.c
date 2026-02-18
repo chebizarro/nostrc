@@ -273,16 +273,16 @@ static void on_promotion_selected(GtkButton *button, gpointer user_data) {
   }
 
   /* Make the promotion move */
-  gchar *from_sq = file_rank_to_algebraic(self->pending_promotion_from_file,
+  g_autofree gchar *from_sq = file_rank_to_algebraic(self->pending_promotion_from_file,
                                            self->pending_promotion_from_rank);
-  gchar *to_sq = file_rank_to_algebraic(self->pending_promotion_to_file,
+  g_autofree gchar *to_sq = file_rank_to_algebraic(self->pending_promotion_to_file,
                                          self->pending_promotion_to_rank);
 
   sync_engine_position(self);
 
   if (chess_engine_make_move(self->engine, from_sq, to_sq, promotion)) {
     /* Update game state */
-    gchar *uci = g_strdup_printf("%s%s%c", from_sq, to_sq, promotion);
+    g_autofree gchar *uci = g_strdup_printf("%s%s%c", from_sq, to_sq, promotion);
 
     /* Apply move to our game state */
     gint from_idx = gnostr_chess_square_to_index(self->pending_promotion_from_file,
@@ -314,10 +314,8 @@ static void on_promotion_selected(GtkButton *button, gpointer user_data) {
     self->game->current_ply++;
 
     /* Emit move-made signal */
-    gchar *san = g_strdup_printf("%s=%c", to_sq, g_ascii_toupper(promotion));
+    g_autofree gchar *san = g_strdup_printf("%s=%c", to_sq, g_ascii_toupper(promotion));
     g_signal_emit(self, signals[SIGNAL_MOVE_MADE], 0, san, uci);
-    g_free(san);
-    g_free(uci);
 
     /* Check for game over */
     sync_engine_position(self);
@@ -329,9 +327,6 @@ static void on_promotion_selected(GtkButton *button, gpointer user_data) {
       g_signal_emit(self, signals[SIGNAL_GAME_OVER], 0, (gint)GNOSTR_CHESS_RESULT_DRAW);
     }
   }
-
-  g_free(from_sq);
-  g_free(to_sq);
 
   clear_selection(self);
   gtk_widget_queue_draw(self->board_drawing);
@@ -432,8 +427,8 @@ static gboolean try_make_move(GnostrChessBoard *self, gint to_file, gint to_rank
     return TRUE;  /* Move will complete after promotion choice */
   }
 
-  gchar *from_sq = file_rank_to_algebraic(self->selected_file, self->selected_rank);
-  gchar *to_sq = file_rank_to_algebraic(to_file, to_rank);
+  g_autofree gchar *from_sq = file_rank_to_algebraic(self->selected_file, self->selected_rank);
+  g_autofree gchar *to_sq = file_rank_to_algebraic(to_file, to_rank);
 
   sync_engine_position(self);
 
@@ -441,7 +436,7 @@ static gboolean try_make_move(GnostrChessBoard *self, gint to_file, gint to_rank
 
   if (success) {
     /* Update game state */
-    gchar *uci = g_strdup_printf("%s%s", from_sq, to_sq);
+    g_autofree gchar *uci = g_strdup_printf("%s%s", from_sq, to_sq);
 
     gint from_idx = gnostr_chess_square_to_index(self->selected_file, self->selected_rank);
     gint to_idx = gnostr_chess_square_to_index(to_file, to_rank);
@@ -493,7 +488,7 @@ static gboolean try_make_move(GnostrChessBoard *self, gint to_file, gint to_rank
 
     /* Generate SAN for the move (simplified) */
     gchar piece_char = gnostr_chess_piece_char(moving->piece);
-    gchar *san;
+    g_autofree gchar *san = NULL;
     if (moving->piece == GNOSTR_CHESS_PIECE_PAWN) {
       san = g_strdup(to_sq);
     } else if (moving->piece == GNOSTR_CHESS_PIECE_KING &&
@@ -505,9 +500,6 @@ static gboolean try_make_move(GnostrChessBoard *self, gint to_file, gint to_rank
 
     /* Emit move-made signal */
     g_signal_emit(self, signals[SIGNAL_MOVE_MADE], 0, san, uci);
-
-    g_free(san);
-    g_free(uci);
 
     /* Check for game over */
     sync_engine_position(self);
@@ -521,9 +513,6 @@ static gboolean try_make_move(GnostrChessBoard *self, gint to_file, gint to_rank
   } else {
     g_signal_emit(self, signals[SIGNAL_ILLEGAL_MOVE_ATTEMPTED], 0);
   }
-
-  g_free(from_sq);
-  g_free(to_sq);
 
   clear_selection(self);
   gtk_widget_queue_draw(self->board_drawing);
@@ -1065,8 +1054,8 @@ gboolean gnostr_chess_board_make_move(GnostrChessBoard *self,
   g_return_val_if_fail(self->engine != NULL, FALSE);
   g_return_val_if_fail(self->game != NULL, FALSE);
 
-  gchar *from_sq = file_rank_to_algebraic(from_file, from_rank);
-  gchar *to_sq = file_rank_to_algebraic(to_file, to_rank);
+  g_autofree gchar *from_sq = file_rank_to_algebraic(from_file, from_rank);
+  g_autofree gchar *to_sq = file_rank_to_algebraic(to_file, to_rank);
 
   sync_engine_position(self);
 
@@ -1096,18 +1085,14 @@ gboolean gnostr_chess_board_make_move(GnostrChessBoard *self,
     self->game->last_move_to = to_idx;
     self->game->current_ply++;
 
-    gchar *uci = promotion ?
+    g_autofree gchar *uci = promotion ?
       g_strdup_printf("%s%s%c", from_sq, to_sq, promotion) :
       g_strdup_printf("%s%s", from_sq, to_sq);
 
     g_signal_emit(self, signals[SIGNAL_MOVE_MADE], 0, uci, uci);
-    g_free(uci);
 
     gtk_widget_queue_draw(self->board_drawing);
   }
-
-  g_free(from_sq);
-  g_free(to_sq);
 
   return success;
 }

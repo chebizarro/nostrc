@@ -246,12 +246,11 @@ on_open_clicked(GtkButton *button, GnostrAppHandlerDialog *self)
 
   /* Remember choice if requested */
   if (gtk_check_button_get_active(self->remember_check)) {
-    char *a_tag = g_strdup_printf("%d:%s:%s",
+    g_autofree char *a_tag = g_strdup_printf("%d:%s:%s",
                                    GNOSTR_NIP89_KIND_HANDLER_INFO,
                                    self->selected_handler->pubkey_hex,
                                    self->selected_handler->d_tag);
     gnostr_nip89_set_preferred_handler(self->event_kind, a_tag);
-    g_free(a_tag);
   }
 
   /* Open URL in default browser/app */
@@ -364,9 +363,8 @@ gnostr_app_handler_dialog_set_event(GnostrAppHandlerDialog *self,
 
   /* Update kind label */
   const char *kind_desc = gnostr_nip89_get_kind_description(event_kind);
-  char *label_text = g_strdup_printf("Open %s (kind %u) with:", kind_desc, event_kind);
+  g_autofree char *label_text = g_strdup_printf("Open %s (kind %u) with:", kind_desc, event_kind);
   gtk_label_set_text(self->kind_label, label_text);
-  g_free(label_text);
 }
 
 void

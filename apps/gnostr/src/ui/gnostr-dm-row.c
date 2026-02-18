@@ -188,9 +188,8 @@ gnostr_dm_row_set_peer(GnostrDmRow *self,
     if (!name || !*name) {
         /* Fallback to truncated pubkey */
         if (pubkey_hex && strlen(pubkey_hex) >= 8) {
-            char *truncated = g_strdup_printf("%.8s...", pubkey_hex);
+            g_autofree char *truncated = g_strdup_printf("%.8s...", pubkey_hex);
             gtk_label_set_text(self->lbl_display, truncated);
-            g_free(truncated);
         } else {
             gtk_label_set_text(self->lbl_display, "Unknown");
         }
@@ -231,9 +230,8 @@ gnostr_dm_row_set_preview(GnostrDmRow *self,
 
     if (preview && *preview) {
         if (is_outgoing) {
-            char *with_prefix = g_strdup_printf("You: %s", preview);
+            g_autofree char *with_prefix = g_strdup_printf("You: %s", preview);
             gtk_label_set_text(self->lbl_preview, with_prefix);
-            g_free(with_prefix);
         } else {
             gtk_label_set_text(self->lbl_preview, preview);
         }
@@ -304,9 +302,8 @@ gnostr_dm_row_set_unread(GnostrDmRow *self, guint unread_count)
     g_return_if_fail(GNOSTR_IS_DM_ROW(self));
 
     if (unread_count > 0) {
-        char *text = g_strdup_printf("%u", unread_count);
+        g_autofree char *text = g_strdup_printf("%u", unread_count);
         gtk_label_set_text(self->lbl_unread, text);
-        g_free(text);
         gtk_widget_set_visible(GTK_WIDGET(self->unread_badge), TRUE);
         gtk_widget_add_css_class(GTK_WIDGET(self), "unread");
     } else {

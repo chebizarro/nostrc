@@ -157,10 +157,10 @@ static char *extract_meta_tag(const char *html, const char *property) {
   if (!html || !property) return NULL;
 
   /* Build search patterns for property="..." or property='...' */
-  char *prop_pattern1 = g_strdup_printf("property=\"%s\"", property);
-  char *prop_pattern2 = g_strdup_printf("property='%s'", property);
-  char *name_pattern1 = g_strdup_printf("name=\"%s\"", property);
-  char *name_pattern2 = g_strdup_printf("name='%s'", property);
+  g_autofree char *prop_pattern1 = g_strdup_printf("property=\"%s\"", property);
+  g_autofree char *prop_pattern2 = g_strdup_printf("property='%s'", property);
+  g_autofree char *name_pattern1 = g_strdup_printf("name=\"%s\"", property);
+  g_autofree char *name_pattern2 = g_strdup_printf("name='%s'", property);
 
   const char *pos = html;
   char *result = NULL;
@@ -205,11 +205,6 @@ static char *extract_meta_tag(const char *html, const char *property) {
     /* Move past this tag */
     pos = tag_end + 1;
   }
-
-  g_free(prop_pattern1);
-  g_free(prop_pattern2);
-  g_free(name_pattern1);
-  g_free(name_pattern2);
 
   return result;
 }

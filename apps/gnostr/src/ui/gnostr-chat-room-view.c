@@ -317,9 +317,8 @@ gnostr_chat_room_view_set_channel(GnostrChatRoomView *self,
     const char *name = channel->name;
     if (!name || !*name) {
         if (channel->channel_id && strlen(channel->channel_id) >= 8) {
-            char *truncated = g_strdup_printf("#%.8s...", channel->channel_id);
+            g_autofree char *truncated = g_strdup_printf("#%.8s...", channel->channel_id);
             gtk_label_set_text(self->lbl_channel_name, truncated);
-            g_free(truncated);
         } else {
             gtk_label_set_text(self->lbl_channel_name, "Unnamed Channel");
         }
@@ -504,9 +503,8 @@ gnostr_chat_room_view_set_reply_to(GnostrChatRoomView *self,
     self->reply_to_id = g_strdup(message_id);
 
     if (message_id && author_name) {
-        char *reply_text = g_strdup_printf("Replying to %s", author_name);
+        g_autofree char *reply_text = g_strdup_printf("Replying to %s", author_name);
         gtk_label_set_text(self->lbl_reply_to, reply_text);
-        g_free(reply_text);
         gtk_revealer_set_reveal_child(self->reply_revealer, TRUE);
     } else {
         gtk_revealer_set_reveal_child(self->reply_revealer, FALSE);

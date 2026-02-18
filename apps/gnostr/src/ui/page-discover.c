@@ -408,19 +408,17 @@ update_profile_count(GnostrPageDiscover *self)
         guint count = g_list_model_get_n_items(G_LIST_MODEL(self->profile_model));
         guint total = gn_profile_list_model_get_total_count(self->profile_model);
 
-        char *text;
+        g_autofree char *text = NULL;
         if (count == total) {
             text = g_strdup_printf("%u profiles", total);
         } else {
             text = g_strdup_printf("%u of %u profiles", count, total);
         }
         gtk_label_set_text(self->lbl_profile_count, text);
-        g_free(text);
     } else {
         guint count = g_list_model_get_n_items(G_LIST_MODEL(self->network_results_model));
-        char *text = g_strdup_printf("%u results", count);
+        g_autofree char *text = g_strdup_printf("%u results", count);
         gtk_label_set_text(self->lbl_profile_count, text);
-        g_free(text);
     }
 }
 
@@ -970,9 +968,8 @@ populate_trending_flow_box(GnostrPageDiscover *self, GPtrArray *hashtags)
     }
 
     /* Create a clickable chip: "#tag (count)" */
-    gchar *label_text = g_strdup_printf("#%s", ht->tag);
+    g_autofree gchar *label_text = g_strdup_printf("#%s", ht->tag);
     GtkWidget *button = gtk_button_new_with_label(label_text);
-    g_free(label_text);
 
     gtk_widget_add_css_class(button, "pill");
     gtk_widget_add_css_class(button, "flat");

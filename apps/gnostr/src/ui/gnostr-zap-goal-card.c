@@ -500,11 +500,10 @@ void gnostr_zap_goal_card_set_author(GnostrZapGoalCard *self,
       gtk_label_set_text(GTK_LABEL(self->author_name_label), display_name);
     } else if (pubkey_hex && strlen(pubkey_hex) >= 12) {
       /* Show truncated pubkey as fallback */
-      gchar *truncated = g_strdup_printf("%.8s...%.4s",
+      g_autofree gchar *truncated = g_strdup_printf("%.8s...%.4s",
                                           pubkey_hex,
                                           pubkey_hex + strlen(pubkey_hex) - 4);
       gtk_label_set_text(GTK_LABEL(self->author_name_label), truncated);
-      g_free(truncated);
     } else {
       gtk_label_set_text(GTK_LABEL(self->author_name_label), _("Anonymous"));
     }
@@ -672,18 +671,16 @@ static void update_progress_display(GnostrZapGoalCard *self) {
   /* Update percentage */
   if (GTK_IS_LABEL(self->percent_label)) {
     gdouble percent = gnostr_zap_goal_card_get_progress_percent(self);
-    gchar *percent_str = g_strdup_printf("%.0f%%", percent);
+    g_autofree gchar *percent_str = g_strdup_printf("%.0f%%", percent);
     gtk_label_set_text(GTK_LABEL(self->percent_label), percent_str);
-    g_free(percent_str);
   }
 
   /* Update zap count */
   if (GTK_IS_LABEL(self->zap_count_label)) {
-    gchar *count_str = g_strdup_printf("%u zap%s",
+    g_autofree gchar *count_str = g_strdup_printf("%u zap%s",
                                         self->zap_count,
                                         self->zap_count == 1 ? "" : "s");
     gtk_label_set_text(GTK_LABEL(self->zap_count_label), count_str);
-    g_free(count_str);
   }
 }
 

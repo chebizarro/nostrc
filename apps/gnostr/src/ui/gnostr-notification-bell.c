@@ -44,7 +44,7 @@ update_badge_visibility(GnostrNotificationBell *self)
 {
   if (self->unread_count > 0)
     {
-      gchar *text;
+      g_autofree gchar *text = NULL;
       if (self->unread_count > 99)
         text = g_strdup("99+");
       else
@@ -52,7 +52,6 @@ update_badge_visibility(GnostrNotificationBell *self)
 
       gtk_label_set_text(self->badge_label, text);
       gtk_widget_set_visible(self->badge_box, TRUE);
-      g_free(text);
     }
   else
     {
