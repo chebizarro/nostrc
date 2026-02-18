@@ -105,9 +105,13 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
 queue_message:
         // Check if channel is still valid (it may have been freed during shutdown)
-        if (!conn->recv_channel) {
-            conn->priv->rx_reassembly_len = 0;
-            return 0;
+        // Validate both pointer and magic number to detect use-after-free
+        {
+            GoChannel *recv_chan = conn->recv_channel;
+            if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
+                conn->priv->rx_reassembly_len = 0;
+                return 0;
+            }
         }
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
@@ -119,17 +123,26 @@ queue_message:
         msg->data[len] = '\0';
         // Reset reassembly state
         conn->priv->rx_reassembly_len = 0;
+        // Capture channel pointer once for thread-safe access
+        GoChannel *recv_chan = conn->recv_channel;
         // Non-blocking send: the lws service thread is shared across ALL
         // connections. A blocking send here would freeze the entire app if
         // the consumer (message_loop) falls behind. (nostrc-j6h1)
-        if (go_channel_try_send(conn->recv_channel, msg) != 0) {
+        if (go_channel_try_send(recv_chan, msg) != 0) {
             // Channel full — retry a few times with brief yields before dropping.
             // With proper reassembly, channel pressure is much lower since we
             // queue 1 complete message instead of N fragments. (nostrc-8zpc)
             int retries = 10;
             while (retries-- > 0) {
                 sched_yield();
-                if (go_channel_try_send(conn->recv_channel, msg) == 0) {
+                // Re-validate channel on each retry in case of shutdown
+                recv_chan = conn->recv_channel;
+                if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
+                    free(msg->data);
+                    free(msg);
+                    return 0;
+                }
+                if (go_channel_try_send(recv_chan, msg) == 0) {
                     goto send_ok;
                 }
             }

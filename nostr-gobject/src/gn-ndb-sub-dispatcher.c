@@ -85,6 +85,15 @@ static void on_ndb_notify_from_writer(void *ctx, uint64_t subid) {
   g_mutex_unlock(&disp->lock);
 
   if (should_schedule) {
+    /* Guard against use-after-free: don't schedule if ui_context is NULL.
+     * This can happen during shutdown when the dispatcher is being torn down
+     * but the NDB writer thread is still sending notifications. */
+    if (!disp->ui_context) {
+      g_warning("ndb-dispatcher: ui_context is NULL, skipping dispatch for subid=%" G_GUINT64_FORMAT,
+                (guint64)subid);
+      return;
+    }
+
     DispatchCtx *dctx = g_new0(DispatchCtx, 1);
     dctx->subid = subid;
 
