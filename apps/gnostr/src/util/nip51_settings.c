@@ -158,6 +158,7 @@ gchar *gnostr_nip51_settings_build_event_json(void) {
   json_node_unref(content_node);
 
   /* Build the event */
+  g_clear_object(&builder);
   builder = json_builder_new();
   json_builder_begin_object(builder);
 
