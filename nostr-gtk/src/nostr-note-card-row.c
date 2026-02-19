@@ -5795,10 +5795,11 @@ void nostr_gtk_note_card_row_set_git_patch_mode(NostrGtkNoteCardRow *self,
                            esc_repo);
   }
 
-  /* Commit reference — escape user string */
+  /* Commit reference — truncate BEFORE escaping to avoid mid-entity truncation */
   if (commit_id && *commit_id) {
-    g_autofree gchar *esc_commit = g_markup_escape_text(commit_id, -1);
-    g_string_append_printf(content, "\n<span font_family='monospace' size='small'>%.8s</span>",
+    g_autofree gchar *short_commit = g_strndup(commit_id, 8);
+    g_autofree gchar *esc_commit = g_markup_escape_text(short_commit, -1);
+    g_string_append_printf(content, "\n<span font_family='monospace' size='small'>%s</span>",
                            esc_commit);
   }
 
