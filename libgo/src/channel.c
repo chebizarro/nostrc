@@ -891,9 +891,19 @@ GoChannel *go_channel_create(size_t capacity) {
     return chan;
 }
 
-/* Increment reference count (hq-e3ach). */
+/* Increment reference count (hq-e3ach).
+ * Returns chan on success, NULL if channel is invalid/destroyed.
+ * CRITICAL (nostrc-ref-race): Must check magic BEFORE incrementing refs.
+ * Without this check, a channel being destroyed (magic cleared in unref)
+ * could have its refs incremented, causing the graveyard to skip freeing
+ * it while the caller uses an invalid channel. */
 GoChannel *go_channel_ref(GoChannel *chan) {
     if (chan == NULL) return NULL;
+    /* Check magic to reject destroyed/invalid channels */
+    if (chan->magic != GO_CHANNEL_MAGIC) {
+        nostr_metric_counter_add("go_chan_ref_invalid_magic", 1);
+        return NULL;
+    }
     atomic_fetch_add_explicit(&chan->refs, 1, memory_order_relaxed);
     return chan;
 }

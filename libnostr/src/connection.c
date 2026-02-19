@@ -447,12 +447,25 @@ static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
  * can NULL the opaque data.  If we free(conn) immediately, the in-flight
  * callback accesses freed memory (conn->priv), leading to nsync_mu_lock on
  * garbage → heap corruption → GLib poll-array assertion. */
+/* nostrc-conn-graveyard: Time-based deferred cleanup for connections.
+ * Similar to the channel graveyard, we delay freeing conn/priv for a fixed
+ * duration to ensure any in-flight LWS callbacks have completed.
+ * The LWS service loop runs at ~50ms intervals, so 2 seconds is plenty. */
+#define CONN_GRAVEYARD_DELAY_NS (2000000000ULL)  /* 2 seconds */
+
 typedef struct DeferredConn {
     NostrConnection        *conn;   /* The conn struct itself (may be NULL) */
     NostrConnectionPrivate *priv;   /* The private state (may be NULL) */
+    uint64_t                death_ns; /* Monotonic timestamp when added */
     struct DeferredConn    *next;
 } DeferredConn;
 static DeferredConn *g_deferred_cleanup_head = NULL;
+
+static uint64_t conn_graveyard_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
 
 /* hq-5ejm4: Connection request queue — moves lws_client_connect_via_info()
  * off caller threads and onto the LWS service thread.  Callers enqueue a
@@ -477,26 +490,37 @@ static void deferred_cleanup_add(NostrConnection *conn,
     if (!node) return; /* leak on OOM, but better than crash */
     node->conn = conn;
     node->priv = priv;
+    node->death_ns = conn_graveyard_now_ns();
     node->next = g_deferred_cleanup_head;
     g_deferred_cleanup_head = node;
 }
 
-/* Must hold g_lws_mutex when calling */
+/* Must hold g_lws_mutex when calling.
+ * nostrc-conn-graveyard: Only free connections that have been dead for
+ * at least CONN_GRAVEYARD_DELAY_NS. This ensures any in-flight LWS
+ * callbacks have completed before we free the memory they're accessing. */
 static void deferred_cleanup_process(void) {
-    DeferredConn *node = g_deferred_cleanup_head;
-    while (node) {
-        DeferredConn *next = node->next;
-        if (node->priv) {
-            free(node->priv->rx_reassembly_buf);
-            free(node->priv);
+    uint64_t cutoff = conn_graveyard_now_ns() - CONN_GRAVEYARD_DELAY_NS;
+    DeferredConn **pp = &g_deferred_cleanup_head;
+    while (*pp) {
+        DeferredConn *node = *pp;
+        if (node->death_ns <= cutoff) {
+            /* Old enough to free */
+            *pp = node->next;
+            if (node->priv) {
+                free(node->priv->rx_reassembly_buf);
+                free(node->priv);
+            }
+            /* nostrc-conn-uaf: Free the conn struct (was previously freed
+             * immediately, causing use-after-free in LWS callbacks). */
+            free(node->conn);
+            free(node);
+            /* Continue from same position since we removed current node */
+        } else {
+            /* Not old enough yet, skip */
+            pp = &node->next;
         }
-        /* nostrc-conn-uaf: Free the conn struct (was previously freed
-         * immediately, causing use-after-free in LWS callbacks). */
-        free(node->conn);
-        free(node);
-        node = next;
     }
-    g_deferred_cleanup_head = NULL;
 }
 
 /* hq-5ejm4: Process a connection request on the LWS service thread.
@@ -558,6 +582,10 @@ static void *lws_service_loop(void *arg) {
         int running = g_lws_running;
         struct lws_context *ctx = g_lws_context;
         GoChannel *queue = g_conn_request_queue;
+        /* nostrc-conn-graveyard: Opportunistically reap old deferred connections.
+         * This ensures connections are freed even while other connections are active,
+         * as long as they've been dead for at least CONN_GRAVEYARD_DELAY_NS. */
+        deferred_cleanup_process();
         pthread_mutex_unlock(&g_lws_mutex);
 
         if (!running || !ctx) {
