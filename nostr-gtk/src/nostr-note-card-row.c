@@ -2358,14 +2358,19 @@ static void lazy_load_context_free_internal(LazyLoadContext *ctx) {
   /* nostrc-img1: Disconnect signal handlers to prevent stale callbacks
    * on recycled widgets. Without this, map/unmap handlers fire on
    * dead contexts after the picture widget is reused.
-   * nostrc-ncr-lifecycle: Use GWeakRef to safely get the picture. */
-  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
-  if (picture) {
-    if (ctx->map_handler_id > 0)
-      g_signal_handler_disconnect(picture, ctx->map_handler_id);
-    if (ctx->unmap_handler_id > 0)
-      g_signal_handler_disconnect(picture, ctx->unmap_handler_id);
-    g_object_unref(picture);
+   * nostrc-ncr-lifecycle: Use GWeakRef to safely get the picture.
+   * nostrc-heap-fix: Only disconnect if NOT destroyed - if destroyed flag is set,
+   * the picture is being finalized and GTK has already cleared signal handlers.
+   * Calling g_signal_handler_disconnect on a finalizing object can corrupt memory. */
+  if (!ctx->destroyed) {
+    GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+    if (picture) {
+      if (ctx->map_handler_id > 0)
+        g_signal_handler_disconnect(picture, ctx->map_handler_id);
+      if (ctx->unmap_handler_id > 0)
+        g_signal_handler_disconnect(picture, ctx->unmap_handler_id);
+      g_object_unref(picture);
+    }
   }
   g_weak_ref_clear(&ctx->picture_ref);
   if (ctx->ctx)
@@ -2498,11 +2503,15 @@ static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_th
   ctx->map_handler_id = 0;
   ctx->unmap_handler_id = 0;
   /* Remove timeout source if pending - this prevents the timeout from firing
-   * after we've marked the context as destroyed. */
+   * after we've marked the context as destroyed.
+   * NOTE: g_source_remove triggers the destroy notify (lazy_load_context_unref),
+   * which releases the timeout's ref. We still need to release our own ref
+   * (the initial ref from load_media_image that the weak-notify owns). */
   if (ctx->timeout_id > 0) {
     g_source_remove(ctx->timeout_id);
     ctx->timeout_id = 0;
   }
+  /* Release the initial ref owned by this weak-notify callback */
   lazy_load_context_unref(ctx);
 }
 

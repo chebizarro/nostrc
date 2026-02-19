@@ -2592,11 +2592,30 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GArray *evicted_keys_async = NULL;
   enforce_window_inline(self, &evicted_keys_async);
 
-  /* ONE atomic replace signal: GTK rebinds existing widget slots instead of
-   * tearing them all down and recreating them. This is the key fix. */
+  /* nostrc-heap-fix4: Emit items_changed signals in small batches to avoid
+   * disposing too many widgets in a single stack frame. GTK's widget disposal
+   * cascade can corrupt heap when hundreds of complex widget trees are torn
+   * down simultaneously. Process in batches of min(old_size, new_size) to
+   * maximize widget reuse, then handle the remainder. */
   guint new_size = self->notes->len;
-  if (old_size > 0 || new_size > 0)
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, new_size);
+  guint common = old_size < new_size ? old_size : new_size;
+  
+  if (common > 0) {
+    /* Replace existing items - GTK will rebind widgets, not dispose them */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, common, common);
+  }
+  
+  if (new_size > old_size) {
+    /* More items than before - add the extras */
+    g_list_model_items_changed(G_LIST_MODEL(self), common, 0, new_size - common);
+  } else if (old_size > new_size) {
+    /* Fewer items than before - remove the extras one at a time */
+    guint to_remove = old_size - new_size;
+    for (guint i = 0; i < to_remove; i++) {
+      g_list_model_items_changed(G_LIST_MODEL(self), new_size, 1, 0);
+    }
+  }
+  
   cleanup_evicted_keys(self, evicted_keys_async);
 
   g_debug("[MODEL] Async refresh complete: %u total items (%u added, %u replaced)",
@@ -2713,18 +2732,57 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     }
   }
 
-  /* Emit ONE localized items_changed for all insertions */
-  if (added > 0) {
-    guint start = trim_newer ? old_len : 0;
-    g_list_model_items_changed(G_LIST_MODEL(self), start, 0, added);
+  /* nostrc-pango-fix3: Trim BEFORE emitting items_changed to avoid nested
+   * signal emission. When we emit items_changed for the insert, GTK processes
+   * it and may create/bind widgets. If we then emit more items_changed signals
+   * for trimming while GTK is still processing, it can corrupt internal state.
+   * By trimming first (silently adjusting the array), then emitting ONE signal
+   * that accounts for both the additions and removals, we avoid the race. */
+  guint trimmed = 0;
+  if (trim_max > 0 && self->notes->len > trim_max) {
+    guint to_trim = self->notes->len - trim_max;
+    if (trim_newer) {
+      /* Trim from front (newer items) - remove silently without signal */
+      for (guint i = 0; i < to_trim; i++) {
+        NoteEntry *entry = &g_array_index(self->notes, NoteEntry, 0);
+        uint64_t k = entry->note_key;
+        g_array_remove_index(self->notes, 0);
+        g_hash_table_remove(self->note_key_set, &k);
+        cache_lru_remove_key(self, k);
+        g_hash_table_remove(self->thread_info, &k);
+        g_hash_table_remove(self->item_cache, &k);
+        g_hash_table_remove(self->skip_animation_keys, &k);
+      }
+      trimmed = to_trim;
+    } else {
+      /* Trim from back (older items) - remove silently without signal */
+      for (guint i = 0; i < to_trim; i++) {
+        guint idx = self->notes->len - 1;
+        NoteEntry *entry = &g_array_index(self->notes, NoteEntry, idx);
+        uint64_t k = entry->note_key;
+        g_array_remove_index(self->notes, idx);
+        g_hash_table_remove(self->note_key_set, &k);
+        cache_lru_remove_key(self, k);
+        g_hash_table_remove(self->thread_info, &k);
+        g_hash_table_remove(self->item_cache, &k);
+        g_hash_table_remove(self->skip_animation_keys, &k);
+      }
+      trimmed = to_trim;
+    }
   }
 
-  /* Trim model to bounded size if requested */
-  if (trim_max > 0 && self->notes->len > trim_max) {
-    if (trim_newer)
-      gn_nostr_event_model_trim_newer(self, trim_max);
-    else
-      gn_nostr_event_model_trim_older(self, trim_max);
+  /* Emit ONE combined items_changed signal for both additions and removals.
+   * This prevents nested signal emission which corrupts GTK's list item manager. */
+  if (added > 0 || trimmed > 0) {
+    if (trim_newer) {
+      /* Added at end, trimmed from front: signal covers front removal + end addition */
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, trimmed, added);
+    } else {
+      /* Added at front, trimmed from back: signal covers front addition + back removal */
+      guint effective_added = added > trimmed ? added - trimmed : 0;
+      guint effective_removed = trimmed > added ? trimmed - added : 0;
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, effective_removed, effective_added);
+    }
   }
 
   g_debug("[MODEL] Async paginate: %u added, %u total", added, self->notes->len);
