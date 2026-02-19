@@ -765,16 +765,22 @@ static void gnostr_video_player_dispose(GObject *obj) {
    * GStreamer audio backend (OpenAL/PipeWire) threads to finish cleanly.
    * Without this, audio threads may access freed memory causing heap-use-after-free. */
   if (self->media_file) {
-    /* Disconnect signal handlers FIRST to prevent callbacks during cleanup */
+    /* Disconnect signal handlers FIRST to prevent callbacks during cleanup.
+     * nostrc-sigf: CRITICAL - Must check if handler is still connected before
+     * disconnecting. GStreamer errors can cause the stream to dispose its
+     * signal handlers internally, and calling g_signal_handler_disconnect on
+     * an already-disconnected handler causes assertion failure. */
     GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
-    if (self->media_error_handler > 0) {
+    if (self->media_error_handler > 0 &&
+        g_signal_handler_is_connected(G_OBJECT(stream), self->media_error_handler)) {
       g_signal_handler_disconnect(stream, self->media_error_handler);
-      self->media_error_handler = 0;
     }
-    if (self->media_prepared_handler > 0) {
+    self->media_error_handler = 0;
+    if (self->media_prepared_handler > 0 &&
+        g_signal_handler_is_connected(G_OBJECT(stream), self->media_prepared_handler)) {
       g_signal_handler_disconnect(stream, self->media_prepared_handler);
-      self->media_prepared_handler = 0;
     }
+    self->media_prepared_handler = 0;
     /* Stop playback and seek to start to fully stop the pipeline */
     gtk_media_stream_pause(stream);
     gtk_media_stream_seek(stream, 0);
