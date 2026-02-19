@@ -444,16 +444,11 @@ void gnostr_pin_list_fetch_with_strategy_async(GnostrPinList *self,
 
     gnostr_pool_sync_relays(s_pin_list_pool, (const gchar **)urls, relay_arr->len);
     {
-        /* nostrc-m8l8: Use unique key per query to avoid freeing filters still
-         * in use by a concurrent query (use-after-free on overlapping fetches).
-         * Same pattern as follow_list.c and profile_pane.c. */
-        static gint _qf_counter_pl = 0;
-        int _qfid = g_atomic_int_add(&_qf_counter_pl, 1);
-        char _qfk[32]; g_snprintf(_qfk, sizeof(_qfk), "qf-pl-%d", _qfid);
+        /* nostrc-dblf: gnostr_pool_query_async takes ownership of filters internally
+         * (attaches to GTask with destroy notify). Do NOT also attach to pool or
+         * we get double-free when both pool and task are disposed. */
         NostrFilters *_qf = nostr_filters_new();
         nostr_filters_add(_qf, filter);
-        g_object_set_data_full(G_OBJECT(s_pin_list_pool), _qfk, _qf,
-                               (GDestroyNotify)nostr_filters_free);
         gnostr_pool_query_async(s_pin_list_pool, _qf, self->fetch_cancellable,
                                 on_pin_list_query_done, ctx);
     }
