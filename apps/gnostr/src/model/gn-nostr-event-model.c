@@ -171,6 +171,11 @@ struct _GnNostrEventModel {
 
   /* Async pagination state */
   gboolean async_loading;
+
+  /* nostrc-reentrant-guard: Prevent reentrant model modifications during
+   * items_changed signal emission. GTK widget disposal can trigger callbacks
+   * that attempt to modify the model, causing heap corruption. */
+  gboolean emitting_items_changed;
 };
 
 typedef struct {
@@ -258,6 +263,21 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
 static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+
+/* nostrc-reentrant-guard: Safe wrapper for g_list_model_items_changed that
+ * prevents reentrant modifications. GTK widget disposal during items_changed
+ * can trigger callbacks that attempt to modify the model, causing heap corruption.
+ * This wrapper sets a guard flag and logs if reentrancy is detected. */
+static void emit_items_changed_safe(GnNostrEventModel *self, guint pos, guint removed, guint added) {
+  if (self->emitting_items_changed) {
+    g_warning("[MODEL] BLOCKED reentrant items_changed(pos=%u, removed=%u, added=%u) - would cause heap corruption",
+              pos, removed, added);
+    return;
+  }
+  self->emitting_items_changed = TRUE;
+  g_list_model_items_changed(G_LIST_MODEL(self), pos, removed, added);
+  self->emitting_items_changed = FALSE;
+}
 
 /* LRU cache management */
 static void cache_touch(GnNostrEventModel *self, uint64_t key) {
@@ -903,7 +923,7 @@ static gboolean on_drain_timer(gpointer user_data) {
      * This avoids the "replace all" pattern (items_changed(0, old, new)) which
      * causes mass widget disposal and Pango layout corruption crashes. */
     if (total_processed > 0) {
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, total_processed);
+      emit_items_changed_safe(self, 0, 0, total_processed);
       g_debug("[FRAME] Inserted %u items at front, model now %u",
               total_processed, self->notes->len);
     }
@@ -936,7 +956,7 @@ static gboolean on_drain_timer(gpointer user_data) {
       GArray *evicted_keys = NULL;
       guint evicted = enforce_window_inline(self, &evicted_keys);
       if (evicted > 0) {
-        g_list_model_items_changed(G_LIST_MODEL(self), self->notes->len, evicted, 0);
+        emit_items_changed_safe(self, self->notes->len, evicted, 0);
         cleanup_evicted_keys(self, evicted_keys);
         g_debug("[FRAME] Evicted %u items from tail, model %u -> %u",
                 evicted, pre_evict, self->notes->len);
@@ -1109,7 +1129,7 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   g_hash_table_add(self->note_key_set, set_key);
 
   /* Emit items-changed signal immediately for each insertion */
-  g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
+  emit_items_changed_safe(self, pos, 0, 1);
 }
 
 /* nostrc-5r8b: Helper to insert note without emitting signal (for batching) */
@@ -1158,7 +1178,7 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
      * while cached items are still valid */
     g_array_remove_index(self->notes, i);
     g_hash_table_remove(self->note_key_set, &note_key);
-    g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
+    emit_items_changed_safe(self, i, 1, 0);
 
     /* NOW cleanup caches after GTK has finished with widgets */
     cache_lru_remove_key(self, note_key);
@@ -1599,7 +1619,7 @@ static void timeline_batch_complete_cb(GObject      *source_object,
   if (direct_inserted > 0) {
     GArray *evicted_keys = NULL;
     enforce_window_inline(self, &evicted_keys);
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, self->notes->len);
+    emit_items_changed_safe(self, 0, old_len, self->notes->len);
     cleanup_evicted_keys(self, evicted_keys);
     g_debug("[INSERT] Direct insert: %u items (startup fallback), model now %u",
             direct_inserted, self->notes->len);
@@ -2184,7 +2204,7 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
       if (self->notes->len > 0) {
         GArray *evicted_keys = NULL;
         enforce_window_inline(self, &evicted_keys);
-        g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, self->notes->len);
+        emit_items_changed_safe(self, 0, 0, self->notes->len);
         cleanup_evicted_keys(self, evicted_keys);
         g_debug("[MODEL] Initial load: %u events from nostrdb cache", self->notes->len);
       }
@@ -2355,7 +2375,7 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
    * GTK rebinds existing widget slots instead of mass teardown + recreation. */
   guint new_size = self->notes->len;
   if (old_size > 0 || new_size > 0)
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, new_size);
+    emit_items_changed_safe(self, 0, old_size, new_size);
   cleanup_evicted_keys(self, evicted_keys_refresh);
 
   g_debug("[MODEL] Refresh complete: %u total items (%u added, %u replaced)",
@@ -2600,7 +2620,7 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   
   /* Single atomic signal: remove old_size items at position 0, add new_size items */
   if (old_size > 0 || new_size > 0) {
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, new_size);
+    emit_items_changed_safe(self, 0, old_size, new_size);
   }
   
   cleanup_evicted_keys(self, evicted_keys_async);
@@ -2763,12 +2783,12 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
   if (added > 0 || trimmed > 0) {
     if (trim_newer) {
       /* Added at end, trimmed from front: signal covers front removal + end addition */
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, trimmed, added);
+      emit_items_changed_safe(self, 0, trimmed, added);
     } else {
       /* Added at front, trimmed from back: signal covers front addition + back removal */
       guint effective_added = added > trimmed ? added - trimmed : 0;
       guint effective_removed = trimmed > added ? trimmed - added : 0;
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, effective_removed, effective_added);
+      emit_items_changed_safe(self, 0, effective_removed, effective_added);
     }
   }
 
@@ -2914,7 +2934,7 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
    */
   g_array_set_size(self->notes, 0);
   g_hash_table_remove_all(self->note_key_set);
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
+  emit_items_changed_safe(self, 0, old_size, 0);
 
   /* NOW safe to clean caches — GTK has finished with all widgets */
   g_hash_table_remove_all(self->item_cache);
@@ -3009,7 +3029,7 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
   guint evicted = enforce_window_inline(self, &evicted_keys_add);
   if (evicted > 0) {
     guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
-    g_list_model_items_changed(G_LIST_MODEL(self), cap, evicted, 0);
+    emit_items_changed_safe(self, cap, evicted, 0);
     cleanup_evicted_keys(self, evicted_keys_add);
   } else {
     cleanup_evicted_keys(self, evicted_keys_add);
@@ -3053,7 +3073,7 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
     /* Remove from array and emit signal FIRST */
     g_array_remove_index(self->notes, 0);
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 1, 0);
+    emit_items_changed_safe(self, 0, 1, 0);
 
     /* NOW cleanup caches after GTK has finished with widget */
     g_hash_table_remove(self->note_key_set, &k);
@@ -3220,7 +3240,7 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
   /* ONE batched signal for all insertions */
   if (added > 0) {
     guint new_len = self->notes->len;
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+    emit_items_changed_safe(self, 0, old_len, new_len);
   }
 
   g_debug("[MODEL] load_older: added %u events, total now %u", added, self->notes->len);
@@ -3255,7 +3275,7 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
 
     /* Remove from array and emit signal FIRST */
     g_array_remove_index(self->notes, idx);
-    g_list_model_items_changed(G_LIST_MODEL(self), idx, 1, 0);
+    emit_items_changed_safe(self, idx, 1, 0);
 
     /* NOW cleanup caches after GTK has finished with widget */
     g_hash_table_remove(self->note_key_set, &k);
@@ -3434,7 +3454,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   /* ONE batched signal for all insertions */
   if (added > 0) {
     guint new_len = self->notes->len;
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+    emit_items_changed_safe(self, 0, old_len, new_len);
   }
 
   return added;

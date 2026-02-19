@@ -235,6 +235,15 @@ gnostr_ensure_gsettings_schemas(const char *argv0)
 }
 
 int main(int argc, char **argv) {
+  /* nostrc-heap-workaround: Disable GLib's slice allocator to work around
+   * intermittent heap corruption that only manifests with the slice allocator.
+   * The corruption is timing-dependent (ASAN doesn't catch it) and appears
+   * to be in external code (libwebsockets, Go runtime, or GLib internals).
+   * Using standard malloc makes the app stable.
+   * NOTE: Must use setenv() before any GLib calls, as g_setenv() itself
+   * uses GLib internals that may initialize the slice allocator. */
+  setenv("G_SLICE", "always-malloc", 0);
+
   gnostr_ensure_gsettings_schemas(argv[0]);
   g_set_prgname("gnostr");
 
