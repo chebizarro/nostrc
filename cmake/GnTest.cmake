@@ -8,6 +8,8 @@
 #   - Create an executable from SOURCES
 #   - Link against LIBS
 #   - Set G_DEBUG=fatal-warnings,gc-friendly and G_SLICE=always-malloc
+#     (G_SLICE is a no-op on GLib >= 2.76 where GSlice was removed,
+#      but kept for compatibility with older distros and ASan/Valgrind)
 #   - Register with CTest
 #   - Apply sanitizers if the apply_sanitizers() function is available
 #

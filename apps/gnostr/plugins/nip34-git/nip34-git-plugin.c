@@ -980,7 +980,7 @@ typedef struct {
 static void
 settings_page_data_free(SettingsPageData *data)
 {
-  g_slice_free(SettingsPageData, data);
+  g_free(data);
 }
 
 static void
@@ -1175,7 +1175,7 @@ nip34_git_plugin_create_settings_page(GnostrUIExtension   *extension,
   gtk_list_box_set_placeholder(GTK_LIST_BOX(repo_list), placeholder);
 
   /* Setup data and signals */
-  SettingsPageData *data = g_slice_new0(SettingsPageData);
+  SettingsPageData *data = g_new0(SettingsPageData, 1);
   data->plugin = self;
   data->repo_list = GTK_LIST_BOX(repo_list);
   data->status_label = GTK_LABEL(status_label);
