@@ -749,11 +749,15 @@ static void reset_internal_state_silent(GnNostrEventModel *self) {
   self->unseen_count = 0;
   self->evict_defer_counter = 0;
 
-  /* Clear notes array and all caches - no signal emitted */
+  /* Clear notes array and structural caches - no signal emitted.
+   * CRITICAL: Do NOT clear item_cache here! GTK widgets still reference
+   * GnNostrEventItem objects until items_changed is emitted. Clearing
+   * item_cache before the signal causes use-after-free during widget
+   * finalization (heap corruption in gtk_style_context_finalize).
+   * Callers must clear item_cache AFTER emitting items_changed. */
   g_array_set_size(self->notes, 0);
   g_hash_table_remove_all(self->note_key_set);
-  g_hash_table_remove_all(self->item_cache);
-  g_queue_clear_full(self->cache_lru, g_free);
+  /* item_cache and cache_lru cleared by caller after signal */
   g_hash_table_remove_all(self->thread_info);
   if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
   if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
@@ -2378,6 +2382,10 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
     emit_items_changed_safe(self, 0, old_size, new_size);
   cleanup_evicted_keys(self, evicted_keys_refresh);
 
+  /* NOW safe to clear item_cache - GTK has finished with old widgets */
+  g_hash_table_remove_all(self->item_cache);
+  g_queue_clear_full(self->cache_lru, g_free);
+
   g_debug("[MODEL] Refresh complete: %u total items (%u added, %u replaced)",
           self->notes->len, added, old_size);
 }
@@ -2624,6 +2632,10 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   }
   
   cleanup_evicted_keys(self, evicted_keys_async);
+
+  /* NOW safe to clear item_cache - GTK has finished with old widgets */
+  g_hash_table_remove_all(self->item_cache);
+  g_queue_clear_full(self->cache_lru, g_free);
 
   g_debug("[MODEL] Async refresh complete: %u total items (%u added, %u replaced)",
           self->notes->len, added, old_size);

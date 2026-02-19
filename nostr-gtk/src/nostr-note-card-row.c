@@ -519,13 +519,12 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
     }
   }
 
-  /* nostrc-pango-crash: Clear stale OG preview children during quiesce (unbind)
-   * rather than prepare_for_bind. During unbind, the widget is still fully
-   * realized with a valid native surface, so gtk_box_remove can safely trigger
-   * measure/layout. During bind, the row may be in a transitional state where
-   * children from the previous cycle haven't been fully torn down yet.
-   * The layout manager is nulled in dispose() before template disposal. */
-  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+  /* Keep explicit OG preview child removal in unbind path only.
+   * During dispose, let gtk_widget_dispose_template() own full subtree teardown
+   * to avoid container mutation while GTK is destroying template children. */
+  if (!clear_cancellable_refs &&
+      self->og_preview_container &&
+      GTK_IS_BOX(self->og_preview_container)) {
     GtkWidget *child = gtk_widget_get_first_child(self->og_preview_container);
     while (child) {
       GtkWidget *next = gtk_widget_get_next_sibling(child);

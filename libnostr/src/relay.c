@@ -346,12 +346,25 @@ static void relay_free_impl(NostrRelay *relay) {
         go_wait_group_destroy(&relay->priv->workers);
     }
     // NOW safe to free connection — all workers have exited.
-    // go_channel_free handles already-closed channels correctly.
+    // nostrc-uaf-lws: CRITICAL — detach WSI BEFORE freeing channels.
+    // Same rationale as nostr_relay_close: the LWS service thread callback
+    // may have captured conn->recv_channel. We must NULL the channel pointers
+    // under priv->mutex, then detach the WSI, then free the channels.
     if (conn) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: closing network connection\n");
-        if (conn->recv_channel) { go_channel_free(conn->recv_channel); conn->recv_channel = NULL; }
-        if (conn->send_channel) { go_channel_free(conn->send_channel); conn->send_channel = NULL; }
+        GoChannel *recv_ch = NULL;
+        GoChannel *send_ch = NULL;
+        if (conn->priv) {
+            nsync_mu_lock(&conn->priv->mutex);
+            recv_ch = conn->recv_channel;
+            send_ch = conn->send_channel;
+            conn->recv_channel = NULL;
+            conn->send_channel = NULL;
+            nsync_mu_unlock(&conn->priv->mutex);
+        }
         nostr_connection_close(conn);
+        if (recv_ch) go_channel_free(recv_ch);
+        if (send_ch) go_channel_free(send_ch);
     }
 
     // Free resources
@@ -1594,10 +1607,33 @@ bool nostr_relay_close(NostrRelay *r, Error **err) {
     if (conn->send_channel) go_channel_close(conn->send_channel);
     // Workers observe closed channels / NULL connection / canceled context → exit
     go_wait_group_wait(&r->priv->workers);
-    // Now that workers are done, it's safe to free channels and connection.
-    if (conn->recv_channel) { go_channel_free(conn->recv_channel); conn->recv_channel = NULL; }
-    if (conn->send_channel) { go_channel_free(conn->send_channel); conn->send_channel = NULL; }
+
+    /* nostrc-uaf-lws: CRITICAL ordering fix — detach the WSI from the LWS
+     * service thread BEFORE freeing channels.  The LWS callback captures
+     * conn->recv_channel at callback entry.  If we free the channel first,
+     * an in-flight callback accesses freed memory → heap corruption.
+     *
+     * nostr_connection_close() sets lws_opaque_user_data(wsi, NULL) which
+     * makes future callbacks bail at the conn==NULL check.  For an already
+     * in-flight callback, we NULL out recv/send_channel under priv->mutex
+     * so the callback's next access sees NULL and bails.
+     *
+     * We then snapshot the channels and free them AFTER detachment. */
+    GoChannel *recv_ch = NULL;
+    GoChannel *send_ch = NULL;
+    if (conn->priv) {
+        nsync_mu_lock(&conn->priv->mutex);
+        recv_ch = conn->recv_channel;
+        send_ch = conn->send_channel;
+        conn->recv_channel = NULL;
+        conn->send_channel = NULL;
+        nsync_mu_unlock(&conn->priv->mutex);
+    }
+    // Detach WSI and close the connection (this NULLs opaque user data)
     nostr_connection_close(conn);
+    // NOW safe to free channels — LWS callback can no longer access them
+    if (recv_ch) go_channel_free(recv_ch);
+    if (send_ch) go_channel_free(send_ch);
     return true;
 }
 

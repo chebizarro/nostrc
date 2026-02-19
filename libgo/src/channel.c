@@ -3,6 +3,7 @@
 #include "fiber_hooks.h"
 #include "nostr/metrics.h"
 #include "context.h"
+#include <sched.h> /* sched_yield() for two-phase channel destruction */
 
 /* Implemented in select.c — signals select waiters registered on this channel.
  * Must be called while holding chan->mutex. */
@@ -822,23 +823,51 @@ void go_channel_unref(GoChannel *chan) {
         return;
     }
 
-    // prev == 1: we are the last reference — perform actual cleanup
+    // prev == 1: we are the last reference — perform actual cleanup.
+    //
+    // TWO-PHASE DESTRUCTION (nostrc-uaf-unref):
+    //
+    // Phase 1: Mark closed, wake all waiters, free internal buffers, then
+    // release the mutex. Woken waiters will reacquire the mutex, see
+    // closed=1 / buffer=NULL, and exit gracefully.
+    //
+    // Phase 2: After releasing the mutex, we must NOT immediately free the
+    // GoChannel struct because woken waiters may still be trying to
+    // reacquire the embedded mutex. Instead, we yield to give them time
+    // to wake, observe the closed state, and release the mutex themselves.
+    // This is a best-effort approach — the definitive safety comes from
+    // the protocol: callers MUST ensure all users have stopped (via
+    // go_channel_close + join) before the last unref.
+
     NLOCK(&chan->mutex);
     // Mark closed and wake all waiters to prevent further use
     atomic_store_explicit(&chan->closed, 1, memory_order_release);
     CV_BROADCAST_FULL(chan);
     CV_BROADCAST_EMPTY(chan);
+    // Wake all select waiters too
+    go_channel_signal_select_waiters(chan);
     // Clear magic to help detect use-after-free
     chan->magic = 0;
-    if (chan->buffer) {
-        free(chan->buffer);
-        chan->buffer = NULL;
-    }
-    if (chan->slot_seq) {
-        free(chan->slot_seq);
-        chan->slot_seq = NULL;
-    }
+    // Free internal buffers (under mutex so concurrent access sees NULL)
+    _Atomic(void*) *buf = chan->buffer;
+    _Atomic size_t *seq = chan->slot_seq;
+    chan->buffer = NULL;
+    chan->slot_seq = NULL;
     NUNLOCK(&chan->mutex);
+
+    // Free the internal buffers outside the mutex (no one can access them
+    // since we NULLed the pointers under the mutex)
+    if (buf) free(buf);
+    if (seq) free(seq);
+
+    // Phase 2: Give woken waiters time to observe closed state and exit.
+    // Without this, free(chan) can destroy the mutex while a woken thread
+    // is still in nsync_mu_lock trying to reacquire it.
+    // Three yields is enough for woken threads on the same core to run.
+    for (int i = 0; i < 3; i++) {
+        sched_yield();
+    }
+
     free(chan);
 }
 
