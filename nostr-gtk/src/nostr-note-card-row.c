@@ -2331,8 +2331,13 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url
 /* Lazy loading context for deferred media loading.
  * nostrc-ncr-lifecycle: Uses NoteCardBindingContext instead of raw self pointer,
  * and GWeakRef instead of raw picture pointer, to prevent use-after-free
- * during GtkListView recycling. */
+ * during GtkListView recycling.
+ * 
+ * CRITICAL: This struct is ref-counted to prevent use-after-free when the
+ * picture is destroyed while the timeout callback is executing. The timeout
+ * source and the weak-notify callback both hold refs. */
 typedef struct {
+  gatomicrefcount ref_count;    /* ref-counted to prevent use-after-free */
   NoteCardBindingContext *ctx;  /* ref-counted binding context (replaces raw self) */
   GWeakRef picture_ref;         /* weak ref to GtkPicture (replaces raw pointer) */
   char *url;
@@ -2340,14 +2345,16 @@ typedef struct {
   gulong map_handler_id;
   gulong unmap_handler_id;
   gboolean loaded;
+  gboolean destroyed;           /* TRUE after picture weak-notify fires */
 } LazyLoadContext;
 
-static void lazy_load_context_free(LazyLoadContext *ctx) {
-  if (!ctx) return;
-  if (ctx->timeout_id > 0) {
-    g_source_remove(ctx->timeout_id);
-    ctx->timeout_id = 0;
-  }
+static LazyLoadContext *lazy_load_context_ref(LazyLoadContext *ctx) {
+  if (ctx)
+    g_atomic_ref_count_inc(&ctx->ref_count);
+  return ctx;
+}
+
+static void lazy_load_context_free_internal(LazyLoadContext *ctx) {
   /* nostrc-img1: Disconnect signal handlers to prevent stale callbacks
    * on recycled widgets. Without this, map/unmap handlers fire on
    * dead contexts after the picture widget is reused.
@@ -2367,13 +2374,30 @@ static void lazy_load_context_free(LazyLoadContext *ctx) {
   g_free(ctx);
 }
 
+static void lazy_load_context_unref(LazyLoadContext *ctx) {
+  if (!ctx) return;
+  if (g_atomic_ref_count_dec(&ctx->ref_count))
+    lazy_load_context_free_internal(ctx);
+}
+
+/* Legacy wrapper for compatibility - removes timeout and unrefs */
+static void lazy_load_context_free(LazyLoadContext *ctx) {
+  if (!ctx) return;
+  if (ctx->timeout_id > 0) {
+    g_source_remove(ctx->timeout_id);
+    ctx->timeout_id = 0;
+  }
+  lazy_load_context_unref(ctx);
+}
+
 /* Timeout callback - actually load the image after delay.
  * nostrc-ncr-lifecycle: Uses NoteCardBindingContext for safe row access
- * and GWeakRef for safe picture access. No raw pointer dereferences. */
+ * and GWeakRef for safe picture access. No raw pointer dereferences.
+ * Checks destroyed flag to bail out if picture was destroyed mid-callback. */
 static gboolean on_lazy_load_timeout(gpointer user_data) {
   LazyLoadContext *ctx = (LazyLoadContext *)user_data;
 
-  if (!ctx || ctx->loaded) return G_SOURCE_REMOVE;
+  if (!ctx || ctx->loaded || ctx->destroyed) return G_SOURCE_REMOVE;
 
   /* Get row via binding context — returns NULL if context was cancelled
    * (row recycled/unbound) or row was finalized. No dangling pointer risk. */
@@ -2383,6 +2407,13 @@ static gboolean on_lazy_load_timeout(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
   NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)row_obj;
+
+  /* Re-check destroyed after potentially blocking call */
+  if (ctx->destroyed) {
+    g_object_unref(row_obj);
+    ctx->timeout_id = 0;
+    return G_SOURCE_REMOVE;
+  }
 
   /* Get picture via GWeakRef — returns NULL if picture was destroyed */
   GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
@@ -2427,11 +2458,13 @@ static void on_picture_mapped(GtkWidget *widget, gpointer user_data) {
   /* LEGITIMATE TIMEOUT - Debounce lazy loading to avoid loading during fast scrolling.
    * 150ms delay ensures user has paused on this item before fetching media.
    * nostrc-b0h: Audited - scroll debounce for lazy loading is appropriate.
-   * nostrc-x52i: Use _full variant. Destroy notify is NULL because the
-   * LazyLoadContext lifecycle is managed by the picture widget's weak ref
-   * (on_lazy_load_picture_destroyed), NOT by this timer source. */
+   * nostrc-pango-fix2: The timeout source holds a ref on the context to prevent
+   * use-after-free if the picture is destroyed while the timeout is pending.
+   * The destroy notify unrefs when the source is removed. */
+  lazy_load_context_ref(ctx);
   ctx->timeout_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 150,
-                                        on_lazy_load_timeout, ctx, NULL);
+                                        on_lazy_load_timeout, ctx,
+                                        (GDestroyNotify)lazy_load_context_unref);
 }
 
 /* Called when the picture widget becomes hidden */
@@ -2450,19 +2483,27 @@ static void on_picture_unmapped(GtkWidget *widget, gpointer user_data) {
 }
 
 /* Called when the picture widget is destroyed.
- * nostrc-ncr-lifecycle: GWeakRef handles the pointer invalidation automatically,
- * so we just need to clear handler IDs and free the context. */
+ * nostrc-ncr-lifecycle: Mark context as destroyed and unref. The timeout
+ * callback (if running) will see destroyed=TRUE and bail out safely.
+ * Ref-counting ensures the context isn't freed until all users are done. */
 static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_the_object_was) {
   LazyLoadContext *ctx = (LazyLoadContext *)user_data;
   (void)where_the_object_was;
   /* nostrc-img2: The picture is being finalized — GtkWidget::dispose already
    * cleared all signal handlers.  Clear the weak ref (it will return NULL
    * from g_weak_ref_get anyway since the object is being finalized).
-   * Zero out handler IDs so lazy_load_context_free skips disconnect. */
+   * Zero out handler IDs so lazy_load_context_free_internal skips disconnect. */
+  ctx->destroyed = TRUE;
   g_weak_ref_set(&ctx->picture_ref, NULL);
   ctx->map_handler_id = 0;
   ctx->unmap_handler_id = 0;
-  lazy_load_context_free(ctx);
+  /* Remove timeout source if pending - this prevents the timeout from firing
+   * after we've marked the context as destroyed. */
+  if (ctx->timeout_id > 0) {
+    g_source_remove(ctx->timeout_id);
+    ctx->timeout_id = 0;
+  }
+  lazy_load_context_unref(ctx);
 }
 
 /* Load media image with lazy loading - defers actual loading until widget is visible.
@@ -2471,12 +2512,15 @@ static void load_media_image(NostrGtkNoteCardRow *self, const char *url, GtkPict
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
   if (!self->binding_ctx) return; /* Not bound — skip */
 
-  /* Create lazy loading context with ref-counted ownership */
+  /* Create lazy loading context with ref-counted ownership.
+   * Initial ref count is 1, owned by the weak-notify callback. */
   LazyLoadContext *ctx = g_new0(LazyLoadContext, 1);
+  g_atomic_ref_count_init(&ctx->ref_count);
   ctx->ctx = note_card_binding_context_ref(self->binding_ctx);
   g_weak_ref_init(&ctx->picture_ref, picture);
   ctx->url = g_strdup(url);
   ctx->loaded = FALSE;
+  ctx->destroyed = FALSE;
   ctx->timeout_id = 0;
 
   /* Connect to map/unmap signals for visibility tracking */
@@ -6281,19 +6325,11 @@ NoteCardBindingContext *nostr_gtk_note_card_row_get_binding_ctx(NostrGtkNoteCard
   return self->binding_ctx;
 }
 
-/**
- * nostr_gtk_note_card_row_get_data:
- *
- * Returns the current data bucket, or NULL if unbound.
- * Callers that need the data to survive beyond the current scope
- * (e.g., async callbacks) should call note_card_data_ref() on the
- * returned pointer.
- *
+/* Internal helper: get the current data bucket, or NULL if unbound.
  * nostrc-ncr-lifecycle Phase 5: Ref-counted data sharing.
- *
- * Returns: (transfer none) (nullable): The current data bucket
- */
-NoteCardData *nostr_gtk_note_card_row_get_data(NostrGtkNoteCardRow *self) {
+ * Not exposed in public API — kept static until external use is needed. */
+G_GNUC_UNUSED static NoteCardData *
+nostr_gtk_note_card_row_get_data(NostrGtkNoteCardRow *self) {
   g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
   return self->data;
 }
