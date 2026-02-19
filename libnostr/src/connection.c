@@ -796,10 +796,20 @@ void *websocket_send_coroutine(void *arg) {
     NostrConnection *conn = (NostrConnection *)arg;
     while (1) {
         WebSocketMessage *msg;
-        if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
-            lws_callback_on_writable(conn->priv->wsi); // Signal that there is data to send
+        /* go_channel_receive blocks until message or channel close.
+         * When channel is closed, it returns non-zero and we exit. */
+        if (go_channel_receive(conn->send_channel, (void **)&msg) != 0) {
+            break; /* Channel closed, exit coroutine */
+        }
+        /* nostrc-send-uaf: Check conn->priv before accessing. The connection
+         * may have been closed by another thread, which sets priv->wsi to NULL
+         * and eventually frees priv. */
+        NostrConnectionPrivate *priv = conn->priv;
+        if (priv && priv->wsi) {
+            lws_callback_on_writable(priv->wsi);
         }
     }
+    return NULL;
 }
 
 void nostr_connection_close(NostrConnection *conn) {
