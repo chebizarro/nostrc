@@ -88,4 +88,80 @@ GPtrArray *gnostr_extract_media_urls(const char *content, int content_len,
  * Returns: @str (same pointer, for chaining)
  */
 char *gnostr_strip_zwsp(char *str);
+
+/**
+ * gnostr_sanitize_utf8:
+ * @str: input string (may contain invalid UTF-8)
+ *
+ * Validates UTF-8 and replaces invalid sequences with U+FFFD.
+ * Also strips dangerous zero-width characters via gnostr_strip_zwsp().
+ *
+ * Returns: (transfer full): newly allocated valid UTF-8 string.
+ *          Caller must g_free().
+ */
+char *gnostr_sanitize_utf8(const char *str);
+
+/**
+ * gnostr_safe_set_markup:
+ * @label: a #GtkLabel (must include gtk/gtk.h before using this)
+ * @markup: Pango markup string (may be invalid/malformed)
+ *
+ * Safely sets markup on a GtkLabel. Validates the markup with
+ * pango_parse_markup() first — if it fails (malformed tags, invalid
+ * UTF-8, etc.), falls back to gtk_label_set_text() with the raw
+ * text extracted by stripping tags.
+ *
+ * This is the PRIMARY defense against relay-sourced content crashing
+ * Pango during layout or finalization.
+ *
+ * Note: This is a static inline to avoid pulling GTK into the
+ * content_renderer header. Include <gtk/gtk.h> before this header
+ * to get the implementation.
+ */
+#ifdef GTK_LABEL
+static inline void
+gnostr_safe_set_markup(GtkLabel *label, const char *markup)
+{
+  if (!label || !GTK_IS_LABEL(label)) return;
+  if (!markup || !*markup) {
+    gtk_label_set_text(label, "");
+    return;
+  }
+
+  /* First sanitize UTF-8 */
+  g_autofree char *clean = gnostr_sanitize_utf8(markup);
+
+  /* Try parsing - if it fails, fall back to plain text */
+  GError *err = NULL;
+  if (pango_parse_markup(clean, -1, 0, NULL, NULL, NULL, &err)) {
+    gtk_label_set_markup(label, clean);
+  } else {
+    g_debug("gnostr_safe_set_markup: invalid markup, falling back to text: %s",
+            err->message);
+    g_clear_error(&err);
+    /* Strip all XML/Pango tags and set as plain text */
+    g_autofree char *plaintext = NULL;
+    GRegex *tag_re = g_regex_new("<[^>]*>", 0, 0, NULL);
+    if (tag_re) {
+      plaintext = g_regex_replace_literal(tag_re, clean, -1, 0, "", 0, NULL);
+      g_regex_unref(tag_re);
+    }
+    /* Also un-escape XML entities for the plain text fallback */
+    if (plaintext) {
+      /* Simple entity replacements for common XML entities */
+      g_autofree char *t1 = NULL;
+      GRegex *amp_re = g_regex_new("&amp;", 0, 0, NULL);
+      if (amp_re) {
+        t1 = g_regex_replace_literal(amp_re, plaintext, -1, 0, "&", 0, NULL);
+        g_regex_unref(amp_re);
+      }
+      const char *use = t1 ? t1 : plaintext;
+      gtk_label_set_text(label, use);
+    } else {
+      gtk_label_set_text(label, clean);
+    }
+  }
+}
+#endif /* GTK_LABEL */
+
 #endif /* APPS_GNOSTR_UTIL_CONTENT_RENDERER_H */

@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "gnostr-label-guard.h"
 #include "../util/markdown_pango.h"
+#include <nostr-gtk-1.0/content_renderer.h>
 #include "../util/nip05.h"
 #include "../util/nip84_highlights.h"
 #include "../util/utils.h"
@@ -602,7 +603,8 @@ void gnostr_article_card_set_article(GnostrArticleCard *self,
   if (GTK_IS_LABEL(self->lbl_summary)) {
     if (summary && *summary) {
       gchar *pango_summary = markdown_to_pango_summary(summary, 300);
-      gtk_label_set_markup(GTK_LABEL(self->lbl_summary), pango_summary);
+      /* nostrc-csaf: Use safe markup setter for markdown-converted relay content */
+      gnostr_safe_set_markup(GTK_LABEL(self->lbl_summary), pango_summary);
       gtk_widget_set_visible(self->lbl_summary, TRUE);
       g_free(pango_summary);
     } else {

@@ -69,6 +69,20 @@ static const char *find_closing(const char *start, const char *delim, gsize deli
   return NULL;
 }
 
+/* nostrc-csaf: Helper to escape and append a single UTF-8 character.
+ * Unlike escape_pango_text(p, 1) which splits multi-byte sequences,
+ * this properly handles the full character width. */
+static inline void
+append_escaped_utf8_char(GString *out, const char *p, const char **next_out)
+{
+  const char *next = g_utf8_next_char(p);
+  gsize byte_len = next - p;
+  char *escaped = escape_pango_text(p, byte_len);
+  g_string_append(out, escaped);
+  g_free(escaped);
+  *next_out = next;
+}
+
 /* Process inline markdown elements */
 static void process_inline(GString *out, const char *line, gsize len) {
   const char *p = line;
@@ -77,10 +91,10 @@ static void process_inline(GString *out, const char *line, gsize len) {
   while (p < end && *p) {
     /* Handle escaped characters */
     if (*p == '\\' && p + 1 < end) {
-      char *escaped = escape_pango_text(p + 1, 1);
-      g_string_append(out, escaped);
-      g_free(escaped);
-      p += 2;
+      /* nostrc-csaf: advance by full UTF-8 char after backslash */
+      const char *next;
+      append_escaped_utf8_char(out, p + 1, &next);
+      p = next;
       continue;
     }
 
@@ -225,11 +239,10 @@ static void process_inline(GString *out, const char *line, gsize len) {
       }
     }
 
-    /* Regular character - escape and append */
-    char *escaped = escape_pango_text(p, 1);
-    g_string_append(out, escaped);
-    g_free(escaped);
-    p++;
+    /* Regular character — escape full UTF-8 codepoint (nostrc-csaf) */
+    const char *next;
+    append_escaped_utf8_char(out, p, &next);
+    p = next;
   }
 }
 
@@ -392,16 +405,51 @@ char *markdown_to_pango(const char *markdown, gsize max_length) {
   return g_string_free(out, FALSE);
 }
 
+/* nostrc-csaf: Helper to process a span of text with proper UTF-8 advancement.
+ * Used inside bold/italic/link-text spans. */
+static inline const char *
+append_span_text_utf8(GString *out, const char *p, const char *limit,
+                      gsize *char_count, gsize max_chars, gboolean *prev_space)
+{
+  while (p < limit && *char_count < max_chars) {
+    if (g_ascii_isspace(*p)) {
+      if (!*prev_space) {
+        g_string_append_c(out, ' ');
+        (*char_count)++;
+      }
+      *prev_space = TRUE;
+      p++;
+    } else {
+      const char *next;
+      append_escaped_utf8_char(out, p, &next);
+      (*char_count)++;
+      *prev_space = FALSE;
+      p = next;
+    }
+  }
+  return p;
+}
+
 char *markdown_to_pango_summary(const char *markdown, gsize max_chars) {
   if (!markdown || !*markdown) {
     return g_strdup("");
   }
 
+  /* nostrc-csaf: Sanitize UTF-8 first. Relay content can contain invalid
+   * byte sequences that corrupt Pango if passed through as-is. */
+  g_autofree gchar *safe_md = NULL;
+  if (!g_utf8_validate(markdown, -1, NULL)) {
+    safe_md = g_utf8_make_valid(markdown, -1);
+    markdown = safe_md;
+  }
+
   /* For summaries, we do a simplified conversion:
    * - Keep bold and italic
-   * - Strip headings markers but keep text
+   * - Strip heading markers but keep text
    * - Convert links to plain text
    * - Collapse whitespace
+   * nostrc-csaf: All character advancement uses g_utf8_next_char to
+   * avoid splitting multi-byte UTF-8 sequences.
    */
   GString *out = g_string_sized_new(max_chars + 64);
   const char *p = markdown;
@@ -434,22 +482,7 @@ char *markdown_to_pango_summary(const char *markdown, gsize max_chars) {
       p += 2;
       const char *close = strstr(p, delim);
       if (close) {
-        while (p < close && char_count < max_chars) {
-          if (g_ascii_isspace(*p)) {
-            if (!prev_space) {
-              g_string_append_c(out, ' ');
-              char_count++;
-            }
-            prev_space = TRUE;
-          } else {
-            char *escaped = escape_pango_text(p, 1);
-            g_string_append(out, escaped);
-            g_free(escaped);
-            char_count++;
-            prev_space = FALSE;
-          }
-          p++;
-        }
+        p = append_span_text_utf8(out, p, close, &char_count, max_chars, &prev_space);
         p = close + 2;
       }
       g_string_append(out, "</b>");
@@ -461,23 +494,12 @@ char *markdown_to_pango_summary(const char *markdown, gsize max_chars) {
       g_string_append(out, "<i>");
       char delim = *p;
       p++;
-      while (*p && *p != delim && char_count < max_chars) {
-        if (g_ascii_isspace(*p)) {
-          if (!prev_space) {
-            g_string_append_c(out, ' ');
-            char_count++;
-          }
-          prev_space = TRUE;
-        } else {
-          char *escaped = escape_pango_text(p, 1);
-          g_string_append(out, escaped);
-          g_free(escaped);
-          char_count++;
-          prev_space = FALSE;
-        }
-        p++;
+      /* Find closing delimiter */
+      const char *close = strchr(p, delim);
+      if (close) {
+        p = append_span_text_utf8(out, p, close, &char_count, max_chars, &prev_space);
+        if (*p == delim) p++;
       }
-      if (*p == delim) p++;
       g_string_append(out, "</i>");
       continue;
     }
@@ -489,24 +511,9 @@ char *markdown_to_pango_summary(const char *markdown, gsize max_chars) {
       if (text_end && *(text_end + 1) == '(') {
         const char *url_end = strchr(text_end + 2, ')');
         if (url_end) {
-          /* Output just the link text */
+          /* Output just the link text with proper UTF-8 handling */
           const char *text = p + 1;
-          while (text < text_end && char_count < max_chars) {
-            if (g_ascii_isspace(*text)) {
-              if (!prev_space) {
-                g_string_append_c(out, ' ');
-                char_count++;
-              }
-              prev_space = TRUE;
-            } else {
-              char *escaped = escape_pango_text(text, 1);
-              g_string_append(out, escaped);
-              g_free(escaped);
-              char_count++;
-              prev_space = FALSE;
-            }
-            text++;
-          }
+          append_span_text_utf8(out, text, text_end, &char_count, max_chars, &prev_space);
           p = url_end + 1;
           continue;
         }
@@ -524,18 +531,17 @@ char *markdown_to_pango_summary(const char *markdown, gsize max_chars) {
       continue;
     }
 
-    /* Regular character */
-    char *escaped = escape_pango_text(p, 1);
-    g_string_append(out, escaped);
-    g_free(escaped);
+    /* Regular character — advance by full UTF-8 codepoint */
+    const char *next;
+    append_escaped_utf8_char(out, p, &next);
     char_count++;
     prev_space = FALSE;
-    p++;
+    p = next;
   }
 
   /* Add ellipsis if truncated */
   if (char_count >= max_chars && *p) {
-    g_string_append(out, "...");
+    g_string_append(out, "…");
   }
 
   return g_string_free(out, FALSE);

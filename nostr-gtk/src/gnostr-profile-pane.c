@@ -18,6 +18,7 @@
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <gtk/gtk.h>
+#include <nostr-gtk-1.0/content_renderer.h>
 
 /* App-specific NIP utilities — temporary cross-includes until moved to nostr-gobject */
 #include "nip05.h"
@@ -2794,7 +2795,8 @@ static void update_profile_ui(NostrGtkProfilePane *self, const char *profile_jso
                                          "<a href=\"\\1\">\\1</a>", 0, NULL);
       g_regex_unref(url_re);
       if (linkified) {
-        gtk_label_set_markup(GTK_LABEL(self->lbl_bio), linkified);
+        /* nostrc-csaf: Use safe markup setter for relay-sourced bio content */
+        gnostr_safe_set_markup(GTK_LABEL(self->lbl_bio), linkified);
         g_free(linkified);
       } else {
         gtk_label_set_text(GTK_LABEL(self->lbl_bio), about);

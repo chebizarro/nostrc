@@ -747,7 +747,8 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
      * so URLs and nostr: refs are properly formatted before being cut off. */
     if (content && *content) {
       GnContentRenderResult *render = gnostr_render_content(content, -1, NULL);
-      gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
+      /* nostrc-csaf: Use safe markup setter for relay content */
+      gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
       gnostr_content_render_result_free(render);
     } else {
       gtk_label_set_text(GTK_LABEL(self->content_label), "");
