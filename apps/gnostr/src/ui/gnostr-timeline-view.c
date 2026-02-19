@@ -994,6 +994,15 @@ static void on_note_card_label_note_requested_relay(NostrGtkNoteCardRow *row, co
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
+
+  /* nostrc-lir: CRITICAL - The list_item may have been recycled or disposed by
+   * the time this profile update callback fires. GTK's GtkListView recycles
+   * GtkListItem objects as the user scrolls, so the user_data pointer we
+   * captured during bind may no longer be valid. We MUST check GTK_IS_LIST_ITEM
+   * before any access to prevent SEGV in gtk_list_item_get_child. */
+  if (!user_data || !GTK_IS_LIST_ITEM(user_data)) {
+    return;
+  }
   GtkListItem *list_item = GTK_LIST_ITEM(user_data);
 
   /* Get the row widget */
