@@ -2281,6 +2281,13 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[MODEL] Failed to begin query");
+    /* reset_internal_state_silent() already cleared notes without signaling.
+     * Mirror the normal atomic-replace contract on failure so views and
+     * caches stay consistent. */
+    if (old_size > 0)
+      emit_items_changed_safe(self, 0, old_size, 0);
+    g_hash_table_remove_all(self->item_cache);
+    g_queue_clear_full(self->cache_lru, g_free);
     g_string_free(filter, TRUE);
     return;
   }
