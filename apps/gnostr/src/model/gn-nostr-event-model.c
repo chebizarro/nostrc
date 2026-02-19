@@ -2389,16 +2389,21 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   GArray *evicted_keys_refresh = NULL;
   enforce_window_inline(self, &evicted_keys_refresh);
 
+  /* nostrc-duplicate-fix: Clear item_cache BEFORE emitting items_changed.
+   * GTK calls get_item() during signal emission to bind new widgets. If the
+   * cache contains old items, GTK sees duplicate GObject pointers (same item
+   * returned for different positions), causing "Duplicate item detected" warnings
+   * and eventual crashes. Clearing the cache first ensures get_item() creates
+   * fresh items for the new model state. */
+  g_hash_table_remove_all(self->item_cache);
+  g_queue_clear_full(self->cache_lru, g_free);
+
   /* nostrc-atomic-replace: ONE atomic replace signal instead of clear + add.
    * GTK rebinds existing widget slots instead of mass teardown + recreation. */
   guint new_size = self->notes->len;
   if (old_size > 0 || new_size > 0)
     emit_items_changed_safe(self, 0, old_size, new_size);
   cleanup_evicted_keys(self, evicted_keys_refresh);
-
-  /* NOW safe to clear item_cache - GTK has finished with old widgets */
-  g_hash_table_remove_all(self->item_cache);
-  g_queue_clear_full(self->cache_lru, g_free);
 
   g_debug("[MODEL] Refresh complete: %u total items (%u added, %u replaced)",
           self->notes->len, added, old_size);
@@ -2634,6 +2639,15 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GArray *evicted_keys_async = NULL;
   enforce_window_inline(self, &evicted_keys_async);
 
+  /* nostrc-duplicate-fix: Clear item_cache BEFORE emitting items_changed.
+   * GTK calls get_item() during signal emission to bind new widgets. If the
+   * cache contains old items, GTK sees duplicate GObject pointers (same item
+   * returned for different positions), causing "Duplicate item detected" warnings
+   * and eventual crashes. Clearing the cache first ensures get_item() creates
+   * fresh items for the new model state. */
+  g_hash_table_remove_all(self->item_cache);
+  g_queue_clear_full(self->cache_lru, g_free);
+
   /* nostrc-render-crash: Emit a SINGLE items_changed signal to avoid race
    * conditions with GTK's render loop. Multiple signals can cause GTK to
    * start rendering while we're still modifying the model, leading to
@@ -2646,10 +2660,6 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   }
   
   cleanup_evicted_keys(self, evicted_keys_async);
-
-  /* NOW safe to clear item_cache - GTK has finished with old widgets */
-  g_hash_table_remove_all(self->item_cache);
-  g_queue_clear_full(self->cache_lru, g_free);
 
   g_debug("[MODEL] Async refresh complete: %u total items (%u added, %u replaced)",
           self->notes->len, added, old_size);
