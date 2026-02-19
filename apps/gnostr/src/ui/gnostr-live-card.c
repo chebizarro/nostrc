@@ -61,10 +61,8 @@ gnostr_live_card_dispose(GObject *object)
 {
     GnostrLiveCard *self = GNOSTR_LIVE_CARD(object);
 
-    if (self->image_cancellable) {
-        g_cancellable_cancel(self->image_cancellable);
-        g_clear_object(&self->image_cancellable);
-    }
+    /* nostrc-soup-dblf: Don't cancel shared session requests — let them complete. */
+    g_clear_object(&self->image_cancellable);
 
     GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self));
     if (child)
@@ -204,11 +202,8 @@ gnostr_live_card_set_activity(GnostrLiveCard *self,
         self->activity = NULL;
     }
 
-    /* Cancel any pending image load */
-    if (self->image_cancellable) {
-        g_cancellable_cancel(self->image_cancellable);
-        g_clear_object(&self->image_cancellable);
-    }
+    /* nostrc-soup-dblf: Don't cancel — let requests complete harmlessly. */
+    g_clear_object(&self->image_cancellable);
 
     /* Copy new activity */
     if (activity) {
@@ -592,11 +587,8 @@ load_cover_image(GnostrLiveCard *self)
 
     gtk_widget_set_visible(GTK_WIDGET(self->cover_image), TRUE);
 
-    /* Cancel previous load */
-    if (self->image_cancellable) {
-        g_cancellable_cancel(self->image_cancellable);
-        g_clear_object(&self->image_cancellable);
-    }
+    /* nostrc-soup-dblf: Don't cancel — let requests complete harmlessly. */
+    g_clear_object(&self->image_cancellable);
 
     /* Load image from URL - gtk_picture_set_file handles async loading */
     g_autoptr(GFile) file = g_file_new_for_uri(self->activity->image);

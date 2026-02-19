@@ -106,10 +106,8 @@ gnostr_classified_card_dispose(GObject *obj)
   }
 
 #ifdef HAVE_SOUP3
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-  }
+  /* nostrc-soup-dblf: Don't cancel shared session requests — let them complete. */
+  g_clear_object(&self->image_cancellable);
   /* Shared session is managed globally - do not clear here */
 #endif
 

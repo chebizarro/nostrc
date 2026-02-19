@@ -109,10 +109,9 @@ static void gnostr_image_viewer_dispose(GObject *obj) {
   GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(obj);
 
 #ifdef HAVE_SOUP3
-  if (self->cancellable) {
-    g_cancellable_cancel(self->cancellable);
-    g_clear_object(&self->cancellable);
-  }
+  /* nostrc-soup-dblf: Don't cancel — let requests complete harmlessly.
+   * The g_object_weak_ref in ImageLoadCtx detects widget destruction. */
+  g_clear_object(&self->cancellable);
   /* Shared session is managed globally - do not clear here */
 #endif
 
@@ -714,12 +713,8 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
 #ifdef HAVE_SOUP3
   if (!url || !*url) return;
 
-  /* Cancel any pending request */
-  if (self->cancellable) {
-    g_cancellable_cancel(self->cancellable);
-    g_clear_object(&self->cancellable);
-  }
-  self->cancellable = g_cancellable_new();
+  /* nostrc-soup-dblf: Don't cancel pending requests — let them complete.
+   * The g_object_weak_ref in ImageLoadCtx will detect the widget is gone. */
 
   /* Always fetch the full-size image from the network.  The avatar cache
    * stores downscaled thumbnails which are too small for the image viewer.
@@ -759,7 +754,7 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
     session,
     msg,
     G_PRIORITY_DEFAULT,
-    self->cancellable,
+    NULL, /* nostrc-soup-dblf: no cancellable on shared session */
     on_image_loaded,
     ctx
   );
@@ -776,10 +771,8 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
 
 #ifdef HAVE_SOUP3
   /* Cancel any pending HTTP request since we already have the texture */
-  if (self->cancellable) {
-    g_cancellable_cancel(self->cancellable);
-    g_clear_object(&self->cancellable);
-  }
+  /* nostrc-soup-dblf: Don't cancel — let pending request complete harmlessly */
+  g_clear_object(&self->cancellable);
 #endif
 
   g_clear_object(&self->texture);

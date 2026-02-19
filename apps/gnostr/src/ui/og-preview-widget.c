@@ -372,14 +372,9 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 /* Load image asynchronously */
 static void load_image_async(OgPreviewWidget *self, const char *url) {
   if (!url || !*url) return;
-  
-  /* Cancel previous load */
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-  }
-  
-  self->image_cancellable = g_cancellable_new();
+
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) return;
   
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
@@ -392,11 +387,13 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
   *weak_ref = G_OBJECT(self);
   g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
   
+  /* nostrc-soup-dblf: No cancellable on shared session — weak ref handles
+   * widget-gone detection in the callback. */
   soup_session_send_and_read_async(
-    gnostr_get_shared_soup_session(),
+    session,
     msg,
     G_PRIORITY_LOW,
-    self->image_cancellable,
+    NULL,
     on_image_loaded,
     weak_ref
   );
@@ -561,20 +558,11 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
     return;
   }
   
-  /* Cancel previous fetch */
-  if (self->cancellable) {
-    g_cancellable_cancel(self->cancellable);
-    g_clear_object(&self->cancellable);
-  }
-  
-  /* Use external cancellable from parent if available, otherwise create our own */
-  GCancellable *effective_cancellable;
-  if (self->external_cancellable) {
-    effective_cancellable = self->external_cancellable;
-  } else {
-    self->cancellable = g_cancellable_new();
-    effective_cancellable = self->cancellable;
-  }
+  /* nostrc-soup-dblf: Don't cancel previous requests — let them complete.
+   * The weak ref in the callback will detect the widget is gone. */
+
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) return;
   
   /* Show loading state */
   gtk_widget_set_visible(self->card_box, FALSE);
@@ -597,11 +585,12 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
   *weak_ref = G_OBJECT(self);
   g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
   
+  /* nostrc-soup-dblf: No cancellable on shared session. */
   soup_session_send_and_read_async(
-    gnostr_get_shared_soup_session(),
+    session,
     msg,
     G_PRIORITY_LOW,
-    effective_cancellable,
+    NULL,
     on_html_fetched,
     weak_ref
   );
@@ -616,17 +605,16 @@ static void og_preview_widget_dispose(GObject *object) {
   /* Mark as disposed FIRST - this prevents callbacks from accessing widget state */
   self->disposed = TRUE;
 
-  /* Cancel any in-flight requests - this will trigger cleanup in libsoup.
-   * Do NOT call g_clear_object on cancellables immediately - let them be
-   * cleaned up naturally to avoid file descriptor corruption in GLib main loop.
-   * The cancellables will be freed when the widget is finalized. */
-  if (self->cancellable) {
-    g_cancellable_cancel(self->cancellable);
-  }
-
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-  }
+  /* nostrc-soup-dblf: Do NOT cancel GCancellables for requests on the shared
+   * SoupSession.  Cancelling in-flight requests causes libsoup's connection
+   * pool to destroy SoupConnection objects while still referenced by other
+   * queue items, leading to double-free in g_weak_ref_get on macOS.
+   *
+   * The callbacks already use g_object_add_weak_pointer to safely detect
+   * widget destruction — they will bail out when they find the weak ref
+   * is NULL.  Just clear the cancellable objects without cancelling. */
+  g_clear_object(&self->cancellable);
+  g_clear_object(&self->image_cancellable);
 
   g_clear_pointer(&self->cache, g_hash_table_unref);
 

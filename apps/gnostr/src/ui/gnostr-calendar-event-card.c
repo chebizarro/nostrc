@@ -116,14 +116,10 @@ static void gnostr_calendar_event_card_dispose(GObject *object) {
   }
 
 #ifdef HAVE_SOUP3
-  if (self->avatar_cancellable) {
-    g_cancellable_cancel(self->avatar_cancellable);
-    g_clear_object(&self->avatar_cancellable);
-  }
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-  }
+  /* nostrc-soup-dblf: Don't cancel shared session requests — let them complete.
+   * Callbacks use GWeakRef to detect widget destruction. */
+  g_clear_object(&self->avatar_cancellable);
+  g_clear_object(&self->image_cancellable);
   /* Shared session is managed globally - do not clear here */
 #endif
 

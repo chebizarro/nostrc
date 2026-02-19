@@ -102,14 +102,17 @@ static void gnostr_article_card_dispose(GObject *object) {
   }
 
 #ifdef HAVE_SOUP3
-  if (self->avatar_cancellable) {
-    g_cancellable_cancel(self->avatar_cancellable);
-    g_clear_object(&self->avatar_cancellable);
-  }
-  if (self->header_cancellable) {
-    g_cancellable_cancel(self->header_cancellable);
-    g_clear_object(&self->header_cancellable);
-  }
+  /* nostrc-soup-dblf: Do NOT cancel GCancellables for requests on the shared
+   * SoupSession.  Cancelling in-flight requests causes libsoup's connection
+   * pool to destroy SoupConnection objects while still referenced by other
+   * queue items, leading to double-free in g_weak_ref_get on macOS.
+   *
+   * Instead, callbacks use GWeakRef to safely detect that the widget is gone.
+   * Just clear the cancellable objects without cancelling them — the pending
+   * requests will complete harmlessly and the GWeakRef check in the callback
+   * will bail out. */
+  g_clear_object(&self->avatar_cancellable);
+  g_clear_object(&self->header_cancellable);
   /* Shared session is managed globally - do not clear here */
 #endif
 
@@ -522,11 +525,21 @@ GnostrArticleCard *gnostr_article_card_new(void) {
 }
 
 #ifdef HAVE_SOUP3
+/* nostrc-soup-dblf: Context for safe async image callback using GWeakRef.
+ * Replaces the previous pattern of passing 'self' directly as user_data,
+ * which was a use-after-free if the widget was finalized before the callback. */
+typedef struct {
+  GWeakRef card_ref;
+} ArticleImageCtx;
+
+static void article_image_ctx_free(ArticleImageCtx *ctx) {
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->card_ref);
+  g_free(ctx);
+}
+
 static void on_header_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrArticleCard *self = GNOSTR_ARTICLE_CARD(user_data);
-
-  if (!GNOSTR_IS_ARTICLE_CARD(self)) return;
-
+  ArticleImageCtx *ctx = (ArticleImageCtx *)user_data;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
@@ -535,6 +548,16 @@ static void on_header_image_loaded(GObject *source, GAsyncResult *res, gpointer 
       g_debug("Article: Failed to load header image: %s", error->message);
     }
     if (error) g_error_free(error);
+    article_image_ctx_free(ctx);
+    return;
+  }
+
+  /* Safely check if the card is still alive via weak ref */
+  GnostrArticleCard *self = g_weak_ref_get(&ctx->card_ref);
+  if (!self || self->disposed) {
+    g_bytes_unref(bytes);
+    if (self) g_object_unref(self);
+    article_image_ctx_free(ctx);
     return;
   }
 
@@ -546,6 +569,8 @@ static void on_header_image_loaded(GObject *source, GAsyncResult *res, gpointer 
       g_debug("Article: Failed to create texture: %s", error->message);
       g_error_free(error);
     }
+    g_object_unref(self);
+    article_image_ctx_free(ctx);
     return;
   }
 
@@ -555,22 +580,35 @@ static void on_header_image_loaded(GObject *source, GAsyncResult *res, gpointer 
   }
 
   g_object_unref(texture);
+  g_object_unref(self);
+  article_image_ctx_free(ctx);
 }
 
 static void load_header_image(GnostrArticleCard *self, const char *url) {
   if (!url || !*url) return;
 
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) return;
+
   /* Create HTTP request */
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) return;
 
+  /* nostrc-soup-dblf: Use GWeakRef context instead of raw self pointer.
+   * Don't pass a GCancellable — cancellation on the shared session's
+   * connection pool causes libsoup connection-pool corruption (double-free
+   * in g_weak_ref_get during lookup_connection on macOS).  Instead, the
+   * callback safely detects a dead widget via the GWeakRef. */
+  ArticleImageCtx *ctx = g_new0(ArticleImageCtx, 1);
+  g_weak_ref_init(&ctx->card_ref, self);
+
   soup_session_send_and_read_async(
-    gnostr_get_shared_soup_session(),
+    session,
     msg,
     G_PRIORITY_LOW,
-    self->header_cancellable,
+    NULL, /* no cancellable — see comment above */
     on_header_image_loaded,
-    self
+    ctx
   );
 
   g_object_unref(msg);

@@ -276,17 +276,14 @@ static void load_header_image(GnostrArticleReader *self, const char *url) {
   SoupSession *session = gnostr_get_shared_soup_session();
   if (!session) return;
 
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-  }
-  self->image_cancellable = g_cancellable_new();
+  /* nostrc-soup-dblf: Don't cancel — let old requests complete.
+   * The callback holds g_object_ref(self) and checks root_box==NULL. */
 
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) return;
 
   soup_session_send_async(session, msg, G_PRIORITY_DEFAULT,
-                          self->image_cancellable,
+                          NULL, /* nostrc-soup-dblf: no cancellable on shared session */
                           on_header_image_ready,
                           g_object_ref(self));
   g_object_unref(msg);
@@ -304,10 +301,9 @@ static void gnostr_article_reader_dispose(GObject *object) {
   GnostrArticleReader *self = GNOSTR_ARTICLE_READER(object);
 
 #ifdef HAVE_SOUP3
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-  }
+  /* nostrc-soup-dblf: Don't cancel shared session requests — let them complete.
+   * The callback holds a g_object_ref to self and checks root_box==NULL. */
+  g_clear_object(&self->image_cancellable);
 #endif
 
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
