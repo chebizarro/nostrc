@@ -510,8 +510,28 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
       if (GNOSTR_IS_VIDEO_PLAYER(child)) {
         gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(child));
       }
-      /* nostrc-pango-crash: Clear paintables from media GtkPictures to prevent
-       * GtkImageDefinition corruption during rapid widget recycling. */
+      /* nostrc-imgdef: Walk overlay children to clear BOTH GtkPicture paintables
+       * AND GtkImage icon-names. The media containers (GtkOverlay) hold:
+       *   - GtkPicture (the image) — clear paintable
+       *   - GtkSpinner (loading indicator) — stop and hide
+       *   - GtkImage (error fallback) — clear icon to reset GtkImageDefinition
+       * Clearing icon-name sets the internal GtkImageDefinition to EMPTY type,
+       * which is a safe state for finalization even if heap corruption has
+       * damaged adjacent memory. */
+      if (GTK_IS_OVERLAY(child)) {
+        GtkWidget *ov_child = gtk_widget_get_first_child(child);
+        while (ov_child) {
+          if (GTK_IS_PICTURE(ov_child)) {
+            gtk_picture_set_paintable(GTK_PICTURE(ov_child), NULL);
+          } else if (GTK_IS_IMAGE(ov_child)) {
+            gtk_image_clear(GTK_IMAGE(ov_child));
+          } else if (GTK_IS_SPINNER(ov_child)) {
+            gtk_spinner_stop(GTK_SPINNER(ov_child));
+          }
+          ov_child = gtk_widget_get_next_sibling(ov_child);
+        }
+      }
+      /* Backwards compat: direct GtkPicture children of media_box */
       if (GTK_IS_PICTURE(child)) {
         gtk_picture_set_paintable(GTK_PICTURE(child), NULL);
       }
@@ -612,6 +632,40 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
     gtk_picture_set_paintable(GTK_PICTURE(self->article_image), NULL);
   if (self->video_thumb_picture && GTK_IS_PICTURE(self->video_thumb_picture))
     gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), NULL);
+
+  /* nostrc-imgdef: Clear ALL GtkImage icons in the template widget tree BEFORE
+   * dispose_template runs. gtk_image_clear() resets the internal
+   * GtkImageDefinition to the EMPTY type, which is a safe base state for
+   * finalization. This prevents the "code should not be reached" crash in
+   * gtk_image_definition_unref when heap corruption (from nsync/libgo UAF)
+   * has trashed the definition's type discriminant.
+   *
+   * Walk the widget subtree to find ALL GtkImage widgets — both named
+   * template children (like_icon, zap_icon) and unnamed ones (button icons). */
+  {
+    GList *image_widgets = NULL;
+    GtkWidget *_walk = gtk_widget_get_first_child(GTK_WIDGET(self));
+    /* BFS traversal to find all GtkImage widgets in the subtree */
+    GQueue bfs = G_QUEUE_INIT;
+    if (_walk) g_queue_push_tail(&bfs, _walk);
+    while (!g_queue_is_empty(&bfs)) {
+      GtkWidget *w = g_queue_pop_head(&bfs);
+      if (GTK_IS_IMAGE(w)) {
+        image_widgets = g_list_prepend(image_widgets, w);
+      }
+      /* Enqueue children */
+      GtkWidget *c = gtk_widget_get_first_child(w);
+      while (c) {
+        g_queue_push_tail(&bfs, c);
+        c = gtk_widget_get_next_sibling(c);
+      }
+    }
+    /* Clear all found GtkImages */
+    for (GList *l = image_widgets; l; l = l->next) {
+      gtk_image_clear(GTK_IMAGE(l->data));
+    }
+    g_list_free(image_widgets);
+  }
 
   /* nostrc-pango-crash: Null layout manager before template disposal to prevent
    * it from measuring partially-destroyed children during the disposal cascade.
@@ -3274,6 +3328,15 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
     while (child) {
       GtkWidget *next = gtk_widget_get_next_sibling(child);
+      /* nostrc-imgdef: pre-clear overlay children before removal */
+      if (GTK_IS_OVERLAY(child)) {
+        GtkWidget *ov = gtk_widget_get_first_child(child);
+        while (ov) {
+          if (GTK_IS_IMAGE(ov))   gtk_image_clear(GTK_IMAGE(ov));
+          if (GTK_IS_PICTURE(ov)) gtk_picture_set_paintable(GTK_PICTURE(ov), NULL);
+          ov = gtk_widget_get_next_sibling(ov);
+        }
+      }
       gtk_box_remove(GTK_BOX(self->media_box), child);
       child = next;
     }
@@ -3528,6 +3591,15 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
     while (child) {
       GtkWidget *next = gtk_widget_get_next_sibling(child);
+      /* nostrc-imgdef: pre-clear overlay children before removal */
+      if (GTK_IS_OVERLAY(child)) {
+        GtkWidget *ov = gtk_widget_get_first_child(child);
+        while (ov) {
+          if (GTK_IS_IMAGE(ov))   gtk_image_clear(GTK_IMAGE(ov));
+          if (GTK_IS_PICTURE(ov)) gtk_picture_set_paintable(GTK_PICTURE(ov), NULL);
+          ov = gtk_widget_get_next_sibling(ov);
+        }
+      }
       gtk_box_remove(GTK_BOX(self->media_box), child);
       child = next;
     }
