@@ -1295,6 +1295,23 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
   NoteEntry *entry = &g_array_index(self->notes, NoteEntry, position);
   uint64_t key = entry->note_key;
 
+  /* nostrc-duplicate-fix2: Defensive check for duplicate note_keys in the notes array.
+   * If the same note_key appears at a different position, the item_cache would return
+   * the same GObject pointer, causing GTK's "Duplicate item detected" warning.
+   * This check is O(N) but only runs in debug builds; in release it's compiled out. */
+#ifndef NDEBUG
+  for (guint i = 0; i < self->notes->len; i++) {
+    if (i == position) continue;
+    NoteEntry *other = &g_array_index(self->notes, NoteEntry, i);
+    if (other->note_key == key) {
+      g_critical("[MODEL] DUPLICATE note_key %" G_GUINT64_FORMAT " at positions %u and %u! "
+                 "This WILL cause 'Duplicate item detected' warnings and crashes.",
+                 key, i, position);
+      break;
+    }
+  }
+#endif
+
   /* Check LRU cache */
   GnNostrEventItem *item = g_hash_table_lookup(self->item_cache, &key);
   if (item) {
@@ -2814,18 +2831,31 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     }
   }
 
-  /* Emit ONE combined items_changed signal for both additions and removals.
-   * This prevents nested signal emission which corrupts GTK's list item manager. */
+  /* nostrc-duplicate-fix2: Emit a single "replace all" items_changed signal.
+   *
+   * CRITICAL: The previous signal logic was semantically incorrect and was
+   * the root cause of "Duplicate item detected in list" warnings + segfaults.
+   *
+   * The bug: For trim_newer=TRUE (load-older), items are appended at the END
+   * of the notes array, and older items are trimmed from the FRONT. But the
+   * signal items_changed(0, trimmed, added) told GTK "N new items at position 0",
+   * when actually the surviving old items are at the front and new items at the end.
+   * GTK then called get_item(0) expecting a new item but got a surviving old item
+   * that GTK also tracked at position N — same GObject pointer at two positions.
+   *
+   * Similarly for trim_newer=FALSE (load-newer) with trimming: the signal
+   * miscounted positions, causing GTK's item→widget mapping to become corrupted.
+   *
+   * Fix: Use the conservative "replace all" signal items_changed(0, old_len, new_len),
+   * which correctly tells GTK the entire model has changed. This is the same
+   * pattern used by the sync load_older/load_newer and refresh paths.
+   * Clear item_cache first to ensure get_item() creates fresh items and avoids
+   * returning stale GObject pointers that GTK already tracks elsewhere. */
   if (added > 0 || trimmed > 0) {
-    if (trim_newer) {
-      /* Added at end, trimmed from front: signal covers front removal + end addition */
-      emit_items_changed_safe(self, 0, trimmed, added);
-    } else {
-      /* Added at front, trimmed from back: signal covers front addition + back removal */
-      guint effective_added = added > trimmed ? added - trimmed : 0;
-      guint effective_removed = trimmed > added ? trimmed - added : 0;
-      emit_items_changed_safe(self, 0, effective_removed, effective_added);
-    }
+    guint new_len = self->notes->len;
+    g_hash_table_remove_all(self->item_cache);
+    g_queue_clear_full(self->cache_lru, g_free);
+    emit_items_changed_safe(self, 0, old_len, new_len);
   }
 
   g_debug("[MODEL] Async paginate: %u added, %u total", added, self->notes->len);
