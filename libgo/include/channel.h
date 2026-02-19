@@ -50,6 +50,10 @@ typedef struct GoChannel {
     // Reference count for shared ownership (hq-e3ach). Starts at 1.
     // When refs drops to 0 the channel is destroyed.
     _Atomic int refs;
+    // Active waiters count (nostrc-waiter-count). Tracks threads currently
+    // blocked inside go_channel_send/receive. Channel cannot be freed until
+    // this reaches 0, preventing use-after-free in nsync_cv_wait.
+    _Atomic int active_waiters;
     // Linked list of select waiter registrations (protected by mutex)
     struct GoSelectWaiterNode *select_waiters;
     // Linked list of fiber waiters on cond_full (protected by mutex)
