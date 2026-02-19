@@ -139,6 +139,30 @@ static gchar *format_mention_display(struct nostr_bech32 *bech32,
   }
 }
 
+/* nostrc-csaf: Validate and sanitize UTF-8 strings from untrusted relay content.
+ * Replaces invalid byte sequences with U+FFFD and strips dangerous zero-width
+ * characters. Every string from a relay should pass through this before reaching
+ * Pango or GTK label functions. */
+char *
+gnostr_sanitize_utf8(const char *str)
+{
+  if (!str) return g_strdup("");
+  if (!*str) return g_strdup("");
+
+  /* Step 1: Ensure valid UTF-8 */
+  gchar *valid;
+  if (g_utf8_validate(str, -1, NULL)) {
+    valid = g_strdup(str);
+  } else {
+    valid = g_utf8_make_valid(str, -1);
+  }
+
+  /* Step 2: Strip dangerous zero-width characters */
+  gnostr_strip_zwsp(valid);
+
+  return valid;
+}
+
 /* nostrc-pgo5/pgo6: Strip zero-width and invisible Unicode characters that
  * corrupt Pango's internal layout line list (NULL entries), causing SEGV in
  * pango_layout_line_unref during gtk_widget_allocate or dispose.
@@ -220,12 +244,18 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
 
   storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
   if (!blocks) {
-    /* Fallback: manually truncate URLs in plain text when NDB parser fails.
-     * This handles cases where the content contains URLs but NDB can't parse it. */
+    /* nostrc-csaf: Fallback when NDB parser fails.
+     * CRITICAL: First sanitize UTF-8, then use g_markup_escape_text on the
+     * whole string instead of byte-by-byte processing which splits multi-byte
+     * UTF-8 sequences. The old byte-at-a-time loop would process e.g. the
+     * 3-byte sequence E2 80 99 (U+2019 RIGHT SINGLE QUOTATION MARK) as three
+     * separate bytes, producing garbage that crashes Pango. */
+    g_autofree gchar *safe_content = gnostr_sanitize_utf8(content);
+    int safe_len = (int)strlen(safe_content);
+    const char *p = safe_content;
+    const char *end = safe_content + safe_len;
     GString *fallback = g_string_new("");
-    const char *p = content;
-    const char *end = content + content_len;
-    
+
     while (p < end) {
       /* Look for http:// or https:// */
       const char *url_start = NULL;
@@ -234,7 +264,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
       } else if (p + 8 <= end && g_ascii_strncasecmp(p, "https://", 8) == 0) {
         url_start = p;
       }
-      
+
       if (url_start) {
         /* Find end of URL (whitespace or end of string) */
         const char *url_end = url_start;
@@ -242,7 +272,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
           url_end++;
         }
         size_t url_len = url_end - url_start;
-        
+
         /* Create truncated display and link */
         gchar *url = g_strndup(url_start, url_len);
         gchar *esc_url = g_markup_escape_text(url, -1);
@@ -257,24 +287,20 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         g_free(esc_display);
         g_free(esc_url);
         g_free(url);
-        
+
         p = url_end;
       } else {
-        /* Escape and append single character */
-        if (*p == '<') {
-          g_string_append(fallback, "&lt;");
-        } else if (*p == '>') {
-          g_string_append(fallback, "&gt;");
-        } else if (*p == '&') {
-          g_string_append(fallback, "&amp;");
-        } else {
-          g_string_append_c(fallback, *p);
-        }
-        p++;
+        /* nostrc-csaf: Advance by whole UTF-8 character, not single byte.
+         * Use g_utf8_next_char to correctly handle multi-byte sequences. */
+        const char *next = g_utf8_next_char(p);
+        gchar *escaped = g_markup_escape_text(p, next - p);
+        g_string_append(fallback, escaped);
+        g_free(escaped);
+        p = next;
       }
     }
-    
-    res->markup = gnostr_strip_zwsp(g_string_free(fallback, FALSE));
+
+    res->markup = g_string_free(fallback, FALSE);
     return res;
   }
 

@@ -14,6 +14,7 @@
 #include "../util/nip23.h"
 #include "../util/markdown_pango.h"
 #include "../util/utils.h"
+#include <nostr-gtk-1.0/content_renderer.h>
 
 #include <json-glib/json-glib.h>
 #include <glib/gi18n.h>
@@ -535,7 +536,8 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
   if (content && *content) {
     char *pango = markdown_to_pango(content, 0);
     if (pango) {
-      gtk_label_set_markup(GTK_LABEL(self->lbl_content), pango);
+      /* nostrc-csaf: Use safe markup setter for relay-sourced content */
+      gnostr_safe_set_markup(GTK_LABEL(self->lbl_content), pango);
       g_free(pango);
     } else {
       gtk_label_set_text(GTK_LABEL(self->lbl_content), content);

@@ -3262,9 +3262,10 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
 
   if (!render) return;
 
+  /* nostrc-csaf: Use safe markup setter for relay content */
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-    gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
   }
 
   /* nostrc-dqwq.2: Defer media widget creation to map signal.
@@ -3363,9 +3364,9 @@ void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
 
   if (!render || !render->markup) return;
 
-  /* Set only the label markup -- no media/OG/embed creation */
+  /* nostrc-csaf: Use safe markup setter for relay content */
   gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-  gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
+  gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
 }
 
 /**
@@ -3481,7 +3482,7 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
     gchar *subject = extract_subject_from_tags_json(tags_json);
     if (subject && self->subject_label && GTK_IS_LABEL(self->subject_label)) {
       gchar *escaped = gnostr_strip_zwsp(g_markup_escape_text(subject, -1));
-      gtk_label_set_markup(GTK_LABEL(self->subject_label), escaped);
+        gnostr_safe_set_markup(GTK_LABEL(self->subject_label), escaped);
       gtk_widget_set_visible(self->subject_label, TRUE);
       g_free(escaped);
       g_debug("NIP-14: Displaying subject: %s", subject);
@@ -3516,9 +3517,10 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
 
   /* Single-pass content render: markup + all URLs */
   GnContentRenderResult *render = gnostr_render_content(content, -1, NULL);
+  /* nostrc-csaf: Use safe markup setter for relay content */
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-    gtk_label_set_markup(GTK_LABEL(self->content_label), render->markup);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
   }
 
   /* nostrc-dqwq.2: Defer media widget creation to map signal (imeta path).
@@ -5174,8 +5176,8 @@ void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     if (summary && *summary) {
       gchar *pango_summary = markdown_to_pango_summary(summary, 300);
-      gnostr_strip_zwsp(pango_summary); /* nostrc-pgo6: strip before Pango */
-      gtk_label_set_markup(GTK_LABEL(self->content_label), pango_summary);
+      /* nostrc-csaf: Use safe markup setter for markdown-converted content */
+      gnostr_safe_set_markup(GTK_LABEL(self->content_label), pango_summary);
       g_free(pango_summary);
     } else {
       gtk_label_set_text(GTK_LABEL(self->content_label), _("No summary available"));
@@ -5669,44 +5671,57 @@ void nostr_gtk_note_card_row_set_git_repo_mode(NostrGtkNoteCardRow *self,
     gtk_widget_add_css_class(self->root, "git-repo-card");
   }
 
-  /* Build rich content display */
+  /* nostrc-csaf: Build rich content display.
+   * ALL user-provided strings from relay events MUST be escaped with
+   * g_markup_escape_text before embedding in Pango markup. A malicious relay
+   * can send name="<b onmouseover='...'>" or description="</span><script>"
+   * which would produce malformed Pango markup → crash in pango_parse_markup
+   * or pango_layout_line_unref during dispose. */
   GString *content = g_string_new(NULL);
 
-  /* Repository name with icon */
-  g_string_append_printf(content, "<span weight='bold' size='large'>📦 %s</span>",
-                         (name && *name) ? name : "Unnamed Repository");
-
-  /* Description */
-  if (description && *description) {
-    g_string_append_printf(content, "\n\n%s", description);
+  /* Repository name with icon — escape user string */
+  {
+    g_autofree gchar *esc_name = g_markup_escape_text(
+      (name && *name) ? name : "Unnamed Repository", -1);
+    g_string_append_printf(content, "<span weight='bold' size='large'>📦 %s</span>",
+                           esc_name);
   }
 
-  /* Clone URL(s) */
+  /* Description — escape user string */
+  if (description && *description) {
+    g_autofree gchar *esc_desc = g_markup_escape_text(description, -1);
+    g_string_append_printf(content, "\n\n%s", esc_desc);
+  }
+
+  /* Clone URL(s) — escape user strings */
   if (clone_urls && clone_urls[0]) {
     g_string_append(content, "\n\n<span weight='bold'>Clone:</span>");
     for (int i = 0; clone_urls[i]; i++) {
+      g_autofree gchar *esc = g_markup_escape_text(clone_urls[i], -1);
       g_string_append_printf(content, "\n<span font_family='monospace' size='small'>%s</span>",
-                             clone_urls[i]);
+                             esc);
     }
   }
 
-  /* Web URL(s) */
+  /* Web URL(s) — escape user strings for both href and display */
   if (web_urls && web_urls[0]) {
     g_string_append(content, "\n\n<span weight='bold'>Web:</span>");
     for (int i = 0; web_urls[i]; i++) {
-      g_string_append_printf(content, "\n<a href='%s'>%s</a>", web_urls[i], web_urls[i]);
+      g_autofree gchar *esc = g_markup_escape_text(web_urls[i], -1);
+      g_string_append_printf(content, "\n<a href='%s'>%s</a>", esc, esc);
     }
   }
 
-  /* Metadata line: maintainers and license */
+  /* Metadata line: maintainers and license — escape license */
   GString *meta_line = g_string_new(NULL);
   if (maintainer_count > 0) {
     g_string_append_printf(meta_line, "👥 %zu maintainer%s",
                            maintainer_count, maintainer_count == 1 ? "" : "s");
   }
   if (license && *license) {
+    g_autofree gchar *esc_lic = g_markup_escape_text(license, -1);
     if (meta_line->len > 0) g_string_append(meta_line, "  •  ");
-    g_string_append_printf(meta_line, "📄 %s", license);
+    g_string_append_printf(meta_line, "📄 %s", esc_lic);
   }
   if (meta_line->len > 0) {
     g_string_append_printf(content, "\n\n<span size='small' foreground='gray'>%s</span>",
@@ -5714,10 +5729,9 @@ void nostr_gtk_note_card_row_set_git_repo_mode(NostrGtkNoteCardRow *self,
   }
   g_string_free(meta_line, TRUE);
 
-  /* Set content with markup */
+  /* nostrc-csaf: Use safe markup setter — validates before passing to Pango */
   if (GNOSTR_LABEL_SAFE(self->content_label)) {
-    gnostr_strip_zwsp(content->str); /* nostrc-pgo6: strip before Pango */
-    gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-repo-content");
   }
   g_string_free(content, TRUE);
@@ -5764,27 +5778,33 @@ void nostr_gtk_note_card_row_set_git_patch_mode(NostrGtkNoteCardRow *self,
     gtk_widget_add_css_class(self->root, "git-patch-card");
   }
 
+  /* nostrc-csaf: Escape all user-provided strings before embedding in markup */
   GString *content = g_string_new(NULL);
 
-  /* Patch icon and title */
-  g_string_append_printf(content, "<span weight='bold'>🔧 %s</span>",
-                         (title && *title) ? title : "Untitled Patch");
+  /* Patch icon and title — escape user string */
+  {
+    g_autofree gchar *esc_title = g_markup_escape_text(
+      (title && *title) ? title : "Untitled Patch", -1);
+    g_string_append_printf(content, "<span weight='bold'>🔧 %s</span>", esc_title);
+  }
 
-  /* Repository reference */
+  /* Repository reference — escape user string */
   if (repo_name && *repo_name) {
+    g_autofree gchar *esc_repo = g_markup_escape_text(repo_name, -1);
     g_string_append_printf(content, "\n<span size='small' foreground='gray'>for %s</span>",
-                           repo_name);
+                           esc_repo);
   }
 
-  /* Commit reference */
+  /* Commit reference — escape user string */
   if (commit_id && *commit_id) {
+    g_autofree gchar *esc_commit = g_markup_escape_text(commit_id, -1);
     g_string_append_printf(content, "\n<span font_family='monospace' size='small'>%.8s</span>",
-                           commit_id);
+                           esc_commit);
   }
 
+  /* nostrc-csaf: Use safe markup setter */
   if (GNOSTR_LABEL_SAFE(self->content_label)) {
-    gnostr_strip_zwsp(content->str); /* nostrc-pgo6: strip before Pango */
-    gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-patch-content");
   }
   g_string_free(content, TRUE);
@@ -5805,26 +5825,31 @@ void nostr_gtk_note_card_row_set_git_issue_mode(NostrGtkNoteCardRow *self,
     gtk_widget_add_css_class(self->root, "git-issue-card");
   }
 
+  /* nostrc-csaf: Escape all user-provided strings before embedding in markup */
   GString *content = g_string_new(NULL);
 
-  /* Issue icon (open/closed) and title */
+  /* Issue icon (open/closed) and title — escape user string */
   const char *icon = is_open ? "🟢" : "🔴";
-  g_string_append_printf(content, "<span weight='bold'>%s %s</span>",
-                         icon, (title && *title) ? title : "Untitled Issue");
-
-  /* Repository reference */
-  if (repo_name && *repo_name) {
-    g_string_append_printf(content, "\n<span size='small' foreground='gray'>in %s</span>",
-                           repo_name);
+  {
+    g_autofree gchar *esc_title = g_markup_escape_text(
+      (title && *title) ? title : "Untitled Issue", -1);
+    g_string_append_printf(content, "<span weight='bold'>%s %s</span>", icon, esc_title);
   }
 
-  /* Status */
+  /* Repository reference — escape user string */
+  if (repo_name && *repo_name) {
+    g_autofree gchar *esc_repo = g_markup_escape_text(repo_name, -1);
+    g_string_append_printf(content, "\n<span size='small' foreground='gray'>in %s</span>",
+                           esc_repo);
+  }
+
+  /* Status — safe (hardcoded strings) */
   g_string_append_printf(content, "\n<span size='small'>%s</span>",
                          is_open ? "Open" : "Closed");
 
+  /* nostrc-csaf: Use safe markup setter */
   if (GNOSTR_LABEL_SAFE(self->content_label)) {
-    gnostr_strip_zwsp(content->str); /* nostrc-pgo6: strip before Pango */
-    gtk_label_set_markup(GTK_LABEL(self->content_label), content->str);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), content->str);
     gtk_widget_add_css_class(self->content_label, "git-issue-content");
   }
   g_string_free(content, TRUE);
