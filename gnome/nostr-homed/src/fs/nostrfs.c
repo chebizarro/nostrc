@@ -28,7 +28,6 @@
 #include "go.h"
 #include "channel.h"
 #include "wait_group.h"
-#include <libgo/fiber.h>  /* gof_start_background, gof_request_stop, gof_join_background */
 
 typedef struct {
   nostrfs_options opts;
@@ -882,9 +881,9 @@ int nostrfs_run(const nostrfs_options *opts, int argc, char **argv){
   /* Hand off to fuse_main (argv contains only FUSE args here) */
   int rc = fuse_main(argc, argv, &ops, ctx);
 
-  /* Shut down fiber scheduler after FUSE exits */
-  gof_request_stop();
-  gof_join_background();
+  /* nostrc-deferred-free: No fiber scheduler lifecycle here while
+   * go_fiber_compat() is running on OS threads. If fibers are re-enabled,
+   * restore gof_request_stop()/gof_join_background() with startup. */
 
   return rc;
 }
