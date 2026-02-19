@@ -1292,12 +1292,13 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
   if (row && GTK_IS_WIDGET(row)) {
     g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
 
-    /* Disconnect Tier 2 map handler if still active (not yet fired) */
+    /* Disconnect Tier 2 map handler if still active (not yet fired).
+     * nostrc-icn: Check handler is still connected before disconnecting. */
     gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
-    if (map_id > 0) {
+    if (map_id > 0 && g_signal_handler_is_connected(G_OBJECT(row), map_id)) {
       g_signal_handler_disconnect(row, map_id);
-      g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
     }
+    g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
   }
 
   if (row && GTK_IS_WIDGET(row)) {
@@ -1664,12 +1665,13 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
     nostr_gtk_note_card_row_apply_deferred_content(NOSTR_GTK_NOTE_CARD_ROW(row), cached);
   }
 
-  /* One-shot: disconnect after first run */
+  /* One-shot: disconnect after first run.
+   * nostrc-icn: Check handler is still connected before disconnecting. */
   gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
-  if (map_id > 0) {
+  if (map_id > 0 && g_signal_handler_is_connected(G_OBJECT(row), map_id)) {
     g_signal_handler_disconnect(row, map_id);
-    g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
   }
+  g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
 }
 
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
