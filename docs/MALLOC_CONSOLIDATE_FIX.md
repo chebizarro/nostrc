@@ -116,6 +116,65 @@ To verify the graveyard is working, add `GOF_DEBUG=1` to enable scheduler debug
 logging, or add a `fprintf` to `go_channel_graveyard_reap` to see channels being
 reaped.
 
+## Follow-up Fix: NostrConnection Use-After-Free (nostrc-conn-uaf)
+
+The graveyard fix eliminated the channel-level UAF, but the crash persisted with
+a new assertion:
+
+```
+GLib:ERROR:../../../glib/gmain.c:4090:g_main_context_check_unlocked:
+  assertion failed: (i <= 0 || fds[i - 1].fd < fds[i].fd)
+malloc_consolidate(): unaligned fastbin chunk detected
+```
+
+### Root Cause
+
+**`nostr_connection_close()` freed the `NostrConnection` struct immediately while
+the LWS service thread's callback was still referencing it.**
+
+The LWS callback runs on the service thread and captures `conn` as a local variable
+from `lws_get_opaque_user_data(wsi)`. The close thread sets the opaque data to NULL,
+but this is a simple pointer write — NOT synchronized with the callback thread:
+
+```
+Close thread                       LWS service thread (callback)
+────────────                       ────────────────────────────
+                                   conn = lws_get_opaque_user_data(wsi) → valid!
+lws_set_opaque_user_data(wsi, NULL)
+free(conn)                         priv = conn->priv ← FREED MEMORY
+                                   nsync_mu_lock(&priv->mutex) ← WRITES TO GARBAGE
+                                   → heap corruption
+```
+
+The heap corruption eventually corrupts GLib's internal GPollFD arrays, causing the
+`fds[i-1].fd < fds[i].fd` assertion. The `malloc_consolidate` error is glibc
+detecting the fastbin metadata corruption during the abort.
+
+### Fix
+
+Extended the deferred cleanup queue to hold **both** `NostrConnection` and
+`NostrConnectionPrivate` structs:
+
+```c
+typedef struct DeferredConn {
+    NostrConnection        *conn;
+    NostrConnectionPrivate *priv;
+    struct DeferredConn    *next;
+} DeferredConn;
+```
+
+In `nostr_connection_close()`:
+- If `should_free_priv=1` (last connection, service thread joined): free both immediately
+- Otherwise: add both to the deferred queue, freed when the service thread eventually stops
+
+### Why `lws_set_opaque_user_data(NULL)` Wasn't Sufficient
+
+1. The LWS callback does NOT hold `g_lws_mutex` when it calls `lws_get_opaque_user_data`
+2. Pointer-sized writes are atomic on x86_64, but the callback may have already cached
+   `conn` as a local variable before the NULL was written
+3. `lws_cancel_service()` wakes the service thread but doesn't wait for in-flight callbacks
+4. There is no LWS API to synchronize with in-flight callbacks
+
 ## Future Work
 
 When fibers are re-enabled, restore in `main_app.c`:

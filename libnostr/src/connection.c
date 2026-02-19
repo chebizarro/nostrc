@@ -437,14 +437,22 @@ static int g_lws_running = 0;
 static int g_lws_refcount = 0;
 static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* Deferred cleanup queue for conn->priv structs that can't be freed immediately
- * because the service thread is still running. Queue is processed when the
- * service thread stops (g_lws_refcount hits 0). */
-typedef struct DeferredPriv {
-    NostrConnectionPrivate *priv;
-    struct DeferredPriv *next;
-} DeferredPriv;
-static DeferredPriv *g_deferred_cleanup_head = NULL;
+/* Deferred cleanup queue for connection structs that can't be freed immediately
+ * because the LWS service thread is still running.  Queue is processed when the
+ * service thread stops (g_lws_refcount hits 0).
+ *
+ * nostrc-conn-uaf: Both the NostrConnection AND NostrConnectionPrivate structs
+ * must be deferred — the LWS callback captures `conn` from
+ * lws_get_opaque_user_data(wsi) as a local variable BEFORE the close thread
+ * can NULL the opaque data.  If we free(conn) immediately, the in-flight
+ * callback accesses freed memory (conn->priv), leading to nsync_mu_lock on
+ * garbage → heap corruption → GLib poll-array assertion. */
+typedef struct DeferredConn {
+    NostrConnection        *conn;   /* The conn struct itself (may be NULL) */
+    NostrConnectionPrivate *priv;   /* The private state (may be NULL) */
+    struct DeferredConn    *next;
+} DeferredConn;
+static DeferredConn *g_deferred_cleanup_head = NULL;
 
 /* hq-5ejm4: Connection request queue — moves lws_client_connect_via_info()
  * off caller threads and onto the LWS service thread.  Callers enqueue a
@@ -461,10 +469,13 @@ typedef struct {
 
 static GoChannel *g_conn_request_queue = NULL; /* capacity 32, created under g_lws_mutex */
 
-/* Must hold g_lws_mutex when calling */
-static void deferred_cleanup_add(NostrConnectionPrivate *priv) {
-    DeferredPriv *node = malloc(sizeof(DeferredPriv));
+/* Must hold g_lws_mutex when calling.
+ * Either or both of conn/priv may be NULL. */
+static void deferred_cleanup_add(NostrConnection *conn,
+                                 NostrConnectionPrivate *priv) {
+    DeferredConn *node = malloc(sizeof(DeferredConn));
     if (!node) return; /* leak on OOM, but better than crash */
+    node->conn = conn;
     node->priv = priv;
     node->next = g_deferred_cleanup_head;
     g_deferred_cleanup_head = node;
@@ -472,13 +483,16 @@ static void deferred_cleanup_add(NostrConnectionPrivate *priv) {
 
 /* Must hold g_lws_mutex when calling */
 static void deferred_cleanup_process(void) {
-    DeferredPriv *node = g_deferred_cleanup_head;
+    DeferredConn *node = g_deferred_cleanup_head;
     while (node) {
-        DeferredPriv *next = node->next;
+        DeferredConn *next = node->next;
         if (node->priv) {
             free(node->priv->rx_reassembly_buf);
             free(node->priv);
         }
+        /* nostrc-conn-uaf: Free the conn struct (was previously freed
+         * immediately, causing use-after-free in LWS callbacks). */
+        free(node->conn);
         free(node);
         node = next;
     }
@@ -848,6 +862,8 @@ void nostr_connection_close(NostrConnection *conn) {
         // No libwebsockets context or thread in test mode
         free(conn->priv->rx_reassembly_buf);
         free(conn->priv);
+        free(conn);
+        return;
     } else if (conn->priv) {
         /* Detach the connection from WSI to prevent callbacks from accessing freed memory.
          * We cannot safely call lws_close_reason() from this thread - that must be done
@@ -907,21 +923,43 @@ void nostr_connection_close(NostrConnection *conn) {
             deferred_cleanup_process();
             pthread_mutex_unlock(&g_lws_mutex);
         }
-        /* Free conn->priv: either immediately if service stopped, or defer until later */
+        /* nostrc-conn-uaf: Free conn + priv safely.
+         *
+         * CRITICAL: The LWS service thread callback captures `conn` from
+         * lws_get_opaque_user_data(wsi) as a LOCAL VARIABLE before we can
+         * NULL the opaque data (data race on the WSI struct).  If we
+         * free(conn) immediately, the in-flight callback reads
+         * conn->priv (freed memory) and calls nsync_mu_lock on garbage,
+         * corrupting glibc's fastbin metadata → malloc_consolidate crash
+         * or GLib poll-array assertion.
+         *
+         * Fix: defer BOTH conn and priv until the service thread stops.
+         * When should_free_priv=1 we've already joined the service thread,
+         * so immediate free is safe.  Otherwise, add both to the deferred
+         * cleanup queue. */
         if (should_free_priv) {
+            /* Service thread has stopped (pthread_join above) — safe to
+             * free immediately. */
             free(conn->priv->rx_reassembly_buf);
             free(conn->priv);
-        } else if (conn->priv) {
-            /* Can't free now - service thread may still reference via WSI callbacks.
-             * Add to deferred cleanup queue, will be processed when service stops. */
+            conn->priv = NULL;
+            // Do not free channels here; the owner (relay) will free them
+            // after worker threads exit.
+            free(conn);
+        } else {
+            /* Service thread still running — defer BOTH conn and priv.
+             * The conn struct must stay alive because an in-flight LWS
+             * callback may be reading conn->priv right now. */
             pthread_mutex_lock(&g_lws_mutex);
-            deferred_cleanup_add(conn->priv);
+            deferred_cleanup_add(conn, conn->priv);
             pthread_mutex_unlock(&g_lws_mutex);
+            /* Do NOT free(conn) here — it's owned by the deferred queue. */
         }
+    } else {
+        /* No priv (shouldn't happen in practice) — safe to free conn
+         * immediately since no LWS service thread involvement. */
+        free(conn);
     }
-
-    // Do not free channels here; the owner (relay) will free them after worker threads exit.
-    free(conn);
 }
 
 void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char *message, Error **err) {
