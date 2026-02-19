@@ -1005,6 +1005,15 @@ void go_channel_unref(GoChannel *chan) {
     if (buf) free(buf);
     if (seq) free(seq);
 
+    // nostrc-waiter-count: Wait for all active waiters to exit before adding
+    // to graveyard. Waiters woken by the broadcast above will see closed=1,
+    // decrement active_waiters, and exit. We spin briefly to let them drain.
+    for (int i = 0; i < 1000; ++i) {
+        int waiters = atomic_load_explicit(&chan->active_waiters, memory_order_acquire);
+        if (waiters <= 0) break;
+        sched_yield();
+    }
+
     // Phase 2: Defer the struct free via graveyard (nostrc-deferred-free).
     //
     // CRITICAL: We cannot free(chan) here — woken waiters blocked in
