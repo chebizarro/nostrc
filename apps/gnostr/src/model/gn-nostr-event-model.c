@@ -2592,28 +2592,15 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GArray *evicted_keys_async = NULL;
   enforce_window_inline(self, &evicted_keys_async);
 
-  /* nostrc-heap-fix4: Emit items_changed signals in small batches to avoid
-   * disposing too many widgets in a single stack frame. GTK's widget disposal
-   * cascade can corrupt heap when hundreds of complex widget trees are torn
-   * down simultaneously. Process in batches of min(old_size, new_size) to
-   * maximize widget reuse, then handle the remainder. */
+  /* nostrc-render-crash: Emit a SINGLE items_changed signal to avoid race
+   * conditions with GTK's render loop. Multiple signals can cause GTK to
+   * start rendering while we're still modifying the model, leading to
+   * crashes in gsk_renderer_render. A single atomic signal is safer. */
   guint new_size = self->notes->len;
-  guint common = old_size < new_size ? old_size : new_size;
   
-  if (common > 0) {
-    /* Replace existing items - GTK will rebind widgets, not dispose them */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, common, common);
-  }
-  
-  if (new_size > old_size) {
-    /* More items than before - add the extras */
-    g_list_model_items_changed(G_LIST_MODEL(self), common, 0, new_size - common);
-  } else if (old_size > new_size) {
-    /* Fewer items than before - remove the extras one at a time */
-    guint to_remove = old_size - new_size;
-    for (guint i = 0; i < to_remove; i++) {
-      g_list_model_items_changed(G_LIST_MODEL(self), new_size, 1, 0);
-    }
+  /* Single atomic signal: remove old_size items at position 0, add new_size items */
+  if (old_size > 0 || new_size > 0) {
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, new_size);
   }
   
   cleanup_evicted_keys(self, evicted_keys_async);
