@@ -221,7 +221,13 @@ static void go_channel_graveyard_add(GoChannel *chan) {
 }
 
 /* Reap channels dead for longer than GO_GRAVEYARD_DELAY_NS.
- * Called opportunistically from channel_create and channel_unref. */
+ * Called opportunistically from channel_create and channel_unref.
+ *
+ * SAFETY (nostrc-select-refcount): Before freeing a dead channel, check
+ * if anyone took a ref on it (e.g., go_select via ref_channels). If
+ * refs > 0, skip it — the channel will be freed when the ref is dropped
+ * and the graveyard is reaped again. This prevents use-after-free when
+ * go_select is operating on a channel that was recently unreffed. */
 static void go_channel_graveyard_reap(void) {
     uint64_t cutoff = graveyard_now_ns() - GO_GRAVEYARD_DELAY_NS;
 
@@ -230,6 +236,15 @@ static void go_channel_graveyard_reap(void) {
     while (*pp) {
         GoDeadChannel *d = *pp;
         if (d->death_ns <= cutoff) {
+            /* Check if someone has taken a ref on the dead channel.
+             * This can happen if go_select ref'd it just before
+             * go_channel_unref cleared the magic number. */
+            int refs = atomic_load_explicit(&d->chan->refs, memory_order_acquire);
+            if (refs > 0) {
+                /* Still referenced — skip, will retry on next reap */
+                pp = &d->next;
+                continue;
+            }
             *pp = d->next;
             pthread_mutex_unlock(&g_graveyard_mu);
             free(d->chan);
@@ -925,6 +940,13 @@ void go_channel_unref(GoChannel *chan) {
     CV_BROADCAST_EMPTY(chan);
     // Wake all select waiters too
     go_channel_signal_select_waiters(chan);
+    // Clean up all select waiter registrations (nostrc-select-refcount).
+    // This frees GoSelectWaiterNode entries and drops their refs on waiters.
+    // Previously, nodes were leaked when unregister_waiter_all skipped dead
+    // channels (magic=0), leaving orphaned nodes with dangling waiter pointers.
+    // Must happen AFTER signaling (so waiters get woken) but BEFORE clearing
+    // magic (so we're still under the mutex with a valid channel state).
+    go_channel_cleanup_select_waiters(chan);
     // Clear magic to help detect use-after-free
     chan->magic = 0;
     // Free internal buffers (under mutex so concurrent access sees NULL)
