@@ -846,12 +846,10 @@ if (ctx->req_chan){ go_channel_close(ctx->req_chan); go_channel_free(ctx->req_ch
 int nostrfs_run(const nostrfs_options *opts, int argc, char **argv){
   if (!opts || !opts->mountpoint) return -1;
 
-  /* Initialize fiber scheduler as background thread pool.
-   * Must happen before any go_fiber_compat() calls.
-   * Uses 0 for default stack size (256KB per fiber). */
-  if (gof_start_background(0) != 0) {
-    fprintf(stderr, "[nostrfs] Failed to start fiber scheduler — falling back to OS threads\n");
-  }
+  /* nostrc-deferred-free: Fiber scheduler removed — go_fiber_compat() is
+   * reverted to OS threads. Restore when fibers are re-enabled:
+   *   gof_start_background(0);
+   */
 
   /* Build context */
   nostrfs_ctx *ctx = (nostrfs_ctx*)calloc(1, sizeof(*ctx)); if (!ctx) return -1;

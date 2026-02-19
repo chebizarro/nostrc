@@ -3,7 +3,9 @@
 #include "fiber_hooks.h"
 #include "nostr/metrics.h"
 #include "context.h"
-#include <sched.h> /* sched_yield() for two-phase channel destruction */
+#include <sched.h>     /* sched_yield for CPU_RELAX fallback */
+#include <time.h>      /* clock_gettime for deferred free */
+#include <pthread.h>   /* graveyard mutex */
 
 /* Implemented in select.c — signals select waiters registered on this channel.
  * Must be called while holding chan->mutex. */
@@ -167,6 +169,77 @@ static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unl
     nsync_cv_broadcast(&(chan)->cond_full);              \
     fiber_waiter_wake_all(&(chan)->fiber_waiters_full);  \
 } while(0)
+
+/* ── Channel Graveyard (nostrc-deferred-free) ─────────────────────────
+ *
+ * When go_channel_unref drops the last reference, we CANNOT immediately
+ * free the GoChannel struct. Woken waiters (broadcast in Phase 1) are
+ * still inside nsync_mu_lock trying to reacquire chan->mutex. If we free
+ * the struct, nsync writes to freed memory — corrupting glibc's fastbin
+ * metadata and causing `malloc_consolidate(): unaligned fastbin chunk`.
+ *
+ * ASAN doesn't catch this because nsync is compiled without ASAN
+ * instrumentation. The old sched_yield × 3 hack was timing-dependent
+ * and failed under load.
+ *
+ * Solution: dead channels go into a graveyard list with a timestamp.
+ * They are only freed once 1 second has elapsed, guaranteeing all nsync
+ * waiters have long since exited. Reaping is amortized onto channel_create
+ * and channel_unref calls.
+ */
+
+#define GO_GRAVEYARD_DELAY_NS (1000000000ULL)  /* 1 second */
+
+typedef struct GoDeadChannel {
+    GoChannel            *chan;
+    uint64_t              death_ns;
+    struct GoDeadChannel *next;
+} GoDeadChannel;
+
+static pthread_mutex_t g_graveyard_mu = PTHREAD_MUTEX_INITIALIZER;
+static GoDeadChannel  *g_graveyard_head = NULL;
+
+static uint64_t graveyard_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+/* Add a dead channel to the graveyard. Called from go_channel_unref. */
+static void go_channel_graveyard_add(GoChannel *chan) {
+    GoDeadChannel *d = (GoDeadChannel *)malloc(sizeof(*d));
+    if (!d) { /* OOM — leak the channel rather than crash */ return; }
+    d->chan = chan;
+    d->death_ns = graveyard_now_ns();
+    pthread_mutex_lock(&g_graveyard_mu);
+    d->next = g_graveyard_head;
+    g_graveyard_head = d;
+    pthread_mutex_unlock(&g_graveyard_mu);
+}
+
+/* Reap channels dead for longer than GO_GRAVEYARD_DELAY_NS.
+ * Called opportunistically from channel_create and channel_unref. */
+static void go_channel_graveyard_reap(void) {
+    uint64_t cutoff = graveyard_now_ns() - GO_GRAVEYARD_DELAY_NS;
+
+    pthread_mutex_lock(&g_graveyard_mu);
+    GoDeadChannel **pp = &g_graveyard_head;
+    while (*pp) {
+        GoDeadChannel *d = *pp;
+        if (d->death_ns <= cutoff) {
+            *pp = d->next;
+            pthread_mutex_unlock(&g_graveyard_mu);
+            free(d->chan);
+            free(d);
+            pthread_mutex_lock(&g_graveyard_mu);
+            /* Restart scan from head since list may have changed */
+            pp = &g_graveyard_head;
+        } else {
+            pp = &d->next;
+        }
+    }
+    pthread_mutex_unlock(&g_graveyard_mu);
+}
 
 // Portable aligned allocation: prefer C11 aligned_alloc, fallback to malloc
 static inline void *go_aligned_alloc(size_t alignment, size_t size) {
@@ -740,6 +813,9 @@ int go_channel_has_data(const void *chan) {
 
 /* Create a new channel with the given capacity */
 GoChannel *go_channel_create(size_t capacity) {
+    /* Opportunistically reap dead channels from the graveyard */
+    go_channel_graveyard_reap();
+
     GoChannel *chan = malloc(sizeof(GoChannel));
     if (!chan) return NULL;
     // Set magic number for validation
@@ -860,15 +936,20 @@ void go_channel_unref(GoChannel *chan) {
     if (buf) free(buf);
     if (seq) free(seq);
 
-    // Phase 2: Give woken waiters time to observe closed state and exit.
-    // Without this, free(chan) can destroy the mutex while a woken thread
-    // is still in nsync_mu_lock trying to reacquire it.
-    // Three yields is enough for woken threads on the same core to run.
-    for (int i = 0; i < 3; i++) {
-        sched_yield();
-    }
+    // Phase 2: Defer the struct free via graveyard (nostrc-deferred-free).
+    //
+    // CRITICAL: We cannot free(chan) here — woken waiters blocked in
+    // nsync_mu_lock are still touching chan->mutex AFTER we unlocked.
+    // nsync is not ASAN-instrumented, so writes to freed memory corrupt
+    // glibc fastbin metadata silently (malloc_consolidate crash).
+    //
+    // The previous sched_yield × 3 was a timing hack that failed under
+    // load. Instead, defer the free for 1 second via a graveyard list,
+    // guaranteeing all waiters have long since exited.
+    go_channel_graveyard_add(chan);
 
-    free(chan);
+    // Opportunistically reap old entries (amortized cost)
+    go_channel_graveyard_reap();
 }
 
 /* Free the channel resources — backward compatible wrapper (hq-e3ach). */
