@@ -1,3 +1,6 @@
+/* Feature test macros must come before any includes */
+#define _POSIX_C_SOURCE 199309L  /* clock_gettime, CLOCK_MONOTONIC */
+
 #include "channel.h"
 #include "select.h"
 #include "fiber_hooks.h"
