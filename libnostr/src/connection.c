@@ -21,6 +21,10 @@
 #define MAX_PAYLOAD_SIZE (128 * 1024)
 #define MAX_HEADER_SIZE 1024
 
+/* Forward declarations for priv refcount functions (defined later in file) */
+static NostrConnectionPrivate *priv_try_ref(NostrConnectionPrivate *priv);
+static void priv_unref(NostrConnectionPrivate *priv);
+
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
     (void)user; // not used; use opaque user data API
@@ -37,14 +41,13 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
     switch (reason) {
     case LWS_CALLBACK_CLIENT_RECEIVE: {
-        /* nostrc-priv-race: CRITICAL - Capture conn->priv pointer ONCE at the start.
-         * Another thread may call nostr_connection_close() which frees conn->priv
-         * while this callback is still running. By capturing the pointer locally,
-         * we ensure consistent access throughout the callback. If priv becomes
-         * invalid mid-callback, we're accessing freed memory, but at least we
-         * won't crash from a NULL deref after the initial check. */
-        NostrConnectionPrivate *priv = conn->priv;
-        if (!priv) break;
+        /* nostrc-priv-refcount: CRITICAL - Acquire a ref on priv before accessing.
+         * This guarantees priv won't be freed while we're using it. If closing
+         * flag is set (connection shutting down), priv_try_ref returns NULL and
+         * we bail out cleanly. This replaces the old "capture pointer and hope"
+         * approach which was a UAF waiting to happen. */
+        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+        if (!priv) break; /* Connection closing, bail out */
         // Enforce hard frame cap (check total accumulated size for fragmented messages)
         size_t total_len = priv->rx_reassembly_len + len;
         if (total_len > (size_t)nostr_limit_max_frame_len()) {
@@ -52,6 +55,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             // Discard partial reassembly
             priv->rx_reassembly_len = 0;
             lws_close_reason(wsi, LWS_CLOSE_STATUS_MESSAGE_TOO_LARGE, NULL, 0);
+            priv_unref(priv);
             return -1;
         }
         // Token-bucket admission: frames/sec and bytes/sec
@@ -66,6 +70,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         if (rate_limit_enabled) {
             if (!tb_allow(&priv->tb_frames, 1.0) || !tb_allow(&priv->tb_bytes, (double)len)) {
                 nostr_rl_log(NLOG_DEBUG, "ws", "drop: rate limit exceeded (len=%zu)", len);
+                priv_unref(priv);
                 return 0;
             }
         }
@@ -101,6 +106,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             if (!new_buf) {
                 nostr_rl_log(NLOG_WARN, "ws", "drop: reassembly OOM (%zu bytes)", new_alloc);
                 priv->rx_reassembly_len = 0;
+                priv_unref(priv);
                 return 0;
             }
             priv->rx_reassembly_buf = new_buf;
@@ -111,6 +117,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
         if (!is_final || remaining > 0) {
             /* More fragments coming - wait for complete message */
+            priv_unref(priv);
             return 0;
         }
 
@@ -139,14 +146,15 @@ queue_message:;
         nsync_mu_unlock(&priv->mutex);
         if (!recv_chan) {
             priv->rx_reassembly_len = 0;
+            priv_unref(priv);
             return 0;
         }
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
-        if (!msg) { go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; return -1; }
+        if (!msg) { go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; priv_unref(priv); return -1; }
         msg->length = len;
         msg->data = (char*)malloc(len + 1);
-        if (!msg->data) { free(msg); go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; return -1; }
+        if (!msg->data) { free(msg); go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; priv_unref(priv); return -1; }
         memcpy(msg->data, in, len);
         msg->data[len] = '\0';
         // Reset reassembly state
@@ -179,6 +187,7 @@ queue_message:;
             free(msg->data);
             free(msg);
             go_channel_unref(recv_chan);
+            priv_unref(priv);
             break;
         }
 send_ok:
@@ -187,6 +196,7 @@ send_ok:
         nostr_metric_counter_add("ws_rx_enqueued_messages", 1);
 send_done:
         go_channel_unref(recv_chan);
+        priv_unref(priv);
         break;
     }
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
@@ -204,53 +214,60 @@ send_done:
         break;
     }
     case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
-    case LWS_CALLBACK_CLIENT_ESTABLISHED:
+    case LWS_CALLBACK_CLIENT_ESTABLISHED: {
         printf("WebSocket connection established\n");
         // Initialize timers/progress trackers and arm periodic checks
-        if (conn && conn->priv) {
-            nsync_mu_lock(&conn->priv->mutex);
-            conn->priv->established = 1;  /* Mark handshake complete */
+        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+        if (priv) {
+            nsync_mu_lock(&priv->mutex);
+            priv->established = 1;  /* Mark handshake complete */
             uint64_t now_us = (uint64_t)lws_now_usecs();
-            conn->priv->last_rx_ns = now_us;
-            conn->priv->rx_window_start_ns = now_us;
-            conn->priv->rx_window_bytes = 0;
-            nsync_mu_unlock(&conn->priv->mutex);
+            priv->last_rx_ns = now_us;
+            priv->rx_window_start_ns = now_us;
+            priv->rx_window_bytes = 0;
+            nsync_mu_unlock(&priv->mutex);
+            priv_unref(priv);
         }
         // Arm a 1s timer for periodic timeout/progress checks
         lws_set_timer_usecs(wsi, 1000000);
         lws_callback_on_writable(wsi); // Ensure the socket becomes writable
         break;
+    }
     
-    case LWS_CALLBACK_EVENT_WAIT_CANCELLED:
-        if (conn && conn->priv) {
-            nsync_mu_lock(&conn->priv->mutex);
-            if (conn->priv->wsi == wsi && conn->priv->writable_pending) {
-                conn->priv->writable_pending = 0;
-                nsync_mu_unlock(&conn->priv->mutex);
+    case LWS_CALLBACK_EVENT_WAIT_CANCELLED: {
+        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+        if (priv) {
+            nsync_mu_lock(&priv->mutex);
+            if (priv->wsi == wsi && priv->writable_pending) {
+                priv->writable_pending = 0;
+                nsync_mu_unlock(&priv->mutex);
                 lws_callback_on_writable(wsi);
             } else {
-                nsync_mu_unlock(&conn->priv->mutex);
+                nsync_mu_unlock(&priv->mutex);
             }
+            priv_unref(priv);
         }
         break;
+    }
 
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
         // Pop a message from the send_channel and send it over the WebSocket (non-blocking)
-        if (!conn || !conn->priv) break;
+        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+        if (!priv) break;
         
         /* nostrc-uaf-lws: Acquire send_channel ref under priv->mutex.
          * Same pattern as recv_channel — relay close NULLs the pointer
          * under this mutex before freeing. */
         GoChannel *send_chan = NULL;
-        nsync_mu_lock(&conn->priv->mutex);
-        struct lws *wsi_check = conn->priv->wsi;
+        nsync_mu_lock(&priv->mutex);
+        struct lws *wsi_check = priv->wsi;
         if (wsi_check && wsi_check == wsi && conn->send_channel &&
             conn->send_channel->magic == GO_CHANNEL_MAGIC) {
             send_chan = conn->send_channel;
             go_channel_ref(send_chan);
         }
-        nsync_mu_unlock(&conn->priv->mutex);
-        if (!send_chan) break;
+        nsync_mu_unlock(&priv->mutex);
+        if (!send_chan) { priv_unref(priv); break; }
         
         WebSocketMessage *msg = NULL;
         if (go_channel_try_receive(send_chan, (void **)&msg) == 0 && msg) {
@@ -260,6 +277,7 @@ send_done:
                 if (msg->data) free(msg->data);
                 free(msg);
                 go_channel_unref(send_chan);
+                priv_unref(priv);
                 return -1;
             }
             
@@ -270,6 +288,7 @@ send_done:
                 free(msg->data);
                 free(msg);
                 go_channel_unref(send_chan);
+                priv_unref(priv);
                 return -1;
             }
             unsigned char *p = buf + LWS_PRE;
@@ -291,6 +310,7 @@ send_done:
                 free(msg);
                 free(buf);
                 go_channel_unref(send_chan);
+                priv_unref(priv);
                 return -1;
             }
 
@@ -302,22 +322,26 @@ send_done:
             lws_callback_on_writable(wsi);
         }
         go_channel_unref(send_chan);
+        priv_unref(priv);
         break;
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
-    case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-        if (conn && conn->priv) {
+    case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
+        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+        if (priv) {
             lws_set_timer_usecs(wsi, 0);
-            nsync_mu_lock(&conn->priv->mutex);
-            conn->priv->wsi = NULL;
-            conn->priv->writable_pending = 0;
-            conn->priv->established = 0;  /* Mark handshake as incomplete */
+            nsync_mu_lock(&priv->mutex);
+            priv->wsi = NULL;
+            priv->writable_pending = 0;
+            priv->established = 0;  /* Mark handshake as incomplete */
             /* Reset reassembly state to prevent stale partial data from
              * being prepended to the first message on reconnect. */
-            conn->priv->rx_reassembly_len = 0;
-            nsync_mu_unlock(&conn->priv->mutex);
+            priv->rx_reassembly_len = 0;
+            nsync_mu_unlock(&priv->mutex);
+            priv_unref(priv);
         }
         break;
+    }
     case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
 #if defined(LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS) && \
     (LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS != LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS)
@@ -354,44 +378,48 @@ send_done:
         break;
     }
     case LWS_CALLBACK_TIMER: {
-        if (!conn || !conn->priv) break;
+        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+        if (!priv) break;
         int should_process = 0;
-        nsync_mu_lock(&conn->priv->mutex);
-        if (conn->priv->wsi == wsi) should_process = 1;
-        nsync_mu_unlock(&conn->priv->mutex);
-        if (!should_process) break;
+        nsync_mu_lock(&priv->mutex);
+        if (priv->wsi == wsi) should_process = 1;
+        nsync_mu_unlock(&priv->mutex);
+        if (!should_process) { priv_unref(priv); break; }
         uint64_t now_us = (uint64_t)lws_now_usecs();
         int64_t read_to_s = nostr_limit_ws_read_timeout_seconds();
         if (read_to_s > 0) {
-            uint64_t last_us = conn->priv->last_rx_ns ? conn->priv->last_rx_ns : now_us;
+            uint64_t last_us = priv->last_rx_ns ? priv->last_rx_ns : now_us;
             if (now_us - last_us > (uint64_t)read_to_s * 1000000ULL) {
                 nostr_rl_log(NLOG_WARN, "ws", "read timeout: no data for %llds", (long long)read_to_s);
                 nostr_metric_counter_add("ws_timeout_read", 1);
                 // Avoid closing from timer callback; just log and continue.
                 // The upper layers can decide to reconnect.
+                priv_unref(priv);
                 return 0;
             }
         }
         int64_t win_ms = nostr_limit_ws_progress_window_ms();
         int64_t min_bytes = nostr_limit_ws_min_bytes_per_window();
         if (win_ms > 0 && min_bytes > 0) {
-            uint64_t win_start = conn->priv->rx_window_start_ns ? conn->priv->rx_window_start_ns : now_us;
+            uint64_t win_start = priv->rx_window_start_ns ? priv->rx_window_start_ns : now_us;
             if (now_us - win_start >= (uint64_t)win_ms * 1000ULL) {
-                uint64_t bytes = conn->priv->rx_window_bytes;
+                uint64_t bytes = priv->rx_window_bytes;
                 if (bytes < (uint64_t)min_bytes) {
                     nostr_rl_log(NLOG_WARN, "ws", "progress violation: %lluB < %lldB in %lldms", (unsigned long long)bytes, (long long)min_bytes, (long long)win_ms);
                     nostr_metric_counter_add("ws_progress_violation", 1);
                     // Avoid closing from timer callback; just log and continue.
                     // The upper layers can decide to reconnect.
+                    priv_unref(priv);
                     return 0;
                 }
                 // reset window
-                conn->priv->rx_window_start_ns = now_us;
-                conn->priv->rx_window_bytes = 0;
+                priv->rx_window_start_ns = now_us;
+                priv->rx_window_bytes = 0;
             }
         }
         // Re-arm timer for continuous checks
         lws_set_timer_usecs(wsi, 1000000);
+        priv_unref(priv);
         break;
     }
     default:
@@ -437,20 +465,75 @@ static int g_lws_running = 0;
 static int g_lws_refcount = 0;
 static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* Deferred cleanup queue for connection structs that can't be freed immediately
- * because the LWS service thread is still running.  Queue is processed when the
- * service thread stops (g_lws_refcount hits 0).
+/* nostrc-priv-refcount: Refcounted lifetime management for NostrConnectionPrivate.
  *
- * nostrc-conn-uaf: Both the NostrConnection AND NostrConnectionPrivate structs
- * must be deferred — the LWS callback captures `conn` from
- * lws_get_opaque_user_data(wsi) as a local variable BEFORE the close thread
- * can NULL the opaque data.  If we free(conn) immediately, the in-flight
- * callback accesses freed memory (conn->priv), leading to nsync_mu_lock on
- * garbage → heap corruption → GLib poll-array assertion. */
-/* nostrc-conn-graveyard: Time-based deferred cleanup for connections.
- * Similar to the channel graveyard, we delay freeing conn/priv for a fixed
- * duration to ensure any in-flight LWS callbacks have completed.
- * The LWS service loop runs at ~50ms intervals, so 2 seconds is plenty. */
+ * The problem: LWS callbacks capture `conn` from lws_get_opaque_user_data(wsi)
+ * as a local variable. Another thread can call nostr_connection_close() which
+ * frees conn->priv while the callback is still running. Any subsequent access
+ * to priv->mutex (nsync_mu) corrupts heap metadata → malloc_consolidate crash.
+ *
+ * The solution: priv is refcounted. Callbacks call priv_try_ref() at entry and
+ * priv_unref() at exit. priv_try_ref() fails if closing flag is set, preventing
+ * new refs after shutdown begins. priv is only freed when refs==0 AND closing==1.
+ *
+ * Pattern:
+ *   NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+ *   if (!priv) return;  // closing, bail out
+ *   ... use priv safely ...
+ *   priv_unref(priv);
+ */
+
+/* Try to acquire a reference to priv. Returns priv on success, NULL if closing.
+ * Uses acquire-release semantics to ensure visibility of closing flag. */
+static NostrConnectionPrivate *priv_try_ref(NostrConnectionPrivate *priv) {
+    if (!priv) return NULL;
+    /* Check closing flag first - if set, no new refs allowed */
+    if (atomic_load_explicit(&priv->closing, memory_order_acquire)) {
+        return NULL;
+    }
+    /* Increment refs. We use relaxed here because the closing check above
+     * provides the necessary synchronization. */
+    atomic_fetch_add_explicit(&priv->refs, 1, memory_order_relaxed);
+    /* Double-check closing after incrementing refs (TOCTOU protection).
+     * If closing was set between our check and increment, undo and fail. */
+    if (atomic_load_explicit(&priv->closing, memory_order_acquire)) {
+        atomic_fetch_sub_explicit(&priv->refs, 1, memory_order_relaxed);
+        return NULL;
+    }
+    return priv;
+}
+
+/* Release a reference to priv. If this is the last ref and closing is set,
+ * free the priv struct. */
+static void priv_unref(NostrConnectionPrivate *priv) {
+    if (!priv) return;
+    int old_refs = atomic_fetch_sub_explicit(&priv->refs, 1, memory_order_acq_rel);
+    if (old_refs == 1) {
+        /* We were the last ref. Check if closing is set. */
+        if (atomic_load_explicit(&priv->closing, memory_order_acquire)) {
+            /* Safe to free - no more refs and closing is set */
+            free(priv->rx_reassembly_buf);
+            free(priv);
+        }
+        /* If closing is not set, someone else will free when they set closing */
+    }
+}
+
+/* Mark priv as closing and release the owner's reference.
+ * After this call, priv_try_ref() will fail for all callers.
+ * The priv struct will be freed when the last ref is released. */
+static void priv_close_and_unref(NostrConnectionPrivate *priv) {
+    if (!priv) return;
+    /* Set closing flag - this prevents new refs from being acquired */
+    atomic_store_explicit(&priv->closing, 1, memory_order_release);
+    /* Release the owner's reference */
+    priv_unref(priv);
+}
+
+/* Deferred cleanup queue - DEPRECATED but kept for conn struct cleanup.
+ * With priv refcounting, priv is freed when last ref drops.
+ * The conn struct still needs deferred cleanup because it's accessed
+ * by LWS callbacks before we can NULL the opaque data. */
 #define CONN_GRAVEYARD_DELAY_NS (2000000000ULL)  /* 2 seconds */
 
 typedef struct DeferredConn {
@@ -688,6 +771,11 @@ NostrConnection *nostr_connection_new(const char *url) {
     }
     conn->priv = priv;
     conn->priv->enable_compression = 0;
+    /* nostrc-priv-refcount: Initialize refcount to 1 (owner's ref).
+     * Callbacks will acquire additional refs via priv_try_ref().
+     * The owner releases via priv_close_and_unref() in nostr_connection_close(). */
+    atomic_store_explicit(&conn->priv->refs, 1, memory_order_relaxed);
+    atomic_store_explicit(&conn->priv->closing, 0, memory_order_relaxed);
     nsync_mu_init(&conn->priv->mutex);
 
     // Check for test mode: bypass real network and event loop
@@ -888,8 +976,9 @@ void nostr_connection_close(NostrConnection *conn) {
 
     if (conn->priv && conn->priv->test_mode) {
         // No libwebsockets context or thread in test mode
-        free(conn->priv->rx_reassembly_buf);
-        free(conn->priv);
+        // Use priv_close_and_unref for consistency (refs should be 1 here)
+        priv_close_and_unref(conn->priv);
+        conn->priv = NULL;
         free(conn);
         return;
     } else if (conn->priv) {
@@ -951,37 +1040,33 @@ void nostr_connection_close(NostrConnection *conn) {
             deferred_cleanup_process();
             pthread_mutex_unlock(&g_lws_mutex);
         }
-        /* nostrc-conn-uaf: Free conn + priv safely.
+        /* nostrc-priv-refcount: Release priv via refcounting, not deferred cleanup.
          *
-         * CRITICAL: The LWS service thread callback captures `conn` from
-         * lws_get_opaque_user_data(wsi) as a LOCAL VARIABLE before we can
-         * NULL the opaque data (data race on the WSI struct).  If we
-         * free(conn) immediately, the in-flight callback reads
-         * conn->priv (freed memory) and calls nsync_mu_lock on garbage,
-         * corrupting glibc's fastbin metadata → malloc_consolidate crash
-         * or GLib poll-array assertion.
+         * With refcounting, we set the closing flag and release our ref.
+         * Any in-flight callbacks that acquired a ref via priv_try_ref() will
+         * keep priv alive until they call priv_unref(). New callbacks will
+         * fail priv_try_ref() (returns NULL) and bail out cleanly.
          *
-         * Fix: defer BOTH conn and priv until the service thread stops.
-         * When should_free_priv=1 we've already joined the service thread,
-         * so immediate free is safe.  Otherwise, add both to the deferred
-         * cleanup queue. */
+         * The priv struct is freed when the last ref is released AND closing
+         * is set. This is lifetime correctness, not timing-based delay. */
+        priv_close_and_unref(conn->priv);
+        conn->priv = NULL;
+        
+        /* The conn struct still needs deferred cleanup because LWS callbacks
+         * capture conn from lws_get_opaque_user_data() before we can NULL it.
+         * We defer conn (but not priv, which is now refcounted). */
         if (should_free_priv) {
             /* Service thread has stopped (pthread_join above) — safe to
-             * free immediately. */
-            free(conn->priv->rx_reassembly_buf);
-            free(conn->priv);
-            conn->priv = NULL;
+             * free conn immediately. */
             // Do not free channels here; the owner (relay) will free them
             // after worker threads exit.
             free(conn);
         } else {
-            /* Service thread still running — defer BOTH conn and priv.
-             * The conn struct must stay alive because an in-flight LWS
-             * callback may be reading conn->priv right now. */
+            /* Service thread still running — defer conn only.
+             * priv is handled by refcounting. */
             pthread_mutex_lock(&g_lws_mutex);
-            deferred_cleanup_add(conn, conn->priv);
+            deferred_cleanup_add(conn, NULL);  /* NULL priv - it's refcounted */
             pthread_mutex_unlock(&g_lws_mutex);
-            /* Do NOT free(conn) here — it's owned by the deferred queue. */
         }
     } else {
         /* No priv (shouldn't happen in practice) — safe to free conn
