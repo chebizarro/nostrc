@@ -27,7 +27,7 @@
 #define ITEMS_PER_FRAME_MAX 50       /* Ceiling during aggressive drain */
 #define FRAME_BUDGET_US 12000        /* 12ms target, leaving 4ms margin for 16.6ms frame */
 #define INSERTION_BUFFER_MAX 100     /* Max items in insertion buffer before backpressure */
-#define EVICT_DEFER_FRAMES 30        /* Only enforce window size every 30 frames (~500ms) */
+#define EVICT_DEFER_FRAMES 3         /* Defer eviction 3 frames after insertions to let GTK finish disposal */
 #define PENDING_SIGNAL_INTERVAL_US 250000  /* 250ms between new-items-pending emissions */
 #define REACTION_CACHE_MAX 500   /* Cap reaction count cache (keyed by target event_id) */
 #define ZAP_CACHE_MAX 500        /* Cap zap stats cache (keyed by target event_id) */
@@ -945,15 +945,22 @@ static gboolean on_drain_timer(gpointer user_data) {
     }
   }
 
-  /* Phase 2: Window eviction — ONLY when no items were inserted this frame.
-   * CRITICAL: Two items_changed signals in one frame (insert at 0 + evict at
-   * tail) causes a GTK widget recycling storm. During rapid recycle, GtkPicture's
-   * internal GtkImageDefinition can get corrupted, triggering:
-   *   Gtk:ERROR:gtkimagedefinition.c:156:gtk_image_definition_unref:
-   *     code should not be reached
-   * By deferring eviction to a frame with no insertions, we guarantee at most
-   * ONE items_changed signal per frame. */
-  if (total_processed == 0) {
+  /* Phase 2: Window eviction — ONLY after multiple frames with no insertions.
+   * CRITICAL: GTK's GtkListItemManager holds internal references to list items.
+   * When we emit items_changed, GTK disposes widgets asynchronously. If we emit
+   * another items_changed too soon (even in the next frame), GTK may access
+   * stale GtkListItem pointers, causing heap-use-after-free in GTK_IS_LIST_ITEM.
+   *
+   * Solution: Defer eviction for EVICT_DEFER_FRAMES frames after any insertion.
+   * This gives GTK time to fully process widget disposal before we trigger more. */
+  if (total_processed > 0) {
+    /* Reset defer counter on any insertion */
+    self->evict_defer_counter = EVICT_DEFER_FRAMES;
+  } else if (self->evict_defer_counter > 0) {
+    /* Count down defer frames */
+    self->evict_defer_counter--;
+  } else {
+    /* Safe to evict: no insertions for EVICT_DEFER_FRAMES frames */
     guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
     if (self->notes->len > cap) {
       guint pre_evict = self->notes->len;
