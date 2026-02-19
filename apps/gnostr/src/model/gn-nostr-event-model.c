@@ -187,8 +187,13 @@ typedef struct {
 
 static void thread_info_free(ThreadInfo *info) {
   if (!info) return;
-  g_free(info->root_id);
-  g_free(info->parent_id);
+  /* Defensive: clear pointers after free to catch double-free */
+  char *root = info->root_id;
+  char *parent = info->parent_id;
+  info->root_id = NULL;
+  info->parent_id = NULL;
+  g_free(root);
+  g_free(parent);
   g_free(info);
 }
 
@@ -265,11 +270,28 @@ static void cache_touch(GnNostrEventModel *self, uint64_t key) {
 }
 
 static void cache_add(GnNostrEventModel *self, uint64_t key, GnNostrEventItem *item) {
+  /* Check if already in cache - if so, just touch it and update the item */
+  if (g_hash_table_contains(self->item_cache, &key)) {
+    cache_touch(self, key);
+    /* Replace the item but don't add another queue entry */
+    uint64_t *key_copy = g_new(uint64_t, 1);
+    *key_copy = key;
+    g_hash_table_replace(self->item_cache, key_copy, g_object_ref(item));
+    return;
+  }
+
   uint64_t *key_copy = g_new(uint64_t, 1);
   *key_copy = key;
 
+  /* CRITICAL: Queue gets its own copy of the key to avoid use-after-free.
+   * Previously, queue and item_cache shared the same pointer, causing heap
+   * corruption when g_queue_find_custom iterated stale pointers after
+   * item_cache freed them. */
+  uint64_t *queue_key = g_new(uint64_t, 1);
+  *queue_key = key;
+
   g_hash_table_insert(self->item_cache, key_copy, g_object_ref(item));
-  g_queue_push_head(self->cache_lru, key_copy);
+  g_queue_push_head(self->cache_lru, queue_key);
 
   /* Evict oldest if over capacity */
   while (g_queue_get_length(self->cache_lru) > ITEM_CACHE_SIZE) {
@@ -278,7 +300,8 @@ static void cache_add(GnNostrEventModel *self, uint64_t key, GnNostrEventItem *i
       /* Remove from thread_info before removing from item_cache to prevent dangling pointers */
       g_hash_table_remove(self->thread_info, old_key);
       g_hash_table_remove(self->item_cache, old_key);
-      /* Note: key is freed by hash table; queue just dropped its pointer */
+      /* Queue owns its own key copy, free it */
+      g_free(old_key);
     }
   }
 }
@@ -305,11 +328,14 @@ static void precache_item_from_note(GnNostrEventModel *self, uint64_t note_key,
   g_object_unref(item);
 }
 
-/* Helper: remove a key from cache_lru (must be called before removing from item_cache) */
+/* Helper: remove a key from cache_lru.
+ * Queue owns its own copy of the key, so we free it here. */
 static void cache_lru_remove_key(GnNostrEventModel *self, uint64_t note_key) {
   if (!self || !self->cache_lru) return;
   GList *link = g_queue_find_custom(self->cache_lru, &note_key, (GCompareFunc)uint64_compare_for_queue);
   if (!link) return;
+  /* Queue owns its own key copy, free it */
+  g_free(link->data);
   g_queue_unlink(self->cache_lru, link);
   g_list_free_1(link);
 }
@@ -707,7 +733,7 @@ static void reset_internal_state_silent(GnNostrEventModel *self) {
   g_array_set_size(self->notes, 0);
   g_hash_table_remove_all(self->note_key_set);
   g_hash_table_remove_all(self->item_cache);
-  g_queue_clear(self->cache_lru);
+  g_queue_clear_full(self->cache_lru, g_free);
   g_hash_table_remove_all(self->thread_info);
   if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
   if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
@@ -1892,7 +1918,7 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   if (self->notes) g_array_unref(self->notes);
   if (self->note_key_set) g_hash_table_unref(self->note_key_set);
   if (self->item_cache) g_hash_table_unref(self->item_cache);
-  if (self->cache_lru) g_queue_free(self->cache_lru);
+  if (self->cache_lru) g_queue_free_full(self->cache_lru, g_free);
   if (self->profile_cache) g_hash_table_unref(self->profile_cache);
   if (self->profile_cache_lru) {
     g_queue_free_full(self->profile_cache_lru, g_free);
@@ -2817,7 +2843,7 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   if (old_size == 0) {
     /* Still clear caches to be safe */
     g_hash_table_remove_all(self->item_cache);
-    g_queue_clear(self->cache_lru);
+    g_queue_clear_full(self->cache_lru, g_free);
     g_hash_table_remove_all(self->thread_info);
     if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
     if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
@@ -2847,7 +2873,7 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
 
   /* NOW safe to clean caches — GTK has finished with all widgets */
   g_hash_table_remove_all(self->item_cache);
-  g_queue_clear(self->cache_lru);
+  g_queue_clear_full(self->cache_lru, g_free);
   g_hash_table_remove_all(self->thread_info);
   if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
   if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
@@ -2974,21 +3000,17 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
   guint to_remove = self->notes->len - keep_count;
 
-  /* Collect keys to remove BEFORE modifying data structures */
-  uint64_t *keys_to_remove = g_new(uint64_t, to_remove);
+  /* nostrc-pango-fix: Remove items one at a time from the FRONT to avoid
+   * Pango layout corruption. See trim_older for detailed explanation. */
   for (guint i = 0; i < to_remove; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    keys_to_remove[i] = entry->note_key;
-  }
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, 0);
+    uint64_t k = entry->note_key;
 
-  /* Remove from array and emit items_changed FIRST so GTK can tear down widgets
-   * while cached items are still valid */
-  g_array_remove_range(self->notes, 0, to_remove);
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
+    /* Remove from array and emit signal FIRST */
+    g_array_remove_index(self->notes, 0);
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 1, 0);
 
-  /* NOW cleanup caches after GTK has finished with widgets */
-  for (guint i = 0; i < to_remove; i++) {
-    uint64_t k = keys_to_remove[i];
+    /* NOW cleanup caches after GTK has finished with widget */
     g_hash_table_remove(self->note_key_set, &k);
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
@@ -2996,7 +3018,6 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
     g_hash_table_remove(self->skip_animation_keys, &k);
   }
 
-  g_free(keys_to_remove);
   g_debug("[MODEL] Trimmed %u newer items, %u remaining", to_remove, self->notes->len);
 }
 
@@ -3174,23 +3195,24 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
   if (self->notes->len <= keep_count) return;
 
   guint to_remove = self->notes->len - keep_count;
-  guint start_idx = keep_count; /* Remove from end */
 
-  /* Collect keys to remove BEFORE modifying data structures */
-  uint64_t *keys_to_remove = g_new(uint64_t, to_remove);
+  /* nostrc-pango-fix: Remove items one at a time from the END to avoid
+   * Pango layout corruption. Removing many items at once via a single
+   * items_changed(start, N, 0) signal causes GTK to dispose many widgets
+   * simultaneously, which can corrupt PangoLayout internal state.
+   * 
+   * By removing from the end one at a time, each disposal completes before
+   * the next begins, preventing the corruption. */
   for (guint i = 0; i < to_remove; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, start_idx + i);
-    keys_to_remove[i] = entry->note_key;
-  }
+    guint idx = self->notes->len - 1;  /* Always remove last item */
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, idx);
+    uint64_t k = entry->note_key;
 
-  /* Remove from array and emit items_changed FIRST so GTK can tear down widgets
-   * while cached items are still valid */
-  g_array_remove_range(self->notes, start_idx, to_remove);
-  g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
+    /* Remove from array and emit signal FIRST */
+    g_array_remove_index(self->notes, idx);
+    g_list_model_items_changed(G_LIST_MODEL(self), idx, 1, 0);
 
-  /* NOW cleanup caches after GTK has finished with widgets */
-  for (guint i = 0; i < to_remove; i++) {
-    uint64_t k = keys_to_remove[i];
+    /* NOW cleanup caches after GTK has finished with widget */
     g_hash_table_remove(self->note_key_set, &k);
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
@@ -3198,7 +3220,6 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
     g_hash_table_remove(self->skip_animation_keys, &k);
   }
 
-  g_free(keys_to_remove);
   g_debug("[MODEL] Trimmed %u older items, %u remaining", to_remove, self->notes->len);
 }
 

@@ -267,20 +267,14 @@ gboolean nostr_gtk_note_card_row_is_disposed(NostrGtkNoteCardRow *self);
 gboolean nostr_gtk_note_card_row_is_bound(NostrGtkNoteCardRow *self);
 guint64 nostr_gtk_note_card_row_get_binding_id(NostrGtkNoteCardRow *self);
 
-/* nostrc-ncr-lifecycle: Ref-counted binding context for safe async callbacks.
- * Opaque type — implementation in note-card-binding-ctx.h (internal). */
+/* nostrc-ncr-lifecycle: Binding context accessor for factory use.
+ * Returns the current binding context (opaque type). Full API for
+ * NoteCardBindingContext is in the internal header note-card-binding-ctx.h. */
 #ifndef NOTE_CARD_BINDING_CTX_TYPEDEF
 #define NOTE_CARD_BINDING_CTX_TYPEDEF
 typedef struct _NoteCardBindingContext NoteCardBindingContext;
 #endif
 NoteCardBindingContext *nostr_gtk_note_card_row_get_binding_ctx(NostrGtkNoteCardRow *self);
-NoteCardBindingContext *note_card_binding_context_ref(NoteCardBindingContext *ctx);
-void note_card_binding_context_unref(NoteCardBindingContext *ctx);
-void note_card_binding_context_cancel(NoteCardBindingContext *ctx);
-gboolean note_card_binding_context_is_cancelled(NoteCardBindingContext *ctx);
-GObject *note_card_binding_context_get_row(NoteCardBindingContext *ctx);
-GCancellable *note_card_binding_context_get_cancellable(NoteCardBindingContext *ctx);
-guint64 note_card_binding_context_get_binding_id(NoteCardBindingContext *ctx);
 
 G_END_DECLS
 #endif /* NOSTR_GTK_NOSTR_NOTE_CARD_ROW_H */
