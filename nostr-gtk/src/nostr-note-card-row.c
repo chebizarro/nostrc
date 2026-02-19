@@ -399,9 +399,11 @@ enum {
 static guint signals[N_SIGNALS];
 
 /* Centralized teardown quiesce path used by both unbind and dispose.
- * Keep this strictly non-visual: do NOT mutate labels, CSS state, or
- * child widget trees here. Those operations can re-enter GTK internals while
- * list-item recycling is already tearing down children. */
+ * This function performs LIMITED visual mutations that are safe during unbind:
+ * - Clearing high-risk label markup (content_label) to prevent Pango crashes
+ * - Clearing paintables to prevent GtkImageDefinition corruption
+ * - Removing OG preview children (safe because we null layout manager in dispose)
+ * Avoid CSS class mutations or complex widget tree restructuring here. */
 static void
 nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
                                 gboolean clear_cancellable_refs)
@@ -517,10 +519,12 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
     }
   }
 
-  /* nostrc-pango-crash: Clear stale OG preview and note embed children during
-   * quiesce instead of in prepare_for_bind, to avoid re-entering GTK internals
-   * during list-item recycling. gtk_box_remove inside the recycling cycle can
-   * trigger measure/layout on partially-torn-down children. */
+  /* nostrc-pango-crash: Clear stale OG preview children during quiesce (unbind)
+   * rather than prepare_for_bind. During unbind, the widget is still fully
+   * realized with a valid native surface, so gtk_box_remove can safely trigger
+   * measure/layout. During bind, the row may be in a transitional state where
+   * children from the previous cycle haven't been fully torn down yet.
+   * The layout manager is nulled in dispose() before template disposal. */
   if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
     GtkWidget *child = gtk_widget_get_first_child(self->og_preview_container);
     while (child) {
@@ -563,13 +567,18 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
    * If the native surface is gone, ref-leak the label (~1KB) to prevent
    * finalization from touching the dead PangoContext.
    * Pattern from og-preview-widget.c OG_DISPOSE_LABEL. */
+  static gint ncr_leaked_labels = 0;
 #define NCR_DISPOSE_LABEL(lbl) \
   do { \
     if (GNOSTR_LABEL_SAFE(lbl)) { \
       gtk_label_set_text(GTK_LABEL(lbl), ""); \
     } else if (GTK_IS_LABEL(lbl)) { \
       const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
-      if (_t && *_t) g_object_ref(lbl); \
+      if (_t && *_t) { \
+        g_object_ref(lbl); \
+        gint _leaked = g_atomic_int_add(&ncr_leaked_labels, 1) + 1; \
+        g_debug("NCR: ref-leaked label to prevent Pango crash (total: %d)", _leaked); \
+      } \
     } \
   } while (0)
 
@@ -595,7 +604,9 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
 
   /* nostrc-pango-crash: Clear GtkPicture paintables to prevent
    * GtkImageDefinition corruption during widget disposal.
-   * See drain timer comment about gtk_image_definition_unref crash. */
+   * Note: avatar_image paintable is already cleared in quiesce(), but we
+   * clear all pictures here as belt-and-suspenders for the dispose path
+   * (quiesce may have been called with clear_cancellable_refs=FALSE). */
   if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image))
     gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
   if (self->article_image && GTK_IS_PICTURE(self->article_image))
@@ -6315,6 +6326,7 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
 #ifdef HAVE_SOUP3
   g_clear_object(&self->avatar_cancellable);
   g_clear_object(&self->article_image_cancellable);
+  g_clear_object(&self->video_thumb_cancellable);
   /* Clear media cancellables - they'll be created on demand */
   if (self->media_cancellables) {
     g_hash_table_remove_all(self->media_cancellables);
