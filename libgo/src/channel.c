@@ -247,6 +247,15 @@ static void go_channel_graveyard_reap(void) {
                 pp = &d->next;
                 continue;
             }
+            /* nostrc-waiter-count: Check if any threads are still blocked
+             * inside go_channel_send/receive. These threads are touching
+             * the channel's nsync_mu mutex and will corrupt heap if we free. */
+            int waiters = atomic_load_explicit(&d->chan->active_waiters, memory_order_acquire);
+            if (waiters > 0) {
+                /* Still has active waiters — skip, will retry on next reap */
+                pp = &d->next;
+                continue;
+            }
             *pp = d->next;
             pthread_mutex_unlock(&g_graveyard_mu);
             free(d->chan);
@@ -491,12 +500,16 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
+    /* nostrc-waiter-count: Increment BEFORE magic check to prevent race with graveyard. */
+    atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
     // Validate magic number to detect garbage/freed channel pointers
     if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_invalid_magic_send", 1);
         return -1;
     }
     if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
@@ -506,6 +519,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
         size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
         if (head - tail >= chan->capacity || atomic_load_explicit(&chan->closed, memory_order_acquire) || NOSTR_UNLIKELY(chan->buffer == NULL)) {
+            atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
             nostr_metric_counter_add("go_chan_try_send_failures", 1);
             return -1;
         }
@@ -556,8 +570,10 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
                 nostr_metric_counter_add("go_chan_signal_empty", 1);
             }
         }
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         return 0;
     }
+    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     nostr_metric_counter_add("go_chan_try_send_failures", 1);
     return -1;
 #elif NOSTR_CHANNEL_ATOMIC_TRY && NOSTR_CHANNEL_DERIVE_SIZE
@@ -566,6 +582,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
     size_t out_a = atomic_load_explicit(&chan->out, memory_order_acquire);
     size_t next_in_a = (in_a + 1) & chan->mask;
     if (next_in_a == out_a) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
@@ -573,6 +590,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
     int rc = -1;
     NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
@@ -635,6 +653,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         }
         rc = 0;
     }
+    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     NUNLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(rc != 0)) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
@@ -648,17 +667,22 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
+    /* nostrc-waiter-count: Increment BEFORE magic check to prevent race with graveyard. */
+    atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
     // Validate magic number to detect garbage/freed channel pointers
     if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_invalid_magic_recv", 1);
         return -1;
     }
     // Early buffer NULL check to catch channels being freed concurrently
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
     if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
@@ -668,6 +692,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
         size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
         if (head == tail || NOSTR_UNLIKELY(chan->buffer == NULL)) {
+            atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
             nostr_metric_counter_add("go_chan_try_recv_failures", 1);
             return -1;
         }
@@ -726,6 +751,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
                 nostr_metric_counter_add("go_chan_signal_full", 1);
             }
         }
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         return 0;
     }
 #elif NOSTR_CHANNEL_ATOMIC_TRY && NOSTR_CHANNEL_DERIVE_SIZE
@@ -733,12 +759,14 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
     size_t in_a = atomic_load_explicit(&chan->in, memory_order_acquire);
     size_t out_a = atomic_load_explicit(&chan->out, memory_order_acquire);
     if (in_a == out_a) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
 #endif
     // Check freed flag before taking mutex to avoid use-after-free
     if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
@@ -746,11 +774,13 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
     NLOCK(&chan->mutex);
     // Re-check freed flag under mutex in case of race
     if (NOSTR_UNLIKELY(atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
@@ -812,6 +842,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         }
         rc = 0;
     }
+    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     NUNLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(rc != 0)) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
@@ -885,6 +916,7 @@ GoChannel *go_channel_create(size_t capacity) {
     nsync_cv_init(&chan->cond_full);
     nsync_cv_init(&chan->cond_empty);
     atomic_store_explicit(&chan->refs, 1, memory_order_relaxed);
+    atomic_store_explicit(&chan->active_waiters, 0, memory_order_relaxed);
     chan->select_waiters = NULL;
     chan->fiber_waiters_full = NULL;
     chan->fiber_waiters_empty = NULL;
@@ -999,6 +1031,17 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     if (NOSTR_UNLIKELY(chan == NULL)) {
         return -1;
     }
+    /* nostrc-waiter-count: Increment active_waiters BEFORE acquiring mutex.
+     * This ensures graveyard reap sees us even if we haven't locked yet.
+     * The sequence is: increment waiters → check magic → acquire mutex.
+     * If magic is invalid, we decrement and bail out. */
+    atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
+    /* nostrc-magic-check: Reject dead channels. If magic is cleared, the
+     * channel is in the graveyard. Decrement waiters and bail out. */
+    if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
+        return -1;
+    }
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
     int have_tw = 0; // whether we started wake->progress timer
@@ -1006,6 +1049,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     ensure_histos();
     NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
@@ -1074,11 +1118,13 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
 
     // Guard: channel may have been freed while we were waiting
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
     }
     if (NOSTR_UNLIKELY(chan->closed)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1; // Cannot send to a closed channel
@@ -1154,6 +1200,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_signal_empty", 1);
     }
 
+    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     NUNLOCK(&chan->mutex);
     nostr_metric_timer_stop(&t, h_send_wait_ns);
     if (have_tw) {
@@ -1167,6 +1214,13 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     if (NOSTR_UNLIKELY(chan == NULL)) {
         return -1;
     }
+    /* nostrc-waiter-count: Increment active_waiters BEFORE acquiring mutex. */
+    atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
+    /* nostrc-magic-check: Reject dead channels. */
+    if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
+        return -1;
+    }
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
     int have_tw = 0; // whether we started wake->progress timer
@@ -1174,6 +1228,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     ensure_histos();
     NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
@@ -1255,6 +1310,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 #else
         size_t occ_dbg = chan->size;
 #endif
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         nostr_metric_counter_add("go_chan_recv_closed_empty", 1);
@@ -1267,6 +1323,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 
     // Guard: channel may have been freed while we were waiting
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
@@ -1346,6 +1403,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 
+    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     NUNLOCK(&chan->mutex);
     nostr_metric_timer_stop(&t, h_recv_wait_ns);
     if (have_tw) {
@@ -1356,17 +1414,29 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 
 /* Send data to the channel with cancellation context */
 int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        return -1;
+    }
+    /* nostrc-waiter-count: Increment active_waiters BEFORE acquiring mutex. */
+    atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
+    /* nostrc-magic-check: Reject dead channels. */
+    if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
+        return -1;
+    }
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
     int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
     if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         ensure_histos();
         return -1;
     }
     NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
@@ -1438,6 +1508,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     if (have_tw) { (void)0; }
 
     if (NOSTR_UNLIKELY(chan->closed || (ctx && go_context_is_canceled(ctx)))) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         ensure_histos();
         nostr_metric_timer_stop(&t, h_send_wait_ns);
@@ -1493,23 +1564,36 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         nostr_metric_counter_add("go_chan_signal_empty", 1);
     }
 
+    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     NUNLOCK(&chan->mutex);
     return 0;
 }
 
 /* Receive data from the channel with cancellation context */
 int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        return -1;
+    }
+    /* nostrc-waiter-count: Increment active_waiters BEFORE acquiring mutex. */
+    atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
+    /* nostrc-magic-check: Reject dead channels. */
+    if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
+        return -1;
+    }
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
     int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
     if (atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         ensure_histos();
         return -1;
     }
     NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
@@ -1595,6 +1679,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #else
             size_t occ_dbg = chan->size;
 #endif
+            atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
             NUNLOCK(&chan->mutex);
             ensure_histos();
             nostr_metric_timer_stop(&t, h_recv_wait_ns);
@@ -1616,6 +1701,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 
     // Guard: channel may have been freed while we were waiting
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         NUNLOCK(&chan->mutex);
         return -1;
     }
@@ -1689,6 +1775,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 
+    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     NUNLOCK(&chan->mutex);
     return 0;
 }
