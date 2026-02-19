@@ -87,7 +87,7 @@ int go_fiber_compat(void *(*start_routine)(void *), void *arg) {
 
 // Wrapper function to create a new thread
 int go(void *(*start_routine)(void *), void *arg) {
-    go_autofree GoWrapper *w = (GoWrapper *)malloc(sizeof(GoWrapper));
+    GoWrapper *w = (GoWrapper *)malloc(sizeof(GoWrapper));
     if (!w) {
         fprintf(stderr, "Failed to allocate goroutine wrapper\n");
         return -1;
@@ -99,11 +99,10 @@ int go(void *(*start_routine)(void *), void *arg) {
     int result = pthread_create(&thread, NULL, go_wrapper_func, w);
     if (result != 0) {
         fprintf(stderr, "Failed to create thread: %d\n", result);
-        return result; /* w still valid, auto-freed at scope exit */
+        free(w);
+        return result;
     }
-    /* Only steal the pointer after pthread_create succeeds */
-    go_steal_pointer(&w);
-    // Detach the thread to allow it to clean up resources automatically upon completion
+    /* w is now owned by go_wrapper_func — it will free(w) after reading fields */
     result = pthread_detach(thread);
     if (result != 0) {
         fprintf(stderr, "Failed to detach thread: %d\n", result);

@@ -15,8 +15,10 @@
 #include "sync/gnostr-sync-bridge.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/gnostr-identity.h>
-#include <go.h>          /* go_blocking_executor_init/shutdown */
-#include <libgo/fiber.h>  /* gof_start_background, gof_request_stop, gof_join_background */
+#include <go.h>          /* go(), go_fiber_compat() */
+/* nostrc-deferred-free: Fiber scheduler removed — go_fiber_compat() is reverted
+ * to OS threads (see libgo/src/go.c), so the fiber scheduler was creating idle
+ * worker threads for nothing. Removing eliminates unnecessary thread contention. */
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -235,14 +237,11 @@ gnostr_ensure_gsettings_schemas(const char *argv0)
 }
 
 int main(int argc, char **argv) {
-  /* nostrc-heap-workaround: Disable GLib's slice allocator to work around
-   * intermittent heap corruption that only manifests with the slice allocator.
-   * The corruption is timing-dependent (ASAN doesn't catch it) and appears
-   * to be in external code (libwebsockets, Go runtime, or GLib internals).
-   * Using standard malloc makes the app stable.
-   * NOTE: Must use setenv() before any GLib calls, as g_setenv() itself
-   * uses GLib internals that may initialize the slice allocator. */
-  setenv("G_SLICE", "always-malloc", 0);
+  /* nostrc-deferred-free: G_SLICE=always-malloc removed. It was a no-op on
+   * GLib >= 2.76 (slice allocator removed). The real crash cause was
+   * go_channel_unref freeing channel structs while nsync waiters still
+   * held references to the embedded mutex. Fixed by deferred channel
+   * destruction in libgo/src/channel.c (graveyard pattern). */
 
   gnostr_ensure_gsettings_schemas(argv[0]);
   g_set_prgname("gnostr");
@@ -256,15 +255,13 @@ int main(int argc, char **argv) {
   gnostr_relays_init("org.gnostr.gnostr");
   gnostr_identity_init("org.gnostr.Client");
 
-  /* Initialize fiber scheduler as background thread pool.
-   * Must happen before any go_fiber_compat() calls (relay/subscription startup).
-   * Uses 0 for default stack size (256KB per fiber). */
-  if (gof_start_background(0) != 0) {
-    g_warning("Failed to start fiber scheduler — falling back to OS threads");
-  }
-  /* Initialize blocking executor for NDB I/O offload from fibers.
-   * 4 threads handles typical NDB query concurrency. */
-  go_blocking_executor_init(4);
+  /* nostrc-deferred-free: Fiber scheduler and blocking executor removed.
+   * go_fiber_compat() is reverted to OS threads (nostrc-b0h-revert in go.c),
+   * so these were creating idle threads that served no purpose.
+   * When fibers are re-enabled in the future, restore:
+   *   gof_start_background(0);
+   *   go_blocking_executor_init(4);
+   */
 
   /* Install app actions */
   static const GActionEntry app_entries[] = {
@@ -328,14 +325,14 @@ int main(int argc, char **argv) {
 
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
 
-  /* Fiber scheduler and blocking executor are shut down after the main loop
-   * exits, ensuring all fibers complete before process teardown. */
   int status = g_application_run(G_APPLICATION(app), argc, argv);
 
-  /* Shut down fiber scheduler and blocking executor (drains queues first) */
-  go_blocking_executor_shutdown();
-  gof_request_stop();
-  gof_join_background();
+  /* nostrc-deferred-free: Fiber shutdown removed (scheduler not started).
+   * Restore when fibers are re-enabled:
+   *   go_blocking_executor_shutdown();
+   *   gof_request_stop();
+   *   gof_join_background();
+   */
 
   g_object_unref(app);
   return status;
