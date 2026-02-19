@@ -37,13 +37,20 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
     switch (reason) {
     case LWS_CALLBACK_CLIENT_RECEIVE: {
-        if (!conn->priv) break;
+        /* nostrc-priv-race: CRITICAL - Capture conn->priv pointer ONCE at the start.
+         * Another thread may call nostr_connection_close() which frees conn->priv
+         * while this callback is still running. By capturing the pointer locally,
+         * we ensure consistent access throughout the callback. If priv becomes
+         * invalid mid-callback, we're accessing freed memory, but at least we
+         * won't crash from a NULL deref after the initial check. */
+        NostrConnectionPrivate *priv = conn->priv;
+        if (!priv) break;
         // Enforce hard frame cap (check total accumulated size for fragmented messages)
-        size_t total_len = conn->priv->rx_reassembly_len + len;
+        size_t total_len = priv->rx_reassembly_len + len;
         if (total_len > (size_t)nostr_limit_max_frame_len()) {
             nostr_rl_log(NLOG_WARN, "ws", "drop: frame too large (%zu > %lld)", total_len, (long long)nostr_limit_max_frame_len());
             // Discard partial reassembly
-            conn->priv->rx_reassembly_len = 0;
+            priv->rx_reassembly_len = 0;
             lws_close_reason(wsi, LWS_CLOSE_STATUS_MESSAGE_TOO_LARGE, NULL, 0);
             return -1;
         }
@@ -57,19 +64,19 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             rate_limit_enabled = (env && env[0] == '1') ? 1 : 0;
         }
         if (rate_limit_enabled) {
-            if (!tb_allow(&conn->priv->tb_frames, 1.0) || !tb_allow(&conn->priv->tb_bytes, (double)len)) {
+            if (!tb_allow(&priv->tb_frames, 1.0) || !tb_allow(&priv->tb_bytes, (double)len)) {
                 nostr_rl_log(NLOG_DEBUG, "ws", "drop: rate limit exceeded (len=%zu)", len);
                 return 0;
             }
         }
         // Update RX timing/progress
         uint64_t now_us = (uint64_t)lws_now_usecs();
-        conn->priv->last_rx_ns = now_us; /* store usec */
-        if (conn->priv->rx_window_start_ns == 0) {
-            conn->priv->rx_window_start_ns = now_us;
-            conn->priv->rx_window_bytes = 0;
+        priv->last_rx_ns = now_us; /* store usec */
+        if (priv->rx_window_start_ns == 0) {
+            priv->rx_window_start_ns = now_us;
+            priv->rx_window_bytes = 0;
         }
-        conn->priv->rx_window_bytes += (uint64_t)len;
+        priv->rx_window_bytes += (uint64_t)len;
 
         /* nostrc-8zpc: Proper WebSocket frame reassembly.
          * LWS delivers data in chunks up to rx_buffer_size. When a WebSocket
@@ -78,29 +85,29 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         int is_final = lws_is_final_fragment(wsi);
         size_t remaining = lws_remaining_packet_payload(wsi);
 
-        if (is_final && conn->priv->rx_reassembly_len == 0) {
+        if (is_final && priv->rx_reassembly_len == 0) {
             /* Fast path: complete message in a single callback (common case
              * now that rx_buffer_size is 128KB). No reassembly needed. */
             goto queue_message;
         }
 
         /* Accumulate fragment into reassembly buffer */
-        size_t needed = conn->priv->rx_reassembly_len + len + 1;
-        if (needed > conn->priv->rx_reassembly_alloc) {
-            size_t new_alloc = conn->priv->rx_reassembly_alloc;
+        size_t needed = priv->rx_reassembly_len + len + 1;
+        if (needed > priv->rx_reassembly_alloc) {
+            size_t new_alloc = priv->rx_reassembly_alloc;
             if (new_alloc == 0) new_alloc = 4096;
             while (new_alloc < needed) new_alloc *= 2;
-            char *new_buf = (char *)realloc(conn->priv->rx_reassembly_buf, new_alloc);
+            char *new_buf = (char *)realloc(priv->rx_reassembly_buf, new_alloc);
             if (!new_buf) {
                 nostr_rl_log(NLOG_WARN, "ws", "drop: reassembly OOM (%zu bytes)", new_alloc);
-                conn->priv->rx_reassembly_len = 0;
+                priv->rx_reassembly_len = 0;
                 return 0;
             }
-            conn->priv->rx_reassembly_buf = new_buf;
-            conn->priv->rx_reassembly_alloc = new_alloc;
+            priv->rx_reassembly_buf = new_buf;
+            priv->rx_reassembly_alloc = new_alloc;
         }
-        memcpy(conn->priv->rx_reassembly_buf + conn->priv->rx_reassembly_len, in, len);
-        conn->priv->rx_reassembly_len += len;
+        memcpy(priv->rx_reassembly_buf + priv->rx_reassembly_len, in, len);
+        priv->rx_reassembly_len += len;
 
         if (!is_final || remaining > 0) {
             /* More fragments coming - wait for complete message */
@@ -108,9 +115,9 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         }
 
         /* Reassembly complete - use the reassembled buffer as the message */
-        conn->priv->rx_reassembly_buf[conn->priv->rx_reassembly_len] = '\0';
-        in = conn->priv->rx_reassembly_buf;
-        len = conn->priv->rx_reassembly_len;
+        priv->rx_reassembly_buf[priv->rx_reassembly_len] = '\0';
+        in = priv->rx_reassembly_buf;
+        len = priv->rx_reassembly_len;
 
 queue_message:
         // Check if channel is still valid (it may have been freed during shutdown)
@@ -118,20 +125,20 @@ queue_message:
         {
             GoChannel *recv_chan = conn->recv_channel;
             if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
-                conn->priv->rx_reassembly_len = 0;
+                priv->rx_reassembly_len = 0;
                 return 0;
             }
         }
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
-        if (!msg) { conn->priv->rx_reassembly_len = 0; return -1; }
+        if (!msg) { priv->rx_reassembly_len = 0; return -1; }
         msg->length = len;
         msg->data = (char*)malloc(len + 1);
-        if (!msg->data) { free(msg); conn->priv->rx_reassembly_len = 0; return -1; }
+        if (!msg->data) { free(msg); priv->rx_reassembly_len = 0; return -1; }
         memcpy(msg->data, in, len);
         msg->data[len] = '\0';
         // Reset reassembly state
-        conn->priv->rx_reassembly_len = 0;
+        priv->rx_reassembly_len = 0;
         // Capture channel pointer once for thread-safe access
         GoChannel *recv_chan = conn->recv_channel;
         // Non-blocking send: the lws service thread is shared across ALL
