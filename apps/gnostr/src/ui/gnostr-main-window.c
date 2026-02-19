@@ -4051,10 +4051,9 @@ static void on_nip65_loaded_for_profile(GPtrArray *nip65_relays, gpointer user_d
     nostr_filters_add(filters, f);
     nostr_filter_free(f);
 
-    /* Stash filters on the pool so they stay alive during the async query.
-     * The pool outlives the query since the callback receives it as source. */
-    g_object_set_data_full(G_OBJECT(profile_pool), "profile-filters",
-                           filters, (GDestroyNotify)nostr_filters_free);
+    /* nostrc-dblf: gnostr_pool_query_async takes ownership of filters internally
+     * (attaches to GTask with destroy notify). Do NOT also attach to pool or
+     * we get double-free when both pool and task are disposed. */
 
     g_debug("[AUTH] Fetching profile from %u relays (after NIP-65 load)", relay_urls->len);
     gnostr_pool_query_async(profile_pool, filters, NULL,
