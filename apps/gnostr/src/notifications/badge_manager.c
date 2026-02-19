@@ -1197,7 +1197,7 @@ history_load_data_free(HistoryLoadData *data)
   g_free(data->user_pubkey);
   if (data->notifs)
     g_ptr_array_unref(data->notifs);
-  g_slice_free(HistoryLoadData, data);
+  g_free(data);
 }
 
 /* Context for extracting last "e" tag value from tags array */
@@ -1602,7 +1602,7 @@ gnostr_badge_manager_load_history(GnostrBadgeManager *self,
   g_return_if_fail(GNOSTR_IS_BADGE_MANAGER(self));
   if (!self->user_pubkey || strlen(self->user_pubkey) != 64 || !view) return;
 
-  HistoryLoadData *data = g_slice_new0(HistoryLoadData);
+  HistoryLoadData *data = g_new0(HistoryLoadData, 1);
   data->user_pubkey = g_strdup(self->user_pubkey);
   memcpy(data->last_read, self->last_read, sizeof(data->last_read));
   data->view = view;
