@@ -734,8 +734,10 @@ void gnostr_dm_file_download_and_decrypt_async(GnostrDmFileMessage *msg,
 
   g_message("[DM_FILES] Downloading and decrypting file from: %s", msg->file_url);
 
+  /* nostrc-soup-dblf: No cancellable on shared session requests —
+   * cancellation triggers libsoup connection pool corruption. */
   soup_session_send_and_read_async(session, soup_msg, G_PRIORITY_DEFAULT,
-                                    ctx->cancellable, on_download_complete, ctx);
+                                    NULL, on_download_complete, ctx);
 
   g_object_unref(soup_msg);
   /* Note: Don't unref shared session - we don't own it */

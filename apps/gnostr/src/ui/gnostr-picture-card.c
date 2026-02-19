@@ -117,15 +117,15 @@ static void
 gnostr_picture_card_dispose(GObject *object) {
   GnostrPictureCard *self = GNOSTR_PICTURE_CARD(object);
 
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-  }
-
-  if (self->nip05_cancellable) {
-    g_cancellable_cancel(self->nip05_cancellable);
-    g_clear_object(&self->nip05_cancellable);
-  }
+  /* nostrc-soup-dblf: Do NOT cancel GCancellables for requests on the shared
+   * SoupSession.  Cancelling in-flight requests causes libsoup's connection
+   * pool to destroy SoupConnection objects while still referenced by other
+   * queue items, leading to double-free in g_weak_ref_get on macOS.
+   *
+   * Instead, callbacks use GWeakRef to safely detect that the widget is gone.
+   * Just clear the cancellable objects without cancelling them. */
+  g_clear_object(&self->image_cancellable);
+  g_clear_object(&self->nip05_cancellable);
 
 #ifdef HAVE_SOUP3
   /* Shared session is managed globally - do not clear here */
@@ -608,12 +608,9 @@ gnostr_picture_card_set_picture(GnostrPictureCard *self,
     self->picture = NULL;
   }
 
-  /* Cancel pending image load */
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-    self->image_cancellable = g_cancellable_new();
-  }
+  /* nostrc-soup-dblf: Don't cancel — let old requests complete harmlessly.
+   * The GWeakRef in ThumbnailLoadCtx detects widget-gone. */
+  g_clear_object(&self->image_cancellable);
 
   /* Copy new data */
   if (meta) {
@@ -990,12 +987,11 @@ load_image(GnostrPictureCard *self) {
   }
 
 #ifdef HAVE_SOUP3
-  /* Cancel any pending load */
-  if (self->image_cancellable) {
-    g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
-    self->image_cancellable = g_cancellable_new();
-  }
+  /* nostrc-soup-dblf: Don't cancel old requests — let them complete harmlessly.
+   * The GWeakRef in ThumbnailLoadCtx will detect the widget is gone. */
+
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session) return;
 
   /* Show spinner while loading */
   gtk_widget_set_visible(self->image_spinner, TRUE);
@@ -1014,10 +1010,10 @@ load_image(GnostrPictureCard *self) {
   ctx->url = g_strdup(url);
 
   soup_session_send_and_read_async(
-    gnostr_get_shared_soup_session(),
+    session,
     msg,
     G_PRIORITY_LOW,
-    self->image_cancellable,
+    NULL, /* nostrc-soup-dblf: no cancellable on shared session */
     on_thumbnail_loaded,
     ctx
   );

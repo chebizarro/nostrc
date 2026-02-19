@@ -479,8 +479,11 @@ void gnostr_nip05_verify_async(const char *identifier,
   /* Set Accept header */
   soup_message_headers_append(soup_message_get_request_headers(msg), "Accept", "application/json");
 
-  /* Start async request */
-  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, ctx->cancellable, on_nip05_http_done, ctx);
+  /* nostrc-soup-dblf: Do NOT pass cancellable to shared session requests.
+   * Cancellation causes libsoup connection-pool corruption (double-free in
+   * g_weak_ref_get on macOS).  The request will complete and the callback
+   * can check for shutdown/disposal via its own context. */
+  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, NULL, on_nip05_http_done, ctx);
 
   g_object_unref(msg);
   /* Note: Don't unref shared session - we don't own it */

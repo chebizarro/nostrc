@@ -424,8 +424,10 @@ void gnostr_relay_info_fetch_async(const gchar *relay_url,
   ctx->relay_url = g_strdup(relay_url);
   ctx->task = task;
 
+  /* nostrc-soup-dblf: No cancellable on shared session requests —
+   * cancellation triggers libsoup connection pool corruption. */
   soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
-                                    cancellable, on_soup_message_complete, ctx);
+                                    NULL, on_soup_message_complete, ctx);
 
   g_object_unref(msg);
   /* Note: Don't unref shared session - we don't own it */

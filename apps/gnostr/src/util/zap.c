@@ -431,8 +431,10 @@ do_lnurl_fetch(LnurlFetchContext *ctx)
   /* Start per-request timeout */
   ctx->timeout_source_id = g_timeout_add_seconds(LNURL_TIMEOUT_SECS, lnurl_timeout_cb, ctx);
 
+  /* nostrc-soup-dblf: No cancellable on shared session requests —
+   * cancellation triggers libsoup connection pool corruption on macOS. */
   soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
-                                   ctx->request_cancellable,
+                                   NULL,
                                    on_lnurl_info_http_done, ctx);
   g_object_unref(msg);
 }
@@ -710,8 +712,9 @@ void gnostr_zap_request_invoice_async(const GnostrLnurlPayInfo *lnurl_info,
   /* Start per-request timeout */
   ctx->timeout_source_id = g_timeout_add_seconds(LNURL_TIMEOUT_SECS, invoice_timeout_cb, ctx);
 
+  /* nostrc-soup-dblf: No cancellable on shared session requests. */
   soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
-                                   ctx->request_cancellable,
+                                   NULL,
                                    on_invoice_http_done, ctx);
 
   g_object_unref(msg);

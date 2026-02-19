@@ -122,10 +122,8 @@ static void gnostr_torrent_card_dispose(GObject *object) {
   }
 
 #ifdef HAVE_SOUP3
-  if (self->avatar_cancellable) {
-    g_cancellable_cancel(self->avatar_cancellable);
-    g_clear_object(&self->avatar_cancellable);
-  }
+  /* nostrc-soup-dblf: Don't cancel shared session requests — let them complete. */
+  g_clear_object(&self->avatar_cancellable);
   /* Shared session is managed globally - do not clear here */
 #endif
 
