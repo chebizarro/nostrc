@@ -410,6 +410,18 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
   self->disposed = TRUE;
   self->binding_id = 0;
 
+  /* nostrc-pango-crash: Clear content label markup during unbind (not just
+   * dispose) because Pango crashes can occur during measure/layout passes
+   * triggered by GTK recycling, even before dispose runs. The content_label
+   * is the highest-risk label as it contains rich Pango markup with links.
+   * Also clear avatar paintable to prevent GtkImageDefinition corruption. */
+  if (GNOSTR_LABEL_SAFE(self->content_label)) {
+    gtk_label_set_markup(GTK_LABEL(self->content_label), "");
+  }
+  if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
+  }
+
   /* nostrc-ncr-lifecycle: Cancel the binding context. In-flight callbacks
    * that hold refs to this context will get NULL from get_row(). */
   if (self->binding_ctx) {
@@ -496,8 +508,27 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
       if (GNOSTR_IS_VIDEO_PLAYER(child)) {
         gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(child));
       }
+      /* nostrc-pango-crash: Clear paintables from media GtkPictures to prevent
+       * GtkImageDefinition corruption during rapid widget recycling. */
+      if (GTK_IS_PICTURE(child)) {
+        gtk_picture_set_paintable(GTK_PICTURE(child), NULL);
+      }
       child = gtk_widget_get_next_sibling(child);
     }
+  }
+
+  /* nostrc-pango-crash: Clear stale OG preview and note embed children during
+   * quiesce instead of in prepare_for_bind, to avoid re-entering GTK internals
+   * during list-item recycling. gtk_box_remove inside the recycling cycle can
+   * trigger measure/layout on partially-torn-down children. */
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->og_preview_container);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->og_preview_container), child);
+      child = next;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
   }
 
   /* Never dereference cached child pointers during teardown. */
@@ -524,6 +555,58 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   /* NIP-25: Clean up reaction breakdown */
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
   g_clear_pointer(&self->reactors, g_ptr_array_unref);
+
+  /* nostrc-pango-crash: Clear all label text BEFORE gtk_widget_dispose_template()
+   * to prevent PangoLayout finalization crash. When the native surface is already
+   * gone (widget unrealized during rapid recycling), PangoLayouts reference a
+   * freed PangoContext. Clearing text resets the PangoLayout while it's safe.
+   * If the native surface is gone, ref-leak the label (~1KB) to prevent
+   * finalization from touching the dead PangoContext.
+   * Pattern from og-preview-widget.c OG_DISPOSE_LABEL. */
+#define NCR_DISPOSE_LABEL(lbl) \
+  do { \
+    if (GNOSTR_LABEL_SAFE(lbl)) { \
+      gtk_label_set_text(GTK_LABEL(lbl), ""); \
+    } else if (GTK_IS_LABEL(lbl)) { \
+      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
+      if (_t && *_t) g_object_ref(lbl); \
+    } \
+  } while (0)
+
+  NCR_DISPOSE_LABEL(self->content_label);
+  NCR_DISPOSE_LABEL(self->lbl_display);
+  NCR_DISPOSE_LABEL(self->lbl_handle);
+  NCR_DISPOSE_LABEL(self->lbl_timestamp);
+  NCR_DISPOSE_LABEL(self->lbl_nip05);
+  NCR_DISPOSE_LABEL(self->lbl_nip05_separator);
+  NCR_DISPOSE_LABEL(self->lbl_timestamp_separator);
+  NCR_DISPOSE_LABEL(self->lbl_relay);
+  NCR_DISPOSE_LABEL(self->lbl_like_count);
+  NCR_DISPOSE_LABEL(self->lbl_zap_count);
+  NCR_DISPOSE_LABEL(self->lbl_repost_count);
+  NCR_DISPOSE_LABEL(self->reply_indicator_label);
+  NCR_DISPOSE_LABEL(self->reply_count_label);
+  NCR_DISPOSE_LABEL(self->subject_label);
+  NCR_DISPOSE_LABEL(self->sensitive_warning_label);
+  NCR_DISPOSE_LABEL(self->article_title_label);
+  NCR_DISPOSE_LABEL(self->article_reading_time);
+  NCR_DISPOSE_LABEL(self->video_title_label);
+#undef NCR_DISPOSE_LABEL
+
+  /* nostrc-pango-crash: Clear GtkPicture paintables to prevent
+   * GtkImageDefinition corruption during widget disposal.
+   * See drain timer comment about gtk_image_definition_unref crash. */
+  if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image))
+    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
+  if (self->article_image && GTK_IS_PICTURE(self->article_image))
+    gtk_picture_set_paintable(GTK_PICTURE(self->article_image), NULL);
+  if (self->video_thumb_picture && GTK_IS_PICTURE(self->video_thumb_picture))
+    gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), NULL);
+
+  /* nostrc-pango-crash: Null layout manager before template disposal to prevent
+   * it from measuring partially-destroyed children during the disposal cascade.
+   * Pattern from og-preview-widget.c. */
+  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
   gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
@@ -6196,18 +6279,11 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
   }
   self->media_map_handler_id = 0;
 
-  /* nostrc-NEW: Clear stale OG preview from previous binding.
-   * prepare_for_unbind sets self->og_preview=NULL but doesn't remove the widget
-   * from container. If the new event has no URL, the old preview stays visible
-   * showing content from a completely different event (e.g., a zip file link
-   * appearing on an unrelated Substack article). */
+  /* nostrc-pango-crash: OG preview children are now cleaned up in quiesce()
+   * to avoid re-entering GTK internals during the recycling cycle. Here we
+   * just ensure the pointer and visibility are reset for the fresh bind.
+   * quiesce already removed children and hid the container. */
   if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
-    GtkWidget *child = gtk_widget_get_first_child(self->og_preview_container);
-    while (child) {
-      GtkWidget *next = gtk_widget_get_next_sibling(child);
-      gtk_box_remove(GTK_BOX(self->og_preview_container), child);
-      child = next;
-    }
     gtk_widget_set_visible(self->og_preview_container, FALSE);
   }
   self->og_preview = NULL;
