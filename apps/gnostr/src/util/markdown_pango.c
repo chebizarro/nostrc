@@ -372,6 +372,14 @@ char *markdown_to_pango(const char *markdown, gsize max_length) {
     return g_strdup("");
   }
 
+  /* nostrc-csaf: Sanitize UTF-8 first. Relay content can contain invalid
+   * byte sequences that corrupt Pango if passed through as-is. */
+  g_autofree gchar *safe_md = NULL;
+  if (!g_utf8_validate(markdown, -1, NULL)) {
+    safe_md = g_utf8_make_valid(markdown, -1);
+    markdown = safe_md;
+  }
+
   GString *out = g_string_sized_new(strlen(markdown) + 256);
   gboolean in_code_block = FALSE;
 

@@ -139,24 +139,53 @@ gnostr_safe_set_markup(GtkLabel *label, const char *markup)
     g_debug("gnostr_safe_set_markup: invalid markup, falling back to text: %s",
             err->message);
     g_clear_error(&err);
+
+    /* nostrc-csaf: Cached regex patterns for fallback path performance.
+     * Thread-local static ensures one-time init per thread without races. */
+    static GRegex *tag_re = NULL, *amp_re = NULL, *lt_re = NULL;
+    static GRegex *gt_re = NULL, *quot_re = NULL, *apos_re = NULL;
+    if (G_UNLIKELY(tag_re == NULL)) {
+      tag_re = g_regex_new("<[^>]*>", 0, 0, NULL);
+      amp_re = g_regex_new("&amp;", 0, 0, NULL);
+      lt_re = g_regex_new("&lt;", 0, 0, NULL);
+      gt_re = g_regex_new("&gt;", 0, 0, NULL);
+      quot_re = g_regex_new("&quot;", 0, 0, NULL);
+      apos_re = g_regex_new("&apos;", 0, 0, NULL);
+    }
+
     /* Strip all XML/Pango tags and set as plain text */
     g_autofree char *plaintext = NULL;
-    GRegex *tag_re = g_regex_new("<[^>]*>", 0, 0, NULL);
     if (tag_re) {
       plaintext = g_regex_replace_literal(tag_re, clean, -1, 0, "", 0, NULL);
-      g_regex_unref(tag_re);
     }
-    /* Also un-escape XML entities for the plain text fallback */
+
+    /* Un-escape all common XML entities for the plain text fallback */
     if (plaintext) {
-      /* Simple entity replacements for common XML entities */
-      g_autofree char *t1 = NULL;
-      GRegex *amp_re = g_regex_new("&amp;", 0, 0, NULL);
+      g_autofree char *t1 = NULL, *t2 = NULL, *t3 = NULL, *t4 = NULL, *t5 = NULL;
+      const char *cur = plaintext;
+
       if (amp_re) {
-        t1 = g_regex_replace_literal(amp_re, plaintext, -1, 0, "&", 0, NULL);
-        g_regex_unref(amp_re);
+        t1 = g_regex_replace_literal(amp_re, cur, -1, 0, "&", 0, NULL);
+        cur = t1;
       }
-      const char *use = t1 ? t1 : plaintext;
-      gtk_label_set_text(label, use);
+      if (lt_re && cur) {
+        t2 = g_regex_replace_literal(lt_re, cur, -1, 0, "<", 0, NULL);
+        cur = t2;
+      }
+      if (gt_re && cur) {
+        t3 = g_regex_replace_literal(gt_re, cur, -1, 0, ">", 0, NULL);
+        cur = t3;
+      }
+      if (quot_re && cur) {
+        t4 = g_regex_replace_literal(quot_re, cur, -1, 0, "\"", 0, NULL);
+        cur = t4;
+      }
+      if (apos_re && cur) {
+        t5 = g_regex_replace_literal(apos_re, cur, -1, 0, "'", 0, NULL);
+        cur = t5;
+      }
+
+      gtk_label_set_text(label, cur ? cur : plaintext);
     } else {
       gtk_label_set_text(label, clean);
     }

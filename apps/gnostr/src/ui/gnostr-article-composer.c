@@ -9,6 +9,7 @@
 
 #include "gnostr-article-composer.h"
 #include "../util/markdown_pango.h"
+#include <nostr-gtk-1.0/content_renderer.h>
 #include <adwaita.h>
 #include <glib/gi18n.h>
 
@@ -90,13 +91,15 @@ static void on_preview_toggled(GtkToggleButton *btn, gpointer user_data) {
     if (text && *text) {
       char *pango = markdown_to_pango(text, 0);
       if (pango) {
-        gtk_label_set_markup(self->lbl_preview, pango);
+        /* nostrc-csaf: Use safe markup setter for consistency - users may paste
+         * relay content into the composer which could contain malformed markup */
+        gnostr_safe_set_markup(GTK_LABEL(self->lbl_preview), pango);
         g_free(pango);
       } else {
-        gtk_label_set_text(self->lbl_preview, text);
+        gtk_label_set_text(GTK_LABEL(self->lbl_preview), text);
       }
     } else {
-      gtk_label_set_text(self->lbl_preview, "(empty)");
+      gtk_label_set_text(GTK_LABEL(self->lbl_preview), "(empty)");
     }
     g_free(text);
 
