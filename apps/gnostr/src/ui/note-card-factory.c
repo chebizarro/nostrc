@@ -619,17 +619,24 @@ factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   GtkWidget *row = gtk_list_item_get_child(item);
 
   if (row) {
-    /* nostrc-sbqe.3: Disconnect Tier 2 map handler */
+    /* nostrc-sbqe.3: Disconnect Tier 2 map handler.
+     * nostrc-icn: Check handler is still connected before disconnecting. */
     gulong map_handler_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tier2-map-handler-id"));
-    if (map_handler_id > 0 && GTK_IS_WIDGET(row)) {
+    if (map_handler_id > 0 && GTK_IS_WIDGET(row) &&
+        g_signal_handler_is_connected(G_OBJECT(row), map_handler_id)) {
       g_signal_handler_disconnect(row, map_handler_id);
     }
     g_object_set_data(G_OBJECT(row), "tier2-map-handler-id", NULL);
 
-    /* Disconnect profile change handler to prevent callbacks to stale row */
+    /* Disconnect profile change handler to prevent callbacks to stale row.
+     * nostrc-icn: CRITICAL - Must check g_signal_handler_is_connected before
+     * disconnecting. The bound_item may have been disposed or the handler may
+     * have been invalidated by GLib internally, causing assertion failure in
+     * invalid_closure_notify if we try to disconnect an already-gone handler. */
     gulong handler_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "profile-handler-id"));
     GObject *bound_item = g_object_get_data(G_OBJECT(row), "bound-item");
-    if (handler_id > 0 && bound_item && G_IS_OBJECT(bound_item)) {
+    if (handler_id > 0 && bound_item && G_IS_OBJECT(bound_item) &&
+        g_signal_handler_is_connected(bound_item, handler_id)) {
       g_signal_handler_disconnect(bound_item, handler_id);
     }
     g_object_set_data(G_OBJECT(row), "profile-handler-id", NULL);
