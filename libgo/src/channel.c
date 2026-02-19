@@ -191,7 +191,9 @@ static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unl
  * and channel_unref calls.
  */
 
-#define GO_GRAVEYARD_DELAY_NS (1000000000ULL)  /* 1 second */
+#define GO_GRAVEYARD_DELAY_NS (5000000000ULL)  /* 5 seconds — increased from 1s to give
+                                                * nsync waiters more time to drain after
+                                                * channel destruction (nostrc-imgdef). */
 
 typedef struct GoDeadChannel {
     GoChannel            *chan;

@@ -1097,34 +1097,42 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
         return;
     }
 
-    // Wait on either an incoming message or context cancellation
-    // nostrc-b0h-revert: Use polling instead of go_select due to race condition
-    // where websocket messages arrive before select waiters are registered.
+    /* Wait on either an incoming message or context cancellation.
+     *
+     * nostrc-imgdef: REPLACED the 1ms polling loop with proper go_select.
+     * The polling loop (nostrc-b0h-revert) was introduced because go_select
+     * had a race where messages arrived before waiters were registered.
+     * That race is now fixed in select.c — the double-check pattern
+     * (try → register → try again) guarantees no lost wakeups.
+     *
+     * Benefits: eliminates 1ms latency floor, removes CPU-burning spin,
+     * and reduces overall system load that contributed to timing-sensitive
+     * heap corruption in nsync waiter drain paths. */
     WebSocketMessage *msg = NULL;
     if (ctx) {
-        // Poll both channels with 1ms backoff
-        for (;;) {
-            // Check if context is canceled
-            if (go_context_is_canceled(ctx)) {
-                if (err) *err = new_error(1, "Context canceled");
-                go_channel_unref(recv_chan);
-                return;
-            }
-            // Try to receive a message
-            if (go_channel_try_receive(recv_chan, (void **)&msg) == 0) {
-                break; // Got a message
-            }
-            // Check if channel is closed
-            if (go_channel_is_closed(recv_chan)) {
-                if (err) *err = new_error(1, "Receive channel closed");
-                go_channel_unref(recv_chan);
-                return;
-            }
-            // Brief sleep to avoid busy-waiting
-            usleep(1000); // 1ms
+        GoChannel *done_chan_sel = ctx->done;
+        void *dummy = NULL;
+        GoSelectCase cases[2] = {
+            { GO_SELECT_RECEIVE, recv_chan,     NULL, (void **)&msg },
+            { GO_SELECT_RECEIVE, done_chan_sel, NULL, (void **)&dummy },
+        };
+        int ncases = (done_chan_sel && done_chan_sel->magic == GO_CHANNEL_MAGIC) ? 2 : 1;
+        int sel = go_select(cases, (size_t)ncases);
+        if (sel < 0) {
+            /* All channels invalid/closed */
+            if (err) *err = new_error(1, "Receive failed: all channels closed");
+            go_channel_unref(recv_chan);
+            return;
         }
+        if (sel == 1) {
+            /* Context canceled */
+            if (err) *err = new_error(1, "Context canceled");
+            go_channel_unref(recv_chan);
+            return;
+        }
+        /* sel == 0: got a message (may be NULL if channel closed) */
         if (msg == NULL) {
-            if (err) *err = new_error(1, "Receive failed or channel closed");
+            if (err) *err = new_error(1, "Receive channel closed");
             go_channel_unref(recv_chan);
             return;
         }
