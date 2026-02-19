@@ -119,7 +119,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         in = priv->rx_reassembly_buf;
         len = priv->rx_reassembly_len;
 
-queue_message:
+queue_message:;
         /* nostrc-uaf-lws: CRITICAL — Acquire recv_channel ref under priv->mutex.
          *
          * The relay close path NULLs conn->recv_channel under priv->mutex
