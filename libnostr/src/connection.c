@@ -120,27 +120,37 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         len = priv->rx_reassembly_len;
 
 queue_message:
-        // Check if channel is still valid (it may have been freed during shutdown)
-        // Validate both pointer and magic number to detect use-after-free
-        {
-            GoChannel *recv_chan = conn->recv_channel;
-            if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
-                priv->rx_reassembly_len = 0;
-                return 0;
-            }
+        /* nostrc-uaf-lws: CRITICAL — Acquire recv_channel ref under priv->mutex.
+         *
+         * The relay close path NULLs conn->recv_channel under priv->mutex
+         * before freeing the channel.  By reading the pointer under the same
+         * mutex and taking a reference, we guarantee the channel won't be
+         * freed while we're using it.  After we're done, we unref to release
+         * our hold.  If the relay has already NULLed the pointer, we see NULL
+         * and bail cleanly. */
+        GoChannel *recv_chan = NULL;
+        nsync_mu_lock(&priv->mutex);
+        recv_chan = conn->recv_channel;
+        if (recv_chan && recv_chan->magic == GO_CHANNEL_MAGIC) {
+            go_channel_ref(recv_chan);
+        } else {
+            recv_chan = NULL;
+        }
+        nsync_mu_unlock(&priv->mutex);
+        if (!recv_chan) {
+            priv->rx_reassembly_len = 0;
+            return 0;
         }
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
-        if (!msg) { priv->rx_reassembly_len = 0; return -1; }
+        if (!msg) { go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; return -1; }
         msg->length = len;
         msg->data = (char*)malloc(len + 1);
-        if (!msg->data) { free(msg); priv->rx_reassembly_len = 0; return -1; }
+        if (!msg->data) { free(msg); go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; return -1; }
         memcpy(msg->data, in, len);
         msg->data[len] = '\0';
         // Reset reassembly state
         priv->rx_reassembly_len = 0;
-        // Capture channel pointer once for thread-safe access
-        GoChannel *recv_chan = conn->recv_channel;
         // Non-blocking send: the lws service thread is shared across ALL
         // connections. A blocking send here would freeze the entire app if
         // the consumer (message_loop) falls behind. (nostrc-j6h1)
@@ -151,14 +161,14 @@ queue_message:
             int retries = 10;
             while (retries-- > 0) {
                 sched_yield();
-                /* nostrc-uaf: Do NOT re-read conn->recv_channel here - conn may have
-                 * been freed during the retry loop. Just validate the channel pointer
-                 * we already captured at line 136. If the channel was closed, the
-                 * magic check will fail and we'll bail out safely. */
-                if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
+                /* nostrc-uaf-lws: We hold a ref on recv_chan, so the channel
+                 * struct can't be freed.  But if it's been closed (by relay
+                 * teardown), try_send will fail — which is the correct behavior.
+                 * Check closed to bail early without burning retries. */
+                if (go_channel_is_closed(recv_chan)) {
                     free(msg->data);
                     free(msg);
-                    return 0;
+                    goto send_done;
                 }
                 if (go_channel_try_send(recv_chan, msg) == 0) {
                     goto send_ok;
@@ -168,12 +178,15 @@ queue_message:
             nostr_rl_log(NLOG_WARN, "ws", "drop: recv_channel full after retries (len=%zu)", len);
             free(msg->data);
             free(msg);
+            go_channel_unref(recv_chan);
             break;
         }
 send_ok:
         // Metrics
         nostr_metric_counter_add("ws_rx_enqueued_bytes", (uint64_t)len);
         nostr_metric_counter_add("ws_rx_enqueued_messages", 1);
+send_done:
+        go_channel_unref(recv_chan);
         break;
     }
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
@@ -223,23 +236,30 @@ send_ok:
 
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
         // Pop a message from the send_channel and send it over the WebSocket (non-blocking)
-        if (!conn || !conn->priv || !conn->priv->wsi || !conn->send_channel) break;
+        if (!conn || !conn->priv) break;
         
-        // Double-check connection is still valid after channel access
+        /* nostrc-uaf-lws: Acquire send_channel ref under priv->mutex.
+         * Same pattern as recv_channel — relay close NULLs the pointer
+         * under this mutex before freeing. */
+        GoChannel *send_chan = NULL;
         nsync_mu_lock(&conn->priv->mutex);
         struct lws *wsi_check = conn->priv->wsi;
-        nsync_mu_unlock(&conn->priv->mutex);
-        if (!wsi_check || wsi_check != wsi) {
-            // Connection has been closed or changed
-            break;
+        if (wsi_check && wsi_check == wsi && conn->send_channel &&
+            conn->send_channel->magic == GO_CHANNEL_MAGIC) {
+            send_chan = conn->send_channel;
+            go_channel_ref(send_chan);
         }
+        nsync_mu_unlock(&conn->priv->mutex);
+        if (!send_chan) break;
+        
         WebSocketMessage *msg = NULL;
-        if (go_channel_try_receive(conn->send_channel, (void **)&msg) == 0 && msg) {
+        if (go_channel_try_receive(send_chan, (void **)&msg) == 0 && msg) {
             // Validate message structure before use
             if (!msg->data || msg->length == 0 || msg->length > 1024*1024) {
                 fprintf(stderr, "Invalid message: data=%p length=%zu\n", (void*)msg->data, msg->length);
                 if (msg->data) free(msg->data);
                 free(msg);
+                go_channel_unref(send_chan);
                 return -1;
             }
             
@@ -249,6 +269,7 @@ send_ok:
                 fprintf(stderr, "OOM allocating write buffer\n");
                 free(msg->data);
                 free(msg);
+                go_channel_unref(send_chan);
                 return -1;
             }
             unsigned char *p = buf + LWS_PRE;
@@ -269,6 +290,7 @@ send_ok:
                 free(msg->data);
                 free(msg);
                 free(buf);
+                go_channel_unref(send_chan);
                 return -1;
             }
 
@@ -279,7 +301,7 @@ send_ok:
             // Ask for another writable callback in case there are more messages pending
             lws_callback_on_writable(wsi);
         }
-
+        go_channel_unref(send_chan);
         break;
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
@@ -1011,9 +1033,20 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
         return;
     }
 
-    // Validate recv_channel before use to prevent use-after-free during shutdown/reconnect
-    GoChannel *recv_chan = conn->recv_channel;
-    if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
+    /* nostrc-uaf-lws: Acquire recv_channel ref under priv->mutex to prevent
+     * use-after-free.  The relay close path NULLs conn->recv_channel under
+     * this mutex before freeing, so if we see a non-NULL pointer and take
+     * a ref, the channel can't be freed until we unref. */
+    GoChannel *recv_chan = NULL;
+    if (conn->priv) {
+        nsync_mu_lock(&conn->priv->mutex);
+        if (conn->recv_channel && conn->recv_channel->magic == GO_CHANNEL_MAGIC) {
+            recv_chan = conn->recv_channel;
+            go_channel_ref(recv_chan);
+        }
+        nsync_mu_unlock(&conn->priv->mutex);
+    }
+    if (!recv_chan) {
         if (err) *err = new_error(1, "recv channel invalid or closed");
         return;
     }
@@ -1022,6 +1055,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
     GoChannel *done_chan = ctx ? ctx->done : NULL;
     if (ctx && (!done_chan || done_chan->magic != GO_CHANNEL_MAGIC)) {
         if (err) *err = new_error(1, "context done channel invalid");
+        go_channel_unref(recv_chan);
         return;
     }
 
@@ -1035,6 +1069,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
             // Check if context is canceled
             if (go_context_is_canceled(ctx)) {
                 if (err) *err = new_error(1, "Context canceled");
+                go_channel_unref(recv_chan);
                 return;
             }
             // Try to receive a message
@@ -1044,6 +1079,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
             // Check if channel is closed
             if (go_channel_is_closed(recv_chan)) {
                 if (err) *err = new_error(1, "Receive channel closed");
+                go_channel_unref(recv_chan);
                 return;
             }
             // Brief sleep to avoid busy-waiting
@@ -1051,11 +1087,13 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
         }
         if (msg == NULL) {
             if (err) *err = new_error(1, "Receive failed or channel closed");
+            go_channel_unref(recv_chan);
             return;
         }
     } else {
         if (go_channel_receive(recv_chan, (void **)&msg) != 0 || !msg) {
             if (err) *err = new_error(1, "Failed to receive message or channel closed");
+            go_channel_unref(recv_chan);
             return;
         }
     }
@@ -1066,6 +1104,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
             // Corrupted message: length > 0 but data is NULL
             if (err) *err = new_error(1, "Corrupted message: data is NULL");
             free(msg);
+            go_channel_unref(recv_chan);
             return;
         }
 
@@ -1082,6 +1121,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
                 // Free memory and return early to avoid issues
                 if (msg->data) free(msg->data);
                 free(msg);
+                go_channel_unref(recv_chan);
                 return;
             }
         }
@@ -1094,4 +1134,5 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
         if (msg->data) free(msg->data);
         free(msg);
     }
+    go_channel_unref(recv_chan);
 }
