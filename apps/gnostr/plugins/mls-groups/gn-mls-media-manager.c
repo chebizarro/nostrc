@@ -8,6 +8,7 @@
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
+#include <marmot/marmot.h>
 #include <libsoup/soup.h>
 
 #define DEFAULT_BLOSSOM_SERVER "https://blossom.primal.net"
@@ -330,41 +331,81 @@ on_file_read(GObject      *source,
 
   /*
    * MIP-04: Encrypt the media using the group's MLS exporter secret.
-   *
-   * The libmarmot API for media encryption:
-   *   marmot_encrypt_media(client, group_id_hex,
-   *                        plaintext_bytes, plaintext_len,
-   *                        &ciphertext_bytes, &ciphertext_len,
-   *                        &nonce_b64, &hash_hex, &epoch,
-   *                        &error)
-   *
-   * Since marmot-gobject does not yet expose a GObject-wrapped
-   * marmot_encrypt_media(), we call the underlying C API directly
-   * via gn_marmot_service_get_client() and use the raw libmarmot
-   * functions through the client's internal handle.
-   *
-   * TODO: Add marmot_gobject_client_encrypt_media_async() to
-   * marmot-gobject when MIP-04 support is added to the GObject wrapper.
-   *
-   * For now, we stub the encryption and proceed with the upload
-   * infrastructure in place.
+   * We use the libmarmot C API directly via marmot_gobject_client_get_marmot().
    */
-  g_info("MlsMediaManager: MIP-04 encryption stub — "
-         "full marmot_encrypt_media() integration pending marmot-gobject update");
+  MarmotGobjectClient *client = gn_marmot_service_get_client(data->manager->service);
+  if (client == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                              "Marmot client not available");
+      g_object_unref(data->task);
+      upload_data_free(data);
+      return;
+    }
+
+  Marmot *marmot = marmot_gobject_client_get_marmot(client);
+  if (marmot == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                              "Marmot instance not available");
+      g_object_unref(data->task);
+      upload_data_free(data);
+      return;
+    }
 
   gsize plain_len = 0;
   const guint8 *plain_bytes = g_bytes_get_data(data->plaintext, &plain_len);
 
-  /* Stub: use plaintext as ciphertext until marmot-gobject exposes encrypt_media */
-  data->ciphertext = g_bytes_new(plain_bytes, plain_len);
-  data->nonce_b64  = g_strdup("AAAAAAAAAAAAAAAAAAAAAA==");   /* 16-byte zero nonce */
-  data->epoch      = 0;
+  /* Parse group ID hex to MarmotGroupId */
+  size_t gid_len = strlen(data->group_id_hex) / 2;
+  uint8_t *gid_bytes = g_malloc(gid_len);
+  for (size_t i = 0; i < gid_len; i++)
+    {
+      unsigned int byte_val;
+      sscanf(data->group_id_hex + (i * 2), "%02x", &byte_val);
+      gid_bytes[i] = (uint8_t)byte_val;
+    }
+  MarmotGroupId mls_group_id = marmot_group_id_new(gid_bytes, gid_len);
+  g_free(gid_bytes);
 
-  /* Compute SHA-256 hash of the (stub) ciphertext for Blossom */
-  GChecksum *cksum = g_checksum_new(G_CHECKSUM_SHA256);
-  g_checksum_update(cksum, plain_bytes, (gssize)plain_len);
-  data->hash_hex = g_strdup(g_checksum_get_string(cksum));
-  g_checksum_free(cksum);
+  /* Call libmarmot encryption */
+  MarmotEncryptedMedia enc_result = {0};
+  MarmotError err = marmot_encrypt_media(
+    marmot,
+    &mls_group_id,
+    plain_bytes, plain_len,
+    data->content_type,
+    data->filename,
+    &enc_result);
+
+  marmot_group_id_free(&mls_group_id);
+
+  if (err != MARMOT_OK)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "MIP-04 encryption failed: %s",
+                              marmot_error_string(err));
+      g_object_unref(data->task);
+      upload_data_free(data);
+      return;
+    }
+
+  g_info("MlsMediaManager: MIP-04 encryption successful (epoch %" G_GUINT64_FORMAT ")",
+         enc_result.imeta.epoch);
+
+  /* Store encryption results */
+  data->ciphertext = g_bytes_new_take(enc_result.encrypted_data, enc_result.encrypted_len);
+  enc_result.encrypted_data = NULL;  /* ownership transferred */
+
+  /* Convert nonce to base64 */
+  data->nonce_b64 = g_base64_encode(enc_result.nonce, sizeof(enc_result.nonce));
+  data->epoch = enc_result.imeta.epoch;
+
+  /* Convert file hash to hex */
+  GString *hash_str = g_string_sized_new(64);
+  for (size_t i = 0; i < sizeof(enc_result.file_hash); i++)
+    g_string_append_printf(hash_str, "%02x", enc_result.file_hash[i]);
+  data->hash_hex = g_string_free(hash_str, FALSE);
 
   do_blossom_upload(data);
 }
@@ -410,18 +451,81 @@ on_blossom_download_done(GObject      *source,
     }
 
   /*
-   * MIP-04: Decrypt the downloaded blob.
-   *
-   * TODO: Call marmot_gobject_client_decrypt_media_async() once available.
-   * Stub: return the bytes as-is.
+   * MIP-04: Decrypt the downloaded blob using libmarmot.
    */
-  g_info("MlsMediaManager: MIP-04 decryption stub — "
-         "full marmot_decrypt_media() integration pending marmot-gobject update");
+  MarmotGobjectClient *client = gn_marmot_service_get_client(data->manager->service);
+  if (client == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                              "Marmot client not available");
+      g_object_unref(data->task);
+      download_data_free(data);
+      return;
+    }
 
-  /* Return content type as NULL (caller can detect from bytes) */
-  g_task_return_pointer(data->task,
-                         g_bytes_ref(cipher_bytes),
-                         (GDestroyNotify)g_bytes_unref);
+  Marmot *marmot = marmot_gobject_client_get_marmot(client);
+  if (marmot == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                              "Marmot instance not available");
+      g_object_unref(data->task);
+      download_data_free(data);
+      return;
+    }
+
+  gsize cipher_len = 0;
+  const guint8 *cipher_data = g_bytes_get_data(cipher_bytes, &cipher_len);
+
+  /* Parse group ID hex to MarmotGroupId */
+  size_t gid_len = strlen(data->group_id_hex) / 2;
+  uint8_t *gid_bytes = g_malloc(gid_len);
+  for (size_t i = 0; i < gid_len; i++)
+    {
+      unsigned int byte_val;
+      sscanf(data->group_id_hex + (i * 2), "%02x", &byte_val);
+      gid_bytes[i] = (uint8_t)byte_val;
+    }
+  MarmotGroupId mls_group_id = marmot_group_id_new(gid_bytes, gid_len);
+  g_free(gid_bytes);
+
+  /* Build imeta info for decryption */
+  MarmotImetaInfo imeta = {0};
+  imeta.epoch = data->epoch;
+
+  /* Decode nonce from base64 */
+  gsize nonce_len = 0;
+  guchar *nonce_decoded = g_base64_decode(data->nonce_b64, &nonce_len);
+  if (nonce_decoded != NULL && nonce_len == sizeof(imeta.nonce))
+    memcpy(imeta.nonce, nonce_decoded, sizeof(imeta.nonce));
+  g_free(nonce_decoded);
+
+  /* Call libmarmot decryption */
+  uint8_t *plaintext_out = NULL;
+  size_t plaintext_len = 0;
+
+  MarmotError err = marmot_decrypt_media(
+    marmot,
+    &mls_group_id,
+    cipher_data, cipher_len,
+    &imeta,
+    &plaintext_out, &plaintext_len);
+
+  marmot_group_id_free(&mls_group_id);
+
+  if (err != MARMOT_OK)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "MIP-04 decryption failed: %s",
+                              marmot_error_string(err));
+      g_object_unref(data->task);
+      download_data_free(data);
+      return;
+    }
+
+  g_info("MlsMediaManager: MIP-04 decryption successful (%zu bytes)", plaintext_len);
+
+  GBytes *result_bytes = g_bytes_new_take(plaintext_out, plaintext_len);
+  g_task_return_pointer(data->task, result_bytes, (GDestroyNotify)g_bytes_unref);
   g_object_unref(data->task);
   download_data_free(data);
 }
