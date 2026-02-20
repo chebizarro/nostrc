@@ -1,0 +1,8 @@
+[Plugin]
+Module=mls-groups
+Name=MLS Group Messaging
+Description=Secure group messaging using the Marmot protocol (MLS over Nostr). Interoperable with Whitenoise and other MDK-compatible clients.
+Authors=Gnostr Contributors
+Version=1.0
+Copyright=Copyright © 2026 Gnostr Contributors
+Website=https://github.com/gnostr
