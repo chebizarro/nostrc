@@ -3,6 +3,9 @@
 
 set(PLUGIN_NAME mls-groups)
 
+# Find libadwaita for UI widgets
+pkg_check_modules(LIBADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
+
 # Get the gnostr app directory (two levels up from plugin)
 set(GNOSTR_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 # Get the project root
@@ -14,6 +17,15 @@ set(PLUGIN_SOURCES
     gn-marmot-service.c
     gn-key-package-manager.c
     gn-mls-event-router.c
+    # Phase 4: Models
+    model/gn-group-list-model.c
+    model/gn-group-message-model.c
+    # Phase 4: UI Widgets
+    ui/gn-group-list-view.c
+    ui/gn-group-list-row.c
+    ui/gn-group-chat-view.c
+    ui/gn-group-message-row.c
+    ui/gn-group-composer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gnostr-plugin-api.c
 )
 
@@ -45,6 +57,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
     PkgConfig::JSON_GLIB
+    PkgConfig::LIBADWAITA
 )
 
 # Link libgo for include paths

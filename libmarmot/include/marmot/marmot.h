@@ -112,6 +112,31 @@ MarmotError marmot_create_key_package(Marmot *m,
                                        const char **relay_urls, size_t relay_count,
                                        MarmotKeyPackageResult *result);
 
+/**
+ * marmot_create_key_package_unsigned:
+ * @m: Marmot instance
+ * @nostr_pubkey: (array fixed-size=32): user's Nostr public key (x-only, 32 bytes)
+ * @relay_urls: (array length=relay_count): relay URL strings
+ * @relay_count: number of relay URLs
+ * @result: (out): result containing the unsigned kind:443 event JSON
+ *
+ * Create an MLS KeyPackage and wrap it in an *unsigned* kind:443 Nostr event.
+ * The MLS LeafNode uses a self-signed credential derived from the pubkey.
+ * The caller must sign the Nostr event externally before publishing.
+ *
+ * This is the preferred API for signer-only architectures where the caller
+ * delegates Nostr event signing to an external service (e.g., D-Bus signer).
+ *
+ * NOTE: The MLS credential's self-signature currently uses a zero SK
+ * placeholder. Future versions will support delegated MLS signing.
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_create_key_package_unsigned(Marmot *m,
+                                                const uint8_t nostr_pubkey[32],
+                                                const char **relay_urls, size_t relay_count,
+                                                MarmotKeyPackageResult *result);
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-01: Group Construction
  * ══════════════════════════════════════════════════════════════════════════ */

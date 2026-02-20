@@ -18,6 +18,10 @@
 
 #include "mls-groups-plugin.h"
 #include "gn-marmot-service.h"
+#include "gn-key-package-manager.h"
+#include "gn-mls-event-router.h"
+#include "ui/gn-group-list-view.h"
+#include "ui/gn-group-chat-view.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
 
@@ -49,10 +53,13 @@ struct _MlsGroupsPlugin
   GnostrPluginContext *context;
   gboolean             active;
 
+  /* Sub-components */
+  GnKeyPackageManager *kp_manager;
+  GnMlsEventRouter    *event_router;
+
   /* Event subscriptions */
   guint64 gift_wrap_subscription;    /* kind:1059 addressed to us */
   guint64 group_msg_subscription;    /* kind:445 for our groups */
-  guint64 key_package_subscription;  /* kind:443 */
 };
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -94,13 +101,10 @@ mls_groups_plugin_dispose(GObject *object)
                                                    self->group_msg_subscription);
           self->group_msg_subscription = 0;
         }
-      if (self->key_package_subscription > 0)
-        {
-          gnostr_plugin_context_unsubscribe_events(self->context,
-                                                   self->key_package_subscription);
-          self->key_package_subscription = 0;
-        }
     }
+
+  g_clear_object(&self->kp_manager);
+  g_clear_object(&self->event_router);
 
   G_OBJECT_CLASS(mls_groups_plugin_parent_class)->dispose(object);
 }
@@ -117,9 +121,10 @@ mls_groups_plugin_init(MlsGroupsPlugin *self)
 {
   self->active                  = FALSE;
   self->context                 = NULL;
+  self->kp_manager              = NULL;
+  self->event_router            = NULL;
   self->gift_wrap_subscription  = 0;
   self->group_msg_subscription  = 0;
-  self->key_package_subscription = 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -172,6 +177,31 @@ on_group_message_received(const gchar *event_json,
 /* ══════════════════════════════════════════════════════════════════════════
  * GnostrPlugin interface
  * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+on_initial_sync_done(GObject      *source,
+                     GAsyncResult *result,
+                     gpointer      user_data)
+{
+  MlsGroupsPlugin *self = MLS_GROUPS_PLUGIN(user_data);
+  g_autoptr(GError) error = NULL;
+
+  if (!self->context)
+    return;
+
+  gboolean ok = gnostr_plugin_context_request_relay_events_finish(
+    self->context, result, &error);
+
+  if (!ok)
+    {
+      g_warning("MLS Groups plugin: initial relay sync failed: %s",
+                error ? error->message : "unknown");
+    }
+  else
+    {
+      g_info("MLS Groups plugin: initial relay sync completed");
+    }
+}
 
 static void
 mls_groups_plugin_activate(GnostrPlugin       *plugin,
@@ -249,9 +279,20 @@ mls_groups_plugin_activate(GnostrPlugin       *plugin,
       G_N_ELEMENTS(mls_kinds),
       200,   /* limit */
       NULL,  /* cancellable */
-      NULL,  /* callback — fire and forget initial sync */
-      NULL);
+      on_initial_sync_done,
+      self);
   }
+
+  /* Create sub-components */
+  self->event_router = gn_mls_event_router_new(service, context);
+  self->kp_manager = gn_key_package_manager_new(service, context);
+
+  /* Ensure key package is published */
+  if (user_pubkey != NULL)
+    {
+      gn_key_package_manager_ensure_key_package_async(
+        self->kp_manager, NULL, NULL, NULL);
+    }
 
   g_info("MLS Groups plugin: activated successfully");
 }
@@ -277,11 +318,10 @@ mls_groups_plugin_deactivate(GnostrPlugin       *plugin,
       gnostr_plugin_context_unsubscribe_events(context, self->group_msg_subscription);
       self->group_msg_subscription = 0;
     }
-  if (self->key_package_subscription > 0)
-    {
-      gnostr_plugin_context_unsubscribe_events(context, self->key_package_subscription);
-      self->key_package_subscription = 0;
-    }
+
+  /* Destroy sub-components */
+  g_clear_object(&self->kp_manager);
+  g_clear_object(&self->event_router);
 
   /* Shut down Marmot service */
   gn_marmot_service_shutdown();
@@ -366,27 +406,35 @@ mls_groups_handle_event(GnostrEventHandler  *handler,
 {
   int kind = gnostr_plugin_event_get_kind(event);
 
+  /*
+   * Return FALSE for all MLS kinds until we actually process them inline.
+   * Returning TRUE would claim exclusive consumption and prevent other
+   * handlers/the host from seeing these events.
+   *
+   * Currently, MLS events are processed by subscription callbacks
+   * (on_gift_wrap_received, on_group_message_received) which have access
+   * to the full event JSON. This handler will return TRUE only once
+   * inline processing is implemented.
+   */
   switch (kind)
     {
     case MLS_KIND_KEY_PACKAGE:
-      g_debug("MLS: Received key package event (kind:443)");
-      /* Key packages are consumed when creating groups / adding members.
-       * They're fetched on-demand from relays, not processed inline. */
-      return TRUE;
+      g_debug("MLS: Observed key package event (kind:443)");
+      /* Key packages are fetched on-demand, not processed inline. */
+      return FALSE;
 
     case MLS_KIND_GIFT_WRAP:
-      /* Gift wraps are handled by the subscription callback which has
-       * access to the full event JSON for NIP-59 unwrapping. */
-      return TRUE;
+      /* Gift wraps are processed by the subscription callback. */
+      return FALSE;
 
     case MLS_KIND_GROUP_MESSAGE:
-      /* Group messages are handled by the subscription callback. */
-      return TRUE;
+      /* Group messages are processed by the subscription callback. */
+      return FALSE;
 
     case MLS_KIND_KP_RELAY_LIST:
-      g_debug("MLS: Received key package relay list (kind:10051)");
+      g_debug("MLS: Observed key package relay list (kind:10051)");
       /* TODO Phase 2: Cache relay lists for key package discovery */
-      return TRUE;
+      return FALSE;
 
     default:
       return FALSE;
@@ -438,17 +486,31 @@ mls_groups_create_panel_widget(GnostrUIExtension  *extension,
 {
   if (g_strcmp0(panel_id, PANEL_ID_GROUP_CHATS) == 0)
     {
-      /* TODO Phase 4: Return GnGroupListView */
-      GtkWidget *placeholder = gtk_label_new("Group Chats — Coming Soon");
-      gtk_widget_add_css_class(placeholder, "dim-label");
-      gtk_widget_set_vexpand(placeholder, TRUE);
-      gtk_widget_set_hexpand(placeholder, TRUE);
-      return placeholder;
+      MlsGroupsPlugin *self = MLS_GROUPS_PLUGIN(extension);
+      GnMarmotService *service = gn_marmot_service_get_default();
+      if (service == NULL || self->event_router == NULL)
+        {
+          GtkWidget *err = gtk_label_new("MLS service not available");
+          gtk_widget_add_css_class(err, "dim-label");
+          return err;
+        }
+
+      /*
+       * The navigation view is created by the host.  We don't have
+       * access to it here, so we pass NULL and the list view will
+       * handle navigation via a fallback mechanism (GtkWindow / toast).
+       *
+       * TODO: Accept AdwNavigationView via plugin context or
+       * create_panel_widget parameter.
+       */
+      GnGroupListView *list = gn_group_list_view_new(
+        service, self->event_router, NULL);
+      return GTK_WIDGET(list);
     }
 
   if (g_strcmp0(panel_id, PANEL_ID_INVITATIONS) == 0)
     {
-      /* TODO Phase 3: Return GnWelcomeListView */
+      /* TODO Phase 5: GnWelcomeListView */
       GtkWidget *placeholder = gtk_label_new("Group Invitations — Coming Soon");
       gtk_widget_add_css_class(placeholder, "dim-label");
       gtk_widget_set_vexpand(placeholder, TRUE);

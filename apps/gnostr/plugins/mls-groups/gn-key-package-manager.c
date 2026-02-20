@@ -11,8 +11,11 @@ struct _GnKeyPackageManager
 {
   GObject parent_instance;
 
-  GnMarmotService     *service;     /* weak ref */
-  GnostrPluginContext *context;     /* borrowed */
+  GnMarmotService     *service;     /* strong ref */
+  GnostrPluginContext *context;     /* borrowed — only accessed on main thread */
+
+  /* Cancellable for in-flight async operations */
+  GCancellable *cancellable;
 
   /* Last published key package reference (for rotation tracking) */
   gchar *last_kp_event_id;
@@ -37,8 +40,11 @@ gn_key_package_manager_dispose(GObject *object)
       self->rotation_source_id = 0;
     }
 
-  /* Don't unref service — we hold a weak reference */
-  self->service = NULL;
+  /* Cancel any in-flight async operations */
+  g_cancellable_cancel(self->cancellable);
+  g_clear_object(&self->cancellable);
+
+  g_clear_object(&self->service);
   self->context = NULL;
 
   G_OBJECT_CLASS(gn_key_package_manager_parent_class)->dispose(object);
@@ -67,6 +73,7 @@ gn_key_package_manager_init(GnKeyPackageManager *self)
 {
   self->service            = NULL;
   self->context            = NULL;
+  self->cancellable        = g_cancellable_new();
   self->last_kp_event_id   = NULL;
   self->rotation_source_id = 0;
 }
@@ -74,15 +81,22 @@ gn_key_package_manager_init(GnKeyPackageManager *self)
 /* ══════════════════════════════════════════════════════════════════════════
  * Internal: Key Package Creation Flow
  *
- * 1. marmot_gobject_client_create_key_package_async() → unsigned kind:443 event JSON
+ * 1. marmot_gobject_client_create_key_package_unsigned_async() → unsigned kind:443 event JSON
  * 2. gnostr_plugin_context_request_sign_event() → signed event JSON
  * 3. gnostr_plugin_context_publish_event_async() → publish to relays
  * ══════════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-  GnKeyPackageManager *manager;
+  GnKeyPackageManager *manager;   /* strong ref */
   GTask               *task;
 } CreateKpData;
+
+static void
+create_kp_data_free(CreateKpData *data)
+{
+  g_clear_object(&data->manager);
+  g_free(data);
+}
 
 static void
 on_kp_published(GObject      *source,
@@ -91,6 +105,16 @@ on_kp_published(GObject      *source,
 {
   CreateKpData *data = user_data;
   g_autoptr(GError) error = NULL;
+
+  /* Validate the manager is still alive and not cancelled */
+  if (data->manager->context == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "Plugin deactivated");
+      g_object_unref(data->task);
+      create_kp_data_free(data);
+      return;
+    }
 
   gboolean ok = gnostr_plugin_context_publish_event_finish(
     data->manager->context, result, &error);
@@ -108,7 +132,7 @@ on_kp_published(GObject      *source,
     }
 
   g_object_unref(data->task);
-  g_free(data);
+  create_kp_data_free(data);
 }
 
 static void
@@ -118,6 +142,15 @@ on_kp_signed(GObject      *source,
 {
   CreateKpData *data = user_data;
   g_autoptr(GError) error = NULL;
+
+  if (data->manager->context == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "Plugin deactivated");
+      g_object_unref(data->task);
+      create_kp_data_free(data);
+      return;
+    }
 
   g_autofree gchar *signed_json =
     gnostr_plugin_context_request_sign_event_finish(
@@ -129,7 +162,7 @@ on_kp_signed(GObject      *source,
                 error ? error->message : "unknown");
       g_task_return_error(data->task, g_steal_pointer(&error));
       g_object_unref(data->task);
-      g_free(data);
+      create_kp_data_free(data);
       return;
     }
 
@@ -154,7 +187,7 @@ on_kp_created(GObject      *source,
   g_autoptr(GError) error = NULL;
 
   g_autofree gchar *unsigned_json =
-    marmot_gobject_client_create_key_package_finish(client, result, &error);
+    marmot_gobject_client_create_key_package_unsigned_finish(client, result, &error);
 
   if (unsigned_json == NULL)
     {
@@ -162,7 +195,16 @@ on_kp_created(GObject      *source,
                 error ? error->message : "unknown");
       g_task_return_error(data->task, g_steal_pointer(&error));
       g_object_unref(data->task);
-      g_free(data);
+      create_kp_data_free(data);
+      return;
+    }
+
+  if (data->manager->context == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "Plugin deactivated");
+      g_object_unref(data->task);
+      create_kp_data_free(data);
       return;
     }
 
@@ -205,16 +247,21 @@ create_and_publish_key_package(GnKeyPackageManager *self,
     gnostr_plugin_context_get_relay_urls(self->context, &n_relays);
 
   CreateKpData *data = g_new0(CreateKpData, 1);
-  data->manager = self;
+  data->manager = g_object_ref(self);   /* strong ref for async safety */
   data->task    = task; /* takes ownership */
 
   MarmotGobjectClient *client = gn_marmot_service_get_client(service);
 
-  /* Step 1: Create the key package via marmot */
-  marmot_gobject_client_create_key_package_async(
+  /*
+   * Step 1: Create the key package via marmot (unsigned variant).
+   *
+   * We use the _unsigned API because the signer service owns the
+   * private key. The returned event will be signed in step 2 via
+   * gnostr_plugin_context_request_sign_event().
+   */
+  marmot_gobject_client_create_key_package_unsigned_async(
     client,
     pubkey,
-    NULL, /* sk_hex — provided separately or via service identity */
     (const gchar * const *)relay_urls,
     g_task_get_cancellable(task),
     on_kp_created,
@@ -261,8 +308,8 @@ gn_key_package_manager_new(GnMarmotService     *service,
   g_return_val_if_fail(plugin_context != NULL, NULL);
 
   GnKeyPackageManager *self = g_object_new(GN_TYPE_KEY_PACKAGE_MANAGER, NULL);
-  self->service = service; /* weak ref */
-  self->context = plugin_context; /* borrowed */
+  self->service = g_object_ref(service);   /* strong ref */
+  self->context = plugin_context; /* borrowed — valid for plugin lifetime */
 
   /* Start auto-rotation */
   start_auto_rotation(self);

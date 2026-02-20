@@ -6,6 +6,7 @@
 
 #include "gn-mls-event-router.h"
 #include <gnostr-plugin-api.h>
+#include <json-glib/json-glib.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
 
 /* NIP-C7: Chat message kind */
@@ -15,8 +16,8 @@ struct _GnMlsEventRouter
 {
   GObject parent_instance;
 
-  GnMarmotService     *service;    /* weak ref */
-  GnostrPluginContext *context;    /* borrowed */
+  GnMarmotService     *service;    /* strong ref */
+  GnostrPluginContext *context;    /* borrowed — only accessed on main thread */
 };
 
 G_DEFINE_TYPE(GnMlsEventRouter, gn_mls_event_router, G_TYPE_OBJECT)
@@ -25,7 +26,7 @@ static void
 gn_mls_event_router_dispose(GObject *object)
 {
   GnMlsEventRouter *self = GN_MLS_EVENT_ROUTER(object);
-  self->service = NULL;
+  g_clear_object(&self->service);
   self->context = NULL;
   G_OBJECT_CLASS(gn_mls_event_router_parent_class)->dispose(object);
 }
@@ -53,7 +54,7 @@ on_welcome_processed(GObject      *source,
                      GAsyncResult *result,
                      gpointer      user_data)
 {
-  GnMlsEventRouter *self = GN_MLS_EVENT_ROUTER(user_data);
+  g_autoptr(GnMlsEventRouter) self = GN_MLS_EVENT_ROUTER(user_data);
   g_autoptr(GError) error = NULL;
 
   MarmotGobjectClient *client = MARMOT_GOBJECT_CLIENT(source);
@@ -69,10 +70,9 @@ on_welcome_processed(GObject      *source,
 
   g_info("MLS EventRouter: welcome processed successfully");
 
-  /* Emit signal on service */
-  GnMarmotService *service = gn_marmot_service_get_default();
-  if (service != NULL)
-    g_signal_emit_by_name(service, "welcome-received", welcome);
+  /* Emit signal on service (if still alive) */
+  if (self->service != NULL)
+    g_signal_emit_by_name(self->service, "welcome-received", welcome);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -84,7 +84,7 @@ on_message_processed(GObject      *source,
                      GAsyncResult *result,
                      gpointer      user_data)
 {
-  GnMlsEventRouter *self = GN_MLS_EVENT_ROUTER(user_data);
+  g_autoptr(GnMlsEventRouter) self = GN_MLS_EVENT_ROUTER(user_data);
   g_autoptr(GError) error = NULL;
 
   MarmotGobjectClient *client = MARMOT_GOBJECT_CLIENT(source);
@@ -101,8 +101,7 @@ on_message_processed(GObject      *source,
       return;
     }
 
-  GnMarmotService *service = gn_marmot_service_get_default();
-  if (service == NULL)
+  if (self->service == NULL)
     return;
 
   switch (result_type)
@@ -117,7 +116,7 @@ on_message_processed(GObject      *source,
            * For now, pass empty string — will be fixed when we add
            * proper event JSON parsing.
            */
-          g_signal_emit_by_name(service, "message-received",
+          g_signal_emit_by_name(self->service, "message-received",
                                 "", inner_json);
         }
       break;
@@ -150,7 +149,7 @@ on_message_processed(GObject      *source,
 static void
 on_gift_wrap_unwrapped(gpointer result_ptr, gpointer user_data)
 {
-  GnMlsEventRouter *self = GN_MLS_EVENT_ROUTER(user_data);
+  g_autoptr(GnMlsEventRouter) self = GN_MLS_EVENT_ROUTER(user_data);
 
   /*
    * NOTE: This uses the GnostrUnwrapResult from nip59_giftwrap.h.
@@ -166,12 +165,16 @@ on_gift_wrap_unwrapped(gpointer result_ptr, gpointer user_data)
    * if (kind == 444) { // Welcome
    *   char *rumor_json = nostr_event_to_json(rumor);
    *   char *wrapper_id = unwrap->wrapper_event_id_hex;
+   *   MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
    *   marmot_gobject_client_process_welcome_async(client,
-   *     wrapper_id, rumor_json, NULL, on_welcome_processed, self);
+   *     wrapper_id, rumor_json, NULL, on_welcome_processed,
+   *     g_object_ref(self));
    * } else if (kind == 445) { // Group message
    *   char *event_json = nostr_event_to_json(rumor);
+   *   MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
    *   marmot_gobject_client_process_message_async(client,
-   *     event_json, NULL, on_message_processed, self);
+   *     event_json, NULL, on_message_processed,
+   *     g_object_ref(self));
    * }
    */
 
@@ -188,9 +191,16 @@ on_gift_wrap_unwrapped(gpointer result_ptr, gpointer user_data)
  * ══════════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-  GnMlsEventRouter *router;
+  GnMlsEventRouter *router;   /* strong ref */
   GTask             *task;
 } SendMsgData;
+
+static void
+send_msg_data_free(SendMsgData *data)
+{
+  g_clear_object(&data->router);
+  g_free(data);
+}
 
 static void
 on_msg_published(GObject      *source,
@@ -199,6 +209,15 @@ on_msg_published(GObject      *source,
 {
   SendMsgData *data = user_data;
   g_autoptr(GError) error = NULL;
+
+  if (data->router->context == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "Plugin deactivated");
+      g_object_unref(data->task);
+      send_msg_data_free(data);
+      return;
+    }
 
   gboolean ok = gnostr_plugin_context_publish_event_finish(
     data->router->context, result, &error);
@@ -216,7 +235,7 @@ on_msg_published(GObject      *source,
     }
 
   g_object_unref(data->task);
-  g_free(data);
+  send_msg_data_free(data);
 }
 
 static void
@@ -237,7 +256,16 @@ on_msg_encrypted(GObject      *source,
                 error ? error->message : "unknown");
       g_task_return_error(data->task, g_steal_pointer(&error));
       g_object_unref(data->task);
-      g_free(data);
+      send_msg_data_free(data);
+      return;
+    }
+
+  if (data->router->context == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "Plugin deactivated");
+      g_object_unref(data->task);
+      send_msg_data_free(data);
       return;
     }
 
@@ -270,7 +298,7 @@ gn_mls_event_router_new(GnMarmotService     *service,
   g_return_val_if_fail(plugin_context != NULL, NULL);
 
   GnMlsEventRouter *self = g_object_new(GN_TYPE_MLS_EVENT_ROUTER, NULL);
-  self->service = service;
+  self->service = g_object_ref(service);   /* strong ref */
   self->context = plugin_context;
 
   return self;
@@ -295,7 +323,8 @@ gn_mls_event_router_process_gift_wrap(GnMlsEventRouter *self,
   /*
    * TODO: Parse gift_wrap_json into NostrEvent, then call
    * gnostr_nip59_unwrap_async(event, user_pubkey, NULL,
-   *                            on_gift_wrap_unwrapped, self);
+   *                            on_gift_wrap_unwrapped,
+   *                            g_object_ref(self));
    *
    * The NIP-59 unwrap will decrypt the seal and rumor using the
    * D-Bus signer for NIP-44 decryption. Once unwrapped, the inner
@@ -324,7 +353,7 @@ gn_mls_event_router_process_group_message(GnMlsEventRouter *self,
     event_json,
     NULL,  /* cancellable */
     on_message_processed,
-    self);
+    g_object_ref(self));   /* strong ref transferred to callback */
 }
 
 void
@@ -362,7 +391,7 @@ gn_mls_event_router_send_message_async(GnMlsEventRouter   *self,
     }
 
   /*
-   * Build the unsigned inner event (the "rumor"):
+   * Build the unsigned inner event (the "rumor") using json-glib:
    * {
    *   "pubkey": "<user_pubkey>",
    *   "kind": 9,       // NIP-C7 chat message
@@ -378,16 +407,34 @@ gn_mls_event_router_send_message_async(GnMlsEventRouter   *self,
    */
   guint16 inner_kind = (kind > 0) ? kind : KIND_CHAT_MESSAGE;
 
-  g_autofree gchar *inner_event_json = g_strdup_printf(
-    "{\"pubkey\":\"%s\",\"kind\":%u,\"created_at\":%lld,"
-    "\"content\":\"%s\",\"tags\":[]}",
-    user_pubkey,
-    inner_kind,
-    (long long)g_get_real_time() / G_USEC_PER_SEC,
-    content);  /* TODO: Properly escape JSON content */
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  json_builder_set_member_name(builder, "pubkey");
+  json_builder_add_string_value(builder, user_pubkey);
+
+  json_builder_set_member_name(builder, "kind");
+  json_builder_add_int_value(builder, inner_kind);
+
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_int_value(builder, g_get_real_time() / G_USEC_PER_SEC);
+
+  json_builder_set_member_name(builder, "content");
+  json_builder_add_string_value(builder, content);
+
+  json_builder_set_member_name(builder, "tags");
+  json_builder_begin_array(builder);
+  json_builder_end_array(builder);
+
+  json_builder_end_object(builder);
+
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  g_autoptr(JsonNode) root = json_builder_get_root(builder);
+  json_generator_set_root(gen, root);
+  g_autofree gchar *inner_event_json = json_generator_to_data(gen, NULL);
 
   SendMsgData *data = g_new0(SendMsgData, 1);
-  data->router = self;
+  data->router = g_object_ref(self);   /* strong ref for async safety */
   data->task   = task;
 
   marmot_gobject_client_send_message_async(
