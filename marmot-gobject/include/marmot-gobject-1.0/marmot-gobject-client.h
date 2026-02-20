@@ -387,6 +387,24 @@ GPtrArray *marmot_gobject_client_get_messages(MarmotGobjectClient *self,
 GPtrArray *marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self,
                                                        GError **error);
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * Internal access (for plugins needing raw libmarmot API)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * marmot_gobject_client_get_marmot:
+ * @self: a #MarmotGobjectClient
+ *
+ * Get the underlying libmarmot Marmot instance for direct API access.
+ * This is intended for advanced use cases like MIP-04 media encryption
+ * where the GObject wrapper doesn't yet expose the functionality.
+ *
+ * The returned pointer is owned by the client and must not be freed.
+ *
+ * Returns: (transfer none) (nullable): the underlying Marmot instance
+ */
+struct Marmot *marmot_gobject_client_get_marmot(MarmotGobjectClient *self);
+
 G_END_DECLS
 
 #endif /* MARMOT_GOBJECT_CLIENT_H */

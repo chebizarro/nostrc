@@ -1005,3 +1005,14 @@ marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self, GError **e
     free(welcomes);
     return arr;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Internal access
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+Marmot *
+marmot_gobject_client_get_marmot(MarmotGobjectClient *self)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
+    return self->marmot;
+}

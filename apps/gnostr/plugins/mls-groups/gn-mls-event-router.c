@@ -79,12 +79,80 @@ on_welcome_processed(GObject      *source,
  * Internal: Process group message after NIP-44 decryption
  * ══════════════════════════════════════════════════════════════════════════ */
 
+typedef struct {
+  GnMlsEventRouter *router;       /* strong ref */
+  gchar            *group_id_hex; /* extracted from h tag */
+} ProcessMsgData;
+
+static void
+process_msg_data_free(ProcessMsgData *data)
+{
+  g_clear_object(&data->router);
+  g_free(data->group_id_hex);
+  g_free(data);
+}
+
+/**
+ * extract_h_tag_from_event:
+ * @event_json: JSON string of the Nostr event
+ *
+ * Extracts the value of the first "h" tag from a Nostr event.
+ * The "h" tag contains the MLS group ID for kind:445 events.
+ *
+ * Returns: (transfer full) (nullable): The h tag value, or NULL if not found
+ */
+static gchar *
+extract_h_tag_from_event(const gchar *event_json)
+{
+  if (event_json == NULL)
+    return NULL;
+
+  g_autoptr(JsonParser) parser = json_parser_new();
+  g_autoptr(GError) error = NULL;
+
+  if (!json_parser_load_from_data(parser, event_json, -1, &error))
+    {
+      g_debug("extract_h_tag: failed to parse JSON: %s", error->message);
+      return NULL;
+    }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root))
+    return NULL;
+
+  JsonObject *obj = json_node_get_object(root);
+  if (!json_object_has_member(obj, "tags"))
+    return NULL;
+
+  JsonArray *tags = json_object_get_array_member(obj, "tags");
+  if (tags == NULL)
+    return NULL;
+
+  guint n_tags = json_array_get_length(tags);
+  for (guint i = 0; i < n_tags; i++)
+    {
+      JsonArray *tag = json_array_get_array_element(tags, i);
+      if (tag == NULL || json_array_get_length(tag) < 2)
+        continue;
+
+      const gchar *tag_name = json_array_get_string_element(tag, 0);
+      if (g_strcmp0(tag_name, "h") == 0)
+        {
+          const gchar *value = json_array_get_string_element(tag, 1);
+          if (value != NULL)
+            return g_strdup(value);
+        }
+    }
+
+  return NULL;
+}
+
 static void
 on_message_processed(GObject      *source,
                      GAsyncResult *result,
                      gpointer      user_data)
 {
-  g_autoptr(GnMlsEventRouter) self = GN_MLS_EVENT_ROUTER(user_data);
+  ProcessMsgData *data = user_data;
   g_autoptr(GError) error = NULL;
 
   MarmotGobjectClient *client = MARMOT_GOBJECT_CLIENT(source);
@@ -98,26 +166,27 @@ on_message_processed(GObject      *source,
     {
       g_warning("MLS EventRouter: failed to process group message: %s",
                 error->message);
+      process_msg_data_free(data);
       return;
     }
 
-  if (self->service == NULL)
-    return;
+  if (data->router->service == NULL)
+    {
+      process_msg_data_free(data);
+      return;
+    }
 
   switch (result_type)
     {
     case MARMOT_GOBJECT_MESSAGE_RESULT_APPLICATION:
       if (inner_json != NULL)
         {
-          g_debug("MLS EventRouter: application message decrypted");
+          g_debug("MLS EventRouter: application message decrypted for group %s",
+                  data->group_id_hex ? data->group_id_hex : "(unknown)");
 
-          /*
-           * TODO: Extract group_id_hex from the event's h tag.
-           * For now, pass empty string — will be fixed when we add
-           * proper event JSON parsing.
-           */
-          g_signal_emit_by_name(self->service, "message-received",
-                                "", inner_json);
+          g_signal_emit_by_name(data->router->service, "message-received",
+                                data->group_id_hex ? data->group_id_hex : "",
+                                inner_json);
         }
       break;
 
@@ -134,6 +203,8 @@ on_message_processed(GObject      *source,
       g_debug("MLS EventRouter: unhandled result type %d", result_type);
       break;
     }
+
+  process_msg_data_free(data);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -346,14 +417,23 @@ gn_mls_event_router_process_group_message(GnMlsEventRouter *self,
       return;
     }
 
-  g_debug("MLS EventRouter: processing kind:445 group message");
+  /* Extract the MLS group ID from the h tag before processing */
+  g_autofree gchar *group_id_hex = extract_h_tag_from_event(event_json);
+
+  g_debug("MLS EventRouter: processing kind:445 group message for group %s",
+          group_id_hex ? group_id_hex : "(unknown)");
+
+  /* Create callback data with extracted group ID */
+  ProcessMsgData *data = g_new0(ProcessMsgData, 1);
+  data->router       = g_object_ref(self);
+  data->group_id_hex = g_steal_pointer(&group_id_hex);
 
   marmot_gobject_client_process_message_async(
     client,
     event_json,
     NULL,  /* cancellable */
     on_message_processed,
-    g_object_ref(self));   /* strong ref transferred to callback */
+    data);
 }
 
 void

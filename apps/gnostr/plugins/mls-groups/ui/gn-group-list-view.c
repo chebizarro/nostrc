@@ -85,19 +85,40 @@ on_group_activated(GtkListView *list_view,
 
   g_debug("GroupListView: activated group %s (%s)", name, mls_id);
 
-  if (self->nav_view == NULL)
-    return;
-
-  /* Create and push the chat view */
+  /* Create the chat view */
   GnGroupChatView *chat = gn_group_chat_view_new(
     self->service, self->router, group, self->plugin_context);
 
-  AdwNavigationPage *page = adw_navigation_page_new(
-    GTK_WIDGET(chat),
-    (name && *name) ? name : "Group Chat");
-  adw_navigation_page_set_tag(page, mls_id);
+  if (self->nav_view != NULL)
+    {
+      /* Use navigation view if available */
+      AdwNavigationPage *page = adw_navigation_page_new(
+        GTK_WIDGET(chat),
+        (name && *name) ? name : "Group Chat");
+      adw_navigation_page_set_tag(page, mls_id);
 
-  adw_navigation_view_push(self->nav_view, page);
+      adw_navigation_view_push(self->nav_view, page);
+    }
+  else
+    {
+      /* Fallback: present chat in an AdwDialog (similar to DM flow) */
+      GtkWidget *toplevel = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(self)));
+
+      AdwDialog *chat_dialog = adw_dialog_new();
+      adw_dialog_set_title(chat_dialog,
+                            (name && *name) ? name : "Group Chat");
+      adw_dialog_set_content_width(chat_dialog, 600);
+      adw_dialog_set_content_height(chat_dialog, 500);
+
+      GtkWidget *toolbar_view = adw_toolbar_view_new();
+      GtkWidget *header = adw_header_bar_new();
+      adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_view), header);
+      adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_view),
+                                    GTK_WIDGET(chat));
+      adw_dialog_set_child(chat_dialog, toolbar_view);
+
+      adw_dialog_present(chat_dialog, toplevel);
+    }
 }
 
 /* ── Model change listener ───────────────────────────────────────── */
