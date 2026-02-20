@@ -7,7 +7,9 @@
 #include "gn-group-list-view.h"
 #include "gn-group-list-row.h"
 #include "gn-group-chat-view.h"
+#include "gn-create-group-dialog.h"
 #include "../model/gn-group-list-model.h"
+#include <gnostr-plugin-api.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
 
 struct _GnGroupListView
@@ -15,9 +17,10 @@ struct _GnGroupListView
   GtkBox parent_instance;
 
   /* Dependencies */
-  GnMarmotService    *service;        /* strong ref */
-  GnMlsEventRouter  *router;         /* strong ref */
-  AdwNavigationView  *nav_view;       /* weak — host owns it */
+  GnMarmotService    *service;         /* strong ref */
+  GnMlsEventRouter  *router;          /* strong ref */
+  AdwNavigationView  *nav_view;        /* weak — host owns it */
+  GnostrPluginContext *plugin_context; /* borrowed — host lifetime */
 
   /* Widgets */
   GtkListView        *list_view;
@@ -29,6 +32,9 @@ struct _GnGroupListView
 };
 
 G_DEFINE_TYPE(GnGroupListView, gn_group_list_view, GTK_TYPE_BOX)
+
+/* ── Forward declarations ────────────────────────────────────────── */
+static void on_create_group_clicked(GtkButton *button, gpointer user_data);
 
 /* ── Factory callbacks ───────────────────────────────────────────── */
 
@@ -74,7 +80,7 @@ on_group_activated(GtkListView *list_view,
   if (group == NULL)
     return;
 
-  const gchar *mls_id = marmot_gobject_group_get_mls_group_id_hex(group);
+  const gchar *mls_id = marmot_gobject_group_get_mls_group_id(group);
   const gchar *name   = marmot_gobject_group_get_name(group);
 
   g_debug("GroupListView: activated group %s (%s)", name, mls_id);
@@ -84,7 +90,7 @@ on_group_activated(GtkListView *list_view,
 
   /* Create and push the chat view */
   GnGroupChatView *chat = gn_group_chat_view_new(
-    self->service, self->router, group);
+    self->service, self->router, group, self->plugin_context);
 
   AdwNavigationPage *page = adw_navigation_page_new(
     GTK_WIDGET(chat),
@@ -122,7 +128,8 @@ gn_group_list_view_dispose(GObject *object)
   g_clear_object(&self->service);
   g_clear_object(&self->router);
   g_clear_object(&self->model);
-  self->nav_view = NULL;
+  self->nav_view        = NULL;
+  self->plugin_context  = NULL;
 
   G_OBJECT_CLASS(gn_group_list_view_parent_class)->dispose(object);
 }
@@ -167,9 +174,37 @@ gn_group_list_view_init(GnGroupListView *self)
   gtk_label_set_justify(GTK_LABEL(empty_desc), GTK_JUSTIFY_CENTER);
   gtk_box_append(GTK_BOX(self->empty_page), empty_desc);
 
+  /* "Create Group" button on the empty page */
+  GtkWidget *create_btn_empty = gtk_button_new_with_label("Create Group");
+  gtk_widget_add_css_class(create_btn_empty, "suggested-action");
+  gtk_widget_add_css_class(create_btn_empty, "pill");
+  gtk_widget_set_halign(create_btn_empty, GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_top(create_btn_empty, 12);
+  g_signal_connect(create_btn_empty, "clicked",
+                   G_CALLBACK(on_create_group_clicked), self);
+  gtk_box_append(GTK_BOX(self->empty_page), create_btn_empty);
+
   gtk_stack_add_named(self->stack, self->empty_page, "empty");
 
   /* Scrolled list view (added after model is set in _new) */
+}
+
+/* ── Create group dialog ─────────────────────────────────────────── */
+
+static void
+on_create_group_clicked(GtkButton *button, gpointer user_data)
+{
+  GnGroupListView *self = GN_GROUP_LIST_VIEW(user_data);
+
+  if (self->service == NULL || self->router == NULL || self->plugin_context == NULL)
+    return;
+
+  GnCreateGroupDialog *dialog =
+    gn_create_group_dialog_new(self->service, self->router, self->plugin_context);
+
+  /* Present the dialog on the top-level window */
+  GtkWidget *toplevel = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(self)));
+  adw_dialog_present(ADW_DIALOG(dialog), toplevel);
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -177,15 +212,17 @@ gn_group_list_view_init(GnGroupListView *self)
 GnGroupListView *
 gn_group_list_view_new(GnMarmotService    *service,
                         GnMlsEventRouter  *router,
-                        AdwNavigationView  *navigation_view)
+                        AdwNavigationView  *navigation_view,
+                        GnostrPluginContext *plugin_context)
 {
   g_return_val_if_fail(GN_IS_MARMOT_SERVICE(service), NULL);
   g_return_val_if_fail(GN_IS_MLS_EVENT_ROUTER(router), NULL);
 
   GnGroupListView *self = g_object_new(GN_TYPE_GROUP_LIST_VIEW, NULL);
-  self->service  = g_object_ref(service);
-  self->router   = g_object_ref(router);
-  self->nav_view = navigation_view;   /* weak ref */
+  self->service        = g_object_ref(service);
+  self->router         = g_object_ref(router);
+  self->nav_view       = navigation_view;      /* weak ref */
+  self->plugin_context = plugin_context;        /* borrowed */
 
   /* Create model */
   self->model = gn_group_list_model_new(service);
@@ -218,6 +255,18 @@ gn_group_list_view_new(GnMarmotService    *service,
   gtk_widget_set_vexpand(scroll, TRUE);
 
   gtk_stack_add_named(self->stack, scroll, "list");
+
+  /* "Create Group" button below the list */
+  GtkWidget *create_btn = gtk_button_new_from_icon_name("list-add-symbolic");
+  gtk_button_set_label(GTK_BUTTON(create_btn), "New Group");
+  gtk_button_set_has_frame(GTK_BUTTON(create_btn), TRUE);
+  gtk_widget_add_css_class(create_btn, "suggested-action");
+  gtk_widget_set_halign(create_btn, GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_top(create_btn, 8);
+  gtk_widget_set_margin_bottom(create_btn, 8);
+  g_signal_connect(create_btn, "clicked",
+                   G_CALLBACK(on_create_group_clicked), self);
+  gtk_box_append(GTK_BOX(self), create_btn);
 
   /* Listen for model changes to switch stack */
   g_signal_connect(self->model, "items-changed",

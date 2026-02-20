@@ -49,6 +49,26 @@ void gn_group_composer_clear(GnGroupComposer *self);
 void gn_group_composer_set_send_sensitive(GnGroupComposer *self,
                                            gboolean         sensitive);
 
+/**
+ * gn_group_composer_set_media_enabled:
+ * @self: The composer
+ * @enabled: Whether to show the media attach button (Phase 7)
+ *
+ * Show or hide the media attachment button. Should be enabled when
+ * a GnMlsMediaManager is available for the current group.
+ */
+void gn_group_composer_set_media_enabled(GnGroupComposer *self,
+                                          gboolean         enabled);
+
+/**
+ * GnGroupComposer::media-attach-requested:
+ * @composer: The composer
+ *
+ * Emitted when the user clicks the media attach button.
+ * The handler should open a file chooser and call
+ * gn_mls_media_manager_upload_async() with the selected file.
+ */
+
 G_END_DECLS
 
 #endif /* GN_GROUP_COMPOSER_H */

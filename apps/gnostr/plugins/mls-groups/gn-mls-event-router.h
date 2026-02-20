@@ -19,6 +19,11 @@
 #include <gio/gio.h>
 #include "gn-marmot-service.h"
 
+/* Forward declaration — full definition in gnostr-plugin-api.h */
+#ifndef GNOSTR_PLUGIN_API_H
+typedef struct _GnostrPluginContext GnostrPluginContext;
+#endif
+
 G_BEGIN_DECLS
 
 #define GN_TYPE_MLS_EVENT_ROUTER (gn_mls_event_router_get_type())
