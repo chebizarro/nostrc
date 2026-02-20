@@ -1,6 +1,7 @@
 #define G_LOG_DOMAIN "gnostr-event-model"
 
 #include "gn-nostr-event-model.h"
+#include "../ui/debug_phase.h"
 #include <nostr-gobject-1.0/gn-timeline-query.h>
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
@@ -269,6 +270,11 @@ static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n
  * can trigger callbacks that attempt to modify the model, causing heap corruption.
  * This wrapper sets a guard flag and logs if reentrancy is detected. */
 static void emit_items_changed_safe(GnNostrEventModel *self, guint pos, guint removed, guint added) {
+  /* Check debug flag to suppress UI updates */
+  if (gnostr_debug_ui_updates_disabled()) {
+    return;
+  }
+  
   if (self->emitting_items_changed) {
     g_warning("[MODEL] BLOCKED reentrant items_changed(pos=%u, removed=%u, added=%u) - would cause heap corruption",
               pos, removed, added);
@@ -420,9 +426,31 @@ static gboolean db_has_profile_event_for_pubkey(void *txn, const unsigned char p
   return TRUE;
 }
 
+/* Helper to remove a pubkey from the LRU queue */
+static void profile_cache_lru_remove(GnNostrEventModel *self, const char *pubkey_hex) {
+  if (!self || !self->profile_cache_lru || !pubkey_hex) return;
+  GList *link = g_queue_find_custom(self->profile_cache_lru, pubkey_hex, (GCompareFunc)g_strcmp0);
+  if (link) {
+    g_free(link->data);
+    g_queue_delete_link(self->profile_cache_lru, link);
+  }
+}
+
 static GNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex) {
   if (!self || !self->profile_cache || !pubkey_hex) return NULL;
-  return g_hash_table_lookup(self->profile_cache, pubkey_hex);
+  GNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey_hex);
+  
+  /* Defensive check: detect corrupted profile pointers */
+  if (profile && !GNOSTR_IS_PROFILE(profile)) {
+    g_critical("[MODEL] profile_cache contains invalid GNostrProfile for pubkey %.16s... "
+               "(ptr=%p) - removing stale entry",
+               pubkey_hex, (void*)profile);
+    /* Remove the stale entry from both hash table AND LRU queue */
+    g_hash_table_remove(self->profile_cache, pubkey_hex);
+    profile_cache_lru_remove(self, pubkey_hex);
+    return NULL;
+  }
+  return profile;
 }
 
 /* Load kind-0 profile from DB (storage_ndb_get_profile_by_pubkey returns *event* JSON), then cache it.
@@ -458,8 +486,9 @@ static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void
       profile = gnostr_profile_new(pubkey_hex);
       gnostr_profile_update_from_json(profile, content);
       g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
-      /* Add to LRU queue (new entry) */
+      /* Add to LRU queue - remove any existing entry first to prevent duplicates */
       if (self->profile_cache_lru) {
+        profile_cache_lru_remove(self, pubkey_hex);  /* Remove stale entry if exists */
         g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
         profile_cache_evict(self);
       }
@@ -532,7 +561,8 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
   if (!profile) {
     profile = gnostr_profile_new(pubkey_hex);
     g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
-    /* Add to LRU queue (new entry) */
+    /* Add to LRU queue - remove any existing entry first to prevent duplicates */
+    profile_cache_lru_remove(self, pubkey_hex);  /* Remove stale entry if exists */
     g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
     /* Evict if over limit */
     profile_cache_evict(self);
@@ -1325,18 +1355,12 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     if (tinfo) {
       gn_nostr_event_item_set_thread_info(item, tinfo->root_id, tinfo->parent_id, tinfo->depth);
     }
-    /* Check if profile needs to be applied or fetched */
-    if (!gn_nostr_event_item_get_profile(item)) {
-      const char *pubkey = gn_nostr_event_item_get_pubkey(item);
-      if (pubkey) {
-        GNostrProfile *profile = profile_cache_get(self, pubkey);
-        if (profile) {
-          gn_nostr_event_item_set_profile(item, profile);
-        } else {
-          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
-        }
-      }
-    }
+    /* NOTE: Profile setting removed from get_item() to make it pure.
+     * Profiles are set via notify_cached_items_for_pubkey() when they arrive.
+     * This avoids reentrancy bugs where get_item() is called during items-changed
+     * and mutates state while we're in the middle of draining/cleanup.
+     * If item has no profile yet, the view will show placeholder and update
+     * when the profile arrives via property notification. */
     return g_object_ref(item);
   }
 
@@ -1359,18 +1383,12 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     g_debug("[NIP10-MODEL] No thread info found for item key %lu", (unsigned long)key);
   }
 
-  /* Apply profile if available, otherwise request fetch.
-   * This is critical for items that were evicted from cache and recreated -
-   * their profiles might still not be loaded. */
+  /* NOTE: Profile setting removed from get_item() to make it pure.
+   * Profiles are set via notify_cached_items_for_pubkey() when they arrive.
+   * For new items, emit need-profile signal so fetch is triggered. */
   const char *pubkey = gn_nostr_event_item_get_pubkey(item);
-  if (pubkey) {
-    GNostrProfile *profile = profile_cache_get(self, pubkey);
-    if (profile) {
-      gn_nostr_event_item_set_profile(item, profile);
-    } else {
-      /* Profile not cached - emit need-profile to trigger fetch */
-      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
-    }
+  if (pubkey && !profile_cache_get(self, pubkey)) {
+    g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
   }
 
   /* Add to cache */

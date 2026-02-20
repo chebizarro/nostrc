@@ -2,9 +2,13 @@
 #include "gn-nostr-event-model.h"
 #include <nostr-gtk-1.0/content_renderer.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
 #include <string.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
+
+/* Cookie magic for detecting memory scribble into profile pointer */
+#define PROFILE_COOKIE_MAGIC 0xFEEDBEEFCAFEBABEULL
 
 struct _GnNostrEventItem {
   GObject parent_instance;
@@ -27,6 +31,7 @@ struct _GnNostrEventItem {
 
   /* Profile object */
   GNostrProfile *profile;
+  guint64 profile_cookie;  /* XOR cookie to detect memory scribble */
 
   /* Thread info (stored, not fetched from nostrdb) */
   char *thread_root_id;
@@ -274,7 +279,25 @@ static void gn_nostr_event_item_finalize(GObject *object) {
   g_free(self->thread_root_id);
   g_free(self->parent_id);
 
-  g_clear_object(&self->profile);
+  /* Clean up profile reference with cookie check to detect corruption source */
+  if (self->profile) {
+    guint64 expected_cookie = (guint64)(uintptr_t)self->profile ^ PROFILE_COOKIE_MAGIC;
+    if (self->profile_cookie != expected_cookie) {
+      /* Cookie mismatch = item struct was overwritten (heap scribble) */
+      g_error("[EVENT_ITEM] HEAP SCRIBBLE: item %p profile pointer overwritten! "
+              "profile=%p cookie=0x%llx expected=0x%llx note_key=%lu",
+              (void*)self, (void*)self->profile,
+              (unsigned long long)self->profile_cookie, (unsigned long long)expected_cookie,
+              (unsigned long)self->note_key);
+    } else if (!GNOSTR_IS_PROFILE(self->profile)) {
+      /* Cookie valid but object invalid = assigned invalid pointer (ownership bug) */
+      g_error("[EVENT_ITEM] OWNERSHIP BUG: item %p has invalid profile %p "
+              "(cookie valid, object freed) note_key=%lu",
+              (void*)self, (void*)self->profile, (unsigned long)self->note_key);
+    } else {
+      g_clear_object(&self->profile);
+    }
+  }
 
   G_OBJECT_CLASS(gn_nostr_event_item_parent_class)->finalize(object);
 }
@@ -602,11 +625,23 @@ gboolean gn_nostr_event_item_get_is_muted(GnNostrEventItem *self) {
 void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GNostrProfile *profile) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
 
+  /* INVARIANT: profile must be NULL or a valid GNostrProfile.
+   * If this fails, the caller passed a garbage/freed pointer. */
+  if (profile && !GNOSTR_IS_PROFILE(profile)) {
+    g_error("[EVENT_ITEM] FATAL: set_profile called with invalid profile pointer %p on item %p (note_key=%lu)",
+            (void*)profile, (void*)self, (unsigned long)self->note_key);
+    return;  /* g_error aborts, but just in case */
+  }
+
   /* Always notify when setting profile, even if it's the same object pointer.
    * The profile object is reused and updated in place by profile_cache_update_from_content,
    * so g_set_object would return FALSE (no pointer change) and skip notification.
    * This caused timeline profile display to not update when profiles arrived. */
   g_set_object(&self->profile, profile);
+  
+  /* Set cookie to detect memory scribble */
+  self->profile_cookie = (guint64)(uintptr_t)self->profile ^ PROFILE_COOKIE_MAGIC;
+  
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PROFILE]);
 }
 
