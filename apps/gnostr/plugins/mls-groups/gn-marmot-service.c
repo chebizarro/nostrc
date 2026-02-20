@@ -192,7 +192,7 @@ gn_marmot_service_initialize(const gchar *data_dir,
 
   /* Create SQLite storage backend */
   g_autofree gchar *db_path = g_build_filename(marmot_dir, "marmot.db", NULL);
-  self->storage = marmot_gobject_sqlite_storage_new(db_path, NULL, error);
+  self->storage = MARMOT_GOBJECT_STORAGE(marmot_gobject_sqlite_storage_new(db_path, NULL, error));
   if (self->storage == NULL)
     {
       g_prefix_error(error, "Failed to create marmot storage: ");

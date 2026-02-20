@@ -111,6 +111,8 @@
 #include "../util/utils.h"
 /* Sync bridge for negentropy EventBus integration */
 #include "../sync/gnostr-sync-bridge.h"
+/* Stress scroll test for crash reproduction */
+#include "stress_scroll.h"
 
 /* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
@@ -246,6 +248,9 @@ struct _GnostrMainWindow {
   GAsyncQueue     *ingest_queue;           /* owned; char* JSON strings */
   GThread         *ingest_thread;          /* owned; background ingestion worker */
   gboolean         ingest_running;         /* atomic; FALSE signals thread to exit */
+
+  /* Stress scroll test (GNOSTR_STRESS_SCROLL=1) */
+  guint            stress_scroll_source_id; /* GLib source id, 0 if disabled */
 };
 
 /* Forward declarations for local helpers used before their definitions */
@@ -6392,6 +6397,9 @@ deferred_heavy_init_cb(gpointer data)
       GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
       if (vadj) {
         g_signal_connect(vadj, "value-changed", G_CALLBACK(on_timeline_scroll_value_changed), self);
+        
+        /* Start stress scroll test if enabled via GNOSTR_STRESS_SCROLL=1 */
+        self->stress_scroll_source_id = gnostr_stress_scroll_start(vadj);
       }
     }
 
