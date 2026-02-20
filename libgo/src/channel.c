@@ -1067,6 +1067,13 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         return -1;
     }
+    /* nostrc-refs-check: Reject channels with refs <= 0. This prevents a race
+     * where go_channel_unref decrements refs to 0 and proceeds with cleanup
+     * while we're about to acquire the mutex. */
+    if (NOSTR_UNLIKELY(atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
+        return -1;
+    }
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
     int have_tw = 0; // whether we started wake->progress timer
@@ -1243,6 +1250,13 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
     /* nostrc-magic-check: Reject dead channels. */
     if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
+        return -1;
+    }
+    /* nostrc-refs-check: Reject channels with refs <= 0. This prevents a race
+     * where go_channel_unref decrements refs to 0 and proceeds with cleanup
+     * while we're about to acquire the mutex. */
+    if (NOSTR_UNLIKELY(atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0)) {
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         return -1;
     }
