@@ -279,6 +279,89 @@ marmot_gobject_client_create_key_package_finish(MarmotGobjectClient *self,
     return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* ── Unsigned key package (signer-only flow) ─────────────────────── */
+
+typedef struct {
+    gchar *pubkey_hex;
+    gchar **relay_urls;
+} CreateKeyPackageUnsignedData;
+
+static void
+create_key_package_unsigned_data_free(gpointer data)
+{
+    CreateKeyPackageUnsignedData *d = data;
+    g_free(d->pubkey_hex);
+    g_strfreev(d->relay_urls);
+    g_free(d);
+}
+
+static void
+create_key_package_unsigned_thread(GTask *task, gpointer source_object,
+                                    gpointer task_data, GCancellable *cancellable)
+{
+    MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    CreateKeyPackageUnsignedData *d = task_data;
+    (void)cancellable;
+
+    uint8_t pubkey[32];
+    if (!hex_to_bytes(d->pubkey_hex, pubkey, 32)) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                                "Invalid hex pubkey");
+        return;
+    }
+
+    size_t relay_count = 0;
+    if (d->relay_urls) {
+        while (d->relay_urls[relay_count] && relay_count < 1000) relay_count++;
+    }
+
+    MarmotKeyPackageResult result = { 0 };
+    MarmotError err = marmot_create_key_package_unsigned(
+        self->marmot, pubkey,
+        (const char **)d->relay_urls, relay_count, &result);
+
+    if (err != MARMOT_OK) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
+                                "%s", marmot_error_string(err));
+        return;
+    }
+
+    g_task_return_pointer(task, g_strdup(result.event_json), g_free);
+    marmot_key_package_result_free(&result);
+}
+
+void
+marmot_gobject_client_create_key_package_unsigned_async(MarmotGobjectClient *self,
+                                                          const gchar *nostr_pubkey_hex,
+                                                          const gchar * const *relay_urls,
+                                                          GCancellable *cancellable,
+                                                          GAsyncReadyCallback callback,
+                                                          gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(nostr_pubkey_hex != NULL);
+
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+
+    CreateKeyPackageUnsignedData *d = g_new0(CreateKeyPackageUnsignedData, 1);
+    d->pubkey_hex = g_strdup(nostr_pubkey_hex);
+    d->relay_urls = g_strdupv((gchar **)relay_urls);
+    g_task_set_task_data(task, d, create_key_package_unsigned_data_free);
+
+    g_task_run_in_thread(task, create_key_package_unsigned_thread);
+    g_object_unref(task);
+}
+
+gchar *
+marmot_gobject_client_create_key_package_unsigned_finish(MarmotGobjectClient *self,
+                                                           GAsyncResult *result,
+                                                           GError **error)
+{
+    g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+    return g_task_propagate_pointer(G_TASK(result), error);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-01: Group Creation (async)
  * ══════════════════════════════════════════════════════════════════════════ */

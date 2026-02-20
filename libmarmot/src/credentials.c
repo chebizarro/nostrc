@@ -319,6 +319,35 @@ success:
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Public API: marmot_create_key_package_unsigned
+ *
+ * Identical to marmot_create_key_package but does not require the secret
+ * key.  The SK parameter was never consumed by the signed variant anyway
+ * (it was only validated), so this is a thin wrapper that makes the
+ * signer-only contract explicit.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_create_key_package_unsigned(Marmot *m,
+                                    const uint8_t nostr_pubkey[32],
+                                    const char **relay_urls, size_t relay_count,
+                                    MarmotKeyPackageResult *result)
+{
+    if (!m || !nostr_pubkey || !result)
+        return MARMOT_ERR_INVALID_ARG;
+
+    /*
+     * The signed variant validates nostr_sk but never uses it for the
+     * actual key package creation (mls_key_package_create only receives
+     * the pubkey).  We pass a zeroed SK to satisfy the parameter contract
+     * while keeping a single code path.
+     */
+    static const uint8_t zero_sk[32] = { 0 };
+    return marmot_create_key_package(m, nostr_pubkey, zero_sk,
+                                      relay_urls, relay_count, result);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Internal: parse a kind:443 event JSON and extract the MlsKeyPackage
  * ──────────────────────────────────────────────────────────────────────── */
 

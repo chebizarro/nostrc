@@ -78,6 +78,10 @@ MarmotGobjectClient *marmot_gobject_client_new(MarmotGobjectStorage *storage);
  * @user_data: data for @callback
  *
  * Asynchronously creates an MLS KeyPackage wrapped in a kind:443 event.
+ * Requires the user's secret key for MLS credential signing.
+ *
+ * For signer-only flows where the caller does not hold the secret key,
+ * use marmot_gobject_client_create_key_package_unsigned_async() instead.
  */
 void marmot_gobject_client_create_key_package_async(MarmotGobjectClient *self,
                                                      const gchar *nostr_pubkey_hex,
@@ -86,6 +90,46 @@ void marmot_gobject_client_create_key_package_async(MarmotGobjectClient *self,
                                                      GCancellable *cancellable,
                                                      GAsyncReadyCallback callback,
                                                      gpointer user_data);
+
+/**
+ * marmot_gobject_client_create_key_package_unsigned_async:
+ * @self: a #MarmotGobjectClient
+ * @nostr_pubkey_hex: user's Nostr public key as hex string
+ * @relay_urls: (array zero-terminated=1) (nullable): relay URLs
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback to invoke when complete
+ * @user_data: data for @callback
+ *
+ * Asynchronously creates an MLS KeyPackage wrapped in an *unsigned*
+ * kind:443 event. The caller is responsible for signing the event
+ * externally (e.g., via a D-Bus signer service) before publication.
+ *
+ * This is the preferred API for signer-only architectures where
+ * the plugin does not hold the user's secret key.
+ *
+ * Since: 1.0
+ */
+void marmot_gobject_client_create_key_package_unsigned_async(MarmotGobjectClient *self,
+                                                              const gchar *nostr_pubkey_hex,
+                                                              const gchar * const *relay_urls,
+                                                              GCancellable *cancellable,
+                                                              GAsyncReadyCallback callback,
+                                                              gpointer user_data);
+
+/**
+ * marmot_gobject_client_create_key_package_unsigned_finish:
+ * @self: a #MarmotGobjectClient
+ * @result: a #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Finishes an async unsigned key package creation.
+ *
+ * Returns: (transfer full) (nullable): the unsigned key package event JSON,
+ *   or NULL on error. The caller must sign this event before publishing.
+ */
+gchar *marmot_gobject_client_create_key_package_unsigned_finish(MarmotGobjectClient *self,
+                                                                 GAsyncResult *result,
+                                                                 GError **error);
 
 /**
  * marmot_gobject_client_create_key_package_finish:
