@@ -52,13 +52,20 @@
  * CRITICAL: Use GWeakRef to prevent use-after-free crash when
  * GtkListView recycles rows during scrolling. */
 #ifdef HAVE_SOUP3
+/* nostrc-generation-fencing: Context for async media callbacks with generation validation.
+ * Prevents use-after-recycle by checking generation before touching widgets. */
 typedef struct {
-  GWeakRef picture_ref;  /* weak ref to GtkPicture */
+  GWeakRef row_ref;       /* weak ref to NostrGtkNoteCardRow */
+  guint64 generation;     /* generation at callback creation time */
+  GWeakRef picture_ref;   /* weak ref to GtkPicture */
+  GCancellable *cancel;   /* cancellable for this operation */
 } MediaLoadCtx;
 
 static void media_load_ctx_free(MediaLoadCtx *ctx) {
   if (!ctx) return;
+  g_weak_ref_clear(&ctx->row_ref);
   g_weak_ref_clear(&ctx->picture_ref);
+  g_clear_object(&ctx->cancel);
   g_free(ctx);
 }
 #endif
@@ -344,6 +351,13 @@ struct _NostrGtkNoteCardRow {
    * at creation time and check it before modifying the widget - if the IDs don't
    * match, the row was recycled for a different item and the callback is stale. */
   guint64 binding_id;
+  
+  /* nostrc-generation-fencing: Generation counter for async callback validation.
+   * Incremented on bind/unbind/dispose to invalidate in-flight async operations.
+   * Async callbacks check generation before touching widgets to prevent
+   * use-after-recycle crashes and heap corruption. */
+  guint64 generation;
+  GCancellable *media_cancel;  /* Cancellable for all media decode operations */
 
   /* Shared cancellable for ALL async operations (avatar, og-preview, note-embed, etc.)
    * When this widget is disposed, cancelling this single cancellable stops all child operations */
@@ -590,6 +604,14 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   
   self->disposed = TRUE;
   g_printerr("[NCR] dispose START: %p\n", (void*)self);
+  
+  /* nostrc-generation-fencing: Bump generation and cancel media ops in dispose too.
+   * This catches any final in-flight callbacks if dispose happens without unbind. */
+  self->generation++;
+  if (self->media_cancel) {
+    g_cancellable_cancel(self->media_cancel);
+    g_clear_object(&self->media_cancel);
+  }
   
   /* Single teardown path for dispose: quiesce external activity and release
    * cancellable refs, then let template disposal own widget subtree cleanup. */
@@ -2121,6 +2143,10 @@ static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
   
   /* nostrc-disposal-forensics: Initialize dispose cookie */
   self->dispose_cookie = (guint64)(uintptr_t)self ^ NCR_COOKIE_MAGIC;
+  
+  /* nostrc-generation-fencing: Initialize generation counter */
+  self->generation = 0;
+  self->media_cancel = NULL;
 
   gtk_widget_init_template(GTK_WIDGET(self));
 
@@ -2348,6 +2374,8 @@ static void media_decode_thread(GTask *task, gpointer source_object,
 }
 
 /* Main-thread callback: apply decoded texture to widget */
+/* nostrc-generation-fencing: Main-thread callback with generation validation.
+ * Prevents use-after-recycle by checking generation before touching widgets. */
 static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)source;
   MediaLoadCtx *ctx = (MediaLoadCtx*)user_data;
@@ -2363,25 +2391,51 @@ static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer us
     return;
   }
 
-  /* CRITICAL: Use g_weak_ref_get to safely check if widget still exists.
-   * If widget was recycled/disposed during decode, weak ref returns NULL
-   * and we skip the update, preventing use-after-free crash. */
-  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
-  if (picture) {
-    if (GTK_IS_PICTURE(picture)) {
-      const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
-      if (url) {
-        media_image_cache_put(url, texture);
-      }
-      gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
-      GtkWidget *container = gtk_widget_get_parent(picture);
-      if (container) show_loaded_image(container);
-    }
-    g_object_unref(picture); /* g_weak_ref_get returns a ref */
-  } else {
-    g_debug("Media: picture widget was recycled, skipping UI update");
+  /* nostrc-generation-fencing: Validate row still exists and is current generation */
+  NostrGtkNoteCardRow *self = g_weak_ref_get(&ctx->row_ref);
+  if (!self) {
+    g_debug("[MEDIA] Row gone, dropping callback");
+    goto out;
   }
 
+  /* nostrc-generation-fencing: Check generation - row may have been recycled */
+  if (ctx->generation != self->generation) {
+    g_debug("[MEDIA] Stale callback dropped: gen=%lu current=%lu row=%p",
+            ctx->generation, self->generation, (void*)self);
+    g_object_unref(self);
+    goto out;
+  }
+
+  /* nostrc-generation-fencing: Check if operation was cancelled */
+  if (g_cancellable_is_cancelled(ctx->cancel)) {
+    g_debug("[MEDIA] Cancelled callback dropped: row=%p", (void*)self);
+    g_object_unref(self);
+    goto out;
+  }
+
+  /* Safe: row is current generation, validate picture widget still exists */
+  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+  if (!picture) {
+    g_debug("[MEDIA] Picture widget gone, dropping callback");
+    g_object_unref(self);
+    goto out;
+  }
+
+  /* All validations passed - safe to update UI */
+  if (GTK_IS_PICTURE(picture)) {
+    const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
+    if (url) {
+      media_image_cache_put(url, texture);
+    }
+    gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+    GtkWidget *container = gtk_widget_get_parent(picture);
+    if (container) show_loaded_image(container);
+  }
+  
+  g_object_unref(picture);
+  g_object_unref(self);
+
+out:
   g_object_unref(texture);
   media_load_ctx_free(ctx);
 }
@@ -2494,10 +2548,12 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url
     return;
   }
 
-  /* CRITICAL: Use weak ref instead of strong ref to prevent crash
-   * when widget is recycled before HTTP completes. */
+  /* nostrc-generation-fencing: Create context with generation and weak refs */
   MediaLoadCtx *ctx = g_new0(MediaLoadCtx, 1);
+  g_weak_ref_init(&ctx->row_ref, self);
+  ctx->generation = self->generation;
   g_weak_ref_init(&ctx->picture_ref, picture);
+  ctx->cancel = g_object_ref(self->media_cancel);  /* Hold ref to cancellable */
 
   /* Start async fetch */
   soup_session_send_and_read_async(
@@ -6413,6 +6469,15 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
    * and check it before modifying the widget. If IDs don't match, the row
    * was recycled and the callback should be ignored. */
   self->binding_id = binding_id_counter++;
+  
+  /* nostrc-generation-fencing: Bump generation to invalidate in-flight callbacks.
+   * Cancel any pending media operations from previous binding. */
+  self->generation++;
+  if (self->media_cancel) {
+    g_cancellable_cancel(self->media_cancel);
+    g_clear_object(&self->media_cancel);
+  }
+  self->media_cancel = g_cancellable_new();
 
   /* nostrc-dqwq.2: Reset deferred media state for fresh binding.
    * prepare_for_unbind already disconnected the handler and freed items,
@@ -6480,6 +6545,14 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
  */
 void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
   g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  
+  /* nostrc-generation-fencing: Bump generation to invalidate in-flight callbacks.
+   * Cancel any pending media operations. */
+  self->generation++;
+  if (self->media_cancel) {
+    g_cancellable_cancel(self->media_cancel);
+    g_clear_object(&self->media_cancel);
+  }
 
   /* Must be idempotent: GTK can trigger unbind/teardown more than once for
    * the same recycled row. Re-running cleanup risks dereferencing stale child
