@@ -270,16 +270,44 @@ static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n
  * can trigger callbacks that attempt to modify the model, causing heap corruption.
  * This wrapper sets a guard flag and logs if reentrancy is detected. */
 static void emit_items_changed_safe(GnNostrEventModel *self, guint pos, guint removed, guint added) {
+  /* Assert main thread - model mutations must be on main thread */
+  ASSERT_MAIN_THREAD();
+  
   /* Check debug flag to suppress UI updates */
   if (gnostr_debug_ui_updates_disabled()) {
     return;
   }
   
-  if (self->emitting_items_changed) {
-    g_warning("[MODEL] BLOCKED reentrant items_changed(pos=%u, removed=%u, added=%u) - would cause heap corruption",
-              pos, removed, added);
-    return;
+  /* nostrc-invariants: Validate items_changed parameters to catch bugs early.
+   * These invariants must hold or GTK will corrupt its internal state. */
+  guint current_len = self->notes->len;
+  
+  /* For "replace all" pattern (pos=0, removed=old_len, added=new_len):
+   * - The array has ALREADY been mutated to new_len
+   * - So current_len == added (the new length)
+   * - removed is the OLD length (before mutation)
+   * 
+   * For incremental patterns:
+   * - pos <= current_len (can't start past end)
+   * - pos + removed <= current_len + removed - added (original length check)
+   */
+  
+  /* Sanity check: pos should not exceed a reasonable bound */
+  if (pos > current_len + removed) {
+    g_error("[MODEL] INVARIANT VIOLATION: pos=%u > current_len(%u) + removed(%u)",
+            pos, current_len, removed);
   }
+  
+  /* Reentrancy guard - fatal in debug mode */
+  if (self->emitting_items_changed) {
+    g_error("[MODEL] FATAL: Reentrant items_changed(pos=%u, removed=%u, added=%u) - "
+            "this causes double-unref and heap corruption",
+            pos, removed, added);
+  }
+  
+  g_debug("[MODEL] items_changed(pos=%u, removed=%u, added=%u) current_len=%u",
+          pos, removed, added, current_len);
+  
   self->emitting_items_changed = TRUE;
   g_list_model_items_changed(G_LIST_MODEL(self), pos, removed, added);
   self->emitting_items_changed = FALSE;
@@ -437,14 +465,18 @@ static void profile_cache_lru_remove(GnNostrEventModel *self, const char *pubkey
 }
 
 static GNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex) {
+  ASSERT_MAIN_THREAD();
   if (!self || !self->profile_cache || !pubkey_hex) return NULL;
   GNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey_hex);
   
   /* Defensive check: detect corrupted profile pointers */
   if (profile && !GNOSTR_IS_PROFILE(profile)) {
-    g_critical("[MODEL] profile_cache contains invalid GNostrProfile for pubkey %.16s... "
-               "(ptr=%p) - removing stale entry",
-               pubkey_hex, (void*)profile);
+    /* Log but don't abort - remove stale entry and continue */
+    g_warning("[MODEL] profile_cache contains invalid GNostrProfile for pubkey %.16s... "
+              "(ptr=%p) - removing stale entry (cache_size=%u lru_size=%u)",
+              pubkey_hex, (void*)profile,
+              g_hash_table_size(self->profile_cache),
+              g_queue_get_length(self->profile_cache_lru));
     /* Remove the stale entry from both hash table AND LRU queue */
     g_hash_table_remove(self->profile_cache, pubkey_hex);
     profile_cache_lru_remove(self, pubkey_hex);
@@ -513,6 +545,17 @@ static void profile_cache_evict(GnNostrEventModel *self) {
          !g_queue_is_empty(self->profile_cache_lru)) {
     char *oldest = g_queue_pop_head(self->profile_cache_lru);
     if (oldest) {
+      /* DEBUG: Log refcount before eviction */
+      GNostrProfile *profile = g_hash_table_lookup(self->profile_cache, oldest);
+      if (profile && GNOSTR_IS_PROFILE(profile)) {
+        guint refcount = G_OBJECT(profile)->ref_count;
+        g_debug("[PROFILE_CACHE] Evicting profile %p pubkey=%.16s... refcount=%u",
+                (void*)profile, oldest, refcount);
+        if (refcount == 1) {
+          g_warning("[PROFILE_CACHE] WARNING: Evicting profile with refcount=1 - "
+                    "items may still reference it! pubkey=%.16s...", oldest);
+        }
+      }
       /* Use g_hash_table_remove which frees both key and value via destroy funcs.
        * We only free our LRU queue copy (oldest), not the hash table's key. */
       g_hash_table_remove(self->profile_cache, oldest);
