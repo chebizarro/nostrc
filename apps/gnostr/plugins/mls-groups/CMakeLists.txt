@@ -6,6 +6,9 @@ set(PLUGIN_NAME mls-groups)
 # Find libadwaita for UI widgets
 pkg_check_modules(LIBADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
 
+# Find libsoup for Blossom HTTP uploads (Phase 7)
+pkg_check_modules(LIBSOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
+
 # Get the gnostr app directory (two levels up from plugin)
 set(GNOSTR_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 # Get the project root
@@ -26,6 +29,16 @@ set(PLUGIN_SOURCES
     ui/gn-group-chat-view.c
     ui/gn-group-message-row.c
     ui/gn-group-composer.c
+    # Phase 5: Group Management
+    ui/gn-create-group-dialog.c
+    ui/gn-group-settings-view.c
+    ui/gn-member-row.c
+    # Phase 6: MLS Direct Messages + Invitations
+    gn-mls-dm-manager.c
+    ui/gn-welcome-list-view.c
+    ui/gn-mls-dm-list-view.c
+    # Phase 7: Encrypted Media (MIP-04)
+    gn-mls-media-manager.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gnostr-plugin-api.c
 )
 
@@ -58,6 +71,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::LIBPEAS
     PkgConfig::JSON_GLIB
     PkgConfig::LIBADWAITA
+    PkgConfig::LIBSOUP
 )
 
 # Link libgo for include paths

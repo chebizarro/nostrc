@@ -115,7 +115,7 @@ gn_group_message_row_bind(GnGroupMessageRow    *self,
 
   g_set_object(&self->message, message);
 
-  const gchar *sender_hex = marmot_gobject_message_get_pubkey_hex(message);
+  const gchar *sender_hex = marmot_gobject_message_get_pubkey(message);
   const gchar *content    = marmot_gobject_message_get_content(message);
   gint64       created_at = marmot_gobject_message_get_created_at(message);
 

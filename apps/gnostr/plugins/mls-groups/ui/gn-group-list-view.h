@@ -3,6 +3,7 @@
  *
  * Main sidebar panel showing all MLS groups as a GtkListView.
  * Selecting a group pushes a GnGroupChatView onto the navigation stack.
+ * Includes a "Create Group" button that opens GnCreateGroupDialog.
  *
  * Copyright (C) 2026 Gnostr Contributors
  */
@@ -15,6 +16,11 @@
 #include "../gn-marmot-service.h"
 #include "../gn-mls-event-router.h"
 
+/* Forward declaration — full definition in gnostr-plugin-api.h */
+#ifndef GNOSTR_PLUGIN_API_H
+typedef struct _GnostrPluginContext GnostrPluginContext;
+#endif
+
 G_BEGIN_DECLS
 
 #define GN_TYPE_GROUP_LIST_VIEW (gn_group_list_view_get_type())
@@ -26,12 +32,14 @@ G_DECLARE_FINAL_TYPE(GnGroupListView, gn_group_list_view,
  * @service: The marmot service
  * @router: The MLS event router (for sending messages)
  * @navigation_view: The host navigation view (to push chat pages)
+ * @plugin_context: The plugin context (for relay/event access)
  *
  * Returns: (transfer full): A new #GnGroupListView
  */
 GnGroupListView *gn_group_list_view_new(GnMarmotService     *service,
                                          GnMlsEventRouter    *router,
-                                         AdwNavigationView   *navigation_view);
+                                         AdwNavigationView   *navigation_view,
+                                         GnostrPluginContext *plugin_context);
 
 G_END_DECLS
 

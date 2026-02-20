@@ -20,8 +20,12 @@
 #include "gn-marmot-service.h"
 #include "gn-key-package-manager.h"
 #include "gn-mls-event-router.h"
+#include "gn-mls-dm-manager.h"
+#include "gn-mls-media-manager.h"
 #include "ui/gn-group-list-view.h"
 #include "ui/gn-group-chat-view.h"
+#include "ui/gn-welcome-list-view.h"
+#include "ui/gn-mls-dm-list-view.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
 
@@ -45,6 +49,7 @@ static const gsize N_SUPPORTED_KINDS = G_N_ELEMENTS(SUPPORTED_KINDS);
 /* Panel IDs */
 #define PANEL_ID_GROUP_CHATS  "mls-group-chats"
 #define PANEL_ID_INVITATIONS  "mls-invitations"
+#define PANEL_ID_SECURE_DMS   "mls-secure-dms"
 
 struct _MlsGroupsPlugin
 {
@@ -56,6 +61,8 @@ struct _MlsGroupsPlugin
   /* Sub-components */
   GnKeyPackageManager *kp_manager;
   GnMlsEventRouter    *event_router;
+  GnMlsDmManager      *dm_manager;      /* Phase 6: MLS DMs */
+  GnMlsMediaManager   *media_manager;   /* Phase 7: Encrypted media */
 
   /* Event subscriptions */
   guint64 gift_wrap_subscription;    /* kind:1059 addressed to us */
@@ -105,6 +112,8 @@ mls_groups_plugin_dispose(GObject *object)
 
   g_clear_object(&self->kp_manager);
   g_clear_object(&self->event_router);
+  g_clear_object(&self->dm_manager);
+  g_clear_object(&self->media_manager);
 
   G_OBJECT_CLASS(mls_groups_plugin_parent_class)->dispose(object);
 }
@@ -123,6 +132,8 @@ mls_groups_plugin_init(MlsGroupsPlugin *self)
   self->context                 = NULL;
   self->kp_manager              = NULL;
   self->event_router            = NULL;
+  self->dm_manager              = NULL;
+  self->media_manager           = NULL;
   self->gift_wrap_subscription  = 0;
   self->group_msg_subscription  = 0;
 }
@@ -284,8 +295,10 @@ mls_groups_plugin_activate(GnostrPlugin       *plugin,
   }
 
   /* Create sub-components */
-  self->event_router = gn_mls_event_router_new(service, context);
-  self->kp_manager = gn_key_package_manager_new(service, context);
+  self->event_router  = gn_mls_event_router_new(service, context);
+  self->kp_manager    = gn_key_package_manager_new(service, context);
+  self->dm_manager    = gn_mls_dm_manager_new(service, self->event_router, context);
+  self->media_manager = gn_mls_media_manager_new(service, context, NULL);
 
   /* Ensure key package is published */
   if (user_pubkey != NULL)
@@ -322,6 +335,8 @@ mls_groups_plugin_deactivate(GnostrPlugin       *plugin,
   /* Destroy sub-components */
   g_clear_object(&self->kp_manager);
   g_clear_object(&self->event_router);
+  g_clear_object(&self->dm_manager);
+  g_clear_object(&self->media_manager);
 
   /* Shut down Marmot service */
   gn_marmot_service_shutdown();
@@ -476,6 +491,15 @@ mls_groups_get_sidebar_items(GnostrUIExtension  *extension,
   gnostr_sidebar_item_set_position(invite_item, 26);
   items = g_list_append(items, invite_item);
 
+  /* Secure DMs sidebar item (Phase 6) */
+  GnostrSidebarItem *dm_item = gnostr_sidebar_item_new(
+    PANEL_ID_SECURE_DMS,
+    "Secure DMs",
+    "security-high-symbolic");
+  gnostr_sidebar_item_set_requires_auth(dm_item, TRUE);
+  gnostr_sidebar_item_set_position(dm_item, 27);
+  items = g_list_append(items, dm_item);
+
   return items;
 }
 
@@ -504,18 +528,40 @@ mls_groups_create_panel_widget(GnostrUIExtension  *extension,
        * create_panel_widget parameter.
        */
       GnGroupListView *list = gn_group_list_view_new(
-        service, self->event_router, NULL);
+        service, self->event_router, NULL, self->context);
       return GTK_WIDGET(list);
     }
 
   if (g_strcmp0(panel_id, PANEL_ID_INVITATIONS) == 0)
     {
-      /* TODO Phase 5: GnWelcomeListView */
-      GtkWidget *placeholder = gtk_label_new("Group Invitations — Coming Soon");
-      gtk_widget_add_css_class(placeholder, "dim-label");
-      gtk_widget_set_vexpand(placeholder, TRUE);
-      gtk_widget_set_hexpand(placeholder, TRUE);
-      return placeholder;
+      MlsGroupsPlugin *plug = MLS_GROUPS_PLUGIN(extension);
+      GnMarmotService *inv_service = gn_marmot_service_get_default();
+      if (inv_service == NULL || plug->event_router == NULL)
+        {
+          GtkWidget *err = gtk_label_new("MLS service not available");
+          gtk_widget_add_css_class(err, "dim-label");
+          return err;
+        }
+
+      GnWelcomeListView *welcome_view = gn_welcome_list_view_new(
+        inv_service, plug->event_router, plug->context);
+      return GTK_WIDGET(welcome_view);
+    }
+
+  if (g_strcmp0(panel_id, PANEL_ID_SECURE_DMS) == 0)
+    {
+      MlsGroupsPlugin *plug = MLS_GROUPS_PLUGIN(extension);
+      GnMarmotService *dm_service = gn_marmot_service_get_default();
+      if (dm_service == NULL || plug->event_router == NULL || plug->dm_manager == NULL)
+        {
+          GtkWidget *err = gtk_label_new("MLS service not available");
+          gtk_widget_add_css_class(err, "dim-label");
+          return err;
+        }
+
+      GnMlsDmListView *dm_view = gn_mls_dm_list_view_new(
+        dm_service, plug->event_router, plug->dm_manager, plug->context);
+      return GTK_WIDGET(dm_view);
     }
 
   return NULL;

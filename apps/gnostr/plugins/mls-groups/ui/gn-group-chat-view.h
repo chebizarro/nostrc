@@ -16,6 +16,11 @@
 #include "../gn-mls-event-router.h"
 #include <marmot-gobject-1.0/marmot-gobject.h>
 
+/* Forward declaration — full definition in gnostr-plugin-api.h */
+#ifndef GNOSTR_PLUGIN_API_H
+typedef struct _GnostrPluginContext GnostrPluginContext;
+#endif
+
 G_BEGIN_DECLS
 
 #define GN_TYPE_GROUP_CHAT_VIEW (gn_group_chat_view_get_type())
@@ -27,12 +32,14 @@ G_DECLARE_FINAL_TYPE(GnGroupChatView, gn_group_chat_view,
  * @service: The marmot service
  * @router: The MLS event router
  * @group: The group to display
+ * @plugin_context: The plugin context (for settings/member management)
  *
  * Returns: (transfer full): A new #GnGroupChatView
  */
 GnGroupChatView *gn_group_chat_view_new(GnMarmotService      *service,
                                           GnMlsEventRouter    *router,
-                                          MarmotGobjectGroup  *group);
+                                          MarmotGobjectGroup  *group,
+                                          GnostrPluginContext *plugin_context);
 
 G_END_DECLS
 

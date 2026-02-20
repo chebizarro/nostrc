@@ -12,10 +12,12 @@ struct _GnGroupComposer
 
   GtkTextView   *text_view;
   GtkButton     *send_button;
+  GtkButton     *attach_button;   /* Phase 7: media attachment */
 };
 
 enum {
   SIGNAL_SEND_REQUESTED,
+  SIGNAL_MEDIA_ATTACH_REQUESTED,
   N_SIGNALS,
 };
 
@@ -24,6 +26,12 @@ static guint signals[N_SIGNALS];
 G_DEFINE_TYPE(GnGroupComposer, gn_group_composer, GTK_TYPE_BOX)
 
 /* ── Signal handlers ─────────────────────────────────────────────── */
+
+static void
+gn_group_composer_request_media_attach(GnGroupComposer *self)
+{
+  g_signal_emit(self, signals[SIGNAL_MEDIA_ATTACH_REQUESTED], 0);
+}
 
 static void
 on_send_clicked(GtkButton *button, gpointer user_data)
@@ -78,6 +86,13 @@ gn_group_composer_class_init(GnGroupComposerClass *klass)
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1,
                  G_TYPE_STRING);
+
+  signals[SIGNAL_MEDIA_ATTACH_REQUESTED] =
+    g_signal_new("media-attach-requested",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 0);
 }
 
 static void
@@ -122,6 +137,20 @@ gn_group_composer_init(GnGroupComposer *self)
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                  GTK_WIDGET(self->text_view));
   gtk_box_append(GTK_BOX(self), scroll);
+
+  /* Media attach button (hidden until Phase 7 is enabled) */
+  self->attach_button = GTK_BUTTON(gtk_button_new_from_icon_name(
+    "mail-attachment-symbolic"));
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->attach_button),
+                               "Attach encrypted media");
+  gtk_widget_set_valign(GTK_WIDGET(self->attach_button), GTK_ALIGN_END);
+  gtk_widget_add_css_class(GTK_WIDGET(self->attach_button), "flat");
+  gtk_widget_add_css_class(GTK_WIDGET(self->attach_button), "circular");
+  gtk_widget_set_visible(GTK_WIDGET(self->attach_button), FALSE);
+  g_signal_connect_swapped(self->attach_button, "clicked",
+                            G_CALLBACK(gn_group_composer_request_media_attach),
+                            self);
+  gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->attach_button));
 
   /* Send button */
   self->send_button = GTK_BUTTON(gtk_button_new_from_icon_name(
@@ -169,4 +198,12 @@ gn_group_composer_set_send_sensitive(GnGroupComposer *self,
 {
   g_return_if_fail(GN_IS_GROUP_COMPOSER(self));
   gtk_widget_set_sensitive(GTK_WIDGET(self->send_button), sensitive);
+}
+
+void
+gn_group_composer_set_media_enabled(GnGroupComposer *self,
+                                     gboolean         enabled)
+{
+  g_return_if_fail(GN_IS_GROUP_COMPOSER(self));
+  gtk_widget_set_visible(GTK_WIDGET(self->attach_button), enabled);
 }

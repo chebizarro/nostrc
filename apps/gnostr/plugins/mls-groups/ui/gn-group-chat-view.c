@@ -7,7 +7,9 @@
 #include "gn-group-chat-view.h"
 #include "gn-group-message-row.h"
 #include "gn-group-composer.h"
+#include "gn-group-settings-view.h"
 #include "../model/gn-group-message-model.h"
+#include <gnostr-plugin-api.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
 
 struct _GnGroupChatView
@@ -15,9 +17,10 @@ struct _GnGroupChatView
   GtkBox parent_instance;
 
   /* Dependencies */
-  GnMarmotService      *service;     /* strong ref */
-  GnMlsEventRouter    *router;      /* strong ref */
-  MarmotGobjectGroup   *group;       /* strong ref */
+  GnMarmotService      *service;          /* strong ref */
+  GnMlsEventRouter    *router;           /* strong ref */
+  MarmotGobjectGroup   *group;            /* strong ref */
+  GnostrPluginContext *plugin_context;    /* borrowed */
 
   /* Child widgets */
   GtkListView          *message_list;
@@ -99,7 +102,7 @@ on_send_requested(GnGroupComposer *composer,
     return;
 
   const gchar *group_id =
-    marmot_gobject_group_get_mls_group_id_hex(self->group);
+    marmot_gobject_group_get_mls_group_id(self->group);
 
   gn_group_composer_set_send_sensitive(self->composer, FALSE);
   gn_group_composer_clear(self->composer);
@@ -146,6 +149,7 @@ gn_group_chat_view_dispose(GObject *object)
   g_clear_object(&self->router);
   g_clear_object(&self->group);
   g_clear_object(&self->msg_model);
+  self->plugin_context = NULL;
 
   G_OBJECT_CLASS(gn_group_chat_view_parent_class)->dispose(object);
 }
@@ -167,21 +171,59 @@ gn_group_chat_view_init(GnGroupChatView *self)
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
+/* ── Info/settings button callback ─────────────────────────────── */
+
+static void
+on_info_button_clicked(GtkButton *button, gpointer user_data)
+{
+  GnGroupChatView *self = GN_GROUP_CHAT_VIEW(user_data);
+
+  if (self->service == NULL || self->router == NULL || self->group == NULL)
+    return;
+
+  GnGroupSettingsView *settings = gn_group_settings_view_new(
+    self->service, self->router, self->group, self->plugin_context);
+
+  const gchar *name = marmot_gobject_group_get_name(self->group);
+  g_autofree gchar *title = g_strdup_printf("%s — Settings",
+    (name && *name) ? name : "Group");
+
+  /* Present as an AdwDialog (sheet) */
+  AdwDialog *dialog = adw_dialog_new();
+  adw_dialog_set_title(dialog, title);
+  adw_dialog_set_content_width(dialog, 420);
+  adw_dialog_set_content_height(dialog, 560);
+
+  GtkWidget *toolbar_view = adw_toolbar_view_new();
+  GtkWidget *header = adw_header_bar_new();
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_view), header);
+  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_view),
+                                GTK_WIDGET(settings));
+  adw_dialog_set_child(dialog, toolbar_view);
+
+  GtkWidget *toplevel = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(self)));
+  adw_dialog_present(dialog, toplevel);
+}
+
+/* ── Public API ───────────────────────────────────────────────── */
+
 GnGroupChatView *
 gn_group_chat_view_new(GnMarmotService      *service,
                         GnMlsEventRouter    *router,
-                        MarmotGobjectGroup  *group)
+                        MarmotGobjectGroup  *group,
+                        GnostrPluginContext *plugin_context)
 {
   g_return_val_if_fail(GN_IS_MARMOT_SERVICE(service), NULL);
   g_return_val_if_fail(GN_IS_MLS_EVENT_ROUTER(router), NULL);
   g_return_val_if_fail(MARMOT_GOBJECT_IS_GROUP(group), NULL);
 
   GnGroupChatView *self = g_object_new(GN_TYPE_GROUP_CHAT_VIEW, NULL);
-  self->service = g_object_ref(service);
-  self->router  = g_object_ref(router);
-  self->group   = g_object_ref(group);
+  self->service        = g_object_ref(service);
+  self->router         = g_object_ref(router);
+  self->group          = g_object_ref(group);
+  self->plugin_context = plugin_context;
 
-  const gchar *mls_id = marmot_gobject_group_get_mls_group_id_hex(group);
+  const gchar *mls_id = marmot_gobject_group_get_mls_group_id(group);
 
   /* Create message model */
   self->msg_model = gn_group_message_model_new(service, mls_id);
@@ -209,6 +251,33 @@ gn_group_chat_view_new(GnMarmotService      *service,
   gtk_scrolled_window_set_child(self->scroll, GTK_WIDGET(self->message_list));
   gtk_widget_set_vexpand(GTK_WIDGET(self->scroll), TRUE);
 
+  /* Header bar with group name and info button */
+  GtkWidget *chat_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_start(chat_header, 12);
+  gtk_widget_set_margin_end(chat_header, 8);
+  gtk_widget_set_margin_top(chat_header, 8);
+  gtk_widget_set_margin_bottom(chat_header, 8);
+
+  const gchar *group_name = marmot_gobject_group_get_name(group);
+  GtkWidget *name_lbl = gtk_label_new(
+    (group_name && *group_name) ? group_name : "Group Chat");
+  gtk_widget_add_css_class(name_lbl, "heading");
+  gtk_label_set_ellipsize(GTK_LABEL(name_lbl), PANGO_ELLIPSIZE_END);
+  gtk_widget_set_hexpand(name_lbl, TRUE);
+  gtk_widget_set_halign(name_lbl, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(chat_header), name_lbl);
+
+  GtkWidget *info_btn = gtk_button_new_from_icon_name("emblem-system-symbolic");
+  gtk_widget_add_css_class(info_btn, "flat");
+  gtk_widget_add_css_class(info_btn, "circular");
+  gtk_widget_set_tooltip_text(info_btn, "Group settings");
+  gtk_widget_set_valign(info_btn, GTK_ALIGN_CENTER);
+  g_signal_connect(info_btn, "clicked",
+                   G_CALLBACK(on_info_button_clicked), self);
+  gtk_box_append(GTK_BOX(chat_header), info_btn);
+
+  GtkWidget *header_sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+
   /* Separator */
   GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
 
@@ -217,7 +286,9 @@ gn_group_chat_view_new(GnMarmotService      *service,
   g_signal_connect(self->composer, "send-requested",
                    G_CALLBACK(on_send_requested), self);
 
-  /* Assemble */
+  /* Assemble: header → messages → separator → composer */
+  gtk_box_append(GTK_BOX(self), chat_header);
+  gtk_box_append(GTK_BOX(self), header_sep);
   gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->scroll));
   gtk_box_append(GTK_BOX(self), sep);
   gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->composer));
