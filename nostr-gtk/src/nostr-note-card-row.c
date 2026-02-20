@@ -324,8 +324,9 @@ struct _NostrGtkNoteCardRow {
   /* NIP-73 External Content IDs state */
   GtkWidget *external_ids_box;        /* FlowBox container for external ID badges */
   GPtrArray *external_ids;            /* Array of GnostrExternalContentId* */
-  /* Disposal state - prevents async callbacks from accessing widget after dispose starts */
-  gboolean disposed;
+  /* nostrc-disposal-forensics: Disposal state tracking */
+  gboolean disposed;  /* Prevents double-dispose and async callback races */
+  guint64 dispose_cookie;  /* XOR cookie to detect memory scribble into struct */
 
   /* nostrc-dqwq.2: Deferred media widget creation.
    * During bind, store media URLs instead of creating heavyweight GtkPicture /
@@ -559,8 +560,37 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
   self->note_embed = NULL;
 }
 
+/* nostrc-disposal-forensics: Macro to dump object type/pointer before unref/clear */
+#define DUMP_OBJ(tag, obj) \
+  do { \
+    if (obj) g_printerr("[NCR][%s] %s %p\n", tag, G_OBJECT_TYPE_NAME(obj), (void*)obj); \
+    else g_printerr("[NCR][%s] (null)\n", tag); \
+  } while(0)
+
+#define NCR_COOKIE_MAGIC 0xDEADBEEFCAFEBABEULL
+
 static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
+  
+  /* nostrc-disposal-forensics: Check cookie to detect memory scribble */
+  guint64 expected_cookie = (guint64)(uintptr_t)self ^ NCR_COOKIE_MAGIC;
+  if (self->dispose_cookie != 0 && self->dispose_cookie != expected_cookie) {
+    g_error("[NCR] MEMORY SCRIBBLE: NoteCardRow %p cookie mismatch! "
+            "expected=0x%016" G_GINT64_MODIFIER "x got=0x%016" G_GINT64_MODIFIER "x",
+            (void*)self, expected_cookie, self->dispose_cookie);
+  }
+  
+  /* nostrc-disposal-forensics: Make dispose idempotent (safe to call multiple times).
+   * GTK's list item recycling can call dispose twice during hash table cleanup. */
+  if (G_UNLIKELY(self->disposed)) {
+    g_printerr("[NCR] dispose REENTRY: %p (already disposed, chaining to parent)\n", (void*)self);
+    G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->dispose(obj);
+    return;
+  }
+  
+  self->disposed = TRUE;
+  g_printerr("[NCR] dispose START: %p\n", (void*)self);
+  
   /* Single teardown path for dispose: quiesce external activity and release
    * cancellable refs, then let template disposal own widget subtree cleanup. */
   nostr_gtk_note_card_row_quiesce(self, TRUE);
@@ -568,12 +598,16 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   /* nostrc-css-stability: Do not mutate popover visibility/state in dispose.
    * Let gtk_widget_dispose_template() own child teardown order; forcing
    * popdown here can race with style node destruction under heavy recycling. */
+  DUMP_OBJ("repost_popover", self->repost_popover);
   self->repost_popover = NULL;
 
+  DUMP_OBJ("menu_popover", self->menu_popover);
   self->menu_popover = NULL;
 
+  DUMP_OBJ("emoji_picker_popover", self->emoji_picker_popover);
   self->emoji_picker_popover = NULL;
 
+  DUMP_OBJ("reactions_popover", self->reactions_popover);
   self->reactions_popover = NULL;
   /* NIP-25: Clean up reaction breakdown */
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
@@ -2084,6 +2118,9 @@ static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
    * will get a unique binding_id from prepare_for_bind. The value 1 allows
    * setters to work while still supporting the binding_id validation pattern. */
   self->binding_id = 1;
+  
+  /* nostrc-disposal-forensics: Initialize dispose cookie */
+  self->dispose_cookie = (guint64)(uintptr_t)self ^ NCR_COOKIE_MAGIC;
 
   gtk_widget_init_template(GTK_WIDGET(self));
 
