@@ -74,12 +74,12 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (!chan || !w) return;
     if (chan->magic != GO_CHANNEL_MAGIC) return;
     /* Must hold chan->mutex — caller is responsible (we take it here for safety) */
-    nsync_mu_lock(&chan->mutex);
+    nsync_mu_lock(&chan->sync->mu);
     /* Avoid double-registration: check if w is already in the list */
     GoSelectWaiterNode *cur = (GoSelectWaiterNode *)chan->select_waiters;
     while (cur) {
         if (cur->waiter == w) {
-            nsync_mu_unlock(&chan->mutex);
+            nsync_mu_unlock(&chan->sync->mu);
             return; /* already registered */
         }
         cur = cur->next;
@@ -90,19 +90,19 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
      * registered on multiple channels concurrently. */
     GoSelectWaiterNode *node = (GoSelectWaiterNode *)malloc(sizeof(GoSelectWaiterNode));
     if (!node) {
-        nsync_mu_unlock(&chan->mutex);
+        nsync_mu_unlock(&chan->sync->mu);
         return;
     }
     node->waiter = go_select_waiter_ref(w);  /* Node takes a ref on the waiter */
     node->next = (GoSelectWaiterNode *)chan->select_waiters;
     chan->select_waiters = node;
-    nsync_mu_unlock(&chan->mutex);
+    nsync_mu_unlock(&chan->sync->mu);
 }
 
 void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (!chan || !w) return;
     if (chan->magic != GO_CHANNEL_MAGIC) return;
-    nsync_mu_lock(&chan->mutex);
+    nsync_mu_lock(&chan->sync->mu);
     GoSelectWaiterNode **pp = (GoSelectWaiterNode **)&chan->select_waiters;
     while (*pp) {
         GoSelectWaiterNode *node = *pp;
@@ -114,7 +114,7 @@ void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
         }
         pp = &(*pp)->next;
     }
-    nsync_mu_unlock(&chan->mutex);
+    nsync_mu_unlock(&chan->sync->mu);
 }
 
 /**

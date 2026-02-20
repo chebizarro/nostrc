@@ -1,0 +1,10 @@
+[Plugin]
+Module=nip17-dms
+Name=NIP-17 Private DMs
+Description=Private direct messages using gift-wrapped encryption (NIP-17)
+Authors=Gnostr Contributors
+Version=1.0
+Copyright=Copyright 2026 Gnostr Contributors
+Website=https://github.com/nostr-protocol/nips/blob/master/17.md
+Builtin=true
+Loader=c

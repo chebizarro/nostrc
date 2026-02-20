@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE          /* usleep on glibc 2.19+ */
 
 #include "channel.h"
+#include "channel_debug.h"
 #include "select.h"
 #include "fiber_hooks.h"
 #include "nostr/metrics.h"
@@ -13,8 +14,123 @@
 #include <unistd.h>    /* usleep for waiter drain */
 
 /* Implemented in select.c — signals select waiters registered on this channel.
- * Must be called while holding chan->mutex. */
+ * Must be called while holding chan->sync->mu. */
 extern void go_channel_signal_select_waiters(GoChannel *chan);
+
+/* ── Sync State Lifecycle ──────────────────────────────────────────────
+ * The sync state (mutex + condition variables) is allocated separately
+ * from the channel. This allows the channel to be freed while late waiters
+ * still have valid sync state to touch.
+ *
+ * Lifecycle:
+ * - Created with refcnt=1 (owned by channel)
+ * - Waiters call sync_ref before blocking, sync_unref after
+ * - Channel unref drops its ownership ref
+ * - Sync state freed when refcnt hits 0 (unless immortal mode)
+ */
+
+/* Immortal sync mode: never free sync state (diagnostic) */
+static int g_go_chan_sync_never_free = 0;
+
+/* Quarantine list for sync state verification */
+#define GO_SYNC_QUARANTINE_MAX 1024
+static GoChanSyncState *g_go_sync_quarantine_list[GO_SYNC_QUARANTINE_MAX] = {0};
+static _Atomic size_t g_go_sync_quarantine_count = 0;
+
+static void go_chan_sync_init_env(void) {
+    static int inited = 0;
+    if (inited) return;
+    inited = 1;
+    
+    const char *env = getenv("NOSTR_CHAN_SYNC_NEVER_FREE");
+    if (env && *env && *env != '0') {
+        g_go_chan_sync_never_free = 1;
+        fprintf(stderr, "[GO_CHAN_DEBUG] Sync state immortal mode ENABLED (sync never freed)\n");
+    }
+}
+
+GoChanSyncState *go_chan_sync_create(void) {
+    go_chan_sync_init_env();
+    
+    GoChanSyncState *sync = malloc(sizeof(GoChanSyncState));
+    if (!sync) return NULL;
+    
+    sync->magic = GO_SYNC_MAGIC_ALIVE;
+    atomic_store_explicit(&sync->refcnt, 1, memory_order_relaxed);
+    atomic_store_explicit(&sync->waiter_count, 0, memory_order_relaxed);
+    nsync_mu_init(&sync->mu);
+    nsync_cv_init(&sync->cv_full);
+    nsync_cv_init(&sync->cv_empty);
+    
+    if (g_go_chan_debug_enabled) {
+        fprintf(stderr, "[GO_CHAN_DEBUG] SYNC_CREATE sync=%p\n", (void*)sync);
+    }
+    
+    return sync;
+}
+
+GoChanSyncState *go_chan_sync_ref(GoChanSyncState *sync) {
+    if (!sync) return NULL;
+    if (sync->magic != GO_SYNC_MAGIC_ALIVE) {
+        fprintf(stderr, "[GO_CHAN_DEBUG] FATAL: sync_ref on dead sync %p magic=0x%08X\n",
+                (void*)sync, sync->magic);
+        abort();
+    }
+    atomic_fetch_add_explicit(&sync->refcnt, 1, memory_order_acq_rel);
+    return sync;
+}
+
+void go_chan_sync_unref(GoChanSyncState *sync) {
+    if (!sync) return;
+    
+    if (sync->magic != GO_SYNC_MAGIC_ALIVE) {
+        fprintf(stderr, "[GO_CHAN_DEBUG] FATAL: sync_unref on dead sync %p magic=0x%08X\n",
+                (void*)sync, sync->magic);
+        abort();
+    }
+    
+    int prev = atomic_fetch_sub_explicit(&sync->refcnt, 1, memory_order_acq_rel);
+    if (prev > 1) return;
+    
+    if (prev <= 0) {
+        fprintf(stderr, "[GO_CHAN_DEBUG] FATAL: sync_unref double-free sync=%p prev=%d\n",
+                (void*)sync, prev);
+        abort();
+    }
+    
+    /* Last reference - check waiter count */
+    int waiters = atomic_load_explicit(&sync->waiter_count, memory_order_acquire);
+    if (waiters != 0) {
+        fprintf(stderr, "[GO_CHAN_DEBUG] WARNING: sync_unref with %d waiters still active sync=%p\n",
+                waiters, (void*)sync);
+    }
+    
+    /* Immortal mode: never free sync state */
+    if (g_go_chan_sync_never_free) {
+        if (g_go_chan_debug_enabled) {
+            fprintf(stderr, "[GO_CHAN_DEBUG] SYNC_IMMORTAL: sync=%p kept alive (not freed)\n",
+                    (void*)sync);
+        }
+        return;
+    }
+    
+    /* Mark as freed and poison */
+    sync->magic = GO_SYNC_MAGIC_FREED;
+    
+    /* Add to quarantine for verification */
+    size_t idx = atomic_fetch_add_explicit(&g_go_sync_quarantine_count, 1, memory_order_relaxed);
+    if (idx < GO_SYNC_QUARANTINE_MAX) {
+        g_go_sync_quarantine_list[idx] = sync;
+    }
+    
+    if (g_go_chan_debug_enabled) {
+        fprintf(stderr, "[GO_CHAN_DEBUG] SYNC_FREE: sync=%p (quarantined, not actually freed)\n",
+                (void*)sync);
+    }
+    
+    /* Don't actually free - keep in quarantine for UAF detection */
+    /* In production, we would free(sync) here */
+}
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -123,8 +239,8 @@ static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unl
  * state transitions (send/recv/close).
  *
  * chan_ptr:    GoChannel* — needed to access the fiber waiter list
- * cv_ptr:     &chan->cond_full or &chan->cond_empty
- * mu_ptr:     &chan->mutex (must be held on entry, re-held on return)
+ * cv_ptr:     &chan->sync->cv_full or &chan->sync->cv_empty
+ * mu_ptr:     &chan->sync->mu (must be held on entry, re-held on return)
  * waiter_list: &chan->fiber_waiters_full or &chan->fiber_waiters_empty
  */
 #define CV_WAIT_FIBER(chan_ptr, cv_ptr, mu_ptr, waiter_list) do { \
@@ -156,22 +272,22 @@ static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unl
  * fiber+thread workloads may have waiters in both paths.
  */
 #define CV_SIGNAL_EMPTY(chan) do {                       \
-    nsync_cv_signal(&(chan)->cond_empty);                \
+    nsync_cv_signal(&(chan)->sync->cv_empty);            \
     fiber_waiter_wake_one(&(chan)->fiber_waiters_empty); \
 } while(0)
 
 #define CV_BROADCAST_EMPTY(chan) do {                    \
-    nsync_cv_broadcast(&(chan)->cond_empty);             \
+    nsync_cv_broadcast(&(chan)->sync->cv_empty);         \
     fiber_waiter_wake_all(&(chan)->fiber_waiters_empty); \
 } while(0)
 
 #define CV_SIGNAL_FULL(chan) do {                        \
-    nsync_cv_signal(&(chan)->cond_full);                 \
+    nsync_cv_signal(&(chan)->sync->cv_full);             \
     fiber_waiter_wake_one(&(chan)->fiber_waiters_full);  \
 } while(0)
 
 #define CV_BROADCAST_FULL(chan) do {                     \
-    nsync_cv_broadcast(&(chan)->cond_full);              \
+    nsync_cv_broadcast(&(chan)->sync->cv_full);          \
     fiber_waiter_wake_all(&(chan)->fiber_waiters_full);  \
 } while(0)
 
@@ -476,9 +592,9 @@ int go_channel_is_closed(GoChannel *chan) {
     }
     int closed = 0;
     ensure_spin_env();
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     closed = atomic_load_explicit(&chan->closed, memory_order_acquire);
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
     return closed;
 }
 
@@ -502,6 +618,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
+    GO_CHAN_CHECK(chan); /* Debug: validate channel before use */
     /* nostrc-waiter-count: Increment BEFORE magic check to prevent race with graveyard. */
     atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
     // Validate magic number to detect garbage/freed channel pointers
@@ -555,7 +672,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         // waiter wakes per signal, leaving others blocked even when data exists.
         {
             int was_empty = (head == tail);
-            NLOCK(&chan->mutex);
+            NLOCK(&chan->sync->mu);
 #if NOSTR_REFINED_SIGNALING
             CV_SIGNAL_EMPTY(chan);
 #else
@@ -564,7 +681,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             }
 #endif
             go_channel_signal_select_waiters(chan);
-            NUNLOCK(&chan->mutex);
+            NUNLOCK(&chan->sync->mu);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
 #endif
@@ -590,9 +707,9 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
     }
 #endif
     int rc = -1;
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
@@ -655,7 +772,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         }
         rc = 0;
     }
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
     /* nostrc-waiter-order: Decrement active_waiters AFTER unlocking mutex.
      * If we decrement before unlock, graveyard reap could see waiters==0
      * and free the channel while we're still about to call NUNLOCK. */
@@ -672,6 +789,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
+    GO_CHAN_CHECK(chan); /* Debug: validate channel before use */
     /* nostrc-waiter-count: Increment BEFORE magic check to prevent race with graveyard. */
     atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
     // Validate magic number to detect garbage/freed channel pointers
@@ -737,7 +855,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         {
             int was_full = ((head - tail) == chan->capacity);
             // Signal under mutex to avoid lost wakeups
-            NLOCK(&chan->mutex);
+            NLOCK(&chan->sync->mu);
 #if NOSTR_REFINED_SIGNALING
             // Always signal to wake one blocked sender
             CV_SIGNAL_FULL(chan);
@@ -748,7 +866,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             }
 #endif
             go_channel_signal_select_waiters(chan);
-            NUNLOCK(&chan->mutex);
+            NUNLOCK(&chan->sync->mu);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
 #endif
@@ -776,16 +894,16 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         return -1;
     }
     int rc = -1;
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     // Re-check freed flag under mutex in case of race
     if (NOSTR_UNLIKELY(atomic_load_explicit(&chan->refs, memory_order_acquire) <= 0)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
@@ -847,7 +965,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         }
         rc = 0;
     }
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
     /* nostrc-waiter-order: Decrement active_waiters AFTER unlocking mutex.
      * If we decrement before unlock, graveyard reap could see waiters==0
      * and free the channel while we're still about to call NUNLOCK. */
@@ -872,13 +990,31 @@ int go_channel_has_data(const void *chan) {
 
 /* Create a new channel with the given capacity */
 GoChannel *go_channel_create(size_t capacity) {
+    /* Initialize debug infrastructure on first call */
+    go_chan_debug_init();
+    
     /* Opportunistically reap dead channels from the graveyard */
     go_channel_graveyard_reap();
 
     GoChannel *chan = malloc(sizeof(GoChannel));
     if (!chan) return NULL;
+    
+    /* Allocate sync state separately - this is the key to the split-lifetime fix */
+    chan->sync = go_chan_sync_create();
+    if (!chan->sync) {
+        free(chan);
+        return NULL;
+    }
+    
     // Set magic number for validation
     chan->magic = GO_CHANNEL_MAGIC;
+    
+    /* Debug: track allocation */
+    if (g_go_chan_debug_enabled) {
+        uint64_t alloc_id = go_chan_next_alloc_id();
+        fprintf(stderr, "[GO_CHAN_DEBUG] CREATE chan=%p sync=%p alloc_id=%llu cap=%zu\n",
+                (void*)chan, (void*)chan->sync, (unsigned long long)alloc_id, capacity);
+    }
     // Optionally round capacity up to next power of two for faster masking
     size_t cap = capacity;
 #if NOSTR_CHANNEL_ENFORCE_POW2_CAP
@@ -920,9 +1056,7 @@ GoChannel *go_channel_create(size_t capacity) {
     chan->slot_seq = NULL;
 #endif
     atomic_store_explicit(&chan->closed, 0, memory_order_relaxed);
-    nsync_mu_init(&chan->mutex);
-    nsync_cv_init(&chan->cond_full);
-    nsync_cv_init(&chan->cond_empty);
+    /* sync->mu, cv_full, cv_empty already initialized in go_chan_sync_create() */
     atomic_store_explicit(&chan->refs, 1, memory_order_relaxed);
     atomic_store_explicit(&chan->active_waiters, 0, memory_order_relaxed);
     chan->select_waiters = NULL;
@@ -955,17 +1089,29 @@ void go_channel_unref(GoChannel *chan) {
     // Magic number validation: detect garbage/invalid pointers
     if (chan->magic != GO_CHANNEL_MAGIC) {
         nostr_metric_counter_add("go_chan_invalid_magic_free", 1);
+        if (g_go_chan_debug_enabled) {
+            fprintf(stderr, "[GO_CHAN_DEBUG] UNREF: Invalid magic 0x%08X for chan=%p\n",
+                    chan->magic, (void*)chan);
+        }
         return;
     }
 
     // Decrement refs. If previous value was 1 we are the last owner.
     int prev = atomic_fetch_sub_explicit(&chan->refs, 1, memory_order_acq_rel);
+    if (g_go_chan_debug_enabled) {
+        fprintf(stderr, "[GO_CHAN_DEBUG] UNREF chan=%p refs=%d->%d\n",
+                (void*)chan, prev, prev - 1);
+    }
     if (prev > 1) {
         return; // Other owners remain
     }
     if (NOSTR_UNLIKELY(prev <= 0)) {
         // Double-free or over-unref guard
         nostr_metric_counter_add("go_chan_double_free_guard", 1);
+        if (g_go_chan_debug_enabled) {
+            fprintf(stderr, "[GO_CHAN_DEBUG] FATAL: Double-free detected for chan=%p (refs was %d)\n",
+                    (void*)chan, prev);
+        }
         return;
     }
 
@@ -985,7 +1131,7 @@ void go_channel_unref(GoChannel *chan) {
     // the protocol: callers MUST ensure all users have stopped (via
     // go_channel_close + join) before the last unref.
 
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     // Mark closed and wake all waiters to prevent further use
     atomic_store_explicit(&chan->closed, 1, memory_order_release);
     CV_BROADCAST_FULL(chan);
@@ -1006,7 +1152,7 @@ void go_channel_unref(GoChannel *chan) {
     _Atomic size_t *seq = chan->slot_seq;
     chan->buffer = NULL;
     chan->slot_seq = NULL;
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
 
     // Free the internal buffers outside the mutex (no one can access them
     // since we NULLed the pointers under the mutex)
@@ -1040,7 +1186,43 @@ void go_channel_unref(GoChannel *chan) {
     // The previous sched_yield × 3 was a timing hack that failed under
     // load. Instead, defer the free for 1 second via a graveyard list,
     // guaranteeing all waiters have long since exited.
+    
+    /* Debug: Never-free mode - channels are NEVER freed (purest UAF test) */
+    if (g_go_chan_never_free_mode) {
+        /* Keep magic as ALIVE so channel remains "valid" - if crash disappears, it's UAF */
+        go_chan_record_leak();
+        if (g_go_chan_debug_enabled) {
+            fprintf(stderr, "[GO_CHAN_DEBUG] NEVER_FREE: chan=%p sync=%p kept alive (not freed)\n",
+                    (void*)chan, (void*)chan->sync);
+        }
+        return;
+    }
+    
+    /* Debug: Quarantine mode - never free channels, just poison and leak */
+    if (go_chan_should_quarantine()) {
+        /* Set magic to FREED to detect use-after-free */
+        chan->magic = GO_CHAN_MAGIC_FREED;
+        /* Poison the entire struct (but don't free it) */
+        go_chan_poison_fill((char*)chan + sizeof(chan->magic), sizeof(*chan) - sizeof(chan->magic));
+        /* Add to quarantine list for periodic verification */
+        go_chan_quarantine_add(chan, sizeof(*chan));
+        go_chan_record_leak();
+        if (g_go_chan_debug_enabled) {
+            fprintf(stderr, "[GO_CHAN_DEBUG] QUARANTINE: chan=%p sync=%p poisoned but NOT freed\n",
+                    (void*)chan, (void*)chan->sync);
+        }
+        /* Don't unref sync - keep it alive for quarantine verification */
+        return;
+    }
+    
+    /* Unref the sync state - it may outlive the channel if waiters are still active */
+    GoChanSyncState *sync = chan->sync;
+    chan->sync = NULL;  /* Prevent double-unref */
+    
     go_channel_graveyard_add(chan);
+    
+    /* Unref sync AFTER adding channel to graveyard - sync may still be needed by late waiters */
+    go_chan_sync_unref(sync);
 
     // Opportunistically reap old entries (amortized cost)
     go_channel_graveyard_reap();
@@ -1056,6 +1238,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     if (NOSTR_UNLIKELY(chan == NULL)) {
         return -1;
     }
+    GO_CHAN_CHECK(chan); /* Debug: validate channel before use */
     /* nostrc-waiter-count: Increment active_waiters BEFORE acquiring mutex.
      * This ensures graveyard reap sees us even if we haven't locked yet.
      * The sequence is: increment waiters → check magic → acquire mutex.
@@ -1079,9 +1262,9 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     int have_tw = 0; // whether we started wake->progress timer
     nostr_metric_timer tw; // wake->progress timer
     ensure_histos();
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
@@ -1105,7 +1288,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
 #endif
              && NOSTR_LIKELY(!chan->closed); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_full, &chan->sync->mu, &chan->fiber_waiters_full);
             // woke up
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if (
@@ -1129,7 +1312,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
             NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
             && NOSTR_LIKELY(!chan->closed)) {
-            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_full, &chan->sync->mu, &chan->fiber_waiters_full);
             // woke up
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if (
@@ -1150,13 +1333,13 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
 
     // Guard: channel may have been freed while we were waiting
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
     }
     if (NOSTR_UNLIKELY(chan->closed)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1; // Cannot send to a closed channel
@@ -1232,7 +1415,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_signal_empty", 1);
     }
 
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
     atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     nostr_metric_timer_stop(&t, h_send_wait_ns);
     if (have_tw) {
@@ -1246,6 +1429,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     if (NOSTR_UNLIKELY(chan == NULL)) {
         return -1;
     }
+    GO_CHAN_CHECK(chan); /* Debug: validate channel before use */
     /* nostrc-waiter-count: Increment active_waiters BEFORE acquiring mutex. */
     atomic_fetch_add_explicit(&chan->active_waiters, 1, memory_order_acq_rel);
     /* nostrc-magic-check: Reject dead channels. */
@@ -1265,9 +1449,9 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     int have_tw = 0; // whether we started wake->progress timer
     nostr_metric_timer tw; // wake->progress timer
     ensure_histos();
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
@@ -1291,7 +1475,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 #endif
              && NOSTR_LIKELY(!chan->closed); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_empty, &chan->sync->mu, &chan->fiber_waiters_empty);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -1315,7 +1499,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
             NOSTR_UNLIKELY(chan->size == 0)
 #endif
             ) && NOSTR_LIKELY(!chan->closed)) {
-            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_empty, &chan->sync->mu, &chan->fiber_waiters_empty);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -1349,7 +1533,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 #else
         size_t occ_dbg = chan->size;
 #endif
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         nostr_metric_counter_add("go_chan_recv_closed_empty", 1);
@@ -1362,7 +1546,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 
     // Guard: channel may have been freed while we were waiting
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
@@ -1442,7 +1626,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
     atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     nostr_metric_timer_stop(&t, h_recv_wait_ns);
     if (have_tw) {
@@ -1473,9 +1657,9 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         ensure_histos();
         return -1;
     }
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
@@ -1501,7 +1685,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 #endif
              && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx)); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_full, &chan->sync->mu, &chan->fiber_waiters_full);
             // woke up (deadline or condition)
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if ((
@@ -1526,7 +1710,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 #endif
             ) && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
             // Correctness-first: wait under mutex until space is available
-            CV_WAIT_FIBER(chan, &chan->cond_full, &chan->mutex, &chan->fiber_waiters_full);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_full, &chan->sync->mu, &chan->fiber_waiters_full);
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1547,7 +1731,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     if (have_tw) { (void)0; }
 
     if (NOSTR_UNLIKELY(chan->closed || (ctx && go_context_is_canceled(ctx)))) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         ensure_histos();
         nostr_metric_timer_stop(&t, h_send_wait_ns);
@@ -1603,7 +1787,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         nostr_metric_counter_add("go_chan_signal_empty", 1);
     }
 
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
     atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     return 0;
 }
@@ -1630,9 +1814,9 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         ensure_histos();
         return -1;
     }
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
@@ -1656,7 +1840,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #endif
              && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx)); ++i) {
             NOSTR_CPU_RELAX();
-            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_empty, &chan->sync->mu, &chan->fiber_waiters_empty);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -1681,7 +1865,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #endif
             ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
             // Correctness-first: wait under mutex until data is available
-            CV_WAIT_FIBER(chan, &chan->cond_empty, &chan->mutex, &chan->fiber_waiters_empty);
+            CV_WAIT_FIBER(chan, &chan->sync->cv_empty, &chan->sync->mu, &chan->fiber_waiters_empty);
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1718,7 +1902,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #else
             size_t occ_dbg = chan->size;
 #endif
-            NUNLOCK(&chan->mutex);
+            NUNLOCK(&chan->sync->mu);
             atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
             ensure_histos();
             nostr_metric_timer_stop(&t, h_recv_wait_ns);
@@ -1740,7 +1924,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 
     // Guard: channel may have been freed while we were waiting
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        NUNLOCK(&chan->mutex);
+        NUNLOCK(&chan->sync->mu);
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         return -1;
     }
@@ -1814,14 +1998,14 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
     atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
     return 0;
 }
 
 /* Close the channel (non-destructive): mark closed and wake waiters. */
 void go_channel_close(GoChannel *chan) {
-    NLOCK(&chan->mutex);
+    NLOCK(&chan->sync->mu);
 
     if (!atomic_load_explicit(&chan->closed, memory_order_acquire)) {
         atomic_store_explicit(&chan->closed, 1, memory_order_release); // Mark the channel as closed
@@ -1837,7 +2021,7 @@ void go_channel_close(GoChannel *chan) {
         nostr_metric_counter_add("go_chan_close_broadcasts", 1);
     }
 
-    NUNLOCK(&chan->mutex);
+    NUNLOCK(&chan->sync->mu);
 }
 
 /* Get current channel depth (number of items in buffer) */

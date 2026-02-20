@@ -464,35 +464,38 @@ static void profile_cache_lru_remove(GnNostrEventModel *self, const char *pubkey
   }
 }
 
+/* nostrc-refcount-fix: Return a strong reference to the profile, not a borrowed pointer.
+ * This prevents use-after-free when the cache evicts the profile after the caller
+ * receives the pointer. Caller must g_object_unref() or use g_autoptr(GNostrProfile). */
 static GNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex) {
   ASSERT_MAIN_THREAD();
   if (!self || !self->profile_cache || !pubkey_hex) return NULL;
   GNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey_hex);
   
+  if (!profile) return NULL;
+  
   /* Defensive check: detect corrupted profile pointers */
-  if (profile && !GNOSTR_IS_PROFILE(profile)) {
-    /* Log but don't abort - remove stale entry and continue */
-    g_warning("[MODEL] profile_cache contains invalid GNostrProfile for pubkey %.16s... "
-              "(ptr=%p) - removing stale entry (cache_size=%u lru_size=%u)",
-              pubkey_hex, (void*)profile,
-              g_hash_table_size(self->profile_cache),
-              g_queue_get_length(self->profile_cache_lru));
-    /* Remove the stale entry from both hash table AND LRU queue */
-    g_hash_table_remove(self->profile_cache, pubkey_hex);
-    profile_cache_lru_remove(self, pubkey_hex);
-    return NULL;
+  if (G_UNLIKELY(!GNOSTR_IS_PROFILE(profile))) {
+    g_error("[MODEL] profile_cache corrupt: key=%.16s... value=%p - cache_size=%u lru_size=%u",
+            pubkey_hex, (void*)profile,
+            g_hash_table_size(self->profile_cache),
+            g_queue_get_length(self->profile_cache_lru));
+    return NULL;  /* g_error aborts */
   }
-  return profile;
+  
+  /* Return a strong reference - caller must unref */
+  return g_object_ref(profile);
 }
 
-/* Load kind-0 profile from DB (storage_ndb_get_profile_by_pubkey returns *event* JSON), then cache it.
- * Returns a cached GNostrProfile* on success, NULL if not found.
- */
+/* nostrc-refcount-fix: Load kind-0 profile from DB and cache it.
+ * Returns a strong reference (ref'd) to the profile, or NULL if not found.
+ * Caller must g_object_unref() when done. */
 static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void *txn,
                                                     const unsigned char pk32[32],
                                                     const char *pubkey_hex) {
   if (!self || !txn || !pk32 || !pubkey_hex) return NULL;
 
+  /* Check cache first - returns ref'd profile if found */
   GNostrProfile *existing = profile_cache_get(self, pubkey_hex);
   if (existing) return existing;
 
@@ -515,9 +518,26 @@ static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void
   if (nostr_event_deserialize(evt, evt_json) == 0 && nostr_event_get_kind(evt) == 0) {
     const char *content = nostr_event_get_content(evt);
     if (content && *content) {
-      profile = gnostr_profile_new(pubkey_hex);
+      profile = gnostr_profile_new(pubkey_hex);  /* ref=1 */
       gnostr_profile_update_from_json(profile, content);
-      g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
+      
+      /* Sanity check before insertion */
+      if (!GNOSTR_IS_PROFILE(profile)) {
+        g_error("[MODEL] BUG: Created invalid profile %p for pubkey %.16s...", 
+                (void*)profile, pubkey_hex);
+      }
+      
+      /* Cache takes ownership of one ref, we keep one ref to return */
+      GNostrProfile *cache_ref = g_object_ref(profile);  /* ref=2 */
+      
+      /* Verify the ref we're about to insert is valid */
+      if (!GNOSTR_IS_PROFILE(cache_ref)) {
+        g_error("[MODEL] BUG: g_object_ref returned invalid profile %p for pubkey %.16s...",
+                (void*)cache_ref, pubkey_hex);
+      }
+      
+      g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), cache_ref);
+      
       /* Add to LRU queue - remove any existing entry first to prevent duplicates */
       if (self->profile_cache_lru) {
         profile_cache_lru_remove(self, pubkey_hex);  /* Remove stale entry if exists */
@@ -525,16 +545,18 @@ static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void
         profile_cache_evict(self);
       }
       mark_author_ready(self, pubkey_hex);
+      /* Return caller's ref (ref=2: cache=1, caller=1) */
     }
   }
 
   nostr_event_free(evt);
   free(evt_json);
 
-  return profile;
+  return profile;  /* Returns ref'd profile or NULL */
 }
 
-/* Evict oldest entries from profile_cache if over limit */
+/* nostrc-refcount-fix: Evict oldest entries from profile_cache if over limit.
+ * Robust against stale LRU entries (keys not in hash table). */
 static void profile_cache_evict(GnNostrEventModel *self) {
   if (!self || !self->profile_cache || !self->profile_cache_lru) return;
   
@@ -551,16 +573,16 @@ static void profile_cache_evict(GnNostrEventModel *self) {
         guint refcount = G_OBJECT(profile)->ref_count;
         g_debug("[PROFILE_CACHE] Evicting profile %p pubkey=%.16s... refcount=%u",
                 (void*)profile, oldest, refcount);
-        if (refcount == 1) {
-          g_warning("[PROFILE_CACHE] WARNING: Evicting profile with refcount=1 - "
-                    "items may still reference it! pubkey=%.16s...", oldest);
-        }
       }
-      /* Use g_hash_table_remove which frees both key and value via destroy funcs.
-       * We only free our LRU queue copy (oldest), not the hash table's key. */
-      g_hash_table_remove(self->profile_cache, oldest);
+      /* Remove from hash table - returns TRUE if key was found */
+      gboolean removed = g_hash_table_remove(self->profile_cache, oldest);
       g_free(oldest);  /* Free LRU queue's copy of the key */
-      evicted++;
+      if (removed) {
+        evicted++;
+      } else {
+        /* Stale LRU entry - key not in hash table, continue evicting */
+        g_debug("[PROFILE_CACHE] Stale LRU entry for pubkey %.16s... (not in cache)", oldest);
+      }
     }
   }
   
@@ -593,6 +615,8 @@ static void authors_ready_evict(GnNostrEventModel *self) {
   }
 }
 
+/* nostrc-refcount-fix: Update profile from content JSON.
+ * If profile doesn't exist, creates and caches it. */
 static void profile_cache_update_from_content(GnNostrEventModel *self, const char *pubkey_hex,
                                               const char *content, gsize content_len) {
   if (!self || !pubkey_hex || !content || content_len == 0) return;
@@ -600,29 +624,33 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
   /* content is kind-0 event content JSON, not necessarily NUL terminated */
   char *tmp = g_strndup(content, content_len);
 
+  /* Get ref'd profile from cache */
   GNostrProfile *profile = profile_cache_get(self, pubkey_hex);
   if (!profile) {
-    profile = gnostr_profile_new(pubkey_hex);
-    g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
+    /* Create new profile and add to cache with explicit ref */
+    profile = gnostr_profile_new(pubkey_hex);  /* ref=1 */
+    g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), g_object_ref(profile));  /* ref=2 */
     /* Add to LRU queue - remove any existing entry first to prevent duplicates */
     profile_cache_lru_remove(self, pubkey_hex);  /* Remove stale entry if exists */
     g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
     /* Evict if over limit */
     profile_cache_evict(self);
+    /* profile ref=2: cache=1, local=1 */
   }
 
   gnostr_profile_update_from_json(profile, tmp);
   mark_author_ready(self, pubkey_hex);
 
   g_free(tmp);
+  g_object_unref(profile);  /* Release our ref */
 }
 
-/* Notify cached items that their "profile" property should be re-read by views.
- * nostrc-80i1: Actually SET the profile on the item, not just notify. */
+/* nostrc-refcount-fix: Notify cached items that their profile has arrived.
+ * Actually SET the profile on matching items. */
 static void notify_cached_items_for_pubkey(GnNostrEventModel *self, const char *pubkey_hex) {
   if (!self || !pubkey_hex || !self->item_cache) return;
 
-  /* Get the profile from the model's cache */
+  /* Get ref'd profile from cache */
   GNostrProfile *profile = profile_cache_get(self, pubkey_hex);
   if (!profile) return; /* No profile to set */
 
@@ -634,10 +662,12 @@ static void notify_cached_items_for_pubkey(GnNostrEventModel *self, const char *
     GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(value);
     const char *item_pubkey = gn_nostr_event_item_get_pubkey(item);
     if (item_pubkey && g_strcmp0(item_pubkey, pubkey_hex) == 0) {
-      /* Actually set the profile on the item - this will also notify */
+      /* Set profile on item - g_set_object will add its own ref */
       gn_nostr_event_item_set_profile(item, profile);
     }
   }
+  
+  g_object_unref(profile);  /* Release our ref */
 }
 
 static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char *pubkey_hex, gint64 created_at) {
@@ -1430,8 +1460,14 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
    * Profiles are set via notify_cached_items_for_pubkey() when they arrive.
    * For new items, emit need-profile signal so fetch is triggered. */
   const char *pubkey = gn_nostr_event_item_get_pubkey(item);
-  if (pubkey && !profile_cache_get(self, pubkey)) {
-    g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
+  if (pubkey) {
+    /* Check if profile exists - must unref the returned ref */
+    GNostrProfile *profile = profile_cache_get(self, pubkey);
+    if (!profile) {
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
+    } else {
+      g_object_unref(profile);  /* Release the ref from profile_cache_get */
+    }
   }
 
   /* Add to cache */

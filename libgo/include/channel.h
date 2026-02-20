@@ -20,12 +20,34 @@
 // Magic number to detect valid vs freed/garbage channel pointers
 #define GO_CHANNEL_MAGIC 0xC4A77E10  // "CHANNEL0"
 
+// Magic numbers for sync state lifecycle
+#define GO_SYNC_MAGIC_ALIVE  0x5CA11FE0  // "SYNC ALIVE" (valid hex)
+#define GO_SYNC_MAGIC_FREED  0xDEAD5C00  // "DEAD SYNC" (valid hex)
+
 /* Forward declarations for select waiters */
 struct GoSelectWaiter;
 struct GoSelectWaiterNode;
 
 /* Forward declaration for fiber waiter (used by fiber-aware CV_WAIT) */
 struct GoFiberWaiter;
+
+/**
+ * Separately-allocated sync state for channels.
+ * 
+ * This struct holds the mutex and condition variables that waiters touch.
+ * By allocating it separately from the channel, we can:
+ * 1. Free the channel while sync state remains valid for late waiters
+ * 2. Implement proper refcounting so sync state lives until all waiters exit
+ * 3. Diagnose UAF by making sync state immortal (NOSTR_CHAN_SYNC_NEVER_FREE=1)
+ */
+typedef struct GoChanSyncState {
+    uint32_t magic;                    // Validation magic
+    _Atomic int refcnt;                // Reference count (channel + active waiters)
+    _Atomic int waiter_count;          // Number of threads currently blocked in wait
+    nsync_mu mu;                       // Mutex for channel operations
+    nsync_cv cv_full;                  // Condition: buffer has space (senders wait here)
+    nsync_cv cv_empty;                 // Condition: buffer has data (receivers wait here)
+} GoChanSyncState;
 
 typedef struct GoChannel {
     // Magic number for validation (must be first field)
@@ -44,9 +66,10 @@ typedef struct GoChannel {
     _Alignas(NOSTR_CACHELINE) _Atomic size_t out;  // Consumer index (writers: receivers)
     _Alignas(NOSTR_CACHELINE) size_t size;         // Occupancy (if maintained)
     _Alignas(NOSTR_CACHELINE) _Atomic int closed;  // Closed flag (atomic)
-    _Alignas(NOSTR_CACHELINE) nsync_mu mutex;      // Mutex separated from hot counters
-    nsync_cv cond_full;
-    nsync_cv cond_empty;
+    
+    // Pointer to separately-allocated sync state (survives channel free)
+    _Alignas(NOSTR_CACHELINE) GoChanSyncState *sync;
+    
     // Reference count for shared ownership (hq-e3ach). Starts at 1.
     // When refs drops to 0 the channel is destroyed.
     _Atomic int refs;
@@ -54,13 +77,26 @@ typedef struct GoChannel {
     // blocked inside go_channel_send/receive. Channel cannot be freed until
     // this reaches 0, preventing use-after-free in nsync_cv_wait.
     _Atomic int active_waiters;
-    // Linked list of select waiter registrations (protected by mutex)
+    // Linked list of select waiter registrations (protected by sync->mu)
     struct GoSelectWaiterNode *select_waiters;
-    // Linked list of fiber waiters on cond_full (protected by mutex)
+    // Linked list of fiber waiters on cv_full (protected by sync->mu)
     struct GoFiberWaiter *fiber_waiters_full;
-    // Linked list of fiber waiters on cond_empty (protected by mutex)
+    // Linked list of fiber waiters on cv_empty (protected by sync->mu)
     struct GoFiberWaiter *fiber_waiters_empty;
 } __attribute__((aligned(NOSTR_CACHELINE))) GoChannel;
+
+/* Sync state lifecycle functions */
+GoChanSyncState *go_chan_sync_create(void);
+GoChanSyncState *go_chan_sync_ref(GoChanSyncState *sync);
+void go_chan_sync_unref(GoChanSyncState *sync);
+
+/* Waiter count helpers - call before/after blocking */
+static inline void go_chan_sync_waiter_enter(GoChanSyncState *sync) {
+    atomic_fetch_add_explicit(&sync->waiter_count, 1, memory_order_acq_rel);
+}
+static inline void go_chan_sync_waiter_exit(GoChanSyncState *sync) {
+    atomic_fetch_sub_explicit(&sync->waiter_count, 1, memory_order_acq_rel);
+}
 
 // Compile-time checks to ensure hot fields start at cacheline boundaries.
 // This helps avoid false sharing between producers/consumers and sync vars.
@@ -68,7 +104,7 @@ typedef struct GoChannel {
 _Static_assert((offsetof(GoChannel, in)   % NOSTR_CACHELINE) == 0,  "GoChannel.in not cacheline-aligned");
 _Static_assert((offsetof(GoChannel, out)  % NOSTR_CACHELINE) == 0,  "GoChannel.out not cacheline-aligned");
 _Static_assert((offsetof(GoChannel, size) % NOSTR_CACHELINE) == 0,  "GoChannel.size not cacheline-aligned");
-_Static_assert((offsetof(GoChannel, mutex) % NOSTR_CACHELINE) == 0, "GoChannel.mutex not cacheline-aligned");
+_Static_assert((offsetof(GoChannel, sync) % NOSTR_CACHELINE) == 0,  "GoChannel.sync not cacheline-aligned");
 #endif
 
 GoChannel *go_channel_create(size_t capacity);

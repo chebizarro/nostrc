@@ -10,7 +10,7 @@
 #  include "config.h"
 #endif
 
-#include "/Users/bizarro/Documents/Projects/nostrc/_build_asan/nostr-gobject/signer_proxy.h"
+#include "/home/bizarro/Documents/Projects/nostrc/_build_asan/nostr-gobject/signer_proxy.h"
 
 #include <string.h>
 #ifdef G_OS_UNIX

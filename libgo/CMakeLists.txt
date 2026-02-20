@@ -62,6 +62,7 @@ set(LIBGO_SOURCES
   src/go.c
   src/context.c
   src/channel.c
+  src/channel_debug.c
   src/wait_group.c
   src/hash_map.c
   src/counter.c
