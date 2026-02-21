@@ -5,21 +5,30 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <string.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <dlfcn.h>
 #include <glib.h>
 
 static void gn_print_backtrace(const char *tag) {
   void *frames[128];
   int n = backtrace(frames, 128);
-  const char msg[] = "===== BACKTRACE =====\n";
-  write(STDERR_FILENO, msg, sizeof(msg)-1);
-  if (tag) { 
-    write(STDERR_FILENO, tag, strlen(tag)); 
-    write(STDERR_FILENO, "\n", 1); 
+
+  dprintf(STDERR_FILENO, "===== BACKTRACE =====\n");
+  if (tag) dprintf(STDERR_FILENO, "%s\n", tag);
+
+  for (int i = 0; i < n; i++) {
+    Dl_info info = {0};
+    if (dladdr(frames[i], &info) && info.dli_fname) {
+      const char *sym = info.dli_sname ? info.dli_sname : "??";
+      uintptr_t off = info.dli_saddr ? (uintptr_t)frames[i] - (uintptr_t)info.dli_saddr : 0;
+      dprintf(STDERR_FILENO, "#%02d %p %s!%s+0x%lx\n",
+              i, frames[i], info.dli_fname, sym, (unsigned long)off);
+    } else {
+      dprintf(STDERR_FILENO, "#%02d %p ??\n", i, frames[i]);
+    }
   }
-  backtrace_symbols_fd(frames, n, STDERR_FILENO);
-  const char end[] = "=====================\n";
-  write(STDERR_FILENO, end, sizeof(end)-1);
+  dprintf(STDERR_FILENO, "=====================\n");
 }
 
 static void gn_glib_log_handler(const gchar *domain, GLogLevelFlags level,
