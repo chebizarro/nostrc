@@ -2149,20 +2149,12 @@ static void gn_nostr_event_model_finalize(GObject *object) {
 
   if (self->notes) g_array_unref(self->notes);
   if (self->note_key_set) g_hash_table_unref(self->note_key_set);
-  
-  /* nostrc-refcount-fix: Clear profile_cache BEFORE item_cache.
-   * Event items hold refs to profiles. If we clear item_cache first,
-   * items will try to unref profiles that are still in the cache,
-   * then cache will unref them again → double-unref → refcount underflow.
-   * Clearing profile_cache first drops cache's refs, leaving items' refs intact. */
+  if (self->item_cache) g_hash_table_unref(self->item_cache);
+  if (self->cache_lru) g_queue_free_full(self->cache_lru, g_free);
   if (self->profile_cache) g_hash_table_unref(self->profile_cache);
   if (self->profile_cache_lru) {
     g_queue_free_full(self->profile_cache_lru, g_free);
   }
-  
-  /* Now safe to clear item_cache - profiles still have refs from items */
-  if (self->item_cache) g_hash_table_unref(self->item_cache);
-  if (self->cache_lru) g_queue_free_full(self->cache_lru, g_free);
   if (self->authors_ready) g_hash_table_unref(self->authors_ready);
   if (self->authors_ready_lru) {
     g_queue_free_full(self->authors_ready_lru, g_free);
