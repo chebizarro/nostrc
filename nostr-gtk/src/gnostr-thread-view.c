@@ -12,11 +12,11 @@
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <nostr-filter.h>
-#include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <string.h>
 #include <time.h>
+#include "../../apps/gnostr/src/ui/gn-ui-fence.h"
 
 #define UI_RESOURCE "/org/nostr/gtk/gnostr-thread-view.ui"
 
@@ -183,6 +183,9 @@ struct _NostrGtkThreadView {
 
   /* nostrc-50t: nostrdb subscription for live thread updates */
   uint64_t ndb_sub_thread;       /* Subscription ID for thread events */
+  
+  /* nostrc-generation-fencing: UI lifetime fence for async relay query validation */
+  GnUiFence fence;
   guint rebuild_pending_id;      /* Timeout source for debounced UI rebuild */
 
   /* nostrc-hl6: Track pubkeys we've fetched NIP-65 relay lists for */
