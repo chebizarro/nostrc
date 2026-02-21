@@ -140,8 +140,8 @@ static void gnostr_note_embed_dispose(GObject *obj) {
   /* Shared session is managed globally - do not clear here */
 #endif
 
-  /* Clear layout manager to prevent measurement during disposal cascade. */
-  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+  /* NOTE: Removed gtk_widget_set_layout_manager(NULL) - GTK handles this
+   * during template disposal. Calling it manually can corrupt rc-boxes. */
 
   /* Safe label cleanup: clear text when native is available (resets
    * PangoLayout), ref-leak when native is gone to prevent finalization

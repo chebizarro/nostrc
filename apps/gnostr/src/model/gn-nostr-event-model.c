@@ -2811,6 +2811,9 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GPtrArray *entries = g_task_propagate_pointer(G_TASK(result), NULL);
   if (!entries) return;
   if (!GN_IS_NOSTR_EVENT_MODEL(self)) { g_ptr_array_unref(entries); return; }
+  
+  g_printerr("[MODEL] on_refresh_async_done ENTER notes_len=%u cache_size=%u\n",
+             self->notes->len, g_hash_table_size(self->item_cache));
 
   /* nostrc-atomic-replace: Record old size BEFORE clearing internal state.
    * We will emit a single items_changed(0, old_size, new_size) instead of
@@ -2963,6 +2966,9 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
 
   GPtrArray *entries = g_task_propagate_pointer(G_TASK(result), NULL);
   if (!entries) return;
+  
+  g_printerr("[MODEL] on_paginate_async_done ENTER notes_len=%u cache_size=%u\n",
+             self->notes->len, g_hash_table_size(self->item_cache));
 
   /* Recover trim parameters from GTask qdata */
   guint trim_max = GPOINTER_TO_UINT(
@@ -3086,31 +3092,24 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     }
   }
 
-  /* nostrc-duplicate-fix2: Emit a single "replace all" items_changed signal.
-   *
-   * CRITICAL: The previous signal logic was semantically incorrect and was
-   * the root cause of "Duplicate item detected in list" warnings + segfaults.
-   *
-   * The bug: For trim_newer=TRUE (load-older), items are appended at the END
-   * of the notes array, and older items are trimmed from the FRONT. But the
-   * signal items_changed(0, trimmed, added) told GTK "N new items at position 0",
-   * when actually the surviving old items are at the front and new items at the end.
-   * GTK then called get_item(0) expecting a new item but got a surviving old item
-   * that GTK also tracked at position N — same GObject pointer at two positions.
-   *
-   * Similarly for trim_newer=FALSE (load-newer) with trimming: the signal
-   * miscounted positions, causing GTK's item→widget mapping to become corrupted.
-   *
-   * Fix: Use the conservative "replace all" signal items_changed(0, old_len, new_len),
-   * which correctly tells GTK the entire model has changed. This is the same
-   * pattern used by the sync load_older/load_newer and refresh paths.
-   * Clear item_cache first to ensure get_item() creates fresh items and avoids
-   * returning stale GObject pointers that GTK already tracks elsewhere. */
+  /* TWO-PHASE CACHE SWAP: Same pattern as refresh - build new cache, swap atomically,
+   * defer old cache destruction to idle. This prevents UAF during GTK's widget recycling. */
   if (added > 0 || trimmed > 0) {
     guint new_len = self->notes->len;
-    g_hash_table_remove_all(self->item_cache);
+    
+    GHashTable *old_cache = self->item_cache;
+    GHashTable *new_cache = build_new_item_cache(self, old_cache);
+    
+    /* Atomic swap */
+    self->item_cache = new_cache;
     g_queue_clear_full(self->cache_lru, g_free);
+    
     emit_items_changed_safe(self, 0, old_len, new_len);
+    
+    /* Defer destruction */
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, destroy_cache_idle,
+                    g_hash_table_ref(old_cache), NULL);
+    g_hash_table_unref(old_cache);
   }
 
   g_debug("[MODEL] Async paginate: %u added, %u total", added, self->notes->len);

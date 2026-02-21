@@ -753,6 +753,8 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
     dump_children("dispose BEFORE template", GTK_WIDGET(self), (void*)self);
     /* NOTE: Removed gtk_widget_set_layout_manager(NULL) - GTK handles this
      * during template disposal. Calling it manually can corrupt rc-boxes. */
+    g_printerr("[NCR] dispose_template row=%p disposed=%d template_disposed=%d\n",
+               (void*)self, self->disposed, self->template_disposed);
     gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
     dump_children("dispose AFTER template", GTK_WIDGET(self), (void*)self);
     
