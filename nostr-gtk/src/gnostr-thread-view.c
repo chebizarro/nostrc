@@ -79,6 +79,35 @@ struct _ThreadGraph {
   GPtrArray *render_order;     /* Events in tree traversal order (borrowed refs) */
 };
 
+/* nostrc-generation-fencing: Context for async relay query callbacks */
+typedef struct {
+  GWeakRef view_ref;     /* weak ref to NostrGtkThreadView */
+  guint64 gen;           /* generation at query creation time */
+  GCancellable *cancel;  /* cancellable for this operation */
+} ThreadQueryCtx;
+
+/* Forward declarations - implementations after struct definition */
+static ThreadQueryCtx* thread_query_ctx_new(NostrGtkThreadView *self);
+static void thread_query_ctx_free(ThreadQueryCtx *ctx);
+
+/* nostrc-generation-fencing: Standard validation macro for all ThreadView callbacks */
+#define THREAD_VIEW_VALIDATE_OR_OUT(ctx, self, out_label)              \
+  do {                                                                \
+    if (!self) {                                                      \
+      g_debug("[FENCE][ThreadView] gone, dropping callback");        \
+      goto out_label;                                                 \
+    }                                                                 \
+    if ((ctx)->gen != gn_ui_fence_gen(&(self)->fence)) {              \
+      g_debug("[FENCE][ThreadView] stale drop gen=%lu cur=%lu",      \
+              (ctx)->gen, gn_ui_fence_gen(&(self)->fence));           \
+      goto out_label;                                                 \
+    }                                                                 \
+    if (g_cancellable_is_cancelled((ctx)->cancel)) {                  \
+      g_debug("[FENCE][ThreadView] cancelled");                       \
+      goto out_label;                                                 \
+    }                                                                 \
+  } while (0)
+
 static void thread_node_free(ThreadNode *node) {
   if (!node) return;
   /* event is borrowed, don't free */
@@ -223,6 +252,26 @@ static guint count_descendants(NostrGtkThreadView *self, const char *event_id);
 static void thread_factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
 static void thread_factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
 static void thread_factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data);
+
+/* nostrc-generation-fencing: ThreadQueryCtx helper implementations */
+static ThreadQueryCtx*
+thread_query_ctx_new(NostrGtkThreadView *self)
+{
+  ThreadQueryCtx *ctx = g_new0(ThreadQueryCtx, 1);
+  g_weak_ref_init(&ctx->view_ref, self);
+  ctx->gen = gn_ui_fence_gen(&self->fence);
+  ctx->cancel = gn_ui_fence_cancel_ref(&self->fence);
+  return ctx;
+}
+
+static void
+thread_query_ctx_free(ThreadQueryCtx *ctx)
+{
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->view_ref);
+  g_clear_object(&ctx->cancel);
+  g_free(ctx);
+}
 
 /* Helper: convert hex string to 32-byte binary */
 static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
@@ -470,6 +519,10 @@ static void nostr_gtk_thread_view_dispose(GObject *obj) {
 
   /* nostrc-59nk: Mark as disposed FIRST to prevent async callbacks from modifying widgets */
   self->disposed = TRUE;
+  
+  /* nostrc-generation-fencing: Bump fence to invalidate in-flight relay queries */
+  gn_ui_fence_bump(&self->fence);
+  gn_ui_fence_clear(&self->fence);
 
   /* nostrc-50t: Teardown nostrdb subscription */
   teardown_thread_subscription(self);
@@ -621,6 +674,9 @@ static void nostr_gtk_thread_view_class_init(NostrGtkThreadViewClass *klass) {
 static void nostr_gtk_thread_view_init(NostrGtkThreadView *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
+  /* nostrc-generation-fencing: Initialize UI fence */
+  gn_ui_fence_init(&self->fence);
+  
   /* Initialize state */
   self->events_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, NULL,
                                              (GDestroyNotify)thread_event_item_free);
@@ -693,6 +749,9 @@ void nostr_gtk_thread_view_set_focus_event_with_json(NostrGtkThreadView *self,
     return;
   }
 
+  /* nostrc-generation-fencing: Bump fence - focus event change invalidates in-flight queries */
+  gn_ui_fence_bump(&self->fence);
+  
   /* Store focus event */
   g_free(self->focus_event_id);
   self->focus_event_id = g_strdup(event_id_hex);
@@ -2010,9 +2069,9 @@ static void fetch_nip65_for_missing_authors(NostrGtkThreadView *self) {
   g_ptr_array_unref(pubkeys_to_fetch);
 }
 
-/* Callback for relay query completion */
+/* nostrc-generation-fencing: Relay query callback with generation validation */
 static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
+  ThreadQueryCtx *ctx = (ThreadQueryCtx *)user_data;
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
@@ -2022,13 +2081,13 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
     }
     g_error_free(error);
     if (results) g_ptr_array_unref(results);
+    thread_query_ctx_free(ctx);
     return;
   }
 
-  /* Now safe to access user_data */
-  if (!user_data) return;
-  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
-  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
+  /* nostrc-generation-fencing: Validate view still exists and is current generation */
+  g_autoptr(NostrGtkThreadView) self = g_weak_ref_get(&ctx->view_ref);
+  THREAD_VIEW_VALIDATE_OR_OUT(ctx, self, out);
 
   if (!results || results->len == 0) {
     g_debug("[THREAD_VIEW] No events found from relays");
@@ -2064,11 +2123,14 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
 
   /* Fetch children of newly discovered events for complete graph */
   fetch_children_from_relays(self);
+
+out:
+  thread_query_ctx_free(ctx);
 }
 
-/* Callback for root event fetch completion */
+/* nostrc-generation-fencing: Root fetch callback with generation validation */
 static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
+  ThreadQueryCtx *ctx = (ThreadQueryCtx *)user_data;
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
@@ -2078,13 +2140,13 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
     }
     g_error_free(error);
     if (results) g_ptr_array_unref(results);
+    thread_query_ctx_free(ctx);
     return;
   }
 
-  /* Now safe to access user_data */
-  if (!user_data) return;
-  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
-  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
+  /* nostrc-generation-fencing: Validate view still exists and is current generation */
+  g_autoptr(NostrGtkThreadView) self = g_weak_ref_get(&ctx->view_ref);
+  THREAD_VIEW_VALIDATE_OR_OUT(ctx, self, out);
 
   g_message("[THREAD_VIEW] on_root_fetch_done: callback fired");
 
@@ -2116,12 +2178,14 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
   if (g_hash_table_size(self->events_by_id) > 0) {
     fetch_missing_ancestors(self);
   }
+
+out:
+  thread_query_ctx_free(ctx);
 }
 
-/* Callback for missing ancestor fetch completion.
- * nostrc-46g: Improved to continue chain traversal until root is reached. */
+/* nostrc-generation-fencing: Missing ancestors callback with generation validation */
 static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
+  ThreadQueryCtx *ctx = (ThreadQueryCtx *)user_data;
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
@@ -2131,13 +2195,13 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
     }
     g_error_free(error);
     if (results) g_ptr_array_unref(results);
+    thread_query_ctx_free(ctx);
     return;
   }
 
-  /* Now safe to access user_data */
-  if (!user_data) return;
-  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
-  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
+  /* nostrc-generation-fencing: Validate view still exists and is current generation */
+  g_autoptr(NostrGtkThreadView) self = g_weak_ref_get(&ctx->view_ref);
+  THREAD_VIEW_VALIDATE_OR_OUT(ctx, self, out);
 
   gboolean found_new_events = FALSE;
 
@@ -2179,6 +2243,9 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
      * This may find relays where the root/parent events are published. */
     fetch_nip65_for_missing_authors(self);
   }
+
+out:
+  thread_query_ctx_free(ctx);
 }
 
 /* nostrc-46g: Maximum depth for ancestor chain traversal to prevent infinite loops */
@@ -2366,7 +2433,7 @@ static void fetch_missing_ancestors(NostrGtkThreadView *self) {
     gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_missing_ancestors_done, self);
+    gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_missing_ancestors_done, thread_query_ctx_new(self));
   }
 
   nostr_filter_free(filter);
@@ -2442,7 +2509,7 @@ static void fetch_thread_from_relays(NostrGtkThreadView *self) {
       gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_replies);
-      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, thread_query_ctx_new(self));
     }
 
     nostr_filter_free(filter_replies);
@@ -2489,7 +2556,7 @@ static void fetch_thread_from_relays(NostrGtkThreadView *self) {
       gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_ids);
-      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_root_fetch_done, self);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_root_fetch_done, thread_query_ctx_new(self));
     }
 
     nostr_filter_free(filter_ids);
@@ -2510,7 +2577,7 @@ static void fetch_thread_from_relays(NostrGtkThreadView *self) {
       gnostr_pool_sync_relays(pool, (const gchar **)urls, all_relays->len);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_nip22);
-      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, thread_query_ctx_new(self));
     }
 
     nostr_filter_free(filter_nip22);
@@ -2545,7 +2612,7 @@ static void fetch_thread_from_relays(NostrGtkThreadView *self) {
       gnostr_pool_sync_relays(pool, (const gchar **)urls2, relay_arr2->len);
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter_focus_replies);
-      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, self);
+      gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_thread_query_done, thread_query_ctx_new(self));
     }
 
     nostr_filter_free(filter_focus_replies);
@@ -2559,9 +2626,9 @@ static void fetch_thread_from_relays(NostrGtkThreadView *self) {
   }
 }
 
-/* Callback for child discovery query completion */
+/* nostrc-generation-fencing: Children query callback with generation validation */
 static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* nostrc-xr65: Check result BEFORE accessing user_data (may be dangling if cancelled) */
+  ThreadQueryCtx *ctx = (ThreadQueryCtx *)user_data;
   GError *error = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
 
@@ -2571,13 +2638,13 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
     }
     g_error_free(error);
     if (results) g_ptr_array_unref(results);
+    thread_query_ctx_free(ctx);
     return;
   }
 
-  /* Now safe to access user_data */
-  if (!user_data) return;
-  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
-  if (!NOSTR_GTK_IS_THREAD_VIEW(self) || self->disposed) return;
+  /* nostrc-generation-fencing: Validate view still exists and is current generation */
+  g_autoptr(NostrGtkThreadView) self = g_weak_ref_get(&ctx->view_ref);
+  THREAD_VIEW_VALIDATE_OR_OUT(ctx, self, out);
 
   gboolean found_new = FALSE;
 
@@ -2611,6 +2678,9 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
     /* Continue iterative child discovery if we haven't reached the limit */
     fetch_children_from_relays(self);
   }
+
+out:
+  thread_query_ctx_free(ctx);
 }
 
 /* Internal: fetch children (replies) of events we have, but haven't queried yet.
@@ -2686,7 +2756,7 @@ static void fetch_children_from_relays(NostrGtkThreadView *self) {
     gnostr_pool_sync_relays(pool, (const gchar **)urls, relay_arr->len);
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_children_query_done, self);
+    gnostr_pool_query_async(pool, _qf, self->fetch_cancellable, on_children_query_done, thread_query_ctx_new(self));
   }
 
   nostr_filter_free(filter);
