@@ -44,7 +44,16 @@ static void gn_glib_log_handler(const gchar *domain, GLogLevelFlags level,
 }
 
 static void gn_signal_handler(int sig) {
-  gn_print_backtrace("Signal");
+  const char *signame = "Unknown";
+  switch (sig) {
+    case SIGABRT: signame = "SIGABRT"; break;
+    case SIGTRAP: signame = "SIGTRAP"; break;
+    case SIGSEGV: signame = "SIGSEGV"; break;
+    case SIGBUS:  signame = "SIGBUS"; break;
+    case SIGFPE:  signame = "SIGFPE"; break;
+  }
+  dprintf(STDERR_FILENO, "\n*** CRASH: %s ***\n", signame);
+  gn_print_backtrace(signame);
   _exit(128 + sig);
 }
 
@@ -53,9 +62,13 @@ void gn_install_crashtrace(void) {
   g_log_set_always_fatal(G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_ERROR);
   g_log_set_default_handler(gn_glib_log_handler, NULL);
 
-  // Also handle SIGABRT/SIGTRAP because GLib often ends there
+  // Handle all crash signals - SIGSEGV is critical for catching heap corruption
   struct sigaction sa = {0};
   sa.sa_handler = gn_signal_handler;
+  sa.sa_flags = SA_RESETHAND;  // Reset to default after first signal (avoid infinite loop)
   sigaction(SIGABRT, &sa, NULL);
   sigaction(SIGTRAP, &sa, NULL);
+  sigaction(SIGSEGV, &sa, NULL);
+  sigaction(SIGBUS, &sa, NULL);
+  sigaction(SIGFPE, &sa, NULL);
 }
