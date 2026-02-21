@@ -6,6 +6,7 @@
 #include <string.h>
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
+#include <stdlib.h>
 
 /* Cookie magic for detecting memory scribble into profile pointer */
 #define PROFILE_COOKIE_MAGIC 0xFEEDBEEFCAFEBABEULL
@@ -103,6 +104,37 @@ enum {
 };
 
 static GParamSpec *properties[N_PROPS];
+
+/* Debug: Track profiles dying while items are alive */
+typedef struct {
+  gpointer item;
+  guint64  note_key;
+} ProfileWeakTag;
+
+static void
+profile_finalized_while_item_alive(gpointer data, GObject *where_the_object_was)
+{
+  ProfileWeakTag *t = data;
+  g_critical("[PROFILE_UAF] Profile finalized while item alive: profile=%p item=%p note_key=%" G_GUINT64_FORMAT,
+             where_the_object_was, t->item, t->note_key);
+  g_critical("[PROFILE_UAF] This proves the item never held a strong ref, or dropped it early.");
+  abort();  /* Stop immediately - this is the smoking gun */
+}
+
+static void
+item_attach_profile_weak_tag(GnNostrEventItem *self, GNostrProfile *p)
+{
+  static int debug_enabled = -1;
+  if (debug_enabled == -1)
+    debug_enabled = (g_getenv("GNOSTR_DEBUG_PROFILE_REFS") != NULL);
+  
+  if (!debug_enabled) return;
+  
+  ProfileWeakTag *t = g_new0(ProfileWeakTag, 1);
+  t->item = self;
+  t->note_key = self->note_key;
+  g_object_weak_ref(G_OBJECT(p), profile_finalized_while_item_alive, t);
+}
 
 /* Helper: Load note data from nostrdb and cache it */
 static gboolean ensure_note_loaded(GnNostrEventItem *self)
@@ -291,9 +323,20 @@ static void gn_nostr_event_item_finalize(GObject *object) {
               (unsigned long)self->note_key);
     } else if (!GNOSTR_IS_PROFILE(self->profile)) {
       /* Cookie valid but object invalid = assigned invalid pointer (ownership bug) */
-      g_error("[EVENT_ITEM] OWNERSHIP BUG: item %p has invalid profile %p "
-              "(cookie valid, object freed) note_key=%lu",
-              (void*)self, (void*)self->profile, (unsigned long)self->note_key);
+      g_critical("[EVENT_ITEM] OWNERSHIP BUG: item %p has invalid profile %p "
+                 "(cookie valid, object freed) note_key=%lu",
+                 (void*)self, (void*)self->profile, (unsigned long)self->note_key);
+      
+      /* Hexdump first 64 bytes to distinguish freed (0xa5/0x5a) vs scribbled memory */
+      const unsigned char *b = (const unsigned char*)self->profile;
+      g_critical("[EVENT_ITEM] Hexdump of profile object at %p:", (void*)self->profile);
+      for (int i = 0; i < 64; i += 16) {
+        g_critical("%p: %02x %02x %02x %02x %02x %02x %02x %02x  %02x %02x %02x %02x %02x %02x %02x %02x",
+                   b+i, b[i], b[i+1], b[i+2], b[i+3], b[i+4], b[i+5], b[i+6], b[i+7],
+                   b[i+8], b[i+9], b[i+10], b[i+11], b[i+12], b[i+13], b[i+14], b[i+15]);
+      }
+      g_critical("[EVENT_ITEM] Pattern 0xa5 = freed (MALLOC_PERTURB), other = scribble or live corruption");
+      abort();
     } else {
       g_clear_object(&self->profile);
     }
@@ -641,6 +684,11 @@ void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GNostrProfile *prof
   
   /* Set cookie to detect memory scribble */
   self->profile_cookie = (guint64)(uintptr_t)self->profile ^ PROFILE_COOKIE_MAGIC;
+  
+  /* Debug: Attach weak ref to catch profile dying while item is alive */
+  if (profile) {
+    item_attach_profile_weak_tag(self, profile);
+  }
   
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PROFILE]);
 }
