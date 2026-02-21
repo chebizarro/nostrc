@@ -11,8 +11,9 @@ export MALLOC_CHECK_=3
 export MALLOC_PERTURB_=165
 export GNOSTR_STRESS_SCROLL=1
 
-# Leave fatal-warnings OFF - we only want it when trapping a specific warning
-unset G_DEBUG || true
+# GLib allocator tripwires - catch heap corruption earlier
+export G_SLICE=always-malloc
+export G_DEBUG=gc-friendly,fatal-criticals
 
 # Test duration per run (6 minutes = 360 seconds)
 DURATION=${1:-360}
@@ -40,6 +41,12 @@ while [ $clean_runs -lt $MAX_CLEAN_RUNS ]; do
 
   echo ""
   echo "Analyzing run $runs..."
+  
+  # Extract first crash signature for classification
+  FIRST_SIG=$(grep -E "malloc_consolidate|unaligned fastbin|G_IS_OBJECT.*failed|g_atomic_ref_count_dec.*0|\[PROFILE_CACHE\] CORRUPTION|GLib-GObject-CRITICAL|GLib-CRITICAL" "$logfile" | head -1 || true)
+  if [ -n "$FIRST_SIG" ]; then
+    echo "First crash signature: $FIRST_SIG"
+  fi
 
   # Check for profile cache corruption (PRIMARY TARGET)
   if grep -q "\[PROFILE_CACHE\] CORRUPTION DETECTED" "$logfile"; then
