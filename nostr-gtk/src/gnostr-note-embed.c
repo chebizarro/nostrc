@@ -8,6 +8,7 @@
 #include <nostr-gtk-1.0/content_renderer.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
+#include "../ui/gn-ui-fence.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-event.h>
@@ -78,6 +79,9 @@ struct _GnostrNoteEmbed {
 
   /* Disposal flag - set during prepare_for_unbind to prevent callbacks from accessing widget */
   gboolean disposed;
+  
+  /* nostrc-generation-fencing: UI lifetime fence for async relay query validation */
+  GnUiFence fence;
 
 #ifdef HAVE_SOUP3
   /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
@@ -92,6 +96,20 @@ enum {
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
+
+/* nostrc-generation-fencing: Context for async relay query callbacks */
+typedef struct {
+  GWeakRef embed_ref;     /* weak ref to GnostrNoteEmbed */
+  guint64 generation;     /* generation at query creation time */
+  GCancellable *cancel;   /* cancellable for this operation */
+} RelayQueryCtx;
+
+static void relay_query_ctx_free(RelayQueryCtx *ctx) {
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->embed_ref);
+  g_clear_object(&ctx->cancel);
+  g_free(ctx);
+}
 
 /* Forward declarations */
 static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id32[32]);
@@ -109,6 +127,9 @@ static void gnostr_note_embed_dispose(GObject *obj) {
   GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(obj);
 
   self->disposed = TRUE;
+  
+  /* nostrc-generation-fencing: Bump fence to invalidate in-flight relay queries */
+  gn_ui_fence_bump(&self->fence);
 
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
@@ -254,6 +275,9 @@ static void gnostr_note_embed_init(GnostrNoteEmbed *self) {
   self->embed_type = EMBED_TYPE_UNKNOWN;
   self->state = EMBED_STATE_EMPTY;
   self->cancellable = g_cancellable_new();
+  
+  /* nostrc-generation-fencing: Initialize UI fence */
+  gn_ui_fence_init(&self->fence);
 
 #ifdef HAVE_SOUP3
   /* Uses shared session from gnostr_get_shared_soup_session() */
@@ -911,27 +935,50 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
 /* Forward declaration for fallback */
 static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex);
 
-/* Callback for relay query */
+/* nostrc-generation-fencing: Relay query callback with generation validation */
 static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  RelayQueryCtx *ctx = (RelayQueryCtx *)user_data;
   GError *err = NULL;
   GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
 
-  /* ASAN fix: We hold a ref on self during async, so it's always valid.
-   * Cast immediately - the ref ensures the object stays alive until we unref. */
-  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
+  /* nostrc-generation-fencing: Validate embed still exists and is current generation */
+  GnostrNoteEmbed *self = g_weak_ref_get(&ctx->embed_ref);
+  if (!self) {
+    g_debug("[EMBED] Widget gone, dropping relay query callback");
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    relay_query_ctx_free(ctx);
+    return;
+  }
 
-  /* Check for cancellation - widget may be disposing but we still hold a ref */
+  /* nostrc-generation-fencing: Check generation - widget may have been rebound */
+  if (ctx->generation != gn_ui_fence_gen(&self->fence)) {
+    g_debug("[EMBED] Stale relay query dropped: gen=%lu current=%lu embed=%p",
+            ctx->generation, gn_ui_fence_gen(&self->fence), (void*)self);
+    g_object_unref(self);
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    relay_query_ctx_free(ctx);
+    return;
+  }
+
+  /* nostrc-generation-fencing: Check if operation was cancelled */
+  if (g_cancellable_is_cancelled(ctx->cancel)) {
+    g_debug("[EMBED] Cancelled relay query dropped: embed=%p", (void*)self);
+    g_object_unref(self);
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    relay_query_ctx_free(ctx);
+    return;
+  }
+
+  /* Check for cancellation error */
   if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     g_error_free(err);
     if (results) g_ptr_array_unref(results);
-    goto cleanup;
-  }
-
-  /* Check disposed flag - widget is disposing, don't do work but still unref */
-  if (self->disposed) {
-    g_clear_error(&err);
-    if (results) g_ptr_array_unref(results);
-    goto cleanup;
+    g_object_unref(self);
+    relay_query_ctx_free(ctx);
+    return;
   }
 
   if (err) {
@@ -1084,13 +1131,17 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
       url_arr[i] = (const char*)g_ptr_array_index(urls, i);
     }
 
-    /* Hold ref during async - callback will unref */
-    g_object_ref(self);
+    /* nostrc-generation-fencing: Create context with generation snapshot */
+    RelayQueryCtx *ctx = g_new0(RelayQueryCtx, 1);
+    g_weak_ref_init(&ctx->embed_ref, self);
+    ctx->generation = gn_ui_fence_gen(&self->fence);
+    ctx->cancel = gn_ui_fence_cancel_ref(&self->fence);
+    
     gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
+      gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, ctx);
     }
 
     g_free(url_arr);
@@ -1124,13 +1175,17 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
     url_arr[i] = (const char*)g_ptr_array_index(urls, i);
   }
 
-  /* Hold ref during async - callback will unref */
-  g_object_ref(self);
+  /* nostrc-generation-fencing: Create context with generation snapshot */
+  RelayQueryCtx *ctx = g_new0(RelayQueryCtx, 1);
+  g_weak_ref_init(&ctx->embed_ref, self);
+  ctx->generation = gn_ui_fence_gen(&self->fence);
+  ctx->cancel = gn_ui_fence_cancel_ref(&self->fence);
+  
   gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);
-    gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
+    gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, ctx);
   }
 
   g_free(url_arr);
