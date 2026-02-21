@@ -613,6 +613,14 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
    * cancellable refs, then let template disposal own widget subtree cleanup. */
   nostr_gtk_note_card_row_quiesce(self, TRUE);
 
+  /* nostrc-shutdown-crash: Diagnostic - check what children exist before template disposal */
+  GtkWidget *w = GTK_WIDGET(self);
+  GtkWidget *child = gtk_widget_get_first_child(w);
+  if (child) {
+    g_printerr("[NCR] dispose %p: still has child %s (%p) BEFORE template disposal\n",
+               (void*)self, G_OBJECT_TYPE_NAME(child), (void*)child);
+  }
+
   /* nostrc-css-stability: Do not mutate popover visibility/state in dispose.
    * Let gtk_widget_dispose_template() own child teardown order; forcing
    * popdown here can race with style node destruction under heavy recycling. */
@@ -725,6 +733,16 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
   gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
+  
+  /* nostrc-shutdown-crash: Diagnostic - verify template disposal cleared children */
+  child = gtk_widget_get_first_child(w);
+  if (child) {
+    g_printerr("[NCR] dispose %p: STILL has child %s (%p) AFTER template disposal!\n",
+               (void*)self, G_OBJECT_TYPE_NAME(child), (void*)child);
+  } else {
+    g_printerr("[NCR] dispose %p: template disposal cleared children successfully\n", (void*)self);
+  }
+  
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_relay = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
   self->lbl_timestamp_separator = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
