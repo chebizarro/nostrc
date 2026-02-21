@@ -35,9 +35,13 @@ export MALLOC_CHECK_=3
 export MALLOC_PERTURB_=165
 export GLIBC_TUNABLES=glibc.malloc.tcache_count=0:glibc.malloc.tcache_max=0
 
-# Run test with timeout and capture full output
-echo "Starting test..."
-timeout --signal=TERM ${DURATION} ./_build/apps/gnostr/gnostr 2>&1 | tee "${LOG_FILE}"
+echo "Starting gnostr with timeout ${DURATION}s..."
+echo ""
+
+# Run with timeout and capture full output
+# Use INT signal for graceful shutdown (like Ctrl+C), with 5s kill-after grace period
+# Use tee to both display and log, with pipefail to catch crashes
+timeout --signal=INT --kill-after=5s ${DURATION} ./_build/apps/gnostr/gnostr 2>&1 | tee "${LOG_FILE}"
 EXIT_CODE=$?
 
 echo ""
