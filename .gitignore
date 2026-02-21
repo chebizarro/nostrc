@@ -3,6 +3,8 @@ build/
 build*/
 */build*/
 _build/
+_build_tsan/
+_build_asan/
 Testing
 tmp*/
 out/
