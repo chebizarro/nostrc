@@ -628,138 +628,137 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
             (void*)self, expected_cookie, self->dispose_cookie);
   }
   
-  /* Template disposal - idempotent one-shot */
+  /* Template disposal MUST happen even if dispose is called multiple times.
+   * The disposed flag only guards the non-template teardown and chain-up. */
   if (!self->template_disposed) {
-    self->template_disposed = TRUE;
+    /* nostrc-generation-fencing: Bump fence and cancel ops in dispose.
+     * This catches any final in-flight callbacks if dispose happens without unbind. */
+    gn_ui_fence_bump(&self->fence);
+
+    /* Quiesce external activity FIRST - cancels async ops, clears cancellable refs.
+     * MUST NOT touch widget subtree structure. */
+    nostr_gtk_note_card_row_quiesce(self, TRUE);
+
+    /* ═══════════════════════════════════════════════════════════════════════════
+     * PRE-TEMPLATE CLEANUP: All widget mutations MUST happen BEFORE dispose_template
+     * ═══════════════════════════════════════════════════════════════════════════
+     * After gtk_widget_dispose_template(), template children are potentially dead.
+     * Any GTK API call on them is UAF and causes rc-box refcount underflow.
+     */
+    dump_children("dispose PRE-TEMPLATE cleanup", GTK_WIDGET(self), (void*)self);
+    
+    /* nostrc-pango-crash: Clear all label text BEFORE gtk_widget_dispose_template()
+     * to prevent PangoLayout finalization crash. When the native surface is already
+     * gone (widget unrealized during rapid recycling), PangoLayouts reference a
+     * freed PangoContext. Clearing text resets the PangoLayout while it's safe.
+     * If the native surface is gone, ref-leak the label (~1KB) to prevent
+     * finalization from touching the dead PangoContext. */
+    static gint ncr_leaked_labels = 0;
+#define NCR_DISPOSE_LABEL(lbl) \
+    do { \
+      if (GNOSTR_LABEL_SAFE(lbl)) { \
+        gtk_label_set_text(GTK_LABEL(lbl), ""); \
+      } else if (GTK_IS_LABEL(lbl)) { \
+        const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
+        if (_t && *_t) { \
+          g_object_ref(lbl); \
+          gint _leaked = g_atomic_int_add(&ncr_leaked_labels, 1) + 1; \
+          g_debug("NCR: ref-leaked label to prevent Pango crash (total: %d)", _leaked); \
+        } \
+      } \
+    } while (0)
+
+    NCR_DISPOSE_LABEL(self->content_label);
+    NCR_DISPOSE_LABEL(self->lbl_display);
+    NCR_DISPOSE_LABEL(self->lbl_handle);
+    NCR_DISPOSE_LABEL(self->lbl_timestamp);
+    NCR_DISPOSE_LABEL(self->lbl_nip05);
+    NCR_DISPOSE_LABEL(self->lbl_nip05_separator);
+    NCR_DISPOSE_LABEL(self->lbl_timestamp_separator);
+    NCR_DISPOSE_LABEL(self->lbl_relay);
+    NCR_DISPOSE_LABEL(self->lbl_like_count);
+    NCR_DISPOSE_LABEL(self->lbl_zap_count);
+    NCR_DISPOSE_LABEL(self->lbl_repost_count);
+    NCR_DISPOSE_LABEL(self->reply_indicator_label);
+    NCR_DISPOSE_LABEL(self->reply_count_label);
+    NCR_DISPOSE_LABEL(self->subject_label);
+    NCR_DISPOSE_LABEL(self->sensitive_warning_label);
+    NCR_DISPOSE_LABEL(self->article_title_label);
+    NCR_DISPOSE_LABEL(self->article_reading_time);
+    NCR_DISPOSE_LABEL(self->video_title_label);
+#undef NCR_DISPOSE_LABEL
+
+    /* nostrc-pango-crash: Clear GtkPicture paintables BEFORE template disposal
+     * to prevent GtkImageDefinition corruption. */
+    if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image))
+      gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
+    if (self->article_image && GTK_IS_PICTURE(self->article_image))
+      gtk_picture_set_paintable(GTK_PICTURE(self->article_image), NULL);
+    if (self->video_thumb_picture && GTK_IS_PICTURE(self->video_thumb_picture))
+      gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), NULL);
+
+    /* nostrc-imgdef: Clear ALL GtkImage icons in the template widget tree BEFORE
+     * dispose_template runs. gtk_image_clear() resets the internal
+     * GtkImageDefinition to the EMPTY type, which is a safe base state for
+     * finalization. */
+    {
+      GList *image_widgets = NULL;
+      GtkWidget *_walk = gtk_widget_get_first_child(GTK_WIDGET(self));
+      /* BFS traversal to find all GtkImage widgets in the subtree */
+      GQueue bfs = G_QUEUE_INIT;
+      if (_walk) g_queue_push_tail(&bfs, _walk);
+      while (!g_queue_is_empty(&bfs)) {
+        GtkWidget *w = g_queue_pop_head(&bfs);
+        if (GTK_IS_IMAGE(w)) {
+          image_widgets = g_list_prepend(image_widgets, w);
+        }
+        /* Enqueue children */
+        GtkWidget *c = gtk_widget_get_first_child(w);
+        while (c) {
+          g_queue_push_tail(&bfs, c);
+          c = gtk_widget_get_next_sibling(c);
+        }
+      }
+      /* Clear all found GtkImages */
+      for (GList *l = image_widgets; l; l = l->next) {
+        gtk_image_clear(GTK_IMAGE(l->data));
+      }
+      g_list_free(image_widgets);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+     * TEMPLATE DISPOSAL - After this, all template children are potentially dead
+     * ═══════════════════════════════════════════════════════════════════════ */
     dump_children("dispose BEFORE template", GTK_WIDGET(self), (void*)self);
-    gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+    /* NOTE: Removed gtk_widget_set_layout_manager(NULL) - GTK handles this
+     * during template disposal. Calling it manually can corrupt rc-boxes. */
     gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
     dump_children("dispose AFTER template", GTK_WIDGET(self), (void*)self);
+    
+    self->template_disposed = TRUE;
   }
-  
-  /* Other teardown - idempotent one-shot, do NOT chain up again */
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * POST-TEMPLATE: NO GTK API calls on template children - they are DEAD
+   * Only clear cached pointers and free non-widget data
+   * ═══════════════════════════════════════════════════════════════════════════ */
+
+  /* Idempotent guard for non-template teardown and chain-up */
   if (self->disposed)
     return;
-  
   self->disposed = TRUE;
-  dump_children("dispose other teardown", GTK_WIDGET(self), (void*)self);
-  
-  /* nostrc-generation-fencing: Bump fence and cancel ops in dispose too.
-   * This catches any final in-flight callbacks if dispose happens without unbind. */
-  gn_ui_fence_bump(&self->fence);
 
-  /* Single teardown path for dispose: quiesce external activity and release
-   * cancellable refs, then let template disposal own widget subtree cleanup. */
-  nostr_gtk_note_card_row_quiesce(self, TRUE);
-
-  /* nostrc-css-stability: Do not mutate popover visibility/state in dispose.
-   * Let gtk_widget_dispose_template() own child teardown order; forcing
-   * popdown here can race with style node destruction under heavy recycling. */
-  DUMP_OBJ("repost_popover", self->repost_popover);
+  /* Clear popover pointers (do NOT call any GTK methods on them) */
   self->repost_popover = NULL;
-
-  DUMP_OBJ("menu_popover", self->menu_popover);
   self->menu_popover = NULL;
-
-  DUMP_OBJ("emoji_picker_popover", self->emoji_picker_popover);
   self->emoji_picker_popover = NULL;
-
-  DUMP_OBJ("reactions_popover", self->reactions_popover);
   self->reactions_popover = NULL;
-  /* NIP-25: Clean up reaction breakdown */
+  
+  /* NIP-25: Clean up reaction breakdown (non-widget data) */
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
   g_clear_pointer(&self->reactors, g_ptr_array_unref);
 
-  /* nostrc-pango-crash: Clear all label text BEFORE gtk_widget_dispose_template()
-   * to prevent PangoLayout finalization crash. When the native surface is already
-   * gone (widget unrealized during rapid recycling), PangoLayouts reference a
-   * freed PangoContext. Clearing text resets the PangoLayout while it's safe.
-   * If the native surface is gone, ref-leak the label (~1KB) to prevent
-   * finalization from touching the dead PangoContext.
-   * Pattern from og-preview-widget.c OG_DISPOSE_LABEL. */
-  static gint ncr_leaked_labels = 0;
-#define NCR_DISPOSE_LABEL(lbl) \
-  do { \
-    if (GNOSTR_LABEL_SAFE(lbl)) { \
-      gtk_label_set_text(GTK_LABEL(lbl), ""); \
-    } else if (GTK_IS_LABEL(lbl)) { \
-      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
-      if (_t && *_t) { \
-        g_object_ref(lbl); \
-        gint _leaked = g_atomic_int_add(&ncr_leaked_labels, 1) + 1; \
-        g_debug("NCR: ref-leaked label to prevent Pango crash (total: %d)", _leaked); \
-      } \
-    } \
-  } while (0)
-
-  NCR_DISPOSE_LABEL(self->content_label);
-  NCR_DISPOSE_LABEL(self->lbl_display);
-  NCR_DISPOSE_LABEL(self->lbl_handle);
-  NCR_DISPOSE_LABEL(self->lbl_timestamp);
-  NCR_DISPOSE_LABEL(self->lbl_nip05);
-  NCR_DISPOSE_LABEL(self->lbl_nip05_separator);
-  NCR_DISPOSE_LABEL(self->lbl_timestamp_separator);
-  NCR_DISPOSE_LABEL(self->lbl_relay);
-  NCR_DISPOSE_LABEL(self->lbl_like_count);
-  NCR_DISPOSE_LABEL(self->lbl_zap_count);
-  NCR_DISPOSE_LABEL(self->lbl_repost_count);
-  NCR_DISPOSE_LABEL(self->reply_indicator_label);
-  NCR_DISPOSE_LABEL(self->reply_count_label);
-  NCR_DISPOSE_LABEL(self->subject_label);
-  NCR_DISPOSE_LABEL(self->sensitive_warning_label);
-  NCR_DISPOSE_LABEL(self->article_title_label);
-  NCR_DISPOSE_LABEL(self->article_reading_time);
-  NCR_DISPOSE_LABEL(self->video_title_label);
-#undef NCR_DISPOSE_LABEL
-
-  /* nostrc-pango-crash: Clear GtkPicture paintables to prevent
-   * GtkImageDefinition corruption during widget disposal.
-   * Note: avatar_image paintable is already cleared in quiesce(), but we
-   * clear all pictures here as belt-and-suspenders for the dispose path
-   * (quiesce may have been called with clear_cancellable_refs=FALSE). */
-  if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image))
-    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
-  if (self->article_image && GTK_IS_PICTURE(self->article_image))
-    gtk_picture_set_paintable(GTK_PICTURE(self->article_image), NULL);
-  if (self->video_thumb_picture && GTK_IS_PICTURE(self->video_thumb_picture))
-    gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), NULL);
-
-  /* nostrc-imgdef: Clear ALL GtkImage icons in the template widget tree BEFORE
-   * dispose_template runs. gtk_image_clear() resets the internal
-   * GtkImageDefinition to the EMPTY type, which is a safe base state for
-   * finalization. This prevents the "code should not be reached" crash in
-   * gtk_image_definition_unref when heap corruption (from nsync/libgo UAF)
-   * has trashed the definition's type discriminant.
-   *
-   * Walk the widget subtree to find ALL GtkImage widgets — both named
-   * template children (like_icon, zap_icon) and unnamed ones (button icons). */
-  {
-    GList *image_widgets = NULL;
-    GtkWidget *_walk = gtk_widget_get_first_child(GTK_WIDGET(self));
-    /* BFS traversal to find all GtkImage widgets in the subtree */
-    GQueue bfs = G_QUEUE_INIT;
-    if (_walk) g_queue_push_tail(&bfs, _walk);
-    while (!g_queue_is_empty(&bfs)) {
-      GtkWidget *w = g_queue_pop_head(&bfs);
-      if (GTK_IS_IMAGE(w)) {
-        image_widgets = g_list_prepend(image_widgets, w);
-      }
-      /* Enqueue children */
-      GtkWidget *c = gtk_widget_get_first_child(w);
-      while (c) {
-        g_queue_push_tail(&bfs, c);
-        c = gtk_widget_get_next_sibling(c);
-      }
-    }
-    /* Clear all found GtkImages */
-    for (GList *l = image_widgets; l; l = l->next) {
-      gtk_image_clear(GTK_IMAGE(l->data));
-    }
-    g_list_free(image_widgets);
-  }
-
-  /* nostrc-shutdown-crash: Template disposal already happened at top of dispose.
-   * Just clear the cached pointers here. */
+  /* Clear all cached template child pointers (widgets are already disposed) */
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_relay = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
   self->lbl_timestamp_separator = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;

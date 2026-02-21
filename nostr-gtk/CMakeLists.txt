@@ -174,6 +174,11 @@ endif()
 # Inherit sanitizer flags from root CMakeLists.txt
 apply_sanitizers(nostr_gtk)
 
+# nostrc-crashtrace: Frame pointers + debug symbols for reliable stack unwinding
+# -Wl,--export-dynamic exports symbols so backtrace_symbols/dladdr can resolve function names
+target_compile_options(nostr_gtk PRIVATE -fno-omit-frame-pointer -g3 -Og)
+target_link_options(nostr_gtk PRIVATE -Wl,--export-dynamic)
+
 # Ensure blueprints are compiled before the library
 if(BLUEPRINT_COMPILER)
   add_dependencies(nostr_gtk nostr_gtk_blueprints)
