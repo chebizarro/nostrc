@@ -2278,29 +2278,67 @@ static void set_avatar_initials(NostrGtkNoteCardRow *self, const char *display, 
 }
 
 #ifdef HAVE_SOUP3
+/* nostrc-generation-fencing: Avatar HTTP callback with generation validation */
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* CRITICAL: Check NULL before type-check macro. Type-check macros dereference
-   * the pointer which crashes if widget was recycled during HTTP fetch.
-   * nostrc-ofq: Fix crash during fast scrolling in timeline. */
-  if (user_data == NULL) return;
-  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)user_data;
-  /* Check disposed flag BEFORE type-check macro */
-  if (self->disposed) return;
-  /* Now safe to use type-check since disposed==FALSE means widget is valid */
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
+  MediaLoadCtx *ctx = (MediaLoadCtx *)user_data;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-  if (!bytes) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
-  if (self->disposed) { g_bytes_unref(bytes); return; }
+  
+  if (!bytes) {
+    g_clear_error(&error);
+    media_load_ctx_free(ctx);
+    return;
+  }
+  
+  /* nostrc-generation-fencing: Validate row still exists and is current generation */
+  NostrGtkNoteCardRow *self = g_weak_ref_get(&ctx->row_ref);
+  if (!self) {
+    g_debug("[FENCE][Avatar] Row gone, dropping callback");
+    g_bytes_unref(bytes);
+    media_load_ctx_free(ctx);
+    return;
+  }
+  
+  if (ctx->generation != gn_ui_fence_gen(&self->fence)) {
+    g_debug("[FENCE][Avatar] Stale callback dropped: gen=%lu current=%lu row=%p",
+            ctx->generation, gn_ui_fence_gen(&self->fence), (void*)self);
+    g_object_unref(self);
+    g_bytes_unref(bytes);
+    media_load_ctx_free(ctx);
+    return;
+  }
+  
+  if (g_cancellable_is_cancelled(ctx->cancel)) {
+    g_debug("[FENCE][Avatar] Cancelled callback dropped: row=%p", (void*)self);
+    g_object_unref(self);
+    g_bytes_unref(bytes);
+    media_load_ctx_free(ctx);
+    return;
+  }
+  
+  /* Safe to update UI */
   GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
-  if (!tex) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
-  if (!self->disposed && GTK_IS_PICTURE(self->avatar_image)) {
+  
+  if (!tex) {
+    g_clear_error(&error);
+    set_avatar_initials(self, NULL, NULL);
+    g_object_unref(self);
+    media_load_ctx_free(ctx);
+    return;
+  }
+  
+  if (GTK_IS_PICTURE(self->avatar_image)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(tex));
     gtk_widget_set_visible(self->avatar_image, TRUE);
   }
-  if (!self->disposed && GTK_IS_WIDGET(self->avatar_initials)) gtk_widget_set_visible(self->avatar_initials, FALSE);
+  if (GTK_IS_WIDGET(self->avatar_initials)) {
+    gtk_widget_set_visible(self->avatar_initials, FALSE);
+  }
+  
   g_object_unref(tex);
+  g_object_unref(self);
+  media_load_ctx_free(ctx);
 }
 
 /* Helper to show broken image fallback in container */
