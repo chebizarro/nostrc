@@ -21,39 +21,52 @@
 
 ---
 
-## HIGH PRIORITY - Needs Fencing
+## HIGH PRIORITY - Fenced and Verified
+
+### NostrGtkThreadView ✅ COMPLETE
+- ✅ `on_thread_query_done` - **FENCED** (commit e3c8fe22)
+  - Owner fence: `ThreadView::fence`
+  - Context: `ThreadQueryCtx` with weak ref + generation + cancellable
+  - Validates before: `rebuild_thread_ui()`, `fetch_missing_ancestors()`, `fetch_children_from_relays()`
+  - Call sites: 3 (all updated to use `thread_query_ctx_new()`)
+
+- ✅ `on_root_fetch_done` - **FENCED** (commit e3c8fe22)
+  - Owner fence: `ThreadView::fence`
+  - Context: `ThreadQueryCtx`
+  - Validates before: `rebuild_thread_ui()`, `fetch_missing_ancestors()`
+  - Call sites: 1
+
+- ✅ `on_missing_ancestors_done` - **FENCED** (commit e3c8fe22)
+  - Owner fence: `ThreadView::fence`
+  - Context: `ThreadQueryCtx`
+  - Validates before: `rebuild_thread_ui()`, `fetch_missing_ancestors()`, `fetch_children_from_relays()`
+  - Call sites: 1
+
+- ✅ `on_children_query_done` - **FENCED** (commit e3c8fe22)
+  - Owner fence: `ThreadView::fence`
+  - Context: `ThreadQueryCtx`
+  - Validates before: `rebuild_thread_ui()`, `fetch_missing_ancestors()`, `fetch_children_from_relays()`
+  - Call sites: 1
+
+**Validation Pattern:**
+```c
+g_autoptr(NostrGtkThreadView) self = g_weak_ref_get(&ctx->view_ref);
+THREAD_VIEW_VALIDATE_OR_OUT(ctx, self, out);
+// Safe to mutate UI
+out:
+  thread_query_ctx_free(ctx);
+```
 
 ### NostrGtkNoteCardRow (remaining)
-- 🔴 `on_avatar_http_done` (line 2281)
-  - Touches: `gtk_picture_set_paintable` on avatar
-  - Risk: Row recycled during HTTP fetch
-  - Action: Add to MediaLoadCtx or create AvatarLoadCtx
+- ✅ `on_avatar_http_done` - **FENCED** (commit afee2da1)
+  - Owner fence: `NoteCardRow::fence`
+  - Context: `MediaLoadCtx` (reused existing context)
+  - Note: Most avatars use global cache, this is edge case
 
-- 🔴 `on_article_image_loaded` (line 5142)
-  - Touches: Article header image widget
+- � `on_article_image_loaded` (line 5142)
   - Uses: NoteCardBindingContext (partial fence)
   - Action: Verify binding context has generation check
-
-### NostrGtkThreadView
-- 🔴 `on_thread_query_done` (line 2011)
-  - Touches: `rebuild_thread_ui()` - massive UI mutation
-  - Risk: View disposed/changed during relay query
-  - Action: Add GnUiFence to ThreadView, create ThreadQueryCtx
-
-- 🔴 `on_root_fetch_done` (line 2067)
-  - Touches: `rebuild_thread_ui()` - massive UI mutation
-  - Risk: View disposed/changed during relay query
-  - Action: Use same ThreadQueryCtx pattern
-
-- 🔴 `on_missing_ancestors_done` (line 2120)
-  - Touches: `rebuild_thread_ui()` - massive UI mutation
-  - Risk: View disposed/changed during relay query
-  - Action: Use same ThreadQueryCtx pattern
-
-- 🔴 `on_children_query_done` (line 2560)
-  - Touches: `rebuild_thread_ui()` - massive UI mutation
-  - Risk: View disposed/changed during relay query
-  - Action: Use same ThreadQueryCtx pattern
+  - Priority: MEDIUM (article mode less common)
 
 ### NostrGtkProfilePane
 - 🔴 `on_image_loaded` (line 2374)
