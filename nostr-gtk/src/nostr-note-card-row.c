@@ -583,8 +583,25 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
 
 #define NCR_COOKIE_MAGIC 0xDEADBEEFCAFEBABEULL
 
+/* nostrc-shutdown-crash: Dump all children for diagnostics */
+static void dump_children(const char *tag, GtkWidget *w, void *self_ptr) {
+  GtkWidget *c = gtk_widget_get_first_child(w);
+  int n = 0;
+  for (; c; c = gtk_widget_get_next_sibling(c)) {
+    g_warning("[NCR] %p %s child[%d]=%s %p", self_ptr, tag, n++, G_OBJECT_TYPE_NAME(c), (void*)c);
+    if (n > 30) { 
+      g_warning("[NCR] %p %s ...truncated (%d+ children)", self_ptr, tag, n);
+      break;
+    }
+  }
+  if (n == 0) {
+    g_warning("[NCR] %p %s (no children)", self_ptr, tag);
+  }
+}
+
 static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
+  GtkWidget *w = GTK_WIDGET(self);
   
   /* nostrc-disposal-forensics: Check cookie to detect memory scribble */
   guint64 expected_cookie = (guint64)(uintptr_t)self ^ NCR_COOKIE_MAGIC;
@@ -594,10 +611,13 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
             (void*)self, expected_cookie, self->dispose_cookie);
   }
   
+  /* nostrc-shutdown-crash: ALWAYS dump children state, even on reentry */
+  dump_children(self->disposed ? "dispose REENTRY BEFORE" : "dispose FIRST BEFORE", w, (void*)self);
+  
   /* nostrc-disposal-forensics: Make dispose idempotent (safe to call multiple times).
    * GTK's list item recycling can call dispose twice during hash table cleanup. */
   if (G_UNLIKELY(self->disposed)) {
-    g_printerr("[NCR] dispose REENTRY: %p (already disposed, chaining to parent)\n", (void*)self);
+    dump_children("dispose REENTRY AFTER(no-op)", w, (void*)self);
     G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->dispose(obj);
     return;
   }
@@ -608,18 +628,10 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   /* nostrc-generation-fencing: Bump fence and cancel ops in dispose too.
    * This catches any final in-flight callbacks if dispose happens without unbind. */
   gn_ui_fence_bump(&self->fence);
-  
+
   /* Single teardown path for dispose: quiesce external activity and release
    * cancellable refs, then let template disposal own widget subtree cleanup. */
   nostr_gtk_note_card_row_quiesce(self, TRUE);
-
-  /* nostrc-shutdown-crash: Diagnostic - check what children exist before template disposal */
-  GtkWidget *w = GTK_WIDGET(self);
-  GtkWidget *child = gtk_widget_get_first_child(w);
-  if (child) {
-    g_printerr("[NCR] dispose %p: still has child %s (%p) BEFORE template disposal\n",
-               (void*)self, G_OBJECT_TYPE_NAME(child), (void*)child);
-  }
 
   /* nostrc-css-stability: Do not mutate popover visibility/state in dispose.
    * Let gtk_widget_dispose_template() own child teardown order; forcing
@@ -734,14 +746,8 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
 
   gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
   
-  /* nostrc-shutdown-crash: Diagnostic - verify template disposal cleared children */
-  child = gtk_widget_get_first_child(w);
-  if (child) {
-    g_printerr("[NCR] dispose %p: STILL has child %s (%p) AFTER template disposal!\n",
-               (void*)self, G_OBJECT_TYPE_NAME(child), (void*)child);
-  } else {
-    g_printerr("[NCR] dispose %p: template disposal cleared children successfully\n", (void*)self);
-  }
+  /* nostrc-shutdown-crash: Dump children after template disposal */
+  dump_children("dispose FIRST AFTER", w, (void*)self);
   
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_relay = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
