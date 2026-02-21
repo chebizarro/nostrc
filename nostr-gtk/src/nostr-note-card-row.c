@@ -8,6 +8,7 @@
 #include "gnostr-video-player.h"
 #include <nostr-gtk-1.0/gnostr-note-embed.h>
 #include "gnostr-avatar-cache.h"
+#include "gn-ui-fence.h"
 
 /* Standard/system libraries */
 #include <glib.h>
@@ -352,12 +353,11 @@ struct _NostrGtkNoteCardRow {
    * match, the row was recycled for a different item and the callback is stale. */
   guint64 binding_id;
   
-  /* nostrc-generation-fencing: Generation counter for async callback validation.
-   * Incremented on bind/unbind/dispose to invalidate in-flight async operations.
+  /* nostrc-generation-fencing: UI lifetime fence for async callback validation.
+   * Bumped on bind/unbind/dispose to invalidate in-flight async operations.
    * Async callbacks check generation before touching widgets to prevent
    * use-after-recycle crashes and heap corruption. */
-  guint64 generation;
-  GCancellable *media_cancel;  /* Cancellable for all media decode operations */
+  GnUiFence fence;
 
   /* Shared cancellable for ALL async operations (avatar, og-preview, note-embed, etc.)
    * When this widget is disposed, cancelling this single cancellable stops all child operations */
@@ -605,13 +605,9 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   self->disposed = TRUE;
   g_printerr("[NCR] dispose START: %p\n", (void*)self);
   
-  /* nostrc-generation-fencing: Bump generation and cancel media ops in dispose too.
+  /* nostrc-generation-fencing: Bump fence and cancel ops in dispose too.
    * This catches any final in-flight callbacks if dispose happens without unbind. */
-  self->generation++;
-  if (self->media_cancel) {
-    g_cancellable_cancel(self->media_cancel);
-    g_clear_object(&self->media_cancel);
-  }
+  gn_ui_fence_bump(&self->fence);
   
   /* Single teardown path for dispose: quiesce external activity and release
    * cancellable refs, then let template disposal own widget subtree cleanup. */
@@ -2144,9 +2140,8 @@ static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
   /* nostrc-disposal-forensics: Initialize dispose cookie */
   self->dispose_cookie = (guint64)(uintptr_t)self ^ NCR_COOKIE_MAGIC;
   
-  /* nostrc-generation-fencing: Initialize generation counter */
-  self->generation = 0;
-  self->media_cancel = NULL;
+  /* nostrc-generation-fencing: Initialize UI fence */
+  gn_ui_fence_init(&self->fence);
 
   gtk_widget_init_template(GTK_WIDGET(self));
 
@@ -2399,9 +2394,9 @@ static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer us
   }
 
   /* nostrc-generation-fencing: Check generation - row may have been recycled */
-  if (ctx->generation != self->generation) {
+  if (ctx->generation != gn_ui_fence_gen(&self->fence)) {
     g_debug("[MEDIA] Stale callback dropped: gen=%lu current=%lu row=%p",
-            ctx->generation, self->generation, (void*)self);
+            ctx->generation, gn_ui_fence_gen(&self->fence), (void*)self);
     g_object_unref(self);
     goto out;
   }
@@ -2551,9 +2546,9 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url
   /* nostrc-generation-fencing: Create context with generation and weak refs */
   MediaLoadCtx *ctx = g_new0(MediaLoadCtx, 1);
   g_weak_ref_init(&ctx->row_ref, self);
-  ctx->generation = self->generation;
+  ctx->generation = gn_ui_fence_gen(&self->fence);
   g_weak_ref_init(&ctx->picture_ref, picture);
-  ctx->cancel = g_object_ref(self->media_cancel);  /* Hold ref to cancellable */
+  ctx->cancel = gn_ui_fence_cancel_ref(&self->fence);
 
   /* Start async fetch */
   soup_session_send_and_read_async(
@@ -6470,14 +6465,9 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
    * was recycled and the callback should be ignored. */
   self->binding_id = binding_id_counter++;
   
-  /* nostrc-generation-fencing: Bump generation to invalidate in-flight callbacks.
-   * Cancel any pending media operations from previous binding. */
-  self->generation++;
-  if (self->media_cancel) {
-    g_cancellable_cancel(self->media_cancel);
-    g_clear_object(&self->media_cancel);
-  }
-  self->media_cancel = g_cancellable_new();
+  /* nostrc-generation-fencing: Bump fence to invalidate in-flight callbacks.
+   * Cancels all pending async operations from previous binding. */
+  gn_ui_fence_bump(&self->fence);
 
   /* nostrc-dqwq.2: Reset deferred media state for fresh binding.
    * prepare_for_unbind already disconnected the handler and freed items,
@@ -6546,13 +6536,9 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
 void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self) {
   g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
   
-  /* nostrc-generation-fencing: Bump generation to invalidate in-flight callbacks.
-   * Cancel any pending media operations. */
-  self->generation++;
-  if (self->media_cancel) {
-    g_cancellable_cancel(self->media_cancel);
-    g_clear_object(&self->media_cancel);
-  }
+  /* nostrc-generation-fencing: Bump fence to invalidate in-flight callbacks.
+   * Cancels all pending async operations. */
+  gn_ui_fence_bump(&self->fence);
 
   /* Must be idempotent: GTK can trigger unbind/teardown more than once for
    * the same recycled row. Re-running cleanup risks dereferencing stale child
