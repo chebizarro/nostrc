@@ -644,7 +644,16 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
      * ═══════════════════════════════════════════════════════════════════════════
      * After gtk_widget_dispose_template(), template children are potentially dead.
      * Any GTK API call on them is UAF and causes rc-box refcount underflow.
+     *
+     * DIAGNOSTIC: Set GNOSTR_NCR_SKIP_PRE_TEMPLATE=1 to skip all pre-template cleanup.
+     * If crash disappears → culprit is in pre-template cleanup.
+     * If crash persists → problem is elsewhere (GTK internal, heap scribble, etc.)
      */
+    static int skip_pre_template = -1;
+    if (skip_pre_template == -1)
+      skip_pre_template = (g_getenv("GNOSTR_NCR_SKIP_PRE_TEMPLATE") != NULL);
+    
+    if (!skip_pre_template) {
     dump_children("dispose PRE-TEMPLATE cleanup", GTK_WIDGET(self), (void*)self);
     
     /* nostrc-pango-crash: Clear all label text BEFORE gtk_widget_dispose_template()
@@ -725,6 +734,7 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
       }
       g_list_free(image_widgets);
     }
+    } /* end if (!skip_pre_template) */
 
     /* ═══════════════════════════════════════════════════════════════════════
      * TEMPLATE DISPOSAL - After this, all template children are potentially dead
