@@ -2798,6 +2798,10 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
   g_task_return_pointer(task, entries, (GDestroyNotify)g_ptr_array_unref);
 }
 
+/* Forward declarations for two-phase cache swap */
+static gboolean destroy_cache_idle(gpointer data);
+static GHashTable *build_new_item_cache(GnNostrEventModel *self, GHashTable *old_cache);
+
 /* Main-thread callback: apply pre-processed results to model */
 static void
 on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
@@ -2842,13 +2846,16 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GArray *evicted_keys_async = NULL;
   enforce_window_inline(self, &evicted_keys_async);
 
-  /* nostrc-duplicate-fix: Clear item_cache BEFORE emitting items_changed.
-   * GTK calls get_item() during signal emission to bind new widgets. If the
-   * cache contains old items, GTK sees duplicate GObject pointers (same item
-   * returned for different positions), causing "Duplicate item detected" warnings
-   * and eventual crashes. Clearing the cache first ensures get_item() creates
-   * fresh items for the new model state. */
-  g_hash_table_remove_all(self->item_cache);
+  /* TWO-PHASE CACHE SWAP: Build new cache, swap atomically, defer old cache destruction.
+   * This prevents UAF: old items stay alive during GTK's items-changed cascade,
+   * and are only finalized in idle after GTK finishes recycling widgets. */
+  GHashTable *old_cache = self->item_cache;
+  GHashTable *new_cache = build_new_item_cache(self, old_cache);
+  
+  /* Atomic swap: get_item() now sees new cache */
+  self->item_cache = new_cache;
+  
+  /* Clear LRU - will be rebuilt on-demand by get_item() */
   g_queue_clear_full(self->cache_lru, g_free);
 
   /* nostrc-render-crash: Emit a SINGLE items_changed signal to avoid race
@@ -2862,12 +2869,74 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
     emit_items_changed_safe(self, 0, old_size, new_size);
   }
   
+  /* Defer destruction of old cache until after GTK finishes processing the signal.
+   * This prevents items from finalizing mid-cascade, which was causing profile UAF. */
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, destroy_cache_idle,
+                  g_hash_table_ref(old_cache), NULL);
+  g_hash_table_unref(old_cache);
+  
   cleanup_evicted_keys(self, evicted_keys_async);
 
   g_debug("[MODEL] Async refresh complete: %u total items (%u added, %u replaced)",
           self->notes->len, added, old_size);
 
   g_ptr_array_unref(entries);
+}
+
+/* Idle callback: destroy old item cache after GTK finishes processing items-changed */
+static gboolean
+destroy_cache_idle(gpointer data)
+{
+  GHashTable *old_cache = data;
+  g_debug("[MODEL] Destroying old item cache (%u items) in idle",
+          g_hash_table_size(old_cache));
+  g_hash_table_unref(old_cache);
+  return G_SOURCE_REMOVE;
+}
+
+/* Build new item cache: steal items from old cache if present, create new items otherwise.
+ * This transfers ownership without changing refcounts, preventing premature finalization. */
+static GHashTable *
+build_new_item_cache(GnNostrEventModel *self, GHashTable *old_cache)
+{
+  GHashTable *new_cache =
+    g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
+
+  for (guint i = 0; i < self->notes->len; i++) {
+    NoteEntry *e = &g_array_index(self->notes, NoteEntry, i);
+    uint64_t key = e->note_key;
+
+    gpointer stolen_key = NULL;
+    gpointer stolen_val = NULL;
+
+    /* Try to steal from old cache - transfers ownership without ref changes */
+    if (g_hash_table_lookup_extended(old_cache, &key, &stolen_key, &stolen_val)) {
+      g_hash_table_steal(old_cache, &key);
+      g_hash_table_insert(new_cache, stolen_key, stolen_val);
+    } else {
+      /* Create new item for keys not in old cache */
+      GnNostrEventItem *item = gn_nostr_event_item_new_from_key(key, e->created_at);
+      uint64_t *key_copy = g_new(uint64_t, 1);
+      *key_copy = key;
+      g_hash_table_insert(new_cache, key_copy, item);
+    }
+  }
+
+  g_debug("[MODEL] Built new cache: %u items (stole from old, created new for missing)",
+          g_hash_table_size(new_cache));
+
+#ifndef NDEBUG
+  /* Debug assertion: every key in notes must exist in new_cache */
+  for (guint i = 0; i < self->notes->len; i++) {
+    NoteEntry *e = &g_array_index(self->notes, NoteEntry, i);
+    if (!g_hash_table_contains(new_cache, &e->note_key)) {
+      g_critical("[MODEL] BUG: note_key %lu not in new_cache after build!",
+                 (unsigned long)e->note_key);
+    }
+  }
+#endif
+
+  return new_cache;
 }
 
 void gn_nostr_event_model_refresh_async(GnNostrEventModel *self) {
