@@ -3035,35 +3035,56 @@ void nostr_gtk_thread_view_update_profiles(NostrGtkThreadView *self) {
 /* Debounce interval for UI rebuild after receiving new events (ms) */
 #define THREAD_REBUILD_DEBOUNCE_MS 150
 
-/* Timeout callback to rebuild the UI after receiving new events */
+/* nostrc-generation-fencing: Debounce timeout closure with generation validation */
 static gboolean on_rebuild_debounce_timeout(gpointer user_data) {
-  NostrGtkThreadView *self = NOSTR_GTK_THREAD_VIEW(user_data);
-  if (!NOSTR_GTK_IS_THREAD_VIEW(self)) return G_SOURCE_REMOVE;
-  /* nostrc-59nk: Check disposal flag to prevent modifying disposed widgets */
-  if (self->disposed) return G_SOURCE_REMOVE;
+  ThreadQueryCtx *ctx = (ThreadQueryCtx *)user_data;
+  
+  /* Validate view still exists and is current generation */
+  NostrGtkThreadView *self = g_weak_ref_get(&ctx->view_ref);
+  if (!self) {
+    g_debug("[FENCE][ThreadView][rebuild_timeout] view gone");
+    thread_query_ctx_free(ctx);
+    return G_SOURCE_REMOVE;
+  }
+  
+  if (ctx->gen != gn_ui_fence_gen(&self->fence)) {
+    g_debug("[FENCE][ThreadView][rebuild_timeout] stale drop gen=%lu cur=%lu focus=%s",
+            ctx->gen, gn_ui_fence_gen(&self->fence),
+            self->focus_event_id ? self->focus_event_id : "(none)");
+    g_object_unref(self);
+    thread_query_ctx_free(ctx);
+    return G_SOURCE_REMOVE;
+  }
+  
+  if (g_cancellable_is_cancelled(ctx->cancel)) {
+    g_debug("[FENCE][ThreadView][rebuild_timeout] cancelled");
+    g_object_unref(self);
+    thread_query_ctx_free(ctx);
+    return G_SOURCE_REMOVE;
+  }
 
   self->rebuild_pending_id = 0;
 
-  /* Rebuild UI with newly arrived events */
+  /* Safe to rebuild UI - current generation */
   rebuild_thread_ui(self);
-
-  /* Check if new events reference ancestors we don't have yet */
   fetch_missing_ancestors(self);
 
+  g_object_unref(self);
+  thread_query_ctx_free(ctx);
   return G_SOURCE_REMOVE;
 }
 
-/* Schedule a debounced UI rebuild */
-/* LEGITIMATE TIMEOUT - Debounce thread rebuild to batch rapid updates.
- * nostrc-b0h: Audited - debouncing expensive UI rebuilds is appropriate. */
+/* nostrc-generation-fencing: Schedule debounced UI rebuild with fence validation */
 static void schedule_thread_rebuild(NostrGtkThreadView *self) {
   if (self->rebuild_pending_id > 0) {
     /* Already scheduled, don't reschedule */
     return;
   }
 
+  /* Create fenced context for timeout closure */
+  ThreadQueryCtx *ctx = thread_query_ctx_new(self);
   self->rebuild_pending_id = g_timeout_add(THREAD_REBUILD_DEBOUNCE_MS,
-                                           on_rebuild_debounce_timeout, self);
+                                           on_rebuild_debounce_timeout, ctx);
 }
 
 /* Callback for nostrdb subscription - called when new thread events arrive */
