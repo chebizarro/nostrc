@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnostr.BlossomCache" path="/org/gnostr/blossom-cache/">
+    <!-- Network settings -->
+    <key name="listen-address" type="s">
+      <default>'127.0.0.1'</default>
+      <summary>Listen address</summary>
+      <description>
+        IP address to bind the local HTTP server to.
+        Use '127.0.0.1' for localhost only, '0.0.0.0' for all interfaces.
+      </description>
+    </key>
+    <key name="listen-port" type="u">
+      <default>24242</default>
+      <summary>Listen port</summary>
+      <description>
+        TCP port for the local Blossom cache HTTP server.
+        Default is 24242 to align with the Nostr event kind used
+        for Blossom authorization events (kind 24242).
+      </description>
+    </key>
+
+    <!-- Storage settings -->
+    <key name="storage-path" type="s">
+      <default>''</default>
+      <summary>Storage directory</summary>
+      <description>
+        Base directory for cached blob data. Empty string means use the
+        XDG data directory (~/.local/share/blossom-cache/).
+      </description>
+    </key>
+    <key name="max-cache-size-mb" type="u">
+      <default>2048</default>
+      <summary>Maximum cache size (MB)</summary>
+      <description>
+        Maximum total size of cached blobs in megabytes.
+        When exceeded, oldest-accessed blobs are evicted.
+        Set to 0 to disable size-based eviction.
+      </description>
+    </key>
+    <key name="max-blob-size-mb" type="u">
+      <default>100</default>
+      <summary>Maximum single blob size (MB)</summary>
+      <description>
+        Maximum size of a single blob to cache, in megabytes.
+        Blobs larger than this are proxied but not stored locally.
+      </description>
+    </key>
+
+    <!-- Upstream servers -->
+    <key name="upstream-servers" type="as">
+      <default>['https://blossom.primal.net', 'https://cdn.satellite.earth']</default>
+      <summary>Upstream Blossom servers</summary>
+      <description>
+        List of upstream Blossom server URLs to fetch blobs from on cache miss.
+        Servers are tried in order; the first successful response is cached.
+      </description>
+    </key>
+
+    <!-- Database backend -->
+    <key name="db-backend" type="s">
+      <default>'sqlite'</default>
+      <summary>Metadata database backend</summary>
+      <description>
+        Backend for blob metadata storage: 'sqlite' (default) or 'lmdb'.
+        LMDB is recommended when running alongside gnostr/nostrdb for
+        consistency with the application's data layer.
+        If LMDB is not available at compile time, falls back to SQLite.
+      </description>
+    </key>
+
+    <!-- Behaviour -->
+    <key name="verify-sha256" type="b">
+      <default>true</default>
+      <summary>Verify SHA-256 on store</summary>
+      <description>
+        Verify that blobs match their SHA-256 identifier when storing.
+        Protects against corrupted or malicious upstream responses.
+      </description>
+    </key>
+  </schema>
+</schemalist>
