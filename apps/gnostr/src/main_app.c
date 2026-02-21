@@ -243,6 +243,11 @@ int main(int argc, char **argv) {
    * held references to the embedded mutex. Fixed by deferred channel
    * destruction in libgo/src/channel.c (graveyard pattern). */
 
+  /* Install crashtrace handler FIRST - catches refcount underflows and GLib fatals
+   * with full backtrace, no debugger required. */
+  extern void gn_install_crashtrace(void);
+  gn_install_crashtrace();
+
   gnostr_ensure_gsettings_schemas(argv[0]);
   g_set_prgname("gnostr");
 
