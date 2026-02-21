@@ -28,6 +28,15 @@
 #include "custom_emoji.h"
 #include "nip32_labels.h"
 #include "nip71.h"
+
+/* nostrc-heap-corruption: Assert widget not disposed before UI mutations */
+#define ASSERT_NOT_DISPOSED(self) \
+  G_STMT_START { \
+    if (G_UNLIKELY((self)->disposed)) { \
+      g_error("[NCR] UI mutation after dispose: %s %p in %s", \
+              G_OBJECT_TYPE_NAME(self), (void*)(self), __func__); \
+    } \
+  } G_STMT_END
 #include "nip84_highlights.h"
 #include "nip48_proxy.h"
 #include "nip03_opentimestamps.h"
@@ -2866,8 +2875,8 @@ static void load_media_image(NostrGtkNoteCardRow *self, const char *url, GtkPict
 
 void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url) {
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
-  /* nostrc-8456: Don't touch labels during/after disposal - causes Pango layout corruption */
-  if (self->disposed) return;
+  /* nostrc-heap-corruption: Fatal if disposed - catches stale callbacks */
+  ASSERT_NOT_DISPOSED(self);
   /* nostrc-534d: Don't modify unbound row (defensive check) */
   if (self->binding_id == 0) return;
   if (GTK_IS_LABEL(self->lbl_display)) gtk_label_set_text(GTK_LABEL(self->lbl_display), (display_name && *display_name) ? display_name : (handle ? handle : _("Anonymous")));
@@ -3030,7 +3039,7 @@ static gboolean update_timestamp_tick(gpointer user_data) {
 
 void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
-  if (self->disposed) return;  /* nostrc-8456 */
+  ASSERT_NOT_DISPOSED(self);
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
   /* Store the created_at timestamp */
@@ -3689,7 +3698,7 @@ void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
 
 void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *content) {
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
-  if (self->disposed) return;
+  ASSERT_NOT_DISPOSED(self);
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
   /* Render content (no cache available in this path) */
