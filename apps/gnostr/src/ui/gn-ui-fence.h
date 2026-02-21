@@ -153,23 +153,27 @@ gn_ui_fence_gen(const GnUiFence *fence) {
 
 /**
  * gn_ui_fence_cancel_ref:
- * @fence: Fence to get cancellable from
+ * @fence: a #GnUiFence
  *
- * Get a reference to the current cancellable.
- * Async contexts hold this ref and check it in callbacks.
+ * Get a new reference to the fence's cancellable for use in async operations.
+ * The caller must unref when done.
  *
- * Returns: (transfer full): New reference to cancellable, or new cancellable if none exists
+ * Returns: (transfer full): A new reference to the cancellable, or NULL
  */
 static inline GCancellable *
-gn_ui_fence_cancel_ref(const GnUiFence *fence) {
-    g_return_val_if_fail(fence != NULL, g_cancellable_new());
-    return fence->cancel ? g_object_ref(fence->cancel) : g_cancellable_new();
+gn_ui_fence_cancel_ref(GnUiFence *fence) {
+    g_return_val_if_fail(fence != NULL, NULL);
+    if (fence->cancel)
+	return g_object_ref(fence->cancel);
+    return NULL;
 }
 
 /**
  * gn_ui_fence_clear:
- * @fence: Fence to clear
+ * @fence: a #GnUiFence
  *
+ * Clear the fence's cancellable and cancel any pending operations.
+ * Safe to call in dispose. Idempotent.
  * Clear the fence, cancelling any pending operations.
  * Call this in your object's dispose/finalize.
  */
