@@ -618,8 +618,7 @@ static void dump_children(const char *tag, GtkWidget *w, void *self_ptr) {
 }
 
 static void nostr_gtk_note_card_row_dispose(GObject *obj) {
-  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow*)obj;
-  GtkWidget *w = GTK_WIDGET(self);
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(obj);
   
   /* nostrc-disposal-forensics: Check cookie to detect memory scribble */
   guint64 expected_cookie = (guint64)(uintptr_t)self ^ NCR_COOKIE_MAGIC;
@@ -629,37 +628,21 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
             (void*)self, expected_cookie, self->dispose_cookie);
   }
   
-  /* nostrc-shutdown-crash: ALWAYS dump children at entry */
-  dump_children("dispose ENTER", w, (void*)self);
-  
-  /* nostrc-shutdown-crash: Template disposal is its own idempotent one-shot.
-   * This happens FIRST, before any other guards, to ensure template children
-   * are cleared even on reentry paths. */
+  /* Template disposal - idempotent one-shot */
   if (!self->template_disposed) {
     self->template_disposed = TRUE;
-    
-    dump_children("dispose FIRST BEFORE template", w, (void*)self);
-    
-    /* Null layout manager before template disposal */
-    gtk_widget_set_layout_manager(w, NULL);
-    
-    gtk_widget_dispose_template(w, NOSTR_GTK_TYPE_NOTE_CARD_ROW);
-    
-    dump_children("dispose FIRST AFTER template", w, (void*)self);
-  } else {
-    dump_children("dispose template REENTRY(skipped)", w, (void*)self);
+    dump_children("dispose BEFORE template", GTK_WIDGET(self), (void*)self);
+    gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
+    gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
+    dump_children("dispose AFTER template", GTK_WIDGET(self), (void*)self);
   }
   
-  /* nostrc-disposal-forensics: Make other teardown idempotent.
-   * GTK's list item recycling can call dispose twice during hash table cleanup.
-   * Do NOT call parent dispose here - it was already called in first dispose. */
-  if (G_UNLIKELY(self->disposed)) {
-    dump_children("dispose other REENTRY(no-op)", w, (void*)self);
-    return;  /* Early return without calling parent - already done */
-  }
+  /* Other teardown - idempotent one-shot, do NOT chain up again */
+  if (self->disposed)
+    return;
   
   self->disposed = TRUE;
-  g_printerr("[NCR] dispose START other teardown: %p\n", (void*)self);
+  dump_children("dispose other teardown", GTK_WIDGET(self), (void*)self);
   
   /* nostrc-generation-fencing: Bump fence and cancel ops in dispose too.
    * This catches any final in-flight callbacks if dispose happens without unbind. */
