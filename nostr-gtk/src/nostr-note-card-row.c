@@ -585,10 +585,18 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
 
 /* nostrc-shutdown-crash: Dump all children for diagnostics */
 static void dump_children(const char *tag, GtkWidget *w, void *self_ptr) {
+  /* Check if widget is still in live hierarchy */
+  GtkRoot *root = gtk_widget_get_root(w);
+  g_warning("[NCR] %p %s root=%p (%s)", self_ptr, tag, (void*)root, 
+            root ? "in hierarchy" : "detached");
+  
   GtkWidget *c = gtk_widget_get_first_child(w);
   int n = 0;
   for (; c; c = gtk_widget_get_next_sibling(c)) {
-    g_warning("[NCR] %p %s child[%d]=%s %p", self_ptr, tag, n++, G_OBJECT_TYPE_NAME(c), (void*)c);
+    GtkWidget *parent = gtk_widget_get_parent(c);
+    g_warning("[NCR] %p %s child[%d]=%s %p parent=%p %s", 
+              self_ptr, tag, n++, G_OBJECT_TYPE_NAME(c), (void*)c, (void*)parent,
+              parent == w ? "(correct)" : "(REPARENTED!)");
     if (n > 30) { 
       g_warning("[NCR] %p %s ...truncated (%d+ children)", self_ptr, tag, n);
       break;
