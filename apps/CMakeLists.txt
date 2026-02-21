@@ -26,6 +26,18 @@ endif()
 
 add_subdirectory(relayctl)
 add_subdirectory(grelay)
+
+# Blossom Cache - standalone local Blossom cache server (requires GLib + libsoup3 + sqlite3)
+option(ENABLE_BLOSSOM_CACHE "Build blossom-cache local Blossom cache server" ON)
+if (ENABLE_BLOSSOM_CACHE AND GLIB_FOUND)
+  pkg_check_modules(BLOSSOM_SOUP3 QUIET IMPORTED_TARGET libsoup-3.0)
+  if (BLOSSOM_SOUP3_FOUND AND SQLITE3_FOUND)
+    add_subdirectory(blossom-cache)
+  else()
+    message(STATUS "blossom-cache: skipped (requires libsoup-3.0 and sqlite3)")
+  endif()
+endif()
+
 if (GTK4_FOUND AND GLIB_FOUND)
   add_subdirectory(gnostr-signer)
   add_subdirectory(gnostr)
