@@ -175,6 +175,11 @@ endif()
 # consumers get it via the nostr_gobject target (PUBLIC include + link).
 add_executable(${APP_CLIENT_BIN} ${APP_SRC})
 target_compile_features(${APP_CLIENT_BIN} PRIVATE c_std_11)
+
+# nostrc-crashtrace: Frame pointers + debug symbols for reliable stack unwinding
+# -rdynamic exports symbols so backtrace_symbols/dladdr can resolve function names
+target_compile_options(${APP_CLIENT_BIN} PRIVATE -fno-omit-frame-pointer -g3 -Og)
+target_link_options(${APP_CLIENT_BIN} PRIVATE -rdynamic)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}"
   GNOSTR_ICON_THEME_DIR="${CMAKE_INSTALL_FULL_DATAROOTDIR}/icons"
   GNOSTR_ICON_THEME_DIR_DEV="${CMAKE_CURRENT_SOURCE_DIR}/data/icons"
