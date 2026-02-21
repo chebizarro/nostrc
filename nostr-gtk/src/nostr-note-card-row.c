@@ -651,11 +651,11 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   }
   
   /* nostrc-disposal-forensics: Make other teardown idempotent.
-   * GTK's list item recycling can call dispose twice during hash table cleanup. */
+   * GTK's list item recycling can call dispose twice during hash table cleanup.
+   * Do NOT call parent dispose here - it was already called in first dispose. */
   if (G_UNLIKELY(self->disposed)) {
     dump_children("dispose other REENTRY(no-op)", w, (void*)self);
-    G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->dispose(obj);
-    return;
+    return;  /* Early return without calling parent - already done */
   }
   
   self->disposed = TRUE;
