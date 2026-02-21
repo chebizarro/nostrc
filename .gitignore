@@ -95,3 +95,4 @@ package-lock.json
 .claude/
 .logs/
 state.json
+_build_asan/

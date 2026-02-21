@@ -631,13 +631,24 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   /* Template disposal MUST happen even if dispose is called multiple times.
    * The disposed flag only guards the non-template teardown and chain-up. */
   if (!self->template_disposed) {
-    /* nostrc-generation-fencing: Bump fence and cancel ops in dispose.
-     * This catches any final in-flight callbacks if dispose happens without unbind. */
-    gn_ui_fence_bump(&self->fence);
+    /* DIAGNOSTIC: GNOSTR_NCR_MINIMAL_DISPOSE=1 skips ALL non-template teardown.
+     * Dispose does ONLY: gtk_widget_dispose_template() + clear pointers + chain up.
+     * If crash disappears → one of quiesce/fence/collection-clear is freeing something
+     *                       still used elsewhere.
+     * If crash persists → external heap scribble, not our dispose logic. */
+    static int minimal_dispose = -1;
+    if (minimal_dispose == -1)
+      minimal_dispose = (g_getenv("GNOSTR_NCR_MINIMAL_DISPOSE") != NULL);
+    
+    if (!minimal_dispose) {
+      /* nostrc-generation-fencing: Bump fence and cancel ops in dispose.
+       * This catches any final in-flight callbacks if dispose happens without unbind. */
+      gn_ui_fence_bump(&self->fence);
 
-    /* Quiesce external activity FIRST - cancels async ops, clears cancellable refs.
-     * MUST NOT touch widget subtree structure. */
-    nostr_gtk_note_card_row_quiesce(self, TRUE);
+      /* Quiesce external activity FIRST - cancels async ops, clears cancellable refs.
+       * MUST NOT touch widget subtree structure. */
+      nostr_gtk_note_card_row_quiesce(self, TRUE);
+    }
 
     /* ═══════════════════════════════════════════════════════════════════════════
      * PRE-TEMPLATE CLEANUP: All widget mutations MUST happen BEFORE dispose_template
