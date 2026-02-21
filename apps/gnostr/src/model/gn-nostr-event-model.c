@@ -9,11 +9,38 @@
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr.h>
 #include <string.h>
+#include <execinfo.h>  /* for backtrace() */
+#include <stdlib.h>
 
 /* Window sizing and cache sizes */
 #define MODEL_MAX_ITEMS 100
 #define ITEM_CACHE_SIZE 100
-#define PROFILE_CACHE_MAX 500
+
+/* nostrc-profile-cache-debug: Experimental controls for isolating corruption */
+static guint get_profile_cache_max(void) {
+  const char *env = g_getenv("GNOSTR_PROFILE_CACHE_MAX");
+  if (env) {
+    guint val = (guint)atoi(env);
+    if (val > 0) {
+      g_debug("[PROFILE_CACHE] Using GNOSTR_PROFILE_CACHE_MAX=%u (experiment mode)", val);
+      return val;
+    }
+  }
+  return 500; /* default */
+}
+#define PROFILE_CACHE_MAX get_profile_cache_max()
+
+static gboolean profile_cache_leak_mode(void) {
+  static int cached = -1;
+  if (cached == -1) {
+    cached = g_getenv("GNOSTR_PROFILE_CACHE_LEAK") != NULL;
+    if (cached) {
+      g_warning("[PROFILE_CACHE] LEAK MODE ENABLED - values will not be unref'd (experiment)");
+    }
+  }
+  return cached;
+}
+
 #define AUTHORS_READY_MAX 1000
 
 /* Frame-aware batching — adaptive drain rate (backported from GnTimelineModel)
@@ -456,12 +483,50 @@ static gboolean db_has_profile_event_for_pubkey(void *txn, const unsigned char p
 
 /* Helper to remove a pubkey from the LRU queue */
 static void profile_cache_lru_remove(GnNostrEventModel *self, const char *pubkey_hex) {
+  ASSERT_MAIN_THREAD();
   if (!self || !self->profile_cache_lru || !pubkey_hex) return;
   GList *link = g_queue_find_custom(self->profile_cache_lru, pubkey_hex, (GCompareFunc)g_strcmp0);
   if (link) {
     g_free(link->data);
     g_queue_delete_link(self->profile_cache_lru, link);
   }
+}
+
+/* nostrc-profile-cache-debug: Safe profile cache insertion with same-pointer guard.
+ * Prevents the GLib "same-pointer replace" trap where g_hash_table_replace() unrefs
+ * the old value even if it's the same pointer, causing use-after-free.
+ * 
+ * This helper enforces:
+ * - Main thread access only
+ * - No same-pointer replace (no-op if already cached)
+ * - Correct ref ownership (takes ownership of one ref)
+ * - LRU bookkeeping
+ * - Eviction when over limit
+ */
+static void profile_cache_put(GnNostrEventModel *self, const char *pubkey_hex, GNostrProfile *profile) {
+  ASSERT_MAIN_THREAD();
+  if (!self || !self->profile_cache || !pubkey_hex || !profile) return;
+  
+  /* Check if same pointer is already cached - this is the GLib trap */
+  GNostrProfile *old = g_hash_table_lookup(self->profile_cache, pubkey_hex);
+  if (old == profile) {
+    g_debug("[PROFILE_CACHE] Same-pointer no-op: key=%.16s... ptr=%p (already cached)",
+            pubkey_hex, (void*)profile);
+    return;  /* No-op: already cached with same pointer */
+  }
+  
+  /* Insert or replace - takes ownership of one ref */
+  g_hash_table_insert(self->profile_cache, g_strdup(pubkey_hex), g_object_ref(profile));
+  
+  /* Update LRU queue */
+  if (self->profile_cache_lru) {
+    profile_cache_lru_remove(self, pubkey_hex);  /* Remove stale entry if exists */
+    g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
+    profile_cache_evict(self);
+  }
+  
+  g_debug("[PROFILE_CACHE] Inserted: key=%.16s... ptr=%p refcount=%u",
+          pubkey_hex, (void*)profile, G_OBJECT(profile)->ref_count);
 }
 
 /* nostrc-corruption-forensics: Weak ref callback fires when profile is finalized while cached.
@@ -488,9 +553,10 @@ static GNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pub
   if (G_UNLIKELY(!GNOSTR_IS_PROFILE(profile))) {
     g_critical("[PROFILE_CACHE] CORRUPTION DETECTED: key=%.16s... value=%p",
                pubkey_hex, (void*)profile);
-    g_critical("[PROFILE_CACHE] cache_size=%u lru_size=%u",
+    g_critical("[PROFILE_CACHE] cache_size=%u lru_size=%u thread_id=%lu",
                g_hash_table_size(self->profile_cache),
-               g_queue_get_length(self->profile_cache_lru));
+               g_queue_get_length(self->profile_cache_lru),
+               (unsigned long)pthread_self());
     
     /* Hexdump first 64 bytes to distinguish freed (0xA5) vs scribbled memory */
     const unsigned char *b = (const unsigned char*)profile;
@@ -502,6 +568,13 @@ static GNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pub
     }
     
     g_critical("[PROFILE_CACHE] Pattern 0xA5 = freed memory, other = heap scribble");
+    
+    /* Dump backtrace to see who is reading the corrupted pointer */
+    void *bt_buffer[64];
+    int bt_size = backtrace(bt_buffer, 64);
+    g_critical("[PROFILE_CACHE] Backtrace (%d frames):", bt_size);
+    backtrace_symbols_fd(bt_buffer, bt_size, STDERR_FILENO);
+    
     abort();  /* Stop immediately for forensics */
   }
   
@@ -549,33 +622,12 @@ static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void
                 (void*)profile, pubkey_hex);
       }
       
-      /* nostrc-corruption-forensics: Detect same-pointer replacement (would unref then re-add) */
-      GNostrProfile *old = g_hash_table_lookup(self->profile_cache, pubkey_hex);
-      if (old != NULL && old == profile) {
-        g_error("[MODEL] BUG: Attempting to replace profile %p with itself! key=%.16s...",
-                (void*)profile, pubkey_hex);
-      }
-      
-      /* Cache takes ownership of one ref, we keep one ref to return */
-      GNostrProfile *cache_ref = g_object_ref(profile);  /* ref=2 */
-      
-      /* Verify the ref we're about to insert is valid */
-      if (!GNOSTR_IS_PROFILE(cache_ref)) {
-        g_error("[MODEL] BUG: g_object_ref returned invalid profile %p for pubkey %.16s...",
-                (void*)cache_ref, pubkey_hex);
-      }
-      
-      g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), cache_ref);
-      
       /* nostrc-corruption-forensics: Track finalization while cached */
-      g_object_weak_ref(G_OBJECT(cache_ref), profile_cache_weak_notify, g_strdup(pubkey_hex));
+      g_object_weak_ref(G_OBJECT(profile), profile_cache_weak_notify, g_strdup(pubkey_hex));
       
-      /* Add to LRU queue - remove any existing entry first to prevent duplicates */
-      if (self->profile_cache_lru) {
-        profile_cache_lru_remove(self, pubkey_hex);  /* Remove stale entry if exists */
-        g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
-        profile_cache_evict(self);
-      }
+      /* Use safe helper - prevents same-pointer replace, handles LRU, eviction */
+      g_object_ref(profile);  /* ref=2 */
+      profile_cache_put(self, pubkey_hex, profile);  /* Takes ownership of one ref */
       mark_author_ready(self, pubkey_hex);
       /* Return caller's ref (ref=2: cache=1, caller=1) */
     }
@@ -590,6 +642,7 @@ static GNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void
 /* nostrc-refcount-fix: Evict oldest entries from profile_cache if over limit.
  * Robust against stale LRU entries (keys not in hash table). */
 static void profile_cache_evict(GnNostrEventModel *self) {
+  ASSERT_MAIN_THREAD();
   if (!self || !self->profile_cache || !self->profile_cache_lru) return;
   
   guint before = g_hash_table_size(self->profile_cache);
@@ -651,6 +704,7 @@ static void authors_ready_evict(GnNostrEventModel *self) {
  * If profile doesn't exist, creates and caches it. */
 static void profile_cache_update_from_content(GnNostrEventModel *self, const char *pubkey_hex,
                                               const char *content, gsize content_len) {
+  ASSERT_MAIN_THREAD();
   if (!self || !pubkey_hex || !content || content_len == 0) return;
 
   /* content is kind-0 event content JSON, not necessarily NUL terminated */
@@ -659,27 +713,15 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
   /* Get ref'd profile from cache */
   GNostrProfile *profile = profile_cache_get(self, pubkey_hex);
   if (!profile) {
-    /* Create new profile and add to cache with explicit ref */
+    /* Create new profile and cache it using safe helper */
     profile = gnostr_profile_new(pubkey_hex);  /* ref=1 */
     
-    /* nostrc-corruption-forensics: Detect same-pointer replacement */
-    GNostrProfile *old = g_hash_table_lookup(self->profile_cache, pubkey_hex);
-    if (old != NULL && old == profile) {
-      g_error("[MODEL] BUG: Attempting to replace profile %p with itself! key=%.16s...",
-              (void*)profile, pubkey_hex);
-    }
-    
-    GNostrProfile *cache_ref = g_object_ref(profile);  /* ref=2 */
-    g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), cache_ref);
-    
     /* nostrc-corruption-forensics: Track finalization while cached */
-    g_object_weak_ref(G_OBJECT(cache_ref), profile_cache_weak_notify, g_strdup(pubkey_hex));
+    g_object_weak_ref(G_OBJECT(profile), profile_cache_weak_notify, g_strdup(pubkey_hex));
     
-    /* Add to LRU queue - remove any existing entry first to prevent duplicates */
-    profile_cache_lru_remove(self, pubkey_hex);  /* Remove stale entry if exists */
-    g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
-    /* Evict if over limit */
-    profile_cache_evict(self);
+    /* Use safe helper - prevents same-pointer replace, handles LRU, eviction */
+    profile_cache_put(self, pubkey_hex, profile);  /* Takes ownership of ref */
+    mark_author_ready(self, pubkey_hex);
     /* profile ref=2: cache=1, local=1 */
   }
 
@@ -2195,7 +2237,9 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
   self->cache_lru = g_queue_new();
 
-  self->profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+  /* nostrc-profile-cache-debug: Support leak mode experiment (GNOSTR_PROFILE_CACHE_LEAK=1) */
+  GDestroyNotify value_destroy = profile_cache_leak_mode() ? NULL : (GDestroyNotify)g_object_unref;
+  self->profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, value_destroy);
   self->profile_cache_lru = g_queue_new();
   self->thread_info = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, (GDestroyNotify)thread_info_free);
 
