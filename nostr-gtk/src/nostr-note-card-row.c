@@ -334,6 +334,7 @@ struct _NostrGtkNoteCardRow {
   GPtrArray *external_ids;            /* Array of GnostrExternalContentId* */
   /* nostrc-disposal-forensics: Disposal state tracking */
   gboolean disposed;  /* Prevents double-dispose and async callback races */
+  gboolean template_disposed;  /* Separate flag for template disposal (one-shot) */
   guint64 dispose_cookie;  /* XOR cookie to detect memory scribble into struct */
 
   /* nostrc-dqwq.2: Deferred media widget creation.
@@ -619,19 +620,37 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
             (void*)self, expected_cookie, self->dispose_cookie);
   }
   
-  /* nostrc-shutdown-crash: ALWAYS dump children state, even on reentry */
-  dump_children(self->disposed ? "dispose REENTRY BEFORE" : "dispose FIRST BEFORE", w, (void*)self);
+  /* nostrc-shutdown-crash: ALWAYS dump children at entry */
+  dump_children("dispose ENTER", w, (void*)self);
   
-  /* nostrc-disposal-forensics: Make dispose idempotent (safe to call multiple times).
+  /* nostrc-shutdown-crash: Template disposal is its own idempotent one-shot.
+   * This happens FIRST, before any other guards, to ensure template children
+   * are cleared even on reentry paths. */
+  if (!self->template_disposed) {
+    self->template_disposed = TRUE;
+    
+    dump_children("dispose FIRST BEFORE template", w, (void*)self);
+    
+    /* Null layout manager before template disposal */
+    gtk_widget_set_layout_manager(w, NULL);
+    
+    gtk_widget_dispose_template(w, NOSTR_GTK_TYPE_NOTE_CARD_ROW);
+    
+    dump_children("dispose FIRST AFTER template", w, (void*)self);
+  } else {
+    dump_children("dispose template REENTRY(skipped)", w, (void*)self);
+  }
+  
+  /* nostrc-disposal-forensics: Make other teardown idempotent.
    * GTK's list item recycling can call dispose twice during hash table cleanup. */
   if (G_UNLIKELY(self->disposed)) {
-    dump_children("dispose REENTRY AFTER(no-op)", w, (void*)self);
+    dump_children("dispose other REENTRY(no-op)", w, (void*)self);
     G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->dispose(obj);
     return;
   }
   
   self->disposed = TRUE;
-  g_printerr("[NCR] dispose START: %p\n", (void*)self);
+  g_printerr("[NCR] dispose START other teardown: %p\n", (void*)self);
   
   /* nostrc-generation-fencing: Bump fence and cancel ops in dispose too.
    * This catches any final in-flight callbacks if dispose happens without unbind. */
@@ -747,16 +766,8 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
     g_list_free(image_widgets);
   }
 
-  /* nostrc-pango-crash: Null layout manager before template disposal to prevent
-   * it from measuring partially-destroyed children during the disposal cascade.
-   * Pattern from og-preview-widget.c. */
-  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
-
-  gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
-  
-  /* nostrc-shutdown-crash: Dump children after template disposal */
-  dump_children("dispose FIRST AFTER", w, (void*)self);
-  
+  /* nostrc-shutdown-crash: Template disposal already happened at top of dispose.
+   * Just clear the cached pointers here. */
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_relay = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
   self->lbl_timestamp_separator = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
