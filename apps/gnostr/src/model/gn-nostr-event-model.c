@@ -917,6 +917,10 @@ static void insertion_buffer_sorted_insert(GArray *buf, PendingEntry *entry) {
   g_array_insert_val(buf, lo, *entry);
 }
 
+/* Forward declarations for two-phase cache swap (used throughout model) */
+static gboolean destroy_cache_idle(gpointer data);
+static GHashTable *build_new_item_cache(GnNostrEventModel *self, GHashTable *old_cache);
+
 /**
  * reset_internal_state_silent:
  * Reset all internal data structures WITHOUT emitting any GListModel signal.
@@ -2491,13 +2495,18 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[MODEL] Failed to begin query");
-    /* reset_internal_state_silent() already cleared notes without signaling.
-     * Mirror the normal atomic-replace contract on failure so views and
-     * caches stay consistent. */
+    /* Error path: swap to empty cache + defer old cache destruction */
     if (old_size > 0)
       emit_items_changed_safe(self, 0, old_size, 0);
-    g_hash_table_remove_all(self->item_cache);
+    
+    GHashTable *old_cache = self->item_cache;
+    self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
     g_queue_clear_full(self->cache_lru, g_free);
+    
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, destroy_cache_idle,
+                    g_hash_table_ref(old_cache), NULL);
+    g_hash_table_unref(old_cache);
+    
     g_string_free(filter, TRUE);
     return;
   }
@@ -2592,13 +2601,11 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   GArray *evicted_keys_refresh = NULL;
   enforce_window_inline(self, &evicted_keys_refresh);
 
-  /* nostrc-duplicate-fix: Clear item_cache BEFORE emitting items_changed.
-   * GTK calls get_item() during signal emission to bind new widgets. If the
-   * cache contains old items, GTK sees duplicate GObject pointers (same item
-   * returned for different positions), causing "Duplicate item detected" warnings
-   * and eventual crashes. Clearing the cache first ensures get_item() creates
-   * fresh items for the new model state. */
-  g_hash_table_remove_all(self->item_cache);
+  /* TWO-PHASE CACHE SWAP: Same pattern as async refresh */
+  GHashTable *old_cache = self->item_cache;
+  GHashTable *new_cache = build_new_item_cache(self, old_cache);
+  
+  self->item_cache = new_cache;
   g_queue_clear_full(self->cache_lru, g_free);
 
   /* nostrc-atomic-replace: ONE atomic replace signal instead of clear + add.
@@ -2606,6 +2613,12 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   guint new_size = self->notes->len;
   if (old_size > 0 || new_size > 0)
     emit_items_changed_safe(self, 0, old_size, new_size);
+  
+  /* Defer destruction of old cache */
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, destroy_cache_idle,
+                  g_hash_table_ref(old_cache), NULL);
+  g_hash_table_unref(old_cache);
+  
   cleanup_evicted_keys(self, evicted_keys_refresh);
 
   g_debug("[MODEL] Refresh complete: %u total items (%u added, %u replaced)",
@@ -2797,10 +2810,6 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
   storage_ndb_end_query(txn);
   g_task_return_pointer(task, entries, (GDestroyNotify)g_ptr_array_unref);
 }
-
-/* Forward declarations for two-phase cache swap */
-static gboolean destroy_cache_idle(gpointer data);
-static GHashTable *build_new_item_cache(GnNostrEventModel *self, GHashTable *old_cache);
 
 /* Main-thread callback: apply pre-processed results to model */
 static void
@@ -3226,9 +3235,16 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
 
   guint old_size = self->notes->len;
   if (old_size == 0) {
-    /* Still clear caches to be safe */
-    g_hash_table_remove_all(self->item_cache);
+    /* Empty model - swap to empty cache and defer destruction */
+    GHashTable *old_cache = self->item_cache;
+    self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
     g_queue_clear_full(self->cache_lru, g_free);
+    
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, destroy_cache_idle,
+                    g_hash_table_ref(old_cache), NULL);
+    g_hash_table_unref(old_cache);
+    
+    /* Clear other caches */
     g_hash_table_remove_all(self->thread_info);
     if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
     if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
@@ -3256,9 +3272,16 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_hash_table_remove_all(self->note_key_set);
   emit_items_changed_safe(self, 0, old_size, 0);
 
-  /* NOW safe to clean caches — GTK has finished with all widgets */
-  g_hash_table_remove_all(self->item_cache);
+  /* TWO-PHASE CACHE SWAP: Defer item cache destruction to idle */
+  GHashTable *old_cache = self->item_cache;
+  self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
   g_queue_clear_full(self->cache_lru, g_free);
+  
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, destroy_cache_idle,
+                  g_hash_table_ref(old_cache), NULL);
+  g_hash_table_unref(old_cache);
+  
+  /* Clear other caches */
   g_hash_table_remove_all(self->thread_info);
   if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
   if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
