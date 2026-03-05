@@ -57,6 +57,7 @@ add_library(signet_core STATIC ${SIGNET_CORE_SOURCES})
 target_include_directories(signet_core
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
   PRIVATE
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/nips/nip01/include
@@ -66,22 +67,15 @@ target_include_directories(signet_core
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
 )
 
-# Link in-tree targets when available
-if (TARGET nostr)
-  target_link_libraries(signet_core PUBLIC nostr)
-endif()
-
-if (TARGET nostr_json)
-  target_link_libraries(signet_core PUBLIC nostr_json)
-endif()
-
-if (TARGET nip46)
-  target_link_libraries(signet_core PUBLIC nip46)
-endif()
-
-if (TARGET nip19)
-  target_link_libraries(signet_core PUBLIC nip19)
-endif()
+# Link in-tree targets. NIP targets are added later in the root CMake via
+# NipOptions.cmake, so use generator expressions to resolve at generate time.
+target_link_libraries(signet_core PUBLIC
+  nostr
+  nostr_json
+  $<$<TARGET_EXISTS:nip19>:nip19>
+  $<$<TARGET_EXISTS:nip04>:nip04>
+  $<$<TARGET_EXISTS:nostr_nip46_core>:nostr_nip46_core>
+)
 
 # External deps
 target_link_libraries(signet_core PRIVATE OpenSSL::SSL OpenSSL::Crypto)
@@ -99,11 +93,11 @@ if (TARGET PkgConfig::MHD)
 endif()
 
 if (TARGET PkgConfig::GLIB)
-  target_link_libraries(signet_core PRIVATE PkgConfig::GLIB)
+  target_link_libraries(signet_core PUBLIC PkgConfig::GLIB)
 endif()
 
 if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(signet_core PRIVATE PkgConfig::JSON_GLIB)
+  target_link_libraries(signet_core PUBLIC PkgConfig::JSON_GLIB)
 endif()
 
 add_executable(signetd ${CMAKE_CURRENT_SOURCE_DIR}/src/signetd_main.c)
@@ -111,6 +105,7 @@ target_link_libraries(signetd PRIVATE signet_core)
 
 add_executable(signetctl ${CMAKE_CURRENT_SOURCE_DIR}/src/signetctl_main.c)
 target_link_libraries(signetctl PRIVATE signet_core)
+target_include_directories(signetctl PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/include)
 
 install(TARGETS signetd signetctl RUNTIME DESTINATION bin)
 

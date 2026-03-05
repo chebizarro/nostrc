@@ -195,9 +195,7 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
     return -1;
   }
 
-  NostrJsonErrorInfo jerr;
-  memset(&jerr, 0, sizeof(jerr));
-  if (!nostr_event_deserialize_compact(evt, event_json, &jerr)) {
+  if (!nostr_event_deserialize_compact(evt, event_json, NULL)) {
     nostr_event_free(evt);
     g_mutex_unlock(&rp->mu);
     return -1;

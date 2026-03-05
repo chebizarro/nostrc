@@ -16,28 +16,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     pkg-config \
     meson \
+    python3-pip \
     git \
     libglib2.0-dev \
     libjson-glib-dev \
+    libjansson-dev \
     libssl-dev \
     libsqlite3-dev \
     libsodium-dev \
     libmicrohttpd-dev \
     libsecp256k1-dev \
     libcurl4-openssl-dev \
+    libwebsockets-dev \
+    libnsync-dev \
     ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && pip3 install --no-cache-dir --break-system-packages "cmake>=3.30,<3.31"
 
 # Copy the entire monorepo (needed for in-tree libs)
 WORKDIR /src
 COPY . .
 
 # Build the monorepo with CMake to produce libnostr, nip libs, etc.
-RUN cmake -B build -G Ninja \
+RUN cmake -B build-docker -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \
     -DSIGNET_ENABLE=ON \
-  && cmake --build build --target signetd signetctl
+    -DBUILD_NOSTR_GTK=OFF \
+    -DBUILD_APPS=OFF \
+    -DBUILD_LIBMARMOT=OFF \
+    -DBUILD_MARMOT_GOBJECT=OFF \
+  && cmake --build build-docker --target signetd signetctl
 
 # ============================================================================
 # Stage 2: Runtime
@@ -47,11 +56,15 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libjson-glib-1.0-0 \
+    libjansson4 \
     libssl3 \
     libsqlite3-0 \
     libsodium23 \
     libmicrohttpd12 \
     libsecp256k1-1 \
+    libnsync1 \
+    libwebsockets17 \
+    libcap2 \
     ca-certificates \
     curl \
   && rm -rf /var/lib/apt/lists/*
@@ -60,14 +73,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -r signet && useradd -r -g signet -d /data -s /usr/sbin/nologin signet
 
 # Copy binaries from build stage
-COPY --from=builder /src/build/signet/signetd /usr/local/bin/signetd
-COPY --from=builder /src/build/signet/signetctl /usr/local/bin/signetctl
+COPY --from=builder /src/build-docker/signet/signetd /usr/local/bin/signetd
+COPY --from=builder /src/build-docker/signet/signetctl /usr/local/bin/signetctl
 
 # Copy shared libraries built by the monorepo
-COPY --from=builder /src/build/libnostr/libnostr.so* /usr/local/lib/
-COPY --from=builder /src/build/nips/nip04/libnip04.so* /usr/local/lib/
-COPY --from=builder /src/build/nips/nip19/libnip19.so* /usr/local/lib/
-COPY --from=builder /src/build/nips/nip46/libnip46.so* /usr/local/lib/
+COPY --from=builder /src/build-docker/libnostr/libnostr.so* /usr/local/lib/
+COPY --from=builder /src/build-docker/libjson/libnostr_json.so* /usr/local/lib/
+COPY --from=builder /src/build-docker/nips/nip04/libnip04.so* /usr/local/lib/
+COPY --from=builder /src/build-docker/nips/nip19/libnip19.so* /usr/local/lib/
+COPY --from=builder /src/build-docker/nips/nip46/libnip46.so* /usr/local/lib/
 RUN ldconfig
 
 # Data directory for SQLCipher database

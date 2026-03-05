@@ -287,15 +287,19 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
   nostr_event_set_created_at(evt, now);
   nostr_event_set_content(evt, ack_content);
 
-  NostrTags *tags = nostr_tags_new();
+  NostrTags *tags = nostr_tags_new(0);
   if (tags) {
     if (recipient_pubkey_hex) {
-      const char *p_tag[] = {"p", recipient_pubkey_hex};
-      nostr_tags_add(tags, p_tag, 2);
+      NostrTag *p_tag = nostr_tag_new("p", recipient_pubkey_hex, NULL);
+      if (p_tag) {
+        nostr_tags_append(tags, p_tag);
+      }
     }
     if (ref_event_id_hex) {
-      const char *e_tag[] = {"e", ref_event_id_hex};
-      nostr_tags_add(tags, e_tag, 2);
+      NostrTag *e_tag = nostr_tag_new("e", ref_event_id_hex, NULL);
+      if (e_tag) {
+        nostr_tags_append(tags, e_tag);
+      }
     }
     nostr_event_set_tags(evt, tags);
   }

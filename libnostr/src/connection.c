@@ -14,6 +14,10 @@
 #include <string.h>
 #include <openssl/ssl.h>
 
+#ifndef LWS_PROTOCOL_LIST_TERM
+#define LWS_PROTOCOL_LIST_TERM { NULL, NULL, 0, 0, 0, NULL, 0 }
+#endif
+
 /* nostrc-8zpc: Increased from 1024 to 128KB. With 1024, lws fragments any
  * Nostr message >1KB into multiple LWS_CALLBACK_CLIENT_RECEIVE calls.
  * Most Nostr events (kind:0 profiles, kind:1 notes with signatures) are

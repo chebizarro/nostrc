@@ -104,10 +104,12 @@ static char *signetctl_build_signed_event(int kind,
 
   /* Tag the bunker pubkey so it knows this is for it. */
   if (bunker_pubkey_hex) {
-    NostrTags *tags = nostr_tags_new();
+    NostrTags *tags = nostr_tags_new(0);
     if (tags) {
-      const char *p_tag[] = {"p", bunker_pubkey_hex};
-      nostr_tags_add(tags, p_tag, 2);
+      NostrTag *p_tag = nostr_tag_new("p", bunker_pubkey_hex, NULL);
+      if (p_tag) {
+        nostr_tags_append(tags, p_tag);
+      }
       nostr_event_set_tags(evt, tags);
     }
   }

@@ -174,9 +174,7 @@ static char *signet_sign_event_json_with_seckey(const char *seckey_hex,
   }
 
   /* Deserialize from the JSON provided by the client */
-  NostrJsonErrorInfo jerr;
-  memset(&jerr, 0, sizeof(jerr));
-  if (!nostr_event_deserialize_compact(evt, event_json, &jerr)) {
+  if (!nostr_event_deserialize_compact(evt, event_json, NULL)) {
     if (out_err) *out_err = g_strdup("invalid event JSON");
     nostr_event_free(evt);
     return NULL;
@@ -227,14 +225,18 @@ static char *signet_build_outer_response_event_json(const char *remote_signer_se
   nostr_event_set_content(evt, encrypted_content);
 
   /* Add tags: ["p", client_pubkey] and optionally ["e", request_event_id] */
-  NostrTags *tags = nostr_tags_new();
+  NostrTags *tags = nostr_tags_new(0);
   if (tags) {
-    const char *p_tag[] = {"p", client_pubkey_hex};
-    nostr_tags_add(tags, p_tag, 2);
+    NostrTag *p_tag = nostr_tag_new("p", client_pubkey_hex, NULL);
+    if (p_tag) {
+      nostr_tags_append(tags, p_tag);
+    }
 
     if (request_outer_event_id_hex && request_outer_event_id_hex[0]) {
-      const char *e_tag[] = {"e", request_outer_event_id_hex};
-      nostr_tags_add(tags, e_tag, 2);
+      NostrTag *e_tag = nostr_tag_new("e", request_outer_event_id_hex, NULL);
+      if (e_tag) {
+        nostr_tags_append(tags, e_tag);
+      }
     }
     nostr_event_set_tags(evt, tags);
   }
