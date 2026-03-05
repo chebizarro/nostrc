@@ -22,7 +22,12 @@
 #include "signet/policy_engine.h"
 #include "signet/relay_pool.h"
 #include "signet/nip46_server.h"
+#include "signet/mgmt_protocol.h"
 #include "signet/health_server.h"
+
+/* Management event kind range */
+#define SIGNET_MGMT_KIND_MIN 28000
+#define SIGNET_MGMT_KIND_MAX 28090
 
 #include <errno.h>
 #include <signal.h>
@@ -111,6 +116,7 @@ static void signet_audit_daemon_event(SignetAuditLogger *audit,
 typedef struct {
   const SignetConfig *cfg;
   SignetNip46Server *nip46;
+  SignetMgmtHandler *mgmt;
 } SignetDaemonCtx;
 
 static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_data) {
@@ -129,13 +135,16 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
     return;
   }
 
-  /* Management event dispatch is handled in the mgmt module in this codebase.
-   * If your relay pool passes management events through this callback, wire
-   * that module here (custom kind, signature verification, admin auth, ack publish).
-   *
-   * This file intentionally keeps mgmt integration out of the health + shutdown
-   * critical path.
-   */
+  /* Management event dispatch (kinds 28000-28090). */
+  if (ev->kind >= SIGNET_MGMT_KIND_MIN && ev->kind <= SIGNET_MGMT_KIND_MAX && ctx->mgmt) {
+    (void)signet_mgmt_handler_handle_event(ctx->mgmt,
+                                          ev->pubkey_hex ? ev->pubkey_hex : "",
+                                          ev->content ? ev->content : "",
+                                          ev->kind,
+                                          ev->event_id_hex ? ev->event_id_hex : "",
+                                          signet_now_unix());
+    return;
+  }
 }
 
 int main(int argc, char **argv) {
@@ -226,6 +235,16 @@ int main(int argc, char **argv) {
   SignetNip46Server *nip46 = signet_nip46_server_new(relays, policy, keys, replay, audit, &n46_cfg);
   dctx.nip46 = nip46;
 
+  /* 7b) Management handler */
+  SignetMgmtHandlerConfig mgmt_cfg = {
+    .provisioner_pubkeys = (const char *const *)cfg.provisioner_pubkeys,
+    .n_provisioner_pubkeys = cfg.n_provisioner_pubkeys,
+    .bunker_secret_key_hex = cfg.remote_signer_secret_key_hex,
+    .bunker_pubkey_hex = cfg.remote_signer_pubkey_hex,
+  };
+  SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, &mgmt_cfg);
+  dctx.mgmt = mgmt;
+
   /* 8) Health server */
   SignetHealthServer *health = NULL;
   if (cfg.health_port > 0) {
@@ -292,6 +311,7 @@ cleanup:
     signet_relay_pool_stop(relays);
   }
 
+  signet_mgmt_handler_free(mgmt);
   signet_nip46_server_free(nip46);
 
   if (relays) signet_relay_pool_free(relays);

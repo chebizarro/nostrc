@@ -1,241 +1,184 @@
 /* SPDX-License-Identifier: MIT
  *
- * mgmt_protocol.c - Signed management protocol helpers (Phase 5).
+ * mgmt_protocol.c - Nostr-native management protocol for Signet.
  *
- * This module:
- * - Parses management command JSON (event content)
- * - Validates required fields by command type
- * - Provides admin authorization helper (pubkey whitelist)
- * - Builds response JSON (event content) with json-glib (safe escaping)
- *
- * It does NOT:
- * - Verify NIP-01 event signatures (caller must verify via libnostr)
- * - Sign response events (caller/daemon signs and publishes)
+ * Handles management events (kinds 28000-28090) for agent provisioning,
+ * revocation, policy updates, and status queries. All operations execute
+ * against the SignetKeyStore (SQLCipher + hot cache).
  */
 
 #include "signet/mgmt_protocol.h"
+#include "signet/key_store.h"
+#include "signet/relay_pool.h"
+#include "signet/audit_logger.h"
 
 #include <string.h>
+#include <time.h>
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
 
-static char *signet_strdup0(const char *s) {
-  if (!s || s[0] == '\0') return NULL;
-  return g_strdup(s);
-}
+/* libnostr */
+#include <nostr-event.h>
+#include <nostr-keys.h>
 
-static gboolean signet_streq_ci(const char *a, const char *b) {
-  if (!a || !b) return FALSE;
-  return g_ascii_strcasecmp(a, b) == 0;
-}
+/* ----------------------------- op mapping -------------------------------- */
 
-SignetMgmtOp signet_mgmt_op_from_string(const char *op) {
-  if (!op) return SIGNET_MGMT_OP_UNKNOWN;
-
-  /* Preferred command set */
-  if (strcmp(op, "add_policy") == 0) return SIGNET_MGMT_OP_ADD_POLICY;
-  if (strcmp(op, "revoke_policy") == 0) return SIGNET_MGMT_OP_REVOKE_POLICY;
-  if (strcmp(op, "list_policies") == 0) return SIGNET_MGMT_OP_LIST_POLICIES;
-  if (strcmp(op, "rotate_key") == 0) return SIGNET_MGMT_OP_ROTATE_KEY;
-  if (strcmp(op, "health_check") == 0) return SIGNET_MGMT_OP_HEALTH_CHECK;
-
-  /* Legacy */
-  if (strcmp(op, "policy.set") == 0) return SIGNET_MGMT_OP_POLICY_SET;
-  if (strcmp(op, "policy.unset") == 0) return SIGNET_MGMT_OP_POLICY_UNSET;
-  if (strcmp(op, "client.revoke") == 0) return SIGNET_MGMT_OP_CLIENT_REVOKE;
-  if (strcmp(op, "client.unrevoke") == 0) return SIGNET_MGMT_OP_CLIENT_UNREVOKE;
-
-  return SIGNET_MGMT_OP_UNKNOWN;
+SignetMgmtOp signet_mgmt_op_from_kind(int kind) {
+  switch (kind) {
+    case SIGNET_KIND_PROVISION_AGENT: return SIGNET_MGMT_OP_PROVISION_AGENT;
+    case SIGNET_KIND_REVOKE_AGENT:   return SIGNET_MGMT_OP_REVOKE_AGENT;
+    case SIGNET_KIND_SET_POLICY:     return SIGNET_MGMT_OP_SET_POLICY;
+    case SIGNET_KIND_GET_STATUS:     return SIGNET_MGMT_OP_GET_STATUS;
+    case SIGNET_KIND_LIST_AGENTS:    return SIGNET_MGMT_OP_LIST_AGENTS;
+    case SIGNET_KIND_ROTATE_KEY:     return SIGNET_MGMT_OP_ROTATE_KEY;
+    default:                         return SIGNET_MGMT_OP_UNKNOWN;
+  }
 }
 
 const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
   switch (op) {
-    case SIGNET_MGMT_OP_ADD_POLICY: return "add_policy";
-    case SIGNET_MGMT_OP_REVOKE_POLICY: return "revoke_policy";
-    case SIGNET_MGMT_OP_LIST_POLICIES: return "list_policies";
-    case SIGNET_MGMT_OP_ROTATE_KEY: return "rotate_key";
-    case SIGNET_MGMT_OP_HEALTH_CHECK: return "health_check";
-
-    /* Legacy map to canonical names where possible */
-    case SIGNET_MGMT_OP_POLICY_SET: return "add_policy";
-    case SIGNET_MGMT_OP_POLICY_UNSET: return "revoke_policy";
-    case SIGNET_MGMT_OP_CLIENT_REVOKE: return "client.revoke";
-    case SIGNET_MGMT_OP_CLIENT_UNREVOKE: return "client.unrevoke";
-
-    default: return "unknown";
+    case SIGNET_MGMT_OP_PROVISION_AGENT: return "provision_agent";
+    case SIGNET_MGMT_OP_REVOKE_AGENT:   return "revoke_agent";
+    case SIGNET_MGMT_OP_SET_POLICY:      return "set_policy";
+    case SIGNET_MGMT_OP_GET_STATUS:      return "get_status";
+    case SIGNET_MGMT_OP_LIST_AGENTS:     return "list_agents";
+    case SIGNET_MGMT_OP_ROTATE_KEY:      return "rotate_key";
+    default:                             return "unknown";
   }
 }
 
-bool signet_mgmt_admin_is_authorized(const char *event_pubkey_hex,
-                                     const char *const *admin_pubkeys,
-                                     size_t n_admin_pubkeys) {
-  if (!event_pubkey_hex || event_pubkey_hex[0] == '\0') return false;
-  if (!admin_pubkeys || n_admin_pubkeys == 0) return false;
+/* ----------------------------- authorization ----------------------------- */
 
-  for (size_t i = 0; i < n_admin_pubkeys; i++) {
-    const char *a = admin_pubkeys[i];
-    if (!a || a[0] == '\0') continue;
-    if (signet_streq_ci(a, event_pubkey_hex)) return true;
+bool signet_mgmt_is_authorized(const char *event_pubkey_hex,
+                               const char *const *provisioner_pubkeys,
+                               size_t n_provisioner_pubkeys) {
+  if (!event_pubkey_hex || !event_pubkey_hex[0]) return false;
+  if (!provisioner_pubkeys || n_provisioner_pubkeys == 0) return false;
+
+  for (size_t i = 0; i < n_provisioner_pubkeys; i++) {
+    const char *pk = provisioner_pubkeys[i];
+    if (!pk || !pk[0]) continue;
+    if (g_ascii_strcasecmp(pk, event_pubkey_hex) == 0) return true;
   }
   return false;
 }
 
+/* ------------------------------ parsing ---------------------------------- */
+
 void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   if (!req) return;
-  g_clear_pointer(&req->command, g_free);
-  g_clear_pointer(&req->identity, g_free);
-  g_clear_pointer(&req->policy_json, g_free);
-  req->op = SIGNET_MGMT_OP_UNKNOWN;
+  g_free(req->agent_id);
+  g_free(req->policy_json);
+  g_free(req->request_id);
+  memset(req, 0, sizeof(*req));
 }
 
-static int signet_mgmt_error(char **out_error, const char *msg) {
-  if (out_error) *out_error = msg ? g_strdup(msg) : g_strdup("management parse error");
-  return -1;
-}
+int signet_mgmt_request_parse(int kind,
+                              const char *content_json,
+                              SignetMgmtRequest *out_req,
+                              char **out_error) {
+  if (!out_req) {
+    if (out_error) *out_error = g_strdup("null output");
+    return -1;
+  }
+  memset(out_req, 0, sizeof(*out_req));
 
-static char *signet_json_node_to_compact_string(JsonNode *node) {
-  if (!node) return NULL;
+  out_req->op = signet_mgmt_op_from_kind(kind);
+  out_req->kind = kind;
 
-  JsonGenerator *gen = json_generator_new();
-  if (!gen) return NULL;
+  if (out_req->op == SIGNET_MGMT_OP_UNKNOWN) {
+    if (out_error) *out_error = g_strdup("unknown management event kind");
+    return -1;
+  }
 
-  json_generator_set_pretty(gen, FALSE);
-  json_generator_set_root(gen, node);
-  char *s = json_generator_to_data(gen, NULL);
-
-  g_object_unref(gen);
-  return s; /* must be g_free() */
-}
-
-int signet_mgmt_request_parse_content_json(const char *content_json,
-                                          SignetMgmtRequest *out_req,
-                                          char **out_error) {
-  if (!content_json || !out_req) return signet_mgmt_error(out_error, "missing content JSON");
-
-  signet_mgmt_request_clear(out_req);
-
-  JsonParser *p = json_parser_new();
-  if (!p) return signet_mgmt_error(out_error, "OOM creating JSON parser");
-
-  GError *err = NULL;
-  if (!json_parser_load_from_data(p, content_json, -1, &err)) {
-    if (err) {
-      int rc = signet_mgmt_error(out_error, err->message ? err->message : "invalid JSON");
-      g_error_free(err);
-      g_object_unref(p);
-      return rc;
+  if (!content_json || !content_json[0]) {
+    /* Some commands (get_status, list_agents) may have empty content. */
+    if (out_req->op == SIGNET_MGMT_OP_GET_STATUS ||
+        out_req->op == SIGNET_MGMT_OP_LIST_AGENTS) {
+      return 0;
     }
-    g_object_unref(p);
-    return signet_mgmt_error(out_error, "invalid JSON");
+    if (out_error) *out_error = g_strdup("missing content JSON");
+    return -1;
+  }
+
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!json_parser_load_from_data(p, content_json, -1, NULL)) {
+    if (out_error) *out_error = g_strdup("invalid JSON");
+    return -1;
   }
 
   JsonNode *root = json_parser_get_root(p);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(p);
-    return signet_mgmt_error(out_error, "content must be a JSON object");
+    if (out_error) *out_error = g_strdup("content must be a JSON object");
+    return -1;
   }
 
   JsonObject *o = json_node_get_object(root);
-  if (!o) {
-    g_object_unref(p);
-    return signet_mgmt_error(out_error, "content must be a JSON object");
+
+  /* Extract common fields. */
+  if (json_object_has_member(o, "agent_id")) {
+    const char *v = json_object_get_string_member(o, "agent_id");
+    if (v && v[0]) out_req->agent_id = g_strdup(v);
   }
 
-  const char *cmd = NULL;
-  if (json_object_has_member(o, "command")) cmd = json_object_get_string_member(o, "command");
-  if (!cmd || cmd[0] == '\0') {
-    g_object_unref(p);
-    return signet_mgmt_error(out_error, "missing required field: command");
+  if (json_object_has_member(o, "request_id")) {
+    const char *v = json_object_get_string_member(o, "request_id");
+    if (v && v[0]) out_req->request_id = g_strdup(v);
   }
 
-  out_req->op = signet_mgmt_op_from_string(cmd);
-  out_req->command = g_strdup(cmd);
-  if (!out_req->command) {
-    g_object_unref(p);
-    return signet_mgmt_error(out_error, "OOM copying command");
-  }
-
-  /* Optional identity */
-  if (json_object_has_member(o, "identity")) {
-    const char *ident = json_object_get_string_member(o, "identity");
-    out_req->identity = signet_strdup0(ident);
-  }
-
-  /* Optional policy */
   if (json_object_has_member(o, "policy")) {
     JsonNode *pn = json_object_get_member(o, "policy");
     if (pn && JSON_NODE_HOLDS_OBJECT(pn)) {
-      out_req->policy_json = signet_json_node_to_compact_string(pn);
-      if (!out_req->policy_json) {
-        g_object_unref(p);
-        return signet_mgmt_error(out_error, "OOM serializing policy");
-      }
-    } else if (pn) {
-      g_object_unref(p);
-      return signet_mgmt_error(out_error, "policy must be a JSON object");
+      JsonGenerator *gen = json_generator_new();
+      json_generator_set_pretty(gen, FALSE);
+      json_generator_set_root(gen, pn);
+      out_req->policy_json = json_generator_to_data(gen, NULL);
+      g_object_unref(gen);
     }
   }
 
-  /* Validation rules */
-  switch (out_req->op) {
-    case SIGNET_MGMT_OP_ADD_POLICY:
-      if (!out_req->identity || out_req->identity[0] == '\0') {
-        g_object_unref(p);
-        return signet_mgmt_error(out_error, "add_policy requires identity");
-      }
-      if (!out_req->policy_json || out_req->policy_json[0] == '\0') {
-        g_object_unref(p);
-        return signet_mgmt_error(out_error, "add_policy requires policy object");
-      }
-      break;
+  /* Validate required fields per op. */
+  bool needs_agent_id = (out_req->op == SIGNET_MGMT_OP_PROVISION_AGENT ||
+                         out_req->op == SIGNET_MGMT_OP_REVOKE_AGENT ||
+                         out_req->op == SIGNET_MGMT_OP_SET_POLICY ||
+                         out_req->op == SIGNET_MGMT_OP_ROTATE_KEY);
 
-    case SIGNET_MGMT_OP_REVOKE_POLICY:
-    case SIGNET_MGMT_OP_ROTATE_KEY:
-      if (!out_req->identity || out_req->identity[0] == '\0') {
-        g_object_unref(p);
-        return signet_mgmt_error(out_error, "command requires identity");
-      }
-      break;
-
-    case SIGNET_MGMT_OP_LIST_POLICIES:
-    case SIGNET_MGMT_OP_HEALTH_CHECK:
-      /* no extra required fields */
-      break;
-
-    case SIGNET_MGMT_OP_POLICY_SET:
-    case SIGNET_MGMT_OP_POLICY_UNSET:
-    case SIGNET_MGMT_OP_CLIENT_REVOKE:
-    case SIGNET_MGMT_OP_CLIENT_UNREVOKE:
-      /* Legacy ops: treat as syntactically valid; semantics handled elsewhere. */
-      break;
-
-    default:
-      g_object_unref(p);
-      return signet_mgmt_error(out_error, "unknown command");
+  if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
+    if (out_error) *out_error = g_strdup("agent_id is required");
+    signet_mgmt_request_clear(out_req);
+    return -1;
   }
 
-  g_object_unref(p);
+  if (out_req->op == SIGNET_MGMT_OP_SET_POLICY &&
+      (!out_req->policy_json || !out_req->policy_json[0])) {
+    if (out_error) *out_error = g_strdup("set_policy requires policy object");
+    signet_mgmt_request_clear(out_req);
+    return -1;
+  }
+
   return 0;
 }
 
-char *signet_mgmt_build_response_json(const char *status,
-                                      const char *command,
-                                      const char *code,
-                                      const char *message,
-                                      const char *result_json) {
-  if (!status || !command) return NULL;
+/* ----------------------------- response building ------------------------- */
 
+char *signet_mgmt_build_ack(const char *request_id,
+                            bool ok,
+                            const char *code,
+                            const char *message,
+                            const char *result_json) {
   JsonBuilder *b = json_builder_new();
   if (!b) return NULL;
 
   json_builder_begin_object(b);
 
-  json_builder_set_member_name(b, "status");
-  json_builder_add_string_value(b, status);
+  json_builder_set_member_name(b, "ok");
+  json_builder_add_boolean_value(b, ok ? TRUE : FALSE);
 
-  json_builder_set_member_name(b, "command");
-  json_builder_add_string_value(b, command);
+  if (request_id) {
+    json_builder_set_member_name(b, "request_id");
+    json_builder_add_string_value(b, request_id);
+  }
 
   if (code) {
     json_builder_set_member_name(b, "code");
@@ -248,81 +191,239 @@ char *signet_mgmt_build_response_json(const char *status,
   }
 
   if (result_json) {
-    JsonParser *p = json_parser_new();
-    if (!p) {
-      g_object_unref(b);
-      return NULL;
-    }
-
-    GError *err = NULL;
-    if (json_parser_load_from_data(p, result_json, -1, &err)) {
-      JsonNode *r = json_parser_get_root(p);
+    g_autoptr(JsonParser) rp = json_parser_new();
+    if (json_parser_load_from_data(rp, result_json, -1, NULL)) {
+      JsonNode *r = json_parser_get_root(rp);
       if (r) {
         json_builder_set_member_name(b, "result");
         json_builder_add_value(b, json_node_copy(r));
       }
-    } else {
-      if (err) g_error_free(err);
-      /* If result_json is invalid JSON, omit result rather than emitting unsafe text. */
     }
-
-    g_object_unref(p);
   }
 
   json_builder_end_object(b);
 
   JsonGenerator *g = json_generator_new();
-  if (!g) {
-    g_object_unref(b);
-    return NULL;
-  }
+  if (!g) { g_object_unref(b); return NULL; }
 
   JsonNode *root = json_builder_get_root(b);
   json_generator_set_root(g, root);
   json_generator_set_pretty(g, FALSE);
-
   char *out = json_generator_to_data(g, NULL);
 
   json_node_free(root);
   g_object_unref(g);
   g_object_unref(b);
-
-  return out; /* must be g_free() */
+  return out;
 }
 
-char *signet_mgmt_build_ack_json(bool ok, const char *code, const char *message) {
-  /* Backwards compatible: old code expected {"ok":bool,"code":"..","message":".."} */
-  JsonBuilder *b = json_builder_new();
-  if (!b) return NULL;
+/* ==================== Management Handler ================================= */
 
-  json_builder_begin_object(b);
+struct SignetMgmtHandler {
+  SignetKeyStore *keys;
+  SignetRelayPool *relays;
+  SignetAuditLogger *audit;
 
-  json_builder_set_member_name(b, "ok");
-  json_builder_add_boolean_value(b, ok ? TRUE : FALSE);
+  char **provisioner_pubkeys;
+  size_t n_provisioner_pubkeys;
 
-  json_builder_set_member_name(b, "code");
-  json_builder_add_string_value(b, code ? code : "");
+  char *bunker_sk_hex;
+  char *bunker_pk_hex;
+};
 
-  json_builder_set_member_name(b, "message");
-  json_builder_add_string_value(b, message ? message : "");
+SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
+                                           SignetRelayPool *relays,
+                                           SignetAuditLogger *audit,
+                                           const SignetMgmtHandlerConfig *cfg) {
+  if (!cfg) return NULL;
 
-  json_builder_end_object(b);
+  SignetMgmtHandler *h = (SignetMgmtHandler *)g_new0(SignetMgmtHandler, 1);
+  if (!h) return NULL;
 
-  JsonGenerator *g = json_generator_new();
-  if (!g) {
-    g_object_unref(b);
-    return NULL;
+  h->keys = keys;
+  h->relays = relays;
+  h->audit = audit;
+
+  if (cfg->provisioner_pubkeys && cfg->n_provisioner_pubkeys > 0) {
+    h->provisioner_pubkeys = (char **)g_new0(char *, cfg->n_provisioner_pubkeys);
+    for (size_t i = 0; i < cfg->n_provisioner_pubkeys; i++) {
+      h->provisioner_pubkeys[i] = g_strdup(cfg->provisioner_pubkeys[i]);
+    }
+    h->n_provisioner_pubkeys = cfg->n_provisioner_pubkeys;
   }
 
-  JsonNode *root = json_builder_get_root(b);
-  json_generator_set_root(g, root);
-  json_generator_set_pretty(g, FALSE);
+  h->bunker_sk_hex = g_strdup(cfg->bunker_secret_key_hex);
+  h->bunker_pk_hex = g_strdup(cfg->bunker_pubkey_hex);
 
-  char *out = json_generator_to_data(g, NULL);
+  return h;
+}
 
-  json_node_free(root);
-  g_object_unref(g);
-  g_object_unref(b);
+void signet_mgmt_handler_free(SignetMgmtHandler *h) {
+  if (!h) return;
 
-  return out; /* must be g_free() */
+  for (size_t i = 0; i < h->n_provisioner_pubkeys; i++) g_free(h->provisioner_pubkeys[i]);
+  g_free(h->provisioner_pubkeys);
+
+  if (h->bunker_sk_hex) {
+    memset(h->bunker_sk_hex, 0, strlen(h->bunker_sk_hex));
+    g_free(h->bunker_sk_hex);
+  }
+  g_free(h->bunker_pk_hex);
+  g_free(h);
+}
+
+/* Publish an ack event to relays. */
+static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
+                                    const char *recipient_pubkey_hex,
+                                    const char *ack_content,
+                                    const char *ref_event_id_hex,
+                                    int64_t now) {
+  if (!h || !h->relays || !h->bunker_sk_hex || !ack_content) return;
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) return;
+
+  nostr_event_set_kind(evt, SIGNET_KIND_MGMT_ACK);
+  nostr_event_set_created_at(evt, now);
+  nostr_event_set_content(evt, ack_content);
+
+  NostrTags *tags = nostr_tags_new();
+  if (tags) {
+    if (recipient_pubkey_hex) {
+      const char *p_tag[] = {"p", recipient_pubkey_hex};
+      nostr_tags_add(tags, p_tag, 2);
+    }
+    if (ref_event_id_hex) {
+      const char *e_tag[] = {"e", ref_event_id_hex};
+      nostr_tags_add(tags, e_tag, 2);
+    }
+    nostr_event_set_tags(evt, tags);
+  }
+
+  if (nostr_event_sign(evt, h->bunker_sk_hex) == 0) {
+    char *json = nostr_event_serialize_compact(evt);
+    if (json) {
+      signet_relay_pool_publish_event_json(h->relays, json);
+      free(json);
+    }
+  }
+
+  nostr_event_free(evt);
+}
+
+int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
+                                     const char *event_pubkey_hex,
+                                     const char *content_json,
+                                     int kind,
+                                     const char *event_id_hex,
+                                     int64_t now) {
+  if (!h) return -1;
+
+  /* 1) Authorization check. */
+  if (!signet_mgmt_is_authorized(event_pubkey_hex,
+                                 (const char *const *)h->provisioner_pubkeys,
+                                 h->n_provisioner_pubkeys)) {
+    return -1; /* silently drop unauthorized events */
+  }
+
+  /* 2) Parse request. */
+  SignetMgmtRequest req;
+  char *parse_err = NULL;
+  if (signet_mgmt_request_parse(kind, content_json, &req, &parse_err) != 0) {
+    char *ack = signet_mgmt_build_ack(NULL, false, "parse_error",
+                                       parse_err ? parse_err : "invalid request", NULL);
+    if (ack) {
+      signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now);
+      g_free(ack);
+    }
+    g_free(parse_err);
+    return -1;
+  }
+
+  /* 3) Execute command. */
+  bool ok = false;
+  const char *code = "internal_error";
+  char *message = NULL;
+  char *result = NULL;
+
+  switch (req.op) {
+    case SIGNET_MGMT_OP_PROVISION_AGENT: {
+      char pubkey_hex[65];
+      int rc = signet_key_store_provision_agent(h->keys, req.agent_id, pubkey_hex, sizeof(pubkey_hex));
+      if (rc == 0) {
+        ok = true;
+        code = "provisioned";
+        message = g_strdup_printf("agent %s provisioned", req.agent_id);
+        result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\"}", req.agent_id, pubkey_hex);
+      } else {
+        code = "provision_failed";
+        message = g_strdup("failed to provision agent");
+      }
+      break;
+    }
+
+    case SIGNET_MGMT_OP_REVOKE_AGENT: {
+      int rc = signet_key_store_revoke_agent(h->keys, req.agent_id);
+      if (rc == 0) {
+        ok = true;
+        code = "revoked";
+        message = g_strdup_printf("agent %s revoked", req.agent_id);
+      } else if (rc == 1) {
+        code = "not_found";
+        message = g_strdup("agent not found");
+      } else {
+        code = "revoke_failed";
+        message = g_strdup("failed to revoke agent");
+      }
+      break;
+    }
+
+    case SIGNET_MGMT_OP_GET_STATUS: {
+      ok = true;
+      code = "ok";
+      uint32_t cache_count = signet_key_store_cache_count(h->keys);
+      bool db_open = signet_key_store_is_open(h->keys);
+      bool relays_ok = signet_relay_pool_is_connected(h->relays);
+      result = g_strdup_printf("{\"db_open\":%s,\"agents\":%u,\"relays_connected\":%s}",
+                                db_open ? "true" : "false",
+                                cache_count,
+                                relays_ok ? "true" : "false");
+      break;
+    }
+
+    case SIGNET_MGMT_OP_LIST_AGENTS: {
+      /* Return list of agent IDs from cache count for now.
+       * Full list requires iterating the store — deferred to store API. */
+      ok = true;
+      code = "ok";
+      uint32_t count = signet_key_store_cache_count(h->keys);
+      result = g_strdup_printf("{\"count\":%u}", count);
+      break;
+    }
+
+    case SIGNET_MGMT_OP_SET_POLICY:
+    case SIGNET_MGMT_OP_ROTATE_KEY:
+      /* These require more complex logic — mark as not-yet-implemented. */
+      code = "not_implemented";
+      message = g_strdup("command not yet implemented");
+      break;
+
+    default:
+      code = "unknown_command";
+      message = g_strdup("unknown management command");
+      break;
+  }
+
+  /* 4) Publish ack. */
+  char *ack = signet_mgmt_build_ack(req.request_id, ok, code, message, result);
+  if (ack) {
+    signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now);
+    g_free(ack);
+  }
+
+  g_free(message);
+  g_free(result);
+  signet_mgmt_request_clear(&req);
+
+  return ok ? 0 : -1;
 }
