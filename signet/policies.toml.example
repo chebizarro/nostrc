@@ -1,0 +1,224 @@
+# Signet Policy Configuration Example
+#
+# This file defines authorization policies for NIP-46 remote signing requests.
+# Each section represents a policy for a specific identity (Nostr public key).
+#
+# Policy Evaluation:
+# 1. Deny rules are checked first (deny_clients, deny_methods, deny_kinds)
+# 2. If no deny rule matches, allow rules are checked
+# 3. If no allow rule matches, the default decision is applied
+#
+# Wildcard Matching:
+# - Use '*' for prefix/suffix matching: "npub1app*", "*@domain.com"
+# - Use '*' alone to match everything
+# - Comma-separated lists: "value1,value2,value3"
+#
+# Reload:
+# - Send SIGHUP to daemon to reload policies without restart
+# - Invalid policies are logged and ignored
+
+# Example 1: Personal identity with broad permissions
+[alice]
+# Allow any client to connect
+allow_clients = "*"
+
+# Allow common methods for personal use
+allow_methods = "sign_event,get_public_key,nip04_encrypt,nip04_decrypt,get_relays"
+
+# Allow common event kinds:
+# 0=metadata, 1=short text, 3=contacts, 4=encrypted DM, 5=delete,
+# 6=repost, 7=reaction, 10002=relay list
+allow_kinds = "0,1,3,4,5,6,7,10002"
+
+# No explicit denies
+deny_clients = ""
+deny_methods = ""
+deny_kinds = ""
+
+# Deny anything not explicitly allowed
+default = "deny"
+
+# Example 2: Service account with specific client restrictions
+[service_bot]
+# Only allow specific client applications
+allow_clients = "npub1client1abc...,npub1client2def..."
+
+# Only allow signing events and getting public key
+allow_methods = "sign_event,get_public_key"
+
+# Only allow kind 1 (short text notes)
+allow_kinds = "1"
+
+deny_clients = ""
+deny_methods = ""
+deny_kinds = ""
+default = "deny"
+
+# Example 3: Application identity with wildcard client matching
+[app_backend]
+# Allow any client from the app's namespace
+allow_clients = "npub1myapp*"
+
+# Allow all methods
+allow_methods = "*"
+
+# Allow all kinds
+allow_kinds = "*"
+
+# But explicitly deny certain clients (e.g., revoked instances)
+deny_clients = "npub1myapprevoked123..."
+
+deny_methods = ""
+deny_kinds = ""
+default = "deny"
+
+# Example 4: Read-only identity (no signing)
+[readonly_viewer]
+# Allow any client
+allow_clients = "*"
+
+# Only allow read operations
+allow_methods = "get_public_key,get_relays,ping"
+
+# No signing allowed
+deny_methods = "sign_event,nip04_encrypt,nip04_decrypt"
+
+allow_kinds = ""
+deny_kinds = ""
+default = "deny"
+
+# Example 5: Restricted identity for sensitive operations
+[high_security]
+# Only allow specific, verified clients
+allow_clients = "npub1verified1...,npub1verified2..."
+
+# Only allow signing specific event kinds
+allow_methods = "sign_event,get_public_key"
+
+# Only allow kind 1 (notes) and kind 7 (reactions)
+allow_kinds = "1,7"
+
+# Explicitly deny DMs and other sensitive kinds
+deny_kinds = "4,14,1059"
+
+deny_clients = ""
+deny_methods = ""
+default = "deny"
+
+# Example 6: Testing identity with permissive policy
+[test_identity]
+# Allow all clients during testing
+allow_clients = "*"
+
+# Allow all methods
+allow_methods = "*"
+
+# Allow all kinds
+allow_kinds = "*"
+
+deny_clients = ""
+deny_methods = ""
+deny_kinds = ""
+
+# Allow by default (use with caution!)
+default = "allow"
+
+# Example 7: Bot identity with rate limiting considerations
+[automated_bot]
+# Allow specific bot clients
+allow_clients = "npub1bot1...,npub1bot2..."
+
+# Allow signing and basic operations
+allow_methods = "sign_event,get_public_key,get_relays"
+
+# Allow kinds typically used by bots:
+# 1=notes, 6=reposts, 7=reactions, 9735=zap requests
+allow_kinds = "1,6,7,9735"
+
+# Deny DMs to prevent spam
+deny_kinds = "4"
+
+deny_clients = ""
+deny_methods = ""
+default = "deny"
+
+# Example 8: Multi-device personal identity
+[personal_multidevice]
+# Allow known devices by pubkey
+allow_clients = "npub1phone...,npub1laptop...,npub1desktop..."
+
+# Allow all personal operations
+allow_methods = "sign_event,get_public_key,nip04_encrypt,nip04_decrypt,get_relays"
+
+# Allow all personal event kinds
+allow_kinds = "*"
+
+# Deny any unknown clients
+deny_clients = "*"
+
+deny_methods = ""
+deny_kinds = ""
+default = "deny"
+
+# Example 9: Delegated signing for specific event kinds
+[delegated_signer]
+# Allow delegation service
+allow_clients = "npub1delegation_service..."
+
+# Only allow signing
+allow_methods = "sign_event"
+
+# Only allow specific delegated kinds (e.g., kind 30078 for app-specific data)
+allow_kinds = "30078,30079"
+
+deny_clients = ""
+deny_methods = ""
+deny_kinds = ""
+default = "deny"
+
+# Example 10: Emergency revocation pattern
+[compromised_identity]
+# Deny all clients
+deny_clients = "*"
+
+# Deny all methods
+deny_methods = "*"
+
+# Deny all kinds
+deny_kinds = "*"
+
+allow_clients = ""
+allow_methods = ""
+allow_kinds = ""
+
+# Deny everything
+default = "deny"
+
+# Notes on Policy Management:
+#
+# 1. Start Restrictive: Begin with deny-by-default and add permissions as needed
+#
+# 2. Regular Audits: Review audit logs to ensure policies match actual usage
+#
+# 3. Client Identification: Use specific client pubkeys when possible rather than wildcards
+#
+# 4. Event Kind Awareness: Understand what kinds your applications use:
+#    - Kind 0: User metadata
+#    - Kind 1: Short text note
+#    - Kind 3: Contact list
+#    - Kind 4: Encrypted direct message
+#    - Kind 5: Event deletion
+#    - Kind 6: Repost
+#    - Kind 7: Reaction
+#    - Kind 1984: Reporting
+#    - Kind 9735: Zap request
+#    - Kind 10002: Relay list metadata
+#    - Kind 30000-39999: Parameterized replaceable events
+#
+# 5. Testing: Use a test identity to validate policy changes before applying to production
+#
+# 6. Documentation: Comment your policies to explain the reasoning
+#
+# 7. Rotation: When rotating keys, update policies for the new identity
+#
+# 8. Monitoring: Watch health endpoint and audit logs after policy changes

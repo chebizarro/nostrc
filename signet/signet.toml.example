@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: MIT
+#
+# Signet example configuration (TOML-style)
+#
+# NOTE: Phase 1 scaffolding ships a stub config loader that applies defaults.
+# This file documents the intended configuration surface for subsequent phases.
+
+# Relay configuration
+relays = ["wss://relay.example.com", "wss://relay2.example.com"]
+
+# Signet identity (logical name used for policy scoping and Vault paths)
+identity = "default"
+
+# NIP-46 bunker transport keypair (remote signer key used for NIP-46 encryption)
+# IMPORTANT: For production, do not store secret keys in plaintext configs.
+# Future phases may support loading this from Vault or OS keyrings/HSMs.
+remote_signer_pubkey_hex = "0000000000000000000000000000000000000000000000000000000000000000"
+remote_signer_secret_key_hex = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# Vault configuration (KV v2 API)
+[vault]
+url = "https://vault.example.com:8200"
+# KV mount name (v2): /v1/<kv_mount>/data/<path>
+kv_mount = "secret"
+# Prefix for custody keys and (optionally) policy documents
+key_prefix = "signet/keys"
+policy_prefix = "signet/policies"
+# Vault token sources: token_file is recommended; VAULT_TOKEN env var may override in future phases
+token_file = "/run/secrets/vault.token"
+# Optional: Vault Enterprise namespace
+namespace = ""
+# TLS settings
+ca_bundle = "/etc/ssl/certs/ca-certificates.crt"
+timeout_ms = 5000
+
+# Policy configuration
+[policy]
+# backend: "file" or "vault"
+backend = "file"
+# File backend location (JSON/INI format TBD in later phases)
+file_path = "/var/lib/signet/policy.json"
+# Default decision if no matching rule exists: "deny" is recommended
+default_decision = "deny"
+
+# Audit logging (structured JSON lines)
+[audit]
+# path: if empty, logs may go to stdout when stdout=true
+path = "/var/log/signet/audit.jsonl"
+stdout = false
+
+# Replay protection
+[replay]
+max_entries = 50000
+ttl_seconds = 600
+skew_seconds = 120
+
+# Management plane: signed Nostr events only (no REST control plane)
+[mgmt]
+# One or more admin pubkeys allowed to submit management events (hex)
+admin_pubkeys = [
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+]
+
+# Minimal health endpoint (GET /health only; no management operations)
+[health]
+enable = true
+listen = "127.0.0.1:9486"

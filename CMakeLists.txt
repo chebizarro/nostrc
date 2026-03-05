@@ -184,6 +184,7 @@ option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
 if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
   add_subdirectory(apps/relayd)
 endif()
+
 # Global hardening flags (GCC/Clang); keep portable and avoid breaking MSVC
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-fstack-protector-strong -fno-strict-aliasing)
@@ -313,6 +314,12 @@ endif()
 add_subdirectory(libgo)
 add_subdirectory(libnostr)
 add_subdirectory(libjson)
+
+# Signet NIP-46 bunker service (requires libnostr)
+option(SIGNET_ENABLE "Build Signet NIP-46 bunker service (signetd + signetctl)" ON)
+if (SIGNET_ENABLE AND EXISTS ${CMAKE_SOURCE_DIR}/signet/CMakeLists.txt)
+  add_subdirectory(signet)
+endif()
 
 # Mock relay testing framework (optional, for unit tests)
 option(BUILD_TESTING_FRAMEWORK "Build the mock relay testing framework" ON)

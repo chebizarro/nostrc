@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT
+#
+# Signet (NIP-46 bunker service) Meson options
+
+option('signet_enable_tests',
+  type: 'boolean',
+  value: true,
+  description: 'Build Signet unit tests'
+)
+
+option('signet_enable_vault',
+  type: 'boolean',
+  value: true,
+  description: 'Enable Vault KV v2 client support (libcurl dependency)'
+)
+
+option('signet_enable_health',
+  type: 'boolean',
+  value: true,
+  description: 'Enable the minimal HTTP /health endpoint'
+)
+
+option('signet_json_backend',
+  type: 'combo',
+  choices: ['json-glib', 'jansson'],
+  value: 'json-glib',
+  description: 'JSON backend used by Signet (defaults to json-glib)'
+)
+
+option('signet_require_in_tree_libs',
+  type: 'boolean',
+  value: true,
+  description: 'Require in-tree libnostr/nip46 libraries (typically built via the monorepo CMake build)'
+)
+
+option('nostrc_build_dir',
+  type: 'string',
+  value: '../build',
+  description: 'Path to the monorepo CMake build directory for locating in-tree libraries (e.g. ../build)'
+)
