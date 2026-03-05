@@ -74,6 +74,7 @@ target_link_libraries(signet_core PUBLIC
   nostr_json
   $<$<TARGET_EXISTS:nip19>:nip19>
   $<$<TARGET_EXISTS:nip04>:nip04>
+  $<$<TARGET_EXISTS:nip44>:nip44>
   $<$<TARGET_EXISTS:nostr_nip46_core>:nostr_nip46_core>
 )
 

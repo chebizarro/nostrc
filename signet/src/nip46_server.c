@@ -4,7 +4,7 @@
  *
  * This module is an orchestration layer:
  * - Replay protection via SignetReplayCache
- * - NIP-04 encrypt/decrypt via nips/nip04 library
+ * - NIP-44 v2 encrypt/decrypt for outer transport layer
  * - Policy gating via SignetPolicyEngine
  * - Event signing via libnostr NostrEvent + nostr_event_sign()
  * - NIP-46 message parse/build via nips/nip46 library
@@ -37,6 +37,7 @@
 
 /* NIP modules */
 #include <nostr/nip04.h>
+#include <nostr/nip44/nip44.h>
 #include <nostr/nip46/nip46_msg.h>
 #include <nostr/nip46/nip46_types.h>
 
@@ -46,6 +47,17 @@
 
 static void signet_memzero(void *p, size_t n) {
   if (p && n) secure_wipe(p, n);
+}
+
+/* Decode a 64-char hex string into 32 raw bytes. Returns false on error. */
+static bool signet_hex_to_bytes32(const char *hex, uint8_t out[32]) {
+  if (!hex) return false;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
+    out[i] = (uint8_t)byte;
+  }
+  return true;
 }
 
 /* ------------------------------ audit helper ------------------------------ */
@@ -332,13 +344,32 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     rr = signet_replay_check_and_mark(s->replay, event_id_hex, created_at, now);
   }
 
-  /* 2) Decrypt request content (NIP-04) using library */
+  /* 2) Decrypt request content (NIP-44 v2) */
   char *plain = NULL;
   char *dec_err = NULL;
-  int dec_rc = nostr_nip04_decrypt(ciphertext, client_pubkey_hex,
-                                   remote_signer_secret_key_hex,
-                                   &plain, &dec_err);
-  bool dec_ok = (dec_rc == 0 && plain != NULL);
+  bool dec_ok = false;
+  {
+    uint8_t sk[32], pk[32];
+    if (signet_hex_to_bytes32(remote_signer_secret_key_hex, sk) &&
+        signet_hex_to_bytes32(client_pubkey_hex, pk)) {
+      uint8_t *pt = NULL;
+      size_t pt_len = 0;
+      int rc = nostr_nip44_decrypt_v2(sk, pk, ciphertext, &pt, &pt_len);
+      signet_memzero(sk, 32);
+      if (rc == 0 && pt && pt_len > 0) {
+        /* NIP-44 returns raw bytes; NUL-terminate for JSON parsing. */
+        plain = (char *)malloc(pt_len + 1);
+        if (plain) {
+          memcpy(plain, pt, pt_len);
+          plain[pt_len] = '\0';
+          dec_ok = true;
+        }
+        free(pt);
+      }
+    } else {
+      dec_err = g_strdup("invalid key hex");
+    }
+  }
 
   /* 3) Parse NIP-46 request using library */
   NostrNip46Request req;
@@ -534,16 +565,21 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                                                result ? result : "");
   }
 
-  /* 9) Encrypt response (NIP-04) using library */
+  /* 9) Encrypt response (NIP-44 v2) */
   char *enc_resp = NULL;
   char *enc_err = NULL;
   bool enc_ok = false;
 
   if (resp_json) {
-    int rc = nostr_nip04_encrypt(resp_json, client_pubkey_hex,
-                                 remote_signer_secret_key_hex,
-                                 &enc_resp, &enc_err);
-    enc_ok = (rc == 0 && enc_resp != NULL);
+    uint8_t sk[32], pk[32];
+    if (signet_hex_to_bytes32(remote_signer_secret_key_hex, sk) &&
+        signet_hex_to_bytes32(client_pubkey_hex, pk)) {
+      int rc = nostr_nip44_encrypt_v2(sk, pk,
+                                      (const uint8_t *)resp_json, strlen(resp_json),
+                                      &enc_resp);
+      signet_memzero(sk, 32);
+      enc_ok = (rc == 0 && enc_resp != NULL);
+    }
   }
 
   /* 10) Build outer response event (signed) and publish */

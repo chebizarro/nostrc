@@ -65,6 +65,7 @@ nostr_dep = cc.find_library('nostr', dirs: in_tree_dirs, required: require_in_tr
 nostr_json_dep = cc.find_library('nostr_json', dirs: in_tree_dirs, required: require_in_tree)
 nip46_dep = cc.find_library('nip46', dirs: in_tree_dirs, required: require_in_tree)
 nip19_dep = cc.find_library('nip19', dirs: in_tree_dirs, required: require_in_tree)
+nip44_dep = cc.find_library('nip44', dirs: in_tree_dirs, required: require_in_tree)
 
 signet_deps = [
   glib_dep,
@@ -86,6 +87,9 @@ if nip46_dep.found()
 endif
 if nip19_dep.found()
   signet_deps += nip19_dep
+endif
+if nip44_dep.found()
+  signet_deps += nip44_dep
 endif
 
 # Include paths to monorepo headers (match existing monorepo patterns)
