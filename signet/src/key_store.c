@@ -407,6 +407,37 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
   return rc;
 }
 
+int signet_key_store_list_agents(SignetKeyStore *ks,
+                                  char ***out_ids,
+                                  size_t *out_count) {
+  if (!ks || !out_ids || !out_count) return -1;
+  *out_ids = NULL;
+  *out_count = 0;
+
+  g_mutex_lock(&ks->mu);
+
+  guint n = g_hash_table_size(ks->cache);
+  char **ids = (char **)g_new0(char *, n + 1);
+  if (!ids && n > 0) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+
+  GHashTableIter iter;
+  gpointer key, value;
+  size_t i = 0;
+  g_hash_table_iter_init(&iter, ks->cache);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ids[i++] = g_strdup((const char *)key);
+  }
+
+  g_mutex_unlock(&ks->mu);
+
+  *out_ids = ids;
+  *out_count = i;
+  return 0;
+}
+
 uint32_t signet_key_store_cache_count(const SignetKeyStore *ks) {
   if (!ks || !ks->cache) return 0;
   /* Note: not locking for this read-only atomic-ish operation. */

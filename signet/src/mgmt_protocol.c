@@ -427,12 +427,27 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
     }
 
     case SIGNET_MGMT_OP_LIST_AGENTS: {
-      /* Return list of agent IDs from cache count for now.
-       * Full list requires iterating the store — deferred to store API. */
-      ok = true;
-      code = "ok";
-      uint32_t count = signet_key_store_cache_count(h->keys);
-      result = g_strdup_printf("{\"count\":%u}", count);
+      char **agent_ids = NULL;
+      size_t agent_count = 0;
+      int lrc = signet_key_store_list_agents(h->keys, &agent_ids, &agent_count);
+      if (lrc == 0) {
+        ok = true;
+        code = "ok";
+        /* Build JSON array of agent IDs. */
+        GString *arr = g_string_new("[");
+        for (size_t i = 0; i < agent_count; i++) {
+          if (i > 0) g_string_append_c(arr, ',');
+          g_string_append_printf(arr, "\"%s\"", agent_ids[i]);
+        }
+        g_string_append_c(arr, ']');
+        result = g_strdup_printf("{\"count\":%zu,\"agents\":%s}",
+                                  agent_count, arr->str);
+        g_string_free(arr, TRUE);
+        g_strfreev(agent_ids);
+      } else {
+        code = "list_failed";
+        message = g_strdup("failed to list agents");
+      }
       break;
     }
 

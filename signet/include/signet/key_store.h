@@ -84,6 +84,12 @@ int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
                                               const char *agent_id,
                                               const char *provided_secret);
 
+/* List all agent IDs from the hot cache. Caller frees with g_strfreev().
+ * Returns 0 on success, -1 on error. */
+int signet_key_store_list_agents(SignetKeyStore *ks,
+                                  char ***out_ids,
+                                  size_t *out_count);
+
 /* Get the number of keys in the hot cache. */
 uint32_t signet_key_store_cache_count(const SignetKeyStore *ks);
 
