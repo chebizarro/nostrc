@@ -37,6 +37,10 @@
 #include <string.h>
 #include <time.h>
 
+/* Process hardening */
+#include <sys/mman.h>
+#include <sys/prctl.h>
+
 #include <glib.h>
 #include <json-glib/json-glib.h>
 
@@ -161,6 +165,28 @@ int main(int argc, char **argv) {
       return 2;
     }
   }
+
+  /* ---- Process hardening (before any secrets are loaded) ---- */
+
+  /* Prevent core dumps and /proc/self/mem reads that could leak key material. */
+  if (prctl(PR_SET_DUMPABLE, 0) != 0) {
+    fprintf(stderr, "signetd: warning: prctl(PR_SET_DUMPABLE, 0) failed: %s\n",
+            strerror(errno));
+  }
+
+  /* Lock all current and future pages in memory — prevents key material
+   * from being swapped to disk.  sodium_malloc() locks individual allocs,
+   * but this covers GLib internals and stack frames that transiently hold
+   * secret bytes. */
+  if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+    /* Non-fatal: may fail without CAP_IPC_LOCK or in containers without
+     * the capability. sodium_malloc per-alloc mlock is still in effect. */
+    fprintf(stderr, "signetd: warning: mlockall() failed: %s "
+            "(consider CAP_IPC_LOCK or --privileged)\n",
+            strerror(errno));
+  }
+
+  /* ---- Signal handling ---- */
 
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
