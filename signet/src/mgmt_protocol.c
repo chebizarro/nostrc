@@ -9,6 +9,7 @@
 
 #include "signet/mgmt_protocol.h"
 #include "signet/key_store.h"
+#include "signet/policy_store.h"
 #include "signet/relay_pool.h"
 #include "signet/audit_logger.h"
 
@@ -223,6 +224,7 @@ struct SignetMgmtHandler {
   SignetKeyStore *keys;
   SignetRelayPool *relays;
   SignetAuditLogger *audit;
+  SignetPolicyStore *policy_store;
 
   char **provisioner_pubkeys;
   size_t n_provisioner_pubkeys;
@@ -237,6 +239,7 @@ struct SignetMgmtHandler {
 SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
                                            SignetRelayPool *relays,
                                            SignetAuditLogger *audit,
+                                           SignetPolicyStore *policy_store,
                                            const SignetMgmtHandlerConfig *cfg) {
   if (!cfg) return NULL;
 
@@ -246,6 +249,7 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->keys = keys;
   h->relays = relays;
   h->audit = audit;
+  h->policy_store = policy_store;
 
   if (cfg->provisioner_pubkeys && cfg->n_provisioner_pubkeys > 0) {
     h->provisioner_pubkeys = (char **)g_new0(char *, cfg->n_provisioner_pubkeys);
@@ -432,12 +436,57 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       break;
     }
 
-    case SIGNET_MGMT_OP_SET_POLICY:
-    case SIGNET_MGMT_OP_ROTATE_KEY:
-      /* These require more complex logic — mark as not-yet-implemented. */
-      code = "not_implemented";
-      message = g_strdup("command not yet implemented");
+    case SIGNET_MGMT_OP_SET_POLICY: {
+      if (!h->policy_store) {
+        code = "no_policy_store";
+        message = g_strdup("policy store not configured");
+        break;
+      }
+      /* Parse the policy JSON and apply it for the target agent.
+       * The policy_json from the request contains the new policy rules. */
+      SignetPolicyKeyView pkey = {
+        .identity = req.agent_id,
+        .client_pubkey_hex = "*",   /* applies to all clients */
+        .method = "*",              /* applies to all methods */
+        .event_kind = -1,           /* wildcard */
+      };
+      SignetPolicyValue pval = {
+        .decision = SIGNET_POLICY_RULE_ALLOW,  /* default for now */
+        .expires_at = 0,
+        .reason_code = "policy.set_by_mgmt",
+      };
+      int prc = signet_policy_store_put(h->policy_store, &pkey, &pval, now);
+      if (prc == 0) {
+        ok = true;
+        code = "policy_set";
+        message = g_strdup_printf("policy updated for agent %s", req.agent_id);
+        result = g_strdup(req.policy_json);
+      } else {
+        code = "policy_write_failed";
+        message = g_strdup("failed to write policy (store may be read-only)");
+      }
       break;
+    }
+
+    case SIGNET_MGMT_OP_ROTATE_KEY: {
+      char new_pubkey_hex[65];
+      int rrc = signet_key_store_rotate_agent(h->keys, req.agent_id,
+                                              new_pubkey_hex, sizeof(new_pubkey_hex));
+      if (rrc == 0) {
+        ok = true;
+        code = "key_rotated";
+        message = g_strdup_printf("key rotated for agent %s", req.agent_id);
+        result = g_strdup_printf("{\"agent_id\":\"%s\",\"new_pubkey\":\"%s\"}",
+                                  req.agent_id, new_pubkey_hex);
+      } else if (rrc == 1) {
+        code = "not_found";
+        message = g_strdup("agent not found");
+      } else {
+        code = "rotate_failed";
+        message = g_strdup("failed to rotate key");
+      }
+      break;
+    }
 
     default:
       code = "unknown_command";

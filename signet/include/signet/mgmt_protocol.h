@@ -103,6 +103,7 @@ char *signet_mgmt_build_ack(const char *request_id,
 struct SignetKeyStore;
 struct SignetRelayPool;
 struct SignetAuditLogger;
+struct SignetPolicyStore;
 
 typedef struct SignetMgmtHandler SignetMgmtHandler;
 
@@ -119,6 +120,7 @@ typedef struct {
 SignetMgmtHandler *signet_mgmt_handler_new(struct SignetKeyStore *keys,
                                            struct SignetRelayPool *relays,
                                            struct SignetAuditLogger *audit,
+                                           struct SignetPolicyStore *policy_store,
                                            const SignetMgmtHandlerConfig *cfg);
 
 /* Free a management handler. Safe on NULL. */

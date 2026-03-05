@@ -267,8 +267,10 @@ int main(int argc, char **argv) {
     .n_provisioner_pubkeys = cfg.n_provisioner_pubkeys,
     .bunker_secret_key_hex = cfg.remote_signer_secret_key_hex,
     .bunker_pubkey_hex = cfg.remote_signer_pubkey_hex,
+    .relay_urls = (const char *const *)cfg.relays,
+    .n_relay_urls = cfg.n_relays,
   };
-  SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, &mgmt_cfg);
+  SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, store, &mgmt_cfg);
   dctx.mgmt = mgmt;
 
   /* 8) Health server */

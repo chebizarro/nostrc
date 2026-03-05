@@ -332,6 +332,81 @@ int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id) {
   return 0;
 }
 
+int signet_key_store_rotate_agent(SignetKeyStore *ks,
+                                   const char *agent_id,
+                                   char *out_pubkey_hex,
+                                   size_t out_pubkey_hex_sz) {
+  if (!ks || !agent_id || !out_pubkey_hex || out_pubkey_hex_sz < 65) return -1;
+
+  g_mutex_lock(&ks->mu);
+
+  /* Check that the agent exists in the cache. */
+  if (!g_hash_table_contains(ks->cache, agent_id)) {
+    g_mutex_unlock(&ks->mu);
+    return 1; /* not found */
+  }
+
+  /* Generate a new keypair. */
+  char *sk_hex = nostr_key_generate_private();
+  if (!sk_hex) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  if (!pk_hex) {
+    secure_wipe(sk_hex, strlen(sk_hex));
+    free(sk_hex);
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+
+  /* Convert sk hex to raw bytes. */
+  uint8_t sk_raw[32];
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    sscanf(sk_hex + i * 2, "%2x", &byte);
+    sk_raw[i] = (uint8_t)byte;
+  }
+
+  int rc = -1;
+  int64_t now = (int64_t)time(NULL);
+
+  /* Replace in SQLCipher (connect_secret = NULL for rotated keys). */
+  if (ks->store) {
+    rc = signet_store_put_agent(ks->store, agent_id, sk_raw, 32, NULL, now);
+  }
+
+  if (rc == 0 || !ks->store) {
+    /* Replace in hot cache. */
+    SignetCacheEntry *entry = signet_cache_entry_new(sk_raw, now);
+    if (entry) {
+      g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
+      rc = 0;
+    } else {
+      rc = -1;
+    }
+  }
+
+  g_mutex_unlock(&ks->mu);
+
+  if (rc == 0) {
+    size_t pk_len = strlen(pk_hex);
+    if (pk_len < out_pubkey_hex_sz) {
+      memcpy(out_pubkey_hex, pk_hex, pk_len + 1);
+    } else {
+      rc = -1;
+    }
+  }
+
+  sodium_memzero(sk_raw, 32);
+  secure_wipe(sk_hex, strlen(sk_hex));
+  free(sk_hex);
+  free(pk_hex);
+
+  return rc;
+}
+
 uint32_t signet_key_store_cache_count(const SignetKeyStore *ks) {
   if (!ks || !ks->cache) return 0;
   /* Note: not locking for this read-only atomic-ish operation. */

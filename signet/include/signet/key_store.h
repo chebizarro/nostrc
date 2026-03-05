@@ -68,6 +68,15 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
  * Returns 0 on success, 1 if not found, -1 on error. */
 int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id);
 
+/* Rotate an agent's keypair. Generates a new keypair, replaces old key in
+ * both SQLCipher and hot cache.
+ * out_pubkey_hex must be at least 65 bytes.
+ * Returns 0 on success, 1 if agent not found, -1 on error. */
+int signet_key_store_rotate_agent(SignetKeyStore *ks,
+                                   const char *agent_id,
+                                   char *out_pubkey_hex,
+                                   size_t out_pubkey_hex_sz);
+
 /* Validate and consume a connect_secret for an agent.
  * Returns 0 if secret matches and was consumed, 1 if no secret required,
  * -1 on mismatch or error. */
