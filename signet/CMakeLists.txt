@@ -36,6 +36,7 @@ endif()
 if (PKG_CONFIG_FOUND)
   pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
   pkg_check_modules(SODIUM QUIET IMPORTED_TARGET libsodium)
+  pkg_check_modules(MHD QUIET IMPORTED_TARGET libmicrohttpd)
 endif()
 
 set(SIGNET_CORE_SOURCES
@@ -91,6 +92,10 @@ endif()
 
 if (TARGET PkgConfig::SODIUM)
   target_link_libraries(signet_core PRIVATE PkgConfig::SODIUM)
+endif()
+
+if (TARGET PkgConfig::MHD)
+  target_link_libraries(signet_core PRIVATE PkgConfig::MHD)
 endif()
 
 if (TARGET PkgConfig::GLIB)

@@ -36,6 +36,7 @@ glib_dep = dependency('glib-2.0', version: '>= 2.56', required: true)
 openssl_dep = dependency('openssl', required: true)
 sqlite3_dep = dependency('sqlite3', required: true)
 sodium_dep = dependency('libsodium', required: true)
+mhd_dep = dependency('libmicrohttpd', required: true)
 
 # JSON backend
 json_backend = get_option('signet_json_backend')
@@ -71,6 +72,7 @@ signet_deps = [
   openssl_dep,
   sqlite3_dep,
   sodium_dep,
+  mhd_dep,
 ]
 
 if nostr_dep.found()
