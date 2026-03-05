@@ -14,6 +14,9 @@
 #include <glib.h>
 #include <json-glib/json-glib.h>
 
+/* NIP-19 bech32 decode */
+#include <nostr/nip19/nip19.h>
+
 typedef enum {
   SIGNET_POLICY_STORE_BACKEND_NONE = 0,
   SIGNET_POLICY_STORE_BACKEND_FILE,
@@ -194,164 +197,6 @@ static char *signet_hex_encode_lower(const guint8 *in, gsize in_len) {
   return out;
 }
 
-/* --------------------------- minimal bech32 decode ------------------------- */
-/* Enough for NIP-19 npub decoding to 32 bytes.
- * This is intentionally local to avoid taking a dependency on any particular
- * monorepo nip19 API surface.
- */
-
-static const char *SIGNET_BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-
-static gint8 signet_bech32_rev(int c) {
-  const char *p = strchr(SIGNET_BECH32_CHARSET, c);
-  if (!p) return -1;
-  return (gint8)(p - SIGNET_BECH32_CHARSET);
-}
-
-static guint32 signet_bech32_polymod(const guint8 *values, gsize len) {
-  guint32 chk = 1;
-  for (gsize i = 0; i < len; i++) {
-    guint8 v = values[i];
-    guint32 top = chk >> 25;
-    chk = (chk & 0x1ffffff) << 5;
-    chk ^= v;
-
-    if (top & 1) chk ^= 0x3b6a57b2;
-    if (top & 2) chk ^= 0x26508e6d;
-    if (top & 4) chk ^= 0x1ea119fa;
-    if (top & 8) chk ^= 0x3d4233dd;
-    if (top & 16) chk ^= 0x2a1462b3;
-  }
-  return chk;
-}
-
-static gsize signet_bech32_hrp_expand(const char *hrp, guint8 *out, gsize out_cap) {
-  gsize hrp_len = strlen(hrp);
-  gsize need = (hrp_len * 2) + 1;
-  if (out_cap < need) return 0;
-
-  for (gsize i = 0; i < hrp_len; i++) out[i] = (guint8)(hrp[i] >> 5);
-  out[hrp_len] = 0;
-  for (gsize i = 0; i < hrp_len; i++) out[hrp_len + 1 + i] = (guint8)(hrp[i] & 0x1f);
-
-  return need;
-}
-
-static gboolean signet_bech32_verify_checksum(const char *hrp, const guint8 *data, gsize data_len) {
-  guint8 hrp_exp[256];
-  gsize hrp_exp_len = signet_bech32_hrp_expand(hrp, hrp_exp, sizeof(hrp_exp));
-  if (hrp_exp_len == 0) return FALSE;
-
-  gsize vlen = hrp_exp_len + data_len;
-  guint8 *vals = g_malloc(vlen);
-  if (!vals) return FALSE;
-
-  memcpy(vals, hrp_exp, hrp_exp_len);
-  memcpy(vals + hrp_exp_len, data, data_len);
-
-  guint32 pm = signet_bech32_polymod(vals, vlen);
-  g_free(vals);
-
-  return pm == 1;
-}
-
-static gboolean signet_convert_bits(guint8 *out,
-                                   gsize *out_len,
-                                   gsize out_cap,
-                                   const guint8 *in,
-                                   gsize in_len,
-                                   int from_bits,
-                                   int to_bits,
-                                   gboolean pad) {
-  guint32 acc = 0;
-  int bits = 0;
-  gsize outpos = 0;
-  guint32 maxv = ((guint32)1 << to_bits) - 1;
-  guint32 maxacc = ((guint32)1 << (from_bits + to_bits - 1)) - 1;
-
-  for (gsize i = 0; i < in_len; i++) {
-    guint32 value = in[i];
-    if ((value >> from_bits) != 0) return FALSE;
-
-    acc = ((acc << from_bits) | value) & maxacc;
-    bits += from_bits;
-
-    while (bits >= to_bits) {
-      bits -= to_bits;
-      if (outpos >= out_cap) return FALSE;
-      out[outpos++] = (guint8)((acc >> bits) & maxv);
-    }
-  }
-
-  if (pad) {
-    if (bits) {
-      if (outpos >= out_cap) return FALSE;
-      out[outpos++] = (guint8)((acc << (to_bits - bits)) & maxv);
-    }
-  } else {
-    if (bits >= from_bits) return FALSE;
-    if (((acc << (to_bits - bits)) & maxv) != 0) return FALSE;
-  }
-
-  *out_len = outpos;
-  return TRUE;
-}
-
-static gboolean signet_nip19_decode_npub32(const char *npub, guint8 out32[32]) {
-  if (!npub || !out32) return FALSE;
-
-  g_autofree char *lower = g_ascii_strdown(npub, -1);
-  if (!lower) return FALSE;
-
-  const char *sep = strrchr(lower, '1');
-  if (!sep) return FALSE;
-
-  gsize hrp_len = (gsize)(sep - lower);
-  if (hrp_len == 0) return FALSE;
-
-  g_autofree char *hrp = g_strndup(lower, (gsize)hrp_len);
-  if (!hrp) return FALSE;
-
-  if (!signet_streq0(hrp, "npub")) return FALSE;
-
-  const char *data_part = sep + 1;
-  gsize data_part_len = strlen(data_part);
-  if (data_part_len < 6) return FALSE; /* checksum */
-
-  gsize data_len = data_part_len;
-  guint8 *data = g_malloc(data_len);
-  if (!data) return FALSE;
-
-  for (gsize i = 0; i < data_len; i++) {
-    int v = signet_bech32_rev((unsigned char)data_part[i]);
-    if (v < 0) {
-      g_free(data);
-      return FALSE;
-    }
-    data[i] = (guint8)v;
-  }
-
-  if (!signet_bech32_verify_checksum(hrp, data, data_len)) {
-    g_free(data);
-    return FALSE;
-  }
-
-  /* Remove 6 checksum values */
-  gsize payload_len = data_len - 6;
-
-  guint8 outbuf[64];
-  gsize outbuf_len = 0;
-  gboolean ok = signet_convert_bits(outbuf, &outbuf_len, sizeof(outbuf),
-                                    data, payload_len,
-                                    5, 8, FALSE);
-  g_free(data);
-  if (!ok) return FALSE;
-
-  if (outbuf_len != 32) return FALSE;
-  memcpy(out32, outbuf, 32);
-  return TRUE;
-}
-
 /* Normalize pubkey strings to 64 hex lower-case when possible.
  * - "*" remains "*"
  * - "npub1..." decodes to 32 bytes and is hex-encoded
@@ -363,8 +208,8 @@ static char *signet_pubkey_canon_dup(const char *s) {
   if (strcmp(s, "*") == 0) return g_strdup("*");
 
   if (g_ascii_strncasecmp(s, "npub1", 5) == 0) {
-    guint8 pk[32];
-    if (!signet_nip19_decode_npub32(s, pk)) return NULL;
+    uint8_t pk[32];
+    if (nostr_nip19_decode_npub(s, pk) != 0) return NULL;
     char *hex = signet_hex_encode_lower(pk, 32);
     memset(pk, 0, sizeof(pk));
     return hex;

@@ -54,6 +54,7 @@ target_include_directories(signet_core
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/nips/nip01/include
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
+    ${CMAKE_SOURCE_DIR}/nips/nip19/include
     ${CMAKE_SOURCE_DIR}/nips/nip44/include
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
 )
@@ -69,6 +70,10 @@ endif()
 
 if (TARGET nip46)
   target_link_libraries(signet_core PUBLIC nip46)
+endif()
+
+if (TARGET nip19)
+  target_link_libraries(signet_core PUBLIC nip19)
 endif()
 
 # External deps

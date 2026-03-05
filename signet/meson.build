@@ -55,11 +55,13 @@ in_tree_dirs = [
   nostrc_build_dir / 'nips' / 'nip04',
   nostrc_build_dir / 'nips' / 'nip44',
   nostrc_build_dir / 'nips' / 'nip01',
+  nostrc_build_dir / 'nips' / 'nip19',
 ]
 
 nostr_dep = cc.find_library('nostr', dirs: in_tree_dirs, required: require_in_tree)
 nostr_json_dep = cc.find_library('nostr_json', dirs: in_tree_dirs, required: require_in_tree)
 nip46_dep = cc.find_library('nip46', dirs: in_tree_dirs, required: require_in_tree)
+nip19_dep = cc.find_library('nip19', dirs: in_tree_dirs, required: require_in_tree)
 
 signet_deps = [
   glib_dep,
@@ -76,6 +78,9 @@ endif
 if nip46_dep.found()
   signet_deps += nip46_dep
 endif
+if nip19_dep.found()
+  signet_deps += nip19_dep
+endif
 
 # Include paths to monorepo headers (match existing monorepo patterns)
 root_inc = include_directories('..')
@@ -85,6 +90,7 @@ libnostr_inc = include_directories('../libnostr/include')
 nips_inc = include_directories(
   '../nips/nip01/include',
   '../nips/nip04/include',
+  '../nips/nip19/include',
   '../nips/nip44/include',
   '../nips/nip46/include',
 )
