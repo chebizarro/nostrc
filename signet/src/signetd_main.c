@@ -187,9 +187,12 @@ int main(int argc, char **argv) {
   };
   SignetReplayCache *replay = signet_replay_cache_new(&replay_cfg);
 
-  /* 3) Key store (stub — pending SQLCipher + hot cache implementation) */
-  SignetKeyStoreConfig ks_cfg;
-  memset(&ks_cfg, 0, sizeof(ks_cfg));
+  /* 3) Key store (SQLCipher + mlock'd hot cache) */
+  const char *db_key = g_getenv("SIGNET_DB_KEY");
+  SignetKeyStoreConfig ks_cfg = {
+    .db_path = cfg.db_path,
+    .master_key = db_key ? db_key : "",
+  };
   SignetKeyStore *keys = signet_key_store_new(audit, &ks_cfg);
 
   /* 4) Policy store (file-backed) */
@@ -257,10 +260,10 @@ int main(int argc, char **argv) {
       SignetHealthSnapshot snap;
       memset(&snap, 0, sizeof(snap));
       snap.relay_connected = signet_relay_pool_is_connected(relays);
-      snap.db_open = false;                            /* TODO: check SQLCipher state */
-      snap.agents_active = 0;                           /* TODO: from agent registry */
-      snap.cache_entries = 0;                            /* TODO: from hot key cache */
-      snap.relay_count = snap.relay_connected ? 1 : 0;  /* TODO: actual count */
+      snap.db_open = signet_key_store_is_open(keys);
+      snap.agents_active = signet_key_store_cache_count(keys);
+      snap.cache_entries = signet_key_store_cache_count(keys);
+      snap.relay_count = snap.relay_connected ? (uint32_t)cfg.n_relays : 0;
       snap.policy_store_loaded = (store != NULL);      /* non-blocking hint */
       snap.key_store_available = (keys != NULL);       /* non-blocking hint */
 

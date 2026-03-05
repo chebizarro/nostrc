@@ -33,8 +33,14 @@ if (NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
   find_package(OpenSSL REQUIRED)
 endif()
 
+if (PKG_CONFIG_FOUND)
+  pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
+  pkg_check_modules(SODIUM QUIET IMPORTED_TARGET libsodium)
+endif()
+
 set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/signet_config.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/audit_logger.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/replay_cache.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/key_store.c
@@ -78,6 +84,14 @@ endif()
 
 # External deps
 target_link_libraries(signet_core PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+
+if (TARGET PkgConfig::SQLITE3)
+  target_link_libraries(signet_core PRIVATE PkgConfig::SQLITE3)
+endif()
+
+if (TARGET PkgConfig::SODIUM)
+  target_link_libraries(signet_core PRIVATE PkgConfig::SODIUM)
+endif()
 
 if (TARGET PkgConfig::GLIB)
   target_link_libraries(signet_core PRIVATE PkgConfig::GLIB)

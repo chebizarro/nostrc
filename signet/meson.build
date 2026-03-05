@@ -34,6 +34,8 @@ require_in_tree = get_option('signet_require_in_tree_libs')
 # Core dependencies (runtime + security)
 glib_dep = dependency('glib-2.0', version: '>= 2.56', required: true)
 openssl_dep = dependency('openssl', required: true)
+sqlite3_dep = dependency('sqlite3', required: true)
+sodium_dep = dependency('libsodium', required: true)
 
 # JSON backend
 json_backend = get_option('signet_json_backend')
@@ -67,6 +69,8 @@ signet_deps = [
   glib_dep,
   json_dep,
   openssl_dep,
+  sqlite3_dep,
+  sodium_dep,
 ]
 
 if nostr_dep.found()
@@ -105,6 +109,7 @@ signet_includes = [
 # Core library sources (everything except main entrypoints)
 signet_core_sources = files(
   'src/signet_config.c',
+  'src/store.c',
   'src/audit_logger.c',
   'src/replay_cache.c',
   'src/key_store.c',
@@ -150,4 +155,5 @@ summary({
   'JSON backend': json_backend,
   'In-tree libnostr required': require_in_tree ? 'yes' : 'no',
   'In-tree build dir': nostrc_build_dir,
+  'libsodium': sodium_dep.found() ? 'found' : 'not found',
 }, section: 'Signet')

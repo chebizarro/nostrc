@@ -2,13 +2,9 @@
  *
  * key_store.h - Key custody interface for Signet.
  *
- * Signet's key store provides signing keys from an mlock'd in-process cache
- * backed by SQLCipher persistence. Keys are loaded into the hot cache at
- * startup and accessed via pointer dereference on the signing hot path.
- *
- * This header defines the interface. The SQLCipher store and hot key cache
- * modules (store.h, key-cache.h) will be implemented in subsequent tasks.
- * For now, this is a stub that always returns "not found".
+ * Provides signing keys from an mlock'd in-process cache backed by
+ * SQLCipher persistence. Keys are loaded into the hot cache at startup
+ * and accessed via pointer dereference on the signing hot path.
  */
 
 #ifndef SIGNET_KEY_STORE_H
@@ -19,43 +15,59 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
-#include <secure_buf.h>
 
 typedef struct SignetKeyStore SignetKeyStore;
 
 struct SignetAuditLogger;
+struct SignetStore;
 
 typedef struct {
-  nostr_secure_buf secret_key; /* secret material; must be freed via signet_loaded_key_clear() */
-  int64_t loaded_at;           /* unix seconds */
-  int64_t expires_at;          /* unix seconds; 0 means "no expiry"/unknown */
+  uint8_t *secret_key;     /* 32-byte secret key (heap, should be in locked memory) */
+  size_t secret_key_len;   /* always 32 on success */
+  int64_t loaded_at;       /* unix seconds */
+  int64_t expires_at;      /* unix seconds; 0 means "no expiry" */
 } SignetLoadedKey;
 
 typedef struct {
-  /* Reserved for SQLCipher store configuration (db_path, etc).
-   * Will be populated when the store module is implemented. */
-  const char *placeholder;
+  const char *db_path;     /* SQLCipher database path */
+  const char *master_key;  /* master key for SQLCipher + envelope encryption */
 } SignetKeyStoreConfig;
 
-/* Create key store. Returns NULL on OOM/invalid config. */
+/* Create key store backed by SQLCipher.
+ * Opens (or creates) the database and loads all agent keys into the hot cache.
+ * Returns NULL on failure. */
 SignetKeyStore *signet_key_store_new(struct SignetAuditLogger *audit,
                                      const SignetKeyStoreConfig *cfg);
 
-/* Free key store. Safe on NULL. */
+/* Free key store, wiping all cached keys. Safe on NULL. */
 void signet_key_store_free(SignetKeyStore *ks);
 
-/* Load the custody key for an agent.
- *
- * agent_id: unique agent identifier.
- * out_key: returned secure buffer and metadata.
- *
- * Returns true on success.
- * NOTE: Currently a stub that always returns false (no backend).
- */
+/* Load the custody key for an agent from the hot cache.
+ * Returns true on success (key found), false if not found. */
 bool signet_key_store_load_agent_key(SignetKeyStore *ks,
                                      const char *agent_id,
                                      SignetLoadedKey *out_key);
+
+/* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
+ * and adds to the hot cache.
+ * out_pubkey_hex must be at least 65 bytes.
+ * Returns 0 on success, -1 on error. */
+int signet_key_store_provision_agent(SignetKeyStore *ks,
+                                     const char *agent_id,
+                                     char *out_pubkey_hex,
+                                     size_t out_pubkey_hex_sz);
+
+/* Revoke an agent. Removes from hot cache and SQLCipher.
+ * Returns 0 on success, 1 if not found, -1 on error. */
+int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id);
+
+/* Get the number of keys in the hot cache. */
+uint32_t signet_key_store_cache_count(const SignetKeyStore *ks);
+
+/* Check if the backing store is open. */
+bool signet_key_store_is_open(const SignetKeyStore *ks);
 
 /* Wipe and free a loaded key. Safe on NULL/empty. */
 void signet_loaded_key_clear(SignetLoadedKey *k);

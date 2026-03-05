@@ -35,7 +35,7 @@ int main(void) {
   };
   SignetReplayCache *replay = signet_replay_cache_new(&rcc);
 
-  SignetKeyStoreConfig ksc = { .placeholder = NULL };
+  SignetKeyStoreConfig ksc = { .db_path = NULL, .master_key = NULL };
   SignetKeyStore *ks = signet_key_store_new(audit, &ksc);
 
   SignetPolicyStore *ps = signet_policy_store_file_new(NULL);
