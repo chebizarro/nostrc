@@ -172,7 +172,7 @@ int main(int argc, char **argv) {
   /* 1) Audit logger */
   SignetAuditLoggerConfig audit_cfg = {
     .path = cfg.audit_path,
-    .to_stdout = cfg.audit_stdout ? true : false,
+    .to_stdout = cfg.audit_stdout,
     .flush_each_write = true,
   };
   SignetAuditLogger *audit = signet_audit_logger_new(&audit_cfg);
@@ -225,12 +225,13 @@ int main(int argc, char **argv) {
 
   /* 8) Health server */
   SignetHealthServer *health = NULL;
-  if (cfg.health_enable) {
-    const char *listen = (cfg.health_listen[0] != '\0') ? cfg.health_listen : "127.0.0.1:8080";
-    SignetHealthServerConfig hs_cfg = { .listen = listen };
+  if (cfg.health_port > 0) {
+    char listen_buf[64];
+    snprintf(listen_buf, sizeof(listen_buf), "127.0.0.1:%d", cfg.health_port);
+    SignetHealthServerConfig hs_cfg = { .listen = listen_buf };
     health = signet_health_server_new(&hs_cfg);
     if (!health || signet_health_server_start(health) != 0) {
-      fprintf(stderr, "signetd: failed to start health server on %s\n", listen);
+      fprintf(stderr, "signetd: failed to start health server on %s\n", listen_buf);
       if (health) {
         signet_health_server_free(health);
         health = NULL;
