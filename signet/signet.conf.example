@@ -1,20 +1,21 @@
 # SPDX-License-Identifier: MIT
 #
-# Signet configuration (TOML)
+# Signet configuration (GKeyFile INI format)
 #
 # Required environment variables (Signet refuses to start without these):
 #   SIGNET_DB_KEY       - Master key for SQLCipher (min 32 bytes, base64 or hex encoded)
 #   SIGNET_BUNKER_NSEC  - Signet's own bunker identity nsec (bech32 or hex)
 #
 # All config values may be overridden by SIGNET_-prefixed environment variables.
+# Lists use semicolons as separators (GKeyFile format).
 
 [server]
-log_level = "info"       # debug | info | warn | error
+log_level = info
 health_port = 8080
 
 [store]
 # Path to SQLCipher database file
-db_path = "/data/signet.db"
+db_path = /data/signet.db
 # Master key injected via env: SIGNET_DB_KEY (required, no default)
 # Minimum 32 bytes of entropy, base64 or hex encoded
 
@@ -22,20 +23,23 @@ db_path = "/data/signet.db"
 # Signet's own bunker identity
 # Injected via env: SIGNET_BUNKER_NSEC (required, no default)
 
-relays = [
-  "wss://relay.example.com",
-]
+# Relay URLs (semicolon-separated)
+relays = wss://relay.example.com
 
 reconnect_interval_s = 30
 
-# Pubkeys authorized to send management events (hex)
-provisioner_pubkeys = [
-  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-]
+# Pubkeys authorized to send management events (hex, semicolon-separated)
+provisioner_pubkeys = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+# Identity name for this bunker instance
+identity = default
 
 [policy_defaults]
-allowed_kinds = []       # empty = all kinds permitted
-rate_limit_rpm = 0       # 0 = unlimited
+default_decision = deny
+# Path to policy JSON file (optional)
+policy_file =
+allowed_kinds =
+rate_limit_rpm = 0
 
 # Replay protection
 [replay]
@@ -45,5 +49,5 @@ skew_seconds = 120
 
 # Audit logging (structured JSON to stdout, 12-factor)
 [audit]
-path = ""                # empty = stdout only
+path =
 stdout = true
