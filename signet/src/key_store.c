@@ -170,9 +170,13 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
 
 int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      const char *agent_id,
+                                     const char *const *relay_urls,
+                                     size_t n_relay_urls,
                                      char *out_pubkey_hex,
-                                     size_t out_pubkey_hex_sz) {
+                                     size_t out_pubkey_hex_sz,
+                                     char **out_bunker_uri) {
   if (!ks || !agent_id || !out_pubkey_hex || out_pubkey_hex_sz < 65) return -1;
+  if (out_bunker_uri) *out_bunker_uri = NULL;
 
   /* Generate a new keypair using libnostr. */
   char *sk_hex = nostr_key_generate_private();
@@ -193,14 +197,24 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
     sk_raw[i] = (uint8_t)byte;
   }
 
+  /* Generate a random connect_secret (32 bytes hex = 64 chars). */
+  uint8_t secret_raw[32];
+  randombytes_buf(secret_raw, sizeof(secret_raw));
+  char connect_secret[65];
+  for (int i = 0; i < 32; i++) {
+    sprintf(connect_secret + i * 2, "%02x", secret_raw[i]);
+  }
+  connect_secret[64] = '\0';
+  sodium_memzero(secret_raw, sizeof(secret_raw));
+
   g_mutex_lock(&ks->mu);
 
   int rc = -1;
   int64_t now = (int64_t)time(NULL);
 
-  /* Store in SQLCipher. */
+  /* Store in SQLCipher (with connect_secret). */
   if (ks->store) {
-    rc = signet_store_put_agent(ks->store, agent_id, sk_raw, 32, now);
+    rc = signet_store_put_agent(ks->store, agent_id, sk_raw, 32, connect_secret, now);
   }
 
   if (rc == 0 || !ks->store) {
@@ -226,12 +240,75 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
     }
   }
 
+  /* Build bunker:// URI if requested and provision succeeded.
+   * Format: bunker://<agent_pubkey>?relay=<url1>&relay=<url2>&secret=<connect_secret> */
+  if (rc == 0 && out_bunker_uri) {
+    GString *uri = g_string_new("bunker://");
+    g_string_append(uri, pk_hex);
+    g_string_append_c(uri, '?');
+    for (size_t i = 0; i < n_relay_urls; i++) {
+      if (i > 0) g_string_append_c(uri, '&');
+      /* URL-encode the relay URL */
+      char *escaped = g_uri_escape_string(relay_urls[i], NULL, FALSE);
+      g_string_append(uri, "relay=");
+      g_string_append(uri, escaped ? escaped : relay_urls[i]);
+      g_free(escaped);
+    }
+    if (n_relay_urls > 0) g_string_append_c(uri, '&');
+    g_string_append(uri, "secret=");
+    g_string_append(uri, connect_secret);
+    *out_bunker_uri = g_string_free(uri, FALSE);
+  }
+
   sodium_memzero(sk_raw, 32);
+  sodium_memzero(connect_secret, sizeof(connect_secret));
   secure_wipe(sk_hex, strlen(sk_hex));
   free(sk_hex);
   free(pk_hex);
 
   return rc;
+}
+
+int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
+                                              const char *agent_id,
+                                              const char *provided_secret) {
+  if (!ks || !agent_id) return -1;
+
+  g_mutex_lock(&ks->mu);
+
+  if (!ks->store) {
+    /* No backing store — no secret to validate. */
+    g_mutex_unlock(&ks->mu);
+    return 1; /* no secret required */
+  }
+
+  SignetAgentRecord rec;
+  memset(&rec, 0, sizeof(rec));
+  int rc = signet_store_get_agent(ks->store, agent_id, &rec);
+  if (rc != 0) {
+    g_mutex_unlock(&ks->mu);
+    return -1; /* agent not found or error */
+  }
+
+  int result;
+  if (!rec.connect_secret || !rec.connect_secret[0]) {
+    /* No connect_secret set — already consumed or never had one. */
+    result = 1; /* no secret required */
+  } else if (!provided_secret || !provided_secret[0]) {
+    /* Secret required but not provided. */
+    result = -1;
+  } else if (g_strcmp0(rec.connect_secret, provided_secret) == 0) {
+    /* Match! Consume the secret so it can't be reused. */
+    signet_store_consume_connect_secret(ks->store, agent_id);
+    result = 0;
+  } else {
+    /* Mismatch. */
+    result = -1;
+  }
+
+  signet_agent_record_clear(&rec);
+  g_mutex_unlock(&ks->mu);
+  return result;
 }
 
 int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id) {

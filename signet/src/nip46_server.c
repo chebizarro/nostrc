@@ -452,7 +452,33 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     decision = "allow";
 
     /* 6) Execute method */
-    if (strcmp(method, "ping") == 0) {
+    if (strcmp(method, "connect") == 0) {
+      /* NIP-46 connect: validate connect_secret for initial auth.
+       * params[0] = remote signer pubkey (already implicit)
+       * params[1] = connect_secret (optional but required if set during provision) */
+      const char *provided_secret = NULL;
+      if (req.params && req.n_params >= 2 && req.params[1] && req.params[1][0]) {
+        provided_secret = req.params[1];
+      }
+
+      /* Validate and consume the connect_secret via key_store. */
+      int cs_rc = signet_key_store_validate_connect_secret(
+          s->keys, s->identity, provided_secret);
+      if (cs_rc < 0) {
+        /* Secret mismatch or error — reject the connect. */
+        err_str = g_strdup("connect_secret mismatch");
+        status = "error";
+        code = "auth_failed";
+        allow = false;
+        decision = "deny";
+      } else {
+        /* cs_rc == 0 (secret consumed) or 1 (no secret required) */
+        result = g_strdup("ack");
+        status = "ok";
+        code = "ok";
+      }
+
+    } else if (strcmp(method, "ping") == 0) {
       result = g_strdup("pong");
       status = "ok";
       code = "ok";

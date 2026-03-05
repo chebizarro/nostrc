@@ -104,6 +104,7 @@ static const char *SIGNET_SCHEMA_SQL =
   "  encrypted_nsec BLOB NOT NULL,"
   "  nonce BLOB NOT NULL,"
   "  algo TEXT NOT NULL DEFAULT 'xsalsa20poly1305',"
+  "  connect_secret TEXT,"
   "  created_at INTEGER NOT NULL,"
   "  last_used INTEGER NOT NULL DEFAULT 0"
   ");";
@@ -191,6 +192,7 @@ int signet_store_put_agent(SignetStore *store,
                            const char *agent_id,
                            const uint8_t *secret_key,
                            size_t secret_key_len,
+                           const char *connect_secret,
                            int64_t now) {
   if (!store || !store->open || !agent_id || !secret_key) return -1;
   if (secret_key_len != SIGNET_NSEC_LEN) return -1;
@@ -212,8 +214,8 @@ int signet_store_put_agent(SignetStore *store,
 
   /* INSERT OR REPLACE into the database. */
   const char *sql =
-    "INSERT OR REPLACE INTO agents (agent_id, encrypted_nsec, nonce, algo, created_at, last_used) "
-    "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, 0);";
+    "INSERT OR REPLACE INTO agents (agent_id, encrypted_nsec, nonce, algo, connect_secret, created_at, last_used) "
+    "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, ?, 0);";
 
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
@@ -225,7 +227,12 @@ int signet_store_put_agent(SignetStore *store,
   sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
   sqlite3_bind_blob(stmt, 2, ciphertext, (int)ct_len, SQLITE_TRANSIENT);
   sqlite3_bind_blob(stmt, 3, nonce, SIGNET_NONCE_LEN, SQLITE_TRANSIENT);
-  sqlite3_bind_int64(stmt, 4, now);
+  if (connect_secret && connect_secret[0]) {
+    sqlite3_bind_text(stmt, 4, connect_secret, -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, 4);
+  }
+  sqlite3_bind_int64(stmt, 5, now);
 
   rc = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
@@ -241,7 +248,7 @@ int signet_store_get_agent(SignetStore *store,
   memset(out_record, 0, sizeof(*out_record));
 
   const char *sql =
-    "SELECT encrypted_nsec, nonce, created_at, last_used FROM agents WHERE agent_id = ?;";
+    "SELECT encrypted_nsec, nonce, created_at, last_used, connect_secret FROM agents WHERE agent_id = ?;";
 
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
@@ -283,9 +290,13 @@ int signet_store_get_agent(SignetStore *store,
     return -1; /* decryption failed (tampered or wrong key) */
   }
 
+  /* Read connect_secret (column 4, may be NULL). */
+  const char *cs = (const char *)sqlite3_column_text(stmt, 4);
+
   out_record->agent_id = g_strdup(agent_id);
   out_record->secret_key = plaintext;
   out_record->secret_key_len = SIGNET_NSEC_LEN;
+  out_record->connect_secret = cs ? g_strdup(cs) : NULL;
   out_record->created_at = created_at;
   out_record->last_used = last_used;
 
@@ -380,8 +391,31 @@ void signet_agent_record_clear(SignetAgentRecord *rec) {
     rec->secret_key = NULL;
   }
   rec->secret_key_len = 0;
+  if (rec->connect_secret) {
+    memset(rec->connect_secret, 0, strlen(rec->connect_secret));
+    g_free(rec->connect_secret);
+    rec->connect_secret = NULL;
+  }
   rec->created_at = 0;
   rec->last_used = 0;
+}
+
+int signet_store_consume_connect_secret(SignetStore *store,
+                                        const char *agent_id) {
+  if (!store || !store->open || !agent_id) return -1;
+
+  const char *sql = "UPDATE agents SET connect_secret = NULL WHERE agent_id = ? AND connect_secret IS NOT NULL;";
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) return -1;
+
+  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(store->db);
+  sqlite3_finalize(stmt);
+
+  if (rc != SQLITE_DONE) return -1;
+  return (changes > 0) ? 0 : 1; /* 1 = not found or already consumed */
 }
 
 void signet_store_free_agent_ids(char **ids, size_t count) {

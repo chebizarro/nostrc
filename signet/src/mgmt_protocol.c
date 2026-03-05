@@ -229,6 +229,9 @@ struct SignetMgmtHandler {
 
   char *bunker_sk_hex;
   char *bunker_pk_hex;
+
+  char **relay_urls;
+  size_t n_relay_urls;
 };
 
 SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
@@ -255,6 +258,14 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->bunker_sk_hex = g_strdup(cfg->bunker_secret_key_hex);
   h->bunker_pk_hex = g_strdup(cfg->bunker_pubkey_hex);
 
+  if (cfg->relay_urls && cfg->n_relay_urls > 0) {
+    h->relay_urls = (char **)g_new0(char *, cfg->n_relay_urls);
+    for (size_t i = 0; i < cfg->n_relay_urls; i++) {
+      h->relay_urls[i] = g_strdup(cfg->relay_urls[i]);
+    }
+    h->n_relay_urls = cfg->n_relay_urls;
+  }
+
   return h;
 }
 
@@ -269,6 +280,8 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
     g_free(h->bunker_sk_hex);
   }
   g_free(h->bunker_pk_hex);
+  for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
+  g_free(h->relay_urls);
   g_free(h);
 }
 
@@ -353,12 +366,26 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
   switch (req.op) {
     case SIGNET_MGMT_OP_PROVISION_AGENT: {
       char pubkey_hex[65];
-      int rc = signet_key_store_provision_agent(h->keys, req.agent_id, pubkey_hex, sizeof(pubkey_hex));
+      char *bunker_uri = NULL;
+      int rc = signet_key_store_provision_agent(
+          h->keys, req.agent_id,
+          (const char *const *)h->relay_urls, h->n_relay_urls,
+          pubkey_hex, sizeof(pubkey_hex),
+          &bunker_uri);
       if (rc == 0) {
         ok = true;
         code = "provisioned";
         message = g_strdup_printf("agent %s provisioned", req.agent_id);
-        result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\"}", req.agent_id, pubkey_hex);
+        if (bunker_uri) {
+          /* Escape the bunker URI for JSON embedding */
+          char *escaped_uri = g_strescape(bunker_uri, NULL);
+          result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"bunker_uri\":\"%s\"}",
+                                   req.agent_id, pubkey_hex, escaped_uri ? escaped_uri : bunker_uri);
+          g_free(escaped_uri);
+        } else {
+          result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\"}", req.agent_id, pubkey_hex);
+        }
+        g_free(bunker_uri);
       } else {
         code = "provision_failed";
         message = g_strdup("failed to provision agent");

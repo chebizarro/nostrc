@@ -53,15 +53,27 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
 /* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
  * and adds to the hot cache.
  * out_pubkey_hex must be at least 65 bytes.
+ * If relay_urls is non-NULL, a bunker:// URI is built and returned via *out_bunker_uri
+ * (caller frees with g_free). out_bunker_uri may be NULL if not needed.
  * Returns 0 on success, -1 on error. */
 int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      const char *agent_id,
+                                     const char *const *relay_urls,
+                                     size_t n_relay_urls,
                                      char *out_pubkey_hex,
-                                     size_t out_pubkey_hex_sz);
+                                     size_t out_pubkey_hex_sz,
+                                     char **out_bunker_uri);
 
 /* Revoke an agent. Removes from hot cache and SQLCipher.
  * Returns 0 on success, 1 if not found, -1 on error. */
 int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id);
+
+/* Validate and consume a connect_secret for an agent.
+ * Returns 0 if secret matches and was consumed, 1 if no secret required,
+ * -1 on mismatch or error. */
+int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
+                                              const char *agent_id,
+                                              const char *provided_secret);
 
 /* Get the number of keys in the hot cache. */
 uint32_t signet_key_store_cache_count(const SignetKeyStore *ks);

@@ -12,6 +12,7 @@
  *          encrypted_nsec BLOB NOT NULL,
  *          nonce BLOB NOT NULL,
  *          algo TEXT NOT NULL DEFAULT 'xsalsa20poly1305',
+ *          connect_secret TEXT,
  *          created_at INTEGER NOT NULL,
  *          last_used INTEGER NOT NULL DEFAULT 0)
  */
@@ -39,6 +40,7 @@ typedef struct {
   char *agent_id;
   uint8_t *secret_key;       /* decrypted 32-byte secret key (heap, mlock'd) */
   size_t secret_key_len;     /* always 32 on success */
+  char *connect_secret;      /* one-time auth secret (heap, may be NULL after use) */
   int64_t created_at;
   int64_t last_used;
 } SignetAgentRecord;
@@ -58,6 +60,7 @@ int signet_store_put_agent(SignetStore *store,
                            const char *agent_id,
                            const uint8_t *secret_key,
                            size_t secret_key_len,
+                           const char *connect_secret,
                            int64_t now);
 
 /* Retrieve and decrypt an agent key.
@@ -81,6 +84,11 @@ int signet_store_list_agents(SignetStore *store,
 int signet_store_touch_agent(SignetStore *store,
                              const char *agent_id,
                              int64_t now);
+
+/* Consume (clear) the connect_secret for an agent after successful connect.
+ * Returns 0 on success, 1 if not found or already consumed, -1 on error. */
+int signet_store_consume_connect_secret(SignetStore *store,
+                                        const char *agent_id);
 
 /* Free an agent record (wipes secret key). Safe on NULL. */
 void signet_agent_record_clear(SignetAgentRecord *rec);

@@ -111,6 +111,8 @@ typedef struct {
   size_t n_provisioner_pubkeys;
   const char *bunker_secret_key_hex;   /* for signing ack events */
   const char *bunker_pubkey_hex;       /* for addressing */
+  const char *const *relay_urls;       /* relay URLs for bunker:// URIs */
+  size_t n_relay_urls;
 } SignetMgmtHandlerConfig;
 
 /* Create a management handler. */
