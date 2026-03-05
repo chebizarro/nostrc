@@ -17,7 +17,6 @@
 #include "signet/signet_config.h"
 #include "signet/audit_logger.h"
 #include "signet/replay_cache.h"
-#include "signet/vault_client.h"
 #include "signet/key_store.h"
 #include "signet/policy_store.h"
 #include "signet/policy_engine.h"
@@ -54,51 +53,7 @@ static void signet_usage(FILE *out) {
   fprintf(out, "Usage: signetd [-c <config_path>]\n");
 }
 
-static char *signet_read_file_trim(const char *path) {
-  if (!path || path[0] == '\0') return NULL;
 
-  FILE *f = fopen(path, "rb");
-  if (!f) return NULL;
-
-  char buf[4096];
-  size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-  fclose(f);
-  if (n == 0) return NULL;
-
-  buf[n] = '\0';
-
-  /* trim whitespace */
-  char *s = g_strdup(buf);
-  if (!s) return NULL;
-
-  g_strchomp(s);
-  g_strstrip(s);
-
-  if (s[0] == '\0') {
-    g_free(s);
-    return NULL;
-  }
-
-  return s; /* g_free */
-}
-
-static void signet_wipe_free(char *s) {
-  if (!s) return;
-  size_t n = strlen(s);
-  if (n) memset(s, 0, n);
-  g_free(s);
-}
-
-static char *signet_load_vault_token(const SignetConfig *cfg) {
-  const char *env = getenv("VAULT_TOKEN");
-  if (env && env[0] != '\0') return g_strdup(env);
-
-  if (cfg && cfg->vault_token_file[0] != '\0') {
-    return signet_read_file_trim(cfg->vault_token_file);
-  }
-
-  return NULL;
-}
 
 static void signet_audit_daemon_event(SignetAuditLogger *audit,
                                       SignetAuditEventType type,
@@ -232,30 +187,15 @@ int main(int argc, char **argv) {
   };
   SignetReplayCache *replay = signet_replay_cache_new(&replay_cfg);
 
-  /* 3) Vault client */
-  char *vault_token = signet_load_vault_token(&cfg);
-  SignetVaultClient *vault = NULL;
-  if (cfg.vault_url[0] != '\0') {
-    SignetVaultClientConfig vc = {
-      .base_url = cfg.vault_url,
-      .token = vault_token, /* client is expected to copy; keep until shutdown */
-      .ca_bundle_path = (cfg.vault_ca_bundle[0] != '\0') ? cfg.vault_ca_bundle : NULL,
-      .namespace_name = (cfg.vault_namespace[0] != '\0') ? cfg.vault_namespace : NULL,
-      .timeout_ms = cfg.vault_timeout_ms,
-    };
-    vault = signet_vault_client_new(&vc);
-  }
-
-  /* 4) Key store */
+  /* 3) Key store (stub — pending SQLCipher + hot cache implementation) */
   SignetKeyStoreConfig ks_cfg;
   memset(&ks_cfg, 0, sizeof(ks_cfg));
-  ks_cfg.cache_ttl_seconds = 0;
-  SignetKeyStore *keys = signet_key_store_new(vault, audit, &ks_cfg);
+  SignetKeyStore *keys = signet_key_store_new(audit, &ks_cfg);
 
-  /* 5) Policy store (file-backed) */
+  /* 4) Policy store (file-backed) */
   SignetPolicyStore *store = signet_policy_store_file_new(cfg.policy_file_path);
 
-  /* 6) Policy engine */
+  /* 5) Policy engine */
   SignetPolicyEngineConfig pe_cfg = {
     .default_decision = (strcmp(cfg.policy_default_decision, "allow") == 0)
                             ? SIGNET_POLICY_DECISION_ALLOW
@@ -263,7 +203,7 @@ int main(int argc, char **argv) {
   };
   SignetPolicyEngine *policy = signet_policy_engine_new(store, audit, &pe_cfg);
 
-  /* 7) Relay pool */
+  /* 6) Relay pool */
   SignetDaemonCtx dctx;
   memset(&dctx, 0, sizeof(dctx));
   dctx.cfg = &cfg;
@@ -276,14 +216,14 @@ int main(int argc, char **argv) {
   };
   SignetRelayPool *relays = signet_relay_pool_new(&rp_cfg);
 
-  /* 8) NIP-46 server */
+  /* 7) NIP-46 server */
   SignetNip46ServerConfig n46_cfg = {
     .identity = cfg.identity,
   };
   SignetNip46Server *nip46 = signet_nip46_server_new(relays, policy, keys, replay, audit, &n46_cfg);
   dctx.nip46 = nip46;
 
-  /* 9) Health server */
+  /* 8) Health server */
   SignetHealthServer *health = NULL;
   if (cfg.health_enable) {
     const char *listen = (cfg.health_listen[0] != '\0') ? cfg.health_listen : "127.0.0.1:8080";
@@ -316,7 +256,10 @@ int main(int argc, char **argv) {
       SignetHealthSnapshot snap;
       memset(&snap, 0, sizeof(snap));
       snap.relay_connected = signet_relay_pool_is_connected(relays);
-      snap.vault_reachable = (vault != NULL);          /* non-blocking hint */
+      snap.db_open = false;                            /* TODO: check SQLCipher state */
+      snap.agents_active = 0;                           /* TODO: from agent registry */
+      snap.cache_entries = 0;                            /* TODO: from hot key cache */
+      snap.relay_count = snap.relay_connected ? 1 : 0;  /* TODO: actual count */
       snap.policy_store_loaded = (store != NULL);      /* non-blocking hint */
       snap.key_store_available = (keys != NULL);       /* non-blocking hint */
 
@@ -354,13 +297,9 @@ cleanup:
 
   signet_key_store_free(keys);
 
-  signet_vault_client_free(vault);
-
   signet_replay_cache_free(replay);
 
   signet_audit_logger_free(audit);
-
-  signet_wipe_free(vault_token);
 
   signet_config_clear(&cfg);
 

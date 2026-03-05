@@ -22,12 +22,11 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 if (SIGNET_ENABLE)
 
-# Optional pkg-config deps (GLib/JSON-GLib/libcurl) to match monorepo patterns
+# Optional pkg-config deps (GLib/JSON-GLib) to match monorepo patterns
 find_package(PkgConfig QUIET)
 if (PKG_CONFIG_FOUND)
   pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0)
   pkg_check_modules(JSON_GLIB QUIET IMPORTED_TARGET json-glib-1.0)
-  pkg_check_modules(LIBCURL QUIET IMPORTED_TARGET libcurl)
 endif()
 
 if (NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
@@ -38,7 +37,6 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/signet_config.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/audit_logger.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/replay_cache.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/vault_client.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/key_store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/policy_store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/policy_engine.c
@@ -82,10 +80,6 @@ endif()
 
 if (TARGET PkgConfig::JSON_GLIB)
   target_link_libraries(signet_core PRIVATE PkgConfig::JSON_GLIB)
-endif()
-
-if (TARGET PkgConfig::LIBCURL)
-  target_link_libraries(signet_core PRIVATE PkgConfig::LIBCURL)
 endif()
 
 add_executable(signetd ${CMAKE_CURRENT_SOURCE_DIR}/src/signetd_main.c)

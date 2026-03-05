@@ -2,8 +2,13 @@
  *
  * key_store.h - Key custody interface for Signet.
  *
- * Signet's key store loads signing keys from Vault (KV v2) and returns them in
- * locked/zeroized secure buffers (libnostr secure_buf).
+ * Signet's key store provides signing keys from an mlock'd in-process cache
+ * backed by SQLCipher persistence. Keys are loaded into the hot cache at
+ * startup and accessed via pointer dereference on the signing hot path.
+ *
+ * This header defines the interface. The SQLCipher store and hot key cache
+ * modules (store.h, key-cache.h) will be implemented in subsequent tasks.
+ * For now, this is a stub that always returns "not found".
  */
 
 #ifndef SIGNET_KEY_STORE_H
@@ -20,7 +25,6 @@ extern "C" {
 typedef struct SignetKeyStore SignetKeyStore;
 
 struct SignetAuditLogger;
-struct SignetVaultClient;
 
 typedef struct {
   nostr_secure_buf secret_key; /* secret material; must be freed via signet_loaded_key_clear() */
@@ -29,45 +33,29 @@ typedef struct {
 } SignetLoadedKey;
 
 typedef struct {
-  /* If 0, disable caching entirely (always read from Vault). */
-  uint32_t cache_ttl_seconds;
-
-  /* Vault KV v2 mount name, e.g. "secret".
-   * Used to build: GET /v1/{mount}/data/{path}
-   * If NULL/empty, defaults to "secret".
-   */
-  const char *vault_kv_mount;
-
-  /* Key prefix within the KV mount, e.g. "signet/keys".
-   * The resolved secret path becomes: {key_prefix}/{identity}
-   * If NULL/empty, defaults to "signet/keys".
-   */
-  const char *key_prefix;
-
-  /* JSON field name inside Vault KV v2 data.data.* containing the secret key hex.
-   * Default: "secp256k1_sk_hex"
-   */
-  const char *secret_key_field;
+  /* Reserved for SQLCipher store configuration (db_path, etc).
+   * Will be populated when the store module is implemented. */
+  const char *placeholder;
 } SignetKeyStoreConfig;
 
 /* Create key store. Returns NULL on OOM/invalid config. */
-SignetKeyStore *signet_key_store_new(struct SignetVaultClient *vault,
-                                     struct SignetAuditLogger *audit,
+SignetKeyStore *signet_key_store_new(struct SignetAuditLogger *audit,
                                      const SignetKeyStoreConfig *cfg);
 
 /* Free key store. Safe on NULL. */
 void signet_key_store_free(SignetKeyStore *ks);
 
-/* Load the custody key for an identity.
+/* Load the custody key for an agent.
  *
- * identity: logical Signet identity (used for path resolution).
+ * agent_id: unique agent identifier.
  * out_key: returned secure buffer and metadata.
  *
  * Returns true on success.
+ * NOTE: Currently a stub that always returns false (no backend).
  */
-bool signet_key_store_load_identity_key(SignetKeyStore *ks,
-                                        const char *identity,
-                                        SignetLoadedKey *out_key);
+bool signet_key_store_load_agent_key(SignetKeyStore *ks,
+                                     const char *agent_id,
+                                     SignetLoadedKey *out_key);
 
 /* Wipe and free a loaded key. Safe on NULL/empty. */
 void signet_loaded_key_clear(SignetLoadedKey *k);

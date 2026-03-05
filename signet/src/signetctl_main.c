@@ -38,7 +38,7 @@ static void signetctl_usage(FILE *out) {
           "      List all configured policies\n"
           "\n"
           "  rotate-key <identity>\n"
-          "      Trigger key rotation in Vault\n"
+          "      Trigger key rotation\n"
           "\n"
           "  health\n"
           "      Query daemon health status\n"

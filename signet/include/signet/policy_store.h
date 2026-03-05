@@ -21,8 +21,6 @@ extern "C" {
 
 typedef struct SignetPolicyStore SignetPolicyStore;
 
-struct SignetVaultClient;
-
 typedef enum {
   SIGNET_POLICY_RULE_DENY = 0,
   SIGNET_POLICY_RULE_ALLOW = 1
@@ -84,10 +82,7 @@ void signet_policy_store_free(SignetPolicyStore *ps);
 /* File-backed policy store. */
 SignetPolicyStore *signet_policy_store_file_new(const char *path);
 
-/* Vault-backed policy store (KV v2; later phases implement). */
-SignetPolicyStore *signet_policy_store_vault_new(struct SignetVaultClient *vault,
-                                                 const char *mount,
-                                                 const char *prefix);
+/* SQLCipher-backed policy store (future implementation). */
 
 #ifdef __cplusplus
 }

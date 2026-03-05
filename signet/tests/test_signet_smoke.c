@@ -1,12 +1,11 @@
 /* SPDX-License-Identifier: MIT
  *
- * test_signet_smoke.c - Phase 1 smoke test
+ * test_signet_smoke.c - Smoke test for Signet module initialization/teardown.
  */
 
 #include "signet/signet_config.h"
 #include "signet/audit_logger.h"
 #include "signet/replay_cache.h"
-#include "signet/vault_client.h"
 #include "signet/key_store.h"
 #include "signet/policy_store.h"
 #include "signet/policy_engine.h"
@@ -36,17 +35,8 @@ int main(void) {
   };
   SignetReplayCache *replay = signet_replay_cache_new(&rcc);
 
-  SignetVaultClientConfig vcfg = {
-    .base_url = "http://127.0.0.1:8200",
-    .token = NULL,
-    .ca_bundle_path = NULL,
-    .namespace_name = NULL,
-    .timeout_ms = 1000,
-  };
-  SignetVaultClient *vault = signet_vault_client_new(&vcfg);
-
-  SignetKeyStoreConfig ksc = { .cache_ttl_seconds = 0 };
-  SignetKeyStore *ks = signet_key_store_new(vault, audit, &ksc);
+  SignetKeyStoreConfig ksc = { .placeholder = NULL };
+  SignetKeyStore *ks = signet_key_store_new(audit, &ksc);
 
   SignetPolicyStore *ps = signet_policy_store_file_new(NULL);
 
@@ -63,7 +53,16 @@ int main(void) {
   SignetHealthServer *hs = signet_health_server_new(&hsc);
 
   if (hs) {
-    SignetHealthSnapshot snap = { .relay_connected = false, .vault_reachable = false, .uptime_sec = 0 };
+    SignetHealthSnapshot snap = {
+      .relay_connected = false,
+      .db_open = false,
+      .uptime_sec = 0,
+      .agents_active = 0,
+      .cache_entries = 0,
+      .relay_count = 0,
+      .policy_store_loaded = false,
+      .key_store_available = false,
+    };
     signet_health_server_set_snapshot(hs, &snap);
     (void)signet_health_server_start(hs);
     signet_health_server_stop(hs);
@@ -77,7 +76,6 @@ int main(void) {
   signet_policy_store_free(ps);
 
   signet_key_store_free(ks);
-  signet_vault_client_free(vault);
   signet_replay_cache_free(replay);
   signet_audit_logger_free(audit);
 

@@ -2,12 +2,14 @@
  *
  * signet_config.h - Signet configuration model and loader.
  *
- * This module owns configuration parsing and defaults. It is intentionally
- * small and follows the monorepo's "defaults + load from file if present"
- * pattern (see apps/relayd/src/relayd_config.c).
+ * Configuration parsing and defaults. Follows the monorepo "defaults + load
+ * from file if present" pattern (see apps/relayd/src/relayd_config.c).
  *
- * Phase 1: loader is a stub that applies defaults; later phases implement
- * TOML-style parsing and full validation.
+ * Required environment variables (Signet refuses to start without these):
+ *   SIGNET_DB_KEY      - master key for SQLCipher (min 32 bytes, base64/hex)
+ *   SIGNET_BUNKER_NSEC - Signet's own bunker identity nsec
+ *
+ * All config values may be overridden by SIGNET_-prefixed env vars.
  */
 
 #ifndef SIGNET_SIGNET_CONFIG_H
@@ -30,25 +32,19 @@ typedef struct {
   char **relays;
   size_t n_relays;
 
-  /* Logical identity name (used to scope policy + Vault paths). */
+  /* Logical identity name (used to scope policy paths). */
   char identity[SIGNET_MAX_STR];
 
-  /* NIP-46 transport keypair (remote signer key). */
+  /* NIP-46 transport keypair (remote signer key).
+   * SIGNET_BUNKER_NSEC provides the secret key; pubkey is derived. */
   char remote_signer_pubkey_hex[SIGNET_MAX_HEX_32_STRLEN];
   char remote_signer_secret_key_hex[SIGNET_MAX_HEX_32_STRLEN];
 
-  /* Vault settings (KV v2). */
-  char vault_url[SIGNET_MAX_STR];
-  char vault_kv_mount[SIGNET_MAX_STR];
-  char vault_key_prefix[SIGNET_MAX_STR];
-  char vault_policy_prefix[SIGNET_MAX_STR];
-  char vault_token_file[SIGNET_MAX_STR];
-  char vault_namespace[SIGNET_MAX_STR];
-  char vault_ca_bundle[SIGNET_MAX_STR];
-  uint32_t vault_timeout_ms;
+  /* Store settings (SQLCipher). */
+  char db_path[SIGNET_MAX_STR];
+  /* Master key injected via env: SIGNET_DB_KEY (required, no default) */
 
   /* Policy settings. */
-  char policy_backend[SIGNET_MAX_STR];     /* "file" or "vault" */
   char policy_file_path[SIGNET_MAX_STR];
   char policy_default_decision[SIGNET_MAX_STR]; /* "deny" or "allow" */
 
@@ -61,7 +57,7 @@ typedef struct {
   uint32_t replay_ttl_seconds;
   uint32_t replay_skew_seconds;
 
-  /* Management settings. */
+  /* Management settings — pubkeys authorized to send management events (hex). */
   char **admin_pubkeys;
   size_t n_admin_pubkeys;
 

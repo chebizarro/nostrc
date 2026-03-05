@@ -1,449 +1,138 @@
-# Signet - NIP-46 Remote Signing Bunker
+# Signet - NIP-46 Nostr Bunker Server
 
-Signet is a production-ready NIP-46 remote signing server (bunker) that provides secure key custody and policy-based authorization for Nostr applications.
+Signet is a NIP-46 compliant Nostr bunker server purpose-built for managing cryptographic identities in agent fleets. It is not a general-purpose key manager for humans — it is infrastructure for autonomous agent systems where many agents each require their own Nostr identity, none of which should ever be exposed as a raw private key.
 
 ## Features
 
-- **NIP-46 Remote Signing**: Full implementation of the NIP-46 protocol for remote event signing
-- **Secure Key Custody**: Integration with HashiCorp Vault for secure key storage
-- **Policy-Based Authorization**: Fine-grained access control with wildcard matching
-- **Replay Protection**: TTL-based cache prevents replay attacks
-- **Comprehensive Audit Logging**: JSONL audit trail for all operations
-- **Health Monitoring**: HTTP endpoint for operational monitoring
-- **Management CLI**: Command-line tool for policy and key management
+- **NIP-46 Remote Signing**: Signs Nostr events on behalf of registered agents
+- **SQLCipher Persistence**: AES-256 encrypted SQLite database for agent records and key material
+- **Hot Key Cache**: `mlock`'d in-process GHashTable for zero-latency signing (no disk read on sign path)
+- **Policy-Gated Signing**: Per-agent allowed event kinds, rate limits, tag restrictions
+- **Nostr-Native Management**: All provisioning, revocation, and policy updates via signed Nostr events (no REST API)
+- **Replay Protection**: Rolling window prevents replayed management and signing events
+- **Audit Logging**: Structured JSON logging of every signing and management operation
+- **Process Hardening**: `mlock`, `prctl(PR_SET_DUMPABLE, 0)`, `explicit_bzero` on all key material
 
 ## Architecture
 
+The control plane is Nostr. All of it. There is no REST management API. The only HTTP surface is `/health`.
+
+```
+Agent → NIP-46 request → Relay → Signet → hot cache lookup → sign → Relay → Agent
+Admin → Signed mgmt event → Relay → Signet → provision/revoke/policy → Relay → Admin
+```
+
 ### Core Components
 
-1. **NIP-46 Server** (`nip46_server.c`)
-   - Handles NIP-46 request events (kind 24133)
-   - NIP-04 encryption/decryption (ECDH + AES-256-CBC)
-   - BIP340 Schnorr signature generation
-   - Supported methods: `sign_event`, `get_public_key`, `nip04_encrypt`, `nip04_decrypt`, `get_relays`, `ping`
+1. **NIP-46 Server** - Handles signing requests via NIP-46 protocol
+2. **Key Cache** - `mlock`'d GHashTable: agent_id → nsec_bytes[32]
+3. **SQLCipher Store** - Encrypted persistence for agents, policies, audit log
+4. **Policy Engine** - Evaluate proposed events against per-agent policy
+5. **Management Protocol** - Nostr event kinds 28000-28090 for fleet management
+6. **Audit Logger** - Structured JSON to stdout (12-factor)
+7. **Health Server** - GET /health via libmicrohttpd
+8. **Relay Pool** - WebSocket connections with exponential backoff reconnect
 
-2. **Policy Engine** (`policy_engine.c`)
-   - File-backed policy store with TOML configuration
-   - Wildcard matching for clients, methods, and event kinds
-   - SIGHUP reload support for policy updates
-   - Deny-by-default security model
-
-3. **Key Store** (`key_store.c`)
-   - Vault KV v2 integration for key retrieval
-   - Optional TTL-based caching
-   - Secure memory handling with OPENSSL_cleanse
-   - Per-identity key isolation
-
-4. **Replay Cache** (`replay_cache.c`)
-   - TTL-based event ID tracking
-   - Time skew validation
-   - Memory-bounded with automatic eviction
-
-5. **Audit Logger** (`audit_logger.c`)
-   - JSONL structured logging
-   - SIGHUP rotation support
-   - No secret material in logs
-   - Atomic append operations
-
-6. **Relay Pool** (`relay_pool.c`)
-   - Multi-relay connectivity
-   - Auto-reconnect with backoff
-   - Event subscription management
-   - Background thread for I/O
-
-7. **Health Server** (`health_server.c`)
-   - HTTP GET /health endpoint
-   - Per-component health status
-   - Fast (<10ms) responses
-   - JSON status output
-
-## Installation
+## Quick Start
 
 ### Prerequisites
 
-- C compiler (GCC or Clang)
-- CMake 3.15+ or Meson 0.55+
-- OpenSSL 3.x
-- GLib 2.70+
+- C compiler (C11)
+- Meson >= 0.59
+- GLib 2.56+, GObject
+- libnostr + nostr-gobject (from monorepo)
+- SQLCipher
+- libsodium
+- libmicrohttpd
 - json-glib 1.0+
-- libcurl (for Vault integration)
-- libnostr (included in monorepo)
 
-### Build with CMake
-
-```bash
-# From the nostrc root directory
-cmake -B _build -DBUILD_TESTING=ON
-cmake --build _build -j8
-
-# Binaries will be in _build/signet/
-# - signetd (daemon)
-# - signetctl (CLI tool)
-```
-
-### Build with Meson
+### Build
 
 ```bash
 cd signet
-meson setup _build
-meson compile -C _build
+meson setup builddir
+meson compile -C builddir
+```
 
-# Binaries will be in _build/
+### Run
+
+```bash
+export SIGNET_DB_KEY="<base64-encoded-32-byte-key>"
+export SIGNET_BUNKER_NSEC="nsec1..."
+./builddir/signetd -c signet.toml
+```
+
+Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC` are **required**. Signet refuses to start without them.
+
+### Docker
+
+```bash
+docker compose up -d
 ```
 
 ## Configuration
 
-Create a configuration file at `/etc/signet/signet.toml` or specify with `-c`:
+See `signet.toml.example` for the full configuration reference.
 
 ```toml
-# Vault configuration for key custody
-[vault]
-base_url = "https://vault.example.com:8200"
-token = "hvs.CAES..."  # Or use VAULT_TOKEN env var
-kv_mount = "secret"
-kv_prefix = "signet/keys"
-secret_key_field = "nsec"
-ca_bundle_path = "/etc/ssl/certs/ca-bundle.crt"
-timeout_ms = 5000
+[server]
+log_level = "info"
+health_port = 8080
 
-# Relay configuration
-[relay]
-urls = [
-  "wss://relay.example.com",
-  "wss://relay2.example.com"
-]
+[store]
+db_path = "/data/signet.db"
 
-# Policy configuration
-[policy]
-file_path = "/etc/signet/policies.toml"
-default_decision = "deny"
+[nostr]
+relays = ["wss://relay.example.com"]
+reconnect_interval_s = 30
+provisioner_pubkeys = ["<hex pubkey>"]
 
-# Replay protection
-[replay]
-max_entries = 10000
-ttl_seconds = 300
-skew_seconds = 30
-
-# Audit logging
-[audit]
-log_path = "/var/log/signet/audit.jsonl"
-flush_each_write = false
-
-# Health monitoring
-[health]
-bind_addr = "127.0.0.1:9486"
-
-# Management
-[mgmt]
-admin_pubkeys = [
-  "npub1...",  # Admin public keys for management commands
-]
+[policy_defaults]
+allowed_kinds = []
+rate_limit_rpm = 0
 ```
 
-## Policy Configuration
-
-Create a policy file at `/etc/signet/policies.toml`:
-
-```toml
-# Policy for identity "alice"
-[alice]
-allow_clients = "*"  # Allow all clients
-allow_methods = "sign_event,get_public_key,nip04_encrypt,nip04_decrypt"
-allow_kinds = "1,4,5,6,7"  # Short text, DM, delete, repost, reaction
-deny_clients = ""
-deny_methods = ""
-deny_kinds = ""
-default = "deny"
-
-# Policy for identity "bob" - more restrictive
-[bob]
-allow_clients = "npub1client1...,npub1client2..."  # Specific clients only
-allow_methods = "sign_event,get_public_key"
-allow_kinds = "1"  # Only short text notes
-default = "deny"
-
-# Policy with wildcard matching
-[service_account]
-allow_clients = "npub1app*"  # Any client starting with npub1app
-allow_methods = "*"  # All methods
-allow_kinds = "*"  # All kinds
-default = "allow"
-```
-
-### Policy Rules
-
-- **Evaluation order**: deny rules checked first, then allow rules
-- **Wildcard support**: Use `*` for prefix/suffix matching (e.g., `npub1app*`, `*@example.com`)
-- **Comma-separated lists**: Multiple values separated by commas
-- **Default decision**: Applied when no explicit rule matches
-- **SIGHUP reload**: Send SIGHUP to daemon to reload policies without restart
-
-## Running the Daemon
-
-### Start the daemon
+## CLI
 
 ```bash
-# With default config path (/etc/signet/signet.toml)
-signetd
-
-# With custom config
-signetd -c /path/to/config.toml
-
-# Run in foreground (for testing)
-signetd -c config.toml
+signet-cli provision --label "agent-01" --allow-kinds 0,1,4 --rate-limit 60
+signet-cli revoke --agent-id <uuid>
+signet-cli policy --agent-id <uuid> --allow-kinds 0,1
+signet-cli status --agent-id <uuid>
+signet-cli audit --agent-id <uuid> --since 2026-01-01
+signet-cli health
 ```
 
-### Systemd service
-
-Create `/etc/systemd/system/signetd.service`:
-
-```ini
-[Unit]
-Description=Signet NIP-46 Remote Signing Bunker
-After=network.target vault.service
-
-[Service]
-Type=simple
-User=signet
-Group=signet
-ExecStart=/usr/local/bin/signetd -c /etc/signet/signet.toml
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
-RestartSec=5s
-
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/log/signet
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
+## Health Endpoint
 
 ```bash
-sudo systemctl enable signetd
-sudo systemctl start signetd
-sudo systemctl status signetd
+curl http://localhost:8080/health
 ```
-
-## Management CLI
-
-Use `signetctl` to manage the daemon:
-
-### Add or update policy
-
-```bash
-signetctl add-policy alice \
-  --allow-clients='*' \
-  --allow-methods='sign_event,get_public_key' \
-  --allow-kinds='1,4,5,6,7' \
-  --default=deny
-```
-
-### Revoke policy
-
-```bash
-signetctl revoke-policy alice
-```
-
-### List all policies
-
-```bash
-signetctl list-policies
-```
-
-### Rotate key in Vault
-
-```bash
-signetctl rotate-key alice
-```
-
-### Check daemon health
-
-```bash
-signetctl health
-```
-
-### Test connectivity
-
-```bash
-signetctl ping
-```
-
-## Health Monitoring
-
-Query the health endpoint:
-
-```bash
-curl http://127.0.0.1:9486/health
-```
-
-Response format:
 
 ```json
 {
   "status": "ok",
-  "timestamp": 1234567890,
-  "uptime_seconds": 3600,
-  "components": {
-    "relay_pool": "connected",
-    "vault_client": "reachable",
-    "policy_store": "loaded",
-    "key_store": "available"
-  }
+  "db": "open",
+  "relays": 2,
+  "agents_active": 14,
+  "cache_entries": 14,
+  "uptime_s": 86400
 }
 ```
 
-Status values:
-- `ok`: All components healthy
-- `degraded`: Some components unhealthy but service operational
-- `error`: Critical components failed
+## Security
 
-## Audit Logs
+- Agent nsecs never leave Signet's process — agents only receive `nostrconnect://` URIs
+- Key material in the hot cache is `mlock`'d (never swapped) and `explicit_bzero`'d on revocation/shutdown
+- SQLCipher provides AES-256 encryption at rest; nsec column is additionally encrypted with per-agent libsodium secretbox
+- Core dumps disabled via `prctl(PR_SET_DUMPABLE, 0)`
+- Runs as non-root `signet` user in production
 
-Audit logs are written in JSONL format to the configured path:
+## Migration Status
 
-```json
-{"timestamp":"2024-03-04T22:00:00Z","event_type":"startup","details":{"version":"0.1.0","config_path":"/etc/signet/signet.toml"}}
-{"timestamp":"2024-03-04T22:01:00Z","event_type":"sign_request","details":{"identity":"alice","client":"npub1...","method":"sign_event","kind":1,"allowed":true}}
-{"timestamp":"2024-03-04T22:02:00Z","event_type":"policy_decision","details":{"identity":"alice","client":"npub1...","method":"sign_event","decision":"allow","reason":"allow_methods matched"}}
-```
-
-### Log rotation
-
-Send SIGHUP to reopen log files after rotation:
-
-```bash
-# Rotate logs
-mv /var/log/signet/audit.jsonl /var/log/signet/audit.jsonl.1
-gzip /var/log/signet/audit.jsonl.1
-
-# Reopen
-sudo systemctl reload signetd
-# Or: kill -HUP $(pidof signetd)
-```
-
-## Security Considerations
-
-### Key Storage
-
-- **Never store keys in config files**: Use Vault or secure key management
-- **Vault token security**: Use short-lived tokens with appropriate policies
-- **Key rotation**: Regularly rotate keys using `signetctl rotate-key`
-
-### Network Security
-
-- **TLS for Vault**: Always use HTTPS for Vault communication
-- **Relay authentication**: Consider using authenticated relays
-- **Health endpoint**: Bind to localhost or use firewall rules
-
-### Policy Best Practices
-
-- **Deny by default**: Start with restrictive policies
-- **Principle of least privilege**: Grant minimum required permissions
-- **Regular audits**: Review audit logs for suspicious activity
-- **Client allowlists**: Use specific client pubkeys when possible
-
-### Operational Security
-
-- **Run as dedicated user**: Don't run as root
-- **File permissions**: Restrict config and log file access (0600)
-- **Audit log retention**: Implement log rotation and retention policies
-- **Monitor health endpoint**: Set up alerting for degraded status
-
-## Troubleshooting
-
-### Daemon won't start
-
-1. Check config file syntax: `signetd -c config.toml --validate` (if implemented)
-2. Verify Vault connectivity: `curl -H "X-Vault-Token: $VAULT_TOKEN" https://vault.example.com:8200/v1/sys/health`
-3. Check audit log for errors: `tail -f /var/log/signet/audit.jsonl`
-
-### Policy not working
-
-1. Verify policy file syntax
-2. Check policy file permissions (readable by signet user)
-3. Reload policies: `sudo systemctl reload signetd`
-4. Review audit logs for policy decisions
-
-### Relay connection issues
-
-1. Test relay connectivity: `websocat wss://relay.example.com`
-2. Check relay pool status via health endpoint
-3. Review relay URLs in config
-
-### High memory usage
-
-1. Reduce replay cache size: Lower `replay.max_entries`
-2. Disable key store caching: Set `key_store.cache_ttl_seconds = 0`
-3. Monitor with: `ps aux | grep signetd`
-
-## Development
-
-### Running tests
-
-```bash
-# Build with tests enabled
-cmake -B _build -DBUILD_TESTING=ON
-cmake --build _build
-
-# Run all tests
-cd _build && ctest --output-on-failure
-
-# Run specific test
-./signet/tests/test_replay_cache
-```
-
-### Code structure
-
-```
-signet/
-├── include/signet/       # Public headers
-│   ├── audit_logger.h
-│   ├── key_store.h
-│   ├── nip46_server.h
-│   ├── policy_engine.h
-│   └── ...
-├── src/                  # Implementation
-│   ├── audit_logger.c
-│   ├── key_store.c
-│   ├── nip46_server.c
-│   ├── signetd_main.c
-│   └── ...
-├── tests/                # Test suite
-│   ├── test_replay_cache.c
-│   ├── test_policy_engine.c
-│   └── ...
-├── CMakeLists.txt        # CMake build
-├── meson.build           # Meson build
-└── signet.toml.example   # Example config
-```
+This codebase is being migrated from a HashiCorp Vault backend to SQLCipher + hot key cache.
+See beads issues for tracking.
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Contributing
-
-Contributions welcome! Please:
-
-1. Follow existing code style
-2. Add tests for new features
-3. Update documentation
-4. Ensure all tests pass
-
-## Support
-
-- Issues: https://github.com/your-org/nostrc/issues
-- Documentation: https://docs.example.com/signet
-- Community: nostr:npub1...
-
-## Acknowledgments
-
-- Built on [libnostr](../libnostr/)
-- Implements [NIP-46](https://github.com/nostr-protocol/nips/blob/master/46.md)
-- Uses [HashiCorp Vault](https://www.vaultproject.io/) for key custody
+MIT

@@ -6,7 +6,7 @@
  * - validating and replay-protecting incoming NIP-46 events
  * - decrypting/parsing NIP-46 requests
  * - policy evaluation (per client/method/kind)
- * - loading custody keys (Vault) and producing signatures
+ * - loading custody keys (hot cache) and producing signatures
  * - emitting encrypted NIP-46 responses to relays
  *
  * Phase 1: API + stub implementation.

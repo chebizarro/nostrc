@@ -17,7 +17,7 @@
 typedef enum {
   SIGNET_POLICY_STORE_BACKEND_NONE = 0,
   SIGNET_POLICY_STORE_BACKEND_FILE,
-  SIGNET_POLICY_STORE_BACKEND_VAULT
+  /* SIGNET_POLICY_STORE_BACKEND_SQLCIPHER -- future */
 } SignetPolicyStoreBackend;
 
 typedef struct {
@@ -54,10 +54,6 @@ struct SignetPolicyStore {
   /* Last load error (for operator logs); may be NULL. */
   char *last_error;
 
-  /* Vault backend placeholders (not implemented in Phase 4) */
-  struct SignetVaultClient *vault;
-  char *vault_mount;
-  char *vault_prefix;
 
   GMutex mu;
 };
@@ -912,8 +908,6 @@ void signet_policy_store_free(SignetPolicyStore *ps) {
   g_clear_pointer(&ps->file_path, free);
   g_clear_pointer(&ps->last_error, g_free);
 
-  g_clear_pointer(&ps->vault_mount, free);
-  g_clear_pointer(&ps->vault_prefix, free);
 
   g_mutex_unlock(&ps->mu);
   g_mutex_clear(&ps->mu);
@@ -948,18 +942,4 @@ SignetPolicyStore *signet_policy_store_file_new(const char *path) {
   return ps;
 }
 
-SignetPolicyStore *signet_policy_store_vault_new(struct SignetVaultClient *vault,
-                                                 const char *mount,
-                                                 const char *prefix) {
-  (void)vault;
-  (void)mount;
-  (void)prefix;
-
-  /* Phase 4: vault backend not implemented. Keep constructor for link compatibility. */
-  SignetPolicyStore *ps = (SignetPolicyStore *)calloc(1, sizeof(*ps));
-  if (!ps) return NULL;
-
-  ps->backend = SIGNET_POLICY_STORE_BACKEND_VAULT;
-  g_mutex_init(&ps->mu);
-  return ps;
-}
+/* SQLCipher-backed policy store will be implemented in a future task. */

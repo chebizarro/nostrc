@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# Signet - NIP-46 bunker service with Vault-backed key custody
+# Signet - NIP-46 bunker service with SQLCipher-backed key custody
 #
 # Build with:
 #   cd signet
@@ -35,9 +35,6 @@ require_in_tree = get_option('signet_require_in_tree_libs')
 glib_dep = dependency('glib-2.0', version: '>= 2.56', required: true)
 openssl_dep = dependency('openssl', required: true)
 
-# Vault integration (optional)
-curl_dep = dependency('libcurl', required: get_option('signet_enable_vault'))
-
 # JSON backend
 json_backend = get_option('signet_json_backend')
 if json_backend == 'json-glib'
@@ -69,10 +66,6 @@ signet_deps = [
   json_dep,
   openssl_dep,
 ]
-
-if get_option('signet_enable_vault')
-  signet_deps += curl_dep
-endif
 
 if nostr_dep.found()
   signet_deps += nostr_dep
@@ -108,7 +101,6 @@ signet_core_sources = files(
   'src/signet_config.c',
   'src/audit_logger.c',
   'src/replay_cache.c',
-  'src/vault_client.c',
   'src/key_store.c',
   'src/policy_store.c',
   'src/policy_engine.c',
@@ -148,7 +140,6 @@ if get_option('signet_enable_tests')
 endif
 
 summary({
-  'Vault (libcurl)': get_option('signet_enable_vault') ? 'enabled' : 'disabled',
   'Health endpoint': get_option('signet_enable_health') ? 'enabled' : 'disabled',
   'JSON backend': json_backend,
   'In-tree libnostr required': require_in_tree ? 'yes' : 'no',

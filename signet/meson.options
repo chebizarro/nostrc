@@ -8,12 +8,6 @@ option('signet_enable_tests',
   description: 'Build Signet unit tests'
 )
 
-option('signet_enable_vault',
-  type: 'boolean',
-  value: true,
-  description: 'Enable Vault KV v2 client support (libcurl dependency)'
-)
-
 option('signet_enable_health',
   type: 'boolean',
   value: true,

@@ -151,14 +151,14 @@ static char *signet_build_health_json(const SignetHealthSnapshot *snap,
                                       int64_t now_unix,
                                       uint64_t uptime_seconds) {
   const char *relay_s = (snap && snap->relay_connected) ? "connected" : "disconnected";
-  const char *vault_s = (snap && snap->vault_reachable) ? "reachable" : "unreachable";
+  const char *db_s = (snap && snap->db_open) ? "open" : "closed";
   const char *policy_s = (snap && snap->policy_store_loaded) ? "loaded" : "error";
   const char *keystore_s = (snap && snap->key_store_available) ? "available" : "unavailable";
 
   const char *overall = "ok";
-  if (!(snap && snap->key_store_available) || !(snap && snap->policy_store_loaded)) {
+  if (!(snap && snap->db_open) || !(snap && snap->key_store_available) || !(snap && snap->policy_store_loaded)) {
     overall = "error";
-  } else if (!(snap && snap->relay_connected) || !(snap && snap->vault_reachable)) {
+  } else if (!(snap && snap->relay_connected)) {
     overall = "degraded";
   }
 
@@ -179,11 +179,17 @@ static char *signet_build_health_json(const SignetHealthSnapshot *snap,
   json_builder_set_member_name(b, "components");
   json_builder_begin_object(b);
 
-  json_builder_set_member_name(b, "relay_pool");
-  json_builder_add_string_value(b, relay_s);
+  json_builder_set_member_name(b, "db");
+  json_builder_add_string_value(b, db_s);
 
-  json_builder_set_member_name(b, "vault_client");
-  json_builder_add_string_value(b, vault_s);
+  json_builder_set_member_name(b, "relays");
+  json_builder_add_int_value(b, (gint64)(snap ? snap->relay_count : 0));
+
+  json_builder_set_member_name(b, "agents_active");
+  json_builder_add_int_value(b, (gint64)(snap ? snap->agents_active : 0));
+
+  json_builder_set_member_name(b, "cache_entries");
+  json_builder_add_int_value(b, (gint64)(snap ? snap->cache_entries : 0));
 
   json_builder_set_member_name(b, "policy_store");
   json_builder_add_string_value(b, policy_s);
@@ -338,7 +344,7 @@ SignetHealthServer *signet_health_server_new(const SignetHealthServerConfig *cfg
 
   memset(&hs->snap, 0, sizeof(hs->snap));
   hs->snap.relay_connected = false;
-  hs->snap.vault_reachable = false;
+    hs->snap.db_open = false;
   hs->snap.uptime_sec = 0;
   hs->snap.policy_store_loaded = false;
   hs->snap.key_store_available = false;

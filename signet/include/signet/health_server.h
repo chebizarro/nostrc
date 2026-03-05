@@ -28,12 +28,12 @@ typedef struct {
 } SignetHealthServerConfig;
 
 typedef struct {
-  /* Existing fields kept for compatibility. */
   bool relay_connected;
-  bool vault_reachable;
+  bool db_open;              /* true if SQLCipher database is open */
   uint64_t uptime_sec;
-
-  /* REPOMARK:SCOPE: 1 - Add component-level health flags used by /health JSON response */
+  uint32_t agents_active;    /* number of active agents */
+  uint32_t cache_entries;    /* entries in hot key cache */
+  uint32_t relay_count;      /* number of connected relays */
   bool policy_store_loaded;  /* true if policy store loaded/usable */
   bool key_store_available;  /* true if key store initialized/usable */
 } SignetHealthSnapshot;
