@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+#
+# Signet docker-compose deployment
+#
+# Usage:
+#   cp signet.toml.example data/signet.toml
+#   # Edit data/signet.toml with your relay URLs
+#   docker compose up -d
+#
+# Required environment variables (set in .env or pass directly):
+#   SIGNET_DB_KEY       - Master key for SQLCipher (min 32 bytes, hex)
+#   SIGNET_BUNKER_NSEC  - Bunker identity nsec (bech32 nsec1... or hex)
+#   SIGNET_RELAYS       - Comma-separated relay URLs
+
+services:
+  signetd:
+    build:
+      context: ..        # monorepo root (needs libnostr, nips, etc.)
+      dockerfile: signet/Dockerfile
+    container_name: signetd
+    restart: unless-stopped
+
+    environment:
+      - SIGNET_DB_KEY=${SIGNET_DB_KEY}
+      - SIGNET_BUNKER_NSEC=${SIGNET_BUNKER_NSEC}
+      - SIGNET_RELAYS=${SIGNET_RELAYS:-wss://relay.damus.io}
+      - SIGNET_LOG_LEVEL=${SIGNET_LOG_LEVEL:-info}
+      - SIGNET_PROVISIONER_PUBKEYS=${SIGNET_PROVISIONER_PUBKEYS:-}
+
+    volumes:
+      - signet-data:/data
+
+    ports:
+      - "${SIGNET_HEALTH_PORT:-8080}:8080"
+
+    # Security hardening
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '1.0'
+        reservations:
+          memory: 64M
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  signet-data:
+    driver: local
