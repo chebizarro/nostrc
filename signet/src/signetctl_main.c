@@ -9,6 +9,9 @@
 #include "signet/signet_config.h"
 #include "signet/mgmt_protocol.h"
 #include "signet/relay_pool.h"
+#include "signet/store.h"
+#include "signet/store_leases.h"
+#include "signet/store_audit.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +43,10 @@ static void signetctl_usage(FILE *out) {
     "  revoke <agent_id>        Revoke an agent identity\n"
     "  status                   Query daemon health status\n"
     "  list                     List managed agents\n"
+    "\n"
+    "  list-agents              List agents with details (local store)\n"
+    "  list-sessions            List active sessions (local store)\n"
+    "  list-leases              List active credential leases (local store)\n"
     "\n"
     "Options:\n"
     "  -c <path>    Configuration file path\n"
@@ -225,9 +232,102 @@ int main(int argc, char **argv) {
     kind = SIGNET_KIND_GET_STATUS;
   } else if (strcmp(cmd, "list") == 0) {
     kind = SIGNET_KIND_LIST_AGENTS;
+  } else if (strcmp(cmd, "list-agents") == 0 ||
+             strcmp(cmd, "list-sessions") == 0 ||
+             strcmp(cmd, "list-leases") == 0) {
+    /* Local store introspection — handled separately below. */
+    kind = -1;
   } else {
     fprintf(stderr, "signetctl: unknown command '%s'\n", cmd);
     return 2;
+  }
+
+  /* --- Local store introspection commands --- */
+  if (kind == -1) {
+    SignetConfig lcfg;
+    if (signet_config_load(config_path, &lcfg) != 0) {
+      fprintf(stderr, "signetctl: failed to load config\n");
+      return 1;
+    }
+    const char *db_key = g_getenv("SIGNET_DB_KEY");
+    SignetStoreConfig scfg = { .db_path = lcfg.db_path, .master_key = db_key ? db_key : "" };
+    SignetStore *store = signet_store_open(&scfg);
+    if (!store) {
+      fprintf(stderr, "signetctl: failed to open store at %s\n", lcfg.db_path);
+      signet_config_clear(&lcfg);
+      return 1;
+    }
+
+    if (strcmp(cmd, "list-agents") == 0) {
+      char **ids = NULL;
+      size_t count = 0;
+      if (signet_store_list_agents(store, &ids, &count) == 0) {
+        printf("%-20s %-10s\n", "AGENT_ID", "CREATED_AT");
+        for (size_t i = 0; i < count; i++) {
+          SignetAgentRecord rec;
+          memset(&rec, 0, sizeof(rec));
+          if (signet_store_get_agent(store, ids[i], &rec) == 0) {
+            printf("%-20s %-10" G_GINT64_FORMAT "\n", ids[i], rec.created_at);
+            signet_agent_record_clear(&rec);
+          } else {
+            printf("%-20s (error)\n", ids[i]);
+          }
+        }
+        printf("\nTotal: %zu agents\n", count);
+        signet_store_free_agent_ids(ids, count);
+      } else {
+        fprintf(stderr, "signetctl: failed to list agents\n");
+      }
+    } else if (strcmp(cmd, "list-leases") == 0) {
+      int64_t now = (int64_t)time(NULL);
+      /* List all active leases (pass NULL agent_id for all). */
+      SignetLeaseRecord *leases = NULL;
+      size_t count = 0;
+      if (signet_store_list_active_leases(store, NULL, now, &leases, &count) == 0) {
+        printf("%-16s %-16s %-16s %-12s %-12s\n",
+               "LEASE_ID", "AGENT_ID", "SECRET_ID", "ISSUED_AT", "EXPIRES_AT");
+        for (size_t i = 0; i < count; i++) {
+          printf("%-16s %-16s %-16s %-12" G_GINT64_FORMAT " %-12" G_GINT64_FORMAT "\n",
+                 leases[i].lease_id ? leases[i].lease_id : "",
+                 leases[i].agent_id ? leases[i].agent_id : "",
+                 leases[i].secret_id ? leases[i].secret_id : "",
+                 leases[i].issued_at,
+                 leases[i].expires_at);
+        }
+        printf("\nTotal: %zu active leases\n", count);
+        signet_lease_list_free(leases, count);
+      } else {
+        fprintf(stderr, "signetctl: failed to list leases\n");
+      }
+    } else if (strcmp(cmd, "list-sessions") == 0) {
+      /* Sessions are tracked as leases with secret_id='session'. */
+      int64_t now = (int64_t)time(NULL);
+      SignetLeaseRecord *leases = NULL;
+      size_t count = 0;
+      if (signet_store_list_active_leases(store, NULL, now, &leases, &count) == 0) {
+        printf("%-16s %-16s %-12s %-12s\n",
+               "SESSION_ID", "AGENT_ID", "ISSUED_AT", "EXPIRES_AT");
+        size_t session_count = 0;
+        for (size_t i = 0; i < count; i++) {
+          if (leases[i].secret_id && strcmp(leases[i].secret_id, "session") == 0) {
+            printf("%-16s %-16s %-12" G_GINT64_FORMAT " %-12" G_GINT64_FORMAT "\n",
+                   leases[i].lease_id ? leases[i].lease_id : "",
+                   leases[i].agent_id ? leases[i].agent_id : "",
+                   leases[i].issued_at,
+                   leases[i].expires_at);
+            session_count++;
+          }
+        }
+        printf("\nTotal: %zu active sessions\n", session_count);
+        signet_lease_list_free(leases, count);
+      } else {
+        fprintf(stderr, "signetctl: failed to list sessions\n");
+      }
+    }
+
+    signet_store_close(store);
+    signet_config_clear(&lcfg);
+    return 0;
   }
 
   /* Resolve provisioner secret key. */

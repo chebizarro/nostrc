@@ -138,6 +138,9 @@ signet_core_sources = files(
   'src/revocation.c',
   'src/dbus_unix.c',
   'src/bootstrap_delivery.c',
+  'src/dbus_tcp.c',
+  'src/nip5l_transport.c',
+  'src/session_broker.c',
 )
 
 signet_core = static_library('signet_core',
