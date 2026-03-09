@@ -36,6 +36,18 @@ typedef struct {
   uint32_t relay_count;      /* number of connected relays */
   bool policy_store_loaded;  /* true if policy store loaded/usable */
   bool key_store_available;  /* true if key store initialized/usable */
+  bool fleet_synced;         /* true if fleet registry synced at least once */
+
+  /* Prometheus counters (monotonic). */
+  uint64_t bootstrap_total;
+  uint64_t auth_total_ok;
+  uint64_t auth_total_denied;
+  uint64_t auth_total_error;
+  uint64_t sign_total;
+  uint64_t revoke_total;
+  int64_t fleet_sync_last_ts;  /* unix timestamp of last fleet sync */
+  uint32_t active_sessions;
+  uint32_t active_leases;
 } SignetHealthSnapshot;
 
 /* Create health server. Returns NULL on OOM. */

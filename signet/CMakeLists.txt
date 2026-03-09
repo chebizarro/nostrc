@@ -58,6 +58,7 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nostr_auth.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/capability.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/bootstrap_server.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/revocation.c
 )
 
 add_library(signet_core STATIC ${SIGNET_CORE_SOURCES})

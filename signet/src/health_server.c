@@ -95,6 +95,123 @@ static char *signet_build_health_json(const SignetHealthSnapshot *snap,
   return out;
 }
 
+/* ----------------------------- /ready handler ----------------------------- */
+
+static enum MHD_Result
+signet_handle_ready(SignetHealthServer *hs, struct MHD_Connection *connection) {
+  SignetHealthSnapshot snap_copy;
+  g_mutex_lock(&hs->mu);
+  snap_copy = hs->snap;
+  g_mutex_unlock(&hs->mu);
+
+  /* Ready = DB open AND fleet synced. */
+  bool ready = snap_copy.db_open && snap_copy.fleet_synced;
+  unsigned int status = ready ? MHD_HTTP_OK : MHD_HTTP_SERVICE_UNAVAILABLE;
+  const char *body = ready ? "{\"ready\":true}" : "{\"ready\":false}";
+
+  struct MHD_Response *resp = MHD_create_response_from_buffer(
+      strlen(body), (void *)body, MHD_RESPMEM_PERSISTENT);
+  MHD_add_response_header(resp, "Content-Type", "application/json");
+  MHD_add_response_header(resp, "Cache-Control", "no-store");
+  enum MHD_Result ret = MHD_queue_response(connection, status, resp);
+  MHD_destroy_response(resp);
+  return ret;
+}
+
+/* ----------------------------- /metrics handler --------------------------- */
+
+static char *signet_build_metrics(const SignetHealthSnapshot *s, uint64_t uptime_sec) {
+  GString *m = g_string_sized_new(1024);
+
+  g_string_append_printf(m, "# HELP signet_up Whether signet is up.\n");
+  g_string_append_printf(m, "# TYPE signet_up gauge\n");
+  g_string_append_printf(m, "signet_up 1\n");
+
+  g_string_append_printf(m, "# HELP signet_uptime_seconds Daemon uptime.\n");
+  g_string_append_printf(m, "# TYPE signet_uptime_seconds gauge\n");
+  g_string_append_printf(m, "signet_uptime_seconds %" G_GUINT64_FORMAT "\n", uptime_sec);
+
+  g_string_append_printf(m, "# HELP signet_bootstrap_total Bootstrap attempts.\n");
+  g_string_append_printf(m, "# TYPE signet_bootstrap_total counter\n");
+  g_string_append_printf(m, "signet_bootstrap_total %" G_GUINT64_FORMAT "\n",
+                         s->bootstrap_total);
+
+  g_string_append_printf(m, "# HELP signet_auth_total Auth attempts by result.\n");
+  g_string_append_printf(m, "# TYPE signet_auth_total counter\n");
+  g_string_append_printf(m, "signet_auth_total{result=\"ok\"} %" G_GUINT64_FORMAT "\n",
+                         s->auth_total_ok);
+  g_string_append_printf(m, "signet_auth_total{result=\"denied\"} %" G_GUINT64_FORMAT "\n",
+                         s->auth_total_denied);
+  g_string_append_printf(m, "signet_auth_total{result=\"error\"} %" G_GUINT64_FORMAT "\n",
+                         s->auth_total_error);
+
+  g_string_append_printf(m, "# HELP signet_sign_total Signing operations.\n");
+  g_string_append_printf(m, "# TYPE signet_sign_total counter\n");
+  g_string_append_printf(m, "signet_sign_total %" G_GUINT64_FORMAT "\n", s->sign_total);
+
+  g_string_append_printf(m, "# HELP signet_revoke_total Revocations.\n");
+  g_string_append_printf(m, "# TYPE signet_revoke_total counter\n");
+  g_string_append_printf(m, "signet_revoke_total %" G_GUINT64_FORMAT "\n", s->revoke_total);
+
+  g_string_append_printf(m, "# HELP signet_fleet_sync_last_timestamp Fleet sync time.\n");
+  g_string_append_printf(m, "# TYPE signet_fleet_sync_last_timestamp gauge\n");
+  g_string_append_printf(m, "signet_fleet_sync_last_timestamp %" G_GINT64_FORMAT "\n",
+                         s->fleet_sync_last_ts);
+
+  g_string_append_printf(m, "# HELP signet_active_sessions Current sessions.\n");
+  g_string_append_printf(m, "# TYPE signet_active_sessions gauge\n");
+  g_string_append_printf(m, "signet_active_sessions %u\n", s->active_sessions);
+
+  g_string_append_printf(m, "# HELP signet_active_leases Current credential leases.\n");
+  g_string_append_printf(m, "# TYPE signet_active_leases gauge\n");
+  g_string_append_printf(m, "signet_active_leases %u\n", s->active_leases);
+
+  g_string_append_printf(m, "# HELP signet_agents_active Active agents.\n");
+  g_string_append_printf(m, "# TYPE signet_agents_active gauge\n");
+  g_string_append_printf(m, "signet_agents_active %u\n", s->agents_active);
+
+  g_string_append_printf(m, "# HELP signet_relays_connected Connected relays.\n");
+  g_string_append_printf(m, "# TYPE signet_relays_connected gauge\n");
+  g_string_append_printf(m, "signet_relays_connected %u\n", s->relay_count);
+
+  return g_string_free(m, FALSE);
+}
+
+static enum MHD_Result
+signet_handle_metrics(SignetHealthServer *hs, struct MHD_Connection *connection) {
+  SignetHealthSnapshot snap_copy;
+  int64_t started_at;
+
+  g_mutex_lock(&hs->mu);
+  snap_copy = hs->snap;
+  started_at = hs->started_at_unix;
+  g_mutex_unlock(&hs->mu);
+
+  int64_t now = signet_now_unix();
+  uint64_t uptime = (started_at > 0 && now >= started_at)
+                      ? (uint64_t)(now - started_at)
+                      : snap_copy.uptime_sec;
+
+  char *body = signet_build_metrics(&snap_copy, uptime);
+  if (!body) {
+    const char *err = "# error building metrics\n";
+    struct MHD_Response *resp = MHD_create_response_from_buffer(
+        strlen(err), (void *)err, MHD_RESPMEM_PERSISTENT);
+    enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, resp);
+    MHD_destroy_response(resp);
+    return ret;
+  }
+
+  struct MHD_Response *resp = MHD_create_response_from_buffer(
+      strlen(body), body, MHD_RESPMEM_MUST_FREE);
+  MHD_add_response_header(resp, "Content-Type",
+                          "text/plain; version=0.0.4; charset=utf-8");
+  MHD_add_response_header(resp, "Cache-Control", "no-store");
+  enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_OK, resp);
+  MHD_destroy_response(resp);
+  return ret;
+}
+
 /* ----------------------------- MHD handler ------------------------------- */
 
 static enum MHD_Result
@@ -113,8 +230,28 @@ signet_health_handler(void *cls,
 
   SignetHealthServer *hs = (SignetHealthServer *)cls;
 
-  /* Only GET /health is served. */
-  if (strcmp(method, "GET") != 0 || strcmp(url, "/health") != 0) {
+  if (strcmp(method, "GET") != 0) {
+    const char *body = "{\"error\":\"method not allowed\"}";
+    struct MHD_Response *resp = MHD_create_response_from_buffer(
+        strlen(body), (void *)body, MHD_RESPMEM_PERSISTENT);
+    MHD_add_response_header(resp, "Content-Type", "application/json");
+    enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_METHOD_NOT_ALLOWED, resp);
+    MHD_destroy_response(resp);
+    return ret;
+  }
+
+  /* GET /ready */
+  if (strcmp(url, "/ready") == 0) {
+    return signet_handle_ready(hs, connection);
+  }
+
+  /* GET /metrics */
+  if (strcmp(url, "/metrics") == 0) {
+    return signet_handle_metrics(hs, connection);
+  }
+
+  /* GET /health (existing) */
+  if (strcmp(url, "/health") != 0) {
     const char *body = "{\"error\":\"not found\"}";
     struct MHD_Response *resp = MHD_create_response_from_buffer(
         strlen(body), (void *)body, MHD_RESPMEM_PERSISTENT);
