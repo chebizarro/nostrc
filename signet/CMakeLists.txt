@@ -55,6 +55,8 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_secrets.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_leases.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_audit.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/nostr_auth.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/capability.c
 )
 
 add_library(signet_core STATIC ${SIGNET_CORE_SOURCES})
@@ -114,8 +116,8 @@ target_include_directories(signetctl PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/incl
 
 install(TARGETS signetd signetctl RUNTIME DESTINATION bin)
 
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/signet.toml.example)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/signet.toml.example DESTINATION share/nostrc)
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/signet.conf.example)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/signet.conf.example DESTINATION share/nostrc)
 endif()
 
 # Tests
