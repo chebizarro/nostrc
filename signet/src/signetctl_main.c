@@ -329,8 +329,6 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "signetctl: failed to list sessions\n");
       }
-    }
-
     } else if (strcmp(cmd, "verify-audit") == 0) {
       int64_t broken_id = 0;
       int vrc = signet_audit_verify_chain(store, 1, 0, &broken_id);

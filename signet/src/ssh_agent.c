@@ -12,6 +12,10 @@
  * Signing uses libsodium crypto_sign_ed25519_detached on the mlock'd key.
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "signet/ssh_agent.h"
 #include "signet/key_store.h"
 #include "signet/capability.h"
