@@ -72,7 +72,7 @@ typedef struct SignetChallengeStore SignetChallengeStore;
 
 /* Fleet registry interface — callbacks to check authorization.
  * Implementations can query NIP-51 lists, internal mint tables, deny lists. */
-typedef struct {
+typedef struct SignetFleetRegistry {
   /* Returns true if pubkey_hex is authorized (in fleet list or mint table). */
   bool (*is_in_fleet)(const char *pubkey_hex, void *user_data);
 

@@ -131,6 +131,7 @@ signet_core_sources = files(
   'src/store_audit.c',
   'src/nostr_auth.c',
   'src/capability.c',
+  'src/bootstrap_server.c',
 )
 
 signet_core = static_library('signet_core',
