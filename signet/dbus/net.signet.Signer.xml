@@ -1,0 +1,45 @@
+<node>
+  <!-- Extends org.nostr.Signer with Signet-specific credential methods.
+       Auth: UID from SO_PEERCRED mapped to agent_id. All methods go through
+       capability engine before dispatch. -->
+
+  <interface name="net.signet.Signer">
+    <!-- Nostr signing operations (delegates to key_store) -->
+    <method name="GetPublicKey">
+      <arg type="s" direction="out" name="pubkey_hex" />
+    </method>
+    <method name="SignEvent">
+      <arg type="s" direction="in" name="event_json" />
+      <arg type="s" direction="out" name="signed_event_json" />
+    </method>
+    <method name="Encrypt">
+      <arg type="s" direction="in" name="plaintext" />
+      <arg type="s" direction="in" name="peer_pubkey_hex" />
+      <arg type="s" direction="in" name="algorithm" /> <!-- "nip04" or "nip44" -->
+      <arg type="s" direction="out" name="ciphertext" />
+    </method>
+    <method name="Decrypt">
+      <arg type="s" direction="in" name="ciphertext" />
+      <arg type="s" direction="in" name="peer_pubkey_hex" />
+      <arg type="s" direction="in" name="algorithm" />
+      <arg type="s" direction="out" name="plaintext" />
+    </method>
+  </interface>
+
+  <interface name="net.signet.Credentials">
+    <!-- Credential lease operations -->
+    <method name="GetSession">
+      <arg type="s" direction="in" name="service_url" />
+      <arg type="s" direction="out" name="session_token" />
+      <arg type="x" direction="out" name="expires_at" />
+    </method>
+    <method name="GetToken">
+      <arg type="s" direction="in" name="credential_type" />
+      <arg type="s" direction="out" name="token" />
+      <arg type="x" direction="out" name="expires_at" />
+    </method>
+    <method name="ListCredentials">
+      <arg type="as" direction="out" name="credential_types" />
+    </method>
+  </interface>
+</node>

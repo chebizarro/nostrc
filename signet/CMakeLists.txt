@@ -59,6 +59,8 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/capability.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/bootstrap_server.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/revocation.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/dbus_unix.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bootstrap_delivery.c
 )
 
 add_library(signet_core STATIC ${SIGNET_CORE_SOURCES})
@@ -70,6 +72,7 @@ target_include_directories(signet_core
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/nips/nip01/include
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
+    ${CMAKE_SOURCE_DIR}/nips/nip17/include
     ${CMAKE_SOURCE_DIR}/nips/nip19/include
     ${CMAKE_SOURCE_DIR}/nips/nip44/include
     ${CMAKE_SOURCE_DIR}/nips/nip46/include

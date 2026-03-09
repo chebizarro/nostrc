@@ -33,6 +33,7 @@ require_in_tree = get_option('signet_require_in_tree_libs')
 
 # Core dependencies (runtime + security)
 glib_dep = dependency('glib-2.0', version: '>= 2.56', required: true)
+gio_dep = dependency('gio-2.0', required: true)
 openssl_dep = dependency('openssl', required: true)
 sqlite3_dep = dependency('sqlite3', required: true)
 sodium_dep = dependency('libsodium', required: true)
@@ -69,6 +70,7 @@ nip44_dep = cc.find_library('nip44', dirs: in_tree_dirs, required: require_in_tr
 
 signet_deps = [
   glib_dep,
+  gio_dep,
   json_dep,
   openssl_dep,
   sqlite3_dep,
@@ -100,6 +102,7 @@ libnostr_inc = include_directories('../libnostr/include')
 nips_inc = include_directories(
   '../nips/nip01/include',
   '../nips/nip04/include',
+  '../nips/nip17/include',
   '../nips/nip19/include',
   '../nips/nip44/include',
   '../nips/nip46/include',
@@ -133,6 +136,8 @@ signet_core_sources = files(
   'src/capability.c',
   'src/bootstrap_server.c',
   'src/revocation.c',
+  'src/dbus_unix.c',
+  'src/bootstrap_delivery.c',
 )
 
 signet_core = static_library('signet_core',
