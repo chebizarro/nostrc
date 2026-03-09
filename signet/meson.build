@@ -141,6 +141,7 @@ signet_core_sources = files(
   'src/dbus_tcp.c',
   'src/nip5l_transport.c',
   'src/session_broker.c',
+  'src/ssh_agent.c',
 )
 
 signet_core = static_library('signet_core',

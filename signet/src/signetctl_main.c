@@ -12,6 +12,7 @@
 #include "signet/store.h"
 #include "signet/store_leases.h"
 #include "signet/store_audit.h"
+#include "signet/store_secrets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,7 @@
 #include <json-glib/json-glib.h>
 
 /* libnostr */
+#include <sodium.h>
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr/nip19/nip19.h>
@@ -47,6 +49,8 @@ static void signetctl_usage(FILE *out) {
     "  list-agents              List agents with details (local store)\n"
     "  list-sessions            List active sessions (local store)\n"
     "  list-leases              List active credential leases (local store)\n"
+    "  verify-audit             Verify hash-chained audit log integrity\n"
+    "  rotate-credential <id>   Rotate a credential (archives old version)\n"
     "\n"
     "Options:\n"
     "  -c <path>    Configuration file path\n"
@@ -234,7 +238,9 @@ int main(int argc, char **argv) {
     kind = SIGNET_KIND_LIST_AGENTS;
   } else if (strcmp(cmd, "list-agents") == 0 ||
              strcmp(cmd, "list-sessions") == 0 ||
-             strcmp(cmd, "list-leases") == 0) {
+             strcmp(cmd, "list-leases") == 0 ||
+             strcmp(cmd, "verify-audit") == 0 ||
+             strcmp(cmd, "rotate-credential") == 0) {
     /* Local store introspection — handled separately below. */
     kind = -1;
   } else {
@@ -322,6 +328,40 @@ int main(int argc, char **argv) {
         signet_lease_list_free(leases, count);
       } else {
         fprintf(stderr, "signetctl: failed to list sessions\n");
+      }
+    }
+
+    } else if (strcmp(cmd, "verify-audit") == 0) {
+      int64_t broken_id = 0;
+      int vrc = signet_audit_verify_chain(store, 1, 0, &broken_id);
+      if (vrc == 0) {
+        int64_t total = signet_audit_log_count(store);
+        printf("Audit log integrity: OK\n");
+        printf("Total entries: %" G_GINT64_FORMAT "\n", total);
+      } else if (vrc == 1) {
+        fprintf(stderr, "Audit log integrity: BROKEN at entry %" G_GINT64_FORMAT "\n", broken_id);
+      } else {
+        fprintf(stderr, "signetctl: failed to verify audit chain\n");
+      }
+    } else if (strcmp(cmd, "rotate-credential") == 0) {
+      if (argi >= argc) {
+        fprintf(stderr, "signetctl: rotate-credential requires <id>\n");
+        signet_store_close(store);
+        signet_config_clear(&lcfg);
+        return 2;
+      }
+      const char *cred_id = argv[argi];
+      /* Generate new payload (placeholder — real rotation needs new credential). */
+      uint8_t new_payload[32];
+      randombytes_buf(new_payload, sizeof(new_payload));
+      int64_t now = (int64_t)time(NULL);
+      int rrc = signet_store_rotate_secret(store, cred_id, new_payload,
+                                             sizeof(new_payload), now);
+      sodium_memzero(new_payload, sizeof(new_payload));
+      if (rrc == 0) {
+        printf("Credential '%s' rotated successfully (old version archived).\n", cred_id);
+      } else {
+        fprintf(stderr, "signetctl: failed to rotate credential '%s'\n", cred_id);
       }
     }
 

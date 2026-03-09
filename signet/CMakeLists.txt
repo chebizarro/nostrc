@@ -64,6 +64,7 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/dbus_tcp.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nip5l_transport.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/session_broker.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ssh_agent.c
 )
 
 add_library(signet_core STATIC ${SIGNET_CORE_SOURCES})
