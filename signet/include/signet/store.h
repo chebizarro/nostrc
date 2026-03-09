@@ -96,6 +96,15 @@ void signet_agent_record_clear(SignetAgentRecord *rec);
 /* Free an agent ID list. Safe on NULL. */
 void signet_store_free_agent_ids(char **ids, size_t count);
 
+/* Get the underlying sqlite3 handle for use by sub-stores.
+ * Returns NULL if store is not open. The handle is owned by the store. */
+struct sqlite3 *signet_store_get_db(SignetStore *store);
+
+/* Get the data-encryption key for envelope encryption by sub-stores.
+ * Returns NULL if store is not open. The pointer is mlock'd and owned by the store.
+ * Caller MUST NOT free or modify. */
+const uint8_t *signet_store_get_dek(const SignetStore *store);
+
 #ifdef __cplusplus
 }
 #endif

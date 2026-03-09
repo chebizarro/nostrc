@@ -125,6 +125,10 @@ signet_core_sources = files(
   'src/nip46_server.c',
   'src/mgmt_protocol.c',
   'src/health_server.c',
+  'src/store_tokens.c',
+  'src/store_secrets.c',
+  'src/store_leases.c',
+  'src/store_audit.c',
 )
 
 signet_core = static_library('signet_core',

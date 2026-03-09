@@ -51,6 +51,10 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nip46_server.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mgmt_protocol.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/health_server.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/store_tokens.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/store_secrets.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/store_leases.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/store_audit.c
 )
 
 add_library(signet_core STATIC ${SIGNET_CORE_SOURCES})

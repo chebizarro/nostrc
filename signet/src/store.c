@@ -99,6 +99,7 @@ static bool signet_derive_dek(const char *master_key, uint8_t dek[SIGNET_DEK_LEN
 /* ------------------------------ schema ----------------------------------- */
 
 static const char *SIGNET_SCHEMA_SQL =
+  /* v1: agent keypair storage */
   "CREATE TABLE IF NOT EXISTS agents ("
   "  agent_id TEXT PRIMARY KEY NOT NULL,"
   "  encrypted_nsec BLOB NOT NULL,"
@@ -107,7 +108,88 @@ static const char *SIGNET_SCHEMA_SQL =
   "  connect_secret TEXT,"
   "  created_at INTEGER NOT NULL,"
   "  last_used INTEGER NOT NULL DEFAULT 0"
-  ");";
+  ");"
+
+  /* v2: extended secrets (multi-type credentials) */
+  "CREATE TABLE IF NOT EXISTS secrets ("
+  "  id TEXT PRIMARY KEY,"
+  "  agent_id TEXT NOT NULL,"
+  "  agent_pubkey TEXT NOT NULL,"
+  "  secret_type TEXT NOT NULL,"
+  "  label TEXT NOT NULL,"
+  "  payload BLOB NOT NULL,"
+  "  nonce BLOB NOT NULL,"
+  "  policy_id TEXT,"
+  "  created_at INTEGER NOT NULL,"
+  "  rotated_at INTEGER,"
+  "  expires_at INTEGER,"
+  "  version INTEGER DEFAULT 1,"
+  "  active_version INTEGER DEFAULT 1"
+  ");"
+  "CREATE INDEX IF NOT EXISTS idx_secrets_agent ON secrets(agent_id);"
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_secrets_pubkey ON secrets(agent_pubkey);"
+
+  /* v2: credential version history for rotation */
+  "CREATE TABLE IF NOT EXISTS secret_versions ("
+  "  id TEXT NOT NULL,"
+  "  version INTEGER NOT NULL,"
+  "  payload BLOB NOT NULL,"
+  "  nonce BLOB NOT NULL,"
+  "  created_at INTEGER NOT NULL,"
+  "  revoked_at INTEGER,"
+  "  PRIMARY KEY (id, version)"
+  ");"
+
+  /* v2: time-bound credential leases */
+  "CREATE TABLE IF NOT EXISTS leases ("
+  "  lease_id TEXT PRIMARY KEY,"
+  "  secret_id TEXT NOT NULL,"
+  "  agent_id TEXT NOT NULL,"
+  "  issued_at INTEGER NOT NULL,"
+  "  expires_at INTEGER NOT NULL,"
+  "  revoked_at INTEGER,"
+  "  metadata TEXT"
+  ");"
+  "CREATE INDEX IF NOT EXISTS idx_leases_agent ON leases(agent_id);"
+  "CREATE INDEX IF NOT EXISTS idx_leases_secret ON leases(secret_id);"
+
+  /* v2: per-credential access policy */
+  "CREATE TABLE IF NOT EXISTS credential_policy ("
+  "  credential_id TEXT NOT NULL,"
+  "  authorized_agents TEXT NOT NULL,"
+  "  session_broker INTEGER DEFAULT 0,"
+  "  rate_limit TEXT,"
+  "  lease_duration_s INTEGER"
+  ");"
+  "CREATE INDEX IF NOT EXISTS idx_credpol_cred ON credential_policy(credential_id);"
+
+  /* v2: bootstrap tokens (single-use, attempt-limited) */
+  "CREATE TABLE IF NOT EXISTS bootstrap_tokens ("
+  "  token_hash TEXT PRIMARY KEY,"
+  "  agent_id TEXT NOT NULL,"
+  "  bootstrap_pubkey TEXT NOT NULL,"
+  "  issued_at INTEGER NOT NULL,"
+  "  expires_at INTEGER NOT NULL,"
+  "  used_at INTEGER,"
+  "  attempt_count INTEGER DEFAULT 0"
+  ");"
+  "CREATE INDEX IF NOT EXISTS idx_bootstrap_agent ON bootstrap_tokens(agent_id);"
+
+  /* v2: append-only hash-chained audit log */
+  "CREATE TABLE IF NOT EXISTS audit_log ("
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+  "  ts INTEGER NOT NULL,"
+  "  agent_id TEXT NOT NULL,"
+  "  operation TEXT NOT NULL,"
+  "  secret_id TEXT,"
+  "  transport TEXT,"
+  "  detail TEXT,"
+  "  prev_hash TEXT NOT NULL,"
+  "  entry_hash TEXT NOT NULL"
+  ");"
+  "CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent_id);"
+  "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);"
+;
 
 /* ------------------------------ public API -------------------------------- */
 
@@ -416,6 +498,16 @@ int signet_store_consume_connect_secret(SignetStore *store,
 
   if (rc != SQLITE_DONE) return -1;
   return (changes > 0) ? 0 : 1; /* 1 = not found or already consumed */
+}
+
+sqlite3 *signet_store_get_db(SignetStore *store) {
+  if (!store || !store->open) return NULL;
+  return store->db;
+}
+
+const uint8_t *signet_store_get_dek(const SignetStore *store) {
+  if (!store || !store->open) return NULL;
+  return store->dek;
 }
 
 void signet_store_free_agent_ids(char **ids, size_t count) {
