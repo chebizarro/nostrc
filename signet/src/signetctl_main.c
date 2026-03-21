@@ -28,6 +28,9 @@
 #include <nostr-keys.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr/nip44/nip44.h>
+
+/* Forward declarations */
+static bool signetctl_hex_to_bytes32(const char *hex, uint8_t out[32]);
 #include <secure_buf.h>
 
 #define SIGNETCTL_VERSION "0.1.0"
