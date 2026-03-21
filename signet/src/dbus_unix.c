@@ -23,6 +23,12 @@
 #include <glib.h>
 #include <sodium.h>
 
+/* libnostr event signing + NIP-04 */
+#include <nostr-event.h>
+#include <nostr-keys.h>
+#include <nostr/nip04.h>
+#include <json.h>
+
 #define SIGNET_DBUS_BUS_NAME "net.signet.Signer"
 #define SIGNET_DBUS_OBJECT_PATH "/net/signet/Signer"
 
@@ -137,8 +143,8 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
     return;
   }
 
-  /* Capability check. */
-  if (!signet_policy_evaluate(ds->policy, agent_id, method_name, -1)) {
+  /* Capability check (skip if policy not configured). */
+  if (ds->policy && !signet_policy_evaluate(ds->policy, agent_id, method_name, -1)) {
     g_free(agent_id);
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.CapabilityDenied",
@@ -147,6 +153,21 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
   }
 
   if (strcmp(method_name, "GetPublicKey") == 0) {
+    char pubkey_hex[65];
+    if (!signet_key_store_get_agent_pubkey(ds->keys, agent_id, pubkey_hex, sizeof(pubkey_hex))) {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.NotFound", "Agent key not found");
+      return;
+    }
+    g_dbus_method_invocation_return_value(invocation,
+        g_variant_new("(s)", pubkey_hex));
+
+  } else if (strcmp(method_name, "SignEvent") == 0) {
+    const char *event_json = NULL;
+    g_variant_get(parameters, "(&s)", &event_json);
+
+    /* Load the agent's secret key. */
     SignetLoadedKey lk;
     memset(&lk, 0, sizeof(lk));
     if (!signet_key_store_load_agent_key(ds->keys, agent_id, &lk)) {
@@ -155,41 +176,135 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
           invocation, "net.signet.Error.NotFound", "Agent key not found");
       return;
     }
-    /* Convert secret key → public key hex. */
-    uint8_t pk[32];
-    if (crypto_scalarmult_ed25519_base_noclamp(pk, lk.secret_key) != 0) {
+
+    /* Deserialize, sign with libnostr, serialize back. */
+    NostrEvent *ev = nostr_event_new();
+    if (!ev || nostr_event_deserialize(ev, event_json) != 0) {
+      if (ev) nostr_event_free(ev);
       signet_loaded_key_clear(&lk);
       g_free(agent_id);
       g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.Internal", "Key derivation failed");
+          invocation, "net.signet.Error.BadRequest", "Invalid event JSON");
       return;
     }
-    char hex[65];
-    for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", pk[i]);
-    hex[64] = '\0';
-    sodium_memzero(pk, sizeof(pk));
+
+    /* Convert secret key to hex for nostr_event_sign(). */
+    char sk_hex[65];
+    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+    sk_hex[64] = '\0';
+    int sign_rc = nostr_event_sign(ev, sk_hex);
+    sodium_memzero(sk_hex, sizeof(sk_hex));
     signet_loaded_key_clear(&lk);
 
+    if (sign_rc != 0) {
+      nostr_event_free(ev);
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.Internal", "Signing failed");
+      return;
+    }
+
+    char *signed_json = nostr_event_serialize(ev);
+    nostr_event_free(ev);
+    if (!signed_json) {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.Internal", "Serialization failed");
+      return;
+    }
+
     g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(s)", hex));
+        g_variant_new("(s)", signed_json));
+    free(signed_json);
 
-  } else if (strcmp(method_name, "SignEvent") == 0) {
-    const char *event_json = NULL;
-    g_variant_get(parameters, "(&s)", &event_json);
+  } else if (strcmp(method_name, "Encrypt") == 0) {
+    const char *plaintext = NULL, *peer_pubkey = NULL, *algo = NULL;
+    g_variant_get(parameters, "(&s&s&s)", &plaintext, &peer_pubkey, &algo);
 
-    /* TODO: Deserialize event, extract kind for kind-filtering, sign with
-     * agent key via nostr_event_sign_secure(), return signed event JSON.
-     * For now, return a placeholder indicating the signing pipeline. */
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotImplemented",
-        "SignEvent dispatch not yet wired to signing pipeline");
+    if (algo && strcmp(algo, "nip04") != 0 && algo[0] != '\0') {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.BadRequest",
+          "Unsupported algorithm; use 'nip04' or empty");
+      return;
+    }
 
-  } else if (strcmp(method_name, "Encrypt") == 0 ||
-             strcmp(method_name, "Decrypt") == 0) {
-    /* TODO: Wire to NIP-04/NIP-44 encryption via nip55l ops or direct. */
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotImplemented",
-        "Encrypt/Decrypt not yet wired");
+    SignetLoadedKey lk;
+    memset(&lk, 0, sizeof(lk));
+    if (!signet_key_store_load_agent_key(ds->keys, agent_id, &lk)) {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.NotFound", "Agent key not found");
+      return;
+    }
+
+    char sk_hex[65];
+    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+    sk_hex[64] = '\0';
+
+    char *ciphertext = NULL;
+    char *err_msg = NULL;
+    int rc = nostr_nip04_encrypt(plaintext, peer_pubkey, sk_hex, &ciphertext, &err_msg);
+    sodium_memzero(sk_hex, sizeof(sk_hex));
+    signet_loaded_key_clear(&lk);
+
+    if (rc != 0) {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.Internal",
+          err_msg ? err_msg : "Encryption failed");
+      free(err_msg);
+      return;
+    }
+
+    g_dbus_method_invocation_return_value(invocation,
+        g_variant_new("(s)", ciphertext));
+    free(ciphertext);
+
+  } else if (strcmp(method_name, "Decrypt") == 0) {
+    const char *ciphertext = NULL, *peer_pubkey = NULL, *algo = NULL;
+    g_variant_get(parameters, "(&s&s&s)", &ciphertext, &peer_pubkey, &algo);
+
+    if (algo && strcmp(algo, "nip04") != 0 && algo[0] != '\0') {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.BadRequest",
+          "Unsupported algorithm; use 'nip04' or empty");
+      return;
+    }
+
+    SignetLoadedKey lk;
+    memset(&lk, 0, sizeof(lk));
+    if (!signet_key_store_load_agent_key(ds->keys, agent_id, &lk)) {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.NotFound", "Agent key not found");
+      return;
+    }
+
+    char sk_hex[65];
+    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+    sk_hex[64] = '\0';
+
+    char *plaintext_out = NULL;
+    char *err_msg = NULL;
+    int rc = nostr_nip04_decrypt(ciphertext, peer_pubkey, sk_hex, &plaintext_out, &err_msg);
+    sodium_memzero(sk_hex, sizeof(sk_hex));
+    signet_loaded_key_clear(&lk);
+
+    if (rc != 0) {
+      g_free(agent_id);
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.Internal",
+          err_msg ? err_msg : "Decryption failed");
+      free(err_msg);
+      return;
+    }
+
+    g_dbus_method_invocation_return_value(invocation,
+        g_variant_new("(s)", plaintext_out));
+    free(plaintext_out);
+
   } else {
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.UnknownMethod", "Unknown method");
@@ -220,7 +335,7 @@ static void signet_dbus_handle_credentials(GDBusConnection *connection,
     return;
   }
 
-  if (!signet_policy_evaluate(ds->policy, agent_id, method_name, -1)) {
+  if (ds->policy && !signet_policy_evaluate(ds->policy, agent_id, method_name, -1)) {
     g_free(agent_id);
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.CapabilityDenied",
@@ -368,7 +483,7 @@ static void signet_on_name_lost(GDBusConnection *conn,
 /* ------------------------------ public API -------------------------------- */
 
 SignetDbusServer *signet_dbus_server_new(const SignetDbusServerConfig *cfg) {
-  if (!cfg || !cfg->keys || !cfg->policy) return NULL;
+  if (!cfg || !cfg->keys) return NULL;  /* policy may be NULL (skips capability check) */
 
   SignetDbusServer *ds = g_new0(SignetDbusServer, 1);
   if (!ds) return NULL;

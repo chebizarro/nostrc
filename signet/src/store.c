@@ -178,6 +178,15 @@ static const char *SIGNET_SCHEMA_SQL =
   "CREATE INDEX IF NOT EXISTS idx_bootstrap_agent ON bootstrap_tokens(agent_id);"
   "CREATE INDEX IF NOT EXISTS idx_bootstrap_handoff ON bootstrap_tokens(handoff_secret);"
 
+  /* v2: deny list for revocation */
+  "CREATE TABLE IF NOT EXISTS deny_list ("
+  "  pubkey_hex TEXT PRIMARY KEY NOT NULL,"
+  "  agent_id TEXT,"
+  "  reason TEXT,"
+  "  denied_at INTEGER NOT NULL"
+  ");"
+  "CREATE INDEX IF NOT EXISTS idx_deny_agent ON deny_list(agent_id);"
+
   /* v2: append-only hash-chained audit log */
   "CREATE TABLE IF NOT EXISTS audit_log ("
   "  id INTEGER PRIMARY KEY AUTOINCREMENT,"

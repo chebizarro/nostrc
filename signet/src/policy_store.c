@@ -713,6 +713,245 @@ int signet_policy_store_get(SignetPolicyStore *ps,
   return 0;
 }
 
+/* ---- set_identity_json: parse JSON → SignetIdentityPolicy, persist ---- */
+
+/* Helper: serialize an identity policy back to GKeyFile under [identity.<id>]. */
+static void signet_policy_identity_to_keyfile(GKeyFile *kf,
+                                              const char *identity,
+                                              const SignetIdentityPolicy *p) {
+  g_autofree char *grp = g_strdup_printf("identity.%s", identity);
+
+  g_key_file_set_string(kf, grp, "default", p->default_allow ? "allow" : "deny");
+
+  if (p->ttl_seconds > 0) {
+    g_autofree char *ttl = g_strdup_printf("%u", p->ttl_seconds);
+    g_key_file_set_string(kf, grp, "ttl_seconds", ttl);
+  }
+
+  /* Serialize string list as JSON array. */
+  #define WRITE_STR_LIST(field, key_name)                                         \
+    if (p->field && p->field->len > 0) {                                          \
+      GString *buf = g_string_new("[");                                           \
+      for (guint _i = 0; _i < p->field->len; _i++) {                             \
+        if (_i > 0) g_string_append_c(buf, ',');                                  \
+        g_string_append_printf(buf, "\"%s\"",                                     \
+            (const char *)g_ptr_array_index(p->field, _i));                       \
+      }                                                                            \
+      g_string_append_c(buf, ']');                                                \
+      g_key_file_set_string(kf, grp, key_name, buf->str);                         \
+      g_string_free(buf, TRUE);                                                   \
+    }
+
+  WRITE_STR_LIST(allow_clients, "allow_clients")
+  WRITE_STR_LIST(deny_clients,  "deny_clients")
+  WRITE_STR_LIST(allow_methods, "allow_methods")
+  WRITE_STR_LIST(deny_methods,  "deny_methods")
+  #undef WRITE_STR_LIST
+
+  /* Serialize kind lists. */
+  #define WRITE_KIND_LIST(arr_field, any_field, key_name)                          \
+    if (p->any_field) {                                                            \
+      g_key_file_set_string(kf, grp, key_name, "[\"*\"]");                        \
+    } else if (p->arr_field && p->arr_field->len > 0) {                           \
+      GString *buf = g_string_new("[");                                           \
+      for (guint _i = 0; _i < p->arr_field->len; _i++) {                         \
+        if (_i > 0) g_string_append_c(buf, ',');                                  \
+        g_string_append_printf(buf, "%" G_GINT64_FORMAT,                          \
+            g_array_index(p->arr_field, gint64, _i));                             \
+      }                                                                            \
+      g_string_append_c(buf, ']');                                                \
+      g_key_file_set_string(kf, grp, key_name, buf->str);                         \
+      g_string_free(buf, TRUE);                                                   \
+    }
+
+  WRITE_KIND_LIST(allow_kinds, allow_kinds_any, "allow_kinds")
+  WRITE_KIND_LIST(deny_kinds,  deny_kinds_any,  "deny_kinds")
+  #undef WRITE_KIND_LIST
+}
+
+/* Parse a JSON string list member into a canonicalized GPtrArray. */
+static GPtrArray *signet_parse_json_string_array(JsonObject *o,
+                                                 const char *member,
+                                                 gboolean canonicalize_pubkeys) {
+  if (!json_object_has_member(o, member)) return NULL;
+
+  JsonNode *n = json_object_get_member(o, member);
+  if (!n || !JSON_NODE_HOLDS_ARRAY(n)) return NULL;
+
+  JsonArray *a = json_node_get_array(n);
+  guint len = json_array_get_length(a);
+  if (len == 0) return NULL;
+
+  GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
+
+  for (guint i = 0; i < len; i++) {
+    JsonNode *en = json_array_get_element(a, i);
+    if (!en || !JSON_NODE_HOLDS_VALUE(en)) continue;
+    if (json_node_get_value_type(en) != G_TYPE_STRING) continue;
+
+    const char *v = json_node_get_string(en);
+    if (!v || v[0] == '\0') continue;
+
+    if (canonicalize_pubkeys) {
+      char *canon = signet_pubkey_canon_dup(v);
+      if (canon) g_ptr_array_add(out, canon);
+    } else {
+      g_ptr_array_add(out, g_strdup(v));
+    }
+  }
+
+  if (out->len == 0) { g_ptr_array_free(out, TRUE); return NULL; }
+  return out;
+}
+
+/* Parse a JSON int/string array for kind lists. */
+static gboolean signet_parse_json_kind_array(JsonObject *o,
+                                             const char *member,
+                                             GArray **out_arr,
+                                             gboolean *out_any) {
+  *out_arr = NULL;
+  *out_any = FALSE;
+
+  if (!json_object_has_member(o, member)) return TRUE;
+
+  JsonNode *n = json_object_get_member(o, member);
+  if (!n || !JSON_NODE_HOLDS_ARRAY(n)) return FALSE;
+
+  JsonArray *a = json_node_get_array(n);
+  guint len = json_array_get_length(a);
+  if (len == 0) return TRUE;
+
+  GArray *arr = g_array_new(FALSE, FALSE, sizeof(gint64));
+
+  for (guint i = 0; i < len; i++) {
+    JsonNode *en = json_array_get_element(a, i);
+    if (!en) continue;
+
+    if (JSON_NODE_HOLDS_VALUE(en)) {
+      GType t = json_node_get_value_type(en);
+      if (t == G_TYPE_STRING) {
+        const char *sv = json_node_get_string(en);
+        if (sv && strcmp(sv, "*") == 0) *out_any = TRUE;
+      } else if (t == G_TYPE_INT64 || t == G_TYPE_DOUBLE || t == G_TYPE_INT) {
+        gint64 v = json_node_get_int(en);
+        g_array_append_val(arr, v);
+      }
+    }
+  }
+
+  if (arr->len == 0 && !*out_any) { g_array_free(arr, TRUE); return TRUE; }
+  *out_arr = arr;
+  return TRUE;
+}
+
+int signet_policy_store_set_identity_json(SignetPolicyStore *ps,
+                                          const char *identity,
+                                          const char *policy_json,
+                                          int64_t now,
+                                          char **out_error) {
+  if (!ps || !identity || !identity[0] || !policy_json || !policy_json[0]) {
+    if (out_error) *out_error = g_strdup("invalid arguments");
+    return -1;
+  }
+
+  /* Parse policy JSON. */
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, policy_json, -1, NULL)) {
+    if (out_error) *out_error = g_strdup("invalid policy JSON");
+    return -1;
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
+    if (out_error) *out_error = g_strdup("policy must be a JSON object");
+    return -1;
+  }
+
+  JsonObject *o = json_node_get_object(root);
+
+  /* Build SignetIdentityPolicy from the JSON. */
+  SignetIdentityPolicy *p = g_new0(SignetIdentityPolicy, 1);
+  p->loaded_at = now;
+  p->default_allow = FALSE; /* safe default */
+
+  /* "default": "allow"|"deny" */
+  if (json_object_has_member(o, "default")) {
+    const char *defv = json_object_get_string_member(o, "default");
+    if (defv && g_ascii_strcasecmp(defv, "allow") == 0) p->default_allow = TRUE;
+  }
+
+  /* "ttl_seconds": <int> */
+  if (json_object_has_member(o, "ttl_seconds")) {
+    gint64 ttl = json_object_get_int_member(o, "ttl_seconds");
+    if (ttl > 0 && ttl <= G_MAXUINT32) p->ttl_seconds = (guint32)ttl;
+  }
+
+  /* Client lists (canonicalize pubkeys). */
+  p->allow_clients = signet_parse_json_string_array(o, "allow_clients", TRUE);
+  p->deny_clients  = signet_parse_json_string_array(o, "deny_clients",  TRUE);
+
+  /* Method lists. */
+  p->allow_methods = signet_parse_json_string_array(o, "allow_methods", FALSE);
+  p->deny_methods  = signet_parse_json_string_array(o, "deny_methods",  FALSE);
+
+  /* Kind lists. */
+  if (!signet_parse_json_kind_array(o, "allow_kinds", &p->allow_kinds, &p->allow_kinds_any)) {
+    signet_identity_policy_free(p);
+    if (out_error) *out_error = g_strdup("invalid allow_kinds array");
+    return -1;
+  }
+  if (!signet_parse_json_kind_array(o, "deny_kinds", &p->deny_kinds, &p->deny_kinds_any)) {
+    signet_identity_policy_free(p);
+    if (out_error) *out_error = g_strdup("invalid deny_kinds array");
+    return -1;
+  }
+
+  /* Update in-memory table. */
+  g_mutex_lock(&ps->mu);
+
+  if (!ps->identities) {
+    ps->identities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                           (GDestroyNotify)signet_identity_policy_free);
+  }
+
+  g_hash_table_replace(ps->identities, g_strdup(identity), p);
+  /* p is now owned by the hash table. */
+
+  /* Persist to file if file-backed. */
+  if (ps->backend == SIGNET_POLICY_STORE_BACKEND_FILE && ps->file_path) {
+    /* Rebuild the entire GKeyFile from the in-memory table. */
+    GKeyFile *kf = g_key_file_new();
+
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, ps->identities);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+      signet_policy_identity_to_keyfile(kf, (const char *)k, (const SignetIdentityPolicy *)v);
+    }
+
+    gsize len = 0;
+    g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
+    g_key_file_free(kf);
+
+    if (data) {
+      GError *err = NULL;
+      if (!g_file_set_contents(ps->file_path, data, (gssize)len, &err)) {
+        g_mutex_unlock(&ps->mu);
+        if (out_error) {
+          *out_error = g_strdup_printf("policy applied in memory but failed to persist: %s",
+                                       err ? err->message : "unknown error");
+        }
+        if (err) g_error_free(err);
+        /* Return 0 — the in-memory update succeeded; persistence is best-effort. */
+        return 0;
+      }
+    }
+  }
+
+  g_mutex_unlock(&ps->mu);
+  return 0;
+}
+
 int signet_policy_store_put(SignetPolicyStore *ps,
                             const SignetPolicyKeyView *key,
                             const SignetPolicyValue *val,
@@ -721,7 +960,7 @@ int signet_policy_store_put(SignetPolicyStore *ps,
   (void)key;
   (void)val;
   (void)now;
-  /* Phase 4: read-only file-backed store. */
+  /* Phase 4: single-rule put not yet implemented; use set_identity_json. */
   return -1;
 }
 

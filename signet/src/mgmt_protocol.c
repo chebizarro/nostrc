@@ -13,6 +13,9 @@
 #include "signet/relay_pool.h"
 #include "signet/audit_logger.h"
 
+#include <nostr/nip44/nip44.h>
+#include <secure_buf.h>
+
 #include <string.h>
 #include <time.h>
 
@@ -23,7 +26,22 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 
-/* ----------------------------- op mapping -------------------------------- */
+/* ---- small helpers (also in nip46_server.c; duplicated to stay static) ---- */
+
+static void signet_mgmt_memzero(void *p, size_t n) {
+  if (p && n) secure_wipe(p, n);
+}
+
+static bool signet_mgmt_hex_to_bytes32(const char *hex, uint8_t out[32]) {
+  if (!hex || strlen(hex) != 64) return false;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
+    out[i] = (uint8_t)byte;
+  }
+  return true;
+}
+
 
 SignetMgmtOp signet_mgmt_op_from_kind(int kind) {
   switch (kind) {
@@ -302,7 +320,21 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
 
   nostr_event_set_kind(evt, SIGNET_KIND_MGMT_ACK);
   nostr_event_set_created_at(evt, now);
-  nostr_event_set_content(evt, ack_content);
+
+  /* NIP-44 v2 encrypt the ack content to the recipient. */
+  char *encrypted_content = NULL;
+  if (recipient_pubkey_hex && recipient_pubkey_hex[0]) {
+    uint8_t sk[32], pk[32];
+    if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
+        signet_mgmt_hex_to_bytes32(recipient_pubkey_hex, pk)) {
+      int erc = nostr_nip44_encrypt_v2(sk, pk,
+                                       (const uint8_t *)ack_content, strlen(ack_content),
+                                       &encrypted_content);
+      signet_mgmt_memzero(sk, 32);
+      if (erc != 0) encrypted_content = NULL;
+    }
+  }
+  nostr_event_set_content(evt, encrypted_content ? encrypted_content : ack_content);
 
   NostrTags *tags = nostr_tags_new(0);
   if (tags) {
@@ -329,6 +361,7 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
     }
   }
 
+  free(encrypted_content);
   nostr_event_free(evt);
 }
 
@@ -347,10 +380,38 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
     return -1; /* silently drop unauthorized events */
   }
 
+  /* 1b) NIP-44 v2 decrypt the event content.
+   * Management events MUST be encrypted to the bunker pubkey per spec.
+   * Try decryption first; if it fails, fall back to plaintext for backward
+   * compatibility (logged as a warning). */
+  char *decrypted_content = NULL;
+  const char *effective_content = content_json;
+
+  if (content_json && content_json[0] && h->bunker_sk_hex && event_pubkey_hex) {
+    uint8_t sk[32], pk[32];
+    if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
+        signet_mgmt_hex_to_bytes32(event_pubkey_hex, pk)) {
+      uint8_t *pt = NULL;
+      size_t pt_len = 0;
+      int drc = nostr_nip44_decrypt_v2(sk, pk, content_json, &pt, &pt_len);
+      signet_mgmt_memzero(sk, 32);
+      if (drc == 0 && pt && pt_len > 0) {
+        decrypted_content = (char *)malloc(pt_len + 1);
+        if (decrypted_content) {
+          memcpy(decrypted_content, pt, pt_len);
+          decrypted_content[pt_len] = '\0';
+          effective_content = decrypted_content;
+        }
+        free(pt);
+      }
+      /* If decryption fails, effective_content stays as plaintext (backward compat). */
+    }
+  }
+
   /* 2) Parse request. */
   SignetMgmtRequest req;
   char *parse_err = NULL;
-  if (signet_mgmt_request_parse(kind, content_json, &req, &parse_err) != 0) {
+  if (signet_mgmt_request_parse(kind, effective_content, &req, &parse_err) != 0) {
     char *ack = signet_mgmt_build_ack(NULL, false, "parse_error",
                                        parse_err ? parse_err : "invalid request", NULL);
     if (ack) {
@@ -358,6 +419,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       g_free(ack);
     }
     g_free(parse_err);
+    free(decrypted_content);
     return -1;
   }
 
@@ -458,29 +520,27 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
         message = g_strdup("policy store not configured");
         break;
       }
-      /* Parse the policy JSON and apply it for the target agent.
-       * The policy_json from the request contains the new policy rules. */
-      SignetPolicyKeyView pkey = {
-        .identity = req.agent_id,
-        .client_pubkey_hex = "*",   /* applies to all clients */
-        .method = "*",              /* applies to all methods */
-        .event_kind = -1,           /* wildcard */
-      };
-      SignetPolicyValue pval = {
-        .decision = SIGNET_POLICY_RULE_ALLOW,  /* default for now */
-        .expires_at = 0,
-        .reason_code = "policy.set_by_mgmt",
-      };
-      int prc = signet_policy_store_put(h->policy_store, &pkey, &pval, now);
+      /* Parse and apply the submitted policy JSON for the target agent. */
+      char *policy_err = NULL;
+      int prc = signet_policy_store_set_identity_json(
+          h->policy_store, req.agent_id, req.policy_json, now, &policy_err);
       if (prc == 0) {
         ok = true;
         code = "policy_set";
-        message = g_strdup_printf("policy updated for agent %s", req.agent_id);
+        if (policy_err) {
+          /* In-memory update succeeded but persistence failed. */
+          message = g_strdup_printf("policy updated for agent %s (warning: %s)",
+                                    req.agent_id, policy_err);
+        } else {
+          message = g_strdup_printf("policy updated for agent %s", req.agent_id);
+        }
         result = g_strdup(req.policy_json);
       } else {
-        code = "policy_write_failed";
-        message = g_strdup("failed to write policy (store may be read-only)");
+        code = "policy_parse_failed";
+        message = g_strdup_printf("failed to parse/apply policy: %s",
+                                   policy_err ? policy_err : "unknown error");
       }
+      g_free(policy_err);
       break;
     }
 
@@ -519,6 +579,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
 
   g_free(message);
   g_free(result);
+  free(decrypted_content);
   signet_mgmt_request_clear(&req);
 
   return ok ? 0 : -1;

@@ -24,6 +24,14 @@
 #include "signet/nip46_server.h"
 #include "signet/mgmt_protocol.h"
 #include "signet/health_server.h"
+#include "signet/bootstrap_server.h"
+#include "signet/nostr_auth.h"
+#include "signet/revocation.h"
+#include "signet/store.h"
+#include "signet/dbus_unix.h"
+#include "signet/dbus_tcp.h"
+#include "signet/nip5l_transport.h"
+#include "signet/ssh_agent.h"
 
 /* Management event kind range */
 #define SIGNET_MGMT_KIND_MIN 28000
@@ -62,6 +70,45 @@ static int64_t signet_now_unix(void) {
 
 static void signet_usage(FILE *out) {
   fprintf(out, "Usage: signetd [-c <config_path>]\n");
+}
+
+/* ---- Fleet registry adapter -------------------------------------------- */
+
+/* Forward declaration — struct defined below. */
+typedef struct {
+  const SignetConfig *cfg;
+  SignetNip46Server *nip46;
+  SignetMgmtHandler *mgmt;
+  SignetDenyList *deny;
+  SignetKeyStore *keys;
+} SignetDaemonCtx;
+
+/* All provisioned agents are considered fleet members. */
+static bool signet_fleet_is_in_fleet(const char *pubkey_hex, void *user_data) {
+  (void)pubkey_hex;
+  (void)user_data;
+  /* An agent that passed bootstrap or was provisioned is implicitly in-fleet.
+   * Full NIP-51 fleet list sync is a future enhancement. */
+  return true;
+}
+
+/* Check the deny list. */
+static bool signet_fleet_is_denied(const char *pubkey_hex, void *user_data) {
+  SignetDaemonCtx *ctx = (SignetDaemonCtx *)user_data;
+  if (!ctx || !ctx->deny) return false;
+  return signet_deny_list_contains(ctx->deny, pubkey_hex);
+}
+
+/* Look up an agent's pubkey from the key store. */
+static char *signet_fleet_get_agent_pubkey(const char *agent_id, void *user_data) {
+  SignetDaemonCtx *ctx = (SignetDaemonCtx *)user_data;
+  if (!ctx || !ctx->keys || !agent_id) return NULL;
+
+  char pubkey[65];
+  if (signet_key_store_get_agent_pubkey(ctx->keys, agent_id, pubkey, sizeof(pubkey))) {
+    return g_strdup(pubkey);
+  }
+  return NULL;
 }
 
 
@@ -118,12 +165,6 @@ static void signet_audit_daemon_event(SignetAuditLogger *audit,
   (void)signet_audit_log_json(audit, type, json);
   g_free(json);
 }
-
-typedef struct {
-  const SignetConfig *cfg;
-  SignetNip46Server *nip46;
-  SignetMgmtHandler *mgmt;
-} SignetDaemonCtx;
 
 static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_data) {
   SignetDaemonCtx *ctx = (SignetDaemonCtx *)user_data;
@@ -249,6 +290,7 @@ int main(int argc, char **argv) {
   SignetDaemonCtx dctx;
   memset(&dctx, 0, sizeof(dctx));
   dctx.cfg = &cfg;
+  dctx.keys = keys;
 
   SignetRelayPoolConfig rp_cfg = {
     .relays = (const char *const *)cfg.relays,
@@ -276,6 +318,145 @@ int main(int argc, char **argv) {
   };
   SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, store, &mgmt_cfg);
   dctx.mgmt = mgmt;
+
+  /* 8a) Challenge store (shared by bootstrap, D-Bus TCP, NIP-5L) */
+  SignetChallengeStore *challenges = signet_challenge_store_new();
+
+  /* 8b) Deny list + fleet registry for auth */
+  SignetStore *base_store = signet_key_store_get_store(keys);
+  SignetDenyList *deny = base_store ? signet_deny_list_new(base_store) : NULL;
+  dctx.deny = deny;
+
+  /* Build a fleet registry adapter.
+   * is_in_fleet: all provisioned agents are fleet members.
+   * is_denied: check the deny list.
+   * get_agent_pubkey: look up from key store. */
+  SignetFleetRegistry fleet_reg;
+  memset(&fleet_reg, 0, sizeof(fleet_reg));
+  fleet_reg.user_data = &dctx;
+  fleet_reg.is_in_fleet = signet_fleet_is_in_fleet;
+  fleet_reg.is_denied = signet_fleet_is_denied;
+  fleet_reg.get_agent_pubkey = signet_fleet_get_agent_pubkey;
+
+  /* 8c) Bootstrap server */
+  SignetBootstrapServer *bootstrap = NULL;
+  if (cfg.bootstrap_port > 0) {
+    char bs_listen[64];
+    snprintf(bs_listen, sizeof(bs_listen), "0.0.0.0:%d", cfg.bootstrap_port);
+    SignetBootstrapServerConfig bs_cfg = {
+      .listen = bs_listen,
+      .keys = keys,
+      .store = base_store,
+      .challenges = challenges,
+      .audit = audit,
+      .fleet = &fleet_reg,
+      .bunker_pubkey_hex = cfg.remote_signer_pubkey_hex,
+      .relay_urls = (const char *const *)cfg.relays,
+      .n_relay_urls = cfg.n_relays,
+    };
+    bootstrap = signet_bootstrap_server_new(&bs_cfg);
+    if (bootstrap && signet_bootstrap_server_start(bootstrap) != 0) {
+      fprintf(stderr, "signetd: failed to start bootstrap server on %s\n", bs_listen);
+      signet_bootstrap_server_free(bootstrap);
+      bootstrap = NULL;
+    } else if (bootstrap) {
+      g_message("[signetd] bootstrap server listening on %s", bs_listen);
+    }
+  }
+
+  /* 8d) D-Bus Unix transport */
+  SignetDbusServer *dbus_unix = NULL;
+  if (cfg.dbus_unix_enabled) {
+    SignetDbusServerConfig du_cfg = {
+      .keys = keys,
+      .policy = NULL,  /* TODO: wire SignetPolicyRegistry when capability engine is live */
+      .store = base_store,
+      .audit = audit,
+      .uid_resolver = NULL,
+      .uid_resolver_data = NULL,
+      .use_system_bus = true,
+    };
+    dbus_unix = signet_dbus_server_new(&du_cfg);
+    if (dbus_unix && signet_dbus_server_start(dbus_unix) != 0) {
+      fprintf(stderr, "signetd: failed to start D-Bus Unix transport\n");
+      signet_dbus_server_free(dbus_unix);
+      dbus_unix = NULL;
+    } else if (dbus_unix) {
+      g_message("[signetd] D-Bus Unix transport started");
+    }
+  }
+
+  /* 8e) D-Bus TCP transport */
+  SignetDbusTcpServer *dbus_tcp = NULL;
+  if (cfg.dbus_tcp_enabled) {
+    char tcp_addr[128];
+    snprintf(tcp_addr, sizeof(tcp_addr), "tcp:host=0.0.0.0,port=%d",
+             cfg.dbus_tcp_port > 0 ? cfg.dbus_tcp_port : 47472);
+    SignetDbusTcpServerConfig dt_cfg = {
+      .listen_address = tcp_addr,
+      .keys = keys,
+      .policy = NULL,
+      .store = base_store,
+      .challenges = challenges,
+      .audit = audit,
+      .fleet = &fleet_reg,
+    };
+    dbus_tcp = signet_dbus_tcp_server_new(&dt_cfg);
+    if (dbus_tcp && signet_dbus_tcp_server_start(dbus_tcp) != 0) {
+      fprintf(stderr, "signetd: failed to start D-Bus TCP transport on %s\n", tcp_addr);
+      signet_dbus_tcp_server_free(dbus_tcp);
+      dbus_tcp = NULL;
+    } else if (dbus_tcp) {
+      g_message("[signetd] D-Bus TCP transport started on %s", tcp_addr);
+    }
+  }
+
+  /* 8f) NIP-5L transport */
+  SignetNip5lServer *nip5l = NULL;
+  if (cfg.nip5l_enabled) {
+    const char *nip5l_path = cfg.nip5l_socket_path[0]
+        ? cfg.nip5l_socket_path : "/run/signet/nip5l.sock";
+    SignetNip5lServerConfig n5_cfg = {
+      .socket_path = nip5l_path,
+      .keys = keys,
+      .policy = NULL,
+      .store = base_store,
+      .challenges = challenges,
+      .audit = audit,
+      .fleet = &fleet_reg,
+    };
+    nip5l = signet_nip5l_server_new(&n5_cfg);
+    if (nip5l && signet_nip5l_server_start(nip5l) != 0) {
+      fprintf(stderr, "signetd: failed to start NIP-5L transport on %s\n", nip5l_path);
+      signet_nip5l_server_free(nip5l);
+      nip5l = NULL;
+    } else if (nip5l) {
+      g_message("[signetd] NIP-5L transport started on %s", nip5l_path);
+    }
+  }
+
+  /* 8g) SSH agent */
+  SignetSshAgent *ssh_agent = NULL;
+  if (cfg.ssh_agent_enabled) {
+    const char *ssh_path = cfg.ssh_agent_socket_path[0]
+        ? cfg.ssh_agent_socket_path : "/run/signet/ssh-agent.sock";
+    SignetSshAgentConfig sa_cfg = {
+      .socket_path = ssh_path,
+      .keys = keys,
+      .policy = NULL,
+      .audit = audit,
+      .uid_resolver = NULL,
+      .uid_resolver_data = NULL,
+    };
+    ssh_agent = signet_ssh_agent_new(&sa_cfg);
+    if (ssh_agent && signet_ssh_agent_start(ssh_agent) != 0) {
+      fprintf(stderr, "signetd: failed to start SSH agent on %s\n", ssh_path);
+      signet_ssh_agent_free(ssh_agent);
+      ssh_agent = NULL;
+    } else if (ssh_agent) {
+      g_message("[signetd] SSH agent started on %s", ssh_path);
+    }
+  }
 
   /* 8) Health server */
   SignetHealthServer *health = NULL;
@@ -316,7 +497,8 @@ int main(int argc, char **argv) {
       SIGNET_KIND_GET_STATUS,      /* 28030 */
       SIGNET_KIND_LIST_AGENTS,     /* 28040 */
       SIGNET_KIND_ROTATE_KEY,      /* 28050 */
-      SIGNET_KIND_MGMT_ACK,        /* 28090 — ack from signetctl   */
+      /* NOTE: 28090 (MGMT_ACK) intentionally excluded — signetd publishes
+       * acks but does not need to receive them; subscribing wastes relay BW. */
     };
     if (signet_relay_pool_subscribe_kinds(relays, signet_kinds,
                                           G_N_ELEMENTS(signet_kinds)) != 0) {
@@ -356,6 +538,33 @@ cleanup:
   signet_audit_daemon_event(audit, SIGNET_AUDIT_EVENT_SHUTDOWN, signet_now_unix(),
                             "shutdown", SIGNET_VERSION, config_path);
 
+  /* Shutdown v2 transports (reverse order). */
+  if (ssh_agent) {
+    signet_ssh_agent_stop(ssh_agent);
+    signet_ssh_agent_free(ssh_agent);
+    ssh_agent = NULL;
+  }
+  if (nip5l) {
+    signet_nip5l_server_stop(nip5l);
+    signet_nip5l_server_free(nip5l);
+    nip5l = NULL;
+  }
+  if (dbus_tcp) {
+    signet_dbus_tcp_server_stop(dbus_tcp);
+    signet_dbus_tcp_server_free(dbus_tcp);
+    dbus_tcp = NULL;
+  }
+  if (dbus_unix) {
+    signet_dbus_server_stop(dbus_unix);
+    signet_dbus_server_free(dbus_unix);
+    dbus_unix = NULL;
+  }
+  if (bootstrap) {
+    signet_bootstrap_server_stop(bootstrap);
+    signet_bootstrap_server_free(bootstrap);
+    bootstrap = NULL;
+  }
+
   if (health) {
     signet_health_server_stop(health);
     signet_health_server_free(health);
@@ -377,6 +586,9 @@ cleanup:
   signet_key_store_free(keys);
 
   signet_replay_cache_free(replay);
+
+  signet_deny_list_free(deny);
+  signet_challenge_store_free(challenges);
 
   signet_audit_logger_free(audit);
 

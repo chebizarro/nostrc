@@ -38,19 +38,20 @@ SignetDenyList *signet_deny_list_new(SignetStore *store) {
   g_mutex_init(&dl->mu);
   dl->cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
-  /* Load existing deny list entries from DB into cache.
-   * The deny list lives in the credential_policy table with
-   * policy_type = 'deny'. */
+  /* Load existing deny list entries from DB into cache. */
   struct sqlite3 *db = signet_store_get_db(store);
   if (db) {
-    const char *sql = "SELECT agent_id FROM credential_policy "
-                      "WHERE policy_type = 'deny'";
+    const char *sql = "SELECT pubkey_hex, agent_id FROM deny_list";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
       while (sqlite3_step(stmt) == SQLITE_ROW) {
-        const char *key = (const char *)sqlite3_column_text(stmt, 0);
-        if (key)
-          g_hash_table_replace(dl->cache, g_strdup(key),
+        const char *pubkey = (const char *)sqlite3_column_text(stmt, 0);
+        const char *aid = (const char *)sqlite3_column_text(stmt, 1);
+        if (pubkey)
+          g_hash_table_replace(dl->cache, g_strdup(pubkey),
+                               GINT_TO_POINTER(1));
+        if (aid)
+          g_hash_table_replace(dl->cache, g_strdup(aid),
                                GINT_TO_POINTER(1));
       }
       sqlite3_finalize(stmt);
@@ -81,25 +82,24 @@ int signet_deny_list_add(SignetDenyList *dl,
   if (!db) return -1;
 
   const char *sql =
-      "INSERT OR REPLACE INTO credential_policy "
-      "(agent_id, policy_type, policy_json, updated_at) "
-      "VALUES (?1, 'deny', ?2, ?3)";
+      "INSERT OR REPLACE INTO deny_list "
+      "(pubkey_hex, agent_id, reason, denied_at) "
+      "VALUES (?1, ?2, ?3, ?4)";
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
     return -1;
 
-  /* Build minimal policy_json with pubkey and reason. */
-  char *json = reason
-      ? g_strdup_printf("{\"pubkey\":\"%s\",\"reason\":\"%s\"}", pubkey_hex, reason)
-      : g_strdup_printf("{\"pubkey\":\"%s\"}", pubkey_hex);
-
-  sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 2, json, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int64(stmt, 3, now);
+  sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, id, -1, SQLITE_TRANSIENT);
+  if (reason) {
+    sqlite3_bind_text(stmt, 3, reason, -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, 3);
+  }
+  sqlite3_bind_int64(stmt, 4, now);
 
   int rc = (sqlite3_step(stmt) == SQLITE_DONE) ? 0 : -1;
   sqlite3_finalize(stmt);
-  g_free(json);
 
   if (rc == 0) {
     g_mutex_lock(&dl->mu);
@@ -121,8 +121,7 @@ int signet_deny_list_remove(SignetDenyList *dl, const char *pubkey_hex) {
   if (!db) return -1;
 
   const char *sql =
-      "DELETE FROM credential_policy "
-      "WHERE agent_id = ?1 AND policy_type = 'deny'";
+      "DELETE FROM deny_list WHERE pubkey_hex = ?1";
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
     return -1;

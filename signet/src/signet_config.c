@@ -280,6 +280,32 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
 
   if (g_key_file_has_key(kf, "audit", "stdout", NULL))
     cfg->audit_stdout = g_key_file_get_boolean(kf, "audit", "stdout", NULL);
+
+  /* [bootstrap] */
+  if (g_key_file_has_key(kf, "bootstrap", "port", NULL))
+    cfg->bootstrap_port = g_key_file_get_integer(kf, "bootstrap", "port", NULL);
+
+  /* [dbus] */
+  if (g_key_file_has_key(kf, "dbus", "unix_enabled", NULL))
+    cfg->dbus_unix_enabled = g_key_file_get_boolean(kf, "dbus", "unix_enabled", NULL);
+  if (g_key_file_has_key(kf, "dbus", "tcp_enabled", NULL))
+    cfg->dbus_tcp_enabled = g_key_file_get_boolean(kf, "dbus", "tcp_enabled", NULL);
+  if (g_key_file_has_key(kf, "dbus", "tcp_port", NULL))
+    cfg->dbus_tcp_port = g_key_file_get_integer(kf, "dbus", "tcp_port", NULL);
+  else
+    cfg->dbus_tcp_port = 47472;
+
+  /* [nip5l] */
+  if (g_key_file_has_key(kf, "nip5l", "enabled", NULL))
+    cfg->nip5l_enabled = g_key_file_get_boolean(kf, "nip5l", "enabled", NULL);
+  val = g_key_file_get_string(kf, "nip5l", "socket_path", NULL);
+  if (val) { signet_strlcpy(cfg->nip5l_socket_path, val, sizeof(cfg->nip5l_socket_path)); g_free(val); }
+
+  /* [ssh_agent] */
+  if (g_key_file_has_key(kf, "ssh_agent", "enabled", NULL))
+    cfg->ssh_agent_enabled = g_key_file_get_boolean(kf, "ssh_agent", "enabled", NULL);
+  val = g_key_file_get_string(kf, "ssh_agent", "socket_path", NULL);
+  if (val) { signet_strlcpy(cfg->ssh_agent_socket_path, val, sizeof(cfg->ssh_agent_socket_path)); g_free(val); }
 }
 
 /* -------------------------- env var overrides ----------------------------- */
@@ -344,6 +370,31 @@ static void signet_config_apply_env(SignetConfig *cfg) {
   }
 
   /* SIGNET_DB_KEY is read at SQLCipher open time, not stored in config struct. */
+
+  /* v2 transport overrides */
+  val = g_getenv("SIGNET_BOOTSTRAP_PORT");
+  if (val) cfg->bootstrap_port = atoi(val);
+
+  val = g_getenv("SIGNET_DBUS_UNIX");
+  if (val) cfg->dbus_unix_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
+
+  val = g_getenv("SIGNET_DBUS_TCP");
+  if (val) cfg->dbus_tcp_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
+
+  val = g_getenv("SIGNET_DBUS_TCP_PORT");
+  if (val) cfg->dbus_tcp_port = atoi(val);
+
+  val = g_getenv("SIGNET_NIP5L");
+  if (val) cfg->nip5l_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
+
+  val = g_getenv("SIGNET_NIP5L_SOCKET");
+  if (val) signet_strlcpy(cfg->nip5l_socket_path, val, sizeof(cfg->nip5l_socket_path));
+
+  val = g_getenv("SIGNET_SSH_AGENT");
+  if (val) cfg->ssh_agent_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
+
+  val = g_getenv("SIGNET_SSH_AGENT_SOCKET");
+  if (val) signet_strlcpy(cfg->ssh_agent_socket_path, val, sizeof(cfg->ssh_agent_socket_path));
 }
 
 /* ------------------------------ public API -------------------------------- */

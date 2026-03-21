@@ -27,6 +27,7 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr/nip19/nip19.h>
+#include <nostr/nip44/nip44.h>
 #include <secure_buf.h>
 
 #define SIGNETCTL_VERSION "0.1.0"
@@ -111,7 +112,20 @@ static char *signetctl_build_signed_event(int kind,
 
   nostr_event_set_kind(evt, kind);
   nostr_event_set_created_at(evt, (int64_t)time(NULL));
-  nostr_event_set_content(evt, content ? content : "");
+  /* NIP-44 encrypt the content to the bunker pubkey. */
+  char *encrypted_content = NULL;
+  if (content && bunker_pubkey_hex && provisioner_sk_hex) {
+    uint8_t sk[32], pk[32];
+    if (signetctl_hex_to_bytes32(provisioner_sk_hex, sk) &&
+        signetctl_hex_to_bytes32(bunker_pubkey_hex, pk)) {
+      int erc = nostr_nip44_encrypt_v2(sk, pk,
+                                       (const uint8_t *)content, strlen(content),
+                                       &encrypted_content);
+      secure_wipe(sk, 32);
+      if (erc != 0) encrypted_content = NULL;
+    }
+  }
+  nostr_event_set_content(evt, encrypted_content ? encrypted_content : (content ? content : ""));
 
   /* Tag the bunker pubkey so it knows this is for it. */
   if (bunker_pubkey_hex) {
@@ -131,6 +145,7 @@ static char *signetctl_build_signed_event(int kind,
   }
 
   char *json = nostr_event_serialize_compact(evt);
+  free(encrypted_content);
   nostr_event_free(evt);
   return json;
 }
@@ -142,22 +157,85 @@ typedef struct {
   char *response_json;
   GMutex mu;
   GCond cond;
+  /* Correlation / security fields. */
+  char expected_request_id[17];      /* hex request_id we sent */
+  char expected_sender_hex[65];      /* bunker pubkey (ack sender) */
+  char provisioner_sk_hex[65];       /* our SK for NIP-44 decrypt */
 } SignetctlAckCtx;
+
+static bool signetctl_hex_to_bytes32(const char *hex, uint8_t out[32]) {
+  if (!hex || strlen(hex) != 64) return false;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
+    out[i] = (uint8_t)byte;
+  }
+  return true;
+}
 
 static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) {
   SignetctlAckCtx *ctx = (SignetctlAckCtx *)user_data;
   if (!ctx || !ev) return;
 
-  /* Look for ack events (kind 28090). */
-  if (ev->kind == SIGNET_KIND_MGMT_ACK && ev->content) {
-    g_mutex_lock(&ctx->mu);
-    if (!ctx->received) {
-      ctx->received = true;
-      ctx->response_json = g_strdup(ev->content);
-      g_cond_signal(&ctx->cond);
+  /* Only accept ack events (kind 28090). */
+  if (ev->kind != SIGNET_KIND_MGMT_ACK || !ev->content) return;
+
+  /* 1) Verify sender is the bunker. */
+  if (ctx->expected_sender_hex[0] && ev->pubkey_hex) {
+    if (g_ascii_strcasecmp(ev->pubkey_hex, ctx->expected_sender_hex) != 0) {
+      return; /* not from our bunker — ignore */
     }
-    g_mutex_unlock(&ctx->mu);
   }
+
+  /* 2) NIP-44 decrypt the content. */
+  char *plaintext = NULL;
+  if (ctx->provisioner_sk_hex[0] && ev->pubkey_hex) {
+    uint8_t sk[32], pk[32];
+    if (signetctl_hex_to_bytes32(ctx->provisioner_sk_hex, sk) &&
+        signetctl_hex_to_bytes32(ev->pubkey_hex, pk)) {
+      uint8_t *pt = NULL;
+      size_t pt_len = 0;
+      int drc = nostr_nip44_decrypt_v2(sk, pk, ev->content, &pt, &pt_len);
+      secure_wipe(sk, 32);
+      if (drc == 0 && pt && pt_len > 0) {
+        plaintext = (char *)malloc(pt_len + 1);
+        if (plaintext) {
+          memcpy(plaintext, pt, pt_len);
+          plaintext[pt_len] = '\0';
+        }
+        free(pt);
+      }
+    }
+  }
+  /* Fall back to plaintext if decryption failed (backward compat). */
+  const char *content = plaintext ? plaintext : ev->content;
+
+  /* 3) Correlate request_id from the ack JSON. */
+  if (ctx->expected_request_id[0]) {
+    g_autoptr(JsonParser) p = json_parser_new();
+    if (json_parser_load_from_data(p, content, -1, NULL)) {
+      JsonNode *root = json_parser_get_root(p);
+      if (root && JSON_NODE_HOLDS_OBJECT(root)) {
+        JsonObject *o = json_node_get_object(root);
+        if (json_object_has_member(o, "request_id")) {
+          const char *rid = json_object_get_string_member(o, "request_id");
+          if (!rid || strcmp(rid, ctx->expected_request_id) != 0) {
+            free(plaintext);
+            return; /* request_id mismatch — not our ack */
+          }
+        }
+      }
+    }
+  }
+
+  g_mutex_lock(&ctx->mu);
+  if (!ctx->received) {
+    ctx->received = true;
+    ctx->response_json = g_strdup(content);
+    g_cond_signal(&ctx->cond);
+  }
+  g_mutex_unlock(&ctx->mu);
+  free(plaintext);
 }
 
 /* ---------------------- resolve provisioner key --------------------------- */
@@ -410,11 +488,11 @@ int main(int argc, char **argv) {
                             : NULL;
   char *event_json = signetctl_build_signed_event(kind, content, bunker_pk, provisioner_sk_hex);
   g_free(content);
-  secure_wipe(provisioner_sk_hex, 64);
 
   if (!event_json) {
     fprintf(stderr, "signetctl: failed to sign event\n");
     signet_config_clear(&cfg);
+    secure_wipe(provisioner_sk_hex, 64);
     return 1;
   }
 
@@ -423,6 +501,14 @@ int main(int argc, char **argv) {
   memset(&ack_ctx, 0, sizeof(ack_ctx));
   g_mutex_init(&ack_ctx.mu);
   g_cond_init(&ack_ctx.cond);
+
+  /* Populate correlation fields for ack validation.
+   * Must copy SK before wiping it — needed for NIP-44 decrypt of acks. */
+  memcpy(ack_ctx.expected_request_id, request_id, sizeof(ack_ctx.expected_request_id));
+  if (cfg.remote_signer_pubkey_hex[0])
+    memcpy(ack_ctx.expected_sender_hex, cfg.remote_signer_pubkey_hex, 65);
+  memcpy(ack_ctx.provisioner_sk_hex, provisioner_sk_hex, 65);
+  secure_wipe(provisioner_sk_hex, 64);
 
   SignetRelayPoolConfig rp_cfg = {
     .relays = (const char *const *)cfg.relays,
@@ -480,6 +566,7 @@ cleanup:
     signet_relay_pool_free(rp);
   }
   g_free(ack_ctx.response_json);
+  secure_wipe(ack_ctx.provisioner_sk_hex, sizeof(ack_ctx.provisioner_sk_hex));
   g_mutex_clear(&ack_ctx.mu);
   g_cond_clear(&ack_ctx.cond);
   signet_config_clear(&cfg);

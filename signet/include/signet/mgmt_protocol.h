@@ -15,7 +15,8 @@
  *   28050 - rotate_key (rotate agent keypair)
  *   28090 - ack (response to any management command)
  *
- * Transport: NIP-44 v2 encrypted to bunker pubkey.
+ * Transport: NIP-44 v2 encrypted to bunker pubkey (decrypt on receive,
+ *            encrypt on ack; falls back to plaintext for backward compat).
  * Authorization: event.pubkey must be in provisioner_pubkeys list.
  */
 

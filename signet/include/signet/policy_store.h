@@ -79,6 +79,30 @@ int signet_policy_store_delete(SignetPolicyStore *ps,
 /* Free the policy store. Safe on NULL. */
 void signet_policy_store_free(SignetPolicyStore *ps);
 
+/* Set the full identity policy from a JSON object string.
+ * Parses the JSON, updates the in-memory table, and persists to the backing
+ * file (if file-backed).
+ *
+ * Expected JSON shape:
+ *   {
+ *     "default": "allow"|"deny",
+ *     "allow_clients": ["*"|"<hex>"|"npub1..."],
+ *     "deny_clients":  [...],
+ *     "allow_methods": ["sign_event","nip04_encrypt",...],
+ *     "deny_methods":  [...],
+ *     "allow_kinds":   [1, 4, ...] or ["*"],
+ *     "deny_kinds":    [...],
+ *     "ttl_seconds":   3600
+ *   }
+ *
+ * Returns 0 on success, -1 on error.  out_error receives a heap string on
+ * error (caller frees with g_free; may be NULL). */
+int signet_policy_store_set_identity_json(SignetPolicyStore *ps,
+                                          const char *identity,
+                                          const char *policy_json,
+                                          int64_t now,
+                                          char **out_error);
+
 /* File-backed policy store. */
 SignetPolicyStore *signet_policy_store_file_new(const char *path);
 

@@ -112,6 +112,10 @@ uint32_t signet_key_store_cache_count(const SignetKeyStore *ks);
 /* Check if the backing store is open. */
 bool signet_key_store_is_open(const SignetKeyStore *ks);
 
+/* Get the underlying SignetStore handle (for sub-stores like deny list).
+ * Returns NULL if key store is not open. Caller does NOT own the pointer. */
+struct SignetStore *signet_key_store_get_store(SignetKeyStore *ks);
+
 /* Wipe and free a loaded key. Safe on NULL/empty. */
 void signet_loaded_key_clear(SignetLoadedKey *k);
 

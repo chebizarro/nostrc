@@ -27,6 +27,11 @@
 #include <json.h>
 #include <sodium.h>
 
+/* libnostr event signing + NIP-04 */
+#include <nostr-event.h>
+#include <nostr-keys.h>
+#include <nostr/nip04.h>
+
 /* NIP-46 JSON-RPC framing: line-delimited JSON. */
 #define NIP5L_MAX_LINE 65536
 
@@ -142,8 +147,8 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
   if (!method)
     return g_strdup("{\"error\":\"missing method\"}");
 
-  /* Capability check. */
-  if (!signet_policy_evaluate(ns->policy, cs->agent_id, method, -1)) {
+  /* Capability check (skip if policy not configured). */
+  if (ns->policy && !signet_policy_evaluate(ns->policy, cs->agent_id, method, -1)) {
     free(method);
     return g_strdup("{\"error\":\"capability denied\"}");
   }
@@ -151,31 +156,106 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
   char *resp = NULL;
 
   if (strcmp(method, "get_public_key") == 0) {
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
+    char pubkey_hex[65];
+    if (!signet_key_store_get_agent_pubkey(ns->keys, cs->agent_id, pubkey_hex, sizeof(pubkey_hex))) {
       resp = g_strdup("{\"error\":\"key not found\"}");
     } else {
-      uint8_t pk[32];
-      if (crypto_scalarmult_ed25519_base_noclamp(pk, lk.secret_key) != 0) {
-        resp = g_strdup("{\"error\":\"key derivation failed\"}");
-      } else {
-        char hex[65];
-        for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", pk[i]);
-        hex[64] = '\0';
-        sodium_memzero(pk, sizeof(pk));
-        resp = g_strdup_printf("{\"result\":\"%s\"}", hex);
-      }
-      signet_loaded_key_clear(&lk);
+      resp = g_strdup_printf("{\"result\":\"%s\"}", pubkey_hex);
     }
 
-  } else if (strcmp(method, "sign_event") == 0 ||
-             strcmp(method, "nip04_encrypt") == 0 ||
-             strcmp(method, "nip04_decrypt") == 0 ||
-             strcmp(method, "nip44_encrypt") == 0 ||
+  } else if (strcmp(method, "sign_event") == 0) {
+    char *event_json = NULL;
+    nostr_json_get_array_string(line, "params", 0, &event_json);
+    if (!event_json || !event_json[0]) {
+      resp = g_strdup("{\"error\":\"missing event json\"}");
+      free(event_json);
+    } else {
+      SignetLoadedKey lk;
+      memset(&lk, 0, sizeof(lk));
+      if (!signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
+        resp = g_strdup("{\"error\":\"key not found\"}");
+      } else {
+        NostrEvent *ev = nostr_event_new();
+        if (!ev || nostr_event_deserialize(ev, event_json) != 0) {
+          if (ev) nostr_event_free(ev);
+          resp = g_strdup("{\"error\":\"invalid event json\"}");
+        } else {
+          char sk_hex[65];
+          for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+          sk_hex[64] = '\0';
+          int src = nostr_event_sign(ev, sk_hex);
+          sodium_memzero(sk_hex, sizeof(sk_hex));
+          if (src != 0) {
+            resp = g_strdup("{\"error\":\"signing failed\"}");
+          } else {
+            char *signed_json = nostr_event_serialize(ev);
+            resp = signed_json
+                ? g_strdup_printf("{\"result\":%s}", signed_json)
+                : g_strdup("{\"error\":\"serialization failed\"}");
+            free(signed_json);
+          }
+          nostr_event_free(ev);
+        }
+        signet_loaded_key_clear(&lk);
+      }
+      free(event_json);
+    }
+
+  } else if (strcmp(method, "nip04_encrypt") == 0) {
+    char *plaintext = NULL, *peer_pk = NULL;
+    nostr_json_get_array_string(line, "params", 0, &peer_pk);
+    nostr_json_get_array_string(line, "params", 1, &plaintext);
+    SignetLoadedKey lk;
+    memset(&lk, 0, sizeof(lk));
+    if (!peer_pk || !plaintext || !signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
+      resp = g_strdup("{\"error\":\"missing params or key not found\"}");
+    } else {
+      char sk_hex[65];
+      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+      sk_hex[64] = '\0';
+      char *ct = NULL, *err_msg = NULL;
+      if (nostr_nip04_encrypt(plaintext, peer_pk, sk_hex, &ct, &err_msg) != 0) {
+        resp = g_strdup_printf("{\"error\":\"%s\"}", err_msg ? err_msg : "encrypt failed");
+        free(err_msg);
+      } else {
+        resp = g_strdup_printf("{\"result\":\"%s\"}", ct);
+        free(ct);
+      }
+      sodium_memzero(sk_hex, sizeof(sk_hex));
+      signet_loaded_key_clear(&lk);
+    }
+    free(peer_pk);
+    free(plaintext);
+
+  } else if (strcmp(method, "nip04_decrypt") == 0) {
+    char *ciphertext = NULL, *peer_pk = NULL;
+    nostr_json_get_array_string(line, "params", 0, &peer_pk);
+    nostr_json_get_array_string(line, "params", 1, &ciphertext);
+    SignetLoadedKey lk;
+    memset(&lk, 0, sizeof(lk));
+    if (!peer_pk || !ciphertext || !signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
+      resp = g_strdup("{\"error\":\"missing params or key not found\"}");
+    } else {
+      char sk_hex[65];
+      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+      sk_hex[64] = '\0';
+      char *pt = NULL, *err_msg = NULL;
+      if (nostr_nip04_decrypt(ciphertext, peer_pk, sk_hex, &pt, &err_msg) != 0) {
+        resp = g_strdup_printf("{\"error\":\"%s\"}", err_msg ? err_msg : "decrypt failed");
+        free(err_msg);
+      } else {
+        resp = g_strdup_printf("{\"result\":\"%s\"}", pt);
+        free(pt);
+      }
+      sodium_memzero(sk_hex, sizeof(sk_hex));
+      signet_loaded_key_clear(&lk);
+    }
+    free(peer_pk);
+    free(ciphertext);
+
+  } else if (strcmp(method, "nip44_encrypt") == 0 ||
              strcmp(method, "nip44_decrypt") == 0) {
-    /* TODO: Wire to signing/encryption pipeline. */
-    resp = g_strdup("{\"error\":\"not yet implemented\"}");
+    resp = g_strdup("{\"error\":\"nip44 not yet supported; use nip04\"}");
 
   } else if (strcmp(method, "ping") == 0) {
     resp = g_strdup("{\"result\":\"pong\"}");
@@ -257,8 +337,8 @@ nip5l_on_incoming(GSocketService *service,
 /* ------------------------------ public API -------------------------------- */
 
 SignetNip5lServer *signet_nip5l_server_new(const SignetNip5lServerConfig *cfg) {
-  if (!cfg || !cfg->keys || !cfg->policy || !cfg->challenges)
-    return NULL;
+  if (!cfg || !cfg->keys || !cfg->challenges)
+    return NULL;  /* policy may be NULL (skips capability check) */
 
   SignetNip5lServer *ns = g_new0(SignetNip5lServer, 1);
   if (!ns) return NULL;

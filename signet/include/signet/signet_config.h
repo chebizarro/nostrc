@@ -85,6 +85,22 @@ typedef struct {
   /* --- [audit] --- */
   char audit_path[SIGNET_MAX_STR];
   bool audit_stdout;
+
+  /* --- [bootstrap] --- */
+  int bootstrap_port;              /* 0 = disabled (default) */
+
+  /* --- [dbus] --- */
+  bool dbus_unix_enabled;          /* system D-Bus (default false) */
+  bool dbus_tcp_enabled;           /* TCP D-Bus (default false) */
+  int  dbus_tcp_port;              /* default 47472 */
+
+  /* --- [nip5l] --- */
+  bool nip5l_enabled;              /* NIP-5L socket (default false) */
+  char nip5l_socket_path[SIGNET_MAX_STR];
+
+  /* --- [ssh_agent] --- */
+  bool ssh_agent_enabled;          /* SSH agent socket (default false) */
+  char ssh_agent_socket_path[SIGNET_MAX_STR];
 } SignetConfig;
 
 /* Initialize cfg with safe defaults. */

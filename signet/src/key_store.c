@@ -512,6 +512,11 @@ bool signet_key_store_is_open(const SignetKeyStore *ks) {
   return true; /* cache-only mode */
 }
 
+SignetStore *signet_key_store_get_store(SignetKeyStore *ks) {
+  if (!ks) return NULL;
+  return ks->store;
+}
+
 void signet_loaded_key_clear(SignetLoadedKey *k) {
   if (!k) return;
   if (k->secret_key) {
