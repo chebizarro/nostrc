@@ -300,6 +300,29 @@ int main(int argc, char **argv) {
     goto cleanup;
   }
 
+  /* Subscribe to management event kinds (28000-28090) and NIP-46 requests (24133).
+   * Without this subscription the daemon connects to the relay but never receives
+   * incoming management commands or signing requests. */
+  {
+    static const int signet_kinds[] = {
+      24133,                       /* NIP-46 signing requests      */
+      SIGNET_KIND_PROVISION_AGENT, /* 28000 */
+      SIGNET_KIND_REVOKE_AGENT,    /* 28010 */
+      SIGNET_KIND_SET_POLICY,      /* 28020 */
+      SIGNET_KIND_GET_STATUS,      /* 28030 */
+      SIGNET_KIND_LIST_AGENTS,     /* 28040 */
+      SIGNET_KIND_ROTATE_KEY,      /* 28050 */
+      SIGNET_KIND_MGMT_ACK,        /* 28090 — ack from signetctl   */
+    };
+    if (signet_relay_pool_subscribe_kinds(relays, signet_kinds,
+                                          G_N_ELEMENTS(signet_kinds)) != 0) {
+      fprintf(stderr, "signetd: failed to subscribe to event kinds\n");
+      goto cleanup;
+    }
+    g_message("[signetd] subscribed to %zu event kinds on relay pool",
+              G_N_ELEMENTS(signet_kinds));
+  }
+
   /* Main loop: update health snapshot and wait for shutdown. */
   int64_t started_at = signet_now_unix();
   while (!g_shutdown_requested) {
