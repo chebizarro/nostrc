@@ -42,8 +42,19 @@ if (TARGET PkgConfig::JSON_GLIB)
   target_link_libraries(test_audit_logger PRIVATE PkgConfig::JSON_GLIB)
 endif()
 
+# Bootstrap/auth contract test
+add_executable(test_bootstrap_contract test_bootstrap_contract.c)
+target_link_libraries(test_bootstrap_contract PRIVATE signet_core)
+if (TARGET PkgConfig::GLIB)
+  target_link_libraries(test_bootstrap_contract PRIVATE PkgConfig::GLIB)
+endif()
+if (TARGET PkgConfig::JSON_GLIB)
+  target_link_libraries(test_bootstrap_contract PRIVATE PkgConfig::JSON_GLIB)
+endif()
+
 # Register tests with CTest
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
 add_test(NAME replay_cache COMMAND test_replay_cache)
 add_test(NAME policy_engine COMMAND test_policy_engine)
 add_test(NAME audit_logger COMMAND test_audit_logger)
+add_test(NAME bootstrap_contract COMMAND test_bootstrap_contract)

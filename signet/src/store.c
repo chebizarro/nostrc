@@ -172,9 +172,11 @@ static const char *SIGNET_SCHEMA_SQL =
   "  issued_at INTEGER NOT NULL,"
   "  expires_at INTEGER NOT NULL,"
   "  used_at INTEGER,"
+  "  handoff_secret TEXT,"
   "  attempt_count INTEGER DEFAULT 0"
   ");"
   "CREATE INDEX IF NOT EXISTS idx_bootstrap_agent ON bootstrap_tokens(agent_id);"
+  "CREATE INDEX IF NOT EXISTS idx_bootstrap_handoff ON bootstrap_tokens(handoff_secret);"
 
   /* v2: append-only hash-chained audit log */
   "CREATE TABLE IF NOT EXISTS audit_log ("
@@ -244,6 +246,14 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
     signet_store_close(store);
     return NULL;
   }
+
+  /* Additive migrations for older v2 databases. Safe to ignore if already applied. */
+  (void)sqlite3_exec(store->db,
+                     "ALTER TABLE bootstrap_tokens ADD COLUMN handoff_secret TEXT;",
+                     NULL, NULL, NULL);
+  (void)sqlite3_exec(store->db,
+                     "CREATE INDEX IF NOT EXISTS idx_bootstrap_handoff ON bootstrap_tokens(handoff_secret);",
+                     NULL, NULL, NULL);
 
   /* Enable WAL mode for better concurrent read performance. */
   (void)sqlite3_exec(store->db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
@@ -503,6 +513,7 @@ int signet_store_consume_connect_secret(SignetStore *store,
 
 int signet_store_consume_connect_secret_value(SignetStore *store,
                                               const char *connect_secret,
+                                              int64_t now,
                                               char **out_agent_id) {
   if (out_agent_id) *out_agent_id = NULL;
   if (!store || !store->open || !connect_secret || !connect_secret[0] || !out_agent_id) {
@@ -540,6 +551,58 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
   if (!agent_copy) {
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return -1;
+  }
+
+  const char *token_sql =
+      "SELECT token_hash FROM bootstrap_tokens "
+      "WHERE handoff_secret = ? AND agent_id = ? AND used_at IS NULL AND expires_at >= ? "
+      "ORDER BY issued_at DESC LIMIT 1;";
+  sqlite3_stmt *token_stmt = NULL;
+  rc = sqlite3_prepare_v2(store->db, token_sql, -1, &token_stmt, NULL);
+  if (rc != SQLITE_OK) {
+    g_free(agent_copy);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  sqlite3_bind_text(token_stmt, 1, connect_secret, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(token_stmt, 2, agent_copy, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(token_stmt, 3, now);
+
+  rc = sqlite3_step(token_stmt);
+  char *token_hash = NULL;
+  if (rc == SQLITE_ROW) {
+    const char *tok = (const char *)sqlite3_column_text(token_stmt, 0);
+    token_hash = tok ? g_strdup(tok) : NULL;
+  } else if (rc != SQLITE_DONE) {
+    sqlite3_finalize(token_stmt);
+    g_free(agent_copy);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  sqlite3_finalize(token_stmt);
+
+  if (token_hash) {
+    const char *consume_token_sql =
+        "UPDATE bootstrap_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL;";
+    sqlite3_stmt *consume_token_stmt = NULL;
+    rc = sqlite3_prepare_v2(store->db, consume_token_sql, -1, &consume_token_stmt, NULL);
+    if (rc != SQLITE_OK) {
+      g_free(token_hash);
+      g_free(agent_copy);
+      sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+      return -1;
+    }
+    sqlite3_bind_int64(consume_token_stmt, 1, now);
+    sqlite3_bind_text(consume_token_stmt, 2, token_hash, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(consume_token_stmt);
+    int token_changes = sqlite3_changes(store->db);
+    sqlite3_finalize(consume_token_stmt);
+    g_free(token_hash);
+    if (rc != SQLITE_DONE || token_changes <= 0) {
+      g_free(agent_copy);
+      sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+      return 1;
+    }
   }
 
   const char *update_sql =

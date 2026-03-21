@@ -53,6 +53,14 @@ int signet_store_list_active_leases(struct SignetStore *store,
                                     SignetLeaseRecord **out_leases,
                                     size_t *out_count);
 
+/* Look up an active session lease by raw session token.
+ * Returns 0 on success (out_rec populated), 1 if not found, -1 on error.
+ * Caller must clear out_rec with signet_lease_record_clear(). */
+int signet_store_get_active_session_by_token(struct SignetStore *store,
+                                             const char *session_token,
+                                             int64_t now,
+                                             SignetLeaseRecord *out_rec);
+
 /* Count all active leases across all agents. Returns count, -1 on error. */
 int signet_store_count_active_leases(struct SignetStore *store, int64_t now);
 

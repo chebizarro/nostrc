@@ -90,6 +90,7 @@ int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
  * Caller owns *out_agent_id (g_free). */
 int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
                                             const char *provided_secret,
+                                            int64_t now,
                                             char **out_agent_id);
 
 /* Copy the derived pubkey for an agent into out_pubkey_hex.

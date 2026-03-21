@@ -91,10 +91,14 @@ int signet_store_consume_connect_secret(SignetStore *store,
                                         const char *agent_id);
 
 /* Resolve an agent by connect_secret and consume that secret atomically.
+ * If the connect_secret was previously bound to a bootstrap token handoff,
+ * the matching bootstrap token must also still be active and will be marked
+ * used in the same transaction.
  * On success, returns 0 and sets *out_agent_id to a newly allocated string
- * owned by the caller (g_free). Returns 1 if not found, -1 on error. */
+ * owned by the caller (g_free). Returns 1 if not found/expired, -1 on error. */
 int signet_store_consume_connect_secret_value(SignetStore *store,
                                               const char *connect_secret,
+                                              int64_t now,
                                               char **out_agent_id);
 
 /* Free an agent record (wipes secret key). Safe on NULL. */

@@ -12,6 +12,7 @@
 
 #include "signet/key_store.h"
 #include "signet/store.h"
+#include "signet/store_tokens.h"
 #include "signet/audit_logger.h"
 
 #include <stdio.h>
@@ -338,6 +339,7 @@ int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
 
 int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
                                             const char *provided_secret,
+                                            int64_t now,
                                             char **out_agent_id) {
   if (out_agent_id) *out_agent_id = NULL;
   if (!ks || !provided_secret || !provided_secret[0] || !out_agent_id) return -1;
@@ -348,7 +350,7 @@ int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
     return -1;
   }
 
-  int rc = signet_store_consume_connect_secret_value(ks->store, provided_secret, out_agent_id);
+  int rc = signet_store_consume_connect_secret_value(ks->store, provided_secret, now, out_agent_id);
   g_mutex_unlock(&ks->mu);
   return rc;
 }

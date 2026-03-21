@@ -10,7 +10,9 @@
 #include <string.h>
 
 #include <glib.h>
+#include <json-glib/json-glib.h>
 #include <sqlite3.h>
+#include <sodium.h>
 
 int signet_store_issue_lease(SignetStore *store,
                              const char *lease_id,
@@ -153,6 +155,66 @@ int signet_store_list_active_leases(SignetStore *store,
   *out_count = arr->len;
   *out_leases = (SignetLeaseRecord *)g_array_free(arr, FALSE);
   return 0;
+}
+
+int signet_store_get_active_session_by_token(SignetStore *store,
+                                             const char *session_token,
+                                             int64_t now,
+                                             SignetLeaseRecord *out_rec) {
+  sqlite3 *db = signet_store_get_db(store);
+  if (!db || !session_token || !session_token[0] || !out_rec) return -1;
+  memset(out_rec, 0, sizeof(*out_rec));
+
+  uint8_t hash_raw[crypto_hash_sha256_BYTES];
+  crypto_hash_sha256(hash_raw, (const unsigned char *)session_token, strlen(session_token));
+  char token_hash[crypto_hash_sha256_BYTES * 2 + 1];
+  for (size_t i = 0; i < crypto_hash_sha256_BYTES; i++) {
+    sprintf(token_hash + (i * 2), "%02x", hash_raw[i]);
+  }
+  token_hash[sizeof(token_hash) - 1] = '\0';
+  sodium_memzero(hash_raw, sizeof(hash_raw));
+
+  SignetLeaseRecord *leases = NULL;
+  size_t count = 0;
+  if (signet_store_list_active_leases(store, NULL, now, &leases, &count) != 0) return -1;
+
+  int rc = 1;
+  for (size_t i = 0; i < count; i++) {
+    if (!leases[i].secret_id || strcmp(leases[i].secret_id, "session") != 0 ||
+        !leases[i].metadata || !leases[i].metadata[0]) {
+      continue;
+    }
+
+    JsonParser *parser = json_parser_new();
+    if (!parser) continue;
+    GError *err = NULL;
+    if (!json_parser_load_from_data(parser, leases[i].metadata, -1, &err)) {
+      if (err) g_error_free(err);
+      g_object_unref(parser);
+      continue;
+    }
+    JsonNode *root = json_parser_get_root(parser);
+    JsonObject *obj = (root && JSON_NODE_HOLDS_OBJECT(root)) ? json_node_get_object(root) : NULL;
+    const char *meta_hash = (obj && json_object_has_member(obj, "session_token_hash"))
+                                ? json_object_get_string_member(obj, "session_token_hash")
+                                : NULL;
+    if (meta_hash && g_ascii_strcasecmp(meta_hash, token_hash) == 0) {
+      out_rec->lease_id = g_strdup(leases[i].lease_id);
+      out_rec->secret_id = g_strdup(leases[i].secret_id);
+      out_rec->agent_id = g_strdup(leases[i].agent_id);
+      out_rec->issued_at = leases[i].issued_at;
+      out_rec->expires_at = leases[i].expires_at;
+      out_rec->revoked_at = leases[i].revoked_at;
+      out_rec->metadata = leases[i].metadata ? g_strdup(leases[i].metadata) : NULL;
+      rc = 0;
+      g_object_unref(parser);
+      break;
+    }
+    g_object_unref(parser);
+  }
+
+  signet_lease_list_free(leases, count);
+  return rc;
 }
 
 int signet_store_count_active_leases(SignetStore *store, int64_t now) {

@@ -2,9 +2,9 @@
  *
  * bootstrap_server.c - HTTP endpoints for Signet v2 bootstrap and re-auth.
  *
- * POST /bootstrap  - Verify bootstrap token, provision agent, return URI
+ * POST /bootstrap  - Verify bootstrap token, return existing bunker handoff URI
  * GET  /challenge  - Issue challenge for agent re-authentication
- * POST /auth       - Verify signed auth event, return session token
+ * POST /auth       - Verify signed auth event, persist and return session lease/token
  *
  * Uses libmicrohttpd following the same pattern as health_server.c.
  */
@@ -13,6 +13,7 @@
 #include "signet/key_store.h"
 #include "signet/store.h"
 #include "signet/store_tokens.h"
+#include "signet/store_leases.h"
 #include "signet/nostr_auth.h"
 #include "signet/audit_logger.h"
 
@@ -62,6 +63,38 @@ static char *json_error(const char *message) {
   return g_strdup_printf("{\"error\":\"%s\"}", message);
 }
 
+static void signet_sha256_hex(const char *input, char out_hex[crypto_hash_sha256_BYTES * 2 + 1]) {
+  uint8_t hash_raw[crypto_hash_sha256_BYTES];
+  crypto_hash_sha256(hash_raw, (const uint8_t *)input, strlen(input));
+  for (size_t i = 0; i < crypto_hash_sha256_BYTES; i++) {
+    sprintf(out_hex + (i * 2), "%02x", hash_raw[i]);
+  }
+  out_hex[crypto_hash_sha256_BYTES * 2] = '\0';
+  sodium_memzero(hash_raw, sizeof(hash_raw));
+}
+
+static char *signet_build_bunker_uri(const char *bunker_pubkey_hex,
+                                     const char *const *relay_urls,
+                                     size_t n_relay_urls,
+                                     const char *connect_secret) {
+  if (!bunker_pubkey_hex || !bunker_pubkey_hex[0] || !connect_secret || !connect_secret[0]) return NULL;
+
+  GString *uri = g_string_new("bunker://");
+  g_string_append(uri, bunker_pubkey_hex);
+  g_string_append_c(uri, '?');
+  for (size_t i = 0; i < n_relay_urls; i++) {
+    if (i > 0) g_string_append_c(uri, '&');
+    char *escaped = g_uri_escape_string(relay_urls[i], NULL, FALSE);
+    g_string_append(uri, "relay=");
+    g_string_append(uri, escaped ? escaped : relay_urls[i]);
+    g_free(escaped);
+  }
+  if (n_relay_urls > 0) g_string_append_c(uri, '&');
+  g_string_append(uri, "secret=");
+  g_string_append(uri, connect_secret);
+  return g_string_free(uri, FALSE);
+}
+
 static enum MHD_Result
 send_json(struct MHD_Connection *conn, unsigned int status, char *json) {
   struct MHD_Response *resp = MHD_create_response_from_buffer(
@@ -78,8 +111,8 @@ send_json(struct MHD_Connection *conn, unsigned int status, char *json) {
 /* Request JSON:
  *   {"token": "<raw_token>", "agent_id": "<id>", "bootstrap_pubkey": "<hex>"}
  * Response JSON (200):
- *   {"uri": "nostrconnect://...", "pubkey": "<hex>"}
- * Errors: 400, 403, 500
+ *   {"uri": "bunker://...", "pubkey": "<hex>"}
+ * Errors: 400, 403, 404, 409, 500
  */
 static enum MHD_Result
 handle_bootstrap(SignetBootstrapServer *bs, struct MHD_Connection *conn,
@@ -128,13 +161,8 @@ handle_bootstrap(SignetBootstrapServer *bs, struct MHD_Connection *conn,
   }
 
   /* Hash the raw token for store lookup. */
-  uint8_t hash_raw[crypto_hash_sha256_BYTES];
-  crypto_hash_sha256(hash_raw, (const uint8_t *)token, strlen(token));
   char token_hash[crypto_hash_sha256_BYTES * 2 + 1];
-  for (size_t i = 0; i < crypto_hash_sha256_BYTES; i++)
-    sprintf(token_hash + i * 2, "%02x", hash_raw[i]);
-  token_hash[sizeof(token_hash) - 1] = '\0';
-  sodium_memzero(hash_raw, sizeof(hash_raw));
+  signet_sha256_hex(token, token_hash);
 
   /* Verify the bootstrap token. */
   int64_t now = signet_now_unix();
@@ -157,29 +185,68 @@ handle_bootstrap(SignetBootstrapServer *bs, struct MHD_Connection *conn,
     return send_json(conn, status, json_error(msg));
   }
 
-  /* Token is valid — provision the agent keypair. */
-  char pubkey_hex[65];
-  char *bunker_uri = NULL;
-  int rc = signet_key_store_provision_agent(
-      bs->keys, agent_id,
-      bs->bunker_pubkey_hex,
-      (const char *const *)bs->relay_urls, bs->n_relay_urls,
-      pubkey_hex, sizeof(pubkey_hex), &bunker_uri);
-
-  if (rc != 0) {
+  /* Token is valid — hand back the already-minted agent's connect URI.
+   * Bootstrap must not mint/provision a new identity on first contact. */
+  SignetAgentRecord rec;
+  memset(&rec, 0, sizeof(rec));
+  if (signet_store_get_agent(bs->store, agent_id, &rec) != 0) {
     g_object_unref(parser);
-    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
-                     json_error("keypair provisioning failed"));
+    return send_json(conn, MHD_HTTP_NOT_FOUND,
+                     json_error("agent not provisioned"));
   }
 
-  /* Mark token consumed only after successful provisioning. */
-  (void)signet_store_consume_bootstrap_token(bs->store, token_hash, now);
+  char pubkey_hex[65];
+  if (!signet_key_store_get_agent_pubkey(bs->keys, agent_id, pubkey_hex, sizeof(pubkey_hex))) {
+    signet_agent_record_clear(&rec);
+    g_object_unref(parser);
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     json_error("failed to resolve agent pubkey"));
+  }
 
-  /* Build success response. */
+  if (bs->fleet) {
+    if (bs->fleet->is_denied && bs->fleet->is_denied(pubkey_hex, bs->fleet->user_data)) {
+      signet_agent_record_clear(&rec);
+      g_object_unref(parser);
+      return send_json(conn, MHD_HTTP_FORBIDDEN, json_error("agent is denied"));
+    }
+    if (bs->fleet->is_in_fleet && !bs->fleet->is_in_fleet(pubkey_hex, bs->fleet->user_data)) {
+      signet_agent_record_clear(&rec);
+      g_object_unref(parser);
+      return send_json(conn, MHD_HTTP_FORBIDDEN, json_error("agent not authorized in fleet"));
+    }
+  }
+
+  if (!rec.connect_secret || !rec.connect_secret[0]) {
+    signet_agent_record_clear(&rec);
+    g_object_unref(parser);
+    return send_json(conn, MHD_HTTP_CONFLICT,
+                     json_error("bootstrap unavailable for this agent"));
+  }
+
+  char *bunker_uri = signet_build_bunker_uri(bs->bunker_pubkey_hex,
+                                             (const char *const *)bs->relay_urls,
+                                             bs->n_relay_urls,
+                                             rec.connect_secret);
+  if (!bunker_uri) {
+    signet_agent_record_clear(&rec);
+    g_object_unref(parser);
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     json_error("failed to build connect uri"));
+  }
+
+  if (signet_store_bind_bootstrap_token_handoff(bs->store, token_hash, rec.connect_secret) != 0) {
+    signet_agent_record_clear(&rec);
+    g_free(bunker_uri);
+    g_object_unref(parser);
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     json_error("failed to bind bootstrap handoff"));
+  }
+
   char *resp_json = g_strdup_printf(
       "{\"uri\":\"%s\",\"pubkey\":\"%s\"}",
       bunker_uri ? bunker_uri : "", pubkey_hex);
 
+  signet_agent_record_clear(&rec);
   g_free(bunker_uri);
   g_object_unref(parser);
 
@@ -215,8 +282,10 @@ handle_challenge(SignetBootstrapServer *bs, struct MHD_Connection *conn) {
 /* ----------------------------- POST /auth -------------------------------- */
 
 /* Request JSON: the signed Nostr auth event (kind SIGNET_AUTH_KIND).
- * Response JSON (200): {"session_token": "<hex>", "expires_at": <unix_ts>}
- * Errors: 400, 401, 403
+ * Response JSON (200):
+ *   {"session_token": "<hex>", "lease_id": "<hex>", "agent_id": "<id>",
+ *    "pubkey": "<hex>", "expires_at": <unix_ts>}
+ * Errors: 400, 401, 403, 500
  */
 static enum MHD_Result
 handle_auth(SignetBootstrapServer *bs, struct MHD_Connection *conn,
@@ -245,7 +314,7 @@ handle_auth(SignetBootstrapServer *bs, struct MHD_Connection *conn,
                      json_error(signet_auth_result_string(ar)));
   }
 
-  /* Generate session token: 32 random bytes → 64-char hex. */
+  /* Generate an authoritative persisted session lease. */
   uint8_t session_raw[32];
   randombytes_buf(session_raw, sizeof(session_raw));
   char session_hex[65];
@@ -254,12 +323,36 @@ handle_auth(SignetBootstrapServer *bs, struct MHD_Connection *conn,
   session_hex[64] = '\0';
   sodium_memzero(session_raw, sizeof(session_raw));
 
+  uint8_t lease_raw[16];
+  randombytes_buf(lease_raw, sizeof(lease_raw));
+  char lease_id[33];
+  for (int i = 0; i < 16; i++)
+    sprintf(lease_id + i * 2, "%02x", lease_raw[i]);
+  lease_id[32] = '\0';
+  sodium_memzero(lease_raw, sizeof(lease_raw));
+
+  char session_token_hash[crypto_hash_sha256_BYTES * 2 + 1];
+  signet_sha256_hex(session_hex, session_token_hash);
+
   int64_t expires_at = now + SIGNET_SESSION_TTL_S;
+  char *meta = g_strdup_printf(
+      "{\"session_token_hash\":\"%s\",\"transport\":\"http\",\"auth_method\":\"keypair\",\"pubkey\":\"%s\"}",
+      session_token_hash, pubkey_hex ? pubkey_hex : "");
+
+  if (signet_store_issue_lease(bs->store, lease_id, "session", agent_id,
+                               now, expires_at, meta) != 0) {
+    g_free(meta);
+    g_free(agent_id);
+    g_free(pubkey_hex);
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     json_error("failed to persist session"));
+  }
+  g_free(meta);
 
   char *resp_json = g_strdup_printf(
-      "{\"session_token\":\"%s\",\"agent_id\":\"%s\",\"pubkey\":\"%s\","
+      "{\"session_token\":\"%s\",\"lease_id\":\"%s\",\"agent_id\":\"%s\",\"pubkey\":\"%s\","
       "\"expires_at\":%" PRId64 "}",
-      session_hex, agent_id ? agent_id : "", pubkey_hex ? pubkey_hex : "",
+      session_hex, lease_id, agent_id ? agent_id : "", pubkey_hex ? pubkey_hex : "",
       expires_at);
 
   g_free(agent_id);

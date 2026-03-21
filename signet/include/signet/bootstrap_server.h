@@ -3,9 +3,9 @@
  * bootstrap_server.h - HTTP endpoints for Signet v2 bootstrap and re-auth.
  *
  * Endpoints served:
- *   POST /bootstrap  - Verify bootstrap token + pubkey, return nostrconnect:// URI
+ *   POST /bootstrap  - Verify bootstrap token + pubkey, return existing bunker:// handoff URI
  *   GET  /challenge  - Issue challenge for agent re-authentication
- *   POST /auth       - Verify signed auth event, return session token
+ *   POST /auth       - Verify signed auth event, persist and return a session lease/token
  *
  * Uses libmicrohttpd, same pattern as health_server.
  */

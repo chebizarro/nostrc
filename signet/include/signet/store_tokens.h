@@ -59,12 +59,20 @@ SignetTokenResult signet_store_verify_bootstrap_token(struct SignetStore *store,
                                                       const char *bootstrap_pubkey,
                                                       int64_t now);
 
-/* Mark a token as consumed (set used_at).
+/* Mark a token as consumed (set used_at) by token_hash.
  * Call only after session is fully established.
  * Returns 0 on success, -1 on error. */
 int signet_store_consume_bootstrap_token(struct SignetStore *store,
                                          const char *token_hash,
                                          int64_t now);
+
+/* Bind a verified bootstrap token to the connect_secret handed back to the
+ * client. This lets the later NIP-46 connect consume the exact token that
+ * produced the handoff URI rather than any token for the agent.
+ * Returns 0 on success, -1 on error. */
+int signet_store_bind_bootstrap_token_handoff(struct SignetStore *store,
+                                              const char *token_hash,
+                                              const char *connect_secret);
 
 /* Delete expired tokens older than cutoff. Returns count deleted, -1 on error. */
 int signet_store_cleanup_expired_tokens(struct SignetStore *store, int64_t cutoff);

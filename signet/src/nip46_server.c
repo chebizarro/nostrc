@@ -421,7 +421,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         pre_code = "wrong_signer";
         pre_err = g_strdup("connect target does not match bunker pubkey");
       } else {
-        int rc = signet_key_store_consume_connect_secret(s->keys, provided_secret, &session_agent_id);
+        int rc = signet_key_store_consume_connect_secret(s->keys, provided_secret, now, &session_agent_id);
         if (rc != 0 || !session_agent_id) {
           pre_code = "auth_failed";
           pre_err = g_strdup("connect_secret mismatch");

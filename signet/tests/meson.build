@@ -34,7 +34,16 @@ test_audit = executable('test_audit_logger',
   install: false,
 )
 
+test_bootstrap_contract = executable('test_bootstrap_contract',
+  'test_bootstrap_contract.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps,
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
 test('audit_logger', test_audit)
+test('bootstrap_contract', test_bootstrap_contract)

@@ -126,6 +126,30 @@ int signet_store_consume_bootstrap_token(SignetStore *store,
   return (changes > 0) ? 0 : -1;
 }
 
+int signet_store_bind_bootstrap_token_handoff(SignetStore *store,
+                                              const char *token_hash,
+                                              const char *connect_secret) {
+  sqlite3 *db = signet_store_get_db(store);
+  if (!db || !token_hash || !token_hash[0] || !connect_secret || !connect_secret[0]) return -1;
+
+  const char *sql =
+    "UPDATE bootstrap_tokens SET handoff_secret = ? WHERE token_hash = ?;";
+
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) return -1;
+
+  sqlite3_bind_text(stmt, 1, connect_secret, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, token_hash, -1, SQLITE_TRANSIENT);
+
+  rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(db);
+  sqlite3_finalize(stmt);
+
+  if (rc != SQLITE_DONE) return -1;
+  return (changes > 0) ? 0 : 1;
+}
+
 int signet_store_cleanup_expired_tokens(SignetStore *store, int64_t cutoff) {
   sqlite3 *db = signet_store_get_db(store);
   if (!db) return -1;
