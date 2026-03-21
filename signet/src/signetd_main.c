@@ -541,6 +541,7 @@ int main(int argc, char **argv) {
 
   /* Main loop: update health snapshot and wait for shutdown. */
   int64_t started_at = signet_now_unix();
+  int64_t last_reconnect_attempt = 0;
   while (!g_shutdown_requested) {
     /* Drain the GLib main context so libnostr's reconnect timers can fire.
      * Without this, NostrSimplePool's GLib-based reconnect logic never runs
@@ -551,6 +552,35 @@ int main(int argc, char **argv) {
       SignetHealthSnapshot snap;
       memset(&snap, 0, sizeof(snap));
       snap.relay_connected = signet_relay_pool_is_connected(relays);
+
+      /* Explicit reconnect: if the relay connection dropped, restart the pool
+       * and re-subscribe. LibNostr's internal reconnect relies on GLib timers
+       * that may not fire reliably when the relay closes an idle socket.
+       * Throttle attempts to once every 30 seconds. */
+      if (!snap.relay_connected) {
+        int64_t now_ts = signet_now_unix();
+        if (now_ts - last_reconnect_attempt >= 30) {
+          last_reconnect_attempt = now_ts;
+          g_message("[signetd] relay disconnected — restarting pool");
+          signet_relay_pool_stop(relays);
+          if (signet_relay_pool_start(relays) == 0) {
+            static const int signet_kinds[] = {
+              24133,
+              SIGNET_KIND_PROVISION_AGENT,
+              SIGNET_KIND_REVOKE_AGENT,
+              SIGNET_KIND_SET_POLICY,
+              SIGNET_KIND_GET_STATUS,
+              SIGNET_KIND_LIST_AGENTS,
+              SIGNET_KIND_ROTATE_KEY,
+            };
+            signet_relay_pool_subscribe_kinds(relays, signet_kinds,
+                                              G_N_ELEMENTS(signet_kinds));
+            g_message("[signetd] relay pool restarted and resubscribed");
+          }
+          /* Re-check after reconnect attempt */
+          snap.relay_connected = signet_relay_pool_is_connected(relays);
+        }
+      }
       snap.db_open = signet_key_store_is_open(keys);
       snap.agents_active = signet_key_store_cache_count(keys);
       snap.cache_entries = signet_key_store_cache_count(keys);
