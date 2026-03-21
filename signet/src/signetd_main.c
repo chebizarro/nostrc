@@ -47,6 +47,7 @@
 
 /* Process hardening */
 #include <sys/mman.h>
+#include <sys/resource.h>
 #if defined(__linux__)
 #include <sys/prctl.h>
 #endif
@@ -222,13 +223,42 @@ int main(int argc, char **argv) {
   /* Lock all current and future pages in memory — prevents key material
    * from being swapped to disk.  sodium_malloc() locks individual allocs,
    * but this covers GLib internals and stack frames that transiently hold
-   * secret bytes. */
-  if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
-    /* Non-fatal: may fail without CAP_IPC_LOCK or in containers without
-     * the capability. sodium_malloc per-alloc mlock is still in effect. */
-    fprintf(stderr, "signetd: warning: mlockall() failed: %s "
-            "(consider CAP_IPC_LOCK or --privileged)\n",
-            strerror(errno));
+   * secret bytes.
+   *
+   * Even with CAP_IPC_LOCK, mlockall can fail if RLIMIT_MEMLOCK is too low
+   * (Docker defaults to 64 KB).  Try to raise it first. */
+  {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_MEMLOCK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
+      rl.rlim_cur = RLIM_INFINITY;
+      rl.rlim_max = RLIM_INFINITY;
+      if (setrlimit(RLIMIT_MEMLOCK, &rl) != 0) {
+        /* CAP_IPC_LOCK allows unlimited mlock but may not grant setrlimit.
+         * Try a generous but finite limit instead. */
+        rl.rlim_cur = 512ULL * 1024 * 1024; /* 512 MiB */
+        rl.rlim_max = 512ULL * 1024 * 1024;
+        (void)setrlimit(RLIMIT_MEMLOCK, &rl);
+      }
+    }
+
+    int mlock_flags = MCL_CURRENT | MCL_FUTURE;
+    if (mlockall(mlock_flags) != 0) {
+      /* MCL_FUTURE is the aggressive flag — locks every future mmap/malloc.
+       * Fall back to MCL_CURRENT which just locks the pages already mapped. */
+      if (mlockall(MCL_CURRENT) != 0) {
+        fprintf(stderr, "signetd: warning: mlockall() failed: %s\n"
+                "  Per-allocation sodium_malloc mlock is still in effect, but GLib\n"
+                "  heap and stack frames may be swappable.  To fix:\n"
+                "    Docker:  cap_add: [IPC_LOCK] + ulimits.memlock: -1\n"
+                "    systemd: MemoryDenyWriteExecute=no, LimitMEMLOCK=infinity\n"
+                "    bare:    setcap cap_ipc_lock+ep signetd\n",
+                strerror(errno));
+      } else {
+        g_message("[signetd] mlockall(MCL_CURRENT) OK (MCL_FUTURE unavailable)");
+      }
+    } else {
+      g_message("[signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK — all pages locked");
+    }
   }
 
   /* ---- Signal handling ---- */

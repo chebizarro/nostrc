@@ -76,11 +76,19 @@ RUN groupadd -r signet && useradd -r -g signet -d /data -s /usr/sbin/nologin sig
 COPY --from=builder /src/build-docker/signet/signetd /usr/local/bin/signetd
 COPY --from=builder /src/build-docker/signet/signetctl /usr/local/bin/signetctl
 
+# Grant CAP_IPC_LOCK so mlockall() works for non-root deployments without
+# Docker cap_add (e.g., bare metal with systemd).  Requires libcap2-bin.
+RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
+  && setcap cap_ipc_lock+ep /usr/local/bin/signetd \
+  && apt-get purge -y libcap2-bin && apt-get autoremove -y \
+  && rm -rf /var/lib/apt/lists/*
+
 # Copy shared libraries built by the monorepo
 COPY --from=builder /src/build-docker/libnostr/libnostr.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/libjson/libnostr_json.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip04/libnip04.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip19/libnip19.so* /usr/local/lib/
+COPY --from=builder /src/build-docker/nips/nip44/libnip44.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip46/libnip46.so* /usr/local/lib/
 RUN ldconfig
 

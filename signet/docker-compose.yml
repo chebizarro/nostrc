@@ -34,11 +34,17 @@ services:
       - "${SIGNET_HEALTH_PORT:-8080}:8080"
 
     # Security hardening
+    cap_add:
+      - IPC_LOCK              # required for mlockall() — prevents key swap
     security_opt:
       - no-new-privileges:true
     read_only: true
     tmpfs:
       - /tmp:size=10M
+    ulimits:
+      memlock:
+        soft: -1              # unlimited — mlockall(MCL_FUTURE) needs this
+        hard: -1
 
     # Resource limits
     deploy:
