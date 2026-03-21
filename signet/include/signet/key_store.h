@@ -53,11 +53,12 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
 /* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
  * and adds to the hot cache.
  * out_pubkey_hex must be at least 65 bytes.
- * If relay_urls is non-NULL, a bunker:// URI is built and returned via *out_bunker_uri
- * (caller frees with g_free). out_bunker_uri may be NULL if not needed.
- * Returns 0 on success, -1 on error. */
+ * If bunker_pubkey_hex and relay_urls are provided, a bunker:// URI is built and
+ * returned via *out_bunker_uri (caller frees with g_free). out_bunker_uri may be
+ * NULL if not needed. Returns 0 on success, -1 on error. */
 int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      const char *agent_id,
+                                     const char *bunker_pubkey_hex,
                                      const char *const *relay_urls,
                                      size_t n_relay_urls,
                                      char *out_pubkey_hex,
@@ -83,6 +84,20 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
 int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
                                               const char *agent_id,
                                               const char *provided_secret);
+
+/* Resolve and consume a connect_secret, returning the bound agent_id.
+ * Returns 0 on success, 1 if no such secret exists, -1 on error.
+ * Caller owns *out_agent_id (g_free). */
+int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
+                                            const char *provided_secret,
+                                            char **out_agent_id);
+
+/* Copy the derived pubkey for an agent into out_pubkey_hex.
+ * out_pubkey_hex must be at least 65 bytes. Returns true on success. */
+bool signet_key_store_get_agent_pubkey(SignetKeyStore *ks,
+                                       const char *agent_id,
+                                       char *out_pubkey_hex,
+                                       size_t out_pubkey_hex_sz);
 
 /* List all agent IDs from the hot cache. Caller frees with g_strfreev().
  * Returns 0 on success, -1 on error. */

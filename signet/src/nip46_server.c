@@ -24,6 +24,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -58,6 +59,13 @@ static bool signet_hex_to_bytes32(const char *hex, uint8_t out[32]) {
     out[i] = (uint8_t)byte;
   }
   return true;
+}
+
+static void signet_bytes32_to_hex(const uint8_t in[32], char out_hex[65]) {
+  for (int i = 0; i < 32; i++) {
+    sprintf(out_hex + (i * 2), "%02x", in[i]);
+  }
+  out_hex[64] = '\0';
 }
 
 /* ------------------------------ audit helper ------------------------------ */
@@ -282,6 +290,7 @@ struct SignetNip46Server {
   SignetAuditLogger *audit;
 
   char *identity;
+  GHashTable *sessions_by_client_pubkey; /* client ephemeral pubkey -> agent_id */
 
   GMutex mu;
 };
@@ -306,7 +315,10 @@ SignetNip46Server *signet_nip46_server_new(SignetRelayPool *relays,
   s->audit = audit;
 
   s->identity = g_strdup(cfg->identity);
-  if (!s->identity) {
+  s->sessions_by_client_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  if (!s->identity || !s->sessions_by_client_pubkey) {
+    if (s->sessions_by_client_pubkey) g_hash_table_destroy(s->sessions_by_client_pubkey);
+    g_free(s->identity);
     g_mutex_clear(&s->mu);
     free(s);
     return NULL;
@@ -317,6 +329,9 @@ SignetNip46Server *signet_nip46_server_new(SignetRelayPool *relays,
 
 void signet_nip46_server_free(SignetNip46Server *s) {
   if (!s) return;
+  if (s->sessions_by_client_pubkey) {
+    g_hash_table_destroy(s->sessions_by_client_pubkey);
+  }
   g_mutex_clear(&s->mu);
   g_free(s->identity);
   free(s);
@@ -389,6 +404,51 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     (void)signet_json_event_extract_kind(req.params[0], &event_kind);
   }
 
+  char *session_agent_id = NULL;
+  const char *policy_identity = s->identity;
+  const char *pre_code = NULL;
+  char *pre_err = NULL;
+
+  if (parse_ok && method) {
+    if (strcmp(method, "connect") == 0) {
+      const char *requested_signer = (req.params && req.n_params >= 1) ? req.params[0] : NULL;
+      const char *provided_secret = (req.params && req.n_params >= 2) ? req.params[1] : NULL;
+
+      if (!requested_signer || !requested_signer[0] || !provided_secret || !provided_secret[0]) {
+        pre_code = "invalid_params";
+        pre_err = g_strdup("connect requires [remote_signer_pubkey, connect_secret]");
+      } else if (g_ascii_strcasecmp(requested_signer, remote_signer_pubkey_hex) != 0) {
+        pre_code = "wrong_signer";
+        pre_err = g_strdup("connect target does not match bunker pubkey");
+      } else {
+        int rc = signet_key_store_consume_connect_secret(s->keys, provided_secret, &session_agent_id);
+        if (rc != 0 || !session_agent_id) {
+          pre_code = "auth_failed";
+          pre_err = g_strdup("connect_secret mismatch");
+        } else {
+          policy_identity = session_agent_id;
+        }
+      }
+    } else {
+      const char *bound_agent = s->sessions_by_client_pubkey
+                                  ? (const char *)g_hash_table_lookup(s->sessions_by_client_pubkey,
+                                                                      client_pubkey_hex)
+                                  : NULL;
+      if (!bound_agent || !bound_agent[0]) {
+        pre_code = "not_connected";
+        pre_err = g_strdup("client has no active NIP-46 session");
+      } else {
+        session_agent_id = g_strdup(bound_agent);
+        if (!session_agent_id) {
+          pre_code = "oom";
+          pre_err = g_strdup("out of memory");
+        } else {
+          policy_identity = session_agent_id;
+        }
+      }
+    }
+  }
+
   /* 4) Policy check */
   SignetPolicyResult pres;
   memset(&pres, 0, sizeof(pres));
@@ -396,9 +456,9 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   pres.reason_code = "policy_engine_missing";
 
   bool policy_ok = false;
-  if (s->policy && parse_ok && method) {
+  if (!pre_err && s->policy && parse_ok && method) {
     policy_ok = signet_policy_engine_eval(s->policy,
-                                          s->identity,
+                                          policy_identity,
                                           client_pubkey_hex,
                                           method,
                                           event_kind,
@@ -408,13 +468,13 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       pres.decision = SIGNET_POLICY_DECISION_DENY;
       pres.reason_code = "policy_eval_error";
     }
-  } else if (parse_ok && method) {
+  } else if (!pre_err && parse_ok && method) {
     policy_ok = true;
     pres.decision = SIGNET_POLICY_DECISION_DENY;
     pres.reason_code = "policy_engine_missing";
   }
 
-  /* 5) Decide early errors (replay, decrypt, parse, deny) */
+  /* 5) Decide early errors (replay, decrypt, parse, session, deny) */
   const char *decision = "deny";
   const char *status = "error";
   const char *code = "internal_error";
@@ -438,6 +498,10 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   } else if (!parse_ok) {
     code = "invalid_request";
     err_str = g_strdup("invalid request");
+  } else if (pre_err) {
+    code = pre_code ? pre_code : "session_error";
+    err_str = pre_err;
+    pre_err = NULL;
   } else if (!policy_ok) {
     code = "policy_error";
     err_str = g_strdup("policy evaluation error");
@@ -453,30 +517,12 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
     /* 6) Execute method */
     if (strcmp(method, "connect") == 0) {
-      /* NIP-46 connect: validate connect_secret for initial auth.
-       * params[0] = remote signer pubkey (already implicit)
-       * params[1] = connect_secret (optional but required if set during provision) */
-      const char *provided_secret = NULL;
-      if (req.params && req.n_params >= 2 && req.params[1] && req.params[1][0]) {
-        provided_secret = req.params[1];
-      }
-
-      /* Validate and consume the connect_secret via key_store. */
-      int cs_rc = signet_key_store_validate_connect_secret(
-          s->keys, s->identity, provided_secret);
-      if (cs_rc < 0) {
-        /* Secret mismatch or error — reject the connect. */
-        err_str = g_strdup("connect_secret mismatch");
-        status = "error";
-        code = "auth_failed";
-        allow = false;
-        decision = "deny";
-      } else {
-        /* cs_rc == 0 (secret consumed) or 1 (no secret required) */
-        result = g_strdup("ack");
-        status = "ok";
-        code = "ok";
-      }
+      g_hash_table_replace(s->sessions_by_client_pubkey,
+                           g_strdup(client_pubkey_hex),
+                           g_strdup(session_agent_id));
+      result = g_strdup("ack");
+      status = "ok";
+      code = "ok";
 
     } else if (strcmp(method, "ping") == 0) {
       result = g_strdup("pong");
@@ -484,83 +530,100 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       code = "ok";
 
     } else if (strcmp(method, "get_public_key") == 0) {
-      /* Derive pubkey from secret key using libnostr */
-      char *pub = nostr_key_get_public(remote_signer_secret_key_hex);
-      if (!pub) {
-        err_str = g_strdup("failed to derive public key");
+      char agent_pubkey_hex[65];
+      if (!signet_key_store_get_agent_pubkey(s->keys, session_agent_id,
+                                             agent_pubkey_hex, sizeof(agent_pubkey_hex))) {
+        err_str = g_strdup("failed to load agent pubkey");
         status = "error";
         code = "invalid_key";
       } else {
-        result = pub;
+        result = g_strdup(agent_pubkey_hex);
         status = "ok";
         code = "ok";
       }
 
-    } else if (strcmp(method, "sign_event") == 0) {
-      if (!req.params || req.n_params < 1) {
-        err_str = g_strdup("sign_event requires event JSON param");
+    } else if (strcmp(method, "sign_event") == 0 ||
+               strcmp(method, "nip04_encrypt") == 0 ||
+               strcmp(method, "nip04_decrypt") == 0) {
+      SignetLoadedKey agent_key;
+      memset(&agent_key, 0, sizeof(agent_key));
+      if (!signet_key_store_load_agent_key(s->keys, session_agent_id, &agent_key) ||
+          !agent_key.secret_key || agent_key.secret_key_len != 32) {
+        err_str = g_strdup("failed to load agent key");
         status = "error";
-        code = "invalid_params";
+        code = "invalid_key";
       } else {
-        char *serr = NULL;
-        char *signed_evt = signet_sign_event_json_with_seckey(
-            remote_signer_secret_key_hex, req.params[0], &serr);
-        if (!signed_evt) {
-          err_str = serr ? serr : g_strdup("sign_event failed");
-          status = "error";
-          code = "sign_failed";
-        } else {
-          result = signed_evt;
-          status = "ok";
-          code = "ok";
-          g_free(serr);
-        }
-      }
+        char agent_sk_hex[65];
+        signet_bytes32_to_hex(agent_key.secret_key, agent_sk_hex);
 
-    } else if (strcmp(method, "nip04_encrypt") == 0) {
-      if (!req.params || req.n_params < 2) {
-        err_str = g_strdup("nip04_encrypt requires [pubkey, plaintext]");
-        status = "error";
-        code = "invalid_params";
-      } else {
-        char *ct = NULL;
-        char *eerr = NULL;
-        int rc = nostr_nip04_encrypt(req.params[1], req.params[0],
-                                     remote_signer_secret_key_hex,
-                                     &ct, &eerr);
-        if (rc != 0) {
-          err_str = eerr ? eerr : g_strdup("encrypt failed");
-          status = "error";
-          code = "encrypt_failed";
+        if (strcmp(method, "sign_event") == 0) {
+          if (!req.params || req.n_params < 1) {
+            err_str = g_strdup("sign_event requires event JSON param");
+            status = "error";
+            code = "invalid_params";
+          } else {
+            char *serr = NULL;
+            char *signed_evt = signet_sign_event_json_with_seckey(
+                agent_sk_hex, req.params[0], &serr);
+            if (!signed_evt) {
+              err_str = serr ? serr : g_strdup("sign_event failed");
+              status = "error";
+              code = "sign_failed";
+            } else {
+              result = signed_evt;
+              status = "ok";
+              code = "ok";
+              g_free(serr);
+            }
+          }
+        } else if (strcmp(method, "nip04_encrypt") == 0) {
+          if (!req.params || req.n_params < 2) {
+            err_str = g_strdup("nip04_encrypt requires [pubkey, plaintext]");
+            status = "error";
+            code = "invalid_params";
+          } else {
+            char *ct = NULL;
+            char *eerr = NULL;
+            int rc = nostr_nip04_encrypt(req.params[1], req.params[0],
+                                         agent_sk_hex,
+                                         &ct, &eerr);
+            if (rc != 0) {
+              err_str = eerr ? eerr : g_strdup("encrypt failed");
+              status = "error";
+              code = "encrypt_failed";
+            } else {
+              result = ct;
+              status = "ok";
+              code = "ok";
+              free(eerr);
+            }
+          }
         } else {
-          result = ct;
-          status = "ok";
-          code = "ok";
-          free(eerr);
+          if (!req.params || req.n_params < 2) {
+            err_str = g_strdup("nip04_decrypt requires [pubkey, ciphertext]");
+            status = "error";
+            code = "invalid_params";
+          } else {
+            char *pt = NULL;
+            char *derr = NULL;
+            int rc = nostr_nip04_decrypt(req.params[1], req.params[0],
+                                         agent_sk_hex,
+                                         &pt, &derr);
+            if (rc != 0) {
+              err_str = derr ? derr : g_strdup("decrypt failed");
+              status = "error";
+              code = "decrypt_failed";
+            } else {
+              result = pt;
+              status = "ok";
+              code = "ok";
+              free(derr);
+            }
+          }
         }
-      }
 
-    } else if (strcmp(method, "nip04_decrypt") == 0) {
-      if (!req.params || req.n_params < 2) {
-        err_str = g_strdup("nip04_decrypt requires [pubkey, ciphertext]");
-        status = "error";
-        code = "invalid_params";
-      } else {
-        char *pt = NULL;
-        char *derr = NULL;
-        int rc = nostr_nip04_decrypt(req.params[1], req.params[0],
-                                     remote_signer_secret_key_hex,
-                                     &pt, &derr);
-        if (rc != 0) {
-          err_str = derr ? derr : g_strdup("decrypt failed");
-          status = "error";
-          code = "decrypt_failed";
-        } else {
-          result = pt;
-          status = "ok";
-          code = "ok";
-          free(derr);
-        }
+        signet_memzero(agent_sk_hex, sizeof(agent_sk_hex));
+        signet_loaded_key_clear(&agent_key);
       }
 
     } else if (strcmp(method, "get_relays") == 0) {
@@ -576,7 +639,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   }
 
   /* 7) Audit (never include plaintext/keys) */
-  signet_audit_nip46(s->audit, now, s->identity, client_pubkey_hex,
+  signet_audit_nip46(s->audit, now, policy_identity, client_pubkey_hex,
                      event_id_hex, req_id, method ? method : "unknown",
                      event_kind, decision,
                      pres.reason_code ? pres.reason_code : "n/a",
@@ -631,6 +694,8 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   free(enc_err);
   if (result) { signet_memzero(result, strlen(result)); g_free(result); }
   g_free(err_str);
+  g_free(pre_err);
+  g_free(session_agent_id);
   free(dec_err);
 
   nostr_nip46_request_free(&req);

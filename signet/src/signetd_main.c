@@ -39,7 +39,9 @@
 
 /* Process hardening */
 #include <sys/mman.h>
+#if defined(__linux__)
 #include <sys/prctl.h>
+#endif
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
@@ -169,10 +171,12 @@ int main(int argc, char **argv) {
   /* ---- Process hardening (before any secrets are loaded) ---- */
 
   /* Prevent core dumps and /proc/self/mem reads that could leak key material. */
+#if defined(__linux__)
   if (prctl(PR_SET_DUMPABLE, 0) != 0) {
     fprintf(stderr, "signetd: warning: prctl(PR_SET_DUMPABLE, 0) failed: %s\n",
             strerror(errno));
   }
+#endif
 
   /* Lock all current and future pages in memory — prevents key material
    * from being swapped to disk.  sodium_malloc() locks individual allocs,

@@ -99,22 +99,34 @@ int signet_store_list_active_leases(SignetStore *store,
                                     SignetLeaseRecord **out_leases,
                                     size_t *out_count) {
   sqlite3 *db = signet_store_get_db(store);
-  if (!db || !agent_id || !out_leases || !out_count) return -1;
+  if (!db || !out_leases || !out_count) return -1;
 
   *out_leases = NULL;
   *out_count = 0;
 
-  const char *sql =
-    "SELECT lease_id, secret_id, agent_id, issued_at, expires_at, metadata "
-    "FROM leases WHERE agent_id = ? AND revoked_at IS NULL AND expires_at > ? "
-    "ORDER BY issued_at;";
+  const char *sql = NULL;
+  if (agent_id && agent_id[0]) {
+    sql =
+      "SELECT lease_id, secret_id, agent_id, issued_at, expires_at, metadata "
+      "FROM leases WHERE agent_id = ? AND revoked_at IS NULL AND expires_at > ? "
+      "ORDER BY issued_at;";
+  } else {
+    sql =
+      "SELECT lease_id, secret_id, agent_id, issued_at, expires_at, metadata "
+      "FROM leases WHERE revoked_at IS NULL AND expires_at > ? "
+      "ORDER BY issued_at;";
+  }
 
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
   if (rc != SQLITE_OK) return -1;
 
-  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int64(stmt, 2, now);
+  if (agent_id && agent_id[0]) {
+    sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, now);
+  } else {
+    sqlite3_bind_int64(stmt, 1, now);
+  }
 
   GArray *arr = g_array_new(FALSE, TRUE, sizeof(SignetLeaseRecord));
 

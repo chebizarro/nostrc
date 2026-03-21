@@ -38,18 +38,29 @@ struct SignetRelayPool {
   gboolean started;
 };
 
+/* Single-pool-per-process assumption: signetd and signetctl each create one
+ * relay pool. libnostr's middleware API does not carry user_data, so keep the
+ * active pool in a process-global atomic pointer. */
+static SignetRelayPool *g_active_pool = NULL;
+
 /* ----------------------- event middleware bridge -------------------------- */
 
 static void signet_pool_event_middleware(NostrIncomingEvent *incoming) {
-  /* This middleware is called by NostrSimplePool for each received event.
-   * We need to get the SignetRelayPool pointer to dispatch.
-   * Unfortunately NostrSimplePool doesn't pass user_data to the middleware,
-   * so we use a thread-local or global pointer set during start.
-   * For now, use a global (single-pool-per-process pattern matches signetd). */
-  (void)incoming;
-  /* Dispatching is done via signet_relay_pool_handle_event_json() called
-   * from the event loop in signetd_main.c. The pool middleware is set up
-   * to forward events there. */
+  SignetRelayPool *rp = g_atomic_pointer_get((void **)&g_active_pool);
+  if (!rp || !incoming || !incoming->event || !rp->on_event) return;
+
+  char *event_id = nostr_event_get_id(incoming->event);
+
+  SignetRelayEventView ev;
+  ev.kind = nostr_event_get_kind(incoming->event);
+  ev.created_at = nostr_event_get_created_at(incoming->event);
+  ev.event_id_hex = event_id;
+  ev.pubkey_hex = nostr_event_get_pubkey(incoming->event);
+  ev.content = nostr_event_get_content(incoming->event);
+
+  rp->on_event(&ev, rp->user_data);
+
+  free(event_id);
 }
 
 /* ------------------------------ public API -------------------------------- */
@@ -72,6 +83,10 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
     free(rp);
     return NULL;
   }
+
+  /* Wire live incoming-event dispatch through libnostr SimplePool. */
+  nostr_simple_pool_set_event_middleware(rp->pool, signet_pool_event_middleware);
+  nostr_simple_pool_set_auto_unsub_on_eose(rp->pool, false);
 
   /* Store URLs and add relays to the pool */
   if (cfg->n_relays > 0 && cfg->relays) {
@@ -125,6 +140,7 @@ int signet_relay_pool_start(SignetRelayPool *rp) {
     return 0;
   }
 
+  g_atomic_pointer_set((void **)&g_active_pool, rp);
   nostr_simple_pool_start(rp->pool);
   rp->started = TRUE;
 
@@ -142,6 +158,9 @@ void signet_relay_pool_stop(SignetRelayPool *rp) {
   }
 
   nostr_simple_pool_stop(rp->pool);
+  if (g_atomic_pointer_get((void **)&g_active_pool) == rp) {
+    g_atomic_pointer_set((void **)&g_active_pool, NULL);
+  }
   rp->started = FALSE;
 
   g_mutex_unlock(&rp->mu);

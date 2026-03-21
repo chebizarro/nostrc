@@ -40,6 +40,7 @@ struct SignetBootstrapServer {
   SignetChallengeStore *challenges;
   SignetAuditLogger *audit;
   const SignetFleetRegistry *fleet;
+  char *bunker_pubkey_hex;
   char **relay_urls;
   size_t n_relay_urls;
 };
@@ -161,6 +162,7 @@ handle_bootstrap(SignetBootstrapServer *bs, struct MHD_Connection *conn,
   char *bunker_uri = NULL;
   int rc = signet_key_store_provision_agent(
       bs->keys, agent_id,
+      bs->bunker_pubkey_hex,
       (const char *const *)bs->relay_urls, bs->n_relay_urls,
       pubkey_hex, sizeof(pubkey_hex), &bunker_uri);
 
@@ -359,6 +361,7 @@ SignetBootstrapServer *signet_bootstrap_server_new(const SignetBootstrapServerCo
   bs->challenges = cfg->challenges;
   bs->audit = cfg->audit;
   bs->fleet = cfg->fleet;
+  bs->bunker_pubkey_hex = g_strdup(cfg->bunker_pubkey_hex);
 
   /* Copy relay URLs. */
   if (cfg->relay_urls && cfg->n_relay_urls > 0) {
@@ -375,6 +378,7 @@ void signet_bootstrap_server_free(SignetBootstrapServer *bs) {
   if (!bs) return;
   signet_bootstrap_server_stop(bs);
   g_free(bs->listen);
+  g_free(bs->bunker_pubkey_hex);
   if (bs->relay_urls) {
     for (size_t i = 0; i < bs->n_relay_urls; i++)
       g_free(bs->relay_urls[i]);

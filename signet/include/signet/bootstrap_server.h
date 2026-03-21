@@ -36,6 +36,7 @@ typedef struct {
   struct SignetChallengeStore *challenges;
   struct SignetAuditLogger *audit;
   const SignetFleetRegistry *fleet;  /* for /auth verification */
+  const char *bunker_pubkey_hex;
   const char *const *relay_urls;
   size_t n_relay_urls;
 } SignetBootstrapServerConfig;

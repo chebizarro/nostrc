@@ -373,6 +373,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       char *bunker_uri = NULL;
       int rc = signet_key_store_provision_agent(
           h->keys, req.agent_id,
+          h->bunker_pk_hex,
           (const char *const *)h->relay_urls, h->n_relay_urls,
           pubkey_hex, sizeof(pubkey_hex),
           &bunker_uri);

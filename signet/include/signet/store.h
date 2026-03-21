@@ -90,6 +90,13 @@ int signet_store_touch_agent(SignetStore *store,
 int signet_store_consume_connect_secret(SignetStore *store,
                                         const char *agent_id);
 
+/* Resolve an agent by connect_secret and consume that secret atomically.
+ * On success, returns 0 and sets *out_agent_id to a newly allocated string
+ * owned by the caller (g_free). Returns 1 if not found, -1 on error. */
+int signet_store_consume_connect_secret_value(SignetStore *store,
+                                              const char *connect_secret,
+                                              char **out_agent_id);
+
 /* Free an agent record (wipes secret key). Safe on NULL. */
 void signet_agent_record_clear(SignetAgentRecord *rec);
 

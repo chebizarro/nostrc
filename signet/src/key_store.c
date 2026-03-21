@@ -14,6 +14,7 @@
 #include "signet/store.h"
 #include "signet/audit_logger.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -31,14 +32,37 @@
 
 typedef struct {
   uint8_t secret_key[32];  /* plaintext secret key (mlock'd) */
+  char pubkey_hex[65];     /* derived pubkey for this agent */
   int64_t loaded_at;
 } SignetCacheEntry;
+
+static void signet_secret_key_to_hex(const uint8_t *sk, char out_hex[65]) {
+  for (int i = 0; i < 32; i++) {
+    sprintf(out_hex + (i * 2), "%02x", sk[i]);
+  }
+  out_hex[64] = '\0';
+}
 
 static SignetCacheEntry *signet_cache_entry_new(const uint8_t *sk, int64_t loaded_at) {
   /* Allocate in locked memory via sodium_malloc */
   SignetCacheEntry *e = (SignetCacheEntry *)sodium_malloc(sizeof(SignetCacheEntry));
   if (!e) return NULL;
+  memset(e, 0, sizeof(*e));
   memcpy(e->secret_key, sk, 32);
+
+  char sk_hex[65];
+  signet_secret_key_to_hex(sk, sk_hex);
+  char *pub_hex = nostr_key_get_public(sk_hex);
+  secure_wipe(sk_hex, sizeof(sk_hex));
+  if (!pub_hex || strlen(pub_hex) != 64) {
+    if (pub_hex) free(pub_hex);
+    sodium_memzero(e->secret_key, 32);
+    sodium_free(e);
+    return NULL;
+  }
+  memcpy(e->pubkey_hex, pub_hex, 65);
+  free(pub_hex);
+
   e->loaded_at = loaded_at;
   return e;
 }
@@ -170,6 +194,7 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
 
 int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      const char *agent_id,
+                                     const char *bunker_pubkey_hex,
                                      const char *const *relay_urls,
                                      size_t n_relay_urls,
                                      char *out_pubkey_hex,
@@ -241,10 +266,10 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   }
 
   /* Build bunker:// URI if requested and provision succeeded.
-   * Format: bunker://<agent_pubkey>?relay=<url1>&relay=<url2>&secret=<connect_secret> */
-  if (rc == 0 && out_bunker_uri) {
+   * Format: bunker://<bunker_pubkey>?relay=<url1>&relay=<url2>&secret=<connect_secret> */
+  if (rc == 0 && out_bunker_uri && bunker_pubkey_hex && bunker_pubkey_hex[0]) {
     GString *uri = g_string_new("bunker://");
-    g_string_append(uri, pk_hex);
+    g_string_append(uri, bunker_pubkey_hex);
     g_string_append_c(uri, '?');
     for (size_t i = 0; i < n_relay_urls; i++) {
       if (i > 0) g_string_append_c(uri, '&');
@@ -309,6 +334,23 @@ int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
   signet_agent_record_clear(&rec);
   g_mutex_unlock(&ks->mu);
   return result;
+}
+
+int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
+                                            const char *provided_secret,
+                                            char **out_agent_id) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (!ks || !provided_secret || !provided_secret[0] || !out_agent_id) return -1;
+
+  g_mutex_lock(&ks->mu);
+  if (!ks->store) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+
+  int rc = signet_store_consume_connect_secret_value(ks->store, provided_secret, out_agent_id);
+  g_mutex_unlock(&ks->mu);
+  return rc;
 }
 
 int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id) {
@@ -436,6 +478,24 @@ int signet_key_store_list_agents(SignetKeyStore *ks,
   *out_ids = ids;
   *out_count = i;
   return 0;
+}
+
+bool signet_key_store_get_agent_pubkey(SignetKeyStore *ks,
+                                       const char *agent_id,
+                                       char *out_pubkey_hex,
+                                       size_t out_pubkey_hex_sz) {
+  if (!ks || !agent_id || !out_pubkey_hex || out_pubkey_hex_sz < 65) return false;
+
+  g_mutex_lock(&ks->mu);
+  SignetCacheEntry *entry = (SignetCacheEntry *)g_hash_table_lookup(ks->cache, agent_id);
+  if (!entry) {
+    g_mutex_unlock(&ks->mu);
+    return false;
+  }
+
+  memcpy(out_pubkey_hex, entry->pubkey_hex, 65);
+  g_mutex_unlock(&ks->mu);
+  return true;
 }
 
 uint32_t signet_key_store_cache_count(const SignetKeyStore *ks) {

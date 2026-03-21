@@ -109,6 +109,7 @@ static const char *SIGNET_SCHEMA_SQL =
   "  created_at INTEGER NOT NULL,"
   "  last_used INTEGER NOT NULL DEFAULT 0"
   ");"
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_connect_secret ON agents(connect_secret) WHERE connect_secret IS NOT NULL;"
 
   /* v2: extended secrets (multi-type credentials) */
   "CREATE TABLE IF NOT EXISTS secrets ("
@@ -498,6 +499,79 @@ int signet_store_consume_connect_secret(SignetStore *store,
 
   if (rc != SQLITE_DONE) return -1;
   return (changes > 0) ? 0 : 1; /* 1 = not found or already consumed */
+}
+
+int signet_store_consume_connect_secret_value(SignetStore *store,
+                                              const char *connect_secret,
+                                              char **out_agent_id) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (!store || !store->open || !connect_secret || !connect_secret[0] || !out_agent_id) {
+    return -1;
+  }
+
+  int rc = sqlite3_exec(store->db, "BEGIN IMMEDIATE TRANSACTION;", NULL, NULL, NULL);
+  if (rc != SQLITE_OK) return -1;
+
+  const char *select_sql =
+      "SELECT agent_id FROM agents WHERE connect_secret = ? LIMIT 1;";
+  sqlite3_stmt *select_stmt = NULL;
+  rc = sqlite3_prepare_v2(store->db, select_sql, -1, &select_stmt, NULL);
+  if (rc != SQLITE_OK) {
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+
+  sqlite3_bind_text(select_stmt, 1, connect_secret, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(select_stmt);
+  if (rc == SQLITE_DONE) {
+    sqlite3_finalize(select_stmt);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return 1;
+  }
+  if (rc != SQLITE_ROW) {
+    sqlite3_finalize(select_stmt);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+
+  const char *agent_id = (const char *)sqlite3_column_text(select_stmt, 0);
+  char *agent_copy = agent_id ? g_strdup(agent_id) : NULL;
+  sqlite3_finalize(select_stmt);
+  if (!agent_copy) {
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+
+  const char *update_sql =
+      "UPDATE agents SET connect_secret = NULL WHERE agent_id = ? AND connect_secret = ?;";
+  sqlite3_stmt *update_stmt = NULL;
+  rc = sqlite3_prepare_v2(store->db, update_sql, -1, &update_stmt, NULL);
+  if (rc != SQLITE_OK) {
+    g_free(agent_copy);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  sqlite3_bind_text(update_stmt, 1, agent_copy, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(update_stmt, 2, connect_secret, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(update_stmt);
+  int changes = sqlite3_changes(store->db);
+  sqlite3_finalize(update_stmt);
+
+  if (rc != SQLITE_DONE || changes <= 0) {
+    g_free(agent_copy);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return (rc == SQLITE_DONE) ? 1 : -1;
+  }
+
+  rc = sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    g_free(agent_copy);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+
+  *out_agent_id = agent_copy;
+  return 0;
 }
 
 sqlite3 *signet_store_get_db(SignetStore *store) {
