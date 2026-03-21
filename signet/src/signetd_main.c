@@ -542,6 +542,11 @@ int main(int argc, char **argv) {
   /* Main loop: update health snapshot and wait for shutdown. */
   int64_t started_at = signet_now_unix();
   while (!g_shutdown_requested) {
+    /* Drain the GLib main context so libnostr's reconnect timers can fire.
+     * Without this, NostrSimplePool's GLib-based reconnect logic never runs
+     * because g_usleep() does not iterate the main context event queue. */
+    g_main_context_iteration(NULL, FALSE);
+
     if (health) {
       SignetHealthSnapshot snap;
       memset(&snap, 0, sizeof(snap));
