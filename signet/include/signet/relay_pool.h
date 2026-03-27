@@ -51,6 +51,19 @@ typedef struct {
   /* Called on each received event after minimal parsing/validation. */
   SignetRelayEventCallback on_event;
   void *user_data;
+
+  /* Optional: hex-encoded private key for NIP-42 AUTH responses.
+   * When set, AUTH challenges from any relay in the pool are answered
+   * automatically with a signed kind:22242 event.  Pass NULL to disable
+   * (connections to relays that require auth will be rejected silently). */
+  const char *auth_sk_hex;
+
+  /* Optional: override URL used in the NIP-42 AUTH event's "relay" tag.
+   * Use this when connecting to a relay via an internal address (e.g.
+   * ws://172.20.0.1:7777) but the relay validates against a public URL
+   * (e.g. wss://armada.sharegap.net set via RELAY_URL env on Khatru).
+   * If NULL, the relay connection URL is used (default behaviour). */
+  const char *auth_relay_tag_url;
 } SignetRelayPoolConfig;
 
 /* Create relay pool. Returns NULL on OOM. */

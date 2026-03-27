@@ -513,11 +513,15 @@ int main(int argc, char **argv) {
   memcpy(ack_ctx.provisioner_sk_hex, provisioner_sk_hex, 65);
   secure_wipe(provisioner_sk_hex, 64);
 
+  /* signetctl signs AUTH challenges using the provisioner's own key,
+   * allowing it to connect to relays that require NIP-42 auth. */
   SignetRelayPoolConfig rp_cfg = {
     .relays = (const char *const *)cfg.relays,
     .n_relays = cfg.n_relays,
     .on_event = signetctl_on_event,
     .user_data = &ack_ctx,
+    .auth_sk_hex = ack_ctx.provisioner_sk_hex[0] ? ack_ctx.provisioner_sk_hex : NULL,
+    .auth_relay_tag_url = g_getenv("SIGNET_AUTH_RELAY_URL"),
   };
   SignetRelayPool *rp = signet_relay_pool_new(&rp_cfg);
 
@@ -532,8 +536,48 @@ int main(int argc, char **argv) {
   int ack_kinds[] = { SIGNET_KIND_MGMT_ACK };
   signet_relay_pool_subscribe_kinds(rp, ack_kinds, 1);
 
-  /* Wait briefly for relay connections. */
-  g_usleep(500 * 1000);
+  /* Wait for relay connections, pumping the GLib main context.
+   *
+   * WHY: signet_relay_auth_callback schedules NIP-42 AUTH via g_idle_add().
+   * Idle callbacks only execute when a GMainLoop is running or the context
+   * is polled explicitly.  A plain g_usleep() here means AUTH never fires,
+   * so auth-required relays (armada) always time out.
+   *
+   * Pumping the context also drains the post-auth re-subscribe chain
+   * (signet_post_auth_resubscribe), ensuring kind:28090 subscriptions are
+   * live before we publish the management event.
+   *
+   * We give up to 5s: connection RTT + NIP-42 challenge/response (2 relay
+   * round trips) + re-subscribe EOSE.  In practice this completes in <200ms
+   * on a LAN relay. */
+  {
+    int64_t connect_deadline = g_get_monotonic_time() + 5000000LL; /* 5s */
+    gboolean connected = FALSE;
+    while (g_get_monotonic_time() < connect_deadline) {
+      /* Drain all pending GLib sources (idle, I/O ready, timeouts). */
+      while (g_main_context_iteration(NULL, FALSE))
+        ;
+      if (signet_relay_pool_is_connected(rp)) {
+        connected = TRUE;
+        break;
+      }
+      g_usleep(10 * 1000); /* 10ms poll */
+    }
+
+    if (!connected) {
+      fprintf(stderr, "signetctl: no relay connected after 5s\n");
+      goto cleanup;
+    }
+
+    /* Extra drain: flush the auth + re-subscribe idle chain that queued up
+     * immediately after connection was established. */
+    int64_t auth_deadline = g_get_monotonic_time() + 2000000LL; /* 2s */
+    while (g_get_monotonic_time() < auth_deadline) {
+      while (g_main_context_iteration(NULL, FALSE))
+        ;
+      g_usleep(10 * 1000);
+    }
+  }
 
   /* Publish the management event. */
   if (signet_relay_pool_publish_event_json(rp, event_json) != 0) {
@@ -543,17 +587,28 @@ int main(int argc, char **argv) {
 
   printf("Published %s event. Waiting for ack...\n", signet_mgmt_op_to_string(signet_mgmt_op_from_kind(kind)));
 
-  /* Wait for ack with timeout. */
-  g_mutex_lock(&ack_ctx.mu);
-  if (!ack_ctx.received) {
+  /* Wait for ack with timeout, pumping the GLib main context.
+   *
+   * The ack event arrives on the relay worker thread and is dispatched via
+   * signet_pool_event_middleware → signetctl_on_event → g_mutex/g_cond signal.
+   * g_cond_wait_until would work for the signal, BUT we must keep pumping the
+   * main context in case additional idle callbacks are still pending (e.g.
+   * a second auth round-trip after a relay reconnect).
+   *
+   * Pattern: unlock → pump → re-lock → check condition → repeat. */
+  {
     int64_t end_time = g_get_monotonic_time() + (SIGNETCTL_TIMEOUT_SEC * G_USEC_PER_SEC);
+    g_mutex_lock(&ack_ctx.mu);
     while (!ack_ctx.received) {
-      if (!g_cond_wait_until(&ack_ctx.cond, &ack_ctx.mu, end_time)) {
-        break; /* timeout */
-      }
+      if (g_get_monotonic_time() >= end_time) break;
+      g_mutex_unlock(&ack_ctx.mu);
+      while (g_main_context_iteration(NULL, FALSE))
+        ;
+      g_usleep(5 * 1000); /* 5ms */
+      g_mutex_lock(&ack_ctx.mu);
     }
+    g_mutex_unlock(&ack_ctx.mu);
   }
-  g_mutex_unlock(&ack_ctx.mu);
 
   if (ack_ctx.received && ack_ctx.response_json) {
     printf("Ack received:\n%s\n", ack_ctx.response_json);

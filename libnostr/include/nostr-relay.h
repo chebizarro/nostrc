@@ -380,6 +380,20 @@ void nostr_relay_reconnect_now(NostrRelay *relay);
  */
 void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *));
 
+/**
+ * nostr_relay_set_ok_callback:
+ * @relay: relay instance
+ * @callback: called for every ["OK","id",ok,"reason"] received from the relay
+ * @user_data: user data passed to callback
+ *
+ * Register a callback that fires whenever an OK response is received.
+ * Used by NIP-42 to subscribe only after auth is confirmed.
+ * Called from relay worker thread - use thread-safe operations (e.g. g_idle_add).
+ */
+void nostr_relay_set_ok_callback(NostrRelay *relay,
+                                  void (*callback)(const char *event_id, bool ok, const char *reason, void *user_data),
+                                  void *user_data);
+
 #ifdef __cplusplus
 }
 #endif

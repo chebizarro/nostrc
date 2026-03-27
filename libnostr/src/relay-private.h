@@ -64,6 +64,10 @@ struct _NostrRelayPrivate {
     /* NIP-42 AUTH challenge callback (nostrc-7og) */
     NostrRelayAuthCallback auth_callback;
     void *auth_callback_user_data;
+
+    /* OK response callback — fires for every ["OK","id",ok,"reason"] message */
+    void (*ok_response_callback)(const char *event_id, bool ok, const char *reason, void *user_data);
+    void *ok_response_callback_user_data;
 };
 
 typedef struct _NostrRelayWriteRequest {

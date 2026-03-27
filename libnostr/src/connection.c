@@ -232,12 +232,40 @@ send_done:
             nsync_mu_unlock(&priv->mutex);
             priv_unref(priv);
         }
-        // Arm a 1s timer for periodic timeout/progress checks
-        lws_set_timer_usecs(wsi, 1000000);
+        /* Arm timer for read-timeout checks. 30s is sufficient —
+         * LWS handles keepalive via PING/PONG, no per-second polling needed. */
+        lws_set_timer_usecs(wsi, 30000000);
         lws_callback_on_writable(wsi); // Ensure the socket becomes writable
         break;
     }
     
+    case LWS_CALLBACK_CLIENT_RECEIVE_PONG: {
+        /* nostrc-ping: PONG received — the connection is alive.
+         *
+         * PONG frames are RFC 6455 control frames; they do NOT trigger
+         * LWS_CALLBACK_CLIENT_RECEIVE, so they previously left
+         * last_rx_ns and rx_window_bytes untouched.  On idle subscriptions
+         * this caused the byte-count progress check to fire even though
+         * the relay was healthy and responding to PINGs.
+         *
+         * Fix: update last_rx_ns and credit the window with at least 1 byte
+         * so both the read-timeout and progress checks remain quiet. */
+        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+        if (priv) {
+            uint64_t now_us = (uint64_t)lws_now_usecs();
+            nsync_mu_lock(&priv->mutex);
+            priv->last_rx_ns   = now_us;
+            priv->last_pong_ns = now_us;
+            /* Credit at least 1 byte to satisfy the progress window */
+            priv->rx_window_bytes += (len > 0 ? (uint64_t)len : 1);
+            nsync_mu_unlock(&priv->mutex);
+            nostr_rl_log(NLOG_DEBUG, "ws", "pong received (payload %zu bytes)", len);
+            nostr_metric_counter_add("ws_pong_received", 1);
+            priv_unref(priv);
+        }
+        break;
+    }
+
     case LWS_CALLBACK_EVENT_WAIT_CANCELLED: {
         NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
         if (priv) {
@@ -402,27 +430,28 @@ send_done:
                 return 0;
             }
         }
-        int64_t win_ms = nostr_limit_ws_progress_window_ms();
-        int64_t min_bytes = nostr_limit_ws_min_bytes_per_window();
-        if (win_ms > 0 && min_bytes > 0) {
-            uint64_t win_start = priv->rx_window_start_ns ? priv->rx_window_start_ns : now_us;
-            if (now_us - win_start >= (uint64_t)win_ms * 1000ULL) {
-                uint64_t bytes = priv->rx_window_bytes;
-                if (bytes < (uint64_t)min_bytes) {
-                    nostr_rl_log(NLOG_WARN, "ws", "progress violation: %lluB < %lldB in %lldms", (unsigned long long)bytes, (long long)min_bytes, (long long)win_ms);
-                    nostr_metric_counter_add("ws_progress_violation", 1);
-                    // Avoid closing from timer callback; just log and continue.
-                    // The upper layers can decide to reconnect.
-                    priv_unref(priv);
-                    return 0;
-                }
-                // reset window
-                priv->rx_window_start_ns = now_us;
-                priv->rx_window_bytes = 0;
-            }
-        }
-        // Re-arm timer for continuous checks
-        lws_set_timer_usecs(wsi, 1000000);
+        /* nostrc-ping: progress violation check removed.
+         *
+         * The old check measured application-data bytes per window.  On idle
+         * Nostr subscriptions (no events) zero bytes flow even when the relay is
+         * fully healthy and responding to PINGs.  PONG frames are control frames
+         * that don't trigger LWS_CALLBACK_CLIENT_RECEIVE, so the counter stayed
+         * at zero regardless of actual liveness.
+         *
+         * Liveness is now handled correctly by two mechanisms:
+         *   1. LWS built-in PING/PONG via g_retry_bo (secs_since_valid_ping=25,
+         *      secs_since_valid_hangup=55) — LWS sends WS PINGs and closes the
+         *      connection if no PONG arrives within the hangup window.
+         *   2. LWS_CALLBACK_CLIENT_RECEIVE_PONG updates last_rx_ns, so the
+         *      read-timeout check above stays quiet on PING/PONG-only connections.
+         *
+         * The progress window state (rx_window_start_ns / rx_window_bytes) is
+         * kept in the struct for future use but no longer evaluated here.
+         */
+
+        /* Re-arm timer at 30s — read-timeout check is sufficient; no need
+         * for per-second polling now that LWS handles keepalive. */
+        lws_set_timer_usecs(wsi, 30000000);
         priv_unref(priv);
         break;
     }
@@ -461,6 +490,29 @@ static const struct lws_protocols protocols[] = {
 };
 
 static const uint32_t retry_table[] = {1000, 2000, 3000}; // Retry intervals in ms
+
+/* nostrc-ping: WebSocket keepalive policy.
+ *
+ * Must be a static global — lws_context_creation_info and
+ * lws_client_connect_info store a POINTER to this struct and access it
+ * long after nostr_connection_new() has returned.  A local variable would
+ * become a dangling pointer the moment the function exited, causing UB.
+ *
+ * secs_since_valid_ping=25  — send WS PING after 25s of silence
+ * secs_since_valid_hangup=55 — close if no PONG/data within 55s of last ping
+ *
+ * Relay subscriptions carry zero application bytes when no events arrive.
+ * PING/PONG is the only correct liveness signal for idle connections.
+ */
+static const uint32_t g_retry_table[] = {1000, 2000, 3000};
+static const lws_retry_bo_t g_retry_bo = {
+    .retry_ms_table       = g_retry_table,
+    .retry_ms_table_count = LWS_ARRAY_SIZE(g_retry_table),
+    .conceal_count        = 3,
+    .secs_since_valid_ping   = 25,
+    .secs_since_valid_hangup = 55,
+    .jitter_percent          = 5,
+};
 
 /* Shared libwebsockets context & service thread */
 static struct lws_context *g_lws_context = NULL;
@@ -641,6 +693,10 @@ static void service_loop_process_connect_request(ConnectionRequest *req,
     ci.protocol = "wss";
     ci.pwsi = &req->conn->priv->wsi;
     ci.userdata = req->conn;
+    /* nostrc-ping: Apply keepalive policy to each client connection.
+     * Without this, LWS only uses the policy at context level (server).
+     * Setting it here enables per-client WS PING/PONG. */
+    ci.retry_and_idle_policy = &g_retry_bo;
 
     struct lws *wsi = lws_client_connect_via_info(&ci);
 
@@ -807,18 +863,9 @@ NostrConnection *nostr_connection_new(const char *url) {
     conn->send_channel = go_channel_create(16);
 
     /* Phase 2: Ensure shared context (fast mutex — microseconds, not seconds) */
-    lws_retry_bo_t retry_bo = {
-        .retry_ms_table = retry_table,
-        .retry_ms_table_count = LWS_ARRAY_SIZE(retry_table),
-        .conceal_count = 3,
-        .secs_since_valid_ping = 29,
-        .secs_since_valid_hangup = 60,
-        .jitter_percent = 5
-    };
-
     struct lws_context_creation_info context_info;
     memset(&context_info, 0, sizeof(context_info));
-    context_info.retry_and_idle_policy = &retry_bo;
+    context_info.retry_and_idle_policy = &g_retry_bo;
     context_info.port = CONTEXT_PORT_NO_LISTEN;
     context_info.protocols = protocols;
     context_info.gid = -1;

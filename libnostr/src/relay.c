@@ -274,6 +274,8 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
 
     relay->priv->notice_handler = NULL;
     relay->priv->custom_handler = NULL;
+    relay->priv->ok_response_callback = NULL;
+    relay->priv->ok_response_callback_user_data = NULL;
 
     /* Initialize reconnection state (nostrc-4du) */
     relay->priv->connection_state = NOSTR_RELAY_STATE_DISCONNECTED;
@@ -1087,6 +1089,14 @@ static void *message_loop(void *arg) {
                         oe->event_id ? oe->event_id : "",
                         oe->reason ? oe->reason : "");
             }
+            /* Fire OK response callback (used by NIP-42 to wait for auth confirmation) */
+            if (r->priv->ok_response_callback) {
+                r->priv->ok_response_callback(
+                    oe->event_id ? oe->event_id : "",
+                    oe->ok,
+                    oe->reason ? oe->reason : "",
+                    r->priv->ok_response_callback_user_data);
+            }
             char tmp[256]; snprintf(tmp, sizeof(tmp), "OK id=%s ok=%s reason=%s",
                                    oe->event_id ? oe->event_id : "",
                                    oe->ok ? "true" : "false",
@@ -1801,4 +1811,12 @@ void nostr_relay_reconnect_now(NostrRelay *relay) {
 void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *)) {
     if (!relay || !relay->priv) return;
     relay->priv->custom_handler = handler;
+}
+
+void nostr_relay_set_ok_callback(NostrRelay *relay,
+                                  void (*callback)(const char *event_id, bool ok, const char *reason, void *user_data),
+                                  void *user_data) {
+    if (!relay || !relay->priv) return;
+    relay->priv->ok_response_callback = callback;
+    relay->priv->ok_response_callback_user_data = user_data;
 }

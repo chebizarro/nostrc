@@ -327,6 +327,13 @@ int main(int argc, char **argv) {
     .n_relays = cfg.n_relays,
     .on_event = signet_on_relay_event,
     .user_data = &dctx,
+    /* NIP-42: sign AUTH challenges with the bunker's own key */
+    .auth_sk_hex = cfg.remote_signer_secret_key_hex[0]
+                   ? cfg.remote_signer_secret_key_hex
+                   : NULL,
+    /* NIP-42: override relay tag URL (e.g. connect via internal address,
+     * sign AUTH with public URL). Reads SIGNET_AUTH_RELAY_URL env var. */
+    .auth_relay_tag_url = g_getenv("SIGNET_AUTH_RELAY_URL"),
   };
   SignetRelayPool *relays = signet_relay_pool_new(&rp_cfg);
 
