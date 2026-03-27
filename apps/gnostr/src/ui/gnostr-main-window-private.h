@@ -136,6 +136,7 @@ struct _GnostrMainWindow {
 void gnostr_main_window_show_toast_internal(GnostrMainWindow *self, const char *message);
 void gnostr_main_window_handle_composer_post_requested(NostrGtkComposer *composer, const char *text, gpointer user_data);
 void gnostr_main_window_on_relays_clicked_internal(GtkButton *btn, gpointer user_data);
+void gnostr_main_window_on_settings_clicked_internal(GtkButton *btn, gpointer user_data);
 
 G_END_DECLS
 
