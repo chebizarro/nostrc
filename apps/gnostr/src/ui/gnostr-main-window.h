@@ -36,6 +36,17 @@ void gnostr_main_window_enqueue_profile_authors(GnostrMainWindow *self, const ch
 /* Public: Show a toast message in the main window (auto-dismisses after 2s) */
 void gnostr_main_window_show_toast(GtkWidget *window, const char *message);
 
+/* Public: Reply / quote / repost / moderation / thread helpers used across UI modules */
+void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, const char *root_id, const char *pubkey_hex);
+void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+void gnostr_main_window_request_report_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex, const char *namespace, const char *label, const char *pubkey_hex);
+void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
+void gnostr_main_window_view_thread_with_json(GtkWidget *window, const char *root_event_id, const char *event_json);
+void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex);
+void gnostr_main_window_mute_thread(GtkWidget *window, const char *event_id_hex);
+
 /* Public: Request a like/reaction (kind 7) for an event - NIP-25 */
 void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, NostrGtkNoteCardRow *row);
 
