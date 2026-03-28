@@ -656,11 +656,15 @@ gnostr_dm_conversation_view_set_peer(GnostrDmConversationView *self,
 
     /* Load avatar if available */
     if (avatar_url && *avatar_url) {
+        gtk_widget_set_visible(GTK_WIDGET(self->peer_avatar_image), TRUE);
+        gtk_widget_set_visible(GTK_WIDGET(self->peer_avatar_initials), TRUE);
         gnostr_avatar_download_async(avatar_url,
                                      GTK_WIDGET(self->peer_avatar_image),
                                      GTK_WIDGET(self->peer_avatar_initials));
     } else {
+        gtk_picture_set_paintable(self->peer_avatar_image, NULL);
         gtk_widget_set_visible(GTK_WIDGET(self->peer_avatar_image), FALSE);
+        gtk_widget_set_visible(GTK_WIDGET(self->peer_avatar_initials), TRUE);
     }
 }
 

@@ -255,7 +255,6 @@ send_done:
             uint64_t now_us = (uint64_t)lws_now_usecs();
             nsync_mu_lock(&priv->mutex);
             priv->last_rx_ns   = now_us;
-            priv->last_pong_ns = now_us;
             /* Credit at least 1 byte to satisfy the progress window */
             priv->rx_window_bytes += (len > 0 ? (uint64_t)len : 1);
             nsync_mu_unlock(&priv->mutex);

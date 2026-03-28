@@ -129,6 +129,16 @@ gnostr_dm_service_new(void)
 }
 
 void
+gnostr_dm_send_result_free(GnostrDmSendResult *result)
+{
+    if (!result)
+        return;
+
+    g_free(result->error_message);
+    g_free(result);
+}
+
+void
 gnostr_dm_service_set_inbox_view(GnostrDmService *self,
                                   GnostrDmInboxView *inbox)
 {
