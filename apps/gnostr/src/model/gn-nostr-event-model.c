@@ -172,6 +172,12 @@ struct _GnNostrEventModel {
   /* Async pagination state */
   gboolean async_loading;
 
+  /* nostrc-deferred-trim: Pagination trim deferred to a separate idle to avoid
+   * the massive "replace all" disposal cascade that causes heap corruption.
+   * Insert-only signals are emitted immediately; trimming runs later. */
+  guint paginate_trim_source_id;     /* g_idle source ID, 0 if no pending trim */
+  GArray *paginate_trim_keys;        /* uint64_t keys to remove in idle */
+
   /* nostrc-reentrant-guard: Prevent reentrant model modifications during
    * items_changed signal emission. GTK widget disposal can trigger callbacks
    * that attempt to modify the model, causing heap corruption. */
@@ -886,6 +892,13 @@ static gboolean on_drain_timer(gpointer user_data) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self)) {
     return G_SOURCE_REMOVE;
+  }
+
+  /* nostrc-deferred-trim: Pause live drain while pagination trim is pending.
+   * Interleaving live inserts with pending trim keys could invalidate positions.
+   * Items remain safely buffered in insertion_buffer until trim completes. */
+  if (self->paginate_trim_source_id > 0) {
+    return G_SOURCE_CONTINUE;
   }
 
   gint64 start_us = g_get_monotonic_time();
@@ -1981,6 +1994,18 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   /* nostrc-7o7: Clean up animation skip tracking */
   if (self->skip_animation_keys) g_hash_table_unref(self->skip_animation_keys);
 
+  /* Clean up deferred pagination trim.
+   * IMPORTANT: We remove the source but do NOT unref self here — we are
+   * already inside finalize, so the idle's ref has already been accounted for.
+   * The source removal prevents the callback from firing on a dead object. */
+  if (self->paginate_trim_source_id > 0) {
+    g_source_remove(self->paginate_trim_source_id);
+    self->paginate_trim_source_id = 0;
+    /* The idle callback held a ref via g_object_ref. Since finalize is running,
+     * that ref was already dropped. Just clean up the source. */
+  }
+  g_clear_pointer(&self->paginate_trim_keys, g_array_unref);
+
   /* Clean up pipeline drain timer and insertion buffer */
   remove_drain_timer(self);
   if (self->insertion_buffer) g_array_unref(self->insertion_buffer);
@@ -2696,6 +2721,101 @@ void gn_nostr_event_model_refresh_async(GnNostrEventModel *self) {
 
 /* --- Async pagination: load_older / load_newer off main thread --- */
 
+/* nostrc-deferred-trim: Idle callback to trim excess items after pagination insert.
+ * Runs in a separate main-loop iteration to avoid the disposal cascade that caused
+ * heap corruption (nanov2_guard_corruption_detected). */
+static gboolean
+paginate_trim_idle_cb(gpointer user_data)
+{
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) goto out;
+
+  GArray *trim_keys = self->paginate_trim_keys;
+  if (!trim_keys || trim_keys->len == 0) goto out;
+
+  /* Find current positions of the keys to trim, working backwards (highest
+   * position first) so earlier removals don't invalidate later positions. */
+  guint removed_total = 0;
+
+  /* Build a set for O(1) lookup of keys to trim */
+  GHashTable *trim_set = g_hash_table_new(uint64_hash, uint64_equal);
+  for (guint i = 0; i < trim_keys->len; i++) {
+    uint64_t *kp = &g_array_index(trim_keys, uint64_t, i);
+    g_hash_table_add(trim_set, kp);
+  }
+
+  /* Scan from tail to head, removing matching keys.
+   * Since trim keys are typically contiguous at front or back,
+   * this is efficient. Remove one contiguous run at a time. */
+  guint run_start = 0;
+  guint run_len = 0;
+  gboolean in_run = FALSE;
+
+  /* Collect runs from back to front */
+  for (gint i = (gint)self->notes->len - 1; i >= 0; i--) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, (guint)i);
+    if (g_hash_table_contains(trim_set, &entry->note_key)) {
+      if (!in_run) {
+        run_start = (guint)i;
+        run_len = 1;
+        in_run = TRUE;
+      } else if ((guint)i == run_start - 1) {
+        /* Extend run downward */
+        run_start = (guint)i;
+        run_len++;
+      } else {
+        /* Flush previous run, start new one */
+        g_array_remove_range(self->notes, run_start, run_len);
+        emit_items_changed_safe(self, run_start, run_len, 0);
+        removed_total += run_len;
+        run_start = (guint)i;
+        run_len = 1;
+      }
+    } else if (in_run) {
+      /* Flush contiguous run */
+      g_array_remove_range(self->notes, run_start, run_len);
+      emit_items_changed_safe(self, run_start, run_len, 0);
+      removed_total += run_len;
+      in_run = FALSE;
+      run_len = 0;
+    }
+  }
+  /* Flush any remaining run */
+  if (in_run && run_len > 0) {
+    g_array_remove_range(self->notes, run_start, run_len);
+    emit_items_changed_safe(self, run_start, run_len, 0);
+    removed_total += run_len;
+  }
+
+  g_hash_table_destroy(trim_set);
+
+  /* Clean up caches for all trimmed keys (AFTER signals, so GTK unbinds first) */
+  for (guint i = 0; i < trim_keys->len; i++) {
+    uint64_t k = g_array_index(trim_keys, uint64_t, i);
+    g_hash_table_remove(self->note_key_set, &k);
+    cache_lru_remove_key(self, k);
+    g_hash_table_remove(self->thread_info, &k);
+    g_hash_table_remove(self->item_cache, &k);
+    g_hash_table_remove(self->skip_animation_keys, &k);
+  }
+
+  g_debug("[MODEL] Deferred pagination trim: removed %u items, model now %u",
+          removed_total, self->notes->len);
+
+out:
+  /* Clear deferred trim state */
+  g_clear_pointer(&self->paginate_trim_keys, g_array_unref);
+  self->paginate_trim_source_id = 0;
+  self->async_loading = FALSE;
+
+  /* Restart drain timer if insertion buffer has pending items */
+  if (self->insertion_buffer && self->insertion_buffer->len > 0)
+    ensure_drain_timer(self);
+
+  g_object_unref(self); /* balance ref from g_idle_add */
+  return G_SOURCE_REMOVE;
+}
+
 /* Main-thread callback: apply pre-processed entries WITHOUT clearing model */
 static void
 on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
@@ -2704,10 +2824,12 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(source);
   if (!GN_IS_NOSTR_EVENT_MODEL(self)) return;
 
-  self->async_loading = FALSE;
+  /* nostrc-deferred-trim: Don't clear async_loading here. It will be cleared
+   * at the bottom of this function, or by paginate_trim_idle_cb if deferred
+   * trimming is scheduled. This prevents overlapping paginations. */
 
   GPtrArray *entries = g_task_propagate_pointer(G_TASK(result), NULL);
-  if (!entries) return;
+  if (!entries) { self->async_loading = FALSE; return; }
 
   /* Recover trim parameters from GTask qdata */
   guint trim_max = GPOINTER_TO_UINT(
@@ -2792,79 +2914,74 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     }
   }
 
-  /* nostrc-pango-fix3: Trim BEFORE emitting items_changed to avoid nested
-   * signal emission. When we emit items_changed for the insert, GTK processes
-   * it and may create/bind widgets. If we then emit more items_changed signals
-   * for trimming while GTK is still processing, it can corrupt internal state.
-   * By trimming first (silently adjusting the array), then emitting ONE signal
-   * that accounts for both the additions and removals, we avoid the race. */
-  guint trimmed = 0;
-  if (trim_max > 0 && self->notes->len > trim_max) {
-    guint to_trim = self->notes->len - trim_max;
+  /* nostrc-deferred-trim: Emit a targeted INSERT-ONLY signal instead of
+   * "replace all" items_changed(0, old_len, new_len). The replace-all pattern
+   * caused GTK to dispose ALL existing widgets and create ALL new ones in a
+   * single signal cascade, overwhelming the heap allocator and causing
+   * nanov2_guard_corruption_detected crashes.
+   *
+   * Instead:
+   * 1. Emit insert-only signal (no removals → no mass disposal)
+   * 2. Defer trimming to a separate idle callback
+   *
+   * This matches the existing safe pattern used by on_drain_timer() which
+   * also uses insert-only signals followed by deferred eviction. */
+  if (added > 0) {
     if (trim_newer) {
-      /* Trim from front (newer items) - remove silently without signal */
-      for (guint i = 0; i < to_trim; i++) {
-        NoteEntry *entry = &g_array_index(self->notes, NoteEntry, 0);
-        uint64_t k = entry->note_key;
-        g_array_remove_index(self->notes, 0);
-        g_hash_table_remove(self->note_key_set, &k);
-        cache_lru_remove_key(self, k);
-        g_hash_table_remove(self->thread_info, &k);
-        g_hash_table_remove(self->item_cache, &k);
-        g_hash_table_remove(self->skip_animation_keys, &k);
-      }
-      trimmed = to_trim;
+      /* Load older: items appended at end */
+      emit_items_changed_safe(self, old_len, 0, added);
     } else {
-      /* Trim from back (older items) - remove silently without signal */
-      for (guint i = 0; i < to_trim; i++) {
-        guint idx = self->notes->len - 1;
-        NoteEntry *entry = &g_array_index(self->notes, NoteEntry, idx);
-        uint64_t k = entry->note_key;
-        g_array_remove_index(self->notes, idx);
-        g_hash_table_remove(self->note_key_set, &k);
-        cache_lru_remove_key(self, k);
-        g_hash_table_remove(self->thread_info, &k);
-        g_hash_table_remove(self->item_cache, &k);
-        g_hash_table_remove(self->skip_animation_keys, &k);
-      }
-      trimmed = to_trim;
+      /* Load newer: items prepended at front */
+      emit_items_changed_safe(self, 0, 0, added);
     }
   }
 
-  /* nostrc-duplicate-fix2: Emit a single "replace all" items_changed signal.
-   *
-   * CRITICAL: The previous signal logic was semantically incorrect and was
-   * the root cause of "Duplicate item detected in list" warnings + segfaults.
-   *
-   * The bug: For trim_newer=TRUE (load-older), items are appended at the END
-   * of the notes array, and older items are trimmed from the FRONT. But the
-   * signal items_changed(0, trimmed, added) told GTK "N new items at position 0",
-   * when actually the surviving old items are at the front and new items at the end.
-   * GTK then called get_item(0) expecting a new item but got a surviving old item
-   * that GTK also tracked at position N — same GObject pointer at two positions.
-   *
-   * Similarly for trim_newer=FALSE (load-newer) with trimming: the signal
-   * miscounted positions, causing GTK's item→widget mapping to become corrupted.
-   *
-   * Fix: Use the conservative "replace all" signal items_changed(0, old_len, new_len),
-   * which correctly tells GTK the entire model has changed. This is the same
-   * pattern used by the sync load_older/load_newer and refresh paths.
-   * Clear item_cache first to ensure get_item() creates fresh items and avoids
-   * returning stale GObject pointers that GTK already tracks elsewhere. */
-  if (added > 0 || trimmed > 0) {
-    guint new_len = self->notes->len;
-    /* nostrc-heap-corruption-fix: Do NOT clear item_cache before the signal.
-     * Same fix as on_refresh_async_done: clearing drops refs to items still
-     * bound by GTK, causing premature finalization and nano-zone heap corruption
-     * during the items_changed disposal cascade.
-     *
-     * Items for trimmed note_keys were already removed from item_cache in the
-     * trim loop above. Remaining cache entries are for items still in the model
-     * and must survive the signal so GTK can unbind them cleanly. */
-    emit_items_changed_safe(self, 0, old_len, new_len);
+  /* Schedule deferred trim if model exceeds trim_max */
+  gboolean trim_scheduled = FALSE;
+  if (trim_max > 0 && self->notes->len > trim_max) {
+    guint to_trim = self->notes->len - trim_max;
+    GArray *trim_keys = g_array_sized_new(FALSE, FALSE, sizeof(uint64_t), to_trim);
+
+    if (trim_newer) {
+      /* Load older → trim from front (newer items) */
+      for (guint i = 0; i < to_trim && i < self->notes->len; i++) {
+        NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+        g_array_append_val(trim_keys, entry->note_key);
+      }
+    } else {
+      /* Load newer → trim from back (older items) */
+      for (guint i = 0; i < to_trim; i++) {
+        guint idx = self->notes->len - 1 - i;
+        NoteEntry *entry = &g_array_index(self->notes, NoteEntry, idx);
+        g_array_append_val(trim_keys, entry->note_key);
+      }
+    }
+
+    /* Cancel any previous pending trim */
+    if (self->paginate_trim_source_id > 0) {
+      g_source_remove(self->paginate_trim_source_id);
+      g_object_unref(self);
+      self->paginate_trim_source_id = 0;
+    }
+    g_clear_pointer(&self->paginate_trim_keys, g_array_unref);
+
+    self->paginate_trim_keys = trim_keys;
+    self->paginate_trim_source_id = g_idle_add(
+        paginate_trim_idle_cb, g_object_ref(self));
+    trim_scheduled = TRUE;
+
+    g_debug("[MODEL] Scheduled deferred trim of %u items", to_trim);
   }
 
-  g_debug("[MODEL] Async paginate: %u added, %u total", added, self->notes->len);
+  /* Only clear async_loading if no deferred trim is pending.
+   * If trim is scheduled, it will clear async_loading when done.
+   * This prevents overlapping paginations during the trim window. */
+  if (!trim_scheduled) {
+    self->async_loading = FALSE;
+  }
+
+  g_debug("[MODEL] Async paginate: %u added, %u total (trim %s)",
+          added, self->notes->len, trim_scheduled ? "deferred" : "none");
   g_ptr_array_unref(entries);
 }
 
