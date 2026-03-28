@@ -392,11 +392,13 @@ if (APPLE)
   # (Linux C implementations were already excluded from APP_SRC before add_executable)
   target_sources(${APP_CLIENT_BIN} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-menubar-macos.m
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-macos-activation.m
     ${CMAKE_CURRENT_SOURCE_DIR}/src/notifications/desktop_notify_macos.m)
 
   # Enable ARC (Automatic Reference Counting) for Objective-C files
   set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-menubar-macos.m
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-macos-activation.m
     ${CMAKE_CURRENT_SOURCE_DIR}/src/notifications/desktop_notify_macos.m
     PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 

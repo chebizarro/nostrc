@@ -281,9 +281,12 @@ void nostr_subscription_free(NostrSubscription *sub) {
 
     // IMPORTANT: Remove from relay map FIRST to prevent message_loop from
     // dispatching events to this subscription while we're freeing it.
-    // This must happen before waiting for the lifecycle worker.
+    // nostrc-sub-uaf: Hold relay priv mutex while removing to serialise with
+    // relay_get_subscription_ref() in message_loop (prevents use-after-free).
     if (sub->relay && sub->relay->subscriptions) {
+        nsync_mu_lock(&sub->relay->priv->mutex);
         go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
+        nsync_mu_unlock(&sub->relay->priv->mutex);
     }
 
     // Decrement refcount — actual deallocation happens when it hits 0 (nostrc-nr96)
@@ -934,9 +937,13 @@ static void *async_cleanup_worker(void *arg) {
     }
     
     /* IMPORTANT: Remove from relay map FIRST to prevent message_loop from
-     * dispatching events to this subscription while we're freeing it. */
+     * dispatching events to this subscription while we're freeing it.
+     * nostrc-sub-uaf: Hold relay priv mutex while removing to serialise with
+     * relay_get_subscription_ref() in message_loop (prevents use-after-free). */
     if (sub->relay && sub->relay->subscriptions) {
+        nsync_mu_lock(&sub->relay->priv->mutex);
         go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
+        nsync_mu_unlock(&sub->relay->priv->mutex);
     }
     
     bool success = true;

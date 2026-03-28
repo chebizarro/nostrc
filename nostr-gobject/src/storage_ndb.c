@@ -966,12 +966,26 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note)
         storage_ndb_hex_encode(str.id, hex);
         g_string_append_printf(json, "\"%s\"", hex);
       } else if (str.str) {
+        /* nostrc-heap-guard: Use bounded strnlen to prevent reading past NDB page
+         * boundaries when malformed events lack proper NUL terminators. Without
+         * this, g_utf8_validate(-1) and g_strescape read until NUL which can
+         * traverse far past the tag data region in LMDB-mapped memory. */
+        size_t slen = strnlen(str.str, 65536);
+        if (slen >= 65536) {
+          g_warning("Tag element string exceeds 64KB safety limit, skipping");
+          g_string_append(json, "\"[truncated]\"");
+          continue;
+        }
         /* String value (either packed inline or offset-based) */
-        if (!g_utf8_validate(str.str, -1, NULL)) {
+        if (!g_utf8_validate_len(str.str, slen, NULL)) {
           /* Invalid UTF-8, escape as hex */
           g_string_append(json, "\"[invalid]\"");
           continue;
         }
+        /* Use g_markup_escape_text for proper JSON-compatible escaping.
+         * g_strescape produces C-style octal escapes (\ooo) for control chars
+         * which are NOT valid JSON. g_markup_escape_text handles the common
+         * XML entities; we manually handle remaining JSON special chars. */
         gchar *escaped = g_strescape(str.str, NULL);
         if (escaped) {
           g_string_append_printf(json, "\"%s\"", escaped);
@@ -2008,7 +2022,12 @@ char **storage_ndb_note_get_hashtags(storage_ndb_note *note)
     /* Get the hashtag value */
     struct ndb_str val = ndb_tag_str(note, tag, 1);
     if (val.str && *val.str) {
-      g_ptr_array_add(hashtags, g_strdup(val.str));
+      /* nostrc-heap-guard: Bound the read to prevent traversing far past
+       * tag data when malformed events lack NUL terminators. */
+      size_t slen = strnlen(val.str, 256);
+      if (slen < 256) {
+        g_ptr_array_add(hashtags, g_strndup(val.str, slen));
+      }
     }
   }
 
@@ -2177,6 +2196,16 @@ storage_ndb_blocks *storage_ndb_get_blocks(void *txn, uint64_t note_key)
 storage_ndb_blocks *storage_ndb_parse_content_blocks(const char *content, int content_len)
 {
   if (!content || content_len <= 0) return NULL;
+
+  /* nostrc-heap-guard: Reject extremely long content before parsing.
+   * ndb_parse_content writes blocks into a fixed buffer. While the parser
+   * uses cursor bounds checks, content with many small blocks (URLs,
+   * hashtags, mentions) generates proportionally more block overhead.
+   * Cap at 256KB to stay well within our 512KB parse buffer. */
+  if (content_len > (256 * 1024)) {
+    g_debug("storage_ndb: content too long (%d bytes), skipping block parse", content_len);
+    return NULL;
+  }
 
   /* Match ndb_note_to_blocks: use malloc (ndb_blocks_free calls free()) */
   const int buf_size = 2 << 18;  /* 512KB, same as nostrdb internal */

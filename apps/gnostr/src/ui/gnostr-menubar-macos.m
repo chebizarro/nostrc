@@ -12,6 +12,7 @@
 
 #import <Cocoa/Cocoa.h>
 #include "gnostr-tray-icon.h"
+#include "gnostr-macos-activation.h"
 
 /* Objective-C class to handle menu bar and delegate methods */
 @interface GnostrMenuBarHelper : NSObject
@@ -365,9 +366,7 @@ static gboolean show_hide_window_idle(gpointer user_data) {
     } else {
         gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
         gtk_window_present(data->window);
-        if (data->app && GTK_IS_APPLICATION(data->app)) {
-            g_application_activate(G_APPLICATION(data->app));
-        }
+        gnostr_macos_activation_request_foreground(data->window);
     }
     /* Update label on main thread */
     if (data->helper) {
@@ -402,8 +401,8 @@ static gboolean new_note_idle(gpointer user_data) {
         gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
     }
     gtk_window_present(data->window);
+    gnostr_macos_activation_request_foreground(data->window);
     if (data->app && GTK_IS_APPLICATION(data->app)) {
-        g_application_activate(G_APPLICATION(data->app));
         GAction *action = g_action_map_lookup_action(G_ACTION_MAP(data->app), "new-note");
         if (action) {
             g_action_activate(action, NULL);
@@ -443,8 +442,8 @@ static gboolean check_dms_idle(gpointer user_data) {
         gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
     }
     gtk_window_present(data->window);
+    gnostr_macos_activation_request_foreground(data->window);
     if (data->app && GTK_IS_APPLICATION(data->app)) {
-        g_application_activate(G_APPLICATION(data->app));
         GAction *action = g_action_map_lookup_action(G_ACTION_MAP(data->app), "show-dms");
         if (action) {
             g_action_activate(action, NULL);
@@ -484,8 +483,8 @@ static gboolean open_preferences_idle(gpointer user_data) {
         gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
     }
     gtk_window_present(data->window);
+    gnostr_macos_activation_request_foreground(data->window);
     if (data->app && GTK_IS_APPLICATION(data->app)) {
-        g_application_activate(G_APPLICATION(data->app));
         GAction *action = g_action_map_lookup_action(G_ACTION_MAP(data->app), "preferences");
         if (action) {
             g_action_activate(action, NULL);

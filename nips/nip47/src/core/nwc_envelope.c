@@ -59,20 +59,17 @@ int nostr_nwc_request_build(const char *wallet_pub_hex, NostrNwcEncryption enc,
   free(mqt); free(content);
 
   /* tags: ["p", wallet_pub_hex] (route) and ["encryption", enc] */
-  size_t tcount = 0;
-  tcount += wallet_pub_hex && *wallet_pub_hex ? 1 : 0;
-  tcount += 1; /* encryption */
-  NostrTags *tags = nostr_tags_new(tcount ? tcount : 1);
+  NostrTags *tags = nostr_tags_new(0);
   if (!tags) goto out;
-  size_t idx = 0;
+  nostr_tags_reserve(tags, 2);
   if (wallet_pub_hex && *wallet_pub_hex) {
     NostrTag *p = nostr_tag_new("p", wallet_pub_hex, NULL);
     if (!p) { nostr_tags_free(tags); goto out; }
-    nostr_tags_set(tags, idx++, p);
+    nostr_tags_append(tags, p);
   }
   NostrTag *e = nostr_tag_new("encryption", enc_label(enc), NULL);
   if (!e) { nostr_tags_free(tags); goto out; }
-  nostr_tags_set(tags, idx++, e);
+  nostr_tags_append(tags, e);
   nostr_event_set_tags(ev, tags);
 
   char *json = nostr_event_serialize(ev);
@@ -124,25 +121,22 @@ int nostr_nwc_response_build(const char *client_pub_hex, const char *req_event_i
   free(content);
 
   /* tags: reference request id and routing/encryption */
-  size_t tcount = 1; /* encryption */
-  tcount += (req_event_id && *req_event_id) ? 1 : 0; /* e */
-  tcount += (client_pub_hex && *client_pub_hex) ? 1 : 0; /* p */
-  NostrTags *tags = nostr_tags_new(tcount);
+  NostrTags *tags = nostr_tags_new(0);
   if (!tags) goto out;
-  size_t idx = 0;
+  nostr_tags_reserve(tags, 3);
   if (req_event_id && *req_event_id) {
     NostrTag *et = nostr_tag_new("e", req_event_id, NULL);
     if (!et) { nostr_tags_free(tags); goto out; }
-    nostr_tags_set(tags, idx++, et);
+    nostr_tags_append(tags, et);
   }
   if (client_pub_hex && *client_pub_hex) {
     NostrTag *pt = nostr_tag_new("p", client_pub_hex, NULL);
     if (!pt) { nostr_tags_free(tags); goto out; }
-    nostr_tags_set(tags, idx++, pt);
+    nostr_tags_append(tags, pt);
   }
   NostrTag *enc_t = nostr_tag_new("encryption", enc_label(enc), NULL);
   if (!enc_t) { nostr_tags_free(tags); goto out; }
-  nostr_tags_set(tags, idx++, enc_t);
+  nostr_tags_append(tags, enc_t);
   nostr_event_set_tags(ev, tags);
 
   char *json = nostr_event_serialize(ev);

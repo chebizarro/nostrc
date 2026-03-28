@@ -229,9 +229,12 @@ NostrTags *nostr_tags_get_all(NostrTags *tags, NostrTag *prefix) {
     if (!tags || !prefix)
         return NULL;
 
-    NostrTags *result = nostr_tags_new(nostr_tags_size(tags));
+    /* nostrc-sub-uaf: Use nostr_tags_new(0) + reserve to avoid UB from
+     * reading phantom va_args in the variadic nostr_tags_new(). */
+    NostrTags *result = nostr_tags_new(0);
     if (!result)
         return NULL;
+    nostr_tags_reserve(result, nostr_tags_size(tags));
 
     size_t count = 0;
     for (size_t i = 0; i < nostr_tags_size(tags); i++) {
@@ -248,9 +251,11 @@ NostrTags *nostr_tags_filter_out(NostrTags *tags, NostrTag *prefix) {
     if (!tags || !prefix)
         return NULL;
 
-    NostrTags *filtered = nostr_tags_new(nostr_tags_size(tags));
+    /* nostrc-sub-uaf: Use nostr_tags_new(0) + reserve to avoid UB. */
+    NostrTags *filtered = nostr_tags_new(0);
     if (!filtered)
         return NULL;
+    nostr_tags_reserve(filtered, nostr_tags_size(tags));
 
     size_t count = 0;
     for (size_t i = 0; i < nostr_tags_size(tags); i++) {

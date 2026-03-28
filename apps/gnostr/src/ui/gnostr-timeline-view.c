@@ -459,31 +459,20 @@ static void on_note_card_label_note_requested_relay(NostrGtkNoteCardRow *row, co
   (void)user_data;
 }
 
+static NostrGtkNoteCardRow *get_bound_note_card_row_for_item(gpointer user_data, GObject *expected_item);
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
 
-  /* nostrc-lir: CRITICAL - The list_item may have been recycled or disposed by
-   * the time this profile update callback fires. GTK's GtkListView recycles
-   * GtkListItem objects as the user scrolls, so the user_data pointer we
-   * captured during bind may no longer be valid. We MUST check GTK_IS_LIST_ITEM
-   * before any access to prevent SEGV in gtk_list_item_get_child. */
-  if (!user_data || !GTK_IS_LIST_ITEM(user_data)) {
+  if (!event_item || !G_IS_OBJECT(event_item))
     return;
-  }
-  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
 
-  /* Get the row widget */
-  GtkWidget *row = gtk_list_item_get_child(list_item);
-  if (!GTK_IS_WIDGET(row)) return;
+  NostrGtkNoteCardRow *card_row = get_bound_note_card_row_for_item(user_data, event_item);
+  if (!card_row)
+    return;
 
-  /* CRITICAL: Check if row is being disposed before updating.
-   * Profile updates can be queued via idle callbacks and may arrive while
-   * the row is being disposed, causing Pango layout corruption (nostrc-ipp). */
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
-    NostrGtkNoteCardRow *card_row = NOSTR_GTK_NOTE_CARD_ROW(row);
-    if (nostr_gtk_note_card_row_is_disposed(card_row)) return;
-  }
+  GtkWidget *row = GTK_WIDGET(card_row);
 
   /* Check if profile is now available */
   GObject *profile = NULL;
@@ -616,170 +605,169 @@ static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *d
   gnostr_avatar_download_async(avatar_url, w_img, w_init);
 }
 
+static NostrGtkNoteCardRow *
+get_bound_note_card_row_for_item(gpointer user_data, GObject *expected_item)
+{
+  if (!user_data || !GTK_IS_LIST_ITEM(user_data))
+    return NULL;
+
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  GObject *current_item = gtk_list_item_get_item(list_item);
+  if (expected_item && current_item != expected_item)
+    return NULL;
+
+  GtkWidget *row = gtk_list_item_get_child(list_item);
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    return NULL;
+  if (nostr_gtk_note_card_row_is_disposed(NOSTR_GTK_NOTE_CARD_ROW(row)))
+    return NULL;
+  if (!nostr_gtk_note_card_row_is_bound(NOSTR_GTK_NOTE_CARD_ROW(row)))
+    return NULL;
+
+  return NOSTR_GTK_NOTE_CARD_ROW(row);
+}
+
 /* Notify handlers to react to TimelineItem property changes after initial bind */
 static void on_item_notify_display_name(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
   g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, avatar_url);
+  nostr_gtk_note_card_row_set_author(row, display, handle, avatar_url);
   g_free(display); g_free(handle); g_free(avatar_url);
 }
 
 static void on_item_notify_handle(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
   g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, avatar_url);
+  nostr_gtk_note_card_row_set_author(row, display, handle, avatar_url);
   g_free(display); g_free(handle); g_free(avatar_url);
 }
 
 static void on_item_notify_avatar_url(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   gchar *url = NULL, *display = NULL, *handle = NULL;
   g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, url);
+  nostr_gtk_note_card_row_set_author(row, display, handle, url);
   g_free(url); g_free(display); g_free(handle);
 }
 
 /* NIP-25: Notify handler for like count changes */
 static void on_item_notify_like_count(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   guint like_count = 0;
   g_object_get(obj, "like-count", &like_count, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_like_count(NOSTR_GTK_NOTE_CARD_ROW(row), like_count);
+  nostr_gtk_note_card_row_set_like_count(row, like_count);
 }
 
 /* NIP-18: Notify handler for repost count changes */
 static void on_item_notify_repost_count(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   guint repost_count = 0;
   g_object_get(obj, "repost-count", &repost_count, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_repost_count(NOSTR_GTK_NOTE_CARD_ROW(row), repost_count);
+  nostr_gtk_note_card_row_set_repost_count(row, repost_count);
 }
 
 /* NIP-25: Notify handler for is_liked changes */
 static void on_item_notify_is_liked(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   gboolean is_liked = FALSE;
   g_object_get(obj, "is-liked", &is_liked, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_liked(NOSTR_GTK_NOTE_CARD_ROW(row), is_liked);
+  nostr_gtk_note_card_row_set_liked(row, is_liked);
 }
 
 /* NIP-57: Notify handler for zap count changes */
 static void on_item_notify_zap_count(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   guint zap_count = 0;
   gint64 total_msat = 0;
   g_object_get(obj, "zap-count", &zap_count, "zap-total-msat", &total_msat, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, total_msat);
+  nostr_gtk_note_card_row_set_zap_stats(row, zap_count, total_msat);
 }
 
 /* hq-vvmzu: Notify handler for reply count changes */
 static void on_item_notify_reply_count(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   guint reply_count = 0;
   g_object_get(obj, "reply-count", &reply_count, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_reply_count(NOSTR_GTK_NOTE_CARD_ROW(row), reply_count);
+  nostr_gtk_note_card_row_set_reply_count(row, reply_count);
 }
 
 /* NIP-57: Notify handler for zap total changes */
 static void on_item_notify_zap_total_msat(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
-  GtkWidget *row = GTK_WIDGET(user_data);
-  if (!GTK_IS_WIDGET(row)) return;
   if (!obj || !G_IS_OBJECT(obj)) return;
+  NostrGtkNoteCardRow *row = get_bound_note_card_row_for_item(user_data, obj);
+  if (!row) return;
   guint zap_count = 0;
   gint64 total_msat = 0;
   g_object_get(obj, "zap-count", &zap_count, "zap-total-msat", &total_msat, NULL);
-  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row))
-    nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, total_msat);
+  nostr_gtk_note_card_row_set_zap_stats(row, zap_count, total_msat);
 }
 
-/* Unbind cleanup: disconnect signal handlers and detach inflight operations.
- *
- * nostrc-sig1: We MUST explicitly disconnect g_signal_connect_object handlers
- * here. These handlers are on the item (obj), watching the row. They only
- * auto-disconnect when the row is FINALIZED — but rows are RECYCLED (not
- * finalized) between unbind/rebind. Without explicit disconnect, handlers
- * accumulate across rebinds: after N rebinds, the old items have N sets of
- * stale handlers whose closure invalidation notifiers reference this row.
- * When those old items are finalized, the notifiers try to remove already-
- * removed handlers → invalid_closure_notify assertion → FATAL.
- *
- * GTK4 guarantees the list_item's "item" property is still valid during
- * the unbind signal (it's cleared AFTER the signal fires). */
+static void
+cleanup_bound_row(GtkWidget *row)
+{
+  if (!row || !GTK_IS_WIDGET(row))
+    return;
+
+  g_signal_handlers_disconnect_by_func(row, G_CALLBACK(gnostr_timeline_embed_on_row_request_embed), NULL);
+
+  gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
+  if (map_id > 0 && g_signal_handler_is_connected(G_OBJECT(row), map_id)) {
+    g_signal_handler_disconnect(row, map_id);
+  }
+  g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
+
+  gnostr_timeline_embed_inflight_detach_row(row);
+
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+    nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
+  }
+}
+
+/* Unbind cleanup: disconnect signal handlers and detach inflight operations. */
 static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
   gpointer item_ptr = gtk_list_item_get_item(item);
 
-  /* nostrc-heap-fix: Disconnect g_signal_connect_object handlers BEFORE unbind.
-   * These handlers are on the obj (GnNostrEventItem) watching the row.
-   * When the model removes items, the obj may be finalized while handlers
-   * still reference the row, causing heap corruption in closure_array_destroy_all.
-   * We must disconnect these handlers explicitly during unbind.
-   * Note: item_ptr may be NULL if the model item was already removed. */
-  if (item_ptr && G_IS_OBJECT(item_ptr) && row && GTK_IS_WIDGET(row)) {
-    g_signal_handlers_disconnect_by_data(G_OBJECT(item_ptr), row);
+  /* Disconnect handlers from the source object bound during the last bind.
+   * Use the saved object, not gtk_list_item_get_item(), because GTK may already
+   * have cleared the live item pointer by teardown time. */
+  GObject *bound_item = g_object_get_data(G_OBJECT(item), "tv-bound-item");
+  if (bound_item && G_IS_OBJECT(bound_item)) {
+    g_signal_handlers_disconnect_by_data(bound_item, item);
+    if (row && GTK_IS_WIDGET(row))
+      g_signal_handlers_disconnect_by_data(bound_item, row);
   }
+  g_object_set_data(G_OBJECT(item), "tv-bound-item", NULL);
 
-  /* Disconnect accumulated "request-embed" handlers on the row.
-   * Plain g_signal_connect adds a new handler on every bind without disconnect. */
-  if (row && GTK_IS_WIDGET(row)) {
-    g_signal_handlers_disconnect_by_func(row, G_CALLBACK(gnostr_timeline_embed_on_row_request_embed), NULL);
-
-    /* Disconnect Tier 2 map handler if still active (not yet fired).
-     * nostrc-icn: Check handler is still connected before disconnecting. */
-    gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
-    if (map_id > 0 && g_signal_handler_is_connected(G_OBJECT(row), map_id)) {
-      g_signal_handler_disconnect(row, map_id);
-    }
-    g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
-  }
-
-  if (row && GTK_IS_WIDGET(row)) {
-    /* Detach this row from any inflight embed fetches */
-    gnostr_timeline_embed_inflight_detach_row(row);
-
-    /* CRITICAL: Prepare the row for unbinding BEFORE GTK disposes it.
-     * This cancels all async operations and sets the disposed flag to prevent
-     * callbacks from corrupting Pango state during the unbind/dispose process. */
-    if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
-      nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
-    }
-  }
+  cleanup_bound_row(row);
 }
 
 /* Context for hashtag extraction callback */
@@ -1150,6 +1138,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   if (!obj) {
     return;
   }
+
+  g_object_set_data_full(G_OBJECT(item), "tv-bound-item",
+                         g_object_ref(obj), g_object_unref);
   
   gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
   gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL, *parent_pubkey = NULL, *nip05 = NULL;
@@ -1645,29 +1636,27 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   g_free(pubkey);
 
   /* Connect reactive updates so that later metadata changes update UI.
-   * CRITICAL: Use g_signal_connect_object to prevent Pango crash during recycling.
-   * When using g_signal_connect, manual disconnection has a race condition:
-   * profile updates can trigger label updates on widgets in transitional state,
-   * causing: AddressSanitizer: SEGV in pango_layout_line_unref.
-   * g_signal_connect_object auto-disconnects when row is destroyed, eliminating race. */
+   * Use the GtkListItem as the per-bind cookie and disconnect by that same
+   * cookie in unbind/teardown. This avoids mixing g_signal_connect_object()
+   * invalidation notifiers with explicit disconnects on recycled rows. */
   if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
-    g_signal_connect_object(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row, 0);
-    g_signal_connect_object(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row, 0);
-    g_signal_connect_object(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row, 0);
+    g_signal_connect(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), item);
+    g_signal_connect(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       item);
+    g_signal_connect(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   item);
 
     /* NIP-25: Connect reaction count/state change handlers */
-    g_signal_connect_object(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row, 0);
-    g_signal_connect_object(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row, 0);
+    g_signal_connect(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   item);
+    g_signal_connect(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     item);
 
     /* NIP-18: Connect repost count change handler */
-    g_signal_connect_object(obj, "notify::repost-count", G_CALLBACK(on_item_notify_repost_count), row, 0);
+    g_signal_connect(obj, "notify::repost-count", G_CALLBACK(on_item_notify_repost_count), item);
 
     /* NIP-57: Connect zap stats change handlers */
-    g_signal_connect_object(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      row, 0);
-    g_signal_connect_object(obj, "notify::zap-total-msat", G_CALLBACK(on_item_notify_zap_total_msat), row, 0);
+    g_signal_connect(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      item);
+    g_signal_connect(obj, "notify::zap-total-msat", G_CALLBACK(on_item_notify_zap_total_msat), item);
 
     /* hq-vvmzu: Connect reply count change handler */
-    g_signal_connect_object(obj, "notify::reply-count",    G_CALLBACK(on_item_notify_reply_count),    row, 0);
+    g_signal_connect(obj, "notify::reply-count",    G_CALLBACK(on_item_notify_reply_count),    item);
   }
 }
 
@@ -1677,18 +1666,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
-  gpointer item_ptr = gtk_list_item_get_item(item);
 
-  /* Disconnect signal handlers from obj to prevent heap corruption.
-   * Note: item_ptr may be NULL during teardown if the model item was already removed. */
-  if (item_ptr && G_IS_OBJECT(item_ptr) && row && GTK_IS_WIDGET(row)) {
-    g_signal_handlers_disconnect_by_data(G_OBJECT(item_ptr), row);
+  /* Disconnect from the source object saved during bind. */
+  GObject *bound_item = g_object_get_data(G_OBJECT(item), "tv-bound-item");
+  if (bound_item && G_IS_OBJECT(bound_item)) {
+    g_signal_handlers_disconnect_by_data(bound_item, item);
+    if (row && GTK_IS_WIDGET(row))
+      g_signal_handlers_disconnect_by_data(bound_item, row);
   }
+  g_object_set_data(G_OBJECT(item), "tv-bound-item", NULL);
 
-  /* Prepare row for disposal */
-  if (row && NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
-    nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
-  }
+  cleanup_bound_row(row);
 }
 
 void nostr_gtk_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {

@@ -50,11 +50,47 @@ static guint nostr_relay_signals[NOSTR_RELAY_SIGNALS_COUNT] = { 0 };
 G_LOCK_DEFINE_STATIC(relay_registry);
 static GHashTable *g_relay_registry = NULL; /* URL → GNostrRelay* (strong ref via destroy notify) */
 
+/* Ref-counted weak-ref container passed as user_data to worker-thread
+ * callbacks (state-changed, auth-challenge).  Because the callback can
+ * fire AFTER the GNostrRelay has been finalized, we cannot pass `self`
+ * directly — g_object_ref() on freed memory is UB.  Instead we pass
+ * this tiny struct whose lifetime is managed by g_atomic_ref_count. */
+typedef struct {
+    GWeakRef weak_relay;
+    gatomicrefcount ref_count;
+} RelayCallbackData;
+
+static RelayCallbackData *
+relay_callback_data_new(GNostrRelay *self)
+{
+    RelayCallbackData *d = g_new(RelayCallbackData, 1);
+    g_weak_ref_init(&d->weak_relay, self);
+    g_atomic_ref_count_init(&d->ref_count);
+    return d;
+}
+
+static RelayCallbackData *
+relay_callback_data_ref(RelayCallbackData *d)
+{
+    g_atomic_ref_count_inc(&d->ref_count);
+    return d;
+}
+
+static void
+relay_callback_data_unref(RelayCallbackData *d)
+{
+    if (g_atomic_ref_count_dec(&d->ref_count)) {
+        g_weak_ref_clear(&d->weak_relay);
+        g_free(d);
+    }
+}
+
 struct _GNostrRelay {
     GObject parent_instance;
     NostrRelay *relay;           /* Core libnostr relay */
     gchar *url;                  /* Cached URL (construct-only) */
     GNostrRelayState state;       /* Current connection state (GObject enum) */
+    RelayCallbackData *cb_data;  /* Weak-ref wrapper for worker-thread callbacks */
 #ifdef ENABLE_NIP11
     RelayInformationDocument *nip11_info;  /* Cached NIP-11 info (owned) */
     GCancellable *nip11_cancellable;       /* Cancel in-flight NIP-11 fetch */
@@ -136,7 +172,7 @@ gnostr_relay_set_state_internal(GNostrRelay *self, GNostrRelayState new_state)
 
 /* Data for idle callback */
 typedef struct {
-    GNostrRelay *self;
+    RelayCallbackData *cb_data;
     GNostrRelayState new_state;
 } StateChangeData;
 
@@ -144,8 +180,12 @@ static gboolean
 set_state_on_main_thread(gpointer user_data)
 {
     StateChangeData *data = user_data;
-    gnostr_relay_set_state_internal(data->self, data->new_state);
-    g_object_unref(data->self);
+    GNostrRelay *self = g_weak_ref_get(&data->cb_data->weak_relay);
+    if (self) {
+        gnostr_relay_set_state_internal(self, data->new_state);
+        g_object_unref(self);
+    }
+    relay_callback_data_unref(data->cb_data);
     g_free(data);
     return G_SOURCE_REMOVE;
 }
@@ -157,24 +197,29 @@ on_core_state_changed(NostrRelay *relay G_GNUC_UNUSED,
                       NostrRelayConnectionState new_state,
                       void *user_data)
 {
-    GNostrRelay *self = GNOSTR_RELAY(user_data);
+    RelayCallbackData *cb_data = user_data;
+    GNostrRelay *self = g_weak_ref_get(&cb_data->weak_relay);
+    if (!self)
+        return; /* relay already finalized */
+
     GNostrRelayState g_new_state = core_state_to_gobject(new_state);
-
-    /* Schedule state update on main thread */
-    StateChangeData *data = g_new(StateChangeData, 1);
-    data->self = g_object_ref(self);
-    data->new_state = g_new_state;
-
-    g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, NULL);
 
     /* Store state directly for immediate access (thread-safe) */
     __atomic_store_n(&self->state, g_new_state, __ATOMIC_SEQ_CST);
+    g_object_unref(self);
+
+    /* Schedule state update on main thread */
+    StateChangeData *data = g_new(StateChangeData, 1);
+    data->cb_data = relay_callback_data_ref(cb_data);
+    data->new_state = g_new_state;
+
+    g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, NULL);
 }
 
 /* ---- NIP-42 AUTH challenge callback (worker thread → main thread) ---- */
 
 typedef struct {
-    GNostrRelay *self;
+    RelayCallbackData *cb_data;
     gchar *challenge;
 } AuthChallengeData;
 
@@ -182,22 +227,24 @@ static gboolean
 auth_challenge_on_main_thread(gpointer user_data)
 {
     AuthChallengeData *data = user_data;
-    GNostrRelay *self = data->self;
+    GNostrRelay *self = g_weak_ref_get(&data->cb_data->weak_relay);
+    if (self) {
+        /* Emit auth-challenge signal */
+        g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_AUTH_CHALLENGE], 0,
+                      data->challenge);
 
-    /* Emit auth-challenge signal */
-    g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_AUTH_CHALLENGE], 0,
-                  data->challenge);
-
-    /* Auto-authenticate if handler is configured */
-    if (self->auth_sign_func) {
-        g_autoptr(GError) error = NULL;
-        if (!gnostr_relay_authenticate(self, &error)) {
-            g_warning("NIP-42 auto-auth failed for %s: %s",
-                      self->url, error ? error->message : "unknown");
+        /* Auto-authenticate if handler is configured */
+        if (self->auth_sign_func) {
+            g_autoptr(GError) error = NULL;
+            if (!gnostr_relay_authenticate(self, &error)) {
+                g_warning("NIP-42 auto-auth failed for %s: %s",
+                          self->url, error ? error->message : "unknown");
+            }
         }
+        g_object_unref(self);
     }
 
-    g_object_unref(data->self);
+    relay_callback_data_unref(data->cb_data);
     g_free(data->challenge);
     g_free(data);
     return G_SOURCE_REMOVE;
@@ -209,10 +256,14 @@ on_core_auth_challenge(NostrRelay *relay G_GNUC_UNUSED,
                        const char *challenge,
                        void *user_data)
 {
-    GNostrRelay *self = GNOSTR_RELAY(user_data);
+    RelayCallbackData *cb_data = user_data;
+    GNostrRelay *self = g_weak_ref_get(&cb_data->weak_relay);
+    if (!self)
+        return; /* relay already finalized */
+    g_object_unref(self); /* just checking liveness; idle callback will re-acquire */
 
     AuthChallengeData *data = g_new(AuthChallengeData, 1);
-    data->self = g_object_ref(self);
+    data->cb_data = relay_callback_data_ref(cb_data);
     data->challenge = g_strdup(challenge);
 
     g_idle_add_full(G_PRIORITY_DEFAULT, auth_challenge_on_main_thread, data, NULL);
@@ -283,11 +334,14 @@ gnostr_relay_constructed(GObject *object)
             /* Skip signature verification - nostrdb handles this during ingestion */
             self->relay->assume_valid = true;
 
+            /* Allocate weak-ref wrapper for worker-thread callbacks */
+            self->cb_data = relay_callback_data_new(self);
+
             /* Set up state callback to receive connection state changes */
-            nostr_relay_set_state_callback(self->relay, on_core_state_changed, self);
+            nostr_relay_set_state_callback(self->relay, on_core_state_changed, self->cb_data);
 
             /* Set up auth callback for NIP-42 challenges (nostrc-7og) */
-            nostr_relay_set_auth_callback(self->relay, on_core_auth_challenge, self);
+            nostr_relay_set_auth_callback(self->relay, on_core_auth_challenge, self->cb_data);
         }
     }
 }
@@ -336,6 +390,13 @@ gnostr_relay_finalize(GObject *object)
         self->nip11_info = NULL;
     }
 #endif
+
+    /* Release weak-ref callback data — pending idle callbacks will
+     * see g_weak_ref_get() return NULL and safely no-op. */
+    if (self->cb_data) {
+        relay_callback_data_unref(self->cb_data);
+        self->cb_data = NULL;
+    }
 
     /* Remove callbacks before freeing relay */
     if (self->relay) {

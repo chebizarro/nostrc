@@ -246,10 +246,11 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
             /* Enforce security limits */
             if (tag_count > (size_t)nostr_limit_max_tags_per_event()) JFAIL_EV(NOSTR_JSON_ERR_TAG_LIMIT, t);
             if (max_depth > (int)nostr_limit_max_tag_depth()) JFAIL_EV(NOSTR_JSON_ERR_DEPTH_LIMIT, t);
-            NostrTags *parsed = nostr_tags_new(tag_count);
+            /* nostrc-sub-uaf: Use nostr_tags_new(0) to avoid undefined behaviour.
+             * The old nostr_tags_new(tag_count) read tag_count phantom va_args
+             * from the stack (UB).  Create empty, then reserve to desired capacity. */
+            NostrTags *parsed = nostr_tags_new(0);
             if (!parsed) JFAIL_EV(NOSTR_JSON_ERR_ALLOC, t);
-            /* If tags_new pre-filled data slots with garbage, reset count to 0 but keep capacity */
-            parsed->count = 0;
             nostr_tags_reserve(parsed, tag_count > 0 ? tag_count : 4);
             t = nostr_json_skip_ws(t);
             while (*t && *t != ']') {
@@ -355,9 +356,15 @@ static NostrTag *tag_clone(const NostrTag *src) {
 
 static NostrTags *tags_clone(const NostrTags *src) {
     if (!src) return NULL;
-    NostrTags *dst = nostr_tags_new(nostr_tags_size(src));
+    /* nostrc-sub-uaf: Use nostr_tags_new(0) + reserve to avoid UB from
+     * reading phantom va_args.  The old code set count=N with garbage data
+     * pointers, then nostr_tags_append started at position N, leaving
+     * garbage in 0..N-1 that would be freed by nostr_tags_free (heap corruption). */
+    NostrTags *dst = nostr_tags_new(0);
     if (!dst) return NULL;
-    for (size_t i = 0; i < nostr_tags_size(src); i++) {
+    size_t n = nostr_tags_size(src);
+    if (n > 0) nostr_tags_reserve(dst, n);
+    for (size_t i = 0; i < n; i++) {
         nostr_tags_append(dst, tag_clone(nostr_tags_get(src, i)));
     }
     return dst;

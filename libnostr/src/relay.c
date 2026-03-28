@@ -150,6 +150,22 @@ void nostr_invalidsig_record_fail(NostrRelay *r, const char *pk) {
 static void *write_error(void *arg);
 static void *write_operations(void *arg);
 static void *message_loop(void *arg);
+
+/* nostrc-sub-uaf: Atomically look up a subscription by serial and take a
+ * reference.  The relay priv mutex serialises this with the map-remove in
+ * subscription teardown so the pointer cannot be freed between the hash-map
+ * get and the ref increment.  Caller MUST call nostr_subscription_unref()
+ * when done with the returned pointer (if non-NULL). */
+static NostrSubscription *
+relay_get_subscription_ref(NostrRelay *r, int serial)
+{
+    if (serial < 0) return NULL;
+    nsync_mu_lock(&r->priv->mutex);
+    NostrSubscription *sub = go_hash_map_get_int(r->subscriptions, serial);
+    if (sub) nostr_subscription_ref(sub);
+    nsync_mu_unlock(&r->priv->mutex);
+    return sub;
+}
 static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_state);
 static uint64_t get_monotonic_time_ms(void);
 static uint64_t calculate_backoff_with_jitter(int attempt);
@@ -916,13 +932,14 @@ static void *message_loop(void *arg) {
                     }
                     nostr_metric_counter_add("eose_parse_error", 1);
                 } else {
-                    NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, serial);
+                    NostrSubscription *subscription = relay_get_subscription_ref(r, serial);
                     if (subscription) {
                         if (debug_eose_cached) {
                             fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
                                     r->url ? r->url : "unknown", env->message, serial);
                         }
                         nostr_subscription_dispatch_eose(subscription);
+                        nostr_subscription_unref(subscription);
                     } else {
                         /* This is NORMAL when a subscription is closed due to timeout before EOSE arrives.
                          * The subscription_free removes from the map, then EOSE arrives from the relay.
@@ -974,7 +991,7 @@ static void *message_loop(void *arg) {
                 snprintf(tmp, sizeof(tmp), "EVENT kind=%d pubkey=%.8s id=%.8s", env->event->kind, pk, id);
                 relay_debug_emit(r, tmp);
             }
-            NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, nostr_sub_id_to_serial(env->subscription_id));
+            NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(env->subscription_id));
             if (subscription && env->event) {
                 /* Security: drop events from banned pubkeys early */
                 int banned = 0;
@@ -988,6 +1005,7 @@ static void *message_loop(void *arg) {
                     if (env->event->pubkey)
                         nostr_rl_log(NLOG_WARN, "relay", "drop banned pk=%.8s", env->event->pubkey);
                     nostr_metric_counter_add("event_ban_drop", 1);
+                    nostr_subscription_unref(subscription);
                     break;
                 }
                 // Optionally verify signature if available
@@ -1019,6 +1037,7 @@ static void *message_loop(void *arg) {
                         snprintf(tmp, sizeof(tmp), "DROP invalid signature id=%.8s", id);
                         relay_debug_emit(r, tmp);
                     }
+                    nostr_subscription_unref(subscription);
                 } else {
                     /* Producer-side rate limiting (nostrc-7u2):
                      * Check queue pressure before dispatching.
@@ -1063,13 +1082,20 @@ static void *message_loop(void *arg) {
                         // ownership passed to subscription; avoid double free
                         env->event = NULL;
                     }
+                    nostr_subscription_unref(subscription);
                 }
+            } else if (subscription) {
+                /* subscription found but no event */
+                nostr_subscription_unref(subscription);
             }
             break; }
         case NOSTR_ENVELOPE_CLOSED: {
             NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
-            NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, nostr_sub_id_to_serial(env->subscription_id));
-            if (subscription) nostr_subscription_dispatch_closed(subscription, env->reason);
+            NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(env->subscription_id));
+            if (subscription) {
+                nostr_subscription_dispatch_closed(subscription, env->reason);
+                nostr_subscription_unref(subscription);
+            }
             /* nostrc-95c: Log CLOSED with reason to help debug subscription issues */
             fprintf(stderr, "[RELAY_CLOSED] relay=%s subscription=%s reason=\"%s\"\n",
                     r->url ? r->url : "unknown",
@@ -1105,10 +1131,13 @@ static void *message_loop(void *arg) {
             break; }
         case NOSTR_ENVELOPE_COUNT: {
             NostrCountEnvelope *ce = (NostrCountEnvelope *)envelope;
-            NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, nostr_sub_id_to_serial(ce->subscription_id));
+            NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(ce->subscription_id));
             if (subscription && subscription->priv->count_result) {
                 int64_t *val = (int64_t *)malloc(sizeof(int64_t));
                 if (val) { *val = (int64_t)ce->count; go_channel_send(subscription->priv->count_result, val); }
+                nostr_subscription_unref(subscription);
+            } else if (subscription) {
+                nostr_subscription_unref(subscription);
             }
             char tmp[64]; snprintf(tmp, sizeof(tmp), "COUNT=%d", ce->count);
             relay_debug_emit(r, tmp);

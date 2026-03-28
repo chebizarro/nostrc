@@ -4,6 +4,9 @@
 #include <errno.h>
 #include "ui/gnostr-main-window.h"
 #include "ui/gnostr-tray-icon.h"
+#ifdef __APPLE__
+#include "ui/gnostr-macos-activation.h"
+#endif
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "util/gnostr_paths.h"
@@ -91,8 +94,25 @@ deferred_plugin_init_cb(gpointer data)
 static void on_activate(GApplication *app, gpointer user_data) {
   (void)user_data;
 
+  GList *windows = gtk_application_get_windows(GTK_APPLICATION(app));
+  if (windows) {
+    GtkWindow *existing = GTK_WINDOW(windows->data);
+    gtk_window_present(existing);
+#ifdef __APPLE__
+    gnostr_macos_activation_request_foreground(existing);
+#endif
+    return;
+  }
+
+#ifdef __APPLE__
+  gnostr_macos_activation_prepare_regular_policy();
+#endif
+
   GnostrMainWindow *win = gnostr_main_window_new(ADW_APPLICATION(app));
   gtk_window_present(GTK_WINDOW(win));
+#ifdef __APPLE__
+  gnostr_macos_activation_request_foreground(GTK_WINDOW(win));
+#endif
 
   /* nostrc-75o3.1: Defer heavy plugin discovery until after the first frame.
    * The window is already visible in LOADING state at this point. */
@@ -119,6 +139,12 @@ static void on_activate(GApplication *app, gpointer user_data) {
   if (gnostr_e2e_enabled()) {
     gnostr_e2e_mark_ready();
   }
+}
+
+static gboolean on_initial_activate_idle(gpointer user_data) {
+  GApplication *app = G_APPLICATION(user_data);
+  on_activate(app, NULL);
+  return G_SOURCE_REMOVE;
 }
 
 static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
@@ -247,6 +273,15 @@ int main(int argc, char **argv) {
   g_set_prgname("gnostr");
 
   /* Initialize libadwaita - required for adaptive/responsive features */
+#ifdef __APPLE__
+  /* GLib's GApplication registration can hang on macOS when no usable
+   * session D-Bus is available. Force a fast local failure instead of a hang
+   * only when the environment did not already provide a bus address. */
+  const char *dbus_addr = g_getenv("DBUS_SESSION_BUS_ADDRESS");
+  if (!dbus_addr || !*dbus_addr) {
+    g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/gnostr-no-session-bus", TRUE);
+  }
+#endif
   AdwApplication *app = adw_application_new("org.gnostr.Client", G_APPLICATION_DEFAULT_FLAGS);
 
   /* Initialize nostr-gobject service schemas before any GSettings access.
@@ -325,6 +360,12 @@ int main(int argc, char **argv) {
 
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
 
+#ifdef __APPLE__
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                  on_initial_activate_idle,
+                  g_object_ref(app),
+                  (GDestroyNotify)g_object_unref);
+#endif
   int status = g_application_run(G_APPLICATION(app), argc, argv);
 
   /* nostrc-deferred-free: Fiber shutdown removed (scheduler not started).

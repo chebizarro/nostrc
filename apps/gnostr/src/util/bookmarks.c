@@ -872,9 +872,15 @@ static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
         if (!entry->is_private) public_count++;
     }
 
-    /* Build the tags array using NostrTags API */
-    NostrTags *tags = nostr_tags_new(public_count);
-    size_t tag_idx = 0;
+    /* Build the tags array using NostrTags API.
+     * Use nostr_tags_new(0) + reserve + append to avoid UB from
+     * nostr_tags_new(N) reading N phantom va_args from the stack. */
+    NostrTags *tags = nostr_tags_new(0);
+    if (!tags) {
+        g_mutex_unlock(&ctx->bookmarks->lock);
+        return;
+    }
+    if (public_count > 0) nostr_tags_reserve(tags, public_count);
 
     /* Add public bookmarked events as "e" tags */
     g_hash_table_iter_init(&iter, ctx->bookmarks->bookmarks);
@@ -888,7 +894,7 @@ static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
             } else {
                 tag = nostr_tag_new("e", entry->event_id, NULL);
             }
-            nostr_tags_set(tags, tag_idx++, tag);
+            nostr_tags_append(tags, tag);
         }
     }
 

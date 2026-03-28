@@ -750,14 +750,15 @@ static void reset_internal_state_silent(GnNostrEventModel *self) {
   self->evict_defer_counter = 0;
 
   /* Clear notes array and structural caches - no signal emitted.
-   * CRITICAL: Do NOT clear item_cache here! GTK widgets still reference
-   * GnNostrEventItem objects until items_changed is emitted. Clearing
-   * item_cache before the signal causes use-after-free during widget
-   * finalization (heap corruption in gtk_style_context_finalize).
-   * Callers must clear item_cache AFTER emitting items_changed. */
+   * CRITICAL: Do NOT clear item_cache here or anywhere before/after the signal!
+   * nostrc-heap-corruption-fix: Clearing item_cache drops refs to items that
+   * GTK widgets still reference, causing premature finalization and nano-zone
+   * heap corruption during the items_changed disposal cascade. The LRU cache
+   * (capped at ITEM_CACHE_SIZE=100) naturally evicts stale entries as new
+   * items are added via get_item() → cache_add(). */
   g_array_set_size(self->notes, 0);
   g_hash_table_remove_all(self->note_key_set);
-  /* item_cache and cache_lru cleared by caller after signal */
+  /* item_cache and cache_lru are NOT cleared — LRU handles eviction */
   g_hash_table_remove_all(self->thread_info);
   if (self->reaction_cache) g_hash_table_remove_all(self->reaction_cache);
   if (self->zap_stats_cache) g_hash_table_remove_all(self->zap_stats_cache);
@@ -2406,14 +2407,8 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   GArray *evicted_keys_refresh = NULL;
   enforce_window_inline(self, &evicted_keys_refresh);
 
-  /* nostrc-duplicate-fix: Clear item_cache BEFORE emitting items_changed.
-   * GTK calls get_item() during signal emission to bind new widgets. If the
-   * cache contains old items, GTK sees duplicate GObject pointers (same item
-   * returned for different positions), causing "Duplicate item detected" warnings
-   * and eventual crashes. Clearing the cache first ensures get_item() creates
-   * fresh items for the new model state. */
-  g_hash_table_remove_all(self->item_cache);
-  g_queue_clear_full(self->cache_lru, g_free);
+  /* nostrc-heap-corruption-fix: Do NOT clear item_cache before the signal.
+   * Same fix as async paths — see on_refresh_async_done comment. */
 
   /* nostrc-atomic-replace: ONE atomic replace signal instead of clear + add.
    * GTK rebinds existing widget slots instead of mass teardown + recreation. */
@@ -2656,14 +2651,19 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GArray *evicted_keys_async = NULL;
   enforce_window_inline(self, &evicted_keys_async);
 
-  /* nostrc-duplicate-fix: Clear item_cache BEFORE emitting items_changed.
-   * GTK calls get_item() during signal emission to bind new widgets. If the
-   * cache contains old items, GTK sees duplicate GObject pointers (same item
-   * returned for different positions), causing "Duplicate item detected" warnings
-   * and eventual crashes. Clearing the cache first ensures get_item() creates
-   * fresh items for the new model state. */
-  g_hash_table_remove_all(self->item_cache);
-  g_queue_clear_full(self->cache_lru, g_free);
+  /* nostrc-heap-corruption-fix: Do NOT clear item_cache before the signal.
+   * Clearing drops the cache's reference to items that are still bound by
+   * GTK widgets. During the subsequent items_changed signal, GTK unbinds
+   * widgets and drops its refs, causing premature item finalization in the
+   * middle of the disposal cascade — corrupting the nano-zone heap.
+   *
+   * The "nostrc-duplicate-fix" cache clearing was a workaround for duplicate
+   * note_keys in the model, which is now prevented by has_note_key() dedup.
+   * The cache is safe: each position has a unique note_key, so get_item()
+   * never returns the same GObject for two different positions.
+   *
+   * Old items in the cache are harmlessly evicted by LRU as new items are
+   * added via get_item() → cache_add(). */
 
   /* nostrc-render-crash: Emit a SINGLE items_changed signal to avoid race
    * conditions with GTK's render loop. Multiple signals can cause GTK to
@@ -2853,8 +2853,14 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
    * returning stale GObject pointers that GTK already tracks elsewhere. */
   if (added > 0 || trimmed > 0) {
     guint new_len = self->notes->len;
-    g_hash_table_remove_all(self->item_cache);
-    g_queue_clear_full(self->cache_lru, g_free);
+    /* nostrc-heap-corruption-fix: Do NOT clear item_cache before the signal.
+     * Same fix as on_refresh_async_done: clearing drops refs to items still
+     * bound by GTK, causing premature finalization and nano-zone heap corruption
+     * during the items_changed disposal cascade.
+     *
+     * Items for trimmed note_keys were already removed from item_cache in the
+     * trim loop above. Remaining cache entries are for items still in the model
+     * and must survive the signal so GTK can unbind them cleanly. */
     emit_items_changed_safe(self, 0, old_len, new_len);
   }
 

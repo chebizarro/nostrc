@@ -415,9 +415,8 @@ static NostrEvent *build_signed_nwc_request(GnostrNwcService *self,
   }
 
   /* Tags: [["p", wallet_pubkey]] */
-  NostrTags *tags = nostr_tags_new(1);
   NostrTag *p_tag = nostr_tag_new("p", self->wallet_pubkey_hex, NULL);
-  nostr_tags_set(tags, 0, p_tag);
+  NostrTags *tags = nostr_tags_new(1, p_tag);
   nostr_event_set_tags(event, tags);
 
   /* Sign the event with the client secret */

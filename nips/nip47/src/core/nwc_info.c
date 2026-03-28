@@ -60,17 +60,17 @@ int nostr_nwc_info_build(const char *pubkey,
   /* tags: ["encryption", enc], ... and optional ["notifications", "true"|"false"] */
   {
     size_t tag_count = enc_count + 1; /* +1 for notifications (we will always include) */
-    NostrTags *tags = nostr_tags_new(tag_count);
+    NostrTags *tags = nostr_tags_new(0);
     if (!tags) goto out;
-    size_t idx = 0;
+    if (tag_count > 0) nostr_tags_reserve(tags, tag_count);
     for (size_t i = 0; i < enc_count; i++) {
       NostrTag *t = nostr_tag_new("encryption", encryptions[i], NULL);
       if (!t) { nostr_tags_free(tags); goto out; }
-      nostr_tags_set(tags, idx++, t);
+      nostr_tags_append(tags, t);
     }
     NostrTag *t = nostr_tag_new("notifications", notifications ? "true" : "false", NULL);
     if (!t) { nostr_tags_free(tags); goto out; }
-    nostr_tags_set(tags, idx++, t);
+    nostr_tags_append(tags, t);
     /* idx should equal tag_count */
     nostr_event_set_tags(ev, tags); /* takes ownership */
   }
