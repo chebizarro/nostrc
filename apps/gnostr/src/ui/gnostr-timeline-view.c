@@ -1343,8 +1343,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       } else {
         nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
-    } else if (tags_json) {
-      gboolean used_cached_tagged_markup = FALSE;
+    }
+
+    gboolean used_cached_tagged_markup = FALSE;
+    if (tags_json) {
       if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
         const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
         if (cached) {
@@ -1357,20 +1359,16 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
 
-      if (!used_cached_tagged_markup) {
-        /* NIP-36: Check for content-warning tag */
-        gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
-        if (content_warning) {
-          nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning);
-          g_free(content_warning);
-        }
+      gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
+      if (hashtags) {
+        nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), (const char * const *)hashtags);
+        g_strfreev(hashtags);
+      }
 
-        /* Extract and set hashtags from "t" tags for regular notes */
-        gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
-        if (hashtags) {
-          nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), (const char * const *)hashtags);
-          g_strfreev(hashtags);
-        }
+      gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
+      if (content_warning) {
+        nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning);
+        g_free(content_warning);
       }
     } else {
       /* Tier 1: markup only — defer embeds/media/OG to Tier 2 map handler.
@@ -1396,7 +1394,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       }
     }
 
-    /* Set hashtags from GnNostrEventItem if available (works even when tags_json is disabled) */
     if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       const char * const *item_hashtags = gn_nostr_event_item_get_hashtags(GN_NOSTR_EVENT_ITEM(obj));
       if (item_hashtags && item_hashtags[0]) {
@@ -1745,4 +1742,3 @@ static GListModel *timeline_child_model_func(gpointer item, gpointer user_data) 
 /* ensure_list_model, scroll tracking, class_init, init, new, and all public API
  * functions are now defined in the nostr-gtk library. Only the factory setup
  * (nostr_gtk_timeline_view_setup_app_factory) remains in the app. */
-
