@@ -3553,9 +3553,8 @@ nostr_gtk_note_card_row_update_custom_emoji_box(NostrGtkNoteCardRow *self,
 
       g_hash_table_unref(used_emojis);
     }
-  } else if (self->emoji_box && GTK_IS_WIDGET(self->emoji_box)) {
-    gtk_widget_set_visible(self->emoji_box, FALSE);
-  }
+}
+
 }
 
 void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow *self,
