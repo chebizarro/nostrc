@@ -538,6 +538,54 @@ static void article_image_ctx_free(ArticleImageCtx *ctx) {
   g_free(ctx);
 }
 
+/* Worker thread: decode article card header image off main thread. */
+static void article_card_image_decode_thread(GTask *task, gpointer source_object,
+                                             gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes *)task_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture)
+    g_task_return_pointer(task, texture, g_object_unref);
+  else
+    g_task_return_error(task, error);
+}
+
+static void on_header_image_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  ArticleImageCtx *ctx = (ArticleImageCtx *)user_data;
+  GError *error = NULL;
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+
+  if (!texture) {
+    if (error) {
+      g_debug("Article: Failed to create texture: %s", error->message);
+      g_error_free(error);
+    }
+    article_image_ctx_free(ctx);
+    return;
+  }
+
+  /* Safely check if the card is still alive via weak ref */
+  GnostrArticleCard *self = g_weak_ref_get(&ctx->card_ref);
+  if (!self || self->disposed) {
+    if (self) g_object_unref(self);
+    g_object_unref(texture);
+    article_image_ctx_free(ctx);
+    return;
+  }
+
+  if (GTK_IS_PICTURE(self->header_image)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->header_image), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(self->header_image_overlay, TRUE);
+  }
+
+  g_object_unref(texture);
+  g_object_unref(self);
+  article_image_ctx_free(ctx);
+}
+
 static void on_header_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   ArticleImageCtx *ctx = (ArticleImageCtx *)user_data;
   GError *error = NULL;
@@ -552,36 +600,10 @@ static void on_header_image_loaded(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  /* Safely check if the card is still alive via weak ref */
-  GnostrArticleCard *self = g_weak_ref_get(&ctx->card_ref);
-  if (!self || self->disposed) {
-    g_bytes_unref(bytes);
-    if (self) g_object_unref(self);
-    article_image_ctx_free(ctx);
-    return;
-  }
-
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-
-  if (!texture || error) {
-    if (error) {
-      g_debug("Article: Failed to create texture: %s", error->message);
-      g_error_free(error);
-    }
-    g_object_unref(self);
-    article_image_ctx_free(ctx);
-    return;
-  }
-
-  if (GTK_IS_PICTURE(self->header_image)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->header_image), GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(self->header_image_overlay, TRUE);
-  }
-
-  g_object_unref(texture);
-  g_object_unref(self);
-  article_image_ctx_free(ctx);
+  GTask *task = g_task_new(NULL, NULL, on_header_image_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, article_card_image_decode_thread);
+  g_object_unref(task);
 }
 
 static void load_header_image(GnostrArticleCard *self, const char *url) {

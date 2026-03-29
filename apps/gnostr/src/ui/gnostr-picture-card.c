@@ -923,6 +923,56 @@ static void thumbnail_load_ctx_free(ThumbnailLoadCtx *ctx) {
 }
 
 #ifdef HAVE_SOUP3
+static void picture_card_thumb_decode_thread(GTask *task, gpointer source_object,
+                                             gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes *)task_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture)
+    g_task_return_pointer(task, texture, g_object_unref);
+  else
+    g_task_return_error(task, error);
+}
+
+static void on_thumbnail_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  ThumbnailLoadCtx *ctx = (ThumbnailLoadCtx *)user_data;
+  GError *error = NULL;
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  GnostrPictureCard *self = g_weak_ref_get(&ctx->card_ref);
+
+  if (!texture) {
+    if (error) {
+      g_warning("PictureCard: Failed to create texture: %s", error->message);
+      g_error_free(error);
+    }
+    if (self) {
+      gtk_widget_set_visible(self->image_spinner, FALSE);
+      gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
+      g_object_unref(self);
+    }
+    thumbnail_load_ctx_free(ctx);
+    return;
+  }
+
+  if (!self) {
+    g_object_unref(texture);
+    thumbnail_load_ctx_free(ctx);
+    return;
+  }
+
+  gtk_picture_set_paintable(GTK_PICTURE(self->image_picture), GDK_PAINTABLE(texture));
+  gtk_widget_set_visible(self->image_picture, TRUE);
+  gtk_widget_set_visible(self->image_spinner, FALSE);
+  gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
+
+  g_object_unref(texture);
+  g_object_unref(self);
+  thumbnail_load_ctx_free(ctx);
+}
+
 static void on_thumbnail_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   ThumbnailLoadCtx *ctx = (ThumbnailLoadCtx *)user_data;
   GError *error = NULL;
@@ -953,27 +1003,12 @@ static void on_thumbnail_loaded(GObject *source, GAsyncResult *res, gpointer use
     return;
   }
 
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-
-  if (error) {
-    g_warning("PictureCard: Failed to create texture: %s", error->message);
-    g_error_free(error);
-    gtk_widget_set_visible(self->image_spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
-    g_object_unref(self);
-    thumbnail_load_ctx_free(ctx);
-    return;
-  }
-
-  gtk_picture_set_paintable(GTK_PICTURE(self->image_picture), GDK_PAINTABLE(texture));
-  gtk_widget_set_visible(self->image_picture, TRUE);
-  gtk_widget_set_visible(self->image_spinner, FALSE);
-  gtk_spinner_stop(GTK_SPINNER(self->image_spinner));
-
-  g_object_unref(texture);
   g_object_unref(self);
-  thumbnail_load_ctx_free(ctx);
+
+  GTask *task = g_task_new(NULL, NULL, on_thumbnail_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, picture_card_thumb_decode_thread);
+  g_object_unref(task);
 }
 #endif
 

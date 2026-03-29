@@ -531,28 +531,30 @@ query_thread_func(GTask         *task,
     QueryAsyncData *data = (QueryAsyncData *)task_data;
     NostrFilters *filters = g_object_get_data(G_OBJECT(task), "filters");
 
+#define POOL_QUERY_DEBUG(...) g_debug(__VA_ARGS__)
+
     /* Check local cache first — avoid network round-trip if data exists */
     if (data->cache_query_func && filters) {
         GPtrArray *cached = data->cache_query_func(filters, data->cache_query_data);
         if (cached && cached->len > 0) {
-            fprintf(stderr, "[POOL_QUERY] cache HIT — %u results, skipping network\n", cached->len);
+            POOL_QUERY_DEBUG("[POOL_QUERY] cache HIT — %u results, skipping network", cached->len);
             g_task_return_pointer(task, cached, (GDestroyNotify)g_ptr_array_unref);
             return;
         }
-        fprintf(stderr, "[POOL_QUERY] cache MISS (cached=%p len=%u)\n",
-                (void *)cached, cached ? cached->len : 0);
+        POOL_QUERY_DEBUG("[POOL_QUERY] cache MISS (cached=%p len=%u)",
+                         (void *)cached, cached ? cached->len : 0);
         if (cached) g_ptr_array_unref(cached);
     } else {
-        fprintf(stderr, "[POOL_QUERY] no cache func or no filters (cache=%p filters=%p)\n",
-                (void *)data->cache_query_func, (void *)filters);
+        POOL_QUERY_DEBUG("[POOL_QUERY] no cache func or no filters (cache=%p filters=%p)",
+                         (void *)data->cache_query_func, (void *)filters);
     }
 
     /* nostrc-snap: Use snapshot captured on main thread, NOT self->relays */
     guint n_relays = data->relay_snapshots ? data->relay_snapshots->len : 0;
-    fprintf(stderr, "[POOL_QUERY] START: %u relays (snapshot), filters=%p (count=%zu)\n",
-              n_relays, (void *)filters, filters ? filters->count : 0);
+    POOL_QUERY_DEBUG("[POOL_QUERY] START: %u relays (snapshot), filters=%p (count=%zu)",
+                     n_relays, (void *)filters, filters ? filters->count : 0);
     if (n_relays == 0) {
-        fprintf(stderr, "[POOL_QUERY] 0 relays - returning empty\n");
+        POOL_QUERY_DEBUG("[POOL_QUERY] 0 relays - returning empty");
         g_task_return_pointer(task,
                               g_ptr_array_new_with_free_func(g_free),
                               (GDestroyNotify)g_ptr_array_unref);
@@ -589,46 +591,46 @@ query_thread_func(GTask         *task,
          * connections every single query. */
         Error *conn_err = NULL;
         gint64 t0 = g_get_monotonic_time();
-        fprintf(stderr, "[POOL_QUERY] relay[%u] %s: connecting (connection=%p)...\n",
-                i, url, (void *)core_relay->connection);
+        POOL_QUERY_DEBUG("[POOL_QUERY] relay[%u] %s: connecting (connection=%p)...",
+                         i, url, (void *)core_relay->connection);
         if (!nostr_relay_connect(core_relay, &conn_err)) {
             gint64 dt = g_get_monotonic_time() - t0;
-            fprintf(stderr, "[POOL_QUERY] relay[%u] %s: CONNECT FAILED after %lldms: %s\n",
-                    i, url, (long long)(dt / 1000),
-                    conn_err ? conn_err->message : "unknown");
+            POOL_QUERY_DEBUG("[POOL_QUERY] relay[%u] %s: CONNECT FAILED after %lldms: %s",
+                             i, url, (long long)(dt / 1000),
+                             conn_err ? conn_err->message : "unknown");
             if (conn_err) free_error(conn_err);
             continue;
         }
         gint64 dt = g_get_monotonic_time() - t0;
-        fprintf(stderr, "[POOL_QUERY] relay[%u] %s: connected OK in %lldms\n",
-                i, url, (long long)(dt / 1000));
+        POOL_QUERY_DEBUG("[POOL_QUERY] relay[%u] %s: connected OK in %lldms",
+                         i, url, (long long)(dt / 1000));
 
         struct NostrSubscription *sub = nostr_relay_prepare_subscription(core_relay, bg, filters);
         if (!sub) {
-            fprintf(stderr, "[POOL_QUERY] relay[%u] %s: prepare_subscription FAILED (filters=%p count=%zu)\n",
-                    i, url, (void *)filters, filters ? filters->count : 0);
+            POOL_QUERY_DEBUG("[POOL_QUERY] relay[%u] %s: prepare_subscription FAILED (filters=%p count=%zu)",
+                             i, url, (void *)filters, filters ? filters->count : 0);
             continue;
         }
 
         Error *fire_err = NULL;
         if (!nostr_subscription_fire(sub, &fire_err)) {
-            fprintf(stderr, "[POOL_QUERY] relay[%u] %s: FIRE FAILED: %s\n",
-                    i, url, fire_err ? fire_err->message : "unknown");
+            POOL_QUERY_DEBUG("[POOL_QUERY] relay[%u] %s: FIRE FAILED: %s",
+                             i, url, fire_err ? fire_err->message : "unknown");
             if (fire_err) free_error(fire_err);
             nostr_subscription_free(sub);
             continue;
         }
 
-        fprintf(stderr, "[POOL_QUERY] relay[%u] %s: subscription FIRED OK\n", i, url);
+        POOL_QUERY_DEBUG("[POOL_QUERY] relay[%u] %s: subscription FIRED OK", i, url);
         RelaySubItem *item = g_new0(RelaySubItem, 1);
         item->core_relay = core_relay;
         item->sub = sub;
         g_ptr_array_add(items, item);
     }
 
-    fprintf(stderr, "[POOL_QUERY] %u active subscriptions across relays\n", items->len);
+    POOL_QUERY_DEBUG("[POOL_QUERY] %u active subscriptions across relays", items->len);
     if (items->len == 0) {
-        fprintf(stderr, "[POOL_QUERY] 0 subscriptions - returning %u results\n", data->results->len);
+        POOL_QUERY_DEBUG("[POOL_QUERY] 0 subscriptions - returning %u results", data->results->len);
         g_ptr_array_unref(items);
         g_task_return_pointer(task,
                               data->results,
@@ -816,7 +818,7 @@ query_thread_func(GTask         *task,
     /* 2. Return results to the caller immediately */
     g_debug("Query completed with %u results — returning before cleanup",
             data->results->len);
-    fprintf(stderr, "[POOL_QUERY] returning %u results to caller\n", data->results->len);
+    POOL_QUERY_DEBUG("[POOL_QUERY] returning %u results to caller", data->results->len);
     g_task_return_pointer(task, data->results,
                           (GDestroyNotify)g_ptr_array_unref);
     data->results = NULL; /* ownership transferred to GTask */
@@ -843,7 +845,8 @@ query_thread_func(GTask         *task,
         g_free(item);
     }
     g_ptr_array_unref(items);
-    fprintf(stderr, "[POOL_QUERY] subscription cleanup done\n");
+    POOL_QUERY_DEBUG("[POOL_QUERY] subscription cleanup done");
+#undef POOL_QUERY_DEBUG
 }
 
 void

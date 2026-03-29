@@ -621,6 +621,60 @@ static void image_load_ctx_free(ImageLoadCtx *ctx) {
 }
 
 #ifdef HAVE_SOUP3
+static void image_viewer_decode_thread(GTask *task, gpointer source_object,
+                                       gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes *)task_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture)
+    g_task_return_pointer(task, texture, g_object_unref);
+  else
+    g_task_return_error(task, error);
+}
+
+static void on_image_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  ImageLoadCtx *ctx = (ImageLoadCtx *)user_data;
+  GError *error = NULL;
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+
+  if (!ctx->viewer || !GNOSTR_IS_IMAGE_VIEWER(ctx->viewer)) {
+    if (texture) g_object_unref(texture);
+    if (error) g_error_free(error);
+    image_load_ctx_free(ctx);
+    return;
+  }
+
+  GnostrImageViewer *self = ctx->viewer;
+
+  if (GTK_IS_WIDGET(self->spinner)) {
+    gtk_widget_set_visible(self->spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  }
+
+  if (!texture) {
+    if (error) {
+      g_warning("ImageViewer: Failed to create texture for '%s': %s",
+                ctx->url ? ctx->url : "?", error->message);
+      g_error_free(error);
+    }
+    image_load_ctx_free(ctx);
+    return;
+  }
+
+  g_clear_object(&self->texture);
+  self->texture = texture;  /* Takes ownership */
+
+  if (GTK_IS_PICTURE(self->picture)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(texture));
+  }
+
+  zoom_to_fit(self);
+  image_load_ctx_free(ctx);
+}
+
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   ImageLoadCtx *ctx = (ImageLoadCtx *)user_data;
   GError *error = NULL;
@@ -663,44 +717,22 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
     }
   }
 
-  /* Hide spinner */
-  if (GTK_IS_WIDGET(self->spinner)) {
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
-  }
-
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
+    if (GTK_IS_WIDGET(self->spinner)) {
+      gtk_widget_set_visible(self->spinner, FALSE);
+      gtk_spinner_stop(GTK_SPINNER(self->spinner));
+    }
     g_warning("ImageViewer: Empty image data for '%s'",
               ctx->url ? ctx->url : "?");
     image_load_ctx_free(ctx);
     return;
   }
 
-  /* Create texture from bytes */
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-
-  if (error) {
-    g_warning("ImageViewer: Failed to create texture for '%s': %s",
-              ctx->url ? ctx->url : "?", error->message);
-    g_error_free(error);
-    image_load_ctx_free(ctx);
-    return;
-  }
-
-  /* Store and display texture */
-  g_clear_object(&self->texture);
-  self->texture = texture;  /* Takes ownership */
-
-  if (GTK_IS_PICTURE(self->picture)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(texture));
-  }
-
-  /* Apply initial fit zoom */
-  zoom_to_fit(self);
-
-  image_load_ctx_free(ctx);
+  GTask *task = g_task_new(NULL, NULL, on_image_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, image_viewer_decode_thread);
+  g_object_unref(task);
 }
 #endif
 

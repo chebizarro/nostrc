@@ -90,7 +90,7 @@ static void avatar_init_config(void) {
     long val = strtol(cap_env, NULL, 10);
     if (val > 0 && val < 100000) {
       s_avatar_cap = (guint)val;
-      g_message("[AVATAR_CACHE] Using GNOSTR_AVATAR_MEM_CAP=%u", s_avatar_cap);
+      g_debug("[AVATAR_CACHE] Using GNOSTR_AVATAR_MEM_CAP=%u", s_avatar_cap);
     } else {
       g_warning("[AVATAR_CACHE] Invalid GNOSTR_AVATAR_MEM_CAP=%s, using default", cap_env);
     }
@@ -103,14 +103,14 @@ static void avatar_init_config(void) {
     long val = strtol(size_env, NULL, 10);
     if (val >= 32 && val <= 512) {
       s_avatar_size = (guint)val;
-      g_message("[AVATAR_CACHE] Using GNOSTR_AVATAR_SIZE=%u", s_avatar_size);
+      g_debug("[AVATAR_CACHE] Using GNOSTR_AVATAR_SIZE=%u", s_avatar_size);
     } else {
       g_warning("[AVATAR_CACHE] Invalid GNOSTR_AVATAR_SIZE=%s (must be 32-512), using default", size_env);
     }
   }
   if (s_avatar_size == 0) s_avatar_size = 96; /* default */
   
-  g_message("[AVATAR_CACHE] Config: cap=%u size=%upx", s_avatar_cap, s_avatar_size);
+  g_debug("[AVATAR_CACHE] Config: cap=%u size=%upx", s_avatar_cap, s_avatar_size);
 }
 
 /* Forward declarations */
@@ -200,7 +200,7 @@ static const char *ensure_avatar_cache_dir(void) {
     g_warning("avatar cache: mkdir failed (%s): %s", dir, g_strerror(errno));
   }
   avatar_cache_dir = dir; /* keep */
-  g_message("avatar cache: using dir %s", avatar_cache_dir);
+  g_debug("avatar cache: using dir %s", avatar_cache_dir);
   return avatar_cache_dir;
 }
 
@@ -390,7 +390,7 @@ static GdkTexture *try_load_avatar_from_disk(const char *url) {
     if (unlink(path) != 0) {
       g_warning("avatar disk: failed to delete corrupt cache file %s: %s", path, g_strerror(errno));
     } else {
-      g_message("avatar disk: deleted corrupt cache file %s", path);
+      g_debug("avatar disk: deleted corrupt cache file %s", path);
     }
     
     return NULL;

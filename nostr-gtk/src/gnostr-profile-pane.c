@@ -2370,63 +2370,6 @@ static void image_cache_insert(NostrGtkProfilePane *self, const char *url, GdkTe
   g_queue_push_tail(self->image_cache_lru, g_strdup(url));
 }
 
-/* Async image loading callback */
-static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  SoupSession *session = SOUP_SESSION(source);
-  GTask *task = G_TASK(user_data);
-  NostrGtkProfilePane *self = g_task_get_source_object(task);
-  GtkPicture *picture = g_task_get_task_data(task);
-  GError *error = NULL;
-  
-  GBytes *bytes = soup_session_send_and_read_finish(session, res, &error);
-  if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("Failed to load image: %s", error->message);
-    }
-    g_error_free(error);
-    g_object_unref(task);
-    return;
-  }
-  
-  if (!bytes || g_bytes_get_size(bytes) == 0) {
-    g_debug("Empty image response");
-    if (bytes) g_bytes_unref(bytes);
-    g_object_unref(task);
-    return;
-  }
-  
-  /* Create texture from bytes */
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-  
-  if (error) {
-    g_debug("Failed to create texture: %s", error->message);
-    g_error_free(error);
-    g_object_unref(task);
-    return;
-  }
-  
-  /* Update UI on main thread */
-  if (NOSTR_GTK_IS_PROFILE_PANE(self) && GTK_IS_PICTURE(picture)) {
-    gtk_picture_set_paintable(picture, GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(GTK_WIDGET(picture), TRUE);
-    
-    /* Hide initials when avatar image is loaded */
-    if (picture == GTK_PICTURE(self->avatar_image)) {
-      gtk_widget_set_visible(self->avatar_initials, FALSE);
-    }
-    
-    /* Cache the texture with LRU eviction */
-    const char *url = g_task_get_task_data(task);
-    if (url) {
-      image_cache_insert(self, url, texture);
-    }
-  }
-  
-  g_object_unref(texture);
-  g_object_unref(task);
-}
-
 /* Use centralized avatar cache API (avatar_cache.h) */
 
 static void load_image_async(NostrGtkProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot) {
@@ -2481,6 +2424,55 @@ static void banner_load_ctx_free(BannerLoadCtx *ctx) {
   g_free(ctx);
 }
 
+/* Worker thread: decode profile banner image off the main thread. */
+static void profile_banner_decode_thread(GTask *task, gpointer source_object,
+                                         gpointer task_data, GCancellable *cancellable) {
+  (void)source_object; (void)cancellable;
+  GBytes *bytes = (GBytes *)task_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture)
+    g_task_return_pointer(task, texture, g_object_unref);
+  else
+    g_task_return_error(task, error);
+}
+
+/* Main-thread completion for profile banner decode. */
+static void on_banner_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  BannerLoadCtx *ctx = (BannerLoadCtx*)user_data;
+  GError *error = NULL;
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+
+  if (!texture) {
+    if (error) {
+      g_warning("profile_pane: failed to create banner texture for url=%s: %s",
+                ctx->url, error->message);
+      g_clear_error(&error);
+    }
+    if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self))
+      g_clear_pointer(&ctx->self->loading_banner_url, g_free);
+    banner_load_ctx_free(ctx);
+    return;
+  }
+
+  /* Update UI - banner uses full resolution for crisp display */
+  if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self) && GTK_IS_PICTURE(ctx->self->banner_image)) {
+    gtk_picture_set_paintable(GTK_PICTURE(ctx->self->banner_image), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(ctx->self->banner_image, TRUE);
+    g_debug("profile_pane: banner loaded at full resolution for url=%s", ctx->url);
+
+    /* Cache the banner texture locally with LRU eviction */
+    image_cache_insert(ctx->self, ctx->url, texture);
+    /* Clear in-flight URL now that load succeeded (nostrc-q8u0) */
+    g_clear_pointer(&ctx->self->loading_banner_url, g_free);
+  }
+
+  g_object_unref(texture);
+  banner_load_ctx_free(ctx);
+}
+
 /* Async banner loading callback - loads at full resolution for quality */
 static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   BannerLoadCtx *ctx = (BannerLoadCtx*)user_data;
@@ -2530,34 +2522,10 @@ static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_d
           ctx->msg ? soup_message_get_status(ctx->msg) : 0,
           ctx->url);
 
-  /* Create texture from bytes at FULL RESOLUTION for banner quality */
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-
-  if (error) {
-    g_warning("profile_pane: failed to create banner texture for url=%s: %s",
-              ctx->url, error->message);
-    g_clear_error(&error);
-    if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self))
-      g_clear_pointer(&ctx->self->loading_banner_url, g_free);
-    banner_load_ctx_free(ctx);
-    return;
-  }
-
-  /* Update UI - banner uses full resolution for crisp display */
-  if (NOSTR_GTK_IS_PROFILE_PANE(ctx->self) && GTK_IS_PICTURE(ctx->self->banner_image)) {
-    gtk_picture_set_paintable(GTK_PICTURE(ctx->self->banner_image), GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(ctx->self->banner_image, TRUE);
-    g_debug("profile_pane: banner loaded at full resolution for url=%s", ctx->url);
-
-    /* Cache the banner texture locally with LRU eviction */
-    image_cache_insert(ctx->self, ctx->url, texture);
-    /* Clear in-flight URL now that load succeeded (nostrc-q8u0) */
-    g_clear_pointer(&ctx->self->loading_banner_url, g_free);
-  }
-
-  g_object_unref(texture);
-  banner_load_ctx_free(ctx);
+  GTask *task = g_task_new(NULL, NULL, on_banner_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, profile_banner_decode_thread);
+  g_object_unref(task);
 }
 
 /* Load banner image at full resolution (not using avatar cache which downscales to 96px) */

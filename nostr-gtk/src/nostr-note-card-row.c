@@ -2248,14 +2248,20 @@ static void show_loaded_image(GtkWidget *container) {
   }
 }
 
-/* Worker thread: keep this path free of GDK texture creation.
- * We return the fetched bytes back to the main thread and let GTK/GDK create
- * render resources there, which is safer for macOS/Metal-backed rendering. */
-static void media_decode_thread(GTask *task, gpointer source_object,
-                                 gpointer task_data, GCancellable *cancellable) {
+/* Worker thread: decode image bytes into an immutable GdkTexture off the
+ * main thread. This keeps JPEG/PNG decode and texture construction out of the
+ * startup/timeline bind hot path. */
+static void texture_decode_thread(GTask *task, gpointer source_object,
+                                  gpointer task_data, GCancellable *cancellable) {
   (void)source_object; (void)cancellable;
   GBytes *bytes = (GBytes*)task_data;
-  g_task_return_pointer(task, g_bytes_ref(bytes), (GDestroyNotify)g_bytes_unref);
+  GError *error = NULL;
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  if (texture)
+    g_task_return_pointer(task, texture, g_object_unref);
+  else
+    g_task_return_error(task, error);
 }
 
 /* Main-thread callback: apply decoded texture to widget */
@@ -2264,18 +2270,7 @@ static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer us
   MediaLoadCtx *ctx = (MediaLoadCtx*)user_data;
   GError *error = NULL;
 
-  GBytes *bytes = g_task_propagate_pointer(G_TASK(res), &error);
-  if (!bytes) {
-    if (error) {
-      g_debug("Media: Failed to transfer image bytes: %s", error->message);
-      g_error_free(error);
-    }
-    media_load_ctx_free(ctx);
-    return;
-  }
-
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
   if (!texture) {
     if (error) {
       g_debug("Media: Failed to create texture: %s", error->message);
@@ -2335,7 +2330,7 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
    * 50-200ms to decompress, which would drop 3-12 frames on the main thread. */
   GTask *task = g_task_new(NULL, NULL, on_media_decode_done, ctx);
   g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
-  g_task_run_in_thread(task, media_decode_thread);
+  g_task_run_in_thread(task, texture_decode_thread);
   g_object_unref(task);
 }
 
@@ -5037,6 +5032,37 @@ static gchar *format_article_date(gint64 timestamp) {
 }
 
 #ifdef HAVE_SOUP3
+/* Main-thread completion for article header image decode. */
+static void on_article_image_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  NoteCardBindingContext *ctx = (NoteCardBindingContext *)user_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  if (!texture) {
+    if (error) {
+      g_debug("NIP-23: Failed to create texture: %s", error->message);
+      g_error_free(error);
+    }
+    note_card_binding_context_unref(ctx);
+    return;
+  }
+
+  GObject *row_obj = note_card_binding_context_get_row(ctx);
+  if (row_obj) {
+    NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)row_obj;
+    if (GTK_IS_PICTURE(self->article_image)) {
+      gtk_picture_set_paintable(GTK_PICTURE(self->article_image), GDK_PAINTABLE(texture));
+      if (self->article_image_box)
+        gtk_widget_set_visible(self->article_image_box, TRUE);
+    }
+    g_object_unref(row_obj);
+  }
+
+  g_object_unref(texture);
+  note_card_binding_context_unref(ctx);
+}
+
 /* Callback for article header image loading */
 static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   /* nostrc-ncr-lifecycle: user_data is a ref'd NoteCardBindingContext, not a raw self pointer.
@@ -5054,32 +5080,10 @@ static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-
-  if (!texture) {
-    if (error) {
-      g_debug("NIP-23: Failed to create texture: %s", error->message);
-      g_error_free(error);
-    }
-    note_card_binding_context_unref(ctx);
-    return;
-  }
-
-  /* Safe row access: returns NULL if context was cancelled (row recycled) or row finalized */
-  GObject *row_obj = note_card_binding_context_get_row(ctx);
-  if (row_obj) {
-    NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)row_obj;
-    if (GTK_IS_PICTURE(self->article_image)) {
-      gtk_picture_set_paintable(GTK_PICTURE(self->article_image), GDK_PAINTABLE(texture));
-      if (self->article_image_box)
-        gtk_widget_set_visible(self->article_image_box, TRUE);
-    }
-    g_object_unref(row_obj);
-  }
-
-  g_object_unref(texture);
-  note_card_binding_context_unref(ctx);
+  GTask *task = g_task_new(NULL, NULL, on_article_image_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, texture_decode_thread);
+  g_object_unref(task);
 }
 
 /* Load article header image asynchronously */
@@ -5369,6 +5373,31 @@ static void video_thumb_ctx_free(VideoThumbCtx *ctx) {
 }
 
 #ifdef HAVE_SOUP3
+/* Main-thread completion for video thumbnail decode. */
+static void on_video_thumb_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  VideoThumbCtx *ctx = (VideoThumbCtx *)user_data;
+  GError *error = NULL;
+
+  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  if (!texture) {
+    if (error) {
+      g_debug("NIP-71: Failed to create thumbnail texture: %s", error->message);
+      g_error_free(error);
+    }
+    video_thumb_ctx_free(ctx);
+    return;
+  }
+
+  if (ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
+    gtk_picture_set_paintable(GTK_PICTURE(ctx->picture), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(ctx->picture, TRUE);
+  }
+
+  g_object_unref(texture);
+  video_thumb_ctx_free(ctx);
+}
+
 /* NIP-71: Async thumbnail image loader - uses context struct with weak reference */
 static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gpointer user_data) {
   VideoThumbCtx *ctx = (VideoThumbCtx *)user_data;
@@ -5397,19 +5426,10 @@ static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gp
     return;
   }
 
-  /* Load image from bytes */
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, NULL);
-  g_bytes_unref(bytes);
-
-  if (texture && GTK_IS_PICTURE(ctx->picture)) {
-    gtk_picture_set_paintable(GTK_PICTURE(ctx->picture), GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(ctx->picture, TRUE);
-    g_object_unref(texture);
-  } else if (texture) {
-    g_object_unref(texture);
-  }
-
-  video_thumb_ctx_free(ctx);
+  GTask *task = g_task_new(NULL, NULL, on_video_thumb_decode_done, ctx);
+  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+  g_task_run_in_thread(task, texture_decode_thread);
+  g_object_unref(task);
 }
 
 static void load_video_thumbnail(NostrGtkNoteCardRow *self, const char *thumb_url) {

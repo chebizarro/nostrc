@@ -131,30 +131,66 @@ typedef struct {
     GnostrDmFileMessage *file_msg;
 } FilePreviewCtx;
 
+static void file_preview_ctx_free(FilePreviewCtx *ctx)
+{
+    if (!ctx) return;
+    gnostr_dm_file_message_free(ctx->file_msg);
+    g_weak_ref_clear(&ctx->picture_ref);
+    g_free(ctx);
+}
+
+static void file_preview_decode_thread(GTask *task, gpointer source_object,
+                                       gpointer task_data, GCancellable *cancellable)
+{
+    (void)source_object; (void)cancellable;
+    GBytes *bytes = (GBytes *)task_data;
+    GError *error = NULL;
+    GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+
+    if (texture)
+        g_task_return_pointer(task, texture, g_object_unref);
+    else
+        g_task_return_error(task, error);
+}
+
+static void on_file_preview_decode_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    (void)source;
+    FilePreviewCtx *ctx = user_data;
+    GError *error = NULL;
+    GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+    GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+
+    if (picture && texture) {
+        gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+    }
+
+    if (picture) g_object_unref(picture);
+    if (texture) g_object_unref(texture);
+    if (error) g_error_free(error);
+    file_preview_ctx_free(ctx);
+}
+
 static void
 on_file_preview_downloaded(uint8_t *data, gsize size, GError *error, gpointer user_data)
 {
     FilePreviewCtx *ctx = user_data;
     GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
 
-    if (picture && data && !error) {
-        GBytes *bytes = g_bytes_new_take(data, size);
-        GdkTexture *texture = gdk_texture_new_from_bytes(bytes, NULL);
-        g_bytes_unref(bytes);
-
-        if (texture) {
-            gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
-            g_object_unref(texture);
-        }
-        g_object_unref(picture);
-    } else {
+    if (!picture || !data || error) {
         g_free(data);
         if (picture) g_object_unref(picture);
+        file_preview_ctx_free(ctx);
+        return;
     }
 
-    gnostr_dm_file_message_free(ctx->file_msg);
-    g_weak_ref_clear(&ctx->picture_ref);
-    g_free(ctx);
+    g_object_unref(picture);
+
+    GBytes *bytes = g_bytes_new_take(data, size);
+    GTask *task = g_task_new(NULL, NULL, on_file_preview_decode_done, ctx);
+    g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
+    g_task_run_in_thread(task, file_preview_decode_thread);
+    g_object_unref(task);
 }
 
 /* Build a GnostrDmFileMessage from a GnostrDmMessage's file fields */
