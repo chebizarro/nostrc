@@ -50,11 +50,17 @@ gboolean gnostr_nip05_parse(const char *identifier, char **out_local, char **out
 /**
  * Verify NIP-05 identifier asynchronously.
  *
+ * The verification transport is globally deduplicated per (identifier, pubkey)
+ * pair so repeated UI requests behave like a shared cache/background fetch,
+ * rather than each caller owning its own network request.
+ *
  * @param identifier The NIP-05 identifier to verify
  * @param expected_pubkey The expected pubkey in hex (64 chars)
  * @param callback Callback to invoke when verification completes
  * @param user_data User data for callback
- * @param cancellable Optional GCancellable
+ * @param cancellable Optional caller-local cancellable; cancelling only drops
+ *                    the callback for that caller, not the shared verification
+ *                    request if other listeners are waiting.
  */
 void gnostr_nip05_verify_async(const char *identifier,
                                const char *expected_pubkey,

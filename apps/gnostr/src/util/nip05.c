@@ -14,25 +14,35 @@
 
 /* NIP-05 verification cache */
 static GHashTable *nip05_cache = NULL;  /* key: char* identifier, value: GnostrNip05Result* */
+static GHashTable *nip05_inflight = NULL; /* key: char* request key, value: Nip05VerifyContext* */
 static GMutex nip05_cache_mutex;
 static gboolean nip05_cache_initialized = FALSE;
 
-/* Context for async verification */
+/* Per-caller subscription to a shared verification request */
 typedef struct {
+  GnostrNip05VerifyCallback callback;
+  gpointer user_data;
+  GCancellable *cancellable;
+} Nip05VerifySubscriber;
+
+/* Context for shared async verification */
+typedef struct {
+  char *request_key;
   char *identifier;
   char *expected_pubkey;
   char *local_part;
   char *domain;
-  GnostrNip05VerifyCallback callback;
-  gpointer user_data;
-  GCancellable *cancellable;
+  GPtrArray *subscribers; /* Nip05VerifySubscriber* */
 } Nip05VerifyContext;
 
 /* Forward declarations */
+static void nip05_verify_subscriber_free(Nip05VerifySubscriber *subscriber);
 static void nip05_verify_ctx_free(Nip05VerifyContext *ctx);
 static void ensure_nip05_cache(void);
 static gboolean is_valid_domain(const char *domain);
 static gboolean is_valid_local_part(const char *local);
+static char *nip05_make_request_key(const char *identifier, const char *expected_pubkey);
+static void nip05_deliver_result_to_subscribers(GPtrArray *subscribers, GnostrNip05Result *result);
 
 const char *gnostr_nip05_status_to_string(GnostrNip05Status status) {
   switch (status) {
@@ -69,13 +79,20 @@ static GnostrNip05Result *nip05_result_copy(const GnostrNip05Result *src) {
   return dst;
 }
 
+static void nip05_verify_subscriber_free(Nip05VerifySubscriber *subscriber) {
+  if (!subscriber) return;
+  if (subscriber->cancellable) g_object_unref(subscriber->cancellable);
+  g_free(subscriber);
+}
+
 static void nip05_verify_ctx_free(Nip05VerifyContext *ctx) {
   if (!ctx) return;
+  g_free(ctx->request_key);
   g_free(ctx->identifier);
   g_free(ctx->expected_pubkey);
   g_free(ctx->local_part);
   g_free(ctx->domain);
-  if (ctx->cancellable) g_object_unref(ctx->cancellable);
+  if (ctx->subscribers) g_ptr_array_unref(ctx->subscribers);
   g_free(ctx);
 }
 
@@ -86,6 +103,11 @@ static void ensure_nip05_cache(void) {
     g_str_hash, g_str_equal,
     g_free,
     (GDestroyNotify)gnostr_nip05_result_free
+  );
+  nip05_inflight = g_hash_table_new_full(
+    g_str_hash, g_str_equal,
+    g_free,
+    (GDestroyNotify)nip05_verify_ctx_free
   );
   nip05_cache_initialized = TRUE;
   g_debug("nip05: cache initialized");
@@ -290,6 +312,21 @@ GtkWidget *gnostr_nip05_create_badge(void) {
 
 #ifdef HAVE_SOUP3
 
+static char *nip05_make_request_key(const char *identifier, const char *expected_pubkey) {
+  return g_strdup_printf("%s\n%s", identifier ? identifier : "", expected_pubkey ? expected_pubkey : "");
+}
+
+static void nip05_deliver_result_to_subscribers(GPtrArray *subscribers, GnostrNip05Result *result) {
+  if (!subscribers || !result) return;
+
+  for (guint i = 0; i < subscribers->len; i++) {
+    Nip05VerifySubscriber *subscriber = g_ptr_array_index(subscribers, i);
+    if (!subscriber || !subscriber->callback) continue;
+    if (subscriber->cancellable && g_cancellable_is_cancelled(subscriber->cancellable)) continue;
+    subscriber->callback(nip05_result_copy(result), subscriber->user_data);
+  }
+}
+
 static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   Nip05VerifyContext *ctx = (Nip05VerifyContext *)user_data;
   GError *error = NULL;
@@ -388,14 +425,24 @@ done:
   /* Cache the result */
   gnostr_nip05_cache_put(nip05_result_copy(result));
 
-  /* Invoke callback */
-  if (ctx->callback) {
-    ctx->callback(result, ctx->user_data);
-  } else {
-    gnostr_nip05_result_free(result);
-  }
+  GPtrArray *subscribers = NULL;
 
-  nip05_verify_ctx_free(ctx);
+  g_mutex_lock(&nip05_cache_mutex);
+  if (ctx->subscribers) {
+    subscribers = g_ptr_array_ref(ctx->subscribers);
+    ctx->subscribers = NULL;
+  }
+  if (nip05_inflight && ctx->request_key) {
+    g_hash_table_remove(nip05_inflight, ctx->request_key);
+  }
+  g_mutex_unlock(&nip05_cache_mutex);
+
+  /* Fan out after removing the inflight entry so no concurrent joiners can
+   * mutate the subscriber list while it is being iterated. */
+  nip05_deliver_result_to_subscribers(subscribers, result);
+
+  if (subscribers) g_ptr_array_unref(subscribers);
+  gnostr_nip05_result_free(result);
 }
 
 void gnostr_nip05_verify_async(const char *identifier,
@@ -441,6 +488,36 @@ void gnostr_nip05_verify_async(const char *identifier,
     return;
   }
 
+  Nip05VerifySubscriber *subscriber = g_new0(Nip05VerifySubscriber, 1);
+  subscriber->callback = callback;
+  subscriber->user_data = user_data;
+  subscriber->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+
+  char *request_key = nip05_make_request_key(identifier, expected_pubkey);
+
+  g_mutex_lock(&nip05_cache_mutex);
+  Nip05VerifyContext *ctx = nip05_inflight ? g_hash_table_lookup(nip05_inflight, request_key) : NULL;
+  if (ctx) {
+    g_ptr_array_add(ctx->subscribers, subscriber);
+    g_mutex_unlock(&nip05_cache_mutex);
+    g_debug("nip05: joined inflight verification for %s", identifier);
+    g_free(request_key);
+    g_free(local);
+    g_free(domain);
+    return;
+  }
+
+  ctx = g_new0(Nip05VerifyContext, 1);
+  ctx->request_key = g_strdup(request_key);
+  ctx->identifier = g_strdup(identifier);
+  ctx->expected_pubkey = g_strdup(expected_pubkey);
+  ctx->local_part = local;  /* transfer ownership */
+  ctx->domain = domain;     /* transfer ownership */
+  ctx->subscribers = g_ptr_array_new_with_free_func((GDestroyNotify)nip05_verify_subscriber_free);
+  g_ptr_array_add(ctx->subscribers, subscriber);
+  g_hash_table_insert(nip05_inflight, g_strdup(ctx->request_key), ctx);
+  g_mutex_unlock(&nip05_cache_mutex);
+
   /* Build URL: https://domain/.well-known/nostr.json?name=local */
   char *encoded_local = g_uri_escape_string(local, NULL, TRUE);
   char *url = g_strdup_printf("https://%s/.well-known/nostr.json?name=%s", domain, encoded_local);
@@ -448,31 +525,33 @@ void gnostr_nip05_verify_async(const char *identifier,
 
   g_debug("nip05: verifying %s via %s", identifier, url);
 
-  /* Create context */
-  Nip05VerifyContext *ctx = g_new0(Nip05VerifyContext, 1);
-  ctx->identifier = g_strdup(identifier);
-  ctx->expected_pubkey = g_strdup(expected_pubkey);
-  ctx->local_part = local;  /* transfer ownership */
-  ctx->domain = domain;     /* transfer ownership */
-  ctx->callback = callback;
-  ctx->user_data = user_data;
-  ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-
   /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
   SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", url);
   g_free(url);
+  g_free(request_key);
 
   if (!msg) {
     g_warning("nip05: failed to create HTTP message for %s", identifier);
-    if (callback) {
-      GnostrNip05Result *result = g_new0(GnostrNip05Result, 1);
-      result->identifier = g_strdup(identifier);
-      result->status = GNOSTR_NIP05_STATUS_FAILED;
-      callback(result, user_data);
+    GnostrNip05Result *result = g_new0(GnostrNip05Result, 1);
+    result->identifier = g_strdup(identifier);
+    result->status = GNOSTR_NIP05_STATUS_FAILED;
+    GPtrArray *subscribers = NULL;
+
+    g_mutex_lock(&nip05_cache_mutex);
+    if (ctx->subscribers) {
+      subscribers = g_ptr_array_ref(ctx->subscribers);
+      ctx->subscribers = NULL;
     }
-    nip05_verify_ctx_free(ctx);
+    if (nip05_inflight && ctx->request_key) {
+      g_hash_table_remove(nip05_inflight, ctx->request_key);
+    }
+    g_mutex_unlock(&nip05_cache_mutex);
+
+    nip05_deliver_result_to_subscribers(subscribers, result);
+    if (subscribers) g_ptr_array_unref(subscribers);
+    gnostr_nip05_result_free(result);
     return;
   }
 

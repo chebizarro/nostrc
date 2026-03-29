@@ -3929,27 +3929,42 @@ void nostr_gtk_note_card_row_set_embed_rich(NostrGtkNoteCardRow *self, const cha
   gtk_widget_set_visible(self->embed_box, TRUE);
 }
 
-/* NIP-05 verification callback for note card.
- * user_data is a weak ref pointer that will be NULL if widget was destroyed. */
-static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
-  GObject **weak_ref = (GObject **)user_data;
-  NostrGtkNoteCardRow *self = NULL;
+typedef struct {
+  NoteCardBindingContext *binding_ctx;
+  GWeakRef row_ref;
+} NoteCardNip05CallbackCtx;
 
-  /* Check weak reference - if NULL, widget was destroyed */
-  if (weak_ref && *weak_ref) {
-    self = NOSTR_GTK_NOTE_CARD_ROW(*weak_ref);
+static void note_card_nip05_callback_ctx_free(NoteCardNip05CallbackCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->binding_ctx) note_card_binding_context_unref(ctx->binding_ctx);
+  g_weak_ref_clear(&ctx->row_ref);
+  g_free(ctx);
+}
+
+/* NIP-05 verification callback for note card.
+ * user_data carries either the active binding context or a weak row fallback
+ * for directly created cards that were never bound through GtkListItem. */
+static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
+  NoteCardNip05CallbackCtx *ctx = (NoteCardNip05CallbackCtx *)user_data;
+  GObject *row_obj = NULL;
+
+  if (ctx) {
+    row_obj = ctx->binding_ctx
+      ? note_card_binding_context_get_row(ctx->binding_ctx)
+      : g_weak_ref_get(&ctx->row_ref);
   }
 
-  /* Clean up weak ref container */
-  g_free(weak_ref);
-
-  if (!self || !result) {
+  if (!row_obj || !result) {
+    if (row_obj) g_object_unref(row_obj);
+    note_card_nip05_callback_ctx_free(ctx);
     if (result) gnostr_nip05_result_free(result);
     return;
   }
 
-  /* Double-check widget is still valid and not disposed */
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(row_obj);
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || self->disposed) {
+    g_object_unref(row_obj);
+    note_card_nip05_callback_ctx_free(ctx);
     gnostr_nip05_result_free(result);
     return;
   }
@@ -3957,12 +3972,16 @@ static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data
   g_debug("note_card: NIP-05 verification result for %s: %s",
           result->identifier, gnostr_nip05_status_to_string(result->status));
 
-  /* Show badge if verified */
-  if (result->status == GNOSTR_NIP05_STATUS_VERIFIED && self->nip05_badge) {
+  if (result->status == GNOSTR_NIP05_STATUS_VERIFIED &&
+      self->nip05 && result->identifier &&
+      g_strcmp0(self->nip05, result->identifier) == 0 &&
+      self->nip05_badge) {
     gtk_widget_set_visible(self->nip05_badge, TRUE);
     g_debug("note_card: showing NIP-05 verified badge for %s", result->identifier);
   }
 
+  g_object_unref(row_obj);
+  note_card_nip05_callback_ctx_free(ctx);
   gnostr_nip05_result_free(result);
 }
 
@@ -4043,15 +4062,22 @@ void nostr_gtk_note_card_row_set_nip05(NostrGtkNoteCardRow *self, const char *ni
     return;
   }
 
-  /* Verify async - use weak reference to safely handle callback after widget destruction */
+  /* Request shared background verification. The transport is globally
+   * deduplicated in nip05.c, so repeated bind-time requests behave like an
+   * image cache warmup rather than per-row network ownership. */
   self->nip05_cancellable = g_cancellable_new();
-  
-  /* Create weak reference container that will be set to NULL when widget is destroyed */
-  GObject **weak_ref = g_new0(GObject *, 1);
-  *weak_ref = G_OBJECT(self);
-  g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
-  
-  gnostr_nip05_verify_async(nip05, pubkey_hex, on_note_nip05_verified, weak_ref, self->nip05_cancellable);
+
+  NoteCardNip05CallbackCtx *cb_ctx = g_new0(NoteCardNip05CallbackCtx, 1);
+  if (self->binding_ctx) {
+    cb_ctx->binding_ctx = note_card_binding_context_ref(self->binding_ctx);
+  }
+  g_weak_ref_init(&cb_ctx->row_ref, G_OBJECT(self));
+
+  gnostr_nip05_verify_async(nip05,
+                            pubkey_hex,
+                            on_note_nip05_verified,
+                            cb_ctx,
+                            self->nip05_cancellable);
 }
 
 /* Set bookmark state and update button icon */
