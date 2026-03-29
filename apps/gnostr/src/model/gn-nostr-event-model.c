@@ -674,7 +674,14 @@ static void ensure_drain_timer(GnNostrEventModel *self) {
   if (!self->drain_enabled)
     return;
 
-  self->tick_source_id = g_timeout_add(16, on_drain_timer, g_object_ref(self));
+  /* Let GLib own the callback reference and release it exactly once via the
+   * source destroy notify. This avoids manual ref/unref balancing across both
+   * the timeout callback and external remove_drain_timer() calls. */
+  self->tick_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT,
+                                            16,
+                                            on_drain_timer,
+                                            g_object_ref(self),
+                                            g_object_unref);
 
   if (self->tick_source_id != 0) {
     g_debug("[FRAME] Drain timer started (id=%u)", self->tick_source_id);
@@ -688,7 +695,6 @@ static void ensure_drain_timer(GnNostrEventModel *self) {
 static void remove_drain_timer(GnNostrEventModel *self) {
   if (self->tick_source_id != 0) {
     g_source_remove(self->tick_source_id);
-    g_object_unref(self);  /* balance the ref from ensure_drain_timer */
   }
   self->tick_source_id = 0;
 }
@@ -999,7 +1005,6 @@ static gboolean on_drain_timer(gpointer user_data) {
 
   g_debug("[FRAME] All work complete, removing drain timer");
   self->tick_source_id = 0;
-  g_object_unref(self);  /* balance the ref from ensure_drain_timer */
   return G_SOURCE_REMOVE;
 }
 
@@ -2812,7 +2817,6 @@ out:
   if (self->insertion_buffer && self->insertion_buffer->len > 0)
     ensure_drain_timer(self);
 
-  g_object_unref(self); /* balance ref from g_idle_add */
   return G_SOURCE_REMOVE;
 }
 
@@ -2878,12 +2882,16 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
       added++;
     }
   } else {
-    /* Load newer: prepend in reverse order to preserve newest-first. */
+    /* Load newer: queue into the existing insertion buffer and let the drain
+     * timer perform frame-synced front insertion. Direct prepend + immediate
+     * items_changed(0,0,added) from this async completion path has repeatedly
+     * correlated with GTK list-item setup heap corruption on macOS. */
     for (gint i = (gint)entries->len - 1; i >= 0; i--) {
       RefreshEntry *e = g_ptr_array_index(entries, (guint)i);
       if (!e) continue;
 
-      if (has_note_key(self, e->note_key)) continue;
+      if (has_note_key(self, e->note_key) || has_note_key_pending(self, e->note_key))
+        continue;
 
       GNostrMuteList *ml = gnostr_mute_list_get_default();
       if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
@@ -2905,12 +2913,19 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
         }
       }
 
-      NoteEntry entry = { .note_key = e->note_key, .created_at = e->created_at };
-      g_array_insert_val(self->notes, 0, entry);
-      uint64_t *set_key = g_new(uint64_t, 1);
-      *set_key = e->note_key;
-      g_hash_table_add(self->note_key_set, set_key);
+      PendingEntry pentry = {
+        .note_key = e->note_key,
+        .created_at = e->created_at,
+        .arrival_time_us = g_get_monotonic_time()
+      };
+      insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
+      add_note_key_to_insertion_set(self, e->note_key);
       added++;
+    }
+
+    if (added > 0) {
+      apply_insertion_backpressure(self);
+      ensure_drain_timer(self);
     }
   }
 
@@ -2926,19 +2941,16 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
    *
    * This matches the existing safe pattern used by on_drain_timer() which
    * also uses insert-only signals followed by deferred eviction. */
-  if (added > 0) {
-    if (trim_newer) {
-      /* Load older: items appended at end */
-      emit_items_changed_safe(self, old_len, 0, added);
-    } else {
-      /* Load newer: items prepended at front */
-      emit_items_changed_safe(self, 0, 0, added);
-    }
+  if (added > 0 && trim_newer) {
+    /* Load older: items appended at end */
+    emit_items_changed_safe(self, old_len, 0, added);
   }
 
-  /* Schedule deferred trim if model exceeds trim_max */
+  /* Schedule deferred trim if model exceeds trim_max.
+   * For "load newer", the drain/eviction pipeline handles this after the
+   * buffered inserts land, so avoid a second concurrent mutation source here. */
   gboolean trim_scheduled = FALSE;
-  if (trim_max > 0 && self->notes->len > trim_max) {
+  if (trim_newer && trim_max > 0 && self->notes->len > trim_max) {
     guint to_trim = self->notes->len - trim_max;
     GArray *trim_keys = g_array_sized_new(FALSE, FALSE, sizeof(uint64_t), to_trim);
 
@@ -2960,14 +2972,16 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
     /* Cancel any previous pending trim */
     if (self->paginate_trim_source_id > 0) {
       g_source_remove(self->paginate_trim_source_id);
-      g_object_unref(self);
       self->paginate_trim_source_id = 0;
     }
     g_clear_pointer(&self->paginate_trim_keys, g_array_unref);
 
     self->paginate_trim_keys = trim_keys;
-    self->paginate_trim_source_id = g_idle_add(
-        paginate_trim_idle_cb, g_object_ref(self));
+    self->paginate_trim_source_id = g_idle_add_full(
+        G_PRIORITY_DEFAULT_IDLE,
+        paginate_trim_idle_cb,
+        g_object_ref(self),
+        g_object_unref);
     trim_scheduled = TRUE;
 
     g_debug("[MODEL] Scheduled deferred trim of %u items", to_trim);
@@ -3426,10 +3440,10 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
 
-  /* ONE batched signal for all insertions */
+  /* Emit insert-only signal for older pagination.
+   * These items are older than the current window, so they land at the tail. */
   if (added > 0) {
-    guint new_len = self->notes->len;
-    emit_items_changed_safe(self, 0, old_len, new_len);
+    emit_items_changed_safe(self, old_len, 0, added);
   }
 
   g_debug("[MODEL] load_older: added %u events, total now %u", added, self->notes->len);
@@ -3536,7 +3550,6 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   int result_count = 0;
   int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count, NULL);
 
-  guint old_len = self->notes->len;
   guint added = 0;
   if (query_rc == 0 && json_results && result_count > 0) {
     /* Iterate from end (oldest in results) to get events closest to our current window.
@@ -3587,7 +3600,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
           continue;
         }
 
-        if (has_note_key(self, note_key)) {
+        if (has_note_key(self, note_key) || has_note_key_pending(self, note_key)) {
           nostr_event_free(evt);
           continue;
         }
@@ -3605,7 +3618,6 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
 
-        /* Direct sorted insert — bypass deferral (user-initiated pagination) */
         if (root_id || reply_id) {
           if (!g_hash_table_contains(self->thread_info, &note_key)) {
             ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
@@ -3617,12 +3629,14 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
             g_hash_table_insert(self->thread_info, key_copy, tinfo);
           }
         }
-        guint pos = find_sorted_position(self, created_at);
-        NoteEntry entry = { .note_key = note_key, .created_at = created_at };
-        g_array_insert_val(self->notes, pos, entry);
-        uint64_t *set_key = g_new(uint64_t, 1);
-        *set_key = note_key;
-        g_hash_table_add(self->note_key_set, set_key);
+
+        PendingEntry pentry = {
+          .note_key = note_key,
+          .created_at = created_at,
+          .arrival_time_us = g_get_monotonic_time()
+        };
+        insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
+        add_note_key_to_insertion_set(self, note_key);
         added++;
 
         g_free(root_id);
@@ -3640,10 +3654,9 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
 
-  /* ONE batched signal for all insertions */
   if (added > 0) {
-    guint new_len = self->notes->len;
-    emit_items_changed_safe(self, 0, old_len, new_len);
+    apply_insertion_backpressure(self);
+    ensure_drain_timer(self);
   }
 
   return added;

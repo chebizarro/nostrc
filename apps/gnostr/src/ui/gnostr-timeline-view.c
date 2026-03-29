@@ -523,9 +523,7 @@ static void on_note_card_search_hashtag(NostrGtkNoteCardRow *row, const char *ha
   nostr_gtk_timeline_view_add_hashtag_tab(self, hashtag);
 }
 
-static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
-  (void)f;
-  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
+static GtkWidget *create_timeline_note_card_row(NostrGtkTimelineView *self) {
   GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
 
   /* Connect the open-profile signal */
@@ -567,7 +565,13 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
     g_signal_connect(row, "search-hashtag", G_CALLBACK(on_note_card_search_hashtag), self);
   }
 
-  gtk_list_item_set_child(item, row);
+  return row;
+}
+
+static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+  (void)f;
+  (void)item;
+  (void)data;
 }
 
 /* Avatar loading now handled by centralized gnostr-avatar-cache module */
@@ -1204,6 +1208,13 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     is_reply = depth > 0;
   }
   GtkWidget *row = gtk_list_item_get_child(item);
+  if (GTK_IS_WIDGET(row)) {
+    cleanup_bound_row(row);
+  }
+
+  row = create_timeline_note_card_row(self);
+  gtk_list_item_set_child(item, row);
+
   if (!GTK_IS_WIDGET(row)) return;
   if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
     /* CRITICAL: Prepare row for binding - resets disposed flag and creates fresh
@@ -1333,20 +1344,33 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
     } else if (tags_json) {
-      nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
-
-      /* NIP-36: Check for content-warning tag */
-      gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
-      if (content_warning) {
-        nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning);
-        g_free(content_warning);
+      gboolean used_cached_tagged_markup = FALSE;
+      if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+        const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
+        if (cached) {
+          nostr_gtk_note_card_row_set_content_tagged_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json, cached);
+          used_cached_tagged_markup = TRUE;
+        } else {
+          nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
+        }
+      } else {
+        nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
       }
 
-      /* Extract and set hashtags from "t" tags for regular notes */
-      gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
-      if (hashtags) {
-        nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), (const char * const *)hashtags);
-        g_strfreev(hashtags);
+      if (!used_cached_tagged_markup) {
+        /* NIP-36: Check for content-warning tag */
+        gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
+        if (content_warning) {
+          nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning);
+          g_free(content_warning);
+        }
+
+        /* Extract and set hashtags from "t" tags for regular notes */
+        gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
+        if (hashtags) {
+          nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), (const char * const *)hashtags);
+          g_strfreev(hashtags);
+        }
       }
     } else {
       /* Tier 1: markup only — defer embeds/media/OG to Tier 2 map handler.

@@ -225,6 +225,52 @@ void gnostr_content_render_result_free(GnContentRenderResult *result) {
   g_free(result);
 }
 
+static gchar *gnostr_render_fallback_markup_from_text(const char *content) {
+  g_autofree gchar *safe_content = gnostr_sanitize_utf8(content);
+  if (!safe_content || !*safe_content) {
+    return g_strdup("");
+  }
+
+  const char *p = safe_content;
+  const char *end = safe_content + strlen(safe_content);
+  GString *fallback = g_string_new("");
+
+  while (p < end) {
+    const char *url_start = NULL;
+    if (p + 7 <= end && g_ascii_strncasecmp(p, "http://", 7) == 0) {
+      url_start = p;
+    } else if (p + 8 <= end && g_ascii_strncasecmp(p, "https://", 8) == 0) {
+      url_start = p;
+    }
+
+    if (url_start) {
+      const char *url_end = url_start;
+      while (url_end < end && !g_ascii_isspace(*url_end)) {
+        url_end++;
+      }
+      g_autofree gchar *url = g_strndup(url_start, url_end - url_start);
+      g_autofree gchar *display = NULL;
+      if ((url_end - url_start) > 40) {
+        display = g_strdup_printf("%.35s...", url);
+      } else {
+        display = g_strdup(url);
+      }
+      gchar *esc_display = g_markup_escape_text(display, -1);
+      g_string_append(fallback, esc_display);
+      g_free(esc_display);
+      p = url_end;
+    } else {
+      const char *next = g_utf8_next_char(p);
+      gchar *escaped = g_markup_escape_text(p, next - p);
+      g_string_append(fallback, escaped);
+      g_free(escaped);
+      p = next;
+    }
+  }
+
+  return g_string_free(fallback, FALSE);
+}
+
 GnContentRenderResult *gnostr_render_content(const char *content, int content_len,
                                               GError **error) {
   if (!content) {
@@ -242,73 +288,38 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
 
   if (content_len < 0) content_len = (int)strlen(content);
 
+  /* Always parse an owned, sanitized buffer so any block pointers returned by
+   * nostrdb are anchored to memory we control for the entire render pass. */
+  g_autofree gchar *safe_content = gnostr_sanitize_utf8(content);
+  if (!safe_content) {
+    safe_content = g_strdup("");
+  }
+  content = safe_content;
+  content_len = (int)strlen(content);
+  const char *content_end = content + content_len;
+
   storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
   if (!blocks) {
-    /* nostrc-csaf: Fallback when NDB parser fails.
-     * CRITICAL: First sanitize UTF-8, then use g_markup_escape_text on the
-     * whole string instead of byte-by-byte processing which splits multi-byte
-     * UTF-8 sequences. The old byte-at-a-time loop would process e.g. the
-     * 3-byte sequence E2 80 99 (U+2019 RIGHT SINGLE QUOTATION MARK) as three
-     * separate bytes, producing garbage that crashes Pango. */
-    g_autofree gchar *safe_content = gnostr_sanitize_utf8(content);
-    int safe_len = (int)strlen(safe_content);
-    const char *p = safe_content;
-    const char *end = safe_content + safe_len;
-    GString *fallback = g_string_new("");
-
-    while (p < end) {
-      /* Look for http:// or https:// */
-      const char *url_start = NULL;
-      if (p + 7 <= end && g_ascii_strncasecmp(p, "http://", 7) == 0) {
-        url_start = p;
-      } else if (p + 8 <= end && g_ascii_strncasecmp(p, "https://", 8) == 0) {
-        url_start = p;
-      }
-
-      if (url_start) {
-        /* Find end of URL (whitespace or end of string) */
-        const char *url_end = url_start;
-        while (url_end < end && !g_ascii_isspace(*url_end)) {
-          url_end++;
-        }
-        size_t url_len = url_end - url_start;
-
-        /* Create truncated display and link */
-        gchar *url = g_strndup(url_start, url_len);
-        gchar *esc_url = g_markup_escape_text(url, -1);
-        g_autofree gchar *display = NULL;
-        if (url_len > 40) {
-          display = g_strdup_printf("%.35s...", url);
-        } else {
-          display = g_strdup(url);
-        }
-        gchar *esc_display = g_markup_escape_text(display, -1);
-        g_string_append_printf(fallback, "<a href=\"%s\">%s</a>", esc_url, esc_display);
-        g_free(esc_display);
-        g_free(esc_url);
-        g_free(url);
-
-        p = url_end;
-      } else {
-        /* nostrc-csaf: Advance by whole UTF-8 character, not single byte.
-         * Use g_utf8_next_char to correctly handle multi-byte sequences. */
-        const char *next = g_utf8_next_char(p);
-        gchar *escaped = g_markup_escape_text(p, next - p);
-        g_string_append(fallback, escaped);
-        g_free(escaped);
-        p = next;
-      }
-    }
-
-    res->markup = g_string_free(fallback, FALSE);
+    res->markup = gnostr_render_fallback_markup_from_text(content);
     return res;
   }
 
   GString *out = g_string_new("");
+  gboolean had_invalid_block_range = FALSE;
   struct ndb_block_iterator iter;
   struct ndb_block *block;
 
   ndb_blocks_iterate_start(content, blocks, &iter);
+
+#define VALIDATE_BLOCK_RANGE(ptr_, len_) \
+  do { \
+    if ((ptr_) == NULL || (ptr_) < content || (ptr_) > content_end || \
+        (gsize)(content_end - (ptr_)) < (gsize)(len_)) { \
+      g_warning("content_renderer: invalid block range; falling back type=%d len=%u", btype, (guint)(len_)); \
+      had_invalid_block_range = TRUE; \
+      goto fallback_from_blocks; \
+    } \
+  } while (0)
 
   while ((block = ndb_blocks_iterate_next(&iter)) != NULL) {
     enum ndb_block_type btype = ndb_get_block_type(block);
@@ -318,6 +329,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         struct ndb_str_block *sb = ndb_block_str(block);
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
+        VALIDATE_BLOCK_RANGE(ptr, len);
         g_autofree gchar *text = g_strndup(ptr, len);
         if (!g_utf8_validate(text, -1, NULL)) {
           gchar *valid = g_utf8_make_valid(text, -1);
@@ -334,6 +346,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         struct ndb_str_block *sb = ndb_block_str(block);
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
+        VALIDATE_BLOCK_RANGE(ptr, len);
         gchar *tag = g_strndup(ptr, len);
         if (!g_utf8_validate(tag, -1, NULL)) {
           gchar *valid = g_utf8_make_valid(tag, -1);
@@ -343,7 +356,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
           g_free(valid);
         } else {
           gchar *esc = g_markup_escape_text(tag, -1);
-          g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc, esc);
+          g_string_append_printf(out, "#%s", esc);
           g_free(esc);
         }
         g_free(tag);
@@ -354,6 +367,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         struct ndb_str_block *sb = ndb_block_str(block);
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
+        VALIDATE_BLOCK_RANGE(ptr, len);
         gchar *url = g_strndup(ptr, len);
 
         /* Collect URL metadata during this single pass */
@@ -387,8 +401,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         }
         gchar *esc_display = g_markup_escape_text(display, -1);
 
-        g_string_append_printf(out,
-          "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
+        g_string_append(out, esc_display);
 
         g_free(esc_display);
         g_free(esc_href);
@@ -401,6 +414,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         const char *str_ptr = ndb_str_block_ptr(sb);
         uint32_t str_len = ndb_str_block_len(sb);
         struct nostr_bech32 *bech32 = ndb_bech32_block(block);
+        VALIDATE_BLOCK_RANGE(str_ptr, str_len);
 
         gchar *bech32_str = g_strndup(str_ptr, str_len);
         g_autofree gchar *href = g_strdup_printf("nostr:%s", bech32_str);
@@ -425,8 +439,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         gchar *display = format_mention_display(bech32, str_ptr, str_len);
         gchar *esc_display = g_markup_escape_text(display, -1);
 
-        g_string_append_printf(out,
-          "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
+        g_string_append(out, esc_display);
 
         g_free(esc_display);
         g_free(display);
@@ -439,6 +452,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         struct ndb_str_block *sb = ndb_block_str(block);
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
+        VALIDATE_BLOCK_RANGE(ptr, len);
         gchar *inv_str = g_strndup(ptr, len);
         gchar *esc = g_markup_escape_text(inv_str, -1);
 
@@ -449,8 +463,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
           display = g_strdup_printf("\xe2\x9a\xa1%s", inv_str);
         }
         gchar *esc_display = g_markup_escape_text(display, -1);
-        g_string_append_printf(out,
-          "<a href=\"lightning:%s\">%s</a>", esc, esc_display);
+        g_string_append(out, esc_display);
 
         g_free(esc_display);
         g_free(esc);
@@ -463,6 +476,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
         if (sb) {
           const char *ptr = ndb_str_block_ptr(sb);
           uint32_t len = ndb_str_block_len(sb);
+          VALIDATE_BLOCK_RANGE(ptr, len);
           gchar *escaped = g_markup_escape_text(ptr, len);
           g_string_append(out, escaped);
           g_free(escaped);
@@ -475,11 +489,24 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
     }
   }
 
+#undef VALIDATE_BLOCK_RANGE
+
   storage_ndb_blocks_free(blocks);
 
   gchar *markup = g_string_free(out, FALSE);
   gnostr_strip_zwsp(markup);
   res->markup = (markup && *markup) ? markup : (g_free(markup), g_strdup(""));
+  return res;
+
+fallback_from_blocks:
+#undef VALIDATE_BLOCK_RANGE
+  storage_ndb_blocks_free(blocks);
+  g_string_free(out, TRUE);
+  if (had_invalid_block_range) {
+    res->markup = gnostr_render_fallback_markup_from_text(content);
+  } else {
+    res->markup = g_strdup("");
+  }
   return res;
 }
 

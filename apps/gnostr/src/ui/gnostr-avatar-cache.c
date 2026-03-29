@@ -642,22 +642,13 @@ typedef struct {
   GBytes *raw_bytes;      /* raw HTTP response bytes for disk cache write */
 } AvatarDecodeCtx;
 
-/* Worker thread: decode image + write disk cache off main thread.
- * Both gdk_pixbuf_new_from_stream_at_scale() and g_file_set_contents()
- * can block — the former for CPU-bound decompression, the latter for I/O.
- * GdkTexture is immutable and thread-safe to create from any thread. */
+/* Worker thread: only perform disk I/O.
+ * Texture creation stays on the main thread to avoid handing potentially
+ * backend-sensitive render resources to GTK/Metal from a worker. */
 static void avatar_decode_thread(GTask *task, gpointer source_object,
                                   gpointer task_data, GCancellable *cancellable) {
   (void)source_object; (void)cancellable;
   AvatarDecodeCtx *dctx = (AvatarDecodeCtx*)task_data;
-  GError *error = NULL;
-
-  /* Decode and scale */
-  GdkTexture *tex = avatar_texture_from_bytes_scaled(dctx->raw_bytes, &error);
-  if (!tex) {
-    g_task_return_error(task, error);
-    return;
-  }
 
   /* Write disk cache while still on worker thread */
   g_autofree char *path = avatar_path_for_url(dctx->avatar_ctx->url);
@@ -674,7 +665,7 @@ static void avatar_decode_thread(GTask *task, gpointer source_object,
     }
   }
 
-  g_task_return_pointer(task, tex, g_object_unref);
+  g_task_return_pointer(task, g_bytes_ref(dctx->raw_bytes), (GDestroyNotify)g_bytes_unref);
 }
 
 static void avatar_decode_ctx_free(AvatarDecodeCtx *dctx) {
@@ -691,9 +682,29 @@ static void on_avatar_decode_done(GObject *source, GAsyncResult *res, gpointer u
   AvatarCtx *ctx = dctx->avatar_ctx;
   GError *error = NULL;
 
-  GdkTexture *tex = g_task_propagate_pointer(G_TASK(res), &error);
-  if (!tex) {
+  GBytes *bytes = g_task_propagate_pointer(G_TASK(res), &error);
+  if (!bytes) {
     g_debug("avatar decode: failed for url=%s: %s",
+            ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    if (ctx && ctx->url) {
+      if (!s_avatar_bad_urls)
+        s_avatar_bad_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      g_hash_table_add(s_avatar_bad_urls, g_strdup(ctx->url));
+    }
+    g_clear_error(&error);
+    avatar_ctx_free(ctx);
+    avatar_decode_ctx_free(dctx);
+    g_mutex_lock(&s_fetch_mutex);
+    if (s_active_fetches > 0) s_active_fetches--;
+    g_mutex_unlock(&s_fetch_mutex);
+    process_pending_fetch_queue();
+    return;
+  }
+
+  GdkTexture *tex = avatar_texture_from_bytes_scaled(bytes, &error);
+  g_bytes_unref(bytes);
+  if (!tex) {
+    g_debug("avatar decode: texture creation failed for url=%s: %s",
             ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     if (ctx && ctx->url) {
       if (!s_avatar_bad_urls)

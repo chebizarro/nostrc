@@ -412,14 +412,10 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
   self->disposed = TRUE;
   self->binding_id = 0;
 
-  /* nostrc-pango-crash: Clear content label markup during unbind (not just
-   * dispose) because Pango crashes can occur during measure/layout passes
-   * triggered by GTK recycling, even before dispose runs. The content_label
-   * is the highest-risk label as it contains rich Pango markup with links.
-   * Also clear avatar paintable to prevent GtkImageDefinition corruption. */
-  if (GNOSTR_LABEL_SAFE(self->content_label)) {
-    gtk_label_set_markup(GTK_LABEL(self->content_label), "");
-  }
+  /* Timeline stability mode: note rows now bind plain sanitized text, not
+   * rich markup. Avoid mutating GtkLabel/Pango state during unbind/dispose;
+   * that recycle-time mutation has been a recurring crash surface. Keep only
+   * the paintable clear, which severs external image resources safely. */
   if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
   }
@@ -579,98 +575,26 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
   g_clear_pointer(&self->reactors, g_ptr_array_unref);
 
-  /* nostrc-pango-crash: Clear all label text BEFORE gtk_widget_dispose_template()
-   * to prevent PangoLayout finalization crash. When the native surface is already
-   * gone (widget unrealized during rapid recycling), PangoLayouts reference a
-   * freed PangoContext. Clearing text resets the PangoLayout while it's safe.
-   * If the native surface is gone, ref-leak the label (~1KB) to prevent
-   * finalization from touching the dead PangoContext.
-   * Pattern from og-preview-widget.c OG_DISPOSE_LABEL. */
-  static gint ncr_leaked_labels = 0;
-#define NCR_DISPOSE_LABEL(lbl) \
-  do { \
-    if (GNOSTR_LABEL_SAFE(lbl)) { \
-      gtk_label_set_text(GTK_LABEL(lbl), ""); \
-    } else if (GTK_IS_LABEL(lbl)) { \
-      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
-      if (_t && *_t) { \
-        g_object_ref(lbl); \
-        gint _leaked = g_atomic_int_add(&ncr_leaked_labels, 1) + 1; \
-        g_debug("NCR: ref-leaked label to prevent Pango crash (total: %d)", _leaked); \
-      } \
-    } \
-  } while (0)
+  /* Timeline stability mode: avoid label mutation/ref-leak hacks in dispose.
+   * Labels are now bound with plain sanitized text, so let template disposal own
+   * label finalization instead of forcing text clears or intentional leaks. */
 
-  NCR_DISPOSE_LABEL(self->content_label);
-  NCR_DISPOSE_LABEL(self->lbl_display);
-  NCR_DISPOSE_LABEL(self->lbl_handle);
-  NCR_DISPOSE_LABEL(self->lbl_timestamp);
-  NCR_DISPOSE_LABEL(self->lbl_nip05);
-  NCR_DISPOSE_LABEL(self->lbl_nip05_separator);
-  NCR_DISPOSE_LABEL(self->lbl_timestamp_separator);
-  NCR_DISPOSE_LABEL(self->lbl_relay);
-  NCR_DISPOSE_LABEL(self->lbl_like_count);
-  NCR_DISPOSE_LABEL(self->lbl_zap_count);
-  NCR_DISPOSE_LABEL(self->lbl_repost_count);
-  NCR_DISPOSE_LABEL(self->reply_indicator_label);
-  NCR_DISPOSE_LABEL(self->reply_count_label);
-  NCR_DISPOSE_LABEL(self->subject_label);
-  NCR_DISPOSE_LABEL(self->sensitive_warning_label);
-  NCR_DISPOSE_LABEL(self->article_title_label);
-  NCR_DISPOSE_LABEL(self->article_reading_time);
-  NCR_DISPOSE_LABEL(self->video_title_label);
-#undef NCR_DISPOSE_LABEL
-
-  /* nostrc-pango-crash: Clear GtkPicture paintables to prevent
-   * GtkImageDefinition corruption during widget disposal.
-   * Note: avatar_image paintable is already cleared in quiesce(), but we
-   * clear all pictures here as belt-and-suspenders for the dispose path
-   * (quiesce may have been called with clear_cancellable_refs=FALSE). */
+  /* Keep dispose-time widget mutation minimal.
+   *
+   * We still clear the row's directly-owned GtkPictures because their content
+   * can outlive async fetches, but we intentionally avoid walking and mutating
+   * the entire descendant tree here. That broad subtree surgery was a likely
+   * source of destruction-order corruption during GtkListView recycling and can
+   * poison the heap before the next row's gtk_widget_init_template() call.
+   *
+   * Let gtk_widget_dispose_template() own teardown of unnamed/internal child
+   * widgets and the layout manager. */
   if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image))
     gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
   if (self->article_image && GTK_IS_PICTURE(self->article_image))
     gtk_picture_set_paintable(GTK_PICTURE(self->article_image), NULL);
   if (self->video_thumb_picture && GTK_IS_PICTURE(self->video_thumb_picture))
     gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), NULL);
-
-  /* nostrc-imgdef: Clear ALL GtkImage icons in the template widget tree BEFORE
-   * dispose_template runs. gtk_image_clear() resets the internal
-   * GtkImageDefinition to the EMPTY type, which is a safe base state for
-   * finalization. This prevents the "code should not be reached" crash in
-   * gtk_image_definition_unref when heap corruption (from nsync/libgo UAF)
-   * has trashed the definition's type discriminant.
-   *
-   * Walk the widget subtree to find ALL GtkImage widgets — both named
-   * template children (like_icon, zap_icon) and unnamed ones (button icons). */
-  {
-    GList *image_widgets = NULL;
-    GtkWidget *_walk = gtk_widget_get_first_child(GTK_WIDGET(self));
-    /* BFS traversal to find all GtkImage widgets in the subtree */
-    GQueue bfs = G_QUEUE_INIT;
-    if (_walk) g_queue_push_tail(&bfs, _walk);
-    while (!g_queue_is_empty(&bfs)) {
-      GtkWidget *w = g_queue_pop_head(&bfs);
-      if (GTK_IS_IMAGE(w)) {
-        image_widgets = g_list_prepend(image_widgets, w);
-      }
-      /* Enqueue children */
-      GtkWidget *c = gtk_widget_get_first_child(w);
-      while (c) {
-        g_queue_push_tail(&bfs, c);
-        c = gtk_widget_get_next_sibling(c);
-      }
-    }
-    /* Clear all found GtkImages */
-    for (GList *l = image_widgets; l; l = l->next) {
-      gtk_image_clear(GTK_IMAGE(l->data));
-    }
-    g_list_free(image_widgets);
-  }
-
-  /* nostrc-pango-crash: Null layout manager before template disposal to prevent
-   * it from measuring partially-destroyed children during the disposal cascade.
-   * Pattern from og-preview-widget.c. */
-  gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
   gtk_widget_dispose_template(GTK_WIDGET(self), NOSTR_GTK_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
@@ -2293,21 +2217,14 @@ static void show_loaded_image(GtkWidget *container) {
   }
 }
 
-/* Worker thread: decode image bytes → GdkTexture off the main thread.
- * GdkTexture is immutable and thread-safe to create from any thread;
- * the actual GPU upload is deferred until first render on the main thread. */
+/* Worker thread: keep this path free of GDK texture creation.
+ * We return the fetched bytes back to the main thread and let GTK/GDK create
+ * render resources there, which is safer for macOS/Metal-backed rendering. */
 static void media_decode_thread(GTask *task, gpointer source_object,
                                  gpointer task_data, GCancellable *cancellable) {
   (void)source_object; (void)cancellable;
   GBytes *bytes = (GBytes*)task_data;
-  GError *error = NULL;
-
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  if (texture) {
-    g_task_return_pointer(task, texture, g_object_unref);
-  } else {
-    g_task_return_error(task, error);
-  }
+  g_task_return_pointer(task, g_bytes_ref(bytes), (GDestroyNotify)g_bytes_unref);
 }
 
 /* Main-thread callback: apply decoded texture to widget */
@@ -2316,10 +2233,21 @@ static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer us
   MediaLoadCtx *ctx = (MediaLoadCtx*)user_data;
   GError *error = NULL;
 
-  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  GBytes *bytes = g_task_propagate_pointer(G_TASK(res), &error);
+  if (!bytes) {
+    if (error) {
+      g_debug("Media: Failed to transfer image bytes: %s", error->message);
+      g_error_free(error);
+    }
+    media_load_ctx_free(ctx);
+    return;
+  }
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
   if (!texture) {
     if (error) {
-      g_debug("Media: Failed to decode texture: %s", error->message);
+      g_debug("Media: Failed to create texture: %s", error->message);
       g_error_free(error);
     }
     media_load_ctx_free(ctx);
@@ -2723,9 +2651,14 @@ void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *d
       }
       g_object_unref(cached);
     } else {
-      /* Cache miss - download asynchronously */
-      g_debug("note_card: avatar cache MISS, downloading url=%s", avatar_url);
-      gnostr_avatar_download_async(avatar_url, self->avatar_image, self->avatar_initials);
+      /* Timeline stability: do not start async avatar downloads from note rows.
+       * Keep initials visible for cache misses; this removes the hottest GWeakRef
+       * path from GtkListView recycling while we stabilize row lifetime. */
+      g_debug("note_card: avatar cache MISS, keeping initials for url=%s", avatar_url);
+      gtk_widget_set_visible(self->avatar_image, FALSE);
+      if (GTK_IS_WIDGET(self->avatar_initials)) {
+        gtk_widget_set_visible(self->avatar_initials, TRUE);
+      }
     }
   } else {
     if (!avatar_url || !*avatar_url) {
@@ -2790,74 +2723,21 @@ void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
       }
       g_object_unref(cached);
     } else if (remote_media_loading_enabled()) {
-      gnostr_avatar_download_async(avatar_url, self->avatar_image, self->avatar_initials);
-    }
+       /* Timeline stability: skip async avatar fetch on cache miss. */
+       gtk_widget_set_visible(self->avatar_image, FALSE);
+       if (GTK_IS_WIDGET(self->avatar_initials)) {
+         gtk_widget_set_visible(self->avatar_initials, TRUE);
+       }
+     }
     /* else: remote media disabled — keep initials visible as placeholder */
   }
 #endif
 }
 
-/* nostrc-p396s: Destroy notify for timestamp timer — releases the ref held
- * by the timer source to prevent use-after-free on the NoteCardRow. */
-static void timestamp_timer_destroy(gpointer user_data) {
-  if (user_data) g_object_unref(user_data);
-}
-
-/* Timer callback to update timestamp display.
- * nostrc-p396s: The timer source holds a ref on self (via g_object_ref at
- * creation + timestamp_timer_destroy at removal) so self cannot be finalized
- * while the timer is active. */
-static gboolean update_timestamp_tick(gpointer user_data) {
-  if (user_data == NULL) {
-    return G_SOURCE_REMOVE;
-  }
-
-  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)user_data;
-
-  /* Check disposed flag - if set, the widget is being torn down.
-   * Also verify the timer ID is still valid (non-zero means we're still active).
-   * IMPORTANT: Clear timer_id when returning G_SOURCE_REMOVE to prevent
-   * "Source ID was not found" errors when dispose/prepare_for_unbind tries
-   * to remove an already-auto-removed source. */
-  if (self->disposed || self->timestamp_timer_id == 0) {
-    self->timestamp_timer_id = 0;
-    return G_SOURCE_REMOVE;
-  }
-
-  /* nostrc-p396s: Check widget is still rooted in a window. When GtkListView
-   * tears down the widget tree, the widget can be unrooted (internal Pango
-   * state cleared) before our dispose runs to remove this timer. */
-  if (gtk_widget_get_root(GTK_WIDGET(self)) == NULL) {
-    self->timestamp_timer_id = 0;
-    return G_SOURCE_REMOVE;
-  }
-
-  if (!GTK_IS_LABEL(self->lbl_timestamp)) {
-    self->timestamp_timer_id = 0;
-    return G_SOURCE_REMOVE;
-  }
-
-  if (gtk_widget_get_parent(GTK_WIDGET(self)) == NULL) {
-    self->timestamp_timer_id = 0;
-    return G_SOURCE_REMOVE;
-  }
-
-  if (self->created_at > 0) {
-    time_t now = time(NULL);
-    long diff = (long)(now - (time_t)self->created_at);
-    if (diff < 0) diff = 0;
-    char buf[32];
-    if (diff < 5) g_strlcpy(buf, "now", sizeof(buf));
-    else if (diff < 3600) g_snprintf(buf, sizeof(buf), "%ldm", diff/60);
-    else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
-    else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
-    if (GNOSTR_LABEL_SAFE(self->lbl_timestamp)) {
-      gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
-    }
-  }
-
-  return G_SOURCE_CONTINUE;
-}
+/* Timestamp auto-refresh disabled for stability.
+ * Updating dozens of timeline labels on timers while GTK is measuring and
+ * recycling rows has been a recurring source of Pango/label instability.
+ * We still show the initial relative timestamp at bind time. */
 
 void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
@@ -2893,19 +2773,11 @@ void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 cre
       g_date_time_unref(dt);
     }
 
-    /* Remove old timer if exists (destroy notify releases old ref) */
+    /* Disable per-row refresh timers; keep the one-time relative string. */
     if (self->timestamp_timer_id > 0) {
       g_source_remove(self->timestamp_timer_id);
       self->timestamp_timer_id = 0;
     }
-
-    /* nostrc-p396s: Timer holds a ref on self to prevent use-after-free if
-     * the widget is finalized before the timer is removed. The destroy notify
-     * (timestamp_timer_destroy) releases the ref when the source is removed. */
-    g_object_ref(self);
-    self->timestamp_timer_id = g_timeout_add_seconds_full(
-        G_PRIORITY_DEFAULT, 60, update_timestamp_tick, self,
-        timestamp_timer_destroy);
   } else {
     /* nostrc-0acr: Check label is safe before update to prevent NULL PangoLayout crash */
     if (GNOSTR_LABEL_SAFE(self->lbl_timestamp)) {
@@ -3420,15 +3292,17 @@ void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
   if (self->disposed) return;
   if (self->binding_id == 0) return;
 
-  /* Store plain text content for clipboard operations */
+  g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
   g_clear_pointer(&self->content_text, g_free);
-  self->content_text = g_strdup(content);
+  self->content_text = g_strdup(safe_text);
 
-  if (!render || !render->markup) return;
-
-  /* nostrc-csaf: Use safe markup setter for relay content */
-  gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-  gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
+  if (render && render->markup && *render->markup) {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
+  } else {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
+    gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
+  }
 }
 
 /**
@@ -3440,10 +3314,41 @@ void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
  */
 void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
                                                   const GnContentRenderResult *render) {
+  (void)render;
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed) return;
   if (self->binding_id == 0) return;
-  if (!render) return;
+
+  /* Timeline stability mode: disable deferred embed/media/OG creation. */
+  if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->media_box), child);
+      child = next;
+    }
+    gtk_widget_set_visible(self->media_box, FALSE);
+  }
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  self->media_widgets_created = FALSE;
+
+  if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    if (GTK_IS_FRAME(self->embed_box)) {
+      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+    }
+    gtk_widget_set_visible(self->embed_box, FALSE);
+    self->note_embed = NULL;
+  }
+
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    if (self->og_preview) {
+      gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      self->og_preview = NULL;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+  }
+
+  return;
 
   /* Deferred media widget creation (images, videos) */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
@@ -3523,10 +3428,79 @@ void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *
   if (self->disposed) return;
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
-  /* Render content (no cache available in this path) */
-  GnContentRenderResult *render = gnostr_render_content(content, -1, NULL);
-  nostr_gtk_note_card_row_set_content_rendered(self, content, render);
-  gnostr_content_render_result_free(render);
+  g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
+  g_clear_pointer(&self->content_text, g_free);
+  self->content_text = g_strdup(safe_text);
+  gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
+  gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
+}
+
+void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow *self,
+                                                            const char *content,
+                                                            const char *tags_json,
+                                                            const GnContentRenderResult *render) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+
+  g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
+  g_clear_pointer(&self->content_text, g_free);
+  self->content_text = g_strdup(safe_text);
+
+  if (tags_json && *tags_json) {
+    gchar *subject = extract_subject_from_tags_json(tags_json);
+    if (subject && self->subject_label && GTK_IS_LABEL(self->subject_label)) {
+      g_autofree gchar *safe_subject = gnostr_sanitize_utf8(subject);
+      gtk_label_set_use_markup(GTK_LABEL(self->subject_label), FALSE);
+      gtk_label_set_text(GTK_LABEL(self->subject_label), safe_subject);
+      gtk_widget_set_visible(self->subject_label, TRUE);
+    } else if (self->subject_label && GTK_IS_WIDGET(self->subject_label)) {
+      gtk_widget_set_visible(self->subject_label, FALSE);
+    }
+    g_free(subject);
+  } else if (self->subject_label && GTK_IS_WIDGET(self->subject_label)) {
+    gtk_widget_set_visible(self->subject_label, FALSE);
+  }
+
+  if (render && render->markup && *render->markup) {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
+  } else {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
+    gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
+  }
+
+  if (self->emoji_box && GTK_IS_WIDGET(self->emoji_box)) {
+    gtk_widget_set_visible(self->emoji_box, FALSE);
+  }
+
+  if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->media_box), child);
+      child = next;
+    }
+    gtk_widget_set_visible(self->media_box, FALSE);
+  }
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  self->media_widgets_created = FALSE;
+
+  if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    if (GTK_IS_FRAME(self->embed_box)) {
+      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+    }
+    gtk_widget_set_visible(self->embed_box, FALSE);
+    self->note_embed = NULL;
+  }
+
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    if (self->og_preview) {
+      gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      self->og_preview = NULL;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+  }
 }
 
 /* NIP-92 imeta-aware content setter */
@@ -3543,10 +3517,10 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
   if (tags_json && *tags_json) {
     gchar *subject = extract_subject_from_tags_json(tags_json);
     if (subject && self->subject_label && GTK_IS_LABEL(self->subject_label)) {
-      gchar *escaped = gnostr_strip_zwsp(g_markup_escape_text(subject, -1));
-        gnostr_safe_set_markup(GTK_LABEL(self->subject_label), escaped);
+      g_autofree gchar *safe_subject = gnostr_sanitize_utf8(subject);
+      gtk_label_set_use_markup(GTK_LABEL(self->subject_label), FALSE);
+      gtk_label_set_text(GTK_LABEL(self->subject_label), safe_subject);
       gtk_widget_set_visible(self->subject_label, TRUE);
-      g_free(escaped);
       g_debug("NIP-14: Displaying subject: %s", subject);
     } else if (self->subject_label && GTK_IS_WIDGET(self->subject_label)) {
       gtk_widget_set_visible(self->subject_label, FALSE);
@@ -3577,85 +3551,39 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
     }
   }
 
-  /* Single-pass content render: markup + all URLs */
-  GnContentRenderResult *render = gnostr_render_content(content, -1, NULL);
-  /* nostrc-csaf: Use safe markup setter for relay content */
+  g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
-    gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-    gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
+    gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
   }
 
-  /* nostrc-dqwq.2: Defer media widget creation to map signal (imeta path).
-   * Store URLs + imeta sizing now; actual widgets created on map. */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
     GtkWidget *child = gtk_widget_get_first_child(self->media_box);
     while (child) {
       GtkWidget *next = gtk_widget_get_next_sibling(child);
-      /* nostrc-imgdef: pre-clear overlay children before removal */
-      if (GTK_IS_OVERLAY(child)) {
-        GtkWidget *ov = gtk_widget_get_first_child(child);
-        while (ov) {
-          if (GTK_IS_IMAGE(ov))   gtk_image_clear(GTK_IMAGE(ov));
-          if (GTK_IS_PICTURE(ov)) gtk_picture_set_paintable(GTK_PICTURE(ov), NULL);
-          ov = gtk_widget_get_next_sibling(ov);
-        }
-      }
       gtk_box_remove(GTK_BOX(self->media_box), child);
       child = next;
     }
     gtk_widget_set_visible(self->media_box, FALSE);
+  }
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  self->media_widgets_created = FALSE;
 
-    /* Clear any previous pending items */
-    g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
-    self->media_widgets_created = FALSE;
-
-    if (render->all_urls && render->all_urls->len > 0) {
-      self->pending_media_items = g_ptr_array_new_with_free_func(pending_media_item_free);
-      for (guint i = 0; i < render->all_urls->len; i++) {
-        const char *url = g_ptr_array_index(render->all_urls, i);
-        GnostrImeta *imeta = imeta_list ? gnostr_imeta_find_by_url(imeta_list, url) : NULL;
-        GnostrMediaType media_type = GNOSTR_MEDIA_TYPE_UNKNOWN;
-        if (imeta) {
-          media_type = imeta->media_type;
-          g_debug("note_card: imeta for %s: type=%d dim=%dx%d alt=%s",
-                  url, media_type, imeta->width, imeta->height,
-                  imeta->alt ? imeta->alt : "(none)");
-        }
-        if (media_type == GNOSTR_MEDIA_TYPE_UNKNOWN) {
-          if (is_image_url(url)) media_type = GNOSTR_MEDIA_TYPE_IMAGE;
-          else if (is_video_url(url)) media_type = GNOSTR_MEDIA_TYPE_VIDEO;
-        }
-
-        if (media_type == GNOSTR_MEDIA_TYPE_IMAGE) {
-          int height = 300;
-          if (imeta && imeta->width > 0 && imeta->height > 0) {
-            int cw = 400;
-            height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
-            if (height > 400) height = 400;
-            if (height < 100) height = 100;
-          }
-          const char *alt_text = (imeta && imeta->alt && *imeta->alt) ? imeta->alt : NULL;
-          g_ptr_array_add(self->pending_media_items,
-                          pending_media_item_new(url, height, 0, alt_text, FALSE));
-        } else if (media_type == GNOSTR_MEDIA_TYPE_VIDEO) {
-          int max_width = 608;
-          int height = 300;
-          if (imeta && imeta->width > 0 && imeta->height > 0) {
-            int cw = max_width;
-            height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
-            if (height > 400) height = 400;
-            if (height < 100) height = 100;
-          }
-          const char *alt_text = (imeta && imeta->alt && *imeta->alt) ? imeta->alt : NULL;
-          g_ptr_array_add(self->pending_media_items,
-                          pending_media_item_new(url, height, max_width, alt_text, TRUE));
-        }
-      }
-      defer_media_widget_creation(self);
+  if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    if (GTK_IS_FRAME(self->embed_box)) {
+      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
     }
+    gtk_widget_set_visible(self->embed_box, FALSE);
+    self->note_embed = NULL;
   }
 
-  gnostr_content_render_result_free(render);
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    if (self->og_preview) {
+      gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      self->og_preview = NULL;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+  }
 
   gnostr_imeta_list_free(imeta_list);
 

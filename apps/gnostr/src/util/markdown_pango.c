@@ -174,7 +174,12 @@ static void process_inline(GString *out, const char *line, gsize len) {
           char *text_escaped = escape_pango_text(text, 0);
           char *url_escaped = escape_pango_text(url, 0);
 
-          g_string_append_printf(out, "<a href=\"%s\">%s</a>", url_escaped, text_escaped);
+          g_string_append(out, text_escaped);
+          if (url[0] != '\0') {
+            g_string_append(out, " (");
+            g_string_append(out, url_escaped);
+            g_string_append(out, ")");
+          }
 
           g_free(text);
           g_free(url);
@@ -201,7 +206,12 @@ static void process_inline(GString *out, const char *line, gsize len) {
           char *alt_escaped = escape_pango_text(alt, 0);
           char *url_escaped = escape_pango_text(url, 0);
 
-          g_string_append_printf(out, "<a href=\"%s\">%s</a>", url_escaped, alt_escaped);
+          g_string_append(out, alt_escaped);
+          if (url[0] != '\0') {
+            g_string_append(out, " (");
+            g_string_append(out, url_escaped);
+            g_string_append(out, ")");
+          }
 
           g_free(alt);
           g_free(url);
@@ -229,8 +239,7 @@ static void process_inline(GString *out, const char *line, gsize len) {
         char *entity = g_strndup(p, entity_len);
         char *entity_escaped = escape_pango_text(entity, 0);
 
-        /* Create a clickable link for nostr entities */
-        g_string_append_printf(out, "<a href=\"%s\">%s</a>", entity_escaped, entity_escaped);
+        g_string_append(out, entity_escaped);
 
         g_free(entity);
         g_free(entity_escaped);

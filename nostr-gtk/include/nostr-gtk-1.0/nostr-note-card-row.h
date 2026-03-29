@@ -96,6 +96,10 @@ void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
 void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
                                                    const char *content,
                                                    const GnContentRenderResult *render);
+void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow *self,
+                                                         const char *content,
+                                                         const char *tags_json,
+                                                         const GnContentRenderResult *render);
 
 /**
  * nostr_gtk_note_card_row_apply_deferred_content:
