@@ -201,6 +201,8 @@ static gboolean apply_profiles_idle(gpointer user_data) {
     ProfileApplyCtx *it = (ProfileApplyCtx*)g_ptr_array_index(c->items, i);
     if (!it || !it->pubkey_hex || !it->content_json) continue;
     gnostr_main_window_update_meta_from_profile_json_internal(self, it->pubkey_hex, it->content_json);
+    if (self->profile_fetch_requested)
+      g_hash_table_remove(self->profile_fetch_requested, it->pubkey_hex);
     applied++;
   }
   c->pos = end;
@@ -234,6 +236,8 @@ static gboolean profile_apply_on_main(gpointer data) {
       if (GNOSTR_IS_MAIN_WINDOW(l->data)) {
         GnostrMainWindow *win = GNOSTR_MAIN_WINDOW(l->data);
         gnostr_main_window_update_meta_from_profile_json_internal(win, c->pubkey_hex, c->content_json);
+        if (win->profile_fetch_requested)
+          g_hash_table_remove(win->profile_fetch_requested, c->pubkey_hex);
         /* nostrc-sk8o: Refresh thread view after single profile update */
         gnostr_main_window_refresh_thread_view_profiles_if_visible_internal(win);
         break;

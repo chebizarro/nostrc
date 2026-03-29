@@ -87,6 +87,7 @@ struct _GnostrMainWindow {
 
   /* Demand-driven profile fetch (debounced batch) */
   GPtrArray   *profile_fetch_queue;   /* owned; char* pubkey hex to fetch */
+  GHashTable  *profile_fetch_requested; /* owned; pubkey hex currently queued/batched/in-flight */
   guint        profile_fetch_source_id; /* GLib source id for debounce */
   guint        profile_fetch_debounce_ms; /* default 150ms */
   GCancellable *profile_fetch_cancellable; /* async cancellable */

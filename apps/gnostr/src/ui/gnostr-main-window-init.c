@@ -36,6 +36,7 @@ gnostr_main_window_init_runtime_state_internal(GnostrMainWindow *self)
   self->reconnection_in_progress = FALSE;
 
   self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+  self->profile_fetch_requested = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->profile_fetch_source_id = 0;
   self->profile_fetch_debounce_ms = 50;
   self->profile_fetch_cancellable = g_cancellable_new();

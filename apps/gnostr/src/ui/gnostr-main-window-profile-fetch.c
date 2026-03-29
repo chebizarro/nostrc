@@ -35,6 +35,10 @@ static gboolean hex_to_bytes32_local(const char *hex, uint8_t out[32]);
 static void profile_apply_item_free_local(gpointer p);
 static gboolean profile_startup_throttle_active(GnostrMainWindow *self);
 static guint profile_effective_max_concurrent(GnostrMainWindow *self);
+static void profile_fetch_requested_add(GnostrMainWindow *self, const char *pubkey_hex);
+static void profile_fetch_requested_remove(GnostrMainWindow *self, const char *pubkey_hex);
+static gboolean profile_fetch_requested_contains(GnostrMainWindow *self, const char *pubkey_hex);
+static void profile_fetch_requested_remove_many(GnostrMainWindow *self, GPtrArray *authors);
 
 static gboolean
 profile_startup_throttle_active(GnostrMainWindow *self)
@@ -52,6 +56,46 @@ profile_effective_max_concurrent(GnostrMainWindow *self)
   return MAX(1u, self->profile_fetch_max_concurrent);
 }
 
+static void
+profile_fetch_requested_add(GnostrMainWindow *self, const char *pubkey_hex)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || strlen(pubkey_hex) != 64)
+    return;
+  if (!self->profile_fetch_requested)
+    self->profile_fetch_requested = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_hash_table_add(self->profile_fetch_requested, g_strdup(pubkey_hex));
+}
+
+static void
+profile_fetch_requested_remove(GnostrMainWindow *self, const char *pubkey_hex)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->profile_fetch_requested || !pubkey_hex)
+    return;
+  g_hash_table_remove(self->profile_fetch_requested, pubkey_hex);
+}
+
+static gboolean
+profile_fetch_requested_contains(GnostrMainWindow *self, const char *pubkey_hex)
+{
+  return GNOSTR_IS_MAIN_WINDOW(self) &&
+         self->profile_fetch_requested &&
+         pubkey_hex &&
+         g_hash_table_contains(self->profile_fetch_requested, pubkey_hex);
+}
+
+static void
+profile_fetch_requested_remove_many(GnostrMainWindow *self, GPtrArray *authors)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->profile_fetch_requested || !authors)
+    return;
+
+  for (guint i = 0; i < authors->len; i++) {
+    const char *pk = (const char *)g_ptr_array_index(authors, i);
+    if (pk)
+      g_hash_table_remove(self->profile_fetch_requested, pk);
+  }
+}
+
 void
 gnostr_main_window_enqueue_profile_author_internal(GnostrMainWindow *self, const char *pubkey_hex)
 {
@@ -64,15 +108,14 @@ gnostr_main_window_enqueue_profile_author_internal(GnostrMainWindow *self, const
     return;
   }
 
+  if (profile_fetch_requested_contains(self, pubkey_hex))
+    goto schedule_only;
+
   if (!self->profile_fetch_queue)
     self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
 
-  for (guint i = 0; i < self->profile_fetch_queue->len; i++) {
-    const char *s = (const char *)g_ptr_array_index(self->profile_fetch_queue, i);
-    if (g_strcmp0(s, pubkey_hex) == 0)
-      goto schedule_only;
-  }
   g_ptr_array_add(self->profile_fetch_queue, g_strdup(pubkey_hex));
+  profile_fetch_requested_add(self, pubkey_hex);
 
 schedule_only:
   if (!self->profile_fetch_source_id) {
@@ -98,6 +141,7 @@ profile_fetch_fire_idle(gpointer data)
   if (!self->pool) {
     g_debug("[PROFILE] Pool not initialized, skipping fetch");
     if (self->profile_fetch_queue) {
+      profile_fetch_requested_remove_many(self, self->profile_fetch_queue);
       g_ptr_array_free(self->profile_fetch_queue, TRUE);
       self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
     }
@@ -199,11 +243,49 @@ on_profile_ndb_check_done(GObject *source_object,
   ProfileNdbResult *r = g_task_propagate_pointer(G_TASK(res), &error);
   if (error) {
     g_warning("[PROFILE] NDB worker failed: %s", error->message);
+    GPtrArray *authors = g_task_get_task_data(G_TASK(res));
+    if (authors)
+      profile_fetch_requested_remove_many(self, authors);
     g_clear_error(&error);
     return;
   }
   if (!r)
     return;
+
+  /* Any author that is neither cached (apply scheduled) nor stale (network fetch)
+   * will not result in a profile update. Clear its requested flag so it can be
+   * retried later if needed. */
+  {
+    GPtrArray *authors = g_task_get_task_data(G_TASK(res));
+    if (authors && self->profile_fetch_requested) {
+      GHashTable *handled = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+      if (r->cached_items) {
+        for (guint i = 0; i < r->cached_items->len; i++) {
+          ProfileApplyCtx *it = (ProfileApplyCtx *)g_ptr_array_index(r->cached_items, i);
+          if (it && it->pubkey_hex)
+            g_hash_table_add(handled, g_strdup(it->pubkey_hex));
+        }
+      }
+      if (r->stale_authors) {
+        for (guint i = 0; i < r->stale_authors->len; i++) {
+          const char *pk = (const char *)g_ptr_array_index(r->stale_authors, i);
+          if (pk)
+            g_hash_table_add(handled, g_strdup(pk));
+        }
+      }
+
+      for (guint i = 0; i < authors->len; i++) {
+        const char *pk = (const char *)g_ptr_array_index(authors, i);
+        if (!pk)
+          continue;
+        if (!g_hash_table_contains(handled, pk))
+          g_hash_table_remove(self->profile_fetch_requested, pk);
+      }
+
+      g_hash_table_unref(handled);
+    }
+  }
 
   if (r->cached_items && r->cached_items->len > 0) {
     gnostr_main_window_schedule_apply_profiles_internal(self, r->cached_items);
@@ -237,6 +319,7 @@ profile_fetch_start_network(GnostrMainWindow *self, GPtrArray *authors)
                                                               0);
   if (!urls || url_count == 0) {
     g_warning("[PROFILE] No relays configured for profile fetch");
+    profile_fetch_requested_remove_many(self, authors);
     g_ptr_array_free(authors, TRUE);
     if (dummy)
       nostr_filters_free(dummy);
@@ -367,7 +450,6 @@ on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
       }
     }
     guint unique_count = g_hash_table_size(unique_pks);
-    g_hash_table_unref(unique_pks);
     g_debug("[PROFILE] Batch received %u events (%u unique authors)", jsons->len, unique_count);
 
     guint queued = 0;
@@ -439,6 +521,18 @@ on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
       }
     }
 
+    if (GNOSTR_IS_MAIN_WINDOW(ctx->self) && ctx->batch) {
+      for (guint i = 0; i < ctx->batch->len; i++) {
+        const char *requested_pk = g_ptr_array_index(ctx->batch, i);
+        if (!requested_pk)
+          continue;
+        if (!g_hash_table_contains(unique_pks, requested_pk)) {
+          profile_fetch_requested_remove(ctx->self, requested_pk);
+        }
+      }
+    }
+    g_hash_table_unref(unique_pks);
+
     g_debug("[PROFILE] ✓ Batch complete: %u profiles applied", dispatched);
     if (items->len > 0 && GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
       gnostr_main_window_schedule_apply_profiles_internal(ctx->self, items);
@@ -449,6 +543,13 @@ on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
     g_ptr_array_free(jsons, TRUE);
   } else {
     g_debug("[PROFILE] Batch returned no results");
+    if (GNOSTR_IS_MAIN_WINDOW(ctx->self) && ctx->batch) {
+      for (guint i = 0; i < ctx->batch->len; i++) {
+        const char *requested_pk = g_ptr_array_index(ctx->batch, i);
+        if (requested_pk)
+          profile_fetch_requested_remove(ctx->self, requested_pk);
+      }
+    }
   }
 
   if (ctx->batch)
@@ -555,8 +656,10 @@ profile_dispatch_next(gpointer data)
     if (self->profile_batches) {
       for (guint i = self->profile_batch_pos; i < self->profile_batches->len; i++) {
         GPtrArray *b = g_ptr_array_index(self->profile_batches, i);
-        if (b)
+        if (b) {
+          profile_fetch_requested_remove_many(self, b);
           g_ptr_array_free(b, TRUE);
+        }
       }
       g_ptr_array_free(self->profile_batches, TRUE);
       self->profile_batches = NULL;
