@@ -1165,10 +1165,14 @@ on_multi_sub_eose(GNostrSubscription *sub,
 
 static void
 on_multi_sub_closed(GNostrSubscription *sub,
+                    const gchar        *reason,
                     gpointer            user_data)
 {
     RelaySubTracker *tracker = user_data;
-    g_debug("Multi-sub: relay subscription closed for %s", tracker->relay_url);
+    const gchar *relay_url = (tracker && tracker->relay_url) ? tracker->relay_url : "(unknown relay)";
+    g_debug("Multi-sub: relay subscription closed for %s: %s",
+            relay_url,
+            reason ? reason : "(no reason)");
 }
 
 static gboolean

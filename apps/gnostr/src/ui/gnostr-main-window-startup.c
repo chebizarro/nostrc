@@ -4,6 +4,7 @@
 
 #include "gnostr-session-view.h"
 #include "gnostr-timeline-view.h"
+#include "gnostr-avatar-cache.h"
 
 #include "../model/gn-nostr-event-model.h"
 #include "../util/blossom_settings.h"
@@ -57,6 +58,21 @@ memory_stats_cb_local(gpointer data)
   return G_SOURCE_CONTINUE;
 }
 
+static void
+maybe_start_startup_gift_wrap(GnostrMainWindow *self)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self))
+    return;
+  if (self->startup_gift_wrap_started)
+    return;
+  if (!self->startup_live_eose_seen)
+    return;
+
+  self->startup_gift_wrap_started = TRUE;
+  g_debug("[STARTUP] stage3: starting gift-wrap after live EOSE");
+  gnostr_main_window_start_gift_wrap_subscription_internal(self);
+}
+
 void
 gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data)
 {
@@ -64,7 +80,7 @@ gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data)
   if (!GNOSTR_IS_MAIN_WINDOW(self))
     return;
 
-  g_warning("[STARTUP] initial_refresh_timeout_cb: starting async refresh");
+  g_debug("[STARTUP] initial_refresh_timeout_cb: starting async refresh");
 
   if (self->event_model) {
     GNostrTimelineQuery *query = gnostr_timeline_query_new_global();
@@ -73,7 +89,42 @@ gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data)
     gn_nostr_event_model_refresh_async(self->event_model);
   }
 
-  g_warning("[STARTUP] initial_refresh_timeout_cb: EXIT");
+  /* Stage 2 startup work after the initial refresh has been queued so the
+   * timeline can paint first, while gift-wrap itself still waits for live EOSE. */
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                  (GSourceFunc)gnostr_main_window_run_startup_stage2_internal,
+                  g_object_ref(self),
+                  g_object_unref);
+
+  g_debug("[STARTUP] initial_refresh_timeout_cb: EXIT");
+}
+
+void
+gnostr_main_window_note_startup_live_eose_internal(GnostrMainWindow *self)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self))
+    return;
+
+  if (!self->startup_live_eose_seen) {
+    self->startup_live_eose_seen = TRUE;
+    gnostr_avatar_cache_set_startup_mode(FALSE);
+    g_debug("[STARTUP] first live relay EOSE observed");
+  }
+
+  maybe_start_startup_gift_wrap(self);
+}
+
+void
+gnostr_main_window_run_startup_stage2_internal(gpointer data)
+{
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self))
+    return;
+
+  g_debug("[STARTUP] stage2: starting profile subscription only");
+  gnostr_main_window_start_profile_subscription_internal(self);
+  maybe_start_startup_gift_wrap(self);
+  g_debug("[STARTUP] stage2: profile subscription started; waiting for live EOSE for gift-wrap");
 }
 
 void
@@ -97,7 +148,8 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
     .limit = 500
   };
   gn_nostr_event_model_set_query(self->event_model, &params);
-  g_warning("[STARTUP] set_query done");
+  g_debug("[STARTUP] set_query done");
+  gnostr_avatar_cache_set_startup_mode(TRUE);
 
   g_signal_connect(self->event_model, "need-profile", need_profile_cb, self);
   g_signal_connect(self->event_model, "new-items-pending", new_items_pending_cb, self);
@@ -122,7 +174,7 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
 
     g_signal_connect(timeline, "tab-filter-changed", tab_filter_cb, self);
     gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_SESSION);
-    g_warning("[STARTUP] page switched to SESSION (cached items visible)");
+    g_debug("[STARTUP] page switched to SESSION (cached items visible)");
   }
 
   self->ingest_queue = g_async_queue_new_full(g_free);
@@ -144,9 +196,8 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
 
   gnostr_nip42_setup_pool_auth(self->pool);
 
-  g_warning("[STARTUP] starting pool...");
+  g_debug("[STARTUP] starting pool...");
   gnostr_main_window_start_pool_live_internal(self);
-  g_warning("[STARTUP] pool started, starting profile sub...");
-  gnostr_main_window_start_profile_subscription_internal(self);
+  g_debug("[STARTUP] pool started; deferring profile/gift-wrap startup to stage2");
 }
 

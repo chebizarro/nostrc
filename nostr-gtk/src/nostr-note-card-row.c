@@ -2573,7 +2573,7 @@ static void on_picture_mapped(GtkWidget *widget, gpointer user_data) {
    * use-after-free if the picture is destroyed while the timeout is pending.
    * The destroy notify unrefs when the source is removed. */
   lazy_load_context_ref(ctx);
-  ctx->timeout_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 150,
+  ctx->timeout_id = g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, 40,
                                         on_lazy_load_timeout, ctx,
                                         (GDestroyNotify)lazy_load_context_unref);
 }
@@ -3447,7 +3447,20 @@ nostr_gtk_note_card_row_update_custom_emoji_box(NostrGtkNoteCardRow *self,
                                                 GnostrEmojiList *emoji_list) {
   if (!self) return;
 
-  if (emoji_list && emoji_list->count > 0 && content) {
+  if (!emoji_list || emoji_list->count == 0 || !content) {
+    if (self->emoji_box && GTK_IS_FLOW_BOX(self->emoji_box)) {
+      GtkWidget *child = gtk_widget_get_first_child(self->emoji_box);
+      while (child) {
+        GtkWidget *next = gtk_widget_get_next_sibling(child);
+        gtk_flow_box_remove(GTK_FLOW_BOX(self->emoji_box), child);
+        child = next;
+      }
+      gtk_widget_set_visible(self->emoji_box, FALSE);
+    }
+    return;
+  }
+
+  {
     if (!self->emoji_box) {
       self->emoji_box = gtk_flow_box_new();
       gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(self->emoji_box), FALSE);
@@ -3568,26 +3581,6 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
       gtk_widget_set_visible(self->subject_label, FALSE);
     }
     g_free(subject);
-
-    /* Re-enable tag metadata parsing without creating media/embed widgets. */
-    GnostrImetaList *imeta_list = gnostr_imeta_parse_tags_json(tags_json);
-    if (imeta_list) {
-      g_debug("note_card: lightweight tagged path parsed %zu imeta tags", imeta_list->count);
-      gnostr_imeta_list_free(imeta_list);
-    }
-
-    GnostrEmojiList *emoji_list = gnostr_emoji_parse_tags_json(tags_json);
-    if (emoji_list) {
-      g_debug("note_card: lightweight tagged path parsed %zu custom emoji tags", emoji_list->count);
-      for (size_t i = 0; i < emoji_list->count; i++) {
-        GnostrCustomEmoji *emoji = emoji_list->items[i];
-        if (emoji && emoji->url) {
-          gnostr_emoji_cache_prefetch(emoji->url);
-        }
-      }
-      nostr_gtk_note_card_row_update_custom_emoji_box(self, content, emoji_list);
-      gnostr_emoji_list_free(emoji_list);
-    }
   } else if (self->subject_label && GTK_IS_WIDGET(self->subject_label)) {
     gtk_widget_set_visible(self->subject_label, FALSE);
   }
@@ -3612,58 +3605,12 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
   self->media_widgets_created = FALSE;
 
-  if (render && render->used_block_fallback) {
-    if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
-      if (GTK_IS_FRAME(self->embed_box)) {
-        gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
-      }
-      gtk_widget_set_visible(self->embed_box, FALSE);
-      self->note_embed = NULL;
-    }
-    if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
-      if (self->og_preview) {
-        gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
-        self->og_preview = NULL;
-      }
-      gtk_widget_set_visible(self->og_preview_container, FALSE);
-    }
-    return;
-  }
-
-  if (render && render->media_urls && render->media_urls->len > 0) {
-    self->pending_media_items = g_ptr_array_new_with_free_func(pending_media_item_free);
-    for (guint i = 0; i < render->media_urls->len; i++) {
-      const char *url = g_ptr_array_index(render->media_urls, i);
-      if (is_image_url(url)) {
-        g_ptr_array_add(self->pending_media_items,
-                        pending_media_item_new(url, 300, 0, NULL, FALSE));
-      } else if (is_video_url(url)) {
-        g_ptr_array_add(self->pending_media_items,
-                        pending_media_item_new(url, 300, 608, NULL, TRUE));
-      }
-    }
-    defer_media_widget_creation(self);
-  }
-
   if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
     if (GTK_IS_FRAME(self->embed_box)) {
       gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
     }
     gtk_widget_set_visible(self->embed_box, FALSE);
     self->note_embed = NULL;
-
-    if (render && render->first_nostr_ref) {
-      self->note_embed = gnostr_note_embed_new();
-      gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
-      g_signal_connect(self->note_embed, "profile-clicked",
-                       G_CALLBACK(on_embed_profile_clicked), self);
-      gnostr_note_embed_set_nostr_uri(self->note_embed, render->first_nostr_ref);
-      if (GTK_IS_FRAME(self->embed_box)) {
-        gtk_frame_set_child(GTK_FRAME(self->embed_box), GTK_WIDGET(self->note_embed));
-      }
-      gtk_widget_set_visible(self->embed_box, TRUE);
-      g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, render->first_nostr_ref);
-    }
   }
 
   if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
@@ -3672,16 +3619,37 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
       self->og_preview = NULL;
     }
     gtk_widget_set_visible(self->og_preview_container, FALSE);
+  }
+}
 
-    if (render && render->first_og_url) {
-      self->og_preview = og_preview_widget_new();
-      gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
-      gtk_widget_set_visible(self->og_preview_container, TRUE);
-      og_preview_widget_set_url_with_cancellable(self->og_preview,
-                                                 render->first_og_url,
-                                                 self->async_cancellable);
+void nostr_gtk_note_card_row_apply_deferred_tag_metadata(NostrGtkNoteCardRow *self,
+                                                         const char *content,
+                                                         const char *tags_json) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+  if (!tags_json || !*tags_json) return;
+
+  GnostrImetaList *imeta_list = gnostr_imeta_parse_tags_json(tags_json);
+  if (imeta_list) {
+    g_debug("note_card: Deferred parsed %zu imeta tags from event", imeta_list->count);
+  }
+
+  GnostrEmojiList *emoji_list = gnostr_emoji_parse_tags_json(tags_json);
+  if (emoji_list) {
+    g_debug("note_card: Deferred parsed %zu custom emoji tags from event", emoji_list->count);
+    for (size_t i = 0; i < emoji_list->count; i++) {
+      GnostrCustomEmoji *emoji = emoji_list->items[i];
+      if (emoji && emoji->url) {
+        gnostr_emoji_cache_prefetch(emoji->url);
+      }
     }
   }
+
+  nostr_gtk_note_card_row_update_custom_emoji_box(self, content, emoji_list);
+
+  gnostr_emoji_list_free(emoji_list);
+  gnostr_imeta_list_free(imeta_list);
 }
 
 /* NIP-92 imeta-aware content setter */

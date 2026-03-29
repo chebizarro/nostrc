@@ -776,7 +776,6 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
                                    g_object_ref(self));
 
   gnostr_profile_provider_prewarm_async(self->user_pubkey_hex);
-  gnostr_main_window_start_gift_wrap_subscription_internal(self);
 
   {
     GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();

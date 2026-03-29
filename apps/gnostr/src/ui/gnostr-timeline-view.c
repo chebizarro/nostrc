@@ -1119,13 +1119,37 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
   extern GType gn_nostr_event_item_get_type(void);
   if (!G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) return;
 
-  const GnContentRenderResult *cached =
-      gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
+  GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(obj);
+  const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(item);
+  const char *tags_json = gn_nostr_event_item_get_tags_json(item);
+  const char *content = gn_nostr_event_item_get_content(item);
+
   if (cached) {
     nostr_gtk_note_card_row_apply_deferred_content(NOSTR_GTK_NOTE_CARD_ROW(row), cached);
   }
 
-  GNostrProfile *profile = gn_nostr_event_item_get_profile(GN_NOSTR_EVENT_ITEM(obj));
+  if (tags_json && *tags_json) {
+    nostr_gtk_note_card_row_apply_deferred_tag_metadata(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
+
+    const char * const *item_hashtags = gn_nostr_event_item_get_hashtags(item);
+    if (item_hashtags && item_hashtags[0]) {
+      nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), item_hashtags);
+    } else {
+      gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
+      if (hashtags) {
+        nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), (const char * const *)hashtags);
+        g_strfreev(hashtags);
+      }
+    }
+
+    gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
+    if (content_warning) {
+      nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning);
+      g_free(content_warning);
+    }
+  }
+
+  GNostrProfile *profile = gn_nostr_event_item_get_profile(item);
   if (profile) {
     const char *avatar_url = gnostr_profile_get_picture_url(profile);
     nostr_gtk_note_card_row_set_avatar(NOSTR_GTK_NOTE_CARD_ROW(row), avatar_url);
@@ -1351,30 +1375,22 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       }
     }
 
-    gboolean used_cached_tagged_markup = FALSE;
     if (tags_json) {
       if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
         const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
         if (cached) {
           nostr_gtk_note_card_row_set_content_tagged_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json, cached);
-          used_cached_tagged_markup = TRUE;
+          gulong map_id = g_signal_connect(row, "map",
+                                            G_CALLBACK(on_tv_row_mapped_tier2), item);
+          g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER((gsize)map_id));
+          if (gtk_widget_get_mapped(row)) {
+            on_tv_row_mapped_tier2(row, item);
+          }
         } else {
           nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
         }
       } else {
         nostr_gtk_note_card_row_set_content_with_imeta(NOSTR_GTK_NOTE_CARD_ROW(row), content, tags_json);
-      }
-
-      gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
-      if (hashtags) {
-        nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), (const char * const *)hashtags);
-        g_strfreev(hashtags);
-      }
-
-      gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
-      if (content_warning) {
-        nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning);
-        g_free(content_warning);
       }
     } else {
       /* Tier 1: markup only — defer embeds/media/OG to Tier 2 map handler.
@@ -1384,26 +1400,18 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
         if (cached) {
           nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, cached);
+          gulong map_id = g_signal_connect(row, "map",
+                                            G_CALLBACK(on_tv_row_mapped_tier2), item);
+          g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER((gsize)map_id));
+          if (gtk_widget_get_mapped(row)) {
+            on_tv_row_mapped_tier2(row, item);
+          }
         } else {
           /* No cache: fall back to full render (first bind) */
           nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
         }
-        /* Connect Tier 2 map handler for deferred embed/media/OG creation */
-        gulong map_id = g_signal_connect(row, "map",
-                                          G_CALLBACK(on_tv_row_mapped_tier2), item);
-        g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER((gsize)map_id));
-        if (gtk_widget_get_mapped(row)) {
-          on_tv_row_mapped_tier2(row, item);
-        }
       } else {
         nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
-      }
-    }
-
-    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
-      const char * const *item_hashtags = gn_nostr_event_item_get_hashtags(GN_NOSTR_EVENT_ITEM(obj));
-      if (item_hashtags && item_hashtags[0]) {
-        nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), item_hashtags);
       }
     }
     nostr_gtk_note_card_row_set_depth(NOSTR_GTK_NOTE_CARD_ROW(row), depth);

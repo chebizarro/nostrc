@@ -515,6 +515,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->profile_fetch_cancellable = g_cancellable_new();
   self->profile_fetch_active = 0;
   self->profile_fetch_max_concurrent = 5; /* Increased from 3 - goroutines are lightweight */
+  self->startup_profile_throttle_until_us = g_get_monotonic_time() + (15 * G_USEC_PER_SEC);
+  self->startup_profile_batch_size = 20;
+  self->startup_profile_max_concurrent = 1;
+  self->startup_profile_inter_batch_delay_ms = 250;
 
   /* Init debounced NostrDB profile sweep */
   self->ndb_sweep_source_id = 0;
@@ -559,7 +563,7 @@ deferred_heavy_init_cb(gpointer data)
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
 
-  g_warning("[STARTUP] deferred_heavy_init_cb: ENTER");
+  g_debug("[STARTUP] deferred_heavy_init_cb: ENTER");
 
   gnostr_main_window_run_startup_bootstrap_internal(self,
                                                     G_CALLBACK(gnostr_main_window_on_event_model_need_profile_internal),
@@ -567,16 +571,11 @@ deferred_heavy_init_cb(gpointer data)
                                                     G_CALLBACK(gnostr_main_window_on_timeline_scroll_value_changed_internal),
                                                     G_CALLBACK(gnostr_main_window_on_timeline_tab_filter_changed_internal));
 
-  /* nostrc-bkor: Start gift wrap subscription AFTER state init and DM service setup.
-   * This sets user_pubkey_hex from saved settings on app restart. */
-  gnostr_main_window_start_gift_wrap_subscription_internal(self);
-  g_warning("[STARTUP] gift wrap sub done, scheduling 150ms timeout");
-
   /* Seed initial items so Timeline page isn't empty.
-   * Timeout-audit: Use g_idle_add instead of 150ms timeout — the refresh
-   * runs on the next main loop iteration after pool setup completes. */
+   * The follow-on profile/gift-wrap startup now runs in stage2 from the
+   * initial refresh callback so the first timeline paint happens earlier. */
   g_idle_add_once((GSourceOnceFunc)gnostr_main_window_initial_refresh_timeout_cb_internal, self);
-  g_warning("[STARTUP] deferred_heavy_init_cb: EXIT (timeout scheduled)");
+  g_debug("[STARTUP] deferred_heavy_init_cb: EXIT (stage2 scheduled)");
 
   /* Background profile prefetch disabled (model emits need-profile when required). */
 

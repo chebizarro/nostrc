@@ -38,7 +38,8 @@ static GnostrAvatarMetrics s_avatar_metrics = {0};
 /* --- Concurrent Request Limiter --- */
 /* nostrc-img1: Reduced from 12 to 6 — avatar fetches were consuming half the
  * SoupSession's 24-connection pool, starving timeline media image loads. */
-#define AVATAR_MAX_CONCURRENT_FETCHES 6   /* Max simultaneous HTTP requests */
+#define AVATAR_MAX_CONCURRENT_FETCHES 4   /* Max simultaneous HTTP requests after startup */
+#define AVATAR_STARTUP_MAX_CONCURRENT_FETCHES 2 /* Lower concurrency while first paint/live EOSE settle */
 
 typedef struct _PendingFetch {
   char *url;
@@ -50,6 +51,7 @@ static guint s_active_fetches = 0;           /* Currently in-flight HTTP request
 static GQueue *s_pending_queue = NULL;       /* Queue of PendingFetch* waiting */
 static GMutex s_fetch_mutex;                 /* Protects active count and queue */
 static gboolean s_fetch_mutex_initialized = FALSE;
+static gboolean s_avatar_startup_mode = TRUE; /* Startup throttling until first live EOSE */
 
 static void pending_fetch_free(PendingFetch *pf) {
   if (!pf) return;
@@ -67,6 +69,11 @@ static void ensure_fetch_limiter(void) {
   if (!s_pending_queue) {
     s_pending_queue = g_queue_new();
   }
+}
+
+static guint avatar_fetch_limit_current(void) {
+  return s_avatar_startup_mode ? AVATAR_STARTUP_MAX_CONCURRENT_FETCHES
+                               : AVATAR_MAX_CONCURRENT_FETCHES;
 }
 
 /* Forward declaration for queue processing */
@@ -126,8 +133,9 @@ static gboolean avatar_cache_log_cb(gpointer data) {
   guint msz = avatar_texture_cache ? g_hash_table_size(avatar_texture_cache) : 0;
   guint lsz = s_avatar_lru_nodes ? g_hash_table_size(s_avatar_lru_nodes) : 0;
   guint pending = s_pending_queue ? g_queue_get_length(s_pending_queue) : 0;
-  g_message("[AVATAR_CACHE] mem=%u lru=%u cap=%u size=%upx active_fetches=%u pending=%u max=%u",
-            msz, lsz, s_avatar_cap, s_avatar_size, s_active_fetches, pending, AVATAR_MAX_CONCURRENT_FETCHES);
+  g_message("[AVATAR_CACHE] mem=%u lru=%u cap=%u size=%upx active_fetches=%u pending=%u max=%u startup=%d",
+            msz, lsz, s_avatar_cap, s_avatar_size, s_active_fetches, pending,
+            avatar_fetch_limit_current(), s_avatar_startup_mode ? 1 : 0);
   gnostr_avatar_metrics_log();
   return TRUE;
 }
@@ -448,7 +456,9 @@ static void process_pending_fetch_queue(void) {
 
   g_mutex_lock(&s_fetch_mutex);
 
-  while (s_active_fetches < AVATAR_MAX_CONCURRENT_FETCHES && !g_queue_is_empty(s_pending_queue)) {
+  guint fetch_limit = avatar_fetch_limit_current();
+
+  while (s_active_fetches < fetch_limit && !g_queue_is_empty(s_pending_queue)) {
     PendingFetch *pf = g_queue_pop_head(s_pending_queue);
     if (!pf) break;
 
@@ -512,7 +522,7 @@ void gnostr_avatar_prefetch(const char *url) {
     ensure_fetch_limiter();
 
     g_mutex_lock(&s_fetch_mutex);
-    if (s_active_fetches < AVATAR_MAX_CONCURRENT_FETCHES) {
+    if (s_active_fetches < avatar_fetch_limit_current()) {
       s_active_fetches++;
       g_mutex_unlock(&s_fetch_mutex);
       g_debug("avatar prefetch: fetching via HTTP url=%s", url);
@@ -565,6 +575,13 @@ GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
  * CRITICAL: Uses GWeakRef for widgets to prevent use-after-free crashes
  * when GtkListView recycles rows during scrolling.
  * Uses concurrent request limiter to prevent FD exhaustion. */
+void gnostr_avatar_cache_set_startup_mode(gboolean enabled) {
+  s_avatar_startup_mode = enabled ? TRUE : FALSE;
+  if (!enabled) {
+    process_pending_fetch_queue();
+  }
+}
+
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
     #ifdef HAVE_SOUP3
       if (!url || !*url || !str_has_prefix_http(url)) return;
@@ -613,7 +630,7 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
       ensure_fetch_limiter();
 
       g_mutex_lock(&s_fetch_mutex);
-      if (s_active_fetches < AVATAR_MAX_CONCURRENT_FETCHES) {
+      if (s_active_fetches < avatar_fetch_limit_current()) {
         /* Slot available - start immediately */
         s_active_fetches++;
         g_mutex_unlock(&s_fetch_mutex);

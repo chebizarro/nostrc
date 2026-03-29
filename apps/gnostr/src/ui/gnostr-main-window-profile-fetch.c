@@ -33,6 +33,24 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
 static gboolean profile_dispatch_next(gpointer data);
 static gboolean hex_to_bytes32_local(const char *hex, uint8_t out[32]);
 static void profile_apply_item_free_local(gpointer p);
+static gboolean profile_startup_throttle_active(GnostrMainWindow *self);
+static guint profile_effective_max_concurrent(GnostrMainWindow *self);
+
+static gboolean
+profile_startup_throttle_active(GnostrMainWindow *self)
+{
+  return GNOSTR_IS_MAIN_WINDOW(self) &&
+         self->startup_profile_throttle_until_us > 0 &&
+         g_get_monotonic_time() < (gint64)self->startup_profile_throttle_until_us;
+}
+
+static guint
+profile_effective_max_concurrent(GnostrMainWindow *self)
+{
+  if (profile_startup_throttle_active(self))
+    return MAX(1u, self->startup_profile_max_concurrent);
+  return MAX(1u, self->profile_fetch_max_concurrent);
+}
 
 void
 gnostr_main_window_enqueue_profile_author_internal(GnostrMainWindow *self, const char *pubkey_hex)
@@ -227,8 +245,28 @@ profile_fetch_start_network(GnostrMainWindow *self, GPtrArray *authors)
     return;
   }
 
+  const gboolean startup_throttled = profile_startup_throttle_active(self);
+  const guint batch_sz = startup_throttled && self->startup_profile_batch_size > 0
+                           ? self->startup_profile_batch_size
+                           : 100;
+
+  if (startup_throttled && authors->len > batch_sz) {
+    if (!self->profile_fetch_queue)
+      self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+
+    for (guint i = batch_sz; i < authors->len; i++) {
+      char *s = (char *)g_ptr_array_index(authors, i);
+      if (s)
+        g_ptr_array_add(self->profile_fetch_queue, s);
+      g_ptr_array_index(authors, i) = NULL;
+    }
+    g_ptr_array_set_size(authors, batch_sz);
+
+    g_debug("[PROFILE] Startup throttle active: fetching %u profiles now, deferring %u",
+            authors->len, self->profile_fetch_queue->len);
+  }
+
   const guint total = authors->len;
-  const guint batch_sz = 100;
 
   if (self->profile_batches) {
     if (self->profile_fetch_active > 0) {
@@ -425,11 +463,21 @@ on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
             self->profile_batch_pos,
             self->profile_batches ? self->profile_batches->len : 0,
             self->profile_fetch_active,
-            self->profile_fetch_max_concurrent);
-    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
-                    profile_dispatch_next,
-                    g_object_ref(self),
-                    g_object_unref);
+            profile_effective_max_concurrent(self));
+    if (profile_startup_throttle_active(self)) {
+      guint delay = self->startup_profile_inter_batch_delay_ms ?
+                    self->startup_profile_inter_batch_delay_ms : 250;
+      g_timeout_add_full(G_PRIORITY_DEFAULT,
+                         delay,
+                         profile_dispatch_next,
+                         g_object_ref(self),
+                         g_object_unref);
+    } else {
+      g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                      profile_dispatch_next,
+                      g_object_ref(self),
+                      g_object_unref);
+    }
   } else {
     g_warning("profile_fetch: cannot dispatch next batch - invalid context");
   }
@@ -448,9 +496,10 @@ profile_dispatch_next(gpointer data)
     return G_SOURCE_REMOVE;
   }
 
-  if (self->profile_fetch_active >= self->profile_fetch_max_concurrent) {
+  guint max_concurrent = profile_effective_max_concurrent(self);
+  if (self->profile_fetch_active >= max_concurrent) {
     g_debug("profile_fetch: at max concurrent (%u/%u), deferring batch",
-            self->profile_fetch_active, self->profile_fetch_max_concurrent);
+            self->profile_fetch_active, max_concurrent);
     g_timeout_add_full(G_PRIORITY_DEFAULT, 500, profile_dispatch_next,
                        g_object_ref(self), g_object_unref);
     return G_SOURCE_REMOVE;
@@ -549,7 +598,7 @@ profile_dispatch_next(gpointer data)
           self->profile_batches ? self->profile_batches->len : 0,
           n,
           self->profile_fetch_active,
-          self->profile_fetch_max_concurrent);
+          max_concurrent);
 
   self->profile_fetch_active++;
 

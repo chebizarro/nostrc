@@ -503,6 +503,7 @@ fallback_from_blocks:
   storage_ndb_blocks_free(blocks);
   g_string_free(out, TRUE);
   if (had_invalid_block_range) {
+    res->used_block_fallback = TRUE;
     res->markup = gnostr_render_fallback_markup_from_text(content);
   } else {
     res->markup = g_strdup("");

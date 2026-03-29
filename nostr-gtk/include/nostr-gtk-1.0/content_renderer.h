@@ -23,6 +23,7 @@ typedef struct GnContentRenderResult {
   GPtrArray *all_urls;        /* ALL http(s) URLs in document order (nullable, element: gchar*) */
   gchar     *first_nostr_ref; /* First nostr: URI for NIP-21 embed (nullable) */
   gchar     *first_og_url;    /* First non-media http(s) URL for OG preview (nullable) */
+  gboolean   used_block_fallback; /* Renderer bailed out of block iteration and returned text fallback */
 } GnContentRenderResult;
 
 /**

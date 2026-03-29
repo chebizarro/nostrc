@@ -111,6 +111,9 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
  */
 void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
                                                   const GnContentRenderResult *render);
+void nostr_gtk_note_card_row_apply_deferred_tag_metadata(NostrGtkNoteCardRow *self,
+                                                       const char *content,
+                                                       const char *tags_json);
 
 /**
  * nostr_gtk_note_card_row_set_content_rendered:

@@ -21,6 +21,7 @@ typedef struct {
 void gnostr_avatar_prefetch(const char *url);
 GdkTexture *gnostr_avatar_try_load_cached(const char *url);
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials);
+void gnostr_avatar_cache_set_startup_mode(gboolean enabled);
 
 #ifdef HAVE_SOUP3
 void gnostr_avatar_download_async_soup(const char *url, GtkWidget *image, GtkWidget *initials);

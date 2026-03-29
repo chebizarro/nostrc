@@ -92,6 +92,10 @@ struct _GnostrMainWindow {
   GCancellable *profile_fetch_cancellable; /* async cancellable */
   guint        profile_fetch_active;  /* count of active concurrent fetches */
   guint        profile_fetch_max_concurrent; /* max concurrent fetches (default 3) */
+  guint64      startup_profile_throttle_until_us; /* monotonic deadline for startup throttling */
+  guint        startup_profile_batch_size; /* small startup batch size for visible rows */
+  guint        startup_profile_max_concurrent; /* startup concurrency cap */
+  guint        startup_profile_inter_batch_delay_ms; /* pacing gap between startup batches */
 
   /* Remote signer (NIP-46) session */
   NostrNip46Session *nip46_session; /* owned */
@@ -147,6 +151,8 @@ struct _GnostrMainWindow {
   char           *user_pubkey_hex;       /* current user's pubkey (64-char hex), NULL if not signed in */
   guint           profile_watch_id;     /* profile provider watch for user's pubkey, 0 if none */
   GPtrArray      *gift_wrap_queue;       /* pending gift wrap events to process */
+  gboolean        startup_live_eose_seen;         /* at least one live relay reached EOSE */
+  gboolean        startup_gift_wrap_started;      /* startup gift-wrap subscription already started */
 
   /* NIP-17 DM Service for decryption and conversation management */
   GnostrDmService *dm_service;           /* owned; handles gift wrap decryption */
@@ -249,6 +255,7 @@ void gnostr_main_window_update_login_ui_state_internal(GnostrMainWindow *self);
 char *gnostr_main_window_get_current_user_pubkey_hex_internal(void);
 void gnostr_main_window_start_gift_wrap_subscription_internal(GnostrMainWindow *self);
 void gnostr_main_window_stop_gift_wrap_subscription_internal(GnostrMainWindow *self);
+void gnostr_main_window_note_startup_live_eose_internal(GnostrMainWindow *self);
 void gnostr_main_window_on_avatar_login_clicked_internal(GtkButton *btn, gpointer user_data);
 void gnostr_main_window_on_signer_state_changed_internal(GnostrSignerService *signer,
                                                          guint old_state,
@@ -330,6 +337,7 @@ void gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
                                                       GCallback tab_filter_cb);
 void gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self);
 void gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data);
+void gnostr_main_window_run_startup_stage2_internal(gpointer data);
 gpointer gnostr_main_window_ingest_thread_func_internal(gpointer data);
 
 /* Panel management helpers (used by extracted signal handler modules) */

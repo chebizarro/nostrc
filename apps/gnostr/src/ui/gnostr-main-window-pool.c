@@ -384,5 +384,6 @@ on_multi_sub_eose(GNostrPoolMultiSub *multi_sub,
     GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
     if (!GNOSTR_IS_MAIN_WINDOW(self))
         return;
-    g_debug("[RELAY] EOSE from %s", relay_url);
+  g_debug("[RELAY] EOSE from %s", relay_url);
+  gnostr_main_window_note_startup_live_eose_internal(self);
 }

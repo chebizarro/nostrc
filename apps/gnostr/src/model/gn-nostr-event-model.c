@@ -244,6 +244,7 @@ static GParamSpec *properties[N_PROPS];
 enum {
   SIGNAL_NEED_PROFILE,
   SIGNAL_NEW_ITEMS_PENDING,  /* nostrc-yi2: emitted when new items are waiting */
+  SIGNAL_REFRESH_COMPLETE,   /* emitted when refresh_async has applied results */
   N_SIGNALS
 };
 
@@ -2075,6 +2076,17 @@ static void gn_nostr_event_model_class_init(GnNostrEventModelClass *klass) {
                  G_TYPE_NONE,
                  1,
                  G_TYPE_UINT);
+
+  /* refresh-complete: emitted after refresh_async has atomically applied a new model snapshot. */
+  signals[SIGNAL_REFRESH_COMPLETE] =
+    g_signal_new("refresh-complete",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0,
+                 NULL, NULL,
+                 g_cclosure_marshal_VOID__VOID,
+                 G_TYPE_NONE,
+                 0);
 }
 
 static void gn_nostr_event_model_init(GnNostrEventModel *self) {
@@ -2710,6 +2722,8 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
 
   g_debug("[MODEL] Async refresh complete: %u total items (%u added, %u replaced)",
           self->notes->len, added, old_size);
+
+  g_signal_emit(self, signals[SIGNAL_REFRESH_COMPLETE], 0);
 
   g_ptr_array_unref(entries);
 }
