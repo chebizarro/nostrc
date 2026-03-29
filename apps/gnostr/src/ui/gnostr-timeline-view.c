@@ -1125,6 +1125,12 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
     nostr_gtk_note_card_row_apply_deferred_content(NOSTR_GTK_NOTE_CARD_ROW(row), cached);
   }
 
+  GNostrProfile *profile = gn_nostr_event_item_get_profile(GN_NOSTR_EVENT_ITEM(obj));
+  if (profile) {
+    const char *avatar_url = gnostr_profile_get_picture_url(profile);
+    nostr_gtk_note_card_row_set_avatar(NOSTR_GTK_NOTE_CARD_ROW(row), avatar_url);
+  }
+
   /* One-shot: disconnect after first run.
    * nostrc-icn: Check handler is still connected before disconnecting. */
   gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
@@ -1228,9 +1234,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       display_fallback = g_strdup_printf("%.8s...", pubkey);
     }
 
-    nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                     display ? display : display_fallback,
-                                     handle, avatar_url);
+    nostr_gtk_note_card_row_set_author_name_only(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                               display ? display : display_fallback,
+                                               handle);
     nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, ts);
 
     /* Connect embed request signal EARLY — before content setting, because
