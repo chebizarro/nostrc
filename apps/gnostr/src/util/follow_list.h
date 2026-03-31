@@ -57,6 +57,12 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
                                      GnostrFollowListCallback callback,
                                      gpointer user_data);
 
+void gnostr_follow_list_fetch_from_relays_async(const gchar *pubkey_hex,
+                                                 const char * const *relays,
+                                                 GCancellable *cancellable,
+                                                 GnostrFollowListCallback callback,
+                                                 gpointer user_data);
+
 /**
  * gnostr_follow_list_get_cached:
  * @pubkey_hex: 64-char hex pubkey of the user

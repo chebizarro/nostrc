@@ -317,25 +317,52 @@ static gboolean watch_dispatch_idle(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-int gnostr_profile_provider_update(const char *pk, const char *json) {
-  if (!pk || !json) return -1;
+static gboolean
+profile_update_internal(const char *pk,
+                        const char *json,
+                        gint64      created_at,
+                        gboolean    reject_older)
+{
+  if (!pk || !json) return FALSE;
   /* Defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex_pk = NULL;
   if (strlen(pk) != 64) {
     hex_pk = gnostr_ensure_hex_pubkey(pk);
-    if (!hex_pk) return -1;
+    if (!hex_pk) return FALSE;
     pk = hex_pk;
   }
-  /* Parse JSON without holding lock (can be slow) */
+
   GnostrProfileMeta *m = meta_from_json(pk, json);
-  if (!m) return -1;
+  if (!m) return FALSE;
+
+  if (created_at > 0)
+    m->created_at = created_at;
+
+  if (reject_older && m->created_at > 0) {
+    GnostrProfileMeta *existing = gnostr_profile_provider_get(pk);
+    if (existing && existing->created_at > 0 && m->created_at < existing->created_at) {
+      gnostr_profile_meta_free(existing);
+      gnostr_profile_meta_free(m);
+      return FALSE;
+    }
+    gnostr_profile_meta_free(existing);
+  }
 
   G_LOCK(profile_provider);
   if (!s_init) {
     G_UNLOCK(profile_provider);
     gnostr_profile_meta_free(m);
-    return -1;
+    return FALSE;
   }
+
+  GnostrProfileMeta *cached = g_hash_table_lookup(s_cache, pk);
+  if (reject_older && cached && cached->created_at > 0 && m->created_at > 0 &&
+      m->created_at < cached->created_at) {
+    G_UNLOCK(profile_provider);
+    gnostr_profile_meta_free(m);
+    return FALSE;
+  }
+
   g_hash_table_replace(s_cache, g_strdup(pk), m);
   lru_insert(pk);
   lru_evict();
@@ -355,13 +382,23 @@ int gnostr_profile_provider_update(const char *pk, const char *json) {
   }
   G_UNLOCK(profile_provider);
 
-  /* Dispatch to main thread outside the lock */
   for (GSList *l = dispatches; l; l = l->next) {
     g_idle_add(watch_dispatch_idle, l->data);
   }
   g_slist_free(dispatches);
 
-  return 0;
+  return TRUE;
+}
+
+int gnostr_profile_provider_update(const char *pk, const char *json) {
+  return profile_update_internal(pk, json, 0, FALSE) ? 0 : -1;
+}
+
+gboolean gnostr_profile_provider_update_if_newer(const char *pk,
+                                                 const char *json,
+                                                 gint64      created_at)
+{
+  return profile_update_internal(pk, json, created_at, TRUE);
 }
 
 void gnostr_profile_meta_free(GnostrProfileMeta *m) {

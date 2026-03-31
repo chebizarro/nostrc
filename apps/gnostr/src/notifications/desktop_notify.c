@@ -49,6 +49,9 @@ struct _GnostrDesktopNotify {
 
   /* Permission status */
   gboolean has_permission;
+
+  /* App action registration */
+  gboolean actions_registered;
 };
 
 G_DEFINE_TYPE(GnostrDesktopNotify, gnostr_desktop_notify, G_TYPE_OBJECT)
@@ -58,6 +61,7 @@ static GnostrDesktopNotify *g_default_notify = NULL;
 /* Forward declarations */
 static void load_settings(GnostrDesktopNotify *self);
 static void save_settings(GnostrDesktopNotify *self);
+static void refresh_runtime_settings(GnostrDesktopNotify *self);
 static gchar *truncate_preview(const char *text, gsize max_len);
 static gchar *get_notification_id(GnostrNotificationType type, const char *event_id);
 static void on_notification_action(GSimpleAction *action, GVariant *parameter, gpointer user_data);
@@ -104,6 +108,7 @@ gnostr_desktop_notify_init(GnostrDesktopNotify *self)
   self->callback_destroy = NULL;
   self->settings = NULL;
   self->has_permission = TRUE;  /* Linux: always granted */
+  self->actions_registered = FALSE;
 
   /* Try to load settings */
   load_settings(self);
@@ -171,6 +176,30 @@ save_settings(GnostrDesktopNotify *self)
                           self->sound_enabled);
 }
 
+static void
+refresh_runtime_settings(GnostrDesktopNotify *self)
+{
+  if (!self->settings)
+    return;
+
+  gboolean master_enabled = g_settings_get_boolean(self->settings, "enabled");
+  gboolean popup_enabled = g_settings_get_boolean(self->settings, "desktop-popup-enabled");
+
+  self->enabled[GNOSTR_NOTIFICATION_DM] =
+    master_enabled && popup_enabled &&
+    g_settings_get_boolean(self->settings, "notify-dm-enabled");
+  self->enabled[GNOSTR_NOTIFICATION_MENTION] =
+    master_enabled && popup_enabled &&
+    g_settings_get_boolean(self->settings, "notify-mention-enabled");
+  self->enabled[GNOSTR_NOTIFICATION_REPLY] =
+    master_enabled && popup_enabled &&
+    g_settings_get_boolean(self->settings, "notify-reply-enabled");
+  self->enabled[GNOSTR_NOTIFICATION_ZAP] =
+    master_enabled && popup_enabled &&
+    g_settings_get_boolean(self->settings, "notify-zap-enabled");
+  self->sound_enabled = g_settings_get_boolean(self->settings, "sound-enabled");
+}
+
 /* ============== Lifecycle ============== */
 
 GnostrDesktopNotify *
@@ -203,16 +232,17 @@ gnostr_desktop_notify_set_app(GnostrDesktopNotify *self, GApplication *app)
 
   self->app = app;  /* weak reference */
 
-  if (app) {
+  if (app && !self->actions_registered) {
     /* Register notification actions with the application */
     static const GActionEntry notify_actions[] = {
-      { "notify-open", on_notification_action, "s", NULL, NULL },
-      { "notify-mark-read", on_notification_action, "s", NULL, NULL },
-      { "notify-reply", on_notification_action, "s", NULL, NULL },
+      { "notify-open", on_notification_action, "(ss)", NULL, NULL },
+      { "notify-mark-read", on_notification_action, "(ss)", NULL, NULL },
+      { "notify-reply", on_notification_action, "(ss)", NULL, NULL },
     };
 
     g_action_map_add_action_entries(G_ACTION_MAP(app), notify_actions,
                                      G_N_ELEMENTS(notify_actions), self);
+    self->actions_registered = TRUE;
 
     g_debug("Registered notification actions with app");
   }
@@ -365,11 +395,16 @@ static void
 on_notification_action(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
   GnostrDesktopNotify *self = GNOSTR_DESKTOP_NOTIFY(user_data);
+  const char *event_id = NULL;
+  const char *target_note_id = NULL;
 
-  if (!self->callback) return;
+  if (!self->callback || !parameter)
+    return;
 
   const char *action_name = g_action_get_name(G_ACTION(action));
-  const char *event_id = g_variant_get_string(parameter, NULL);
+  g_variant_get(parameter, "(&s&s)", &event_id, &target_note_id);
+  if (target_note_id && !*target_note_id)
+    target_note_id = NULL;
 
   /* Extract action type from name */
   const char *action_type = "open";  /* default */
@@ -379,9 +414,12 @@ on_notification_action(GSimpleAction *action, GVariant *parameter, gpointer user
     action_type = "reply";
   }
 
-  g_debug("Notification action: %s for event %s", action_type, event_id);
+  g_debug("Notification action: %s for event %s target %s",
+          action_type,
+          event_id ? event_id : "(null)",
+          target_note_id ? target_note_id : "(null)");
 
-  self->callback(self, action_type, event_id, self->callback_data);
+  self->callback(self, action_type, event_id, target_note_id, self->callback_data);
 }
 
 /* ============== Send Notifications ============== */
@@ -391,8 +429,11 @@ send_notification_internal(GnostrDesktopNotify *self,
                             GnostrNotificationType type,
                             const char *title,
                             const char *body,
-                            const char *event_id)
+                            const char *event_id,
+                            const char *target_note_id)
 {
+  refresh_runtime_settings(self);
+
   if (!self->app) {
     g_warning("Cannot send notification: no app set");
     return;
@@ -436,21 +477,23 @@ send_notification_internal(GnostrDesktopNotify *self,
 
   /* Set default action (clicking the notification) */
   if (event_id) {
+    const char *action_target = target_note_id ? target_note_id : "";
+
     g_notification_set_default_action_and_target(notification,
                                                   "app.notify-open",
-                                                  "s", event_id);
+                                                  "(ss)", event_id, action_target);
 
     /* Add additional actions */
     g_notification_add_button_with_target(notification,
                                            "Mark Read",
                                            "app.notify-mark-read",
-                                           "s", event_id);
+                                           "(ss)", event_id, action_target);
 
     if (type == GNOSTR_NOTIFICATION_DM || type == GNOSTR_NOTIFICATION_REPLY) {
       g_notification_add_button_with_target(notification,
                                              "Reply",
                                              "app.notify-reply",
-                                             "s", event_id);
+                                             "(ss)", event_id, action_target);
     }
   }
 
@@ -471,7 +514,8 @@ gnostr_desktop_notify_send_dm(GnostrDesktopNotify *self,
                                const char *sender_name,
                                const char *sender_pubkey,
                                const char *message_preview,
-                               const char *event_id)
+                               const char *event_id,
+                               const char *target_note_id)
 {
   g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
   g_return_if_fail(sender_name != NULL);
@@ -498,7 +542,7 @@ gnostr_desktop_notify_send_dm(GnostrDesktopNotify *self,
       break;
   }
 
-  send_notification_internal(self, GNOSTR_NOTIFICATION_DM, title, body, event_id);
+  send_notification_internal(self, GNOSTR_NOTIFICATION_DM, title, body, event_id, target_note_id);
 
   g_free(title);
   g_free(body);
@@ -509,7 +553,8 @@ gnostr_desktop_notify_send_mention(GnostrDesktopNotify *self,
                                     const char *sender_name,
                                     const char *sender_pubkey,
                                     const char *note_preview,
-                                    const char *event_id)
+                                    const char *event_id,
+                                    const char *target_note_id)
 {
   g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
   g_return_if_fail(sender_name != NULL);
@@ -533,7 +578,7 @@ gnostr_desktop_notify_send_mention(GnostrDesktopNotify *self,
       break;
   }
 
-  send_notification_internal(self, GNOSTR_NOTIFICATION_MENTION, title, body, event_id);
+  send_notification_internal(self, GNOSTR_NOTIFICATION_MENTION, title, body, event_id, target_note_id);
 
   g_free(title);
   g_free(body);
@@ -544,7 +589,8 @@ gnostr_desktop_notify_send_reply(GnostrDesktopNotify *self,
                                   const char *sender_name,
                                   const char *sender_pubkey,
                                   const char *reply_preview,
-                                  const char *event_id)
+                                  const char *event_id,
+                                  const char *target_note_id)
 {
   g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
   g_return_if_fail(sender_name != NULL);
@@ -568,7 +614,7 @@ gnostr_desktop_notify_send_reply(GnostrDesktopNotify *self,
       break;
   }
 
-  send_notification_internal(self, GNOSTR_NOTIFICATION_REPLY, title, body, event_id);
+  send_notification_internal(self, GNOSTR_NOTIFICATION_REPLY, title, body, event_id, target_note_id);
 
   g_free(title);
   g_free(body);
@@ -580,7 +626,8 @@ gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
                                 const char *sender_pubkey,
                                 guint64 amount_sats,
                                 const char *message,
-                                const char *event_id)
+                                const char *event_id,
+                                const char *target_note_id)
 {
   g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
   g_return_if_fail(sender_name != NULL);
@@ -615,7 +662,7 @@ gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
       break;
   }
 
-  send_notification_internal(self, GNOSTR_NOTIFICATION_ZAP, title, body, event_id);
+  send_notification_internal(self, GNOSTR_NOTIFICATION_ZAP, title, body, event_id, target_note_id);
 
   g_free(title);
   g_free(body);
@@ -625,7 +672,8 @@ void
 gnostr_desktop_notify_send_repost(GnostrDesktopNotify *self,
                                    const char *reposter_name,
                                    const char *reposter_pubkey,
-                                   const char *event_id)
+                                   const char *event_id,
+                                   const char *target_note_id)
 {
   g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
   g_return_if_fail(reposter_name != NULL);
@@ -645,7 +693,7 @@ gnostr_desktop_notify_send_repost(GnostrDesktopNotify *self,
       break;
   }
 
-  send_notification_internal(self, GNOSTR_NOTIFICATION_REPOST, title, NULL, event_id);
+  send_notification_internal(self, GNOSTR_NOTIFICATION_REPOST, title, NULL, event_id, target_note_id);
 
   g_free(title);
 }
@@ -655,12 +703,13 @@ gnostr_desktop_notify_send(GnostrDesktopNotify *self,
                             GnostrNotificationType type,
                             const char *title,
                             const char *body,
-                            const char *event_id)
+                            const char *event_id,
+                            const char *target_note_id)
 {
   g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
   g_return_if_fail(title != NULL);
 
-  send_notification_internal(self, type, title, body, event_id);
+  send_notification_internal(self, type, title, body, event_id, target_note_id);
 }
 
 /* ============== Action Callback ============== */

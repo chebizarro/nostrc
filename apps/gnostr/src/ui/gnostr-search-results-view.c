@@ -15,6 +15,8 @@
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_json.h>
+#include <stdlib.h>
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
@@ -121,6 +123,67 @@ static guint signals[N_SIGNALS];
 static void execute_local_search(GnostrSearchResultsView *self, const char *query);
 static void execute_relay_search(GnostrSearchResultsView *self, const char *query);
 static void populate_result_item(SearchResultItem *item, const char *event_json);
+
+typedef struct {
+    GnostrSearchResultsView *view;
+    GCancellable *cancellable;
+} SearchAsyncCtx;
+
+typedef struct {
+    char *query;
+} LocalSearchTaskData;
+
+static void
+on_result_row_open_profile(NostrGtkNoteCardRow *row,
+                           const char *pubkey_hex,
+                           gpointer user_data)
+{
+    (void)row;
+    GnostrSearchResultsView *self = GNOSTR_SEARCH_RESULTS_VIEW(user_data);
+    if (!GNOSTR_IS_SEARCH_RESULTS_VIEW(self) || !pubkey_hex || !*pubkey_hex)
+        return;
+
+    g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
+}
+
+static void
+on_result_row_search_hashtag(NostrGtkNoteCardRow *row,
+                             const char *hashtag,
+                             gpointer user_data)
+{
+    (void)row;
+    GnostrSearchResultsView *self = GNOSTR_SEARCH_RESULTS_VIEW(user_data);
+    if (!GNOSTR_IS_SEARCH_RESULTS_VIEW(self) || !hashtag || !*hashtag)
+        return;
+
+    g_signal_emit(self, signals[SIGNAL_SEARCH_HASHTAG], 0, hashtag);
+}
+
+static void
+search_async_ctx_free(SearchAsyncCtx *ctx)
+{
+    if (!ctx)
+        return;
+    g_clear_object(&ctx->view);
+    g_clear_object(&ctx->cancellable);
+    g_free(ctx);
+}
+
+static void
+local_search_task_data_free(LocalSearchTaskData *data)
+{
+    if (!data)
+        return;
+    g_free(data->query);
+    g_free(data);
+}
+
+static void
+search_result_json_array_free(GPtrArray *results)
+{
+    if (results)
+        g_ptr_array_unref(results);
+}
 
 static void
 gnostr_search_results_view_dispose(GObject *object)
@@ -237,7 +300,6 @@ bind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
 {
     (void)factory;
     GnostrSearchResultsView *view = GNOSTR_SEARCH_RESULTS_VIEW(user_data);
-    (void)view;
 
     NostrGtkNoteCardRow *row = NOSTR_GTK_NOTE_CARD_ROW(gtk_list_item_get_child(list_item));
     SearchResultItem *item = g_object_ref(gtk_list_item_get_item(list_item));
@@ -268,6 +330,15 @@ bind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
     /* Set login state for authentication-required buttons */
     nostr_gtk_note_card_row_set_logged_in(row, is_user_logged_in());
 
+    gulong h_open_profile = g_signal_connect(row, "open-profile",
+                                             G_CALLBACK(on_result_row_open_profile), view);
+    gulong h_search_hashtag = g_signal_connect(row, "search-hashtag",
+                                               G_CALLBACK(on_result_row_search_hashtag), view);
+    g_object_set_data(G_OBJECT(list_item), "handler-open-profile",
+                      GSIZE_TO_POINTER((gsize)h_open_profile));
+    g_object_set_data(G_OBJECT(list_item), "handler-search-hashtag",
+                      GSIZE_TO_POINTER((gsize)h_search_hashtag));
+
     g_object_unref(item);
 }
 
@@ -283,6 +354,17 @@ unbind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer 
     GtkWidget *child = gtk_list_item_get_child(list_item);
     if (child && NOSTR_GTK_IS_NOTE_CARD_ROW(child)) {
         nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(child));
+
+        gulong h_open_profile = (gulong)GPOINTER_TO_SIZE(
+            g_object_get_data(G_OBJECT(list_item), "handler-open-profile"));
+        gulong h_search_hashtag = (gulong)GPOINTER_TO_SIZE(
+            g_object_get_data(G_OBJECT(list_item), "handler-search-hashtag"));
+        if (h_open_profile > 0)
+            g_signal_handler_disconnect(child, h_open_profile);
+        if (h_search_hashtag > 0)
+            g_signal_handler_disconnect(child, h_search_hashtag);
+        g_object_set_data(G_OBJECT(list_item), "handler-open-profile", NULL);
+        g_object_set_data(G_OBJECT(list_item), "handler-search-hashtag", NULL);
     }
 }
 
@@ -512,7 +594,7 @@ populate_result_item(SearchResultItem *item, const char *event_json)
     }
 
     /* Extract event data */
-    const char *id = nostr_event_get_id(evt);
+    char *id = nostr_event_get_id(evt);
     const char *pubkey = nostr_event_get_pubkey(evt);
     const char *content = nostr_event_get_content(evt);
     uint32_t created_at = nostr_event_get_created_at(evt);
@@ -523,6 +605,8 @@ populate_result_item(SearchResultItem *item, const char *event_json)
     item->created_at = (gint64)created_at;
 
     /* Try to get profile info from provider cache */
+    free(id);
+
     if (pubkey) {
         GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey);
         if (meta) {
@@ -544,42 +628,74 @@ populate_result_item(SearchResultItem *item, const char *event_json)
     nostr_event_free(evt);
 }
 
-/* Execute local nostrdb text search */
 static void
-execute_local_search(GnostrSearchResultsView *self, const char *query)
+local_search_thread_func(GTask *task,
+                         gpointer source_object,
+                         gpointer task_data,
+                         GCancellable *cancellable)
 {
+    (void)source_object;
+    LocalSearchTaskData *data = task_data;
     void *txn = NULL;
-    int rc = storage_ndb_begin_query(&txn, NULL);
-    if (rc != 0 || !txn) {
-        g_warning("[SEARCH] Failed to begin nostrdb query transaction");
-        gnostr_search_results_view_set_loading(self, FALSE);
-        gtk_stack_set_visible_child_name(self->content_stack, "no-results");
-        gtk_label_set_text(self->no_results_hint, "Database temporarily unavailable. Please try again.");
+
+    if (cancellable && g_cancellable_is_cancelled(cancellable)) {
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled");
         return;
     }
 
-    /* Build config JSON for text search - limit to kind 1 (text notes) */
+    int rc = storage_ndb_begin_query(&txn, NULL);
+    if (rc != 0 || !txn) {
+        g_task_return_new_error(task,
+                                G_IO_ERROR,
+                                G_IO_ERROR_FAILED,
+                                "Database temporarily unavailable. Please try again.");
+        return;
+    }
+
     char config_json[256];
     snprintf(config_json, sizeof(config_json),
              "{\"limit\":%d,\"kinds\":[1]}", MAX_LOCAL_RESULTS);
 
     char **results = NULL;
     int count = 0;
-
-    rc = storage_ndb_text_search(txn, query, config_json, &results, &count, NULL);
+    rc = storage_ndb_text_search(txn, data->query, config_json, &results, &count, NULL);
     storage_ndb_end_query(txn);
 
-    if (rc != 0) {
-        g_warning("[SEARCH] Text search failed with rc=%d", rc);
-        gnostr_search_results_view_set_loading(self, FALSE);
-        gtk_stack_set_visible_child_name(self->content_stack, "no-results");
-        gtk_label_set_text(self->no_results_hint, "Search failed. Please try again.");
+    if (cancellable && g_cancellable_is_cancelled(cancellable)) {
+        if (results)
+            storage_ndb_free_results(results, count);
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled");
         return;
     }
 
-    gnostr_search_results_view_set_loading(self, FALSE);
+    if (rc != 0) {
+        if (results)
+            storage_ndb_free_results(results, count);
+        g_task_return_new_error(task,
+                                G_IO_ERROR,
+                                G_IO_ERROR_FAILED,
+                                "Search failed. Please try again.");
+        return;
+    }
 
-    if (count == 0 || !results) {
+    GPtrArray *copied = g_ptr_array_new_with_free_func(g_free);
+    for (int i = 0; i < count && results && results[i]; i++)
+        g_ptr_array_add(copied, g_strdup(results[i]));
+
+    if (results)
+        storage_ndb_free_results(results, count);
+
+    g_task_return_pointer(task, copied, (GDestroyNotify)search_result_json_array_free);
+}
+
+static void
+apply_search_results_to_model(GnostrSearchResultsView *self, GPtrArray *events)
+{
+    g_return_if_fail(GNOSTR_IS_SEARCH_RESULTS_VIEW(self));
+
+    g_list_store_remove_all(self->results_model);
+
+    if (!events || events->len == 0) {
         gtk_stack_set_visible_child_name(self->content_stack, "no-results");
         gtk_label_set_text(self->no_results_hint,
             "Try a different search term or switch to relay search.");
@@ -587,41 +703,88 @@ execute_local_search(GnostrSearchResultsView *self, const char *query)
         return;
     }
 
-    /* Populate results */
-    for (int i = 0; i < count && results[i]; i++) {
+    for (guint i = 0; i < events->len; i++) {
+        const char *event_json = g_ptr_array_index(events, i);
+        if (!event_json)
+            continue;
+
         SearchResultItem *item = search_result_item_new();
-        populate_result_item(item, results[i]);
+        populate_result_item(item, event_json);
         g_list_store_append(self->results_model, item);
         g_object_unref(item);
     }
 
-    /* Clean up */
-    storage_ndb_free_results(results, count);
-
-    /* Update UI */
     char count_text[64];
-    snprintf(count_text, sizeof(count_text), "%d result%s found",
-             count, count == 1 ? "" : "s");
+    snprintf(count_text, sizeof(count_text), "%u result%s found",
+             events->len, events->len == 1 ? "" : "s");
     gtk_label_set_text(self->results_count_label, count_text);
     gtk_widget_set_visible(GTK_WIDGET(self->results_count_label), TRUE);
     gtk_stack_set_visible_child_name(self->content_stack, "results");
 }
 
-/* Relay search completion callback */
-typedef struct {
-    GnostrSearchResultsView *view;
-    GCancellable *cancellable;
-} RelaySearchCtx;
+static void
+on_local_search_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    (void)source;
+    SearchAsyncCtx *ctx = user_data;
+    GnostrSearchResultsView *self = ctx->view;
 
+    if (!GNOSTR_IS_SEARCH_RESULTS_VIEW(self) ||
+        g_cancellable_is_cancelled(ctx->cancellable)) {
+        search_async_ctx_free(ctx);
+        return;
+    }
+
+    GError *error = NULL;
+    GPtrArray *events = g_task_propagate_pointer(G_TASK(result), &error);
+
+    gnostr_search_results_view_set_loading(self, FALSE);
+
+    if (error) {
+        if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            g_warning("[SEARCH] Local search failed: %s", error->message);
+            gtk_stack_set_visible_child_name(self->content_stack, "no-results");
+            gtk_label_set_text(self->no_results_hint, error->message);
+            gtk_widget_set_visible(GTK_WIDGET(self->results_count_label), FALSE);
+        }
+        g_clear_error(&error);
+        search_async_ctx_free(ctx);
+        return;
+    }
+
+    apply_search_results_to_model(self, events);
+
+    if (events)
+        g_ptr_array_unref(events);
+    search_async_ctx_free(ctx);
+}
+
+/* Execute local nostrdb text search */
+static void
+execute_local_search(GnostrSearchResultsView *self, const char *query)
+{
+    SearchAsyncCtx *ctx = g_new0(SearchAsyncCtx, 1);
+    ctx->view = g_object_ref(self);
+    ctx->cancellable = g_object_ref(self->search_cancellable);
+
+    LocalSearchTaskData *data = g_new0(LocalSearchTaskData, 1);
+    data->query = g_strdup(query);
+
+    GTask *task = g_task_new(self, self->search_cancellable, on_local_search_done, ctx);
+    g_task_set_task_data(task, data, (GDestroyNotify)local_search_task_data_free);
+    g_task_run_in_thread(task, local_search_thread_func);
+    g_object_unref(task);
+}
+
+/* Relay search completion callback */
 static void
 on_relay_search_done(GObject *source, GAsyncResult *result, gpointer user_data)
 {
-    RelaySearchCtx *ctx = (RelaySearchCtx *)user_data;
+    SearchAsyncCtx *ctx = (SearchAsyncCtx *)user_data;
     GnostrSearchResultsView *self = ctx->view;
 
     if (g_cancellable_is_cancelled(ctx->cancellable)) {
-        g_object_unref(ctx->cancellable);
-        g_free(ctx);
+        search_async_ctx_free(ctx);
         return;
     }
 
@@ -637,8 +800,7 @@ on_relay_search_done(GObject *source, GAsyncResult *result, gpointer user_data)
         gtk_stack_set_visible_child_name(self->content_stack, "no-results");
         gtk_label_set_text(self->no_results_hint,
             "Relay search failed. The relay may not support NIP-50 search.");
-        g_object_unref(ctx->cancellable);
-        g_free(ctx);
+        search_async_ctx_free(ctx);
         return;
     }
 
@@ -648,37 +810,23 @@ on_relay_search_done(GObject *source, GAsyncResult *result, gpointer user_data)
             "No results from relays. Try a different search term or local search.");
         gtk_widget_set_visible(GTK_WIDGET(self->results_count_label), FALSE);
         if (events) g_ptr_array_unref(events);
-        g_object_unref(ctx->cancellable);
-        g_free(ctx);
+        search_async_ctx_free(ctx);
         return;
     }
 
-    /* Populate results and defer NDB ingestion to background (nostrc-mzab) */
     GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < events->len; i++) {
         const char *event_json = g_ptr_array_index(events, i);
         if (!event_json) continue;
 
         g_ptr_array_add(to_ingest, g_strdup(event_json));
-
-        SearchResultItem *item = search_result_item_new();
-        populate_result_item(item, event_json);
-        g_list_store_append(self->results_model, item);
-        g_object_unref(item);
     }
     storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
 
-    /* Update UI */
-    char count_text[64];
-    snprintf(count_text, sizeof(count_text), "%u result%s found",
-             events->len, events->len == 1 ? "" : "s");
-    gtk_label_set_text(self->results_count_label, count_text);
-    gtk_widget_set_visible(GTK_WIDGET(self->results_count_label), TRUE);
-    gtk_stack_set_visible_child_name(self->content_stack, "results");
+    apply_search_results_to_model(self, events);
 
     g_ptr_array_unref(events);
-    g_object_unref(ctx->cancellable);
-    g_free(ctx);
+    search_async_ctx_free(ctx);
 }
 
 /* Execute relay search via NIP-50 */
@@ -714,15 +862,19 @@ execute_relay_search(GnostrSearchResultsView *self, const char *query)
     static GNostrPool *s_pool = NULL;
     if (!s_pool) s_pool = gnostr_pool_new();
 
-    RelaySearchCtx *ctx = g_new0(RelaySearchCtx, 1);
-    ctx->view = self;
+    SearchAsyncCtx *ctx = g_new0(SearchAsyncCtx, 1);
+    ctx->view = g_object_ref(self);
     ctx->cancellable = g_object_ref(self->search_cancellable);
-
-    gnostr_pool_sync_relays(s_pool, (const gchar **)urls, relay_urls->len);
     {
       NostrFilters *_qf = nostr_filters_new();
       nostr_filters_add(_qf, filter);
-      gnostr_pool_query_async(s_pool, _qf, self->search_cancellable, on_relay_search_done, ctx);
+      gnostr_pool_query_urls_async(s_pool,
+                                   (const gchar **)urls,
+                                   relay_urls->len,
+                                   _qf,
+                                   self->search_cancellable,
+                                   on_relay_search_done,
+                                   ctx);
     }
 
     nostr_filter_free(filter);

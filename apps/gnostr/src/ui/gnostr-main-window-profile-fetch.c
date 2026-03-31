@@ -8,7 +8,10 @@
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
+#include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
+
+#include "../util/profile_event_validation.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +37,11 @@ static gboolean profile_dispatch_next(gpointer data);
 static gboolean hex_to_bytes32_local(const char *hex, uint8_t out[32]);
 static void profile_apply_item_free_local(gpointer p);
 static gboolean profile_startup_throttle_active(GnostrMainWindow *self);
+static gchar *profile_fetch_relay_scope_local(ProfileBatchCtx *ctx);
+static void profile_fetch_log_rejection_local(ProfileBatchCtx *ctx,
+                                              guint            index,
+                                              const gchar     *reason,
+                                              const gchar     *event_json);
 static guint profile_effective_max_concurrent(GnostrMainWindow *self);
 static void profile_fetch_requested_add(GnostrMainWindow *self, const char *pubkey_hex);
 static void profile_fetch_requested_remove(GnostrMainWindow *self, const char *pubkey_hex);
@@ -54,6 +62,49 @@ profile_effective_max_concurrent(GnostrMainWindow *self)
   if (profile_startup_throttle_active(self))
     return MAX(1u, self->startup_profile_max_concurrent);
   return MAX(1u, self->profile_fetch_max_concurrent);
+}
+
+static gchar *
+profile_fetch_relay_scope_local(ProfileBatchCtx *ctx)
+{
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self) ||
+      !ctx->self->profile_batch_urls || ctx->self->profile_batch_url_count == 0) {
+    return g_strdup("(unknown)");
+  }
+
+  GString *scope = g_string_new(NULL);
+  for (guint i = 0; i < ctx->self->profile_batch_url_count; i++) {
+    const char *url = ctx->self->profile_batch_urls[i];
+    if (!url)
+      continue;
+    if (scope->len > 0)
+      g_string_append(scope, ", ");
+    g_string_append(scope, url);
+  }
+  return g_string_free(scope, FALSE);
+}
+
+static void
+profile_fetch_log_rejection_local(ProfileBatchCtx *ctx,
+                                  guint            index,
+                                  const gchar     *reason,
+                                  const gchar     *event_json)
+{
+  g_autofree gchar *relay_scope = profile_fetch_relay_scope_local(ctx);
+  gsize len = event_json ? strlen(event_json) : 0;
+  char snippet[121] = {0};
+  if (event_json && len > 0) {
+    gsize copy = len < 120 ? len : 120;
+    memcpy(snippet, event_json, copy);
+    snippet[copy] = '\0';
+  }
+
+  g_warning("profile_fetch: rejected profile event at index %u from relays [%s]: %s; json='%s'%s",
+            index,
+            relay_scope,
+            reason ? reason : "invalid event",
+            snippet,
+            len > 120 ? "…" : "");
 }
 
 static void
@@ -204,12 +255,25 @@ profile_ndb_check_task(GTask *task,
       char *pjson = NULL;
       int plen = 0;
       if (storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen, NULL) == 0 && pjson && plen > 0) {
-        gchar *content_str = gnostr_json_get_string(pjson, "content", NULL);
-        if (content_str) {
+        g_autofree gchar *validated_pk = NULL;
+        g_autofree gchar *content_str = NULL;
+        g_autofree gchar *reason = NULL;
+        gint64 created_at = 0;
+        if (gnostr_profile_event_extract_for_apply(pjson,
+                                                   &validated_pk,
+                                                   &content_str,
+                                                   &created_at,
+                                                   &reason) &&
+            g_ascii_strcasecmp(validated_pk, pkhex) == 0) {
           ProfileApplyCtx *item = g_new0(ProfileApplyCtx, 1);
-          item->pubkey_hex = g_strdup(pkhex);
-          item->content_json = content_str;
+          item->pubkey_hex = g_strdup(validated_pk);
+          item->content_json = g_strdup(content_str);
+          item->created_at = created_at;
           g_ptr_array_add(out->cached_items, item);
+        } else if (reason) {
+          g_warning("[PROFILE] Ignoring invalid cached profile event for %.16s...: %s",
+                    pkhex,
+                    reason);
         }
         free(pjson);
       }
@@ -306,25 +370,22 @@ on_profile_ndb_check_done(GObject *source_object,
 static void
 profile_fetch_start_network(GnostrMainWindow *self, GPtrArray *authors)
 {
+  GPtrArray *relay_urls = gnostr_get_profile_fetch_relay_urls(NULL);
   const char **urls = NULL;
-  size_t url_count = 0;
-  NostrFilters *dummy = NULL;
-  int kind1 = 1;
-  gnostr_main_window_build_urls_and_filters_for_kinds_internal(self,
-                                                              &kind1,
-                                                              1,
-                                                              &urls,
-                                                              &url_count,
-                                                              &dummy,
-                                                              0);
+  size_t url_count = relay_urls ? relay_urls->len : 0;
+  if (relay_urls && relay_urls->len > 0) {
+    urls = g_new0(const char *, relay_urls->len);
+    for (guint i = 0; i < relay_urls->len; i++)
+      urls[i] = g_strdup(g_ptr_array_index(relay_urls, i));
+  }
   if (!urls || url_count == 0) {
     g_warning("[PROFILE] No relays configured for profile fetch");
     profile_fetch_requested_remove_many(self, authors);
     g_ptr_array_free(authors, TRUE);
-    if (dummy)
-      nostr_filters_free(dummy);
     if (urls)
       gnostr_main_window_free_urls_owned_internal(urls, url_count);
+    if (relay_urls)
+      g_ptr_array_unref(relay_urls);
     return;
   }
 
@@ -368,10 +429,10 @@ profile_fetch_start_network(GnostrMainWindow *self, GPtrArray *authors)
       g_debug("[PROFILE] Batch sequence now has %u batches total", self->profile_batches->len);
 
       g_ptr_array_free(authors, TRUE);
-      if (dummy)
-        nostr_filters_free(dummy);
       if (urls)
         gnostr_main_window_free_urls_owned_internal(urls, url_count);
+      if (relay_urls)
+        g_ptr_array_unref(relay_urls);
       return;
     }
 
@@ -410,8 +471,8 @@ profile_fetch_start_network(GnostrMainWindow *self, GPtrArray *authors)
   }
 
   g_ptr_array_free(authors, TRUE);
-  if (dummy)
-    nostr_filters_free(dummy);
+  if (relay_urls)
+    g_ptr_array_unref(relay_urls);
 
   profile_dispatch_next(g_object_ref(self));
 }
@@ -436,90 +497,49 @@ on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
   if (jsons) {
     guint dispatched = 0;
     GPtrArray *items = g_ptr_array_new_with_free_func(profile_apply_item_free_local);
-
     GHashTable *unique_pks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    for (guint i = 0; i < jsons->len; i++) {
-      const char *evt_json = (const char *)g_ptr_array_index(jsons, i);
-      if (!evt_json)
-        continue;
-      g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
-      if (evt) {
-        const char *pk = gnostr_event_get_pubkey(evt);
-        if (pk)
-          g_hash_table_add(unique_pks, g_strdup(pk));
-      }
-    }
-    guint unique_count = g_hash_table_size(unique_pks);
-    g_debug("[PROFILE] Batch received %u events (%u unique authors)", jsons->len, unique_count);
-
     guint queued = 0;
+
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char *)g_ptr_array_index(jsons, i);
       if (!evt_json)
         continue;
 
-      if (!strstr(evt_json, "\"tags\"")) {
-        const char *kind_pos = strstr(evt_json, "\"kind\"");
-        if (kind_pos) {
-          const char *comma_after_kind = strchr(kind_pos, ',');
-          if (comma_after_kind) {
-            GString *fixed = g_string_new("");
-            g_string_append_len(fixed, evt_json, comma_after_kind - evt_json + 1);
-            g_string_append(fixed, "\"tags\":[],");
-            g_string_append(fixed, comma_after_kind + 1);
-            gchar *fixed_str = g_string_free(fixed, FALSE);
-            if (gnostr_main_window_ingest_queue_push_internal(ctx->self, fixed_str))
-              queued++;
-            else
-              g_free(fixed_str);
-            continue;
-          }
-        }
+      g_autofree gchar *pk_hex = NULL;
+      g_autofree gchar *content = NULL;
+      g_autofree gchar *reason = NULL;
+      gint64 created_at = 0;
+      if (!gnostr_profile_event_extract_for_apply(evt_json, &pk_hex, &content, &created_at, &reason)) {
+        profile_fetch_log_rejection_local(ctx, i, reason, evt_json);
+        continue;
       }
+
+      g_hash_table_add(unique_pks, g_strdup(pk_hex));
 
       gchar *dup = g_strdup(evt_json);
       if (gnostr_main_window_ingest_queue_push_internal(ctx->self, dup))
         queued++;
       else
         g_free(dup);
-    }
-    if (queued > 0)
-      g_debug("[PROFILE] Queued %u events for background ingestion", queued);
-
-    for (guint i = 0; i < jsons->len; i++) {
-      const char *evt_json = (const char *)g_ptr_array_index(jsons, i);
-      if (!evt_json)
-        continue;
-
-      g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
-      if (!evt) {
-        size_t len = strlen(evt_json);
-        char snippet[121];
-        size_t copy = len < 120 ? len : 120;
-        memcpy(snippet, evt_json, copy);
-        snippet[copy] = '\0';
-        g_warning("profile_fetch: deserialize failed at index %u len=%zu json='%s'%s",
-                  i, len, snippet, len > 120 ? "…" : "");
-        continue;
-      }
-
-      const char *pk_hex = gnostr_event_get_pubkey(evt);
-      const char *content = gnostr_event_get_content(evt);
-      if (!pk_hex || !content)
-        continue;
 
       ProfileApplyCtx *pctx = g_new0(ProfileApplyCtx, 1);
       pctx->pubkey_hex = g_strdup(pk_hex);
       pctx->content_json = g_strdup(content);
+      pctx->created_at = created_at;
       g_ptr_array_add(items, pctx);
       dispatched++;
 
       uint8_t pk32[32];
-      if (strlen(pk_hex) == 64 && hex_to_bytes32_local(pk_hex, pk32)) {
+      if (hex_to_bytes32_local(pk_hex, pk32)) {
         uint64_t now = (uint64_t)(g_get_real_time() / G_USEC_PER_SEC);
         storage_ndb_write_last_profile_fetch(pk32, now);
       }
     }
+
+    guint unique_count = g_hash_table_size(unique_pks);
+    g_debug("[PROFILE] Batch received %u events (%u unique authors)", jsons->len, unique_count);
+    if (queued > 0)
+      g_debug("[PROFILE] Queued %u valid profile events for background ingestion", queued);
 
     if (GNOSTR_IS_MAIN_WINDOW(ctx->self) && ctx->batch) {
       for (guint i = 0; i < ctx->batch->len; i++) {

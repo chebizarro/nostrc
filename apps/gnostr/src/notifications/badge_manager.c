@@ -8,6 +8,7 @@
 #define G_LOG_DOMAIN "badge-manager"
 
 #include "badge_manager.h"
+#include "../util/mute_filter.h"
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "../util/zap.h"
@@ -97,6 +98,7 @@ static void on_follower_events(uint64_t subid, const uint64_t *note_keys,
 static void emit_changed(GnostrBadgeManager *self);
 static void load_settings(GnostrBadgeManager *self);
 static void save_settings(GnostrBadgeManager *self);
+static char *history_extract_target_event_id(const char *event_json);
 
 /* ============== GObject Implementation ============== */
 
@@ -413,6 +415,21 @@ gnostr_badge_manager_clear_all(GnostrBadgeManager *self)
   }
 }
 
+void
+gnostr_badge_manager_set_count(GnostrBadgeManager *self,
+                               GnostrNotificationType type,
+                               guint count)
+{
+  g_return_if_fail(GNOSTR_IS_BADGE_MANAGER(self));
+  g_return_if_fail(type < GNOSTR_NOTIFICATION_TYPE_COUNT);
+
+  if (self->counts[type] == count)
+    return;
+
+  self->counts[type] = count;
+  emit_changed(self);
+}
+
 guint
 gnostr_badge_manager_get_count(GnostrBadgeManager *self,
                                 GnostrNotificationType type)
@@ -513,12 +530,39 @@ emit_event(GnostrBadgeManager *self,
            const char *sender_name,
            const char *content,
            const char *event_id,
+           const char *target_note_id,
            guint64 amount_sats)
 {
   if (self->event_callback) {
     self->event_callback(self, type, sender_pubkey, sender_name,
-                         content, event_id, amount_sats, self->event_callback_data);
+                         content, event_id, target_note_id,
+                         amount_sats, self->event_callback_data);
   }
+}
+
+static char *
+live_extract_target_event_id(void *txn, storage_ndb_note *note)
+{
+  const unsigned char *id_bin;
+  char *note_json = NULL;
+  int json_len = 0;
+
+  if (!txn || !note)
+    return NULL;
+
+  id_bin = storage_ndb_note_id(note);
+  if (!id_bin)
+    return NULL;
+
+  if (storage_ndb_get_note_by_id(txn, id_bin, &note_json, &json_len, NULL) != 0 ||
+      !note_json || json_len <= 0) {
+    g_free(note_json);
+    return NULL;
+  }
+
+  char *target_id = history_extract_target_event_id(note_json);
+  g_free(note_json);
+  return target_id;
 }
 
 /* ============== Subscription Callbacks ============== */
@@ -546,22 +590,38 @@ on_dm_events(uint64_t subid, const uint64_t *note_keys,
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
     if (!note) continue;
 
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
+    const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+    char pubkey_hex[65];
+    if (pubkey_bin)
+      storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+    else
+      pubkey_hex[0] = '\0';
+    g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+    if (gnostr_mute_filter_should_hide_fields(mute_list,
+                                              pubkey_hex[0] ? pubkey_hex : NULL,
+                                              storage_ndb_note_content(note),
+                                              hashtags))
+      continue;
+
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
     if (created_at > last_read) {
       new_count++;
 
       /* Emit event for desktop notification (only for first new DM to avoid spam) */
       if (new_count == 1 && self->event_callback) {
-        const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+        const unsigned char *emit_pubkey_bin = storage_ndb_note_pubkey(note);
         const unsigned char *id_bin = storage_ndb_note_id(note);
         const char *content = storage_ndb_note_content(note);
 
-        char pubkey_hex[65], id_hex[65];
-        storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
-        storage_ndb_hex_encode(id_bin, id_hex);
+        if (emit_pubkey_bin && id_bin) {
+          char emit_pubkey_hex[65], id_hex[65];
+          storage_ndb_hex_encode(emit_pubkey_bin, emit_pubkey_hex);
+          storage_ndb_hex_encode(id_bin, id_hex);
 
-        /* Note: sender_name would require profile lookup, pass NULL for now */
-        emit_event(self, GNOSTR_NOTIFICATION_DM, pubkey_hex, NULL, content, id_hex, 0);
+          /* Note: sender_name would require profile lookup, pass NULL for now */
+          emit_event(self, GNOSTR_NOTIFICATION_DM, emit_pubkey_hex, NULL, content, id_hex, id_hex, 0);
+        }
       }
     }
   }
@@ -672,6 +732,20 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
     if (!note) continue;
 
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
+    const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+    char pubkey_hex[65];
+    if (pubkey_bin)
+      storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+    else
+      pubkey_hex[0] = '\0';
+    g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+    if (gnostr_mute_filter_should_hide_fields(mute_list,
+                                              pubkey_hex[0] ? pubkey_hex : NULL,
+                                              storage_ndb_note_content(note),
+                                              hashtags))
+      continue;
+
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
 
     /* Check if this note is a reply to one of user's notes using NIP-10 thread context.
@@ -693,7 +767,8 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
           storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
           storage_ndb_hex_encode(id_bin, id_hex);
 
-          emit_event(self, GNOSTR_NOTIFICATION_REPLY, pubkey_hex, NULL, content, id_hex, 0);
+          emit_event(self, GNOSTR_NOTIFICATION_REPLY, pubkey_hex, NULL, content,
+                     id_hex, target_note_id ? target_note_id : id_hex, 0);
           reply_event_emitted = TRUE;
 
           g_debug("Reply to user's note detected: %.16s... replied to %.16s...",
@@ -716,7 +791,7 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
           storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
           storage_ndb_hex_encode(id_bin, id_hex);
 
-          emit_event(self, GNOSTR_NOTIFICATION_MENTION, pubkey_hex, NULL, content, id_hex, 0);
+          emit_event(self, GNOSTR_NOTIFICATION_MENTION, pubkey_hex, NULL, content, id_hex, id_hex, 0);
           mention_event_emitted = TRUE;
         }
       }
@@ -759,6 +834,20 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
     if (!note) continue;
 
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
+    const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+    char pubkey_hex[65];
+    if (pubkey_bin)
+      storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+    else
+      pubkey_hex[0] = '\0';
+    g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+    if (gnostr_mute_filter_should_hide_fields(mute_list,
+                                              pubkey_hex[0] ? pubkey_hex : NULL,
+                                              storage_ndb_note_content(note),
+                                              hashtags))
+      continue;
+
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
     if (created_at > last_read) {
       new_count++;
@@ -791,7 +880,9 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
             storage_ndb_hex_encode(id_bin, id_hex);
 
             /* Emit with actual amount and sender */
-            emit_event(self, GNOSTR_NOTIFICATION_ZAP, sender, NULL, NULL, id_hex, amount_sats);
+            g_autofree char *target_id = live_extract_target_event_id(txn, note);
+            emit_event(self, GNOSTR_NOTIFICATION_ZAP, sender, NULL, NULL,
+                       id_hex, target_id, amount_sats);
 
             g_debug("Zap notification: %llu sats from %.16s...",
                     (unsigned long long)amount_sats, sender ? sender : "unknown");
@@ -802,7 +893,9 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
             char pubkey_hex[65], id_hex[65];
             storage_ndb_hex_encode(storage_ndb_note_pubkey(note), pubkey_hex);
             storage_ndb_hex_encode(id_bin, id_hex);
-            emit_event(self, GNOSTR_NOTIFICATION_ZAP, pubkey_hex, NULL, NULL, id_hex, 0);
+            g_autofree char *target_id = live_extract_target_event_id(txn, note);
+            emit_event(self, GNOSTR_NOTIFICATION_ZAP, pubkey_hex, NULL, NULL,
+                       id_hex, target_id, 0);
           }
 
           g_free(json_copy);
@@ -811,7 +904,9 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
           char pubkey_hex[65], id_hex[65];
           storage_ndb_hex_encode(storage_ndb_note_pubkey(note), pubkey_hex);
           storage_ndb_hex_encode(id_bin, id_hex);
-          emit_event(self, GNOSTR_NOTIFICATION_ZAP, pubkey_hex, NULL, NULL, id_hex, 0);
+          g_autofree char *target_id = live_extract_target_event_id(txn, note);
+          emit_event(self, GNOSTR_NOTIFICATION_ZAP, pubkey_hex, NULL, NULL,
+                     id_hex, target_id, 0);
         }
       }
     }
@@ -848,6 +943,20 @@ on_repost_events(uint64_t subid, const uint64_t *note_keys,
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
     if (!note) continue;
 
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
+    const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+    char pubkey_hex[65];
+    if (pubkey_bin)
+      storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+    else
+      pubkey_hex[0] = '\0';
+    g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+    if (gnostr_mute_filter_should_hide_fields(mute_list,
+                                              pubkey_hex[0] ? pubkey_hex : NULL,
+                                              storage_ndb_note_content(note),
+                                              hashtags))
+      continue;
+
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
     if (created_at > last_read) {
       new_count++;
@@ -862,7 +971,9 @@ on_repost_events(uint64_t subid, const uint64_t *note_keys,
         storage_ndb_hex_encode(id_bin, id_hex);
 
         /* Emit repost notification - amount_sats is 0 for reposts */
-        emit_event(self, GNOSTR_NOTIFICATION_REPOST, pubkey_hex, NULL, NULL, id_hex, 0);
+        g_autofree char *target_id = live_extract_target_event_id(txn, note);
+        emit_event(self, GNOSTR_NOTIFICATION_REPOST, pubkey_hex, NULL, NULL,
+                   id_hex, target_id, 0);
 
         g_debug("Repost notification from %.16s...", pubkey_hex);
       }
@@ -900,6 +1011,20 @@ on_reaction_events(uint64_t subid, const uint64_t *note_keys,
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
     if (!note) continue;
 
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
+    const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+    char pubkey_hex[65];
+    if (pubkey_bin)
+      storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+    else
+      pubkey_hex[0] = '\0';
+    g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+    if (gnostr_mute_filter_should_hide_fields(mute_list,
+                                              pubkey_hex[0] ? pubkey_hex : NULL,
+                                              storage_ndb_note_content(note),
+                                              hashtags))
+      continue;
+
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
     if (created_at > last_read) {
       new_count++;
@@ -915,7 +1040,9 @@ on_reaction_events(uint64_t subid, const uint64_t *note_keys,
         storage_ndb_hex_encode(id_bin, id_hex);
 
         /* Content is typically the reaction emoji ("+", "-", or custom emoji) */
-        emit_event(self, GNOSTR_NOTIFICATION_REACTION, pubkey_hex, NULL, content, id_hex, 0);
+        g_autofree char *target_id = live_extract_target_event_id(txn, note);
+        emit_event(self, GNOSTR_NOTIFICATION_REACTION, pubkey_hex, NULL, content,
+                   id_hex, target_id, 0);
 
         g_debug("Reaction notification from %.16s... content=%s", pubkey_hex, content ? content : "+");
       }
@@ -954,6 +1081,20 @@ on_list_events(uint64_t subid, const uint64_t *note_keys,
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
     if (!note) continue;
 
+    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
+    const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+    char pubkey_hex[65];
+    if (pubkey_bin)
+      storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+    else
+      pubkey_hex[0] = '\0';
+    g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+    if (gnostr_mute_filter_should_hide_fields(mute_list,
+                                              pubkey_hex[0] ? pubkey_hex : NULL,
+                                              storage_ndb_note_content(note),
+                                              hashtags))
+      continue;
+
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
     if (created_at > last_read) {
       new_count++;
@@ -978,7 +1119,7 @@ on_list_events(uint64_t subid, const uint64_t *note_keys,
         }
 
         /* Emit list notification - use content field for list type description */
-        emit_event(self, GNOSTR_NOTIFICATION_LIST, pubkey_hex, NULL, list_type, id_hex, 0);
+        emit_event(self, GNOSTR_NOTIFICATION_LIST, pubkey_hex, NULL, list_type, id_hex, NULL, 0);
 
         g_debug("List notification: added to %s by %.16s...", list_type, pubkey_hex);
       }
@@ -1048,7 +1189,7 @@ on_follower_events(uint64_t subid, const uint64_t *note_keys,
       storage_ndb_hex_encode(id_bin, id_hex);
 
       emit_event(self, GNOSTR_NOTIFICATION_FOLLOWER, pubkey_hex, NULL,
-                 "started following you", id_hex, 0);
+                 "started following you", id_hex, NULL, 0);
       event_emitted = TRUE;
 
       g_debug("New follower: %.16s...", pubkey_hex);
@@ -1585,6 +1726,7 @@ history_load_done(GObject *source_object, GAsyncResult *result, gpointer user_da
       GnostrNotification *notif = g_ptr_array_index(data->notifs, i);
       gnostr_notifications_view_add_notification(data->view, notif);
     }
+    gnostr_notifications_view_sync_badge_state(data->view);
     gnostr_notifications_view_set_loading(data->view, FALSE);
     if (data->notifs->len == 0)
       gnostr_notifications_view_set_empty(data->view, TRUE);

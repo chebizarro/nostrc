@@ -406,6 +406,11 @@ if(BUILD_TESTING)
       LIBS gnostr-testkit nostr_gobject
     )
 
+    gn_add_gtest(test_nostr_gobject_profile_provider_conflict_resolution
+      SOURCES tests/test_profile_provider_conflict_resolution.c
+      LIBS gnostr-testkit nostr_gobject
+    )
+
     gn_add_gtest(test_nostr_gobject_main_thread_latency
       SOURCES tests/test_main_thread_forbidden_calls.c
       LIBS gnostr-testkit nostr_gobject

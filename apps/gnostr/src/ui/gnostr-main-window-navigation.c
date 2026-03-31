@@ -4,6 +4,7 @@
 
 #include "gnostr-session-view.h"
 #include "gnostr-search-results-view.h"
+#include "gnostr-timeline-view.h"
 #include "gnostr-notifications-view.h"
 #include "gnostr-classifieds-view.h"
 #include "page-discover.h"
@@ -99,6 +100,25 @@ gnostr_main_window_on_search_open_profile_internal(GnostrSearchResultsView *view
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex)
     return;
   open_profile_panel(self, pubkey_hex);
+}
+
+void
+gnostr_main_window_on_search_search_hashtag_internal(GnostrSearchResultsView *view,
+                                                     const char *hashtag,
+                                                     gpointer user_data)
+{
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !hashtag || !*hashtag)
+    return;
+
+  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
+  if (timeline && NOSTR_GTK_IS_TIMELINE_VIEW(timeline)) {
+    nostr_gtk_timeline_view_add_hashtag_tab(NOSTR_GTK_TIMELINE_VIEW(timeline), hashtag);
+    if (self->session_view)
+      gnostr_session_view_show_page(self->session_view, "timeline");
+    g_debug("[SEARCH] Navigated to hashtag #%s from search results", hashtag);
+  }
 }
 
 void

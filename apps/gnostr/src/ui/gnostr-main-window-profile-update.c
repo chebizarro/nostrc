@@ -27,12 +27,14 @@ gnostr_main_window_refresh_thread_view_profiles_if_visible_internal(GnostrMainWi
 void
 gnostr_main_window_update_meta_from_profile_json_internal(GnostrMainWindow *self,
                                                           const char *pubkey_hex,
-                                                          const char *content_json)
+                                                          const char *content_json,
+                                                          gint64      created_at)
 {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !content_json)
     return;
 
-  gnostr_profile_provider_update(pubkey_hex, content_json);
+  if (!gnostr_profile_provider_update_if_newer(pubkey_hex, content_json, created_at))
+    return;
 
   extern void gn_nostr_event_model_update_profile(GObject *model,
                                                   const char *pubkey_hex,

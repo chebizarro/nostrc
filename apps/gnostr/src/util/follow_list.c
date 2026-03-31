@@ -393,11 +393,32 @@ static void on_configured_relay_query_done(GObject *source, GAsyncResult *res, g
                                    on_nip65_relays_fetched, ctx);
 }
 
-/* Public async fetch function */
-void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
-                                     GCancellable *cancellable,
-                                     GnostrFollowListCallback callback,
-                                     gpointer user_data)
+static GPtrArray *
+relay_strv_to_ptr_array(const char * const *relays)
+{
+  if (!relays || !relays[0])
+    return NULL;
+
+  GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
+  for (const char * const *r = relays; *r; r++) {
+    if (*r && **r)
+      g_ptr_array_add(arr, g_strdup(*r));
+  }
+
+  if (arr->len == 0) {
+    g_ptr_array_unref(arr);
+    return NULL;
+  }
+
+  return arr;
+}
+
+static void
+follow_list_fetch_async_internal(const gchar *pubkey_hex,
+                                 const char * const *preferred_relays,
+                                 GCancellable *cancellable,
+                                 GnostrFollowListCallback callback,
+                                 gpointer user_data)
 {
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = NULL;
@@ -407,6 +428,21 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
   }
   if (!pubkey_hex || strlen(pubkey_hex) != 64) {
     if (callback) callback(NULL, user_data);
+    return;
+  }
+
+  GPtrArray *preferred = relay_strv_to_ptr_array(preferred_relays);
+  if (preferred) {
+    FollowListFetchCtx *ctx = g_new0(FollowListFetchCtx, 1);
+    ctx->pubkey_hex = g_strdup(pubkey_hex);
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    g_debug("[FOLLOW_LIST] Refreshing %.8s directly from %u live relay(s)",
+            pubkey_hex, preferred->len);
+    query_relays_for_follow_list_cb(ctx, preferred, on_configured_relay_query_done);
+    g_ptr_array_unref(preferred);
     return;
   }
 
@@ -461,4 +497,22 @@ void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
     gnostr_nip65_fetch_relays_async(pubkey_hex, cancellable,
                                      on_nip65_relays_fetched, ctx);
   }
+}
+
+/* Public async fetch function */
+void gnostr_follow_list_fetch_async(const gchar *pubkey_hex,
+                                     GCancellable *cancellable,
+                                     GnostrFollowListCallback callback,
+                                     gpointer user_data)
+{
+  follow_list_fetch_async_internal(pubkey_hex, NULL, cancellable, callback, user_data);
+}
+
+void gnostr_follow_list_fetch_from_relays_async(const gchar *pubkey_hex,
+                                                 const char * const *relays,
+                                                 GCancellable *cancellable,
+                                                 GnostrFollowListCallback callback,
+                                                 gpointer user_data)
+{
+  follow_list_fetch_async_internal(pubkey_hex, relays, cancellable, callback, user_data);
 }

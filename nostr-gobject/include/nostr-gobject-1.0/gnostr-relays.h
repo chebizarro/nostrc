@@ -65,6 +65,11 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
                                       GCancellable *cancellable,
                                       GnostrNip65RelayCallback callback,
                                       gpointer user_data);
+void gnostr_nip65_fetch_relays_from_urls_async(const gchar *pubkey_hex,
+                                               const char * const *relays,
+                                               GCancellable *cancellable,
+                                               GnostrNip65RelayCallback callback,
+                                               gpointer user_data);
 
 /* Get write relays from a NIP-65 relay list (for reading user's posts).
  * Returns a new GPtrArray of gchar* URLs (caller frees). */
@@ -73,6 +78,11 @@ GPtrArray *gnostr_nip65_get_write_relays(GPtrArray *nip65_relays);
 /* Get read relays from a NIP-65 relay list (for publishing to user).
  * Returns a new GPtrArray of gchar* URLs (caller frees). */
 GPtrArray *gnostr_nip65_get_read_relays(GPtrArray *nip65_relays);
+
+/* Build the relay set used for kind-0 profile fetching.
+ * Combines optional NIP-65 read relays, configured read relays, and known
+ * profile indexers. Returns a new GPtrArray of gchar* URLs (caller frees). */
+GPtrArray *gnostr_get_profile_fetch_relay_urls(GPtrArray *nip65_relays);
 
 /* --- NIP-17 DM Relay List (kind 10050) --- */
 

@@ -15,24 +15,85 @@
 #include "nostr-kinds.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+#define PUBLISH_ACK_TIMEOUT_SECONDS 15
+
 typedef struct _PublishContext PublishContext;
 typedef struct _LikeContext LikeContext;
+typedef struct _PublishRelayAttempt PublishRelayAttempt;
 
 struct _PublishContext {
   GnostrMainWindow *self;
   char *text;
   GWeakRef composer_ref;
+  NostrEvent *event;
+  char *signed_event_json;
+  char *event_id;
+  GPtrArray *attempts; /* PublishRelayAttempt* */
+  GString *failure_reasons;
+  guint success_count;
+  guint fail_count;
+  guint limit_skip_count;
+  char *limit_warnings;
+  gboolean local_ingested;
+  gboolean finalized;
 };
+
+struct _PublishRelayAttempt {
+  PublishContext *ctx;
+  GNostrRelay *relay;
+  char *url;
+  gulong ok_handler_id;
+  gulong state_handler_id;
+  gulong error_handler_id;
+  guint ack_timeout_id;
+  gboolean publish_requested;
+  gboolean settled;
+};
+
+static void publish_relay_attempt_free(PublishRelayAttempt *attempt);
+static void publish_finish_if_settled(PublishContext *ctx);
+static void publish_relay_attempt_dispatch(PublishRelayAttempt *attempt);
+static gboolean publish_relay_attempt_ack_timeout(gpointer user_data);
+static void on_publish_relay_connected(GObject *source, GAsyncResult *res, gpointer user_data);
+static void on_publish_relay_ok(GNostrRelay *relay, const char *event_id, gboolean accepted, const char *message, gpointer user_data);
+static void on_publish_relay_state_changed(GNostrRelay *relay, GNostrRelayState old_state, GNostrRelayState new_state, gpointer user_data);
+static void on_publish_relay_error(GNostrRelay *relay, GError *error, gpointer user_data);
 
 static void publish_context_free(PublishContext *ctx) {
   if (!ctx) return;
   g_clear_object(&ctx->self);
   g_free(ctx->text);
   g_weak_ref_clear(&ctx->composer_ref);
+  if (ctx->event) nostr_event_free(ctx->event);
+  g_free(ctx->signed_event_json);
+  g_clear_pointer(&ctx->event_id, free);
+  if (ctx->attempts) g_ptr_array_free(ctx->attempts, TRUE);
+  if (ctx->failure_reasons) g_string_free(ctx->failure_reasons, TRUE);
+  g_free(ctx->limit_warnings);
   g_free(ctx);
+}
+
+static void
+publish_relay_attempt_free(PublishRelayAttempt *attempt)
+{
+  if (!attempt) return;
+  if (attempt->ack_timeout_id)
+    g_source_remove(attempt->ack_timeout_id);
+  if (attempt->relay) {
+    if (attempt->ok_handler_id)
+      g_signal_handler_disconnect(attempt->relay, attempt->ok_handler_id);
+    if (attempt->state_handler_id)
+      g_signal_handler_disconnect(attempt->relay, attempt->state_handler_id);
+    if (attempt->error_handler_id)
+      g_signal_handler_disconnect(attempt->relay, attempt->error_handler_id);
+    g_object_unref(attempt->relay);
+  }
+  g_free(attempt->url);
+  g_free(attempt);
 }
 
 typedef struct {
@@ -56,7 +117,6 @@ static void relay_publish_result_free(RelayPublishResult *r) {
 
 static void relay_publish_thread(GTask *task, gpointer source_object,
                                  gpointer task_data, GCancellable *cancellable);
-static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
 
 struct _LikeContext {
@@ -172,6 +232,261 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
   g_task_return_pointer(task, r, NULL); /* caller frees */
 }
 
+static void
+publish_relay_attempt_mark_result(PublishRelayAttempt *attempt,
+                                  gboolean             accepted,
+                                  const char          *reason)
+{
+  PublishContext *ctx;
+
+  g_return_if_fail(attempt != NULL);
+  g_return_if_fail(attempt->ctx != NULL);
+
+  if (attempt->settled)
+    return;
+
+  ctx = attempt->ctx;
+  attempt->settled = TRUE;
+
+  if (attempt->ack_timeout_id) {
+    g_source_remove(attempt->ack_timeout_id);
+    attempt->ack_timeout_id = 0;
+  }
+
+  if (accepted) {
+    ctx->success_count++;
+    g_debug("[PUBLISH] Relay accepted event: %s", attempt->url ? attempt->url : "(unknown)");
+    if (!ctx->local_ingested && ctx->signed_event_json && *ctx->signed_event_json) {
+      GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+      g_ptr_array_add(b, g_strdup(ctx->signed_event_json));
+      storage_ndb_ingest_events_async(b);
+      ctx->local_ingested = TRUE;
+      g_debug("[PUBLISH] Ingested authored event locally after first accepted relay OK");
+    }
+  } else {
+    ctx->fail_count++;
+    if (!ctx->failure_reasons)
+      ctx->failure_reasons = g_string_new(NULL);
+    if (ctx->failure_reasons->len > 0)
+      g_string_append(ctx->failure_reasons, "\n");
+    g_string_append_printf(ctx->failure_reasons,
+                           "%s: %s",
+                           attempt->url ? attempt->url : "(unknown relay)",
+                           reason && *reason ? reason : "publish not acknowledged");
+    g_warning("[PUBLISH] Relay rejected/failed event: %s (%s)",
+              attempt->url ? attempt->url : "(unknown relay)",
+              reason && *reason ? reason : "publish not acknowledged");
+  }
+
+  publish_finish_if_settled(ctx);
+}
+
+static void
+publish_relay_attempt_dispatch(PublishRelayAttempt *attempt)
+{
+  g_autoptr(GError) pub_err = NULL;
+
+  g_return_if_fail(attempt != NULL);
+  g_return_if_fail(attempt->ctx != NULL);
+  g_return_if_fail(attempt->relay != NULL);
+
+  if (attempt->settled || attempt->publish_requested)
+    return;
+
+  if (!attempt->ctx->event) {
+    publish_relay_attempt_mark_result(attempt, FALSE, "missing event");
+    return;
+  }
+
+  if (!gnostr_relay_publish(attempt->relay, attempt->ctx->event, &pub_err)) {
+    publish_relay_attempt_mark_result(attempt, FALSE,
+                                      pub_err && pub_err->message ? pub_err->message : "publish enqueue failed");
+    return;
+  }
+
+  attempt->publish_requested = TRUE;
+  attempt->ack_timeout_id = g_timeout_add_seconds(PUBLISH_ACK_TIMEOUT_SECONDS,
+                                                  publish_relay_attempt_ack_timeout,
+                                                  attempt);
+  g_debug("[PUBLISH] Event sent to relay %s, waiting for OK",
+          attempt->url ? attempt->url : "(unknown)");
+}
+
+static gboolean
+publish_relay_attempt_ack_timeout(gpointer user_data)
+{
+  PublishRelayAttempt *attempt = user_data;
+
+  g_return_val_if_fail(attempt != NULL, G_SOURCE_REMOVE);
+
+  attempt->ack_timeout_id = 0;
+
+  if (!attempt->settled && attempt->publish_requested) {
+    publish_relay_attempt_mark_result(attempt, FALSE, "timeout waiting for relay OK");
+  }
+
+  return G_SOURCE_REMOVE;
+}
+
+static void
+publish_finish_if_settled(PublishContext *ctx)
+{
+  guint unsettled = 0;
+
+  g_return_if_fail(ctx != NULL);
+
+  if (ctx->finalized)
+    return;
+
+  if (ctx->attempts) {
+    for (guint i = 0; i < ctx->attempts->len; i++) {
+      PublishRelayAttempt *attempt = g_ptr_array_index(ctx->attempts, i);
+      if (attempt && !attempt->settled)
+        unsettled++;
+    }
+  }
+
+  if (unsettled > 0)
+    return;
+
+  ctx->finalized = TRUE;
+
+  if (!ctx->self || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
+    publish_context_free(ctx);
+    return;
+  }
+
+  if (ctx->success_count > 0) {
+    g_autofree char *msg = NULL;
+    if (ctx->fail_count > 0 && ctx->limit_skip_count > 0) {
+      msg = g_strdup_printf("Published to %u relay%s, %u rejected/failed, %u skipped due to limits",
+                            ctx->success_count, ctx->success_count == 1 ? "" : "s",
+                            ctx->fail_count, ctx->limit_skip_count);
+    } else if (ctx->fail_count > 0) {
+      msg = g_strdup_printf("Published to %u relay%s, %u rejected/failed",
+                            ctx->success_count, ctx->success_count == 1 ? "" : "s",
+                            ctx->fail_count);
+    } else if (ctx->limit_skip_count > 0) {
+      msg = g_strdup_printf("Published to %u relay%s (%u skipped due to limits)",
+                            ctx->success_count, ctx->success_count == 1 ? "" : "s",
+                            ctx->limit_skip_count);
+    } else {
+      msg = g_strdup_printf("Published to %u relay%s",
+                            ctx->success_count, ctx->success_count == 1 ? "" : "s");
+    }
+    gnostr_main_window_show_toast_internal(ctx->self, msg);
+
+    g_autoptr(GObject) composer_obj = g_weak_ref_get(&ctx->composer_ref);
+    if (composer_obj && NOSTR_GTK_IS_COMPOSER(composer_obj)) {
+      NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(composer_obj);
+      GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(composer));
+      AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(composer), "compose-dialog"));
+      if (root != NULL && dialog && ADW_IS_DIALOG(dialog)) {
+        adw_dialog_force_close(dialog);
+        nostr_gtk_composer_clear(composer);
+      }
+    }
+
+    if (ctx->self->session_view && GNOSTR_IS_SESSION_VIEW(ctx->self->session_view))
+      gnostr_session_view_show_page(ctx->self->session_view, "timeline");
+  } else if (ctx->limit_skip_count > 0 && ctx->limit_warnings && *ctx->limit_warnings) {
+    g_autofree char *msg = g_strdup_printf("Event exceeds relay limits:\n%s", ctx->limit_warnings);
+    gnostr_main_window_show_toast_internal(ctx->self, msg);
+  } else {
+    gnostr_main_window_show_toast_internal(ctx->self, "Failed to publish to any relay");
+  }
+
+  if (ctx->limit_warnings && *ctx->limit_warnings)
+    g_warning("[PUBLISH] Relay limit violations:\n%s", ctx->limit_warnings);
+  if (ctx->failure_reasons && ctx->failure_reasons->len > 0)
+    g_warning("[PUBLISH] Relay publish failures:\n%s", ctx->failure_reasons->str);
+
+  publish_context_free(ctx);
+}
+
+static void
+on_publish_relay_ok(GNostrRelay *relay G_GNUC_UNUSED,
+                    const char  *event_id,
+                    gboolean     accepted,
+                    const char  *message,
+                    gpointer     user_data)
+{
+  PublishRelayAttempt *attempt = user_data;
+
+  g_return_if_fail(attempt != NULL);
+  g_return_if_fail(attempt->ctx != NULL);
+
+  if (attempt->settled || !attempt->ctx->event_id)
+    return;
+
+  if (g_strcmp0(event_id, attempt->ctx->event_id) != 0)
+    return;
+
+  publish_relay_attempt_mark_result(attempt, accepted, message);
+}
+
+static void
+on_publish_relay_state_changed(GNostrRelay     *relay G_GNUC_UNUSED,
+                               GNostrRelayState old_state G_GNUC_UNUSED,
+                               GNostrRelayState new_state,
+                               gpointer         user_data)
+{
+  PublishRelayAttempt *attempt = user_data;
+
+  g_return_if_fail(attempt != NULL);
+
+  if (attempt->settled)
+    return;
+
+  if (new_state == GNOSTR_RELAY_STATE_CONNECTED) {
+    publish_relay_attempt_dispatch(attempt);
+    return;
+  }
+
+  if (attempt->publish_requested &&
+      (new_state == GNOSTR_RELAY_STATE_DISCONNECTED || new_state == GNOSTR_RELAY_STATE_ERROR)) {
+    publish_relay_attempt_mark_result(attempt, FALSE, "relay disconnected before OK");
+  }
+}
+
+static void
+on_publish_relay_error(GNostrRelay *relay G_GNUC_UNUSED,
+                       GError      *error,
+                       gpointer     user_data)
+{
+  PublishRelayAttempt *attempt = user_data;
+
+  g_return_if_fail(attempt != NULL);
+
+  if (attempt->settled)
+    return;
+
+  if (attempt->publish_requested) {
+    publish_relay_attempt_mark_result(attempt, FALSE,
+                                      error && error->message ? error->message : "relay error");
+  }
+}
+
+static void
+on_publish_relay_connected(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  PublishRelayAttempt *attempt = user_data;
+  g_autoptr(GError) error = NULL;
+
+  g_return_if_fail(attempt != NULL);
+
+  if (attempt->settled)
+    return;
+
+  if (!gnostr_relay_connect_finish(GNOSTR_RELAY(source), res, &error)) {
+    publish_relay_attempt_mark_result(attempt, FALSE,
+                                      error && error->message ? error->message : "connect failed");
+    return;
+  }
+
+  publish_relay_attempt_dispatch(attempt);
+}
+
 /* Callback when unified signer service completes signing */
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   PublishContext *ctx = (PublishContext*)user_data;
@@ -208,73 +523,114 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  /* Dispatch connect+publish to worker thread to avoid blocking the
-   * main loop with synchronous relay connections (DNS + TLS handshake
-   * under g_lws_mutex starves the LWS service thread). */
-  RelayPublishResult *r = g_new0(RelayPublishResult, 1);
-  r->event = event;           /* transfer ownership */
-  r->relay_urls = gnostr_get_write_relay_urls();
-  r->signed_event_json = signed_event_json; /* transfer ownership */
+  ctx->event = event;
+  ctx->event_id = nostr_event_get_id(event);
+  ctx->attempts = g_ptr_array_new_with_free_func((GDestroyNotify)publish_relay_attempt_free);
 
-  GTask *task = g_task_new(NULL, NULL, on_publish_relay_loop_done, ctx);
-  g_task_set_task_data(task, r, NULL);
-  g_task_run_in_thread(task, relay_publish_thread);
-  g_object_unref(task);
-}
-
-/* Main-thread callback after publish worker completes */
-static void on_publish_relay_loop_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  (void)source;
-  PublishContext *ctx = (PublishContext*)user_data;
-  RelayPublishResult *r = g_task_propagate_pointer(G_TASK(res), NULL);
-  if (!r) { publish_context_free(ctx); return; }
-
-  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
-    relay_publish_result_free(r);
+  if (!ctx->event_id || !*ctx->event_id) {
+    gnostr_main_window_show_toast_internal(self, "Failed to determine signed event ID");
+    g_free(signed_event_json);
     publish_context_free(ctx);
     return;
   }
-  GnostrMainWindow *self = ctx->self;
 
-  if (r->success_count > 0) {
-    g_autofree char *msg = NULL;
-    if (r->limit_skip_count > 0) {
-      msg = g_strdup_printf("Published to %u relay%s (%u skipped due to limits)",
-                            r->success_count, r->success_count == 1 ? "" : "s", r->limit_skip_count);
-    } else {
-      msg = g_strdup_printf("Published to %u relay%s", r->success_count, r->success_count == 1 ? "" : "s");
-    }
-    gnostr_main_window_show_toast_internal(self, msg);
+  g_autoptr(GPtrArray) relay_urls = gnostr_get_write_relay_urls();
+  if (!relay_urls || relay_urls->len == 0) {
+    gnostr_main_window_show_toast_internal(self, "No write relays configured");
+    g_free(signed_event_json);
+    publish_context_free(ctx);
+    return;
+  }
 
-    g_autoptr(GObject) composer_obj = g_weak_ref_get(&ctx->composer_ref);
-    if (composer_obj && NOSTR_GTK_IS_COMPOSER(composer_obj)) {
-      NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(composer_obj);
-      GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(composer));
-      AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(composer), "compose-dialog"));
-      if (root != NULL && dialog && ADW_IS_DIALOG(dialog)) {
-        adw_dialog_force_close(dialog);
-        nostr_gtk_composer_clear(composer);
+  const char *content = nostr_event_get_content(event);
+  gint content_len = content ? (gint)strlen(content) : 0;
+  NostrTags *tags = nostr_event_get_tags(event);
+  gint tag_count = tags ? (gint)nostr_tags_size(tags) : 0;
+  gint64 created_at = nostr_event_get_created_at(event);
+  gssize serialized_len = (gssize)strlen(signed_event_json);
+  GString *warnings = g_string_new(NULL);
+
+  for (guint i = 0; i < relay_urls->len; i++) {
+    const char *url = g_ptr_array_index(relay_urls, i);
+    gboolean allowed = TRUE;
+
+    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
+    if (relay_info) {
+      GnostrRelayValidationResult *validation =
+        gnostr_relay_info_validate_event(relay_info, content, content_len, tag_count, created_at, serialized_len);
+      if (!gnostr_relay_validation_result_is_valid(validation)) {
+        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
+        if (errors) {
+          if (warnings->len > 0) g_string_append(warnings, "\n");
+          g_string_append(warnings, errors);
+          g_free(errors);
+        }
+        ctx->limit_skip_count++;
+        allowed = FALSE;
       }
+      gnostr_relay_validation_result_free(validation);
+
+      if (allowed) {
+        GnostrRelayValidationResult *pub_validation =
+          gnostr_relay_info_validate_for_publishing(relay_info);
+        if (!gnostr_relay_validation_result_is_valid(pub_validation)) {
+          gchar *errors = gnostr_relay_validation_result_format_errors(pub_validation);
+          if (errors) {
+            if (warnings->len > 0) g_string_append(warnings, "\n");
+            g_string_append(warnings, errors);
+            g_free(errors);
+          }
+          ctx->limit_skip_count++;
+          allowed = FALSE;
+        }
+        gnostr_relay_validation_result_free(pub_validation);
+      }
+      gnostr_relay_info_free(relay_info);
     }
 
-    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-      gnostr_session_view_show_page(self->session_view, "timeline");
+    if (!allowed)
+      continue;
+
+    PublishRelayAttempt *attempt = g_new0(PublishRelayAttempt, 1);
+    attempt->ctx = ctx;
+    attempt->relay = gnostr_relay_new(url);
+    attempt->url = g_strdup(url);
+    if (!attempt->relay) {
+      g_free(attempt->url);
+      g_free(attempt);
+      ctx->fail_count++;
+      continue;
     }
-  } else {
-    if (r->limit_skip_count > 0 && r->limit_warnings && *r->limit_warnings) {
-      g_autofree char *msg = g_strdup_printf("Event exceeds relay limits:\n%s", r->limit_warnings);
-      gnostr_main_window_show_toast_internal(self, msg);
-    } else {
-      gnostr_main_window_show_toast_internal(self, "Failed to publish to any relay");
-    }
+
+    attempt->ok_handler_id = g_signal_connect(attempt->relay, "ok",
+                                              G_CALLBACK(on_publish_relay_ok), attempt);
+    attempt->state_handler_id = g_signal_connect(attempt->relay, "state-changed",
+                                                 G_CALLBACK(on_publish_relay_state_changed), attempt);
+    attempt->error_handler_id = g_signal_connect(attempt->relay, "error",
+                                                 G_CALLBACK(on_publish_relay_error), attempt);
+    g_ptr_array_add(ctx->attempts, attempt);
   }
 
-  if (r->limit_warnings && *r->limit_warnings) {
-    g_warning("[PUBLISH] Relay limit violations:\n%s", r->limit_warnings);
+  ctx->limit_warnings = g_string_free(warnings, FALSE);
+  ctx->signed_event_json = signed_event_json;
+
+  if (ctx->attempts->len == 0) {
+    publish_finish_if_settled(ctx);
+    return;
   }
 
-  relay_publish_result_free(r);
-  publish_context_free(ctx);
+  g_autofree char *progress_msg = g_strdup_printf("Publishing to %u relay%s...",
+                                                  ctx->attempts->len,
+                                                  ctx->attempts->len == 1 ? "" : "s");
+  gnostr_main_window_show_toast_internal(self, progress_msg);
+
+  for (guint i = 0; i < ctx->attempts->len; i++) {
+    PublishRelayAttempt *attempt = g_ptr_array_index(ctx->attempts, i);
+    if (gnostr_relay_get_connected(attempt->relay))
+      publish_relay_attempt_dispatch(attempt);
+    else
+      gnostr_relay_connect_async(attempt->relay, NULL, on_publish_relay_connected, attempt);
+  }
 }
 
 /* Public wrapper for requesting a repost (kind 6) - must be after PublishContext is defined */
@@ -1139,4 +1495,3 @@ void gnostr_main_window_handle_composer_post_requested(NostrGtkComposer *compose
 
   g_free(event_json);
 }
-

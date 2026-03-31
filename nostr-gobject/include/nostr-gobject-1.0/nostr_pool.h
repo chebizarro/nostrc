@@ -150,6 +150,29 @@ void gnostr_pool_query_async(GNostrPool      *self,
                              gpointer          user_data);
 
 /**
+ * gnostr_pool_query_urls_async:
+ * @self: a #GNostrPool
+ * @urls: (array length=url_count): relay URLs to query
+ * @url_count: number of URLs
+ * @filters: (transfer full): filters for the query (task takes ownership)
+ * @cancellable: (nullable): optional #GCancellable
+ * @callback: (scope async): callback when query completes
+ * @user_data: (closure): user data for @callback
+ *
+ * Asynchronously queries the provided relay URLs without first mutating the
+ * pool's visible relay store on the caller thread. Relay objects are resolved
+ * on the worker thread against the shared relay registry, preserving connection
+ * reuse without blocking GTK on search setup.
+ */
+void gnostr_pool_query_urls_async(GNostrPool      *self,
+                                  const gchar    **urls,
+                                  gsize            url_count,
+                                  NostrFilters     *filters,
+                                  GCancellable     *cancellable,
+                                  GAsyncReadyCallback callback,
+                                  gpointer          user_data);
+
+/**
  * gnostr_pool_query_finish:
  * @self: a #GNostrPool
  * @result: a #GAsyncResult

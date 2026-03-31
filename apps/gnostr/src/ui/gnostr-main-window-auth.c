@@ -8,8 +8,10 @@
 #include "gnostr-notifications-view.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../notifications/badge_manager.h"
+#include "../notifications/desktop_notify.h"
 #include "../util/blossom_settings.h"
 #include "../util/nip51_settings.h"
+#include "../util/profile_event_validation.h"
 #include "../sync/gnostr-sync-bridge.h"
 
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
@@ -43,6 +45,83 @@ client_settings_get_current_npub_local(void)
   }
 
   return npub;
+}
+
+static const char *
+desktop_notify_actor_name_local(const char *sender_name,
+                                const char *sender_pubkey,
+                                char        fallback_buf[32])
+{
+  if (sender_name && *sender_name)
+    return sender_name;
+
+  if (sender_pubkey && strlen(sender_pubkey) >= 8) {
+    g_snprintf(fallback_buf, 32, "%.8s...", sender_pubkey);
+    return fallback_buf;
+  }
+
+  return "Someone";
+}
+
+static void
+dispatch_desktop_notification_local(GnostrMainWindow         *self,
+                                    GnostrNotificationType    type,
+                                    const char               *sender_pubkey,
+                                    const char               *sender_name,
+                                    const char               *content,
+                                    const char               *event_id,
+                                    const char               *target_note_id,
+                                    guint64                   amount_sats)
+{
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+
+  GnostrDesktopNotify *desktop = gnostr_desktop_notify_get_default();
+  if (!desktop || !gnostr_desktop_notify_is_available())
+    return;
+
+  GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(self)));
+  if (app)
+    gnostr_desktop_notify_set_app(desktop, G_APPLICATION(app));
+
+  gnostr_desktop_notify_request_permission(desktop);
+
+  char fallback_name[32] = {0};
+  const char *actor_name = desktop_notify_actor_name_local(sender_name, sender_pubkey, fallback_name);
+
+  switch (type) {
+    case GNOSTR_NOTIFICATION_DM:
+      gnostr_desktop_notify_send_dm(desktop, actor_name, sender_pubkey, content, event_id, target_note_id);
+      break;
+    case GNOSTR_NOTIFICATION_MENTION:
+      gnostr_desktop_notify_send_mention(desktop, actor_name, sender_pubkey, content, event_id, target_note_id);
+      break;
+    case GNOSTR_NOTIFICATION_REPLY:
+      gnostr_desktop_notify_send_reply(desktop, actor_name, sender_pubkey, content, event_id, target_note_id);
+      break;
+    case GNOSTR_NOTIFICATION_ZAP:
+      gnostr_desktop_notify_send_zap(desktop, actor_name, sender_pubkey, amount_sats, content, event_id, target_note_id);
+      break;
+    case GNOSTR_NOTIFICATION_REPOST:
+      gnostr_desktop_notify_send_repost(desktop, actor_name, sender_pubkey, event_id, target_note_id);
+      break;
+    case GNOSTR_NOTIFICATION_REACTION: {
+      g_autofree gchar *title = g_strdup_printf("%s reacted to your note", actor_name);
+      gnostr_desktop_notify_send(desktop, type, title, NULL, event_id, target_note_id);
+      break;
+    }
+    case GNOSTR_NOTIFICATION_LIST: {
+      g_autofree gchar *title = g_strdup_printf("%s added you to a list", actor_name);
+      gnostr_desktop_notify_send(desktop, type, title, NULL, event_id, target_note_id);
+      break;
+    }
+    case GNOSTR_NOTIFICATION_FOLLOWER: {
+      g_autofree gchar *title = g_strdup_printf("%s followed you", actor_name);
+      gnostr_desktop_notify_send(desktop, type, title, NULL, event_id, target_note_id);
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 void
@@ -209,12 +288,19 @@ gnostr_main_window_on_notification_event_internal(GnostrBadgeManager *manager,
                                                   const char *sender_name,
                                                   const char *content,
                                                   const char *event_id,
+                                                  const char *target_note_id,
                                                   guint64 amount_sats,
                                                   gpointer user_data)
 {
   (void)manager;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->session_view)
+  if (!GNOSTR_IS_MAIN_WINDOW(self))
+    return;
+
+  dispatch_desktop_notification_local(self, type, sender_pubkey, sender_name,
+                                      content, event_id, target_note_id, amount_sats);
+
+  if (!self->session_view)
     return;
 
   GtkWidget *notif_widget = gnostr_session_view_get_notifications_view(self->session_view);
@@ -229,7 +315,7 @@ gnostr_main_window_on_notification_event_internal(GnostrBadgeManager *manager,
   notif->actor_pubkey = sender_pubkey ? g_strdup(sender_pubkey) : NULL;
   notif->actor_name = sender_name ? g_strdup(sender_name) : NULL;
   notif->content_preview = content ? g_strdup(content) : NULL;
-  notif->target_note_id = event_id ? g_strdup(event_id) : NULL;
+  notif->target_note_id = target_note_id ? g_strdup(target_note_id) : NULL;
   notif->created_at = g_get_real_time() / G_USEC_PER_SEC;
   notif->is_read = FALSE;
   notif->zap_amount_msats = amount_sats * 1000;
@@ -261,34 +347,38 @@ on_user_profile_fetched_local(GObject *source, GAsyncResult *res, gpointer user_
   if (jsons && jsons->len > 0) {
     const char *evt_json = g_ptr_array_index(jsons, 0);
     if (evt_json) {
-      g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
-      if (evt) {
-        const char *content = gnostr_event_get_content(evt);
-        if (content && *content) {
-          GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
-          g_ptr_array_add(b, g_strdup(evt_json));
-          storage_ndb_ingest_events_async(b);
+      g_autofree gchar *pk_hex = NULL;
+      g_autofree gchar *content_json = NULL;
+      g_autofree gchar *reason = NULL;
+      gint64 created_at = 0;
+      if (!gnostr_profile_event_extract_for_apply(evt_json, &pk_hex, &content_json, &created_at, &reason)) {
+        g_warning("[AUTH] Rejecting invalid local profile event: %s", reason ? reason : "unknown");
+      } else {
+        GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+        g_ptr_array_add(b, g_strdup(evt_json));
+        storage_ndb_ingest_events_async(b);
 
-          if (self->user_pubkey_hex) {
-            gnostr_profile_provider_update(self->user_pubkey_hex, content);
-            GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
-            if (meta) {
-              const char *final_name = (meta->display_name && *meta->display_name)
-                                       ? meta->display_name : meta->name;
-              if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-                gnostr_session_view_set_user_profile(self->session_view,
-                                                     self->user_pubkey_hex,
-                                                     final_name,
-                                                     meta->picture);
-              }
-              gnostr_profile_meta_free(meta);
+        if (self->user_pubkey_hex && g_strcmp0(self->user_pubkey_hex, pk_hex) == 0 && content_json && *content_json) {
+          gnostr_profile_provider_update_if_newer(self->user_pubkey_hex, content_json, created_at);
+          GnostrProfileMeta *meta = gnostr_profile_provider_get(self->user_pubkey_hex);
+          if (meta) {
+            const char *final_name = (meta->display_name && *meta->display_name)
+                                     ? meta->display_name : meta->name;
+            if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+              gnostr_session_view_set_user_profile(self->session_view,
+                                                   self->user_pubkey_hex,
+                                                   final_name,
+                                                   meta->picture);
             }
+            gnostr_profile_meta_free(meta);
           }
         }
       }
     }
-    g_ptr_array_unref(jsons);
   }
+
+  if (jsons)
+    g_ptr_array_unref(jsons);
 
   g_object_unref(self);
 }
@@ -318,33 +408,7 @@ gnostr_main_window_on_nip65_loaded_for_profile_internal(GPtrArray *nip65_relays,
     return;
   }
 
-  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
-
-  if (nip65_relays && nip65_relays->len > 0) {
-    GPtrArray *read_relays = gnostr_nip65_get_read_relays(nip65_relays);
-    if (read_relays) {
-      for (guint i = 0; i < read_relays->len; i++)
-        g_ptr_array_add(relay_urls, g_strdup(g_ptr_array_index(read_relays, i)));
-      g_ptr_array_unref(read_relays);
-    }
-  }
-
-  gnostr_get_read_relay_urls_into(relay_urls);
-
-  static const char *profile_relays[] = {
-    "wss://purplepag.es", "wss://relay.nostr.band", "wss://relay.damus.io", NULL
-  };
-  for (int i = 0; profile_relays[i]; i++) {
-    gboolean found = FALSE;
-    for (guint j = 0; j < relay_urls->len; j++) {
-      if (g_strcmp0(g_ptr_array_index(relay_urls, j), profile_relays[i]) == 0) {
-        found = TRUE;
-        break;
-      }
-    }
-    if (!found)
-      g_ptr_array_add(relay_urls, g_strdup(profile_relays[i]));
-  }
+  GPtrArray *relay_urls = gnostr_get_profile_fetch_relay_urls(nip65_relays);
 
   if (relay_urls->len > 0) {
     const gchar **urls = g_new0(const gchar *, relay_urls->len);
@@ -367,7 +431,7 @@ gnostr_main_window_on_nip65_loaded_for_profile_internal(GPtrArray *nip65_relays,
     g_debug("[AUTH] Fetching profile from %u relays (after NIP-65 load)", relay_urls->len);
     gnostr_pool_query_async(profile_pool, filters, NULL,
                             on_user_profile_fetched_local,
-                            self);
+                            g_object_ref(self));
 
     g_free(urls);
   } else {
@@ -490,6 +554,21 @@ on_login_signed_in_local(GnostrLogin *login, const char *npub, gpointer user_dat
   }
 
   if (self->user_pubkey_hex) {
+    if (self->dm_service) {
+      gnostr_dm_service_set_user_pubkey(self->dm_service, self->user_pubkey_hex);
+      gnostr_dm_service_start_with_dm_relays(self->dm_service);
+      g_debug("[DM_SERVICE] Started live DM subscriptions for user %.16s...", self->user_pubkey_hex);
+    }
+
+    {
+      GnostrDesktopNotify *desktop = gnostr_desktop_notify_get_default();
+      GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(self)));
+      if (desktop && app)
+        gnostr_desktop_notify_set_app(desktop, G_APPLICATION(app));
+      if (desktop)
+        gnostr_desktop_notify_request_permission(desktop);
+    }
+
     GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
     gnostr_badge_manager_set_user_pubkey(badge_mgr, self->user_pubkey_hex);
     gnostr_badge_manager_set_event_callback(badge_mgr,
@@ -606,6 +685,9 @@ gnostr_main_window_on_avatar_logout_clicked_internal(GtkButton *btn, gpointer us
 
   gnostr_main_window_stop_gift_wrap_subscription_internal(self);
 
+  if (self->dm_service)
+    gnostr_dm_service_stop(self->dm_service);
+
   GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
   gnostr_badge_manager_stop_subscriptions(badge_mgr);
   gnostr_badge_manager_set_event_callback(badge_mgr, NULL, NULL, NULL);
@@ -613,6 +695,8 @@ gnostr_main_window_on_avatar_logout_clicked_internal(GtkButton *btn, gpointer us
   g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (settings)
     g_settings_set_string(settings, "current-npub", "");
+
+  gnostr_sync_bridge_set_user_pubkey(NULL);
 
   g_free(self->user_pubkey_hex);
   self->user_pubkey_hex = NULL;
@@ -683,6 +767,8 @@ gnostr_main_window_on_account_switch_requested_internal(GnostrSessionView *view,
   g_debug("[AUTH] Account switch requested to: %s", npub);
 
   gnostr_main_window_stop_gift_wrap_subscription_internal(self);
+  if (self->dm_service)
+    gnostr_dm_service_stop(self->dm_service);
   GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
   gnostr_badge_manager_stop_subscriptions(badge_mgr);
   gnostr_badge_manager_set_event_callback(badge_mgr, NULL, NULL, NULL);
@@ -700,6 +786,8 @@ gnostr_main_window_on_account_switch_requested_internal(GnostrSessionView *view,
   g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
   if (settings)
     g_settings_set_string(settings, "current-npub", npub);
+
+  gnostr_sync_bridge_set_user_pubkey(NULL);
 
   gnostr_main_window_update_login_ui_state_internal(self);
   open_login_dialog_local(self);
@@ -749,8 +837,16 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
   if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
     gnostr_session_view_set_authenticated(self->session_view, signed_in);
 
-  if (!(signed_in && self->user_pubkey_hex))
+  if (!(signed_in && self->user_pubkey_hex)) {
+    gnostr_sync_bridge_set_user_pubkey(NULL);
     return;
+  }
+
+  if (self->dm_service) {
+    gnostr_dm_service_set_user_pubkey(self->dm_service, self->user_pubkey_hex);
+    gnostr_dm_service_start_with_dm_relays(self->dm_service);
+    g_debug("[DM_SERVICE] Restored live DM subscriptions for user %.16s...", self->user_pubkey_hex);
+  }
 
   if (self->profile_watch_id)
     gnostr_profile_provider_unwatch(self->profile_watch_id);
@@ -779,6 +875,13 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
 
   {
     GnostrBadgeManager *badge_mgr = gnostr_badge_manager_get_default();
+    GnostrDesktopNotify *desktop = gnostr_desktop_notify_get_default();
+    GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(self)));
+    if (desktop && app)
+      gnostr_desktop_notify_set_app(desktop, G_APPLICATION(app));
+    if (desktop)
+      gnostr_desktop_notify_request_permission(desktop);
+
     gnostr_badge_manager_set_user_pubkey(badge_mgr, self->user_pubkey_hex);
     gnostr_badge_manager_set_event_callback(badge_mgr,
                                             gnostr_main_window_on_notification_event_internal,

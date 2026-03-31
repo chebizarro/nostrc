@@ -87,6 +87,21 @@ int gnostr_profile_provider_get_batch(
  */
 int gnostr_profile_provider_update(const char *pubkey_hex, const char *profile_json);
 
+/* Update a profile only if the incoming event is not older than the cached one.
+ * This is the conflict-resolution entry point for kind-0 metadata events.
+ *
+ * Parameters:
+ *   pubkey_hex: 64-char hex pubkey
+ *   profile_json: kind:0 profile JSON content
+ *   created_at: event timestamp for newest-valid-wins comparison
+ *
+ * Returns: TRUE if the profile was applied, FALSE if it was rejected as stale
+ *          or could not be parsed.
+ */
+gboolean gnostr_profile_provider_update_if_newer(const char *pubkey_hex,
+                                                 const char *profile_json,
+                                                 gint64      created_at);
+
 /* Free a profile metadata struct */
 void gnostr_profile_meta_free(GnostrProfileMeta *meta);
 

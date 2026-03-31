@@ -13,6 +13,7 @@
  */
 
 #include "gnostr-sync-bridge.h"
+#include "gnostr-sync-bridge-mute.h"
 #include <nostr-gobject-1.0/gnostr-sync-service.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "../util/follow_list.h"
@@ -97,14 +98,10 @@ on_kind10000_changed(const gchar *topic, gpointer event_data, gpointer user_data
 
   g_debug("[SYNC-BRIDGE] Mute list (kind:10000) sync detected changes");
 
-  /* Reload mute list from NDB cache. The singleton mute list
-   * service will pick up any new events ingested by the sync. */
-  GNostrMuteList *mute = gnostr_mute_list_get_default();
-  if (mute) {
-    /* Trigger async fetch which reloads from relays/cache.
-     * Pass NULL relays to force NDB-only reload. */
-    g_debug("[SYNC-BRIDGE] Triggered mute list reload");
-  }
+  if (gnostr_sync_bridge_reload_mute_list(bridge_user_pubkey))
+    g_debug("[SYNC-BRIDGE] Triggered mute list reload for %.8s...", bridge_user_pubkey);
+  else
+    g_debug("[SYNC-BRIDGE] Mute list reload skipped (no user or mute service)");
 }
 
 static void
@@ -202,6 +199,12 @@ gnostr_sync_bridge_set_user_pubkey(const char *pubkey_hex)
   g_debug("[SYNC-BRIDGE] User pubkey updated: %.*s...",
           bridge_user_pubkey ? 8 : 0,
           bridge_user_pubkey ? bridge_user_pubkey : "");
+}
+
+const char *
+gnostr_sync_bridge_get_user_pubkey(void)
+{
+  return bridge_user_pubkey;
 }
 
 void

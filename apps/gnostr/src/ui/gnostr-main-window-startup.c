@@ -5,6 +5,7 @@
 #include "gnostr-session-view.h"
 #include "gnostr-timeline-view.h"
 #include "gnostr-avatar-cache.h"
+#include "gnostr-startup-live-eose.h"
 
 #include "../model/gn-nostr-event-model.h"
 #include "../util/blossom_settings.h"
@@ -65,11 +66,11 @@ maybe_start_startup_gift_wrap(GnostrMainWindow *self)
     return;
   if (self->startup_gift_wrap_started)
     return;
-  if (!self->startup_live_eose_seen)
+  if (!self->startup_live_all_eose_seen)
     return;
 
   self->startup_gift_wrap_started = TRUE;
-  g_debug("[STARTUP] stage3: starting gift-wrap after live EOSE");
+  g_debug("[STARTUP] stage3: starting gift-wrap after all initial live relay EOSEs");
   gnostr_main_window_start_gift_wrap_subscription_internal(self);
 }
 
@@ -100,15 +101,31 @@ gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data)
 }
 
 void
-gnostr_main_window_note_startup_live_eose_internal(GnostrMainWindow *self)
+gnostr_main_window_note_startup_live_eose_internal(GnostrMainWindow *self,
+                                                   const gchar      *relay_url)
 {
-  if (!GNOSTR_IS_MAIN_WINDOW(self))
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || relay_url == NULL || *relay_url == '\0')
     return;
 
-  if (!self->startup_live_eose_seen) {
-    self->startup_live_eose_seen = TRUE;
+  if (!self->startup_live_eose_relays) {
+    self->startup_live_eose_relays = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  }
+
+  guint flags = gnostr_main_window_track_startup_live_eose_internal(self->startup_live_eose_relays,
+                                                                    self->startup_live_expected_relays,
+                                                                    relay_url);
+  if ((flags & GNOSTR_STARTUP_LIVE_EOSE_FLAG_FIRST) != 0u && !self->startup_live_first_eose_seen) {
+    self->startup_live_first_eose_seen = TRUE;
     gnostr_avatar_cache_set_startup_mode(FALSE);
-    g_debug("[STARTUP] first live relay EOSE observed");
+    g_debug("[STARTUP] first live relay EOSE observed: %s", relay_url);
+  }
+
+  if ((flags & GNOSTR_STARTUP_LIVE_EOSE_FLAG_ALL) != 0u && !self->startup_live_all_eose_seen) {
+    self->startup_live_all_eose_seen = TRUE;
+    guint seen_count = g_hash_table_size(self->startup_live_eose_relays);
+    g_debug("[STARTUP] all initial live relay EOSEs observed (%u/%u)",
+            seen_count,
+            self->startup_live_expected_relays);
   }
 
   maybe_start_startup_gift_wrap(self);
@@ -124,7 +141,7 @@ gnostr_main_window_run_startup_stage2_internal(gpointer data)
   g_debug("[STARTUP] stage2: starting profile subscription only");
   gnostr_main_window_start_profile_subscription_internal(self);
   maybe_start_startup_gift_wrap(self);
-  g_debug("[STARTUP] stage2: profile subscription started; waiting for live EOSE for gift-wrap");
+  g_debug("[STARTUP] stage2: profile subscription started; waiting for all initial live relay EOSEs for gift-wrap");
 }
 
 void

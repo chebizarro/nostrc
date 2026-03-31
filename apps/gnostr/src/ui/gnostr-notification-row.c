@@ -29,6 +29,7 @@ struct _GnostrNotificationRow {
     char *target_note_id;
     char *avatar_url;
     GnostrNotificationType type;
+    gint64 created_at;
     gboolean is_read;
 };
 
@@ -184,6 +185,7 @@ gnostr_notification_row_init(GnostrNotificationRow *self)
     self->actor_pubkey = NULL;
     self->target_note_id = NULL;
     self->avatar_url = NULL;
+    self->created_at = 0;
     self->is_read = FALSE;
 
     /* Connect signals */
@@ -310,6 +312,7 @@ gnostr_notification_row_set_notification(GnostrNotificationRow *self,
     self->avatar_url = g_strdup(notif->actor_avatar_url);
 
     self->type = notif->type;
+    self->created_at = notif->created_at;
     self->is_read = notif->is_read;
 
     /* Set actor name */
@@ -396,6 +399,20 @@ gnostr_notification_row_get_actor_pubkey(GnostrNotificationRow *self)
 {
     g_return_val_if_fail(GNOSTR_IS_NOTIFICATION_ROW(self), NULL);
     return self->actor_pubkey;
+}
+
+GnostrNotificationType
+gnostr_notification_row_get_notification_type(GnostrNotificationRow *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_NOTIFICATION_ROW(self), GNOSTR_NOTIFICATION_DM);
+    return self->type;
+}
+
+gint64
+gnostr_notification_row_get_created_at(GnostrNotificationRow *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_NOTIFICATION_ROW(self), 0);
+    return self->created_at;
 }
 
 void

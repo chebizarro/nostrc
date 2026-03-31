@@ -330,6 +330,54 @@ GPtrArray *gnostr_nip65_get_read_relays(GPtrArray *nip65_relays) {
   return result;
 }
 
+GPtrArray *gnostr_get_profile_fetch_relay_urls(GPtrArray *nip65_relays) {
+  GPtrArray *result = g_ptr_array_new_with_free_func(g_free);
+
+  if (nip65_relays && nip65_relays->len > 0) {
+    GPtrArray *read_relays = gnostr_nip65_get_read_relays(nip65_relays);
+    if (read_relays) {
+      for (guint i = 0; i < read_relays->len; i++) {
+        const char *url = g_ptr_array_index(read_relays, i);
+        if (!url || !*url)
+          continue;
+
+        gboolean found = FALSE;
+        for (guint j = 0; j < result->len; j++) {
+          if (g_strcmp0(g_ptr_array_index(result, j), url) == 0) {
+            found = TRUE;
+            break;
+          }
+        }
+        if (!found)
+          g_ptr_array_add(result, g_strdup(url));
+      }
+      g_ptr_array_unref(read_relays);
+    }
+  }
+
+  gnostr_get_read_relay_urls_into(result);
+
+  static const char *profile_relays[] = {
+    "wss://purplepag.es",
+    "wss://relay.nostr.band",
+    "wss://relay.damus.io",
+    NULL
+  };
+  for (int i = 0; profile_relays[i]; i++) {
+    gboolean found = FALSE;
+    for (guint j = 0; j < result->len; j++) {
+      if (g_strcmp0(g_ptr_array_index(result, j), profile_relays[i]) == 0) {
+        found = TRUE;
+        break;
+      }
+    }
+    if (!found)
+      g_ptr_array_add(result, g_strdup(profile_relays[i]));
+  }
+
+  return result;
+}
+
 #ifndef GNOSTR_RELAY_TEST_ONLY
 /* Async NIP-65 fetch context - requires SimplePool */
 typedef struct {
@@ -389,10 +437,12 @@ static void on_nip65_query_done(GObject *source, GAsyncResult *res, gpointer use
   nip65_fetch_ctx_free(ctx);
 }
 
-void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
-                                      GCancellable *cancellable,
-                                      GnostrNip65RelayCallback callback,
-                                      gpointer user_data) {
+static void
+gnostr_nip65_fetch_relays_with_sources_async(const gchar *pubkey_hex,
+                                             const char * const *relays,
+                                             GCancellable *cancellable,
+                                             GnostrNip65RelayCallback callback,
+                                             gpointer user_data) {
   if (!pubkey_hex || !*pubkey_hex) {
     if (callback) callback(NULL, user_data);
     return;
@@ -413,26 +463,33 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
 
   /* Get configured relays */
   GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(relay_arr);
-
-  /* nostrc-profile-fix: Add profile-indexing relays for 10002 discovery.
-   * These relays index all profiles and relay lists, ensuring we can find
-   * a user's 10002 even if they use different relays than our defaults. */
-  static const char *profile_indexers[] = {
-    "wss://purplepag.es",
-    "wss://relay.nostr.band",
-    NULL
-  };
-  for (int i = 0; profile_indexers[i]; i++) {
-    gboolean already_present = FALSE;
-    for (guint j = 0; j < relay_arr->len; j++) {
-      if (g_strcmp0(g_ptr_array_index(relay_arr, j), profile_indexers[i]) == 0) {
-        already_present = TRUE;
-        break;
-      }
+  if (relays && relays[0]) {
+    for (const char * const *r = relays; *r; r++) {
+      if (*r && **r)
+        g_ptr_array_add(relay_arr, g_strdup(*r));
     }
-    if (!already_present) {
-      g_ptr_array_add(relay_arr, g_strdup(profile_indexers[i]));
+  } else {
+    gnostr_load_relays_into(relay_arr);
+
+    /* nostrc-profile-fix: Add profile-indexing relays for 10002 discovery.
+     * These relays index all profiles and relay lists, ensuring we can find
+     * a user's 10002 even if they use different relays than our defaults. */
+    static const char *profile_indexers[] = {
+      "wss://purplepag.es",
+      "wss://relay.nostr.band",
+      NULL
+    };
+    for (int i = 0; profile_indexers[i]; i++) {
+      gboolean already_present = FALSE;
+      for (guint j = 0; j < relay_arr->len; j++) {
+        if (g_strcmp0(g_ptr_array_index(relay_arr, j), profile_indexers[i]) == 0) {
+          already_present = TRUE;
+          break;
+        }
+      }
+      if (!already_present) {
+        g_ptr_array_add(relay_arr, g_strdup(profile_indexers[i]));
+      }
     }
   }
 
@@ -459,6 +516,21 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
   g_free(urls);
   g_ptr_array_unref(relay_arr);
   nostr_filter_free(filter);
+}
+
+void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
+                                      GCancellable *cancellable,
+                                      GnostrNip65RelayCallback callback,
+                                      gpointer user_data) {
+  gnostr_nip65_fetch_relays_with_sources_async(pubkey_hex, NULL, cancellable, callback, user_data);
+}
+
+void gnostr_nip65_fetch_relays_from_urls_async(const gchar *pubkey_hex,
+                                               const char * const *relays,
+                                               GCancellable *cancellable,
+                                               GnostrNip65RelayCallback callback,
+                                               gpointer user_data) {
+  gnostr_nip65_fetch_relays_with_sources_async(pubkey_hex, relays, cancellable, callback, user_data);
 }
 #endif /* GNOSTR_RELAY_TEST_ONLY */
 

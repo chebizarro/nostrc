@@ -498,6 +498,8 @@ typedef struct {
     GHashTable *seen_ids;       /* dedup set */
     /* nostrc-snap: Immutable relay list snapshot for worker thread */
     GPtrArray *relay_snapshots; /* RelaySnapshotEntry* (owned) */
+    gchar **query_urls;         /* owned, NULL-terminated for worker-built snapshots */
+    gsize n_query_urls;
     /* Event sink: snapshot of pool's sink callback for worker thread */
     GNostrPoolEventSinkFunc event_sink_func;
     gpointer event_sink_data;
@@ -512,8 +514,34 @@ query_async_data_free(QueryAsyncData *data)
     if (!data) return;
     g_clear_pointer(&data->seen_ids, g_hash_table_destroy);
     g_clear_pointer(&data->relay_snapshots, g_ptr_array_unref);
+    g_clear_pointer(&data->query_urls, g_strfreev);
     /* Don't free results - ownership transferred to GTask */
     g_free(data);
+}
+
+static GPtrArray *
+relay_snapshots_new_from_urls(const gchar **urls, gsize url_count)
+{
+    GPtrArray *snapshots = g_ptr_array_new_with_free_func(relay_snapshot_entry_free);
+
+    for (gsize i = 0; i < url_count; i++) {
+        const gchar *url = urls[i];
+        if (!url || *url == '\0')
+            continue;
+
+        GNostrRelay *grelay = gnostr_relay_new(url);
+        if (!grelay)
+            continue;
+
+        RelaySnapshotEntry *entry = g_new0(RelaySnapshotEntry, 1);
+        entry->url = g_strdup(url);
+        entry->core_relay = gnostr_relay_get_core_relay(grelay);
+        entry->grelay_ref = grelay; /* transfer owned ref */
+        entry->connected = gnostr_relay_get_connected(grelay);
+        g_ptr_array_add(snapshots, entry);
+    }
+
+    return snapshots;
 }
 
 /* nostrc-snap: Worker thread for async query.
@@ -532,6 +560,13 @@ query_thread_func(GTask         *task,
     NostrFilters *filters = g_object_get_data(G_OBJECT(task), "filters");
 
 #define POOL_QUERY_DEBUG(...) g_debug(__VA_ARGS__)
+
+    if (!data->relay_snapshots && data->query_urls) {
+        data->relay_snapshots = relay_snapshots_new_from_urls((const gchar **)data->query_urls,
+                                                              data->n_query_urls);
+        POOL_QUERY_DEBUG("[POOL_QUERY] built %u relay snapshots from URL list on worker",
+                         data->relay_snapshots ? data->relay_snapshots->len : 0);
+    }
 
     /* Check local cache first — avoid network round-trip if data exists */
     if (data->cache_query_func && filters) {
@@ -916,6 +951,43 @@ gnostr_pool_query_async(GNostrPool          *self,
      * on the same pool replaced "qf" and freed the old filters while the worker
      * thread was still using them → heap-use-after-free in nostr_subscription_fire.
      * Now the GTask itself owns the filters via destroy notify. */
+    g_object_set_data_full(G_OBJECT(task), "filters", filters,
+                           (GDestroyNotify)nostr_filters_free);
+
+    g_task_run_in_thread(task, query_thread_func);
+    g_object_unref(task);
+}
+
+void
+gnostr_pool_query_urls_async(GNostrPool          *self,
+                             const gchar        **urls,
+                             gsize                url_count,
+                             NostrFilters         *filters,
+                             GCancellable         *cancellable,
+                             GAsyncReadyCallback   callback,
+                             gpointer              user_data)
+{
+    g_return_if_fail(GNOSTR_IS_POOL(self));
+    g_return_if_fail(filters != NULL);
+
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    g_task_set_source_tag(task, gnostr_pool_query_urls_async);
+    g_task_set_check_cancellable(task, FALSE);
+
+    QueryAsyncData *data = g_new0(QueryAsyncData, 1);
+    data->pool = self;
+    data->results = g_ptr_array_new_with_free_func(g_free);
+    data->seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    data->query_urls = g_new0(gchar *, url_count + 1);
+    data->n_query_urls = url_count;
+    for (gsize i = 0; i < url_count; i++)
+        data->query_urls[i] = g_strdup(urls[i]);
+    data->event_sink_func = self->event_sink_func;
+    data->event_sink_data = self->event_sink_data;
+    data->cache_query_func = self->cache_query_func;
+    data->cache_query_data = self->cache_query_data;
+
+    g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
     g_object_set_data_full(G_OBJECT(task), "filters", filters,
                            (GDestroyNotify)nostr_filters_free);
 

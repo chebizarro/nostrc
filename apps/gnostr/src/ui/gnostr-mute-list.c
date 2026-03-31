@@ -6,6 +6,7 @@
  */
 
 #include "gnostr-mute-list.h"
+#include "gnostr-mute-row-data.h"
 #include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include "../ipc/signer_ipc.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
@@ -160,14 +161,14 @@ static void update_save_button(GNostrMuteListDialog *self) {
 
 typedef struct {
     GNostrMuteListDialog *dialog;
-    char *value;
-    int type; /* 0=user, 1=word, 2=hashtag */
+    char *canonical_value;
+    GnostrMuteRowType type;
 } RowData;
 
 static void row_data_free(gpointer data) {
     RowData *rd = (RowData *)data;
     if (rd) {
-        g_free(rd->value);
+        g_free(rd->canonical_value);
         g_free(rd);
     }
 }
@@ -179,14 +180,14 @@ static void on_remove_row_clicked(GtkButton *btn, gpointer user_data) {
     GNostrMuteList *mute_list = gnostr_mute_list_get_default();
 
     switch (rd->type) {
-        case 0: /* User */
-            gnostr_mute_list_remove_pubkey(mute_list, rd->value);
+        case GNOSTR_MUTE_ROW_USER:
+            gnostr_mute_list_remove_pubkey(mute_list, rd->canonical_value);
             break;
-        case 1: /* Word */
-            gnostr_mute_list_remove_word(mute_list, rd->value);
+        case GNOSTR_MUTE_ROW_WORD:
+            gnostr_mute_list_remove_word(mute_list, rd->canonical_value);
             break;
-        case 2: /* Hashtag */
-            gnostr_mute_list_remove_hashtag(mute_list, rd->value);
+        case GNOSTR_MUTE_ROW_HASHTAG:
+            gnostr_mute_list_remove_hashtag(mute_list, rd->canonical_value);
             break;
     }
 
@@ -196,8 +197,7 @@ static void on_remove_row_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static GtkWidget *create_list_row(GNostrMuteListDialog *self,
-                                   const char *value,
-                                   int type) {
+                                   const GnostrMuteRowBinding *binding) {
     GtkWidget *row = gtk_list_box_row_new();
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_margin_start(box, 8);
@@ -206,7 +206,7 @@ static GtkWidget *create_list_row(GNostrMuteListDialog *self,
     gtk_widget_set_margin_bottom(box, 8);
 
     /* Value label */
-    GtkWidget *label = gtk_label_new(value);
+    GtkWidget *label = gtk_label_new(binding ? binding->display_value : "");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0);
     gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
     gtk_widget_set_hexpand(label, TRUE);
@@ -221,8 +221,8 @@ static GtkWidget *create_list_row(GNostrMuteListDialog *self,
     /* Store data for callback */
     RowData *rd = g_new0(RowData, 1);
     rd->dialog = self;
-    rd->value = g_strdup(value);
-    rd->type = type;
+    rd->canonical_value = g_strdup(binding ? binding->canonical_value : "");
+    rd->type = binding ? binding->type : GNOSTR_MUTE_ROW_WORD;
 
     g_signal_connect_data(remove_btn, "clicked",
                           G_CALLBACK(on_remove_row_clicked),
@@ -251,23 +251,9 @@ static void refresh_users_list(GNostrMuteListDialog *self) {
     const char **pubkeys = gnostr_mute_list_get_pubkeys(mute_list, &count);
 
     for (size_t i = 0; i < count; i++) {
-        /* Try to convert to npub for display */
-        char *npub = NULL;
-        gboolean converted = FALSE;
-
-        if (pubkeys[i] && strlen(pubkeys[i]) == 64) {
-            g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(pubkeys[i], NULL);
-            if (n19) {
-                npub = g_strdup(gnostr_nip19_get_bech32(n19));
-                converted = TRUE;
-            }
-        }
-
-        const char *display = converted ? npub : pubkeys[i];
-        GtkWidget *row = create_list_row(self, display, 0);
+        g_autoptr(GnostrMuteRowBinding) binding = gnostr_mute_row_binding_new(pubkeys[i], GNOSTR_MUTE_ROW_USER);
+        GtkWidget *row = create_list_row(self, binding);
         gtk_list_box_append(GTK_LIST_BOX(self->list_users), row);
-
-        g_free(npub);
     }
 
     g_free((void *)pubkeys);
@@ -281,7 +267,8 @@ static void refresh_words_list(GNostrMuteListDialog *self) {
     const char **words = gnostr_mute_list_get_words(mute_list, &count);
 
     for (size_t i = 0; i < count; i++) {
-        GtkWidget *row = create_list_row(self, words[i], 1);
+        g_autoptr(GnostrMuteRowBinding) binding = gnostr_mute_row_binding_new(words[i], GNOSTR_MUTE_ROW_WORD);
+        GtkWidget *row = create_list_row(self, binding);
         gtk_list_box_append(GTK_LIST_BOX(self->list_words), row);
     }
 
@@ -296,9 +283,8 @@ static void refresh_hashtags_list(GNostrMuteListDialog *self) {
     const char **hashtags = gnostr_mute_list_get_hashtags(mute_list, &count);
 
     for (size_t i = 0; i < count; i++) {
-        /* Display with # prefix */
-        g_autofree char *display = g_strdup_printf("#%s", hashtags[i]);
-        GtkWidget *row = create_list_row(self, display, 2);
+        g_autoptr(GnostrMuteRowBinding) binding = gnostr_mute_row_binding_new(hashtags[i], GNOSTR_MUTE_ROW_HASHTAG);
+        GtkWidget *row = create_list_row(self, binding);
         gtk_list_box_append(GTK_LIST_BOX(self->list_hashtags), row);
     }
 

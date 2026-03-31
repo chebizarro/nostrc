@@ -112,6 +112,12 @@ void gnostr_notifications_view_set_empty(GnostrNotificationsView *self, gboolean
 void gnostr_notifications_view_set_loading(GnostrNotificationsView *self, gboolean is_loading);
 
 /**
+ * Recompute visible read/unread state from badge-manager last-read timestamps
+ * and synchronize exact per-type unread counts back into the badge manager.
+ */
+void gnostr_notifications_view_sync_badge_state(GnostrNotificationsView *self);
+
+/**
  * Set the last checked timestamp (for determining new notifications)
  */
 void gnostr_notifications_view_set_last_checked(GnostrNotificationsView *self, gint64 timestamp);

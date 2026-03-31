@@ -108,6 +108,7 @@ gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
                                                  GCallback discover_search_hashtag_cb,
                                                  GCallback search_open_note_cb,
                                                  GCallback search_open_profile_cb,
+                                                 GCallback search_hashtag_cb,
                                                  GCallback notification_open_note_cb,
                                                  GCallback notification_open_profile_cb,
                                                  GCallback classifieds_open_profile_cb,
@@ -130,6 +131,7 @@ gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
   if (search_view && GNOSTR_IS_SEARCH_RESULTS_VIEW(search_view)) {
     g_signal_connect(search_view, "open-note", search_open_note_cb, self);
     g_signal_connect(search_view, "open-profile", search_open_profile_cb, self);
+    g_signal_connect(search_view, "search-hashtag", search_hashtag_cb, self);
   }
 
   GtkWidget *notif_view = self->session_view ? gnostr_session_view_get_notifications_view(self->session_view) : NULL;

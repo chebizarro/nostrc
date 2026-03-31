@@ -13,6 +13,7 @@
 #include <nostr-gobject-1.0/nostr_json.h>
 #include <json.h>
 #include <nostr-gobject-1.0/nostr_relay.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include "nostr-event.h"
 #include "../util/utils.h"
 
@@ -271,12 +272,14 @@ typedef struct {
   GnostrReportDialog *self;  /* weak ref */
   gchar *event_id_hex;       /* owned */
   gchar *report_type;        /* owned */
+  gchar *signed_event_json;  /* owned */
 } ReportContext;
 
 static void report_context_free(ReportContext *ctx) {
   if (!ctx) return;
   g_clear_pointer(&ctx->event_id_hex, g_free);
   g_clear_pointer(&ctx->report_type, g_free);
+  g_clear_pointer(&ctx->signed_event_json, g_free);
   g_free(ctx);
 }
 
@@ -340,7 +343,7 @@ static void on_sign_report_complete(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  g_free(signed_event_json);
+  ctx->signed_event_json = signed_event_json;
 
   /* hq-gflmf: Move connect+publish loop to background thread */
   gnostr_publish_to_relays_async(event, write_relays,
@@ -363,6 +366,12 @@ static void report_publish_done(guint success_count, guint fail_count, gpointer 
     }
 
     if (success_count > 0) {
+      if (ctx->signed_event_json && *ctx->signed_event_json) {
+        GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+        g_ptr_array_add(b, g_strdup(ctx->signed_event_json));
+        storage_ndb_ingest_events_async(b);
+        g_debug("[NIP-56] Ingested authored report locally after successful publish");
+      }
       g_signal_emit(self, signals[SIGNAL_REPORT_SENT], 0, ctx->event_id_hex, ctx->report_type);
       /* hq-6zc5r: Close immediately on confirmed relay acceptance */
       gtk_window_close(GTK_WINDOW(self));

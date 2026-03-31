@@ -179,6 +179,20 @@ void gnostr_badge_manager_clear(GnostrBadgeManager *self,
 void gnostr_badge_manager_clear_all(GnostrBadgeManager *self);
 
 /**
+ * gnostr_badge_manager_set_count:
+ * @self: The badge manager
+ * @type: Notification type
+ * @count: Exact unread count for this type
+ *
+ * Overrides the unread count for a notification type. This is used when a UI
+ * surface has recomputed exact unread state from notification rows after a
+ * read-state transition.
+ */
+void gnostr_badge_manager_set_count(GnostrBadgeManager *self,
+                                     GnostrNotificationType type,
+                                     guint count);
+
+/**
  * gnostr_badge_manager_get_count:
  * @self: The badge manager
  * @type: Notification type
@@ -245,12 +259,13 @@ void gnostr_badge_manager_set_changed_callback(GnostrBadgeManager *self,
  * @sender_pubkey: Sender's public key (hex, 64 chars)
  * @sender_name: Sender's display name (may be NULL)
  * @content: Event content/preview (may be NULL)
- * @event_id: Event ID (hex, 64 chars)
+ * @event_id: Notification event ID (hex, 64 chars)
+ * @target_note_id: Navigation target note ID, when distinct from @event_id (may be NULL)
  * @amount_sats: For zaps, the amount in satoshis (0 for other types)
  * @user_data: User data
  *
  * Callback invoked when a new notification event is detected.
- * This is used by the desktop notification system to send popups.
+ * This is used by the desktop notification system and in-app notification view.
  */
 typedef void (*GnostrNotificationEventCallback)(GnostrBadgeManager *manager,
                                                   GnostrNotificationType type,
@@ -258,6 +273,7 @@ typedef void (*GnostrNotificationEventCallback)(GnostrBadgeManager *manager,
                                                   const char *sender_name,
                                                   const char *content,
                                                   const char *event_id,
+                                                  const char *target_note_id,
                                                   guint64 amount_sats,
                                                   gpointer user_data);
 

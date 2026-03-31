@@ -2,8 +2,9 @@
 
 #include "gnostr-main-window-private.h"
 
-#include <nostr-gobject-1.0/nostr_event.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
+
+#include "../util/profile_event_validation.h"
 
 static void
 profile_apply_item_free_local(gpointer p)
@@ -46,20 +47,20 @@ prepopulate_profiles_thread(GTask *task,
             if (!evt_json)
                 continue;
 
-            g_autoptr(GNostrEvent) evt = gnostr_event_new_from_json(evt_json, NULL);
-            if (!evt)
+            g_autofree gchar *pk_hex = NULL;
+            g_autofree gchar *content_json = NULL;
+            g_autofree gchar *reason = NULL;
+            gint64 created_at = 0;
+            if (!gnostr_profile_event_extract_for_apply(evt_json, &pk_hex, &content_json, &created_at, &reason)) {
+                g_debug("prepopulate_profiles_thread: skipping invalid cached profile event: %s",
+                        reason ? reason : "unknown");
                 continue;
-            if (gnostr_event_get_kind(evt) != 0)
-                continue;
-
-            const char *pk_hex = gnostr_event_get_pubkey(evt);
-            const char *content = gnostr_event_get_content(evt);
-            if (!pk_hex || !content)
-                continue;
+            }
 
             ProfileApplyCtx *pctx = g_new0(ProfileApplyCtx, 1);
             pctx->pubkey_hex = g_strdup(pk_hex);
-            pctx->content_json = g_strdup(content);
+            pctx->content_json = g_strdup(content_json);
+            pctx->created_at = created_at;
             g_ptr_array_add(items, pctx);
         }
 

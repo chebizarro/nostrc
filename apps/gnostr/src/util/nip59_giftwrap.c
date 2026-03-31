@@ -1,12 +1,11 @@
 /**
  * gnostr NIP-59 Gift Wrap Implementation
  *
- * Provides async gift wrap creation and unwrapping using the D-Bus signer
- * interface for NIP-44 encryption operations.
+ * Provides async gift wrap creation and unwrapping using the unified signer
+ * service for NIP-44 encryption operations.
  */
 
 #include "nip59_giftwrap.h"
-#include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -254,25 +253,14 @@ static void on_seal_signed(GObject *source, GAsyncResult *res, gpointer user_dat
     ctx->signed_seal_json = signed_seal;
     g_debug("[NIP59] Seal signed, encrypting for gift wrap");
 
-    /* Get signer proxy for NIP-44 encryption with ephemeral key */
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
-    if (!proxy) {
-        g_warning("[NIP59] Failed to get signer proxy: %s", error ? error->message : "unknown");
-        finish_gift_wrap_with_error(ctx, "Signer not available");
-        g_clear_error(&error);
-        return;
-    }
-
     /* Encrypt seal JSON using sender's key (will be decrypted by recipient) */
     /* Note: For a true ephemeral key implementation, we would need the signer
      * to support generating and using ephemeral keys. For now, we use the
      * sender's key and rely on the randomized timestamp for metadata protection. */
-    nostr_org_nostr_signer_call_nip44_encrypt(
-        proxy,
-        ctx->signed_seal_json,
+    gnostr_nip44_encrypt_async(
         ctx->recipient_pubkey_hex,
-        ctx->sender_pubkey_hex,
-        NULL, /* GCancellable */
+        ctx->signed_seal_json,
+        ctx->cancellable,
         on_gift_wrap_seal_encrypted,
         ctx);
 }
@@ -282,11 +270,10 @@ static void on_gift_wrap_seal_encrypted(GObject *source, GAsyncResult *res, gpoi
     GiftWrapCreateCtx *ctx = (GiftWrapCreateCtx *)user_data;
     GError *error = NULL;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    (void)source;
 
     char *encrypted_seal = NULL;
-    gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
-        proxy, &encrypted_seal, res, &error);
+    gboolean ok = gnostr_nip44_encrypt_finish(res, &encrypted_seal, &error);
 
     if (!ok || !encrypted_seal) {
         g_warning("[NIP59] Failed to encrypt seal: %s", error ? error->message : "unknown");
@@ -374,11 +361,10 @@ static void on_rumor_encrypted(GObject *source, GAsyncResult *res, gpointer user
     GiftWrapCreateCtx *ctx = (GiftWrapCreateCtx *)user_data;
     GError *error = NULL;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    (void)source;
 
     char *encrypted_rumor = NULL;
-    gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
-        proxy, &encrypted_rumor, res, &error);
+    gboolean ok = gnostr_nip44_encrypt_finish(res, &encrypted_rumor, &error);
 
     if (!ok || !encrypted_rumor) {
         g_warning("[NIP59] Failed to encrypt rumor: %s", error ? error->message : "unknown");
@@ -453,21 +439,6 @@ void gnostr_nip59_create_gift_wrap_async(NostrEvent *rumor,
         return;
     }
 
-    /* Get signer proxy */
-    GError *error = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
-    if (!proxy) {
-        g_warning("[NIP59] Failed to get signer proxy: %s", error ? error->message : "unknown");
-        GnostrGiftWrapResult *result = g_new0(GnostrGiftWrapResult, 1);
-        result->success = FALSE;
-        result->error_message = g_strdup("Signer not available");
-        if (callback) callback(result, user_data);
-        else gnostr_gift_wrap_result_free(result);
-        g_free(rumor_json);
-        g_clear_error(&error);
-        return;
-    }
-
     /* Create context for async operation */
     GiftWrapCreateCtx *ctx = g_new0(GiftWrapCreateCtx, 1);
     ctx->recipient_pubkey_hex = g_strdup(recipient_pubkey_hex);
@@ -480,12 +451,10 @@ void gnostr_nip59_create_gift_wrap_async(NostrEvent *rumor,
     g_debug("[NIP59] Starting gift wrap creation for recipient %.8s", recipient_pubkey_hex);
 
     /* Step 1: Encrypt rumor JSON using NIP-44 */
-    nostr_org_nostr_signer_call_nip44_encrypt(
-        proxy,
-        ctx->rumor_json,
+    gnostr_nip44_encrypt_async(
         ctx->recipient_pubkey_hex,
-        ctx->sender_pubkey_hex,
-        NULL, /* GCancellable */
+        ctx->rumor_json,
+        ctx->cancellable,
         on_rumor_encrypted,
         ctx);
 }
@@ -539,11 +508,10 @@ static void on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user
     UnwrapCtx *ctx = (UnwrapCtx *)user_data;
     GError *error = NULL;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    (void)source;
 
     char *rumor_json = NULL;
-    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
-        proxy, &rumor_json, res, &error);
+    gboolean ok = gnostr_nip44_decrypt_finish(res, &rumor_json, &error);
 
     if (!ok || !rumor_json) {
         g_warning("[NIP59] Failed to decrypt rumor: %s", error ? error->message : "unknown");
@@ -599,11 +567,10 @@ static void on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_
     UnwrapCtx *ctx = (UnwrapCtx *)user_data;
     GError *error = NULL;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    (void)source;
 
     char *seal_json = NULL;
-    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
-        proxy, &seal_json, res, &error);
+    gboolean ok = gnostr_nip44_decrypt_finish(res, &seal_json, &error);
 
     if (!ok || !seal_json) {
         g_warning("[NIP59] Failed to decrypt seal: %s", error ? error->message : "unknown");
@@ -655,12 +622,10 @@ static void on_seal_decrypted(GObject *source, GAsyncResult *res, gpointer user_
     g_debug("[NIP59] Seal validated, decrypting rumor from sender %.8s", ctx->seal_pubkey);
 
     /* Decrypt rumor using seal sender's pubkey */
-    nostr_org_nostr_signer_call_nip44_decrypt(
-        proxy,
-        ctx->encrypted_rumor,
+    gnostr_nip44_decrypt_async(
         ctx->seal_pubkey,
-        ctx->user_pubkey_hex,
-        NULL, /* GCancellable */
+        ctx->encrypted_rumor,
+        ctx->cancellable,
         on_rumor_decrypted,
         ctx);
 }
@@ -701,20 +666,6 @@ void gnostr_nip59_unwrap_async(NostrEvent *gift_wrap,
         return;
     }
 
-    /* Get signer proxy */
-    GError *error = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
-    if (!proxy) {
-        g_warning("[NIP59] Failed to get signer proxy: %s", error ? error->message : "unknown");
-        GnostrUnwrapResult *result = g_new0(GnostrUnwrapResult, 1);
-        result->success = FALSE;
-        result->error_message = g_strdup("Signer not available");
-        if (callback) callback(result, user_data);
-        else gnostr_unwrap_result_free(result);
-        g_clear_error(&error);
-        return;
-    }
-
     /* Create context */
     UnwrapCtx *ctx = g_new0(UnwrapCtx, 1);
     ctx->user_pubkey_hex = g_strdup(user_pubkey_hex);
@@ -730,12 +681,10 @@ void gnostr_nip59_unwrap_async(NostrEvent *gift_wrap,
     g_free(gift_wrap_id);
 
     /* Step 1: Decrypt gift wrap content to get seal */
-    nostr_org_nostr_signer_call_nip44_decrypt(
-        proxy,
-        ctx->encrypted_seal,
+    gnostr_nip44_decrypt_async(
         ctx->ephemeral_pubkey,
-        ctx->user_pubkey_hex,
-        NULL, /* GCancellable */
+        ctx->encrypted_seal,
+        ctx->cancellable,
         on_seal_decrypted,
         ctx);
 }

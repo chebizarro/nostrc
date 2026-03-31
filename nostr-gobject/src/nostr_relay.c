@@ -223,6 +223,13 @@ typedef struct {
     gchar *challenge;
 } AuthChallengeData;
 
+typedef struct {
+    RelayCallbackData *cb_data;
+    gchar *event_id;
+    gboolean accepted;
+    gchar *message;
+} OkResponseData;
+
 static gboolean
 auth_challenge_on_main_thread(gpointer user_data)
 {
@@ -250,6 +257,24 @@ auth_challenge_on_main_thread(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
+static gboolean
+ok_response_on_main_thread(gpointer user_data)
+{
+    OkResponseData *data = user_data;
+    GNostrRelay *self = g_weak_ref_get(&data->cb_data->weak_relay);
+    if (self) {
+        g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_OK], 0,
+                      data->event_id, data->accepted, data->message);
+        g_object_unref(self);
+    }
+
+    relay_callback_data_unref(data->cb_data);
+    g_free(data->event_id);
+    g_free(data->message);
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
+
 /* Core relay auth callback (called from worker thread) */
 static void
 on_core_auth_challenge(NostrRelay *relay G_GNUC_UNUSED,
@@ -267,6 +292,25 @@ on_core_auth_challenge(NostrRelay *relay G_GNUC_UNUSED,
     data->challenge = g_strdup(challenge);
 
     g_idle_add_full(G_PRIORITY_DEFAULT, auth_challenge_on_main_thread, data, NULL);
+}
+
+/* Core relay OK callback (called from worker thread) */
+static void
+on_core_ok_response(const char *event_id, bool ok, const char *reason, void *user_data)
+{
+    RelayCallbackData *cb_data = user_data;
+    GNostrRelay *self = g_weak_ref_get(&cb_data->weak_relay);
+    if (!self)
+        return;
+    g_object_unref(self);
+
+    OkResponseData *data = g_new0(OkResponseData, 1);
+    data->cb_data = relay_callback_data_ref(cb_data);
+    data->event_id = g_strdup(event_id);
+    data->accepted = ok ? TRUE : FALSE;
+    data->message = g_strdup(reason);
+
+    g_idle_add_full(G_PRIORITY_DEFAULT, ok_response_on_main_thread, data, NULL);
 }
 
 static void
@@ -342,6 +386,9 @@ gnostr_relay_constructed(GObject *object)
 
             /* Set up auth callback for NIP-42 challenges (nostrc-7og) */
             nostr_relay_set_auth_callback(self->relay, on_core_auth_challenge, self->cb_data);
+
+            /* Bridge OK publish responses onto the GObject signal surface */
+            nostr_relay_set_ok_callback(self->relay, on_core_ok_response, self->cb_data);
         }
     }
 }
@@ -402,6 +449,7 @@ gnostr_relay_finalize(GObject *object)
     if (self->relay) {
         nostr_relay_set_state_callback(self->relay, NULL, NULL);
         nostr_relay_set_auth_callback(self->relay, NULL, NULL);
+        nostr_relay_set_ok_callback(self->relay, NULL, NULL);
 
         /* nostrc-ws3: Dispatch nostr_relay_free to a background thread.
          * relay_free_impl blocks in go_wait_group_wait() waiting for worker

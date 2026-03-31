@@ -129,6 +129,74 @@ static void test_dm_relays_fallback(void) {
   g_free(cfg);
 }
 
+static void test_profile_fetch_relays_include_indexers(void) {
+  gchar *cfg = make_temp_config_path();
+  g_setenv("GNOSTR_CONFIG_PATH", cfg, TRUE);
+
+  GPtrArray *gen_arr = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_add(gen_arr, g_strdup("wss://general.relay.com"));
+  gnostr_save_relays_from(gen_arr);
+  g_ptr_array_free(gen_arr, TRUE);
+
+  GPtrArray *result = gnostr_get_profile_fetch_relay_urls(NULL);
+  g_assert_nonnull(result);
+
+  gboolean found_general = FALSE;
+  gboolean found_purplepages = FALSE;
+  gboolean found_band = FALSE;
+  for (guint i = 0; i < result->len; i++) {
+    const char *url = g_ptr_array_index(result, i);
+    if (g_strcmp0(url, "wss://general.relay.com") == 0)
+      found_general = TRUE;
+    if (g_strcmp0(url, "wss://purplepag.es") == 0)
+      found_purplepages = TRUE;
+    if (g_strcmp0(url, "wss://relay.nostr.band") == 0)
+      found_band = TRUE;
+  }
+  g_assert_true(found_general);
+  g_assert_true(found_purplepages);
+  g_assert_true(found_band);
+  g_ptr_array_unref(result);
+
+  g_unlink(cfg);
+  gchar *parent = g_path_get_dirname(cfg);
+  g_rmdir(parent);
+  g_free(parent);
+  g_free(cfg);
+}
+
+static void test_profile_fetch_relays_prefer_nip65_reads(void) {
+  GPtrArray *nip65_relays = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip65_relay_free);
+
+  GnostrNip65Relay *read_relay = g_new0(GnostrNip65Relay, 1);
+  read_relay->url = g_strdup("wss://profile.read.example");
+  read_relay->type = GNOSTR_RELAY_READ;
+  g_ptr_array_add(nip65_relays, read_relay);
+
+  GnostrNip65Relay *write_relay = g_new0(GnostrNip65Relay, 1);
+  write_relay->url = g_strdup("wss://profile.write.example");
+  write_relay->type = GNOSTR_RELAY_WRITE;
+  g_ptr_array_add(nip65_relays, write_relay);
+
+  GPtrArray *result = gnostr_get_profile_fetch_relay_urls(nip65_relays);
+  g_assert_nonnull(result);
+
+  gboolean found_read = FALSE;
+  gboolean found_write = FALSE;
+  for (guint i = 0; i < result->len; i++) {
+    const char *url = g_ptr_array_index(result, i);
+    if (g_strcmp0(url, "wss://profile.read.example") == 0)
+      found_read = TRUE;
+    if (g_strcmp0(url, "wss://profile.write.example") == 0)
+      found_write = TRUE;
+  }
+  g_assert_true(found_read);
+  g_assert_false(found_write);
+
+  g_ptr_array_unref(result);
+  g_ptr_array_unref(nip65_relays);
+}
+
 /* Test NIP-17 DM relay event parsing (kind 10050) */
 static void test_nip17_parse_dm_relays(void) {
   /* Sample kind 10050 event JSON */
@@ -177,6 +245,8 @@ int main(int argc, char **argv) {
   g_test_add_func("/relays/save_empty_list", test_save_empty_list);
   g_test_add_func("/relays/dm_relays_save_load", test_dm_relays_save_load);
   g_test_add_func("/relays/dm_relays_fallback", test_dm_relays_fallback);
+  g_test_add_func("/relays/profile_fetch_relays_include_indexers", test_profile_fetch_relays_include_indexers);
+  g_test_add_func("/relays/profile_fetch_relays_prefer_nip65_reads", test_profile_fetch_relays_prefer_nip65_reads);
   g_test_add_func("/relays/nip17_parse_dm_relays", test_nip17_parse_dm_relays);
   g_test_add_func("/relays/nip17_parse_wrong_kind", test_nip17_parse_wrong_kind);
   return g_test_run();

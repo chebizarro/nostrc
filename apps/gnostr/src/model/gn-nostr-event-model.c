@@ -8,6 +8,8 @@
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr.h>
 #include <string.h>
+#include <stdlib.h>
+#include "../util/mute_filter.h"
 
 /* Window sizing and cache sizes */
 #define MODEL_MAX_ITEMS 100
@@ -609,6 +611,23 @@ static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char
   if (self->until > 0 && created_at > 0 && created_at > self->until) return FALSE;
 
   return TRUE;
+}
+
+static gboolean
+note_is_muted_by_fields(storage_ndb_note *note,
+                        const char       *pubkey_hex)
+{
+  GNostrMuteList *mute_list = gnostr_mute_list_get_default();
+  if (!mute_list)
+    return FALSE;
+
+  const char *content = storage_ndb_note_content(note);
+  g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+
+  return gnostr_mute_filter_should_hide_fields(mute_list,
+                                               pubkey_hex,
+                                               content,
+                                               hashtags);
 }
 
 /* Find insertion position for sorted insert (newest first) — O(log N) binary search */
@@ -1489,8 +1508,7 @@ static void timeline_batch_thread_func(GTask        *task,
     storage_ndb_hex_encode(pk32, pubkey_hex);
 
     /* Mute check — gnostr_mute_list uses internal GMutex, thread-safe */
-    GNostrMuteList *mute_list = gnostr_mute_list_get_default();
-    if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex))
+    if (note_is_muted_by_fields(note, pubkey_hex))
       continue;
 
     /* Kind filter from snapshot */
@@ -2379,7 +2397,9 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
           continue;
         }
 
-        const char *event_id = nostr_event_get_id(evt);
+        char *event_id_tmp = nostr_event_get_id(evt);
+        g_autofree gchar *event_id = event_id_tmp ? g_strdup(event_id_tmp) : NULL;
+        free(event_id_tmp);
         const char *pubkey_hex = nostr_event_get_pubkey(evt);
         gint64 created_at = nostr_event_get_created_at(evt);
 
@@ -2604,7 +2624,9 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
       int kind = nostr_event_get_kind(evt);
       if (kind != 1 && kind != 6 && kind != 1111) { nostr_event_free(evt); continue; }
 
-      const char *eid = nostr_event_get_id(evt);
+      char *eid_tmp = nostr_event_get_id(evt);
+      g_autofree gchar *eid = eid_tmp ? g_strdup(eid_tmp) : NULL;
+      free(eid_tmp);
       const char *pk  = nostr_event_get_pubkey(evt);
       gint64 cat = nostr_event_get_created_at(evt);
       if (!eid || !pk) { nostr_event_free(evt); continue; }
@@ -2618,6 +2640,7 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
       uint64_t nk = storage_ndb_get_note_key_by_id(txn, id32, &note_ptr);
       if (nk == 0) { nostr_event_free(evt); continue; }
       if (note_ptr && storage_ndb_note_is_expired(note_ptr)) { nostr_event_free(evt); continue; }
+      if (note_ptr && note_is_muted_by_fields(note_ptr, pk)) { nostr_event_free(evt); continue; }
 
       /* nostrc-gate: Always include entry; profile check is advisory only */
       uint8_t pk32[32];
@@ -2673,11 +2696,6 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
   for (guint i = 0; i < entries->len; i++) {
     RefreshEntry *e = g_ptr_array_index(entries, i);
     if (!e) continue;
-
-    /* Mute list check (must be on main thread) */
-    GNostrMuteList *ml = gnostr_mute_list_get_default();
-    if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
-      continue;
 
     /* Request profile fetch via signal - no main-thread NDB queries during refresh */
     if (!e->has_profile) {
@@ -2868,10 +2886,6 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
 
       if (has_note_key(self, e->note_key)) continue;
 
-      GNostrMuteList *ml = gnostr_mute_list_get_default();
-      if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
-        continue;
-
       if (!e->has_profile) {
         g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
       }
@@ -2905,10 +2919,6 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
       if (!e) continue;
 
       if (has_note_key(self, e->note_key) || has_note_key_pending(self, e->note_key))
-        continue;
-
-      GNostrMuteList *ml = gnostr_mute_list_get_default();
-      if (ml && e->pubkey_hex && gnostr_mute_list_is_pubkey_muted(ml, e->pubkey_hex))
         continue;
 
       if (!e->has_profile) {
@@ -3195,7 +3205,9 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
     return;
   }
 
-  const char *event_id = nostr_event_get_id(evt);
+  char *event_id_tmp = nostr_event_get_id(evt);
+  g_autofree gchar *event_id = event_id_tmp ? g_strdup(event_id_tmp) : NULL;
+  free(event_id_tmp);
   const char *pubkey_hex = nostr_event_get_pubkey(evt);
   gint64 created_at = nostr_event_get_created_at(evt);
 
@@ -3369,7 +3381,9 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
           continue;
         }
 
-        const char *event_id = nostr_event_get_id(evt);
+        char *event_id_tmp = nostr_event_get_id(evt);
+        g_autofree gchar *event_id = event_id_tmp ? g_strdup(event_id_tmp) : NULL;
+        free(event_id_tmp);
         const char *pubkey_hex = nostr_event_get_pubkey(evt);
         gint64 created_at = nostr_event_get_created_at(evt);
 
@@ -3582,7 +3596,9 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
           continue;
         }
 
-        const char *event_id = nostr_event_get_id(evt);
+        char *event_id_tmp = nostr_event_get_id(evt);
+        g_autofree gchar *event_id = event_id_tmp ? g_strdup(event_id_tmp) : NULL;
+        free(event_id_tmp);
         const char *pubkey_hex = nostr_event_get_pubkey(evt);
         gint64 created_at = nostr_event_get_created_at(evt);
 

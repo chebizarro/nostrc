@@ -193,7 +193,8 @@ void gnostr_desktop_notify_send_dm(GnostrDesktopNotify *self,
                                     const char *sender_name,
                                     const char *sender_pubkey,
                                     const char *message_preview,
-                                    const char *event_id);
+                                    const char *event_id,
+                                    const char *target_note_id);
 
 /**
  * gnostr_desktop_notify_send_mention:
@@ -209,7 +210,8 @@ void gnostr_desktop_notify_send_mention(GnostrDesktopNotify *self,
                                          const char *sender_name,
                                          const char *sender_pubkey,
                                          const char *note_preview,
-                                         const char *event_id);
+                                         const char *event_id,
+                                         const char *target_note_id);
 
 /**
  * gnostr_desktop_notify_send_reply:
@@ -225,7 +227,8 @@ void gnostr_desktop_notify_send_reply(GnostrDesktopNotify *self,
                                        const char *sender_name,
                                        const char *sender_pubkey,
                                        const char *reply_preview,
-                                       const char *event_id);
+                                       const char *event_id,
+                                       const char *target_note_id);
 
 /**
  * gnostr_desktop_notify_send_zap:
@@ -243,7 +246,8 @@ void gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
                                      const char *sender_pubkey,
                                      guint64 amount_sats,
                                      const char *message,
-                                     const char *event_id);
+                                     const char *event_id,
+                                     const char *target_note_id);
 
 /**
  * gnostr_desktop_notify_send_repost:
@@ -257,7 +261,8 @@ void gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
 void gnostr_desktop_notify_send_repost(GnostrDesktopNotify *self,
                                         const char *reposter_name,
                                         const char *reposter_pubkey,
-                                        const char *event_id);
+                                        const char *event_id,
+                                        const char *target_note_id);
 
 /**
  * gnostr_desktop_notify_send:
@@ -274,7 +279,8 @@ void gnostr_desktop_notify_send(GnostrDesktopNotify *self,
                                  GnostrNotificationType type,
                                  const char *title,
                                  const char *body,
-                                 const char *event_id);
+                                 const char *event_id,
+                                 const char *target_note_id);
 
 /* ============== Notification Actions ============== */
 
@@ -282,7 +288,8 @@ void gnostr_desktop_notify_send(GnostrDesktopNotify *self,
  * GnostrNotifyActionCallback:
  * @self: The desktop notification manager
  * @action: Action identifier (e.g., "open", "mark-read", "reply")
- * @event_id: Event ID associated with the notification
+ * @event_id: Notification event ID associated with the notification
+ * @target_note_id: Navigation target note ID, when distinct from @event_id (may be NULL)
  * @user_data: User data
  *
  * Callback invoked when a notification action is triggered.
@@ -290,6 +297,7 @@ void gnostr_desktop_notify_send(GnostrDesktopNotify *self,
 typedef void (*GnostrNotifyActionCallback)(GnostrDesktopNotify *self,
                                             const char *action,
                                             const char *event_id,
+                                            const char *target_note_id,
                                             gpointer user_data);
 
 /**

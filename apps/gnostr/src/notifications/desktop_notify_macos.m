@@ -35,6 +35,7 @@
 
 /* User info keys */
 #define USERINFO_EVENT_ID   "event_id"
+#define USERINFO_TARGET_ID  "target_note_id"
 #define USERINFO_TYPE       "type"
 #define USERINFO_PUBKEY     "pubkey"
 
@@ -45,13 +46,15 @@
 /* Internal function to handle action callbacks - defined later in C implementation */
 void gnostr_desktop_notify_handle_action(GnostrDesktopNotify *self,
                                           const char *action,
-                                          const char *event_id);
+                                          const char *event_id,
+                                          const char *target_note_id);
 
 /* Callback data for g_idle_add - structs defined here, functions defined after _GnostrDesktopNotify */
 typedef struct {
     GnostrDesktopNotify *owner;
     char *action;
     char *event_id;
+    char *target_note_id;
 } NotifyActionData;
 
 typedef struct {
@@ -103,6 +106,7 @@ static gboolean permission_idle_cb(gpointer user_data);
 
     NSDictionary *userInfo = response.notification.request.content.userInfo;
     NSString *eventId = userInfo[@ USERINFO_EVENT_ID];
+    NSString *targetId = userInfo[@ USERINFO_TARGET_ID];
     NSString *actionId = response.actionIdentifier;
 
     /* Determine action type */
@@ -118,9 +122,10 @@ static gboolean permission_idle_cb(gpointer user_data);
     /* Dispatch callback to GLib main loop */
     if (self.owner) {
         NotifyActionData *data = g_new0(NotifyActionData, 1);
-        data->owner = self.owner;
+        data->owner = g_object_ref(self.owner);
         data->action = g_strdup(action);
         data->event_id = eventId ? g_strdup([eventId UTF8String]) : NULL;
+        data->target_note_id = targetId ? g_strdup([targetId UTF8String]) : NULL;
         g_idle_add(notify_action_idle_cb, data);
     }
 
@@ -167,19 +172,23 @@ static GnostrDesktopNotify *g_default_notify = NULL;
 /* Idle callback implementations - now that struct is defined */
 static gboolean notify_action_idle_cb(gpointer user_data) {
     NotifyActionData *data = user_data;
-    if (data->owner && GNOSTR_IS_DESKTOP_NOTIFY(data->owner)) {
-        gnostr_desktop_notify_handle_action(data->owner, data->action, data->event_id);
+    if (data->owner) {
+        gnostr_desktop_notify_handle_action(data->owner, data->action,
+                                            data->event_id, data->target_note_id);
+        g_object_unref(data->owner);
     }
     g_free(data->action);
     g_free(data->event_id);
+    g_free(data->target_note_id);
     g_free(data);
     return G_SOURCE_REMOVE;
 }
 
 static gboolean permission_idle_cb(gpointer user_data) {
     PermissionData *data = user_data;
-    if (data->owner && GNOSTR_IS_DESKTOP_NOTIFY(data->owner)) {
+    if (data->owner) {
         data->owner->has_permission = data->granted;
+        g_object_unref(data->owner);
     }
     g_free(data);
     return G_SOURCE_REMOVE;
@@ -188,6 +197,7 @@ static gboolean permission_idle_cb(gpointer user_data) {
 /* Forward declarations */
 static void load_settings(GnostrDesktopNotify *self);
 static void save_settings(GnostrDesktopNotify *self);
+static void refresh_runtime_settings(GnostrDesktopNotify *self);
 static NSString *truncate_preview(const char *text, NSUInteger max_len);
 static void register_notification_categories(void);
 
@@ -322,6 +332,30 @@ save_settings(GnostrDesktopNotify *self)
                             self->sound_enabled);
 }
 
+static void
+refresh_runtime_settings(GnostrDesktopNotify *self)
+{
+    if (!self->settings)
+        return;
+
+    gboolean master_enabled = g_settings_get_boolean(self->settings, "enabled");
+    gboolean popup_enabled = g_settings_get_boolean(self->settings, "desktop-popup-enabled");
+
+    self->enabled[GNOSTR_NOTIFICATION_DM] =
+        master_enabled && popup_enabled &&
+        g_settings_get_boolean(self->settings, "notify-dm-enabled");
+    self->enabled[GNOSTR_NOTIFICATION_MENTION] =
+        master_enabled && popup_enabled &&
+        g_settings_get_boolean(self->settings, "notify-mention-enabled");
+    self->enabled[GNOSTR_NOTIFICATION_REPLY] =
+        master_enabled && popup_enabled &&
+        g_settings_get_boolean(self->settings, "notify-reply-enabled");
+    self->enabled[GNOSTR_NOTIFICATION_ZAP] =
+        master_enabled && popup_enabled &&
+        g_settings_get_boolean(self->settings, "notify-zap-enabled");
+    self->sound_enabled = g_settings_get_boolean(self->settings, "sound-enabled");
+}
+
 /* ============== Register Notification Categories ============== */
 
 static void
@@ -433,7 +467,7 @@ gnostr_desktop_notify_request_permission(GnostrDesktopNotify *self)
                                          UNAuthorizationOptionSound |
                                          UNAuthorizationOptionBadge;
 
-        GnostrDesktopNotify *weak_self = self;
+        GnostrDesktopNotify *owner = g_object_ref(self);
         [center requestAuthorizationWithOptions:options
                               completionHandler:^(BOOL granted, NSError * _Nullable error) {
             if (error) {
@@ -443,7 +477,7 @@ gnostr_desktop_notify_request_permission(GnostrDesktopNotify *self)
             }
             /* Use g_idle_add to update state on GLib main loop */
             PermissionData *data = g_new0(PermissionData, 1);
-            data->owner = weak_self;
+            data->owner = owner;
             data->granted = granted;
             g_idle_add(permission_idle_cb, data);
         }];
@@ -595,8 +629,11 @@ send_notification_internal(GnostrDesktopNotify *self,
                             const char *title,
                             const char *body,
                             const char *event_id,
+                            const char *target_note_id,
                             const char *pubkey)
 {
+    refresh_runtime_settings(self);
+
     if (!self->enabled[type]) {
         g_debug("Notification type %d disabled, not sending", type);
         return;
@@ -627,6 +664,9 @@ send_notification_internal(GnostrDesktopNotify *self,
         NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
         if (event_id) {
             userInfo[@ USERINFO_EVENT_ID] = [NSString stringWithUTF8String:event_id];
+        }
+        if (target_note_id) {
+            userInfo[@ USERINFO_TARGET_ID] = [NSString stringWithUTF8String:target_note_id];
         }
         userInfo[@ USERINFO_TYPE] = @(type);
         if (pubkey) {
@@ -666,7 +706,8 @@ gnostr_desktop_notify_send_dm(GnostrDesktopNotify *self,
                                const char *sender_name,
                                const char *sender_pubkey,
                                const char *message_preview,
-                               const char *event_id)
+                               const char *event_id,
+                               const char *target_note_id)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
     g_return_if_fail(sender_name != NULL);
@@ -700,7 +741,7 @@ gnostr_desktop_notify_send_dm(GnostrDesktopNotify *self,
             break;
     }
 
-    send_notification_internal(self, GNOSTR_NOTIFICATION_DM, title, body, event_id, sender_pubkey);
+    send_notification_internal(self, GNOSTR_NOTIFICATION_DM, title, body, event_id, target_note_id, sender_pubkey);
 }
 
 void
@@ -708,7 +749,8 @@ gnostr_desktop_notify_send_mention(GnostrDesktopNotify *self,
                                     const char *sender_name,
                                     const char *sender_pubkey,
                                     const char *note_preview,
-                                    const char *event_id)
+                                    const char *event_id,
+                                    const char *target_note_id)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
     g_return_if_fail(sender_name != NULL);
@@ -740,7 +782,7 @@ gnostr_desktop_notify_send_mention(GnostrDesktopNotify *self,
             break;
     }
 
-    send_notification_internal(self, GNOSTR_NOTIFICATION_MENTION, title, body, event_id, sender_pubkey);
+    send_notification_internal(self, GNOSTR_NOTIFICATION_MENTION, title, body, event_id, target_note_id, sender_pubkey);
 }
 
 void
@@ -748,7 +790,8 @@ gnostr_desktop_notify_send_reply(GnostrDesktopNotify *self,
                                   const char *sender_name,
                                   const char *sender_pubkey,
                                   const char *reply_preview,
-                                  const char *event_id)
+                                  const char *event_id,
+                                  const char *target_note_id)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
     g_return_if_fail(sender_name != NULL);
@@ -780,7 +823,7 @@ gnostr_desktop_notify_send_reply(GnostrDesktopNotify *self,
             break;
     }
 
-    send_notification_internal(self, GNOSTR_NOTIFICATION_REPLY, title, body, event_id, sender_pubkey);
+    send_notification_internal(self, GNOSTR_NOTIFICATION_REPLY, title, body, event_id, target_note_id, sender_pubkey);
 }
 
 void
@@ -789,7 +832,8 @@ gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
                                 const char *sender_pubkey,
                                 guint64 amount_sats,
                                 const char *message,
-                                const char *event_id)
+                                const char *event_id,
+                                const char *target_note_id)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
     g_return_if_fail(sender_name != NULL);
@@ -833,7 +877,36 @@ gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
             break;
     }
 
-    send_notification_internal(self, GNOSTR_NOTIFICATION_ZAP, title, body, event_id, sender_pubkey);
+    send_notification_internal(self, GNOSTR_NOTIFICATION_ZAP, title, body, event_id, target_note_id, sender_pubkey);
+}
+
+void
+gnostr_desktop_notify_send_repost(GnostrDesktopNotify *self,
+                                   const char *reposter_name,
+                                   const char *reposter_pubkey,
+                                   const char *event_id,
+                                   const char *target_note_id)
+{
+    g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
+    g_return_if_fail(reposter_name != NULL);
+
+    const char *title = NULL;
+    g_autofree gchar *title_str = NULL;
+
+    switch (self->privacy) {
+        case GNOSTR_NOTIFY_PRIVACY_HIDDEN:
+            title = "Your note was reposted";
+            break;
+
+        case GNOSTR_NOTIFY_PRIVACY_SENDER_ONLY:
+        case GNOSTR_NOTIFY_PRIVACY_FULL:
+        default:
+            title_str = g_strdup_printf("%s reposted your note", reposter_name);
+            title = title_str;
+            break;
+    }
+
+    send_notification_internal(self, GNOSTR_NOTIFICATION_REPOST, title, NULL, event_id, target_note_id, reposter_pubkey);
 }
 
 void
@@ -841,12 +914,13 @@ gnostr_desktop_notify_send(GnostrDesktopNotify *self,
                             GnostrNotificationType type,
                             const char *title,
                             const char *body,
-                            const char *event_id)
+                            const char *event_id,
+                            const char *target_note_id)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
     g_return_if_fail(title != NULL);
 
-    send_notification_internal(self, type, title, body, event_id, NULL);
+    send_notification_internal(self, type, title, body, event_id, target_note_id, NULL);
 }
 
 /* ============== Action Handling ============== */
@@ -854,11 +928,12 @@ gnostr_desktop_notify_send(GnostrDesktopNotify *self,
 void
 gnostr_desktop_notify_handle_action(GnostrDesktopNotify *self,
                                      const char *action,
-                                     const char *event_id)
+                                     const char *event_id,
+                                     const char *target_note_id)
 {
     if (!self || !self->callback) return;
 
-    self->callback(self, action, event_id, self->callback_data);
+    self->callback(self, action, event_id, target_note_id, self->callback_data);
 }
 
 void

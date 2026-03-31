@@ -674,6 +674,40 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "keystore;security;unit;gnostr")
 
+  add_executable(gnostr-test-profile-event-validation
+    tests/test_profile_event_validation.c
+    src/util/profile_event_validation.c)
+  target_compile_features(gnostr-test-profile-event-validation PRIVATE c_std_11)
+  target_include_directories(gnostr-test-profile-event-validation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libnostr/include)
+  target_link_libraries(gnostr-test-profile-event-validation PRIVATE
+    PkgConfig::GLIB nostr_gobject nostr_json)
+  _gnostr_apply_sanitizers(gnostr-test-profile-event-validation)
+  add_test(NAME gnostr-test-profile-event-validation COMMAND gnostr-test-profile-event-validation)
+  set_tests_properties(gnostr-test-profile-event-validation PROPERTIES
+    TIMEOUT 30
+    LABELS "profile;validation;unit;gnostr")
+
+  add_executable(gnostr-test-dm-gift-wrap-validation
+    tests/test_dm_gift_wrap_validation.c
+    src/util/dm_gift_wrap_validation.c)
+  target_compile_features(gnostr-test-dm-gift-wrap-validation PRIVATE c_std_11)
+  target_include_directories(gnostr-test-dm-gift-wrap-validation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libgo/include
+    ${PROJECT_ROOT}/libjson/include
+    ${_NOSTR_CONFIG_DIR})
+  target_link_libraries(gnostr-test-dm-gift-wrap-validation PRIVATE
+    PkgConfig::GLIB nostr_json)
+  _gnostr_apply_sanitizers(gnostr-test-dm-gift-wrap-validation)
+  add_test(NAME gnostr-test-dm-gift-wrap-validation COMMAND gnostr-test-dm-gift-wrap-validation)
+  set_tests_properties(gnostr-test-dm-gift-wrap-validation PROPERTIES
+    TIMEOUT 30
+    LABELS "dm;validation;unit;gnostr")
+
   # NIP-46 E2E tests
   add_executable(gnostr-test-nip46-e2e tests/test_nip46_e2e.c)
   target_compile_features(gnostr-test-nip46-e2e PRIVATE c_std_11)
@@ -746,6 +780,126 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-thread-sub PROPERTIES
     TIMEOUT 30
     LABELS "thread;subscription;unit;gnostr")
+
+  add_executable(gnostr-test-startup-live-eose
+    tests/test_startup_live_eose.c
+    src/ui/gnostr-startup-live-eose.c)
+  target_compile_features(gnostr-test-startup-live-eose PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-startup-live-eose PRIVATE GNOSTR_TESTING)
+  target_include_directories(gnostr-test-startup-live-eose PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/nostr-gtk/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${_NOSTR_CONFIG_DIR})
+  target_link_libraries(gnostr-test-startup-live-eose PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::GTK4 PkgConfig::ADWAITA
+    nostr_gobject nostr_gtk)
+  if(APPLE)
+    target_link_options(gnostr-test-startup-live-eose PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-startup-live-eose PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-startup-live-eose)
+  add_test(NAME gnostr-test-startup-live-eose COMMAND gnostr-test-startup-live-eose)
+  set_tests_properties(gnostr-test-startup-live-eose PROPERTIES
+    TIMEOUT 30
+    LABELS "startup;eose;unit;gnostr")
+
+  add_executable(gnostr-test-live-state-kinds
+    tests/test_live_state_kinds.c
+    src/ui/gnostr-live-state-kinds.c)
+  target_compile_features(gnostr-test-live-state-kinds PRIVATE c_std_11)
+  target_include_directories(gnostr-test-live-state-kinds PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libjson/include
+    ${PROJECT_ROOT}/libgo/include
+    ${_NOSTR_CONFIG_DIR})
+  target_link_libraries(gnostr-test-live-state-kinds PRIVATE
+    PkgConfig::GLIB nostr_json nostr_gobject)
+  _gnostr_apply_sanitizers(gnostr-test-live-state-kinds)
+  add_test(NAME gnostr-test-live-state-kinds COMMAND gnostr-test-live-state-kinds)
+  set_tests_properties(gnostr-test-live-state-kinds PROPERTIES
+    TIMEOUT 30
+    LABELS "live;state;kinds;unit;gnostr")
+
+  add_executable(gnostr-test-sync-bridge-mute-reload
+    tests/test_sync_bridge_mute_reload.c
+    src/sync/gnostr-sync-bridge-mute.c)
+  target_compile_features(gnostr-test-sync-bridge-mute-reload PRIVATE c_std_11)
+  target_include_directories(gnostr-test-sync-bridge-mute-reload PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-sync-bridge-mute-reload PRIVATE
+    PkgConfig::GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-sync-bridge-mute-reload)
+  add_test(NAME gnostr-test-sync-bridge-mute-reload COMMAND gnostr-test-sync-bridge-mute-reload)
+  set_tests_properties(gnostr-test-sync-bridge-mute-reload PROPERTIES
+    TIMEOUT 30
+    LABELS "sync;bridge;mute;unit;gnostr")
+
+  add_executable(gnostr-test-sync-bridge-user-state
+    tests/test_sync_bridge_user_state.c
+    src/sync/gnostr-sync-bridge.c
+    src/sync/gnostr-sync-bridge-mute.c)
+  target_compile_features(gnostr-test-sync-bridge-user-state PRIVATE c_std_11)
+  target_include_directories(gnostr-test-sync-bridge-user-state PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-sync-bridge-user-state PRIVATE
+    PkgConfig::GLIB nostr_gobject)
+  if (APPLE)
+    target_link_options(gnostr-test-sync-bridge-user-state PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-sync-bridge-user-state PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-sync-bridge-user-state)
+  add_test(NAME gnostr-test-sync-bridge-user-state COMMAND gnostr-test-sync-bridge-user-state)
+  set_tests_properties(gnostr-test-sync-bridge-user-state PROPERTIES
+    TIMEOUT 30
+    LABELS "sync;bridge;state;unit;gnostr")
+
+  add_executable(gnostr-test-mute-filter
+    tests/test_mute_filter.c
+    src/util/mute_filter.c)
+  target_compile_features(gnostr-test-mute-filter PRIVATE c_std_11)
+  target_include_directories(gnostr-test-mute-filter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-mute-filter PRIVATE
+    PkgConfig::GLIB nostr_gobject)
+  if (APPLE)
+    target_link_options(gnostr-test-mute-filter PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-mute-filter PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-mute-filter)
+  add_test(NAME gnostr-test-mute-filter COMMAND gnostr-test-mute-filter)
+  set_tests_properties(gnostr-test-mute-filter PROPERTIES
+    TIMEOUT 30
+    LABELS "mute;filter;unit;gnostr")
+
+  add_executable(gnostr-test-mute-row-data
+    tests/test_mute_row_data.c
+    src/ui/gnostr-mute-row-data.c)
+  target_compile_features(gnostr-test-mute-row-data PRIVATE c_std_11)
+  target_include_directories(gnostr-test-mute-row-data PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-mute-row-data PRIVATE
+    PkgConfig::GLIB nostr_gobject)
+  if (APPLE)
+    target_link_options(gnostr-test-mute-row-data PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-mute-row-data PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-mute-row-data)
+  add_test(NAME gnostr-test-mute-row-data COMMAND gnostr-test-mute-row-data)
+  set_tests_properties(gnostr-test-mute-row-data PROPERTIES
+    TIMEOUT 30
+    LABELS "mute;row;ui;unit;gnostr")
 
   # Thread graph model unit tests (nostrc-pp64 4.2)
   add_executable(gnostr-test-thread-graph-model tests/test_thread_graph_model.c)

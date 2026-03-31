@@ -50,6 +50,7 @@ typedef struct {
 typedef struct {
   char *pubkey_hex;
   char *content_json;
+  gint64 created_at;
 } ProfileApplyCtx;
 
 struct _GnostrMainWindow {
@@ -152,7 +153,10 @@ struct _GnostrMainWindow {
   char           *user_pubkey_hex;       /* current user's pubkey (64-char hex), NULL if not signed in */
   guint           profile_watch_id;     /* profile provider watch for user's pubkey, 0 if none */
   GPtrArray      *gift_wrap_queue;       /* pending gift wrap events to process */
-  gboolean        startup_live_eose_seen;         /* at least one live relay reached EOSE */
+  GHashTable     *startup_live_eose_relays;      /* startup EOSE relays seen so far (char* set) */
+  guint           startup_live_expected_relays;   /* initial live relays expected to EOSE for startup */
+  gboolean        startup_live_first_eose_seen;   /* at least one initial live relay reached EOSE */
+  gboolean        startup_live_all_eose_seen;     /* all initial live relays reached EOSE */
   gboolean        startup_gift_wrap_started;      /* startup gift-wrap subscription already started */
 
   /* NIP-17 DM Service for decryption and conversation management */
@@ -221,6 +225,7 @@ void gnostr_main_window_on_discover_zap_article_internal(GnostrPageDiscover *pag
 void gnostr_main_window_on_discover_search_hashtag_internal(GnostrPageDiscover *page, const char *hashtag, gpointer user_data);
 void gnostr_main_window_on_search_open_note_internal(GnostrSearchResultsView *view, const char *event_id_hex, gpointer user_data);
 void gnostr_main_window_on_search_open_profile_internal(GnostrSearchResultsView *view, const char *pubkey_hex, gpointer user_data);
+void gnostr_main_window_on_search_search_hashtag_internal(GnostrSearchResultsView *view, const char *hashtag, gpointer user_data);
 void gnostr_main_window_on_notification_open_note_internal(GnostrNotificationsView *view, const char *note_id, gpointer user_data);
 void gnostr_main_window_on_notification_open_profile_internal(GnostrNotificationsView *view, const char *pubkey_hex, gpointer user_data);
 void gnostr_main_window_on_classifieds_open_profile_internal(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data);
@@ -246,7 +251,10 @@ gboolean gnostr_main_window_ingest_queue_push_internal(GnostrMainWindow *self, g
 void gnostr_main_window_schedule_apply_profiles_internal(GnostrMainWindow *self, GPtrArray *items);
 void gnostr_main_window_prepopulate_all_profiles_from_cache_internal(GnostrMainWindow *self);
 void gnostr_main_window_enqueue_profile_author_internal(GnostrMainWindow *self, const char *pubkey_hex);
-void gnostr_main_window_update_meta_from_profile_json_internal(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
+void gnostr_main_window_update_meta_from_profile_json_internal(GnostrMainWindow *self,
+                                                               const char *pubkey_hex,
+                                                               const char *content_json,
+                                                               gint64      created_at);
 void gnostr_main_window_refresh_thread_view_profiles_if_visible_internal(GnostrMainWindow *self);
 void gnostr_main_window_get_property_internal(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 void gnostr_main_window_set_property_internal(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
@@ -256,7 +264,8 @@ void gnostr_main_window_update_login_ui_state_internal(GnostrMainWindow *self);
 char *gnostr_main_window_get_current_user_pubkey_hex_internal(void);
 void gnostr_main_window_start_gift_wrap_subscription_internal(GnostrMainWindow *self);
 void gnostr_main_window_stop_gift_wrap_subscription_internal(GnostrMainWindow *self);
-void gnostr_main_window_note_startup_live_eose_internal(GnostrMainWindow *self);
+void gnostr_main_window_note_startup_live_eose_internal(GnostrMainWindow *self,
+                                                        const gchar      *relay_url);
 void gnostr_main_window_on_avatar_login_clicked_internal(GtkButton *btn, gpointer user_data);
 void gnostr_main_window_on_signer_state_changed_internal(GnostrSignerService *signer,
                                                          guint old_state,
@@ -320,6 +329,7 @@ void gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
                                                      GCallback discover_search_hashtag_cb,
                                                      GCallback search_open_note_cb,
                                                      GCallback search_open_profile_cb,
+                                                     GCallback search_hashtag_cb,
                                                      GCallback notification_open_note_cb,
                                                      GCallback notification_open_profile_cb,
                                                      GCallback classifieds_open_profile_cb,

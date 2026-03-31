@@ -37,6 +37,14 @@ void gnostr_sync_bridge_init(const char *user_pubkey_hex);
 void gnostr_sync_bridge_set_user_pubkey(const char *pubkey_hex);
 
 /**
+ * gnostr_sync_bridge_get_user_pubkey:
+ *
+ * Returns the current user pubkey tracked by the sync bridge, or NULL if clear.
+ * Primarily intended for diagnostics and regression tests.
+ */
+const char *gnostr_sync_bridge_get_user_pubkey(void);
+
+/**
  * gnostr_sync_bridge_shutdown:
  *
  * Unsubscribes from EventBus and cleans up. Call at app shutdown

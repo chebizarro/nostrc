@@ -200,7 +200,10 @@ static gboolean apply_profiles_idle(gpointer user_data) {
   for (guint i = c->pos; i < end; i++) {
     ProfileApplyCtx *it = (ProfileApplyCtx*)g_ptr_array_index(c->items, i);
     if (!it || !it->pubkey_hex || !it->content_json) continue;
-    gnostr_main_window_update_meta_from_profile_json_internal(self, it->pubkey_hex, it->content_json);
+    gnostr_main_window_update_meta_from_profile_json_internal(self,
+                                                             it->pubkey_hex,
+                                                             it->content_json,
+                                                             it->created_at);
     if (self->profile_fetch_requested)
       g_hash_table_remove(self->profile_fetch_requested, it->pubkey_hex);
     applied++;
@@ -235,7 +238,10 @@ static gboolean profile_apply_on_main(gpointer data) {
     for (GList *l = tops; l; l = l->next) {
       if (GNOSTR_IS_MAIN_WINDOW(l->data)) {
         GnostrMainWindow *win = GNOSTR_MAIN_WINDOW(l->data);
-        gnostr_main_window_update_meta_from_profile_json_internal(win, c->pubkey_hex, c->content_json);
+        gnostr_main_window_update_meta_from_profile_json_internal(win,
+                                                                 c->pubkey_hex,
+                                                                 c->content_json,
+                                                                 c->created_at);
         if (win->profile_fetch_requested)
           g_hash_table_remove(win->profile_fetch_requested, c->pubkey_hex);
         /* nostrc-sk8o: Refresh thread view after single profile update */
@@ -544,6 +550,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                                                    G_CALLBACK(gnostr_main_window_on_discover_search_hashtag_internal),
                                                    G_CALLBACK(gnostr_main_window_on_search_open_note_internal),
                                                    G_CALLBACK(gnostr_main_window_on_search_open_profile_internal),
+                                                   G_CALLBACK(gnostr_main_window_on_search_search_hashtag_internal),
                                                    G_CALLBACK(gnostr_main_window_on_notification_open_note_internal),
                                                    G_CALLBACK(gnostr_main_window_on_notification_open_profile_internal),
                                                    G_CALLBACK(gnostr_main_window_on_classifieds_open_profile_internal),
@@ -1079,4 +1086,3 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
   }
   return TRUE;
 }
-

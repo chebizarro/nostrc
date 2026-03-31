@@ -19,6 +19,7 @@
 /* Use gobject relay wrapper for GLib integration */
 #include <nostr-gobject-1.0/nostr_relay.h>
 #include "../util/utils.h"
+#include <stdlib.h>
 
 struct _GnostrChessPublishDialog {
     AdwDialog parent_instance;
@@ -325,7 +326,7 @@ publish_context_free(PublishContext *ctx)
 {
     if (!ctx) return;
     g_clear_pointer(&ctx->pgn_content, g_free);
-    g_clear_pointer(&ctx->event_id, g_free);
+    g_clear_pointer(&ctx->event_id, free);
     g_free(ctx);
 }
 

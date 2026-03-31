@@ -7,6 +7,7 @@
 #include "gnostr-dm-service.h"
 
 #include <nostr-gobject-1.0/gnostr-relays.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/gnostr-main-window.ui"
@@ -151,6 +152,7 @@ gnostr_main_window_dispose_internal(GObject *object)
   g_clear_object(&self->profile_fetch_cancellable);
   g_clear_object(&self->bg_prefetch_cancellable);
   g_clear_object(&self->pool_cancellable);
+  g_clear_pointer(&self->live_filters, nostr_filters_free);
   if (self->live_urls) {
     gnostr_main_window_free_urls_owned_internal(self->live_urls, self->live_url_count);
     self->live_urls = NULL;
@@ -171,6 +173,10 @@ gnostr_main_window_dispose_internal(GObject *object)
   }
   g_clear_pointer(&self->profile_batch_filters, nostr_filters_free);
   g_clear_object(&self->profile_pool);
+  if (self->live_multi_sub) {
+    gnostr_pool_multi_sub_close(self->live_multi_sub);
+    self->live_multi_sub = NULL;
+  }
   if (self->pool) {
     if (self->pool_events_handler) {
       g_signal_handler_disconnect(self->pool, self->pool_events_handler);
@@ -185,6 +191,7 @@ gnostr_main_window_dispose_internal(GObject *object)
   g_clear_pointer(&self->liked_events, g_hash_table_unref);
 
   gnostr_main_window_stop_gift_wrap_subscription_internal(self);
+  g_clear_pointer(&self->startup_live_eose_relays, g_hash_table_unref);
   if (self->gift_wrap_queue) {
     g_ptr_array_free(self->gift_wrap_queue, TRUE);
     self->gift_wrap_queue = NULL;

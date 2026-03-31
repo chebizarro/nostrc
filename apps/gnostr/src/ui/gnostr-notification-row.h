@@ -48,6 +48,16 @@ const char *gnostr_notification_row_get_target_note_id(GnostrNotificationRow *se
 const char *gnostr_notification_row_get_actor_pubkey(GnostrNotificationRow *self);
 
 /**
+ * Get the notification type for this row
+ */
+GnostrNotificationType gnostr_notification_row_get_notification_type(GnostrNotificationRow *self);
+
+/**
+ * Get the notification timestamp for this row
+ */
+gint64 gnostr_notification_row_get_created_at(GnostrNotificationRow *self);
+
+/**
  * Set the read state
  */
 void gnostr_notification_row_set_read(GnostrNotificationRow *self, gboolean is_read);

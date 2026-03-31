@@ -91,6 +91,45 @@ on_mark_all_read_clicked(GtkButton *button, GnostrNotificationsView *self)
     gnostr_notifications_view_mark_all_read(self);
 }
 
+static void
+sync_badge_state_from_rows(GnostrNotificationsView *self)
+{
+    GnostrBadgeManager *manager;
+    guint unread_by_type[GNOSTR_NOTIFICATION_TYPE_COUNT] = {0};
+
+    g_return_if_fail(GNOSTR_IS_NOTIFICATIONS_VIEW(self));
+
+    manager = gnostr_badge_manager_get_default();
+
+    for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->list_box));
+         child != NULL;
+         child = gtk_widget_get_next_sibling(child)) {
+        GtkWidget *row_child = child;
+        if (GTK_IS_LIST_BOX_ROW(child))
+            row_child = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(child));
+
+        if (!GNOSTR_IS_NOTIFICATION_ROW(row_child))
+            continue;
+
+        GnostrNotificationRow *row = GNOSTR_NOTIFICATION_ROW(row_child);
+        GnostrNotificationType type = gnostr_notification_row_get_notification_type(row);
+        gint64 created_at = gnostr_notification_row_get_created_at(row);
+        gboolean is_read = (created_at <= gnostr_badge_manager_get_last_read(manager, type));
+
+        gnostr_notification_row_set_read(row, is_read);
+        if (!is_read)
+            unread_by_type[type]++;
+    }
+
+    self->unread_count = 0;
+    for (guint i = 0; i < GNOSTR_NOTIFICATION_TYPE_COUNT; i++) {
+        self->unread_count += unread_by_type[i];
+        gnostr_badge_manager_set_count(manager, (GnostrNotificationType)i, unread_by_type[i]);
+    }
+
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_mark_all_read), self->unread_count > 0);
+}
+
 static gint
 compare_rows_by_timestamp(GtkListBoxRow *row1, GtkListBoxRow *row2, gpointer user_data)
 {
@@ -325,12 +364,18 @@ gnostr_notifications_view_mark_read(GnostrNotificationsView *self,
     g_return_if_fail(notification_id != NULL);
 
     GnostrNotificationRow *row = g_hash_table_lookup(self->notifications, notification_id);
-    if (row && !gnostr_notification_row_is_read(row)) {
-        gnostr_notification_row_set_read(row, TRUE);
-        if (self->unread_count > 0)
-            self->unread_count--;
-        gtk_widget_set_visible(GTK_WIDGET(self->btn_mark_all_read), self->unread_count > 0);
-    }
+    if (!row || gnostr_notification_row_is_read(row))
+        return;
+
+    GnostrBadgeManager *manager = gnostr_badge_manager_get_default();
+    GnostrNotificationType type = gnostr_notification_row_get_notification_type(row);
+    gint64 created_at = gnostr_notification_row_get_created_at(row);
+    gint64 last_read = gnostr_badge_manager_get_last_read(manager, type);
+
+    if (created_at > last_read)
+        gnostr_badge_manager_set_last_read(manager, type, created_at);
+
+    sync_badge_state_from_rows(self);
 }
 
 void
@@ -338,20 +383,9 @@ gnostr_notifications_view_mark_all_read(GnostrNotificationsView *self)
 {
     g_return_if_fail(GNOSTR_IS_NOTIFICATIONS_VIEW(self));
 
-    GHashTableIter iter;
-    gpointer key, value;
-
-    g_hash_table_iter_init(&iter, self->notifications);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        GnostrNotificationRow *row = GNOSTR_NOTIFICATION_ROW(value);
-        if (!gnostr_notification_row_is_read(row)) {
-            gnostr_notification_row_set_read(row, TRUE);
-        }
-    }
-
-    self->unread_count = 0;
+    gnostr_badge_manager_clear_all(gnostr_badge_manager_get_default());
     self->last_checked = (gint64)time(NULL);
-    gtk_widget_set_visible(GTK_WIDGET(self->btn_mark_all_read), FALSE);
+    sync_badge_state_from_rows(self);
 }
 
 guint
@@ -402,6 +436,13 @@ gnostr_notifications_view_set_loading(GnostrNotificationsView *self, gboolean is
             gtk_stack_set_visible_child_name(self->content_stack, "empty");
         }
     }
+}
+
+void
+gnostr_notifications_view_sync_badge_state(GnostrNotificationsView *self)
+{
+    g_return_if_fail(GNOSTR_IS_NOTIFICATIONS_VIEW(self));
+    sync_badge_state_from_rows(self);
 }
 
 void

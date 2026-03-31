@@ -9,6 +9,7 @@
 #include "gnostr-dm-service-private.h"
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-conversation-view.h"
+#include "../util/dm_gift_wrap_validation.h"
 #include "../util/utils.h"
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "../ipc/gnostr-signer-service.h"
@@ -24,6 +25,7 @@
 #include "nostr-tag.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 
 /* DmConversation and struct _GnostrDmService are in gnostr-dm-service-private.h */
@@ -610,7 +612,7 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
         }
 
         /* Store message in conversation history */
-        const char *rumor_id = nostr_event_get_id(rumor);
+        char *rumor_id = nostr_event_get_id(rumor);
         DmConversation *conv = g_hash_table_lookup(self->conversations, peer_pubkey);
         if (conv && display_content) {
             /* Parse kind 15 file metadata if applicable */
@@ -647,6 +649,7 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
             if (file_msg) gnostr_dm_file_message_free(file_msg);
         }
 
+        free(rumor_id);
         g_free(file_preview);
     }
 
@@ -739,18 +742,20 @@ on_seal_decrypted(GnostrSignerService *service, const char *seal_json,
 static void
 decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
 {
-    const char *id = nostr_event_get_id(gift_wrap);
+    char *id = nostr_event_get_id(gift_wrap);
     const char *ephemeral_pk = nostr_event_get_pubkey(gift_wrap);
     const char *encrypted_content = nostr_event_get_content(gift_wrap);
 
     if (!id || !ephemeral_pk || !encrypted_content) {
         g_warning("[DM_SERVICE] Invalid gift wrap event");
+        free(id);
         return;
     }
 
     /* Check if already processing */
     if (g_hash_table_contains(self->pending_decrypts, id)) {
         g_debug("[DM_SERVICE] Already processing gift wrap %.8s", id);
+        free(id);
         return;
     }
 
@@ -762,6 +767,7 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
     GnostrSignerService *signer = gnostr_signer_service_get_default();
     if (!gnostr_signer_service_is_available(signer)) {
         g_debug("[DM_SERVICE] No signer connected, skipping gift wrap %.8s", id);
+        free(id);
         return;
     }
 
@@ -784,6 +790,7 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
         NULL, /* GCancellable */
         on_seal_decrypted,
         ctx);
+    free(id);
 }
 
 /* Subscription event callback for gift wraps */
@@ -825,17 +832,11 @@ gnostr_dm_service_process_gift_wrap(GnostrDmService *self,
     g_return_if_fail(GNOSTR_IS_DM_SERVICE(self));
     g_return_if_fail(gift_wrap_json != NULL);
 
-    NostrEvent *gift_wrap = nostr_event_new();
-    if (!nostr_event_deserialize(gift_wrap, gift_wrap_json)) {
-        g_warning("[DM_SERVICE] Failed to parse gift wrap JSON");
-        nostr_event_free(gift_wrap);
-        return;
-    }
-
-    if (nostr_event_get_kind(gift_wrap) != NOSTR_KIND_GIFT_WRAP) {
-        g_warning("[DM_SERVICE] Event is not a gift wrap (kind %d)",
-                  nostr_event_get_kind(gift_wrap));
-        nostr_event_free(gift_wrap);
+    NostrEvent *gift_wrap = NULL;
+    g_autofree gchar *reason = NULL;
+    if (!gnostr_dm_gift_wrap_parse_for_processing(gift_wrap_json, &gift_wrap, &reason)) {
+        g_warning("[DM_SERVICE] Failed to parse gift wrap JSON: %s",
+                  reason ? reason : "unknown error");
         return;
     }
 
