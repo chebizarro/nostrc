@@ -178,11 +178,6 @@ set_tests_properties(signer/dbus PROPERTIES
     LABELS "signer;dbus;integration"
     ENVIRONMENT "GSETTINGS_BACKEND=memory;G_DEBUG=fatal-warnings;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
 )
-if(APPLE)
-    # On macOS this test completes its assertions but the process does not
-    # terminate reliably under CTest/GTestDBus in CI/local headless runs.
-    set_tests_properties(signer/dbus PROPERTIES DISABLED TRUE)
-endif()
 
 # ==============================================================================
 # Test: Rate limiter (brute force attack prevention)

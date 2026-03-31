@@ -91,6 +91,14 @@ void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,
  */
 gboolean gnostr_image_viewer_navigate(GnostrImageViewer *self, int delta);
 
+#ifdef GNOSTR_TESTING
+/* Test helpers for privacy-gated remote media loading. */
+gboolean gnostr_image_viewer_remote_media_allowed_for_testing(void);
+/* Returns TRUE only when the explicit "Load image" action itself is visible. */
+gboolean gnostr_image_viewer_is_load_action_visible_for_testing(GnostrImageViewer *self);
+void gnostr_image_viewer_activate_load_action_for_testing(GnostrImageViewer *self);
+#endif
+
 G_END_DECLS
 
 #endif /* GNOSTR_IMAGE_VIEWER_H */

@@ -70,7 +70,9 @@ gn_test_ndb_get_dir(GnTestNdb *ndb)
 }
 
 gboolean
-gn_test_ndb_ingest_json(GnTestNdb *ndb, const char *json)
+gn_test_ndb_ingest_json_from_relay(GnTestNdb *ndb,
+                                   const char *json,
+                                   const char *relay_url)
 {
     g_return_val_if_fail(ndb != NULL, FALSE);
     g_return_val_if_fail(json != NULL, FALSE);
@@ -78,8 +80,14 @@ gn_test_ndb_ingest_json(GnTestNdb *ndb, const char *json)
 
     (void)ndb;
     /* Use async ingestion - caller must call gn_test_ndb_wait_for_ingest() after batch */
-    int ret = storage_ndb_ingest_event_json(json, NULL);
+    int ret = storage_ndb_ingest_event_json(json, relay_url);
     return ret == 0;
+}
+
+gboolean
+gn_test_ndb_ingest_json(GnTestNdb *ndb, const char *json)
+{
+    return gn_test_ndb_ingest_json_from_relay(ndb, json, NULL);
 }
 
 void

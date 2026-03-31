@@ -45,12 +45,14 @@
 typedef struct {
   uint64_t note_key;
   gint64 created_at;
+  uint8_t event_id[32];
 } NoteEntry;
 
 /* Pending entry for frame-aware insertion buffer */
 typedef struct {
   uint64_t note_key;
   gint64   created_at;
+  uint8_t  event_id[32];
   gint64   arrival_time_us;  /* Monotonic time when queued, for backpressure */
 } PendingEntry;
 
@@ -58,6 +60,7 @@ typedef struct {
 typedef struct {
   uint64_t note_key;
   gint64   created_at;
+  uint8_t  event_id[32];
   char     pubkey_hex[65];
   char    *root_id;       /* owned, nullable — NIP-10 thread root */
   char    *reply_id;      /* owned, nullable — NIP-10 thread reply */
@@ -630,13 +633,49 @@ note_is_muted_by_fields(storage_ndb_note *note,
                                                hashtags);
 }
 
+static gint
+compare_created_at_then_event_id(gint64 created_at_a,
+                                 const uint8_t event_id_a[32],
+                                 gint64 created_at_b,
+                                 const uint8_t event_id_b[32])
+{
+  if (created_at_a > created_at_b) return -1;
+  if (created_at_a < created_at_b) return 1;
+
+  int id_cmp = memcmp(event_id_a, event_id_b, 32);
+  if (id_cmp > 0) return -1;
+  if (id_cmp < 0) return 1;
+  return 0;
+}
+
+static gboolean
+lookup_note_event_id(void *txn, uint64_t note_key, uint8_t out_event_id[32])
+{
+  g_return_val_if_fail(txn != NULL, FALSE);
+
+  storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+  if (!note)
+    return FALSE;
+
+  memcpy(out_event_id, storage_ndb_note_id(note), 32);
+  return TRUE;
+}
+
 /* Find insertion position for sorted insert (newest first) — O(log N) binary search */
-static guint find_sorted_position(GnNostrEventModel *self, gint64 created_at) {
+static guint find_sorted_position(GnNostrEventModel *self,
+                                  gint64 created_at,
+                                  const uint8_t event_id[32]) {
   guint lo = 0, hi = self->notes->len;
   while (lo < hi) {
     guint mid = lo + (hi - lo) / 2;
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, mid);
-    if (entry->created_at >= created_at)
+    gint cmp = compare_created_at_then_event_id(entry->created_at,
+                                                entry->event_id,
+                                                created_at,
+                                                event_id);
+    /* cmp <= 0 means the existing entry belongs before or at the same
+     * position as the new item, so continue searching to the right. */
+    if (cmp <= 0)
       lo = mid + 1;
     else
       hi = mid;
@@ -751,7 +790,8 @@ static void insertion_buffer_sorted_insert(GArray *buf, PendingEntry *entry) {
   while (lo < hi) {
     guint mid = lo + (hi - lo) / 2;
     PendingEntry *e = &g_array_index(buf, PendingEntry, mid);
-    if (entry->created_at > e->created_at)
+    if (compare_created_at_then_event_id(entry->created_at, entry->event_id,
+                                         e->created_at, e->event_id) < 0)
       hi = mid;
     else
       lo = mid + 1;
@@ -877,6 +917,7 @@ static void process_pending_items(GnNostrEventModel *self, guint count) {
       .note_key = pending->note_key,
       .created_at = pending->created_at
     };
+    memcpy(entry.event_id, pending->event_id, sizeof(entry.event_id));
 
     /* Prepend at position 0 — newest items end up at front */
     g_array_insert_val(self->notes, 0, entry);
@@ -1123,18 +1164,17 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
           *reply_id ? *reply_id : "(null)");
 }
 
-/* Compare function for sorting NoteEntry by created_at (newest first) */
+/* Compare function for sorting NoteEntry by created_at and event id (newest first). */
 static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
   const NoteEntry *ea = (const NoteEntry *)a;
   const NoteEntry *eb = (const NoteEntry *)b;
-  /* Newest first: higher created_at comes first */
-  if (ea->created_at > eb->created_at) return -1;
-  if (ea->created_at < eb->created_at) return 1;
-  return 0;
+  return compare_created_at_then_event_id(ea->created_at, ea->event_id,
+                                          eb->created_at, eb->event_id);
 }
 
 /* Add a note to the model (assumes gating has already been satisfied) */
 static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
+                               const uint8_t event_id[32],
                                const char *root_id, const char *parent_id, guint depth) {
   if (has_note_key(self, note_key)) {
     return;  /* Already in model */
@@ -1162,7 +1202,7 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   }
 
   /* Find insertion position */
-  guint pos = find_sorted_position(self, created_at);
+  guint pos = find_sorted_position(self, created_at, event_id);
 
   /* nostrc-7o7: Mark items added outside visible viewport to skip animation */
   if (pos < self->visible_start || pos > self->visible_end) {
@@ -1173,6 +1213,7 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
 
   /* Insert note entry */
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+  memcpy(entry.event_id, event_id, sizeof(entry.event_id));
   g_array_insert_val(self->notes, pos, entry);
   uint64_t *set_key = g_new(uint64_t, 1);
   *set_key = note_key;
@@ -1184,6 +1225,7 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
 
 /* nostrc-5r8b: Helper to insert note without emitting signal (for batching) */
 static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
+                                    const uint8_t event_id[32],
                                     const char *root_id, const char *parent_id, guint depth) {
   if (has_note_key(self, note_key)) return FALSE;
 
@@ -1201,7 +1243,7 @@ static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, g
   }
 
   /* Find sorted position and insert */
-  guint pos = find_sorted_position(self, created_at);
+  guint pos = find_sorted_position(self, created_at, event_id);
   if (pos < self->visible_start || pos > self->visible_end) {
     uint64_t *key_copy = g_new(uint64_t, 1);
     *key_copy = note_key;
@@ -1209,6 +1251,7 @@ static gboolean insert_note_silent(GnNostrEventModel *self, uint64_t note_key, g
   }
 
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+  memcpy(entry.event_id, event_id, sizeof(entry.event_id));
   g_array_insert_val(self->notes, pos, entry);
   uint64_t *set_key = g_new(uint64_t, 1);
   *set_key = note_key;
@@ -1547,6 +1590,7 @@ static void timeline_batch_thread_func(GTask        *task,
       .reply_id = reply_id,   /* ownership transferred to GArray */
       .kind = kind
     };
+    memcpy(entry.event_id, storage_ndb_note_id(note), sizeof(entry.event_id));
     memcpy(entry.pubkey_hex, pubkey_hex, 65);
     g_array_append_val(bp->validated, entry);
 
@@ -1665,11 +1709,12 @@ static void timeline_batch_complete_cb(GObject      *source_object,
         .created_at = ve->created_at,
         .arrival_time_us = arrival_time_us
       };
+      memcpy(pentry.event_id, ve->event_id, sizeof(pentry.event_id));
       insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
       add_note_key_to_insertion_set(self, ve->note_key);
     } else {
       /* Direct insert (startup fallback): sorted insert + track in note_key_set */
-      if (insert_note_silent(self, ve->note_key, ve->created_at,
+      if (insert_note_silent(self, ve->note_key, ve->created_at, ve->event_id,
                              ve->root_id, ve->reply_id, 0)) {
         direct_inserted++;
       }
@@ -2277,17 +2322,27 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
       const StorageNdbCursorEntry *entries = NULL;
       guint count = 0;
       guint total = 0;
+      void *txn = NULL;
+      gboolean have_txn = (storage_ndb_begin_query(&txn, NULL) == 0 && txn != NULL);
 
       while (storage_ndb_cursor_next(cursor, &entries, &count, NULL) == 0 && count > 0) {
         for (guint i = 0; i < count; i++) {
+          uint8_t event_id[32] = {0};
+          if (!have_txn || !lookup_note_event_id(txn, entries[i].note_key, event_id)) {
+            g_debug("[MODEL] Failed to resolve event id for note_key=%" G_GUINT64_FORMAT
+                    " during initial load; falling back to zero-id ordering",
+                    entries[i].note_key);
+          }
           insert_note_silent(self, entries[i].note_key,
-                             (gint64)entries[i].created_at, NULL, NULL, 0);
+                              (gint64)entries[i].created_at, event_id, NULL, NULL, 0);
         }
         total += count;
         if (total >= self->window_size)
           break;
       }
 
+      if (have_txn)
+        storage_ndb_end_query(txn);
       storage_ndb_cursor_free(cursor);
 
       if (self->notes->len > 0) {
@@ -2447,7 +2502,7 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
         char *reply_id = NULL;
         parse_nip10_tags(evt, &root_id, &reply_id);
 
-        if (insert_note_silent(self, note_key, created_at, root_id, reply_id, 0))
+        if (insert_note_silent(self, note_key, created_at, id32, root_id, reply_id, 0))
           added++;
 
         g_free(root_id);
@@ -2488,6 +2543,7 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
 typedef struct {
   uint64_t note_key;
   gint64   created_at;
+  uint8_t  event_id[32];
   char    *pubkey_hex;   /* owned */
   char    *root_id;      /* owned, may be NULL */
   char    *reply_id;     /* owned, may be NULL */
@@ -2654,6 +2710,7 @@ refresh_thread_func(GTask *task, gpointer source_object G_GNUC_UNUSED,
       RefreshEntry *e = g_new0(RefreshEntry, 1);
       e->note_key = nk;
       e->created_at = cat;
+      memcpy(e->event_id, id32, sizeof(e->event_id));
       e->pubkey_hex = g_strdup(pk);
       e->root_id = root_id;
       e->reply_id = reply_id;
@@ -2703,7 +2760,8 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
     }
 
     /* Insert silently (no per-note items_changed) */
-    if (insert_note_silent(self, e->note_key, e->created_at, e->root_id, e->reply_id, 0))
+    if (insert_note_silent(self, e->note_key, e->created_at, e->event_id,
+                           e->root_id, e->reply_id, 0))
       added++;
   }
 
@@ -2903,6 +2961,7 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
       }
 
       NoteEntry entry = { .note_key = e->note_key, .created_at = e->created_at };
+      memcpy(entry.event_id, e->event_id, sizeof(entry.event_id));
       g_array_insert_val(self->notes, self->notes->len, entry);
       uint64_t *set_key = g_new(uint64_t, 1);
       *set_key = e->note_key;
@@ -2942,6 +3001,7 @@ on_paginate_async_done(GObject *source, GAsyncResult *result, gpointer user_data
         .created_at = e->created_at,
         .arrival_time_us = g_get_monotonic_time()
       };
+      memcpy(pentry.event_id, e->event_id, sizeof(pentry.event_id));
       insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
       add_note_key_to_insertion_set(self, e->note_key);
       added++;
@@ -3253,7 +3313,7 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
   char *reply_id = NULL;
   parse_nip10_tags(evt, &root_id, &reply_id);
 
-  add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+  add_note_internal(self, note_key, created_at, id32, root_id, reply_id, 0);
   GArray *evicted_keys_add = NULL;
   guint evicted = enforce_window_inline(self, &evicted_keys_add);
   if (evicted > 0) {
@@ -3445,8 +3505,9 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
             g_hash_table_insert(self->thread_info, key_copy, tinfo);
           }
         }
-        guint pos = find_sorted_position(self, created_at);
+        guint pos = find_sorted_position(self, created_at, id32);
         NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+        memcpy(entry.event_id, id32, sizeof(entry.event_id));
         g_array_insert_val(self->notes, pos, entry);
         uint64_t *set_key = g_new(uint64_t, 1);
         *set_key = note_key;
@@ -3665,6 +3726,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
           .created_at = created_at,
           .arrival_time_us = g_get_monotonic_time()
         };
+        memcpy(pentry.event_id, id32, sizeof(pentry.event_id));
         insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
         add_note_key_to_insertion_set(self, note_key);
         added++;

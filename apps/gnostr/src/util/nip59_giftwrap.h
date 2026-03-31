@@ -3,10 +3,16 @@
  *
  * NIP-59 defines gift-wrapped events (kind 1059) for private communication.
  * This module provides async wrapping and unwrapping functions that integrate
- * with the D-Bus signer interface for NIP-44 encryption.
+ * with the unified signer service for NIP-44 encryption.
+ *
+ * Current implementation note:
+ * - The outer gift wrap (kind 1059) is currently signed with the sender's
+ *   configured identity, not a one-off ephemeral keypair.
+ * - The outer event still uses a randomized timestamp to reduce metadata
+ *   leakage, but this does not provide full ephemeral-sender privacy.
  *
  * Gift Wrap Structure:
- * - Outer event (kind 1059): Signed with ephemeral key, randomized timestamp
+ * - Outer event (kind 1059): Sender-signed wrapper with randomized timestamp
  * - Encrypted content: NIP-44 encrypted seal event
  * - Seal (kind 13): Signed by real sender, contains encrypted rumor
  * - Rumor: Unsigned inner event (the actual message content)
@@ -104,13 +110,14 @@ typedef void (*GnostrUnwrapCallback)(GnostrUnwrapResult *result,
  *
  * Flow:
  * 1. Creates a seal (kind 13) containing NIP-44 encrypted rumor JSON
- * 2. Signs the seal via D-Bus signer
- * 3. Generates ephemeral keypair for gift wrap
- * 4. Creates gift wrap (kind 1059) with NIP-44 encrypted seal
- * 5. Signs gift wrap with ephemeral key
+ * 2. Signs the seal via the unified signer service
+ * 3. Creates gift wrap (kind 1059) with NIP-44 encrypted seal
+ * 4. Signs the gift wrap via the configured sender identity
  *
  * The rumor should be an unsigned event (kind 14 for DMs, or other kinds).
- * The gift wrap uses a randomized timestamp for metadata protection.
+ * The gift wrap uses a randomized timestamp for partial metadata protection,
+ * but the current implementation does not generate a one-off ephemeral outer
+ * signing key.
  */
 void gnostr_nip59_create_gift_wrap_async(NostrEvent *rumor,
                                           const char *recipient_pubkey_hex,

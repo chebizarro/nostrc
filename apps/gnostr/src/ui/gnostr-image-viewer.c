@@ -15,6 +15,9 @@
 #include <libsoup/soup.h>
 #endif
 
+#define GNOSTR_CLIENT_SCHEMA_ID "org.gnostr.Client"
+#define GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY "load-remote-media"
+
 /* Zoom constants */
 #define MIN_ZOOM 0.1
 #define MAX_ZOOM 10.0
@@ -31,6 +34,9 @@ struct _GnostrImageViewer {
   GtkWidget *close_button;
   GtkWidget *zoom_label;
   GtkWidget *spinner;
+  GtkWidget *blocked_overlay;
+  GtkWidget *blocked_label;
+  GtkWidget *load_button;
   GtkWidget *save_button;
   GtkWidget *copy_link_button;
   GtkWidget *prev_button;
@@ -104,6 +110,15 @@ static void on_next_clicked(GtkButton *button, gpointer user_data);
 static void on_save_clicked(GtkButton *button, gpointer user_data);
 static void on_copy_link_clicked(GtkButton *button, gpointer user_data);
 static void update_nav_display(GnostrImageViewer *self);
+static gboolean gnostr_image_viewer_remote_media_allowed(void);
+static void image_viewer_set_overlay_state(GnostrImageViewer *self,
+                                           gboolean visible,
+                                           const char *message,
+                                           gboolean show_load_action);
+static void image_viewer_set_blocked_state(GnostrImageViewer *self, gboolean blocked);
+static void image_viewer_set_unavailable_state(GnostrImageViewer *self, const char *message);
+static void image_viewer_begin_fetch(GnostrImageViewer *self);
+static void on_load_button_clicked(GtkButton *button, gpointer user_data);
 
 static void gnostr_image_viewer_dispose(GObject *obj) {
   GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(obj);
@@ -200,6 +215,20 @@ static void gnostr_image_viewer_init(GnostrImageViewer *self) {
   gtk_widget_set_size_request(self->spinner, 48, 48);
   gtk_widget_set_visible(self->spinner, FALSE);
   gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->spinner);
+
+  /* Create blocked-media overlay (hidden by default) */
+  self->blocked_overlay = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_halign(self->blocked_overlay, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(self->blocked_overlay, GTK_ALIGN_CENTER);
+  gtk_widget_set_visible(self->blocked_overlay, FALSE);
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->blocked_overlay);
+
+  self->blocked_label = gtk_label_new(_("Remote media is blocked"));
+  gtk_box_append(GTK_BOX(self->blocked_overlay), self->blocked_label);
+
+  self->load_button = gtk_button_new_with_label(_("Load image"));
+  g_signal_connect(self->load_button, "clicked", G_CALLBACK(on_load_button_clicked), self);
+  gtk_box_append(GTK_BOX(self->blocked_overlay), self->load_button);
 
   /* Create toolbar box for buttons in top-left */
   GtkWidget *toolbar_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -303,6 +332,74 @@ GnostrImageViewer *gnostr_image_viewer_new(GtkWindow *parent) {
                                           "transient-for", parent,
                                           NULL);
   return self;
+}
+
+static gboolean
+gnostr_image_viewer_remote_media_allowed(void)
+{
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  if (!source) {
+    g_debug("ImageViewer: GSettings schema source unavailable; blocking remote media");
+    return FALSE;
+  }
+
+  g_autoptr(GSettingsSchema) schema =
+    g_settings_schema_source_lookup(source, GNOSTR_CLIENT_SCHEMA_ID, TRUE);
+  if (!schema ||
+      !g_settings_schema_has_key(schema, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY)) {
+    g_debug("ImageViewer: GSettings schema/key unavailable; blocking remote media");
+    return FALSE;
+  }
+
+  g_autoptr(GSettings) settings = g_settings_new(GNOSTR_CLIENT_SCHEMA_ID);
+  if (!settings) {
+    g_debug("ImageViewer: failed to open GSettings; blocking remote media");
+    return FALSE;
+  }
+
+  return g_settings_get_boolean(settings, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY);
+}
+
+static void
+image_viewer_set_overlay_state(GnostrImageViewer *self,
+                               gboolean visible,
+                               const char *message,
+                               gboolean show_load_action)
+{
+  if (GTK_IS_LABEL(self->blocked_label) && message) {
+    gtk_label_set_text(GTK_LABEL(self->blocked_label), message);
+  }
+
+  if (GTK_IS_WIDGET(self->load_button)) {
+    gtk_widget_set_visible(self->load_button, show_load_action);
+  }
+
+  if (GTK_IS_WIDGET(self->blocked_overlay)) {
+    gtk_widget_set_visible(self->blocked_overlay, visible);
+  }
+
+  if (visible && GTK_IS_WIDGET(self->spinner)) {
+    gtk_widget_set_visible(self->spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  }
+}
+
+static void
+image_viewer_set_blocked_state(GnostrImageViewer *self, gboolean blocked)
+{
+  image_viewer_set_overlay_state(self,
+                                 blocked,
+                                 _("Remote media is blocked"),
+                                 blocked);
+}
+
+static void
+image_viewer_set_unavailable_state(GnostrImageViewer *self, const char *message)
+{
+  image_viewer_set_overlay_state(self,
+                                 TRUE,
+                                 message ? message : _("Remote images unavailable"),
+                                 FALSE);
 }
 
 static void update_zoom_display(GnostrImageViewer *self) {
@@ -671,6 +768,7 @@ static void on_image_decode_done(GObject *source, GAsyncResult *res, gpointer us
     gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(texture));
   }
 
+  image_viewer_set_blocked_state(self, FALSE);
   zoom_to_fit(self);
   image_load_ctx_free(ctx);
 }
@@ -736,11 +834,12 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 }
 #endif
 
-void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url) {
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
+static void
+image_viewer_begin_fetch(GnostrImageViewer *self)
+{
+  const char *url = self->image_url;
 
-  g_clear_pointer(&self->image_url, g_free);
-  self->image_url = g_strdup(url);
+  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
 
 #ifdef HAVE_SOUP3
   if (!url || !*url) return;
@@ -752,16 +851,25 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
    * stores downscaled thumbnails which are too small for the image viewer.
    * DO NOT use gnostr_avatar_try_load_cached here. */
 
+  image_viewer_set_blocked_state(self, FALSE);
+
   /* Show loading spinner */
   gtk_widget_set_visible(self->spinner, TRUE);
   gtk_spinner_start(GTK_SPINNER(self->spinner));
+
+#ifdef GNOSTR_TESTING
+  if (g_strcmp0(g_getenv("GNOSTR_IMAGE_VIEWER_TEST_SKIP_FETCH"), "1") == 0) {
+    gtk_widget_set_visible(self->spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+    return;
+  }
+#endif
 
   /* hq-snq39: Check shared soup session before starting fetch */
   SoupSession *session = gnostr_get_shared_soup_session();
   if (!session) {
     g_warning("ImageViewer: shared soup session unavailable, cannot load: %s", url);
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+    image_viewer_set_unavailable_state(self, _("Remote images unavailable"));
     return;
   }
 
@@ -769,8 +877,7 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
     g_warning("ImageViewer: Invalid URL: %s", url);
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+    image_viewer_set_unavailable_state(self, _("Remote image URL is invalid"));
     return;
   }
 
@@ -793,8 +900,39 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
 
   g_object_unref(msg);
 #else
-  g_warning("ImageViewer: libsoup3 not available, cannot load remote images");
+  if (url && *url) {
+    g_warning("ImageViewer: libsoup3 not available, cannot load remote images");
+    image_viewer_set_unavailable_state(self, _("Remote images unavailable"));
+  }
 #endif
+}
+
+void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url) {
+  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
+
+  g_clear_pointer(&self->image_url, g_free);
+  self->image_url = g_strdup(url);
+
+  g_clear_object(&self->texture);
+  if (GTK_IS_PICTURE(self->picture)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->picture), NULL);
+  }
+  if (GTK_IS_WIDGET(self->spinner)) {
+    gtk_widget_set_visible(self->spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  }
+
+  if (!url || !*url) {
+    image_viewer_set_blocked_state(self, FALSE);
+    return;
+  }
+
+  if (!gnostr_image_viewer_remote_media_allowed()) {
+    image_viewer_set_blocked_state(self, TRUE);
+    return;
+  }
+
+  image_viewer_begin_fetch(self);
 }
 
 void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *texture) {
@@ -819,6 +957,7 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
     gtk_widget_set_visible(self->spinner, FALSE);
     gtk_spinner_stop(GTK_SPINNER(self->spinner));
   }
+  image_viewer_set_blocked_state(self, FALSE);
 
   /* Apply initial fit zoom */
   zoom_to_fit(self);
@@ -880,9 +1019,7 @@ static char *get_filename_from_url(const char *url) {
   return g_strdup("image.jpg");
 }
 
-#ifdef HAVE_SOUP3
 static void on_save_response(GObject *source, GAsyncResult *result, gpointer user_data);
-#endif
 
 static void on_save_clicked(GtkButton *button, gpointer user_data) {
   (void)button;
@@ -973,6 +1110,23 @@ static void on_copy_link_clicked(GtkButton *button, gpointer user_data) {
   }
 }
 
+static void
+on_load_button_clicked(GtkButton *button, gpointer user_data)
+{
+  (void)button;
+  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
+
+  if (!self->image_url || !*self->image_url) {
+    return;
+  }
+
+  if (!GTK_IS_WIDGET(self->load_button) || !gtk_widget_get_visible(self->load_button)) {
+    return;
+  }
+
+  image_viewer_begin_fetch(self);
+}
+
 void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,
                                      const char * const *urls,
                                      guint current_index) {
@@ -1061,3 +1215,27 @@ void gnostr_image_viewer_present(GnostrImageViewer *self) {
   /* Update navigation display */
   update_nav_display(self);
 }
+
+#ifdef GNOSTR_TESTING
+gboolean
+gnostr_image_viewer_remote_media_allowed_for_testing(void)
+{
+  return gnostr_image_viewer_remote_media_allowed();
+}
+
+gboolean
+gnostr_image_viewer_is_load_action_visible_for_testing(GnostrImageViewer *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_IMAGE_VIEWER(self), FALSE);
+  return GTK_IS_WIDGET(self->load_button) &&
+         gtk_widget_get_visible(self->load_button);
+}
+
+void
+gnostr_image_viewer_activate_load_action_for_testing(GnostrImageViewer *self)
+{
+  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
+
+  on_load_button_clicked(GTK_BUTTON(self->load_button), self);
+}
+#endif

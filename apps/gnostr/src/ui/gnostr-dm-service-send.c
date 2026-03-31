@@ -162,6 +162,7 @@ typedef struct {
     gpointer user_data;
     GPtrArray *attempts;        /* DmPublishAttempt* */
     GString *failure_reasons;
+    GString *relay_outcomes;
     guint success_count;
     guint fail_count;
     gboolean finalized;
@@ -204,6 +205,7 @@ static void dm_send_ctx_free(DmSendCtx *ctx) {
     g_clear_object(&ctx->cancellable);
     if (ctx->attempts) g_ptr_array_free(ctx->attempts, TRUE);
     if (ctx->failure_reasons) g_string_free(ctx->failure_reasons, TRUE);
+    if (ctx->relay_outcomes) g_string_free(ctx->relay_outcomes, TRUE);
     g_free(ctx);
 }
 
@@ -243,6 +245,7 @@ dm_publish_attempt_free(DmPublishAttempt *attempt)
 static void
 dm_publish_attempt_mark_result(DmPublishAttempt *attempt,
                                gboolean          accepted,
+                               const char       *failure_class,
                                const char       *reason)
 {
     DmSendCtx *ctx;
@@ -261,10 +264,22 @@ dm_publish_attempt_mark_result(DmPublishAttempt *attempt,
         attempt->ack_timeout_id = 0;
     }
 
+    if (!ctx->relay_outcomes)
+        ctx->relay_outcomes = g_string_new(NULL);
+    if (ctx->relay_outcomes->len > 0)
+        g_string_append(ctx->relay_outcomes, "\n");
+    g_string_append_printf(ctx->relay_outcomes,
+                           "%s | class=%s | %s",
+                           attempt->url ? attempt->url : "(unknown relay)",
+                           failure_class && *failure_class ? failure_class : (accepted ? "accepted" : "publish_failed"),
+                           reason && *reason ? reason : (accepted ? "relay OK accepted" : "publish not acknowledged"));
+
     if (accepted) {
         ctx->success_count++;
-        g_message("[DM_SERVICE] Relay accepted DM publish: %s",
-                  attempt->url ? attempt->url : "(unknown)");
+        g_debug("[DM_SERVICE] relay=%s class=%s message=%s",
+                  attempt->url ? attempt->url : "(unknown relay)",
+                  failure_class && *failure_class ? failure_class : "accepted",
+                  reason && *reason ? reason : "relay OK accepted");
     } else {
         ctx->fail_count++;
         if (!ctx->failure_reasons)
@@ -272,11 +287,13 @@ dm_publish_attempt_mark_result(DmPublishAttempt *attempt,
         if (ctx->failure_reasons->len > 0)
             g_string_append(ctx->failure_reasons, "\n");
         g_string_append_printf(ctx->failure_reasons,
-                               "%s: %s",
+                               "%s [%s]: %s",
                                attempt->url ? attempt->url : "(unknown relay)",
+                               failure_class && *failure_class ? failure_class : "publish_failed",
                                reason && *reason ? reason : "publish not acknowledged");
-        g_warning("[DM_SERVICE] Relay rejected/failed DM publish: %s (%s)",
+        g_warning("[DM_SERVICE] relay=%s class=%s message=%s",
                   attempt->url ? attempt->url : "(unknown relay)",
+                  failure_class && *failure_class ? failure_class : "publish_failed",
                   reason && *reason ? reason : "publish not acknowledged");
     }
 
@@ -296,12 +313,13 @@ dm_publish_attempt_dispatch(DmPublishAttempt *attempt)
         return;
 
     if (!attempt->ctx->gift_wrap_event) {
-        dm_publish_attempt_mark_result(attempt, FALSE, "missing gift wrap event");
+        dm_publish_attempt_mark_result(attempt, FALSE, "missing_event", "missing gift wrap event");
         return;
     }
 
     if (!gnostr_relay_publish(attempt->relay, attempt->ctx->gift_wrap_event, &pub_err)) {
         dm_publish_attempt_mark_result(attempt, FALSE,
+                                       "enqueue_failed",
                                        pub_err && pub_err->message ? pub_err->message : "publish enqueue failed");
         return;
     }
@@ -324,7 +342,7 @@ dm_publish_attempt_ack_timeout(gpointer user_data)
     attempt->ack_timeout_id = 0;
 
     if (!attempt->settled && attempt->publish_requested) {
-        dm_publish_attempt_mark_result(attempt, FALSE, "timeout waiting for relay OK");
+        dm_publish_attempt_mark_result(attempt, FALSE, "ack_timeout", "timeout waiting for relay OK");
     }
 
     return G_SOURCE_REMOVE;
@@ -367,6 +385,8 @@ finish_dm_send_attempts(DmSendCtx *ctx)
 
     if (ctx->failure_reasons && ctx->failure_reasons->len > 0)
         g_warning("[DM_SERVICE] Relay DM publish failures:\n%s", ctx->failure_reasons->str);
+    if (ctx->relay_outcomes && ctx->relay_outcomes->len > 0)
+        g_message("[DM_SERVICE] Relay DM publish outcomes:\n%s", ctx->relay_outcomes->str);
 
     if (ctx->callback)
         ctx->callback(result, ctx->user_data);
@@ -394,7 +414,10 @@ on_dm_publish_relay_ok(GNostrRelay *relay G_GNUC_UNUSED,
     if (g_strcmp0(event_id, attempt->ctx->event_id) != 0)
         return;
 
-    dm_publish_attempt_mark_result(attempt, accepted, message);
+    dm_publish_attempt_mark_result(attempt,
+                                   accepted,
+                                   accepted ? "accepted" : "relay_rejected",
+                                   message);
 }
 
 static void
@@ -417,7 +440,7 @@ on_dm_publish_relay_state_changed(GNostrRelay     *relay G_GNUC_UNUSED,
 
     if (attempt->publish_requested &&
         (new_state == GNOSTR_RELAY_STATE_DISCONNECTED || new_state == GNOSTR_RELAY_STATE_ERROR)) {
-        dm_publish_attempt_mark_result(attempt, FALSE, "relay disconnected before OK");
+        dm_publish_attempt_mark_result(attempt, FALSE, "disconnect_before_ok", "relay disconnected before OK");
     }
 }
 
@@ -435,6 +458,7 @@ on_dm_publish_relay_error(GNostrRelay *relay G_GNUC_UNUSED,
 
     if (attempt->publish_requested) {
         dm_publish_attempt_mark_result(attempt, FALSE,
+                                       "relay_error",
                                        error && error->message ? error->message : "relay error");
     }
 }
@@ -452,6 +476,7 @@ on_dm_publish_relay_connected(GObject *source, GAsyncResult *res, gpointer user_
 
     if (!gnostr_relay_connect_finish(GNOSTR_RELAY(source), res, &error)) {
         dm_publish_attempt_mark_result(attempt, FALSE,
+                                       "connect_failed",
                                        error && error->message ? error->message : "connect failed");
         return;
     }

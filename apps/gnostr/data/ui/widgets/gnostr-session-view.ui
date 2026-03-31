@@ -473,8 +473,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="GtkOverlay" id="content_root">
                             <child>
                               <object class="AdwClamp" id="middle_clamp">
-                                <property name="maximum-size">20000</property>
-                                <property name="tightening-threshold">20000</property>
+                                <property name="maximum-size">960</property>
+                                <property name="tightening-threshold">720</property>
                                 <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
                                 <property name="halign">0</property>

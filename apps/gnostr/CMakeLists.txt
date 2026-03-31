@@ -806,6 +806,38 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "startup;eose;unit;gnostr")
 
+  add_executable(gnostr-test-image-viewer-remote-media
+    tests/test_image_viewer_remote_media.c
+    src/ui/gnostr-image-viewer.c)
+  target_compile_features(gnostr-test-image-viewer-remote-media PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-image-viewer-remote-media PRIVATE GNOSTR_TESTING)
+  if (SOUP3_FOUND)
+    target_compile_definitions(gnostr-test-image-viewer-remote-media PRIVATE HAVE_SOUP3=1)
+  endif()
+  target_include_directories(gnostr-test-image-viewer-remote-media PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/nostr-gtk/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${_NOSTR_CONFIG_DIR})
+  target_link_libraries(gnostr-test-image-viewer-remote-media PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::GTK4 PkgConfig::ADWAITA
+    nostr_gobject nostr_gtk)
+  if (SOUP3_FOUND)
+    target_link_libraries(gnostr-test-image-viewer-remote-media PRIVATE PkgConfig::SOUP3)
+  endif()
+  if(APPLE)
+    target_link_options(gnostr-test-image-viewer-remote-media PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-image-viewer-remote-media PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-image-viewer-remote-media)
+  add_test(NAME gnostr-test-image-viewer-remote-media COMMAND gnostr-test-image-viewer-remote-media)
+  set_tests_properties(gnostr-test-image-viewer-remote-media PROPERTIES
+    TIMEOUT 30
+    LABELS "image;viewer;privacy;unit;gnostr"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+
   add_executable(gnostr-test-live-state-kinds
     tests/test_live_state_kinds.c
     src/ui/gnostr-live-state-kinds.c)

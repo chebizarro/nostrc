@@ -4,7 +4,7 @@
  * Implements NIP-17 (Private Direct Messages) using gift-wrapped encryption:
  * - Kind 14 (chat message/rumor, unsigned)
  * - Kind 13 (seal, signed wrapper)
- * - Kind 1059 (gift wrap, final container with ephemeral sender)
+ * - Kind 1059 (gift wrap, final sender-signed container with randomized timestamp)
  * - Kind 10050 (DM relay list preferences)
  *
  * Copyright (C) 2026 Gnostr Contributors
@@ -174,7 +174,7 @@ static const char *
 nip17_dms_plugin_get_description(GnostrPlugin *plugin)
 {
   (void)plugin;
-  return "Private direct messages using gift-wrapped encryption (NIP-17)";
+  return "Private direct messages using NIP-17 gift wraps (currently sender-signed outer wraps)";
 }
 
 static const char *const *

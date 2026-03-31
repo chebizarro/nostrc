@@ -68,6 +68,13 @@ typedef struct {
     gchar        *test_key_hex;      /* Test private key (hex) */
     gchar        *test_npub;         /* Corresponding npub */
     gchar        *acl_dir;           /* Temporary config dir */
+    guint         service_registration_id;
+    guint         service_name_id;
+    gboolean      service_ready;
+    gboolean      name_lost;
+    gboolean      shutdown_complete;
+    GMutex        state_lock;
+    GCond         state_cond;
 } DbusFixture;
 
 /* Forward declarations */
@@ -798,35 +805,6 @@ static const GDBusInterfaceVTable interface_vtable = {
     NULL   /* set_property */
 };
 
-static guint service_registration_id = 0;
-static guint service_name_id = 0;
-
-static void
-on_bus_acquired(GDBusConnection *connection,
-                const gchar     *name,
-                gpointer         user_data)
-{
-    (void)name;
-    GError *error = NULL;
-    GDBusNodeInfo *introspection_data;
-
-    introspection_data = g_dbus_node_info_new_for_xml(introspection_xml, &error);
-    g_assert_no_error(error);
-
-    service_registration_id = g_dbus_connection_register_object(
-        connection,
-        TEST_OBJECT_PATH,
-        introspection_data->interfaces[0],
-        &interface_vtable,
-        user_data,
-        NULL,  /* user_data_free_func */
-        &error);
-
-    g_assert_no_error(error);
-    g_assert_cmpuint(service_registration_id, >, 0);
-
-    g_dbus_node_info_unref(introspection_data);
-}
 
 static void
 on_name_acquired(GDBusConnection *connection,
@@ -835,8 +813,12 @@ on_name_acquired(GDBusConnection *connection,
 {
     (void)connection;
     (void)name;
-    (void)user_data;
-    /* Service is now ready */
+    DbusFixture *fix = (DbusFixture *)user_data;
+
+    g_mutex_lock(&fix->state_lock);
+    fix->service_ready = TRUE;
+    g_cond_broadcast(&fix->state_cond);
+    g_mutex_unlock(&fix->state_lock);
 }
 
 static void
@@ -846,8 +828,57 @@ on_name_lost(GDBusConnection *connection,
 {
     (void)connection;
     (void)name;
-    (void)user_data;
-    /* Name lost - this is normal during teardown */
+    DbusFixture *fix = (DbusFixture *)user_data;
+
+    g_mutex_lock(&fix->state_lock);
+    fix->name_lost = TRUE;
+    g_cond_broadcast(&fix->state_cond);
+    g_mutex_unlock(&fix->state_lock);
+}
+
+static gboolean
+wait_for_fixture_flag(DbusFixture *fix,
+                      gboolean    *flag,
+                      gint64       timeout_us)
+{
+    gboolean reached = FALSE;
+    gint64 deadline = g_get_monotonic_time() + timeout_us;
+
+    g_mutex_lock(&fix->state_lock);
+    while (!(*flag)) {
+        if (!g_cond_wait_until(&fix->state_cond, &fix->state_lock, deadline))
+            break;
+    }
+    reached = *flag;
+    g_mutex_unlock(&fix->state_lock);
+
+    return reached;
+}
+
+static gboolean
+service_shutdown_cb(gpointer user_data)
+{
+    DbusFixture *fix = (DbusFixture *)user_data;
+
+    if (fix->service_registration_id && fix->service_conn) {
+        g_dbus_connection_unregister_object(fix->service_conn, fix->service_registration_id);
+        fix->service_registration_id = 0;
+    }
+
+    if (fix->service_name_id) {
+        g_bus_unown_name(fix->service_name_id);
+        fix->service_name_id = 0;
+    }
+
+    g_mutex_lock(&fix->state_lock);
+    fix->shutdown_complete = TRUE;
+    g_cond_broadcast(&fix->state_cond);
+    g_mutex_unlock(&fix->state_lock);
+
+    if (fix->service_loop)
+        g_main_loop_quit(fix->service_loop);
+
+    return G_SOURCE_REMOVE;
 }
 
 static void
@@ -855,6 +886,14 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
 {
     (void)user_data;
     GError *error = NULL;
+
+    g_mutex_init(&fix->state_lock);
+    g_cond_init(&fix->state_cond);
+    fix->service_registration_id = 0;
+    fix->service_name_id = 0;
+    fix->service_ready = FALSE;
+    fix->name_lost = FALSE;
+    fix->shutdown_complete = FALSE;
 
     /* Generate test keypair */
     generate_test_keypair(fix);
@@ -892,7 +931,7 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
     GDBusNodeInfo *introspection_data = g_dbus_node_info_new_for_xml(introspection_xml, &error);
     g_assert_no_error(error);
 
-    service_registration_id = g_dbus_connection_register_object(
+    fix->service_registration_id = g_dbus_connection_register_object(
         fix->service_conn,
         TEST_OBJECT_PATH,
         introspection_data->interfaces[0],
@@ -901,11 +940,11 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
         NULL,  /* user_data_free_func */
         &error);
     g_assert_no_error(error);
-    g_assert_cmpuint(service_registration_id, >, 0);
+    g_assert_cmpuint(fix->service_registration_id, >, 0);
     g_dbus_node_info_unref(introspection_data);
 
     /* Own the bus name */
-    service_name_id = g_bus_own_name_on_connection(
+    fix->service_name_id = g_bus_own_name_on_connection(
         fix->service_conn,
         TEST_BUS_NAME,
         G_BUS_NAME_OWNER_FLAGS_NONE,
@@ -918,8 +957,17 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
     /* Start the service thread to process D-Bus method calls */
     fix->service_thread = g_thread_new("dbus-service", service_thread_func, fix);
 
-    /* Give the service time to start up */
-    g_usleep(100000);  /* 100ms */
+    if (!wait_for_fixture_flag(fix, &fix->service_ready, 5 * G_TIME_SPAN_SECOND)) {
+        g_mutex_lock(&fix->state_lock);
+        gboolean name_lost = fix->name_lost;
+        g_mutex_unlock(&fix->state_lock);
+
+        if (name_lost) {
+            g_error("D-Bus test fixture lost bus name '%s' during startup", TEST_BUS_NAME);
+        }
+
+        g_error("D-Bus test fixture timed out waiting for bus name '%s'", TEST_BUS_NAME);
+    }
 
     /* Get a separate connection for the client (uses default main context) */
     fix->client_conn = g_dbus_connection_new_for_address_sync(
@@ -957,29 +1005,20 @@ fixture_teardown(DbusFixture *fix, gconstpointer user_data)
         fix->proxy = NULL;
     }
 
-    /* Stop the service main loop (this will cause the thread to exit) */
-    if (fix->service_loop) {
-        g_main_loop_quit(fix->service_loop);
+    if (fix->service_context && fix->service_loop && fix->service_thread) {
+        g_main_context_invoke_full(fix->service_context,
+                                   G_PRIORITY_DEFAULT,
+                                   service_shutdown_cb,
+                                   fix,
+                                   NULL);
+        if (!wait_for_fixture_flag(fix, &fix->shutdown_complete, 5 * G_TIME_SPAN_SECOND))
+            g_error("D-Bus test fixture timed out waiting for shutdown completion");
     }
 
     /* Wait for service thread to finish */
     if (fix->service_thread) {
         g_thread_join(fix->service_thread);
         fix->service_thread = NULL;
-    }
-
-    /* Unown the name (must be done from service context) */
-    if (service_name_id) {
-        g_main_context_push_thread_default(fix->service_context);
-        g_bus_unown_name(service_name_id);
-        service_name_id = 0;
-        g_main_context_pop_thread_default(fix->service_context);
-    }
-
-    /* Unregister the object */
-    if (service_registration_id && fix->service_conn) {
-        g_dbus_connection_unregister_object(fix->service_conn, service_registration_id);
-        service_registration_id = 0;
     }
 
     /* Clean up client connection */
@@ -1025,6 +1064,9 @@ fixture_teardown(DbusFixture *fix, gconstpointer user_data)
     /* Free test key data */
     free(fix->test_key_hex);
     free(fix->test_npub);
+
+    g_cond_clear(&fix->state_cond);
+    g_mutex_clear(&fix->state_lock);
 }
 
 /* ===========================================================================

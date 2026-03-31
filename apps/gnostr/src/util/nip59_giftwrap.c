@@ -233,7 +233,7 @@ static void finish_gift_wrap_with_error(GiftWrapCreateCtx *ctx, const char *msg)
 /* Step 4: Gift wrap creation complete - finalize and return */
 static void on_gift_wrap_seal_encrypted(GObject *source, GAsyncResult *res, gpointer user_data);
 
-/* Step 3: Seal signed - now encrypt it with ephemeral key for gift wrap */
+/* Step 3: Seal signed - now encrypt it for the sender-signed gift wrap */
 static void on_seal_signed(GObject *source, GAsyncResult *res, gpointer user_data) {
     GiftWrapCreateCtx *ctx = (GiftWrapCreateCtx *)user_data;
     GError *error = NULL;
@@ -253,10 +253,12 @@ static void on_seal_signed(GObject *source, GAsyncResult *res, gpointer user_dat
     ctx->signed_seal_json = signed_seal;
     g_debug("[NIP59] Seal signed, encrypting for gift wrap");
 
-    /* Encrypt seal JSON using sender's key (will be decrypted by recipient) */
-    /* Note: For a true ephemeral key implementation, we would need the signer
-     * to support generating and using ephemeral keys. For now, we use the
-     * sender's key and rely on the randomized timestamp for metadata protection. */
+    /* Encrypt seal JSON using the sender's configured key so the recipient can
+     * decrypt it through the current signer abstraction.
+     *
+     * Note: This is not a true ephemeral outer-wrap implementation. The outer
+     * kind-1059 event is also signed by the sender identity; randomized
+     * timestamps provide only partial metadata protection here. */
     gnostr_nip44_encrypt_async(
         ctx->recipient_pubkey_hex,
         ctx->signed_seal_json,
@@ -467,7 +469,7 @@ void gnostr_nip59_create_gift_wrap_async(NostrEvent *rumor,
 typedef struct {
     /* Input parameters */
     char *user_pubkey_hex;
-    char *ephemeral_pubkey;     /* Gift wrap sender (ephemeral key) */
+    char *outer_pubkey;         /* Gift wrap signer pubkey from the outer event */
     char *encrypted_seal;       /* Gift wrap content */
     GCancellable *cancellable;
     GnostrUnwrapCallback callback;
@@ -481,7 +483,7 @@ typedef struct {
 static void unwrap_ctx_free(UnwrapCtx *ctx) {
     if (!ctx) return;
     g_free(ctx->user_pubkey_hex);
-    g_free(ctx->ephemeral_pubkey);
+    g_free(ctx->outer_pubkey);
     g_free(ctx->encrypted_seal);
     if (ctx->cancellable) g_object_unref(ctx->cancellable);
     g_free(ctx->seal_pubkey);
@@ -654,10 +656,10 @@ void gnostr_nip59_unwrap_async(NostrEvent *gift_wrap,
         return;
     }
 
-    const char *ephemeral_pk = nostr_event_get_pubkey(gift_wrap);
+    const char *outer_pk = nostr_event_get_pubkey(gift_wrap);
     const char *encrypted_content = nostr_event_get_content(gift_wrap);
 
-    if (!ephemeral_pk || !encrypted_content) {
+    if (!outer_pk || !encrypted_content) {
         GnostrUnwrapResult *result = g_new0(GnostrUnwrapResult, 1);
         result->success = FALSE;
         result->error_message = g_strdup("Missing gift wrap pubkey or content");
@@ -669,20 +671,20 @@ void gnostr_nip59_unwrap_async(NostrEvent *gift_wrap,
     /* Create context */
     UnwrapCtx *ctx = g_new0(UnwrapCtx, 1);
     ctx->user_pubkey_hex = g_strdup(user_pubkey_hex);
-    ctx->ephemeral_pubkey = g_strdup(ephemeral_pk);
+    ctx->outer_pubkey = g_strdup(outer_pk);
     ctx->encrypted_seal = g_strdup(encrypted_content);
     ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
     ctx->callback = callback;
     ctx->user_data = user_data;
 
     char *gift_wrap_id = nostr_event_get_id(gift_wrap);
-    g_debug("[NIP59] Unwrapping gift wrap %.8s from ephemeral key %.8s",
-            gift_wrap_id ? gift_wrap_id : "(null)", ephemeral_pk);
+    g_debug("[NIP59] Unwrapping gift wrap %.8s from outer signer %.8s",
+            gift_wrap_id ? gift_wrap_id : "(null)", outer_pk);
     g_free(gift_wrap_id);
 
     /* Step 1: Decrypt gift wrap content to get seal */
     gnostr_nip44_decrypt_async(
-        ctx->ephemeral_pubkey,
+        ctx->outer_pubkey,
         ctx->encrypted_seal,
         ctx->cancellable,
         on_seal_decrypted,

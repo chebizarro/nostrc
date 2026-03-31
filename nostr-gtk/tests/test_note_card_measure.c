@@ -14,6 +14,7 @@
  */
 
 #include <gtk/gtk.h>
+#include <adwaita.h>
 #include <glib.h>
 
 /* ── Size thresholds (in pixels) ──────────────────────────────────── */
@@ -184,6 +185,43 @@ test_constrained_box_stays_bounded(void)
 
 /* ── Test: ScrolledWindow constrains ListView row heights ─────────── */
 static void
+test_adw_clamp_bounds_natural_width(void)
+{
+    GtkWidget *clamp = adw_clamp_new();
+    adw_clamp_set_maximum_size(ADW_CLAMP(clamp), 960);
+    adw_clamp_set_tightening_threshold(ADW_CLAMP(clamp), 720);
+
+    GtkBox *box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 4));
+    GtkLabel *header = GTK_LABEL(gtk_label_new("Test Author · 2m ago"));
+    gtk_label_set_ellipsize(header, PANGO_ELLIPSIZE_END);
+    gtk_box_append(box, GTK_WIDGET(header));
+
+    GtkLabel *content = GTK_LABEL(gtk_label_new(
+        "This is a very long note that should test the width bounding behavior of the clamp. "
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+        "nostr:nevent1qqsqz9xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx "
+        "https://example.com/very/long/path/that/used/to/force/the/timeline/wider/than/the/window"));
+    gtk_label_set_wrap(content, TRUE);
+    gtk_label_set_wrap_mode(content, PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_xalign(content, 0.0f);
+    gtk_label_set_max_width_chars(content, 80);
+    gtk_label_set_width_chars(content, 1);
+    gtk_box_append(box, GTK_WIDGET(content));
+
+    adw_clamp_set_child(ADW_CLAMP(clamp), GTK_WIDGET(box));
+
+    int min_w, nat_w;
+    gtk_widget_measure(clamp, GTK_ORIENTATION_HORIZONTAL, -1, &min_w, &nat_w, NULL, NULL);
+
+    g_test_message("Clamp bounded width: min=%d nat=%d", min_w, nat_w);
+    g_assert_cmpint(min_w, <=, 960);
+    g_assert_cmpint(nat_w, <=, 960);
+
+    g_object_ref_sink(clamp);
+    g_object_unref(clamp);
+}
+
+static void
 test_listview_row_heights_bounded(void)
 {
     GListStore *store = g_list_store_new(GTK_TYPE_STRING_OBJECT);
@@ -246,6 +284,8 @@ main(int argc, char *argv[])
                     test_label_stays_bounded);
     g_test_add_func("/nostr-gtk/sizing/constrained-box-bounded",
                     test_constrained_box_stays_bounded);
+    g_test_add_func("/nostr-gtk/sizing/adw-clamp-bounds-natural-width",
+                    test_adw_clamp_bounds_natural_width);
     g_test_add_func("/nostr-gtk/sizing/listview-row-heights",
                     test_listview_row_heights_bounded);
 

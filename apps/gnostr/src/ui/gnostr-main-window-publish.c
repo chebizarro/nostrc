@@ -34,6 +34,7 @@ struct _PublishContext {
   char *event_id;
   GPtrArray *attempts; /* PublishRelayAttempt* */
   GString *failure_reasons;
+  GString *relay_outcomes;
   guint success_count;
   guint fail_count;
   guint limit_skip_count;
@@ -73,6 +74,7 @@ static void publish_context_free(PublishContext *ctx) {
   g_clear_pointer(&ctx->event_id, free);
   if (ctx->attempts) g_ptr_array_free(ctx->attempts, TRUE);
   if (ctx->failure_reasons) g_string_free(ctx->failure_reasons, TRUE);
+  if (ctx->relay_outcomes) g_string_free(ctx->relay_outcomes, TRUE);
   g_free(ctx->limit_warnings);
   g_free(ctx);
 }
@@ -235,6 +237,7 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
 static void
 publish_relay_attempt_mark_result(PublishRelayAttempt *attempt,
                                   gboolean             accepted,
+                                  const char          *failure_class,
                                   const char          *reason)
 {
   PublishContext *ctx;
@@ -253,9 +256,22 @@ publish_relay_attempt_mark_result(PublishRelayAttempt *attempt,
     attempt->ack_timeout_id = 0;
   }
 
+  if (!ctx->relay_outcomes)
+    ctx->relay_outcomes = g_string_new(NULL);
+  if (ctx->relay_outcomes->len > 0)
+    g_string_append(ctx->relay_outcomes, "\n");
+  g_string_append_printf(ctx->relay_outcomes,
+                         "%s | class=%s | %s",
+                         attempt->url ? attempt->url : "(unknown relay)",
+                         failure_class && *failure_class ? failure_class : (accepted ? "accepted" : "publish_failed"),
+                         reason && *reason ? reason : (accepted ? "relay OK accepted" : "publish not acknowledged"));
+
   if (accepted) {
     ctx->success_count++;
-    g_debug("[PUBLISH] Relay accepted event: %s", attempt->url ? attempt->url : "(unknown)");
+    g_debug("[PUBLISH] relay=%s class=%s message=%s",
+              attempt->url ? attempt->url : "(unknown relay)",
+              failure_class && *failure_class ? failure_class : "accepted",
+              reason && *reason ? reason : "relay OK accepted");
     if (!ctx->local_ingested && ctx->signed_event_json && *ctx->signed_event_json) {
       GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
       g_ptr_array_add(b, g_strdup(ctx->signed_event_json));
@@ -270,11 +286,13 @@ publish_relay_attempt_mark_result(PublishRelayAttempt *attempt,
     if (ctx->failure_reasons->len > 0)
       g_string_append(ctx->failure_reasons, "\n");
     g_string_append_printf(ctx->failure_reasons,
-                           "%s: %s",
+                           "%s [%s]: %s",
                            attempt->url ? attempt->url : "(unknown relay)",
+                           failure_class && *failure_class ? failure_class : "publish_failed",
                            reason && *reason ? reason : "publish not acknowledged");
-    g_warning("[PUBLISH] Relay rejected/failed event: %s (%s)",
+    g_warning("[PUBLISH] relay=%s class=%s message=%s",
               attempt->url ? attempt->url : "(unknown relay)",
+              failure_class && *failure_class ? failure_class : "publish_failed",
               reason && *reason ? reason : "publish not acknowledged");
   }
 
@@ -294,12 +312,13 @@ publish_relay_attempt_dispatch(PublishRelayAttempt *attempt)
     return;
 
   if (!attempt->ctx->event) {
-    publish_relay_attempt_mark_result(attempt, FALSE, "missing event");
+    publish_relay_attempt_mark_result(attempt, FALSE, "missing_event", "missing event");
     return;
   }
 
   if (!gnostr_relay_publish(attempt->relay, attempt->ctx->event, &pub_err)) {
     publish_relay_attempt_mark_result(attempt, FALSE,
+                                      "enqueue_failed",
                                       pub_err && pub_err->message ? pub_err->message : "publish enqueue failed");
     return;
   }
@@ -322,7 +341,7 @@ publish_relay_attempt_ack_timeout(gpointer user_data)
   attempt->ack_timeout_id = 0;
 
   if (!attempt->settled && attempt->publish_requested) {
-    publish_relay_attempt_mark_result(attempt, FALSE, "timeout waiting for relay OK");
+    publish_relay_attempt_mark_result(attempt, FALSE, "ack_timeout", "timeout waiting for relay OK");
   }
 
   return G_SOURCE_REMOVE;
@@ -400,6 +419,8 @@ publish_finish_if_settled(PublishContext *ctx)
     g_warning("[PUBLISH] Relay limit violations:\n%s", ctx->limit_warnings);
   if (ctx->failure_reasons && ctx->failure_reasons->len > 0)
     g_warning("[PUBLISH] Relay publish failures:\n%s", ctx->failure_reasons->str);
+  if (ctx->relay_outcomes && ctx->relay_outcomes->len > 0)
+    g_message("[PUBLISH] Relay publish outcomes:\n%s", ctx->relay_outcomes->str);
 
   publish_context_free(ctx);
 }
@@ -422,7 +443,10 @@ on_publish_relay_ok(GNostrRelay *relay G_GNUC_UNUSED,
   if (g_strcmp0(event_id, attempt->ctx->event_id) != 0)
     return;
 
-  publish_relay_attempt_mark_result(attempt, accepted, message);
+  publish_relay_attempt_mark_result(attempt,
+                                    accepted,
+                                    accepted ? "accepted" : "relay_rejected",
+                                    message);
 }
 
 static void
@@ -445,7 +469,7 @@ on_publish_relay_state_changed(GNostrRelay     *relay G_GNUC_UNUSED,
 
   if (attempt->publish_requested &&
       (new_state == GNOSTR_RELAY_STATE_DISCONNECTED || new_state == GNOSTR_RELAY_STATE_ERROR)) {
-    publish_relay_attempt_mark_result(attempt, FALSE, "relay disconnected before OK");
+    publish_relay_attempt_mark_result(attempt, FALSE, "disconnect_before_ok", "relay disconnected before OK");
   }
 }
 
@@ -463,6 +487,7 @@ on_publish_relay_error(GNostrRelay *relay G_GNUC_UNUSED,
 
   if (attempt->publish_requested) {
     publish_relay_attempt_mark_result(attempt, FALSE,
+                                      "relay_error",
                                       error && error->message ? error->message : "relay error");
   }
 }
@@ -480,6 +505,7 @@ on_publish_relay_connected(GObject *source, GAsyncResult *res, gpointer user_dat
 
   if (!gnostr_relay_connect_finish(GNOSTR_RELAY(source), res, &error)) {
     publish_relay_attempt_mark_result(attempt, FALSE,
+                                      "connect_failed",
                                       error && error->message ? error->message : "connect failed");
     return;
   }

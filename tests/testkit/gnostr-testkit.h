@@ -67,6 +67,21 @@ const char *gn_test_ndb_get_dir(GnTestNdb *ndb);
 gboolean gn_test_ndb_ingest_json(GnTestNdb *ndb, const char *json);
 
 /**
+ * gn_test_ndb_ingest_json_from_relay:
+ * @ndb: a #GnTestNdb
+ * @json: a valid nostr event JSON string
+ * @relay_url: (nullable): source relay URL to record as provenance
+ *
+ * Ingests a single event JSON string into the test database while attributing
+ * it to a specific relay. Use this for dedupe/provenance tests.
+ *
+ * Returns: %TRUE on success
+ */
+gboolean gn_test_ndb_ingest_json_from_relay(GnTestNdb *ndb,
+                                            const char *json,
+                                            const char *relay_url);
+
+/**
  * gn_test_ndb_wait_for_ingest:
  *
  * Waits for async NDB ingester threads to commit queued events to the database.

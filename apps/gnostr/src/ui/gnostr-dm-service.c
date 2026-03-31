@@ -478,7 +478,7 @@ update_conversation(GnostrDmService *self,
 struct _DecryptContext {
     GnostrDmService *service;   /* weak ref */
     char *gift_wrap_id;
-    char *ephemeral_pubkey;     /* Gift wrap sender (ephemeral key) */
+    char *outer_pubkey;         /* Gift wrap signer pubkey from the outer event */
     char *encrypted_seal;       /* Encrypted seal content */
     /* After first decrypt: */
     char *seal_pubkey;          /* Seal sender (real sender) */
@@ -488,7 +488,7 @@ struct _DecryptContext {
 static void decrypt_ctx_free(DecryptContext *ctx) {
     if (!ctx) return;
     g_clear_pointer(&ctx->gift_wrap_id, g_free);
-    g_clear_pointer(&ctx->ephemeral_pubkey, g_free);
+    g_clear_pointer(&ctx->outer_pubkey, g_free);
     g_clear_pointer(&ctx->encrypted_seal, g_free);
     g_clear_pointer(&ctx->seal_pubkey, g_free);
     g_clear_pointer(&ctx->encrypted_rumor, g_free);
@@ -743,10 +743,10 @@ static void
 decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
 {
     char *id = nostr_event_get_id(gift_wrap);
-    const char *ephemeral_pk = nostr_event_get_pubkey(gift_wrap);
+    const char *outer_pk = nostr_event_get_pubkey(gift_wrap);
     const char *encrypted_content = nostr_event_get_content(gift_wrap);
 
-    if (!id || !ephemeral_pk || !encrypted_content) {
+    if (!id || !outer_pk || !encrypted_content) {
         g_warning("[DM_SERVICE] Invalid gift wrap event");
         free(id);
         return;
@@ -759,8 +759,8 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
         return;
     }
 
-    g_debug("[DM_SERVICE] Processing gift wrap %.8s from ephemeral key %.8s",
-            id, ephemeral_pk);
+    g_debug("[DM_SERVICE] Processing gift wrap %.8s from outer signer %.8s",
+            id, outer_pk);
 
     /* nostrc-dbus1: Check signer availability through the signer service
      * abstraction, which handles both NIP-46 and NIP-55L methods. */
@@ -775,7 +775,7 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
     DecryptContext *ctx = g_new0(DecryptContext, 1);
     ctx->service = self;
     ctx->gift_wrap_id = g_strdup(id);
-    ctx->ephemeral_pubkey = g_strdup(ephemeral_pk);
+    ctx->outer_pubkey = g_strdup(outer_pk);
     ctx->encrypted_seal = g_strdup(encrypted_content);
 
     /* Track pending decryption */
@@ -785,7 +785,7 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
      * This works with whichever signing method is active (NIP-46 or NIP-55L). */
     gnostr_signer_service_nip44_decrypt_async(
         signer,
-        ctx->ephemeral_pubkey,
+        ctx->outer_pubkey,
         ctx->encrypted_seal,
         NULL, /* GCancellable */
         on_seal_decrypted,

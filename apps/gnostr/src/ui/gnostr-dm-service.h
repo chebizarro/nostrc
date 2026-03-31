@@ -23,7 +23,8 @@ G_DECLARE_FINAL_TYPE(GnostrDmService, gnostr_dm_service, GNOSTR, DM_SERVICE, GOb
  *
  * The decryption flow:
  * 1. Receive gift wrap (kind 1059) from relay
- * 2. Decrypt gift wrap content using NIP-44 with ephemeral pubkey
+ * 2. Decrypt gift wrap content using NIP-44 with the outer event's signer
+ *    pubkey (currently the sender identity, not a one-off ephemeral key)
  * 3. Parse seal (kind 13) from decrypted content
  * 4. Verify seal signature
  * 5. Decrypt seal content using NIP-44 with sender pubkey
@@ -198,7 +199,7 @@ void gnostr_dm_send_result_free(GnostrDmSendResult *result);
  *
  * Flow:
  * 1. Creates kind 14 rumor with message content
- * 2. Wraps in NIP-59 gift wrap (seal + ephemeral key)
+ * 2. Wraps in NIP-59 gift wrap (seal + sender-signed outer event)
  * 3. Fetches recipient's DM relays (kind 10050 or fallback)
  * 4. Publishes gift wrap to recipient's relays
  *
@@ -225,7 +226,7 @@ void gnostr_dm_service_send_dm_async(GnostrDmService *self,
  * Flow:
  * 1. Encrypt file with AES-256-GCM and upload to Blossom
  * 2. Build kind 15 rumor with file metadata tags
- * 3. Wrap in NIP-59 gift wrap (seal + ephemeral key)
+ * 3. Wrap in NIP-59 gift wrap (seal + sender-signed outer event)
  * 4. Fetch recipient's DM relays and publish
  */
 void gnostr_dm_service_send_file_async(GnostrDmService *self,
