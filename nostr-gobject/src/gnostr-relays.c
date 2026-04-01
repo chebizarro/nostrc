@@ -7,8 +7,8 @@
 #ifndef GNOSTR_RELAY_TEST_ONLY
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/nostr_relay.h>
-#include "relay_info.h"
-#include "utils.h"
+#include "../../apps/gnostr/src/util/relay_info.h"
+#include "../../apps/gnostr/src/util/utils.h"
 #endif
 
 /* Constructor-injected GSettings schema ID */
@@ -995,7 +995,7 @@ void gnostr_get_write_relay_urls_into(GPtrArray *out) {
 /* --- NIP-65 Publishing Implementation --- */
 
 #ifndef GNOSTR_RELAY_TEST_ONLY
-#include "../ipc/gnostr-signer-service.h"
+#include "../../apps/gnostr/src/ipc/gnostr-signer-service.h"
 #include "nostr-relay.h"
 #include <time.h>
 

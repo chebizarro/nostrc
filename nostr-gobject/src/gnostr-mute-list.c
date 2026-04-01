@@ -17,9 +17,9 @@
 #include "nostr-tag.h"
 
 #ifndef GNOSTR_MUTE_LIST_TEST_ONLY
-#include "utils.h"
-#include "signer_ipc.h"
-#include "gnostr-signer-service.h"
+#include "../../apps/gnostr/src/util/utils.h"
+#include "../../apps/gnostr/src/ipc/signer_ipc.h"
+#include "../../apps/gnostr/src/ipc/gnostr-signer-service.h"
 #include "json.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"

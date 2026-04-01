@@ -166,11 +166,6 @@ target_include_directories(nostr_gobject
     $<$<BOOL:${ENABLE_NIP11}>:${CMAKE_SOURCE_DIR}/nips/nip11/include>
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
     ${NSYNC_INCLUDE_DIR}
-    # App dirs for moved services (resolved at final link time)
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/util
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/ipc
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/sync
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/ui
 )
 
 # Determine link visibility: PUBLIC for static builds (deps must propagate),

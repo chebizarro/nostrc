@@ -258,14 +258,6 @@ nostr_gobject_inc = include_directories('include/nostr-gobject-1.0')
 # External: consumers use #include <nostr-gobject-1.0/nostr_event.h>
 nostr_gobject_pub_inc = include_directories('include')
 
-# Transitional: app-specific headers not yet fully extracted
-nostr_gobject_app_inc = include_directories(
-  '../apps/gnostr/src/util',
-  '../apps/gnostr/src/ipc',
-  '../apps/gnostr/src/sync',
-  '../apps/gnostr/src/ui',
-)
-
 # nostrdb headers (required by storage_ndb.c and ndb store)
 nostr_gobject_ndb_inc = include_directories(
   '../third_party/nostrdb/src',
@@ -307,7 +299,7 @@ nip46_inc = include_directories('../nips/nip46/include')
 
 nostr_gobject_lib = library('nostr-gobject-1.0',
   nostr_gobject_sources + signer_proxy,
-  include_directories: [nostr_gobject_inc, nip46_inc, nostr_gobject_app_inc, nostr_gobject_ndb_inc],
+  include_directories: [nostr_gobject_inc, nip46_inc, nostr_gobject_ndb_inc],
   dependencies: nostr_gobject_deps,
   install: true)
 

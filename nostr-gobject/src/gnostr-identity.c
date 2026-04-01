@@ -6,7 +6,7 @@
  */
 
 #include "gnostr-identity.h"
-#include "keystore.h"
+#include "../../apps/gnostr/src/util/keystore.h"
 #include <nostr-gobject-1.0/nostr_keys.h>
 #include <string.h>
 
