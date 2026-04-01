@@ -154,6 +154,9 @@ add_custom_command(
   VERBATIM)
 
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c)
+# Explicitly append app-local timeline factory source so it is always built,
+# even when incremental builds miss new globbed files before reconfigure.
+list(APPEND APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-timeline-view-app-factory.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
 # NostrGtkComposer is now provided by nostr-gtk library (nostrc-lx35)
@@ -1125,138 +1128,158 @@ if (BUILD_TESTING)
       LABELS "model;item;txn;unit;gnostr")
 
     # Integration: NIP-09 delete authorization
-    if(NOT APPLE)
-      gn_add_gtest(gnostr-test-delete-authorization
-        SOURCES tests/integ/test_model_delete_authorization.c
-                src/model/gn-nostr-event-model.c
-                src/model/gn-nostr-event-item.c
-                src/util/relays.c
-                src/util/relay_info.c
-                src/util/utils.c
-                src/ipc/signer_ipc.c
-                src/ipc/gnostr-signer-service.c
-        LIBS gnostr-testkit nostr_gobject nostr_gtk
-             PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
-        TIMEOUT 120
-      )
+    gn_add_gtest(gnostr-test-delete-authorization
+      SOURCES tests/integ/test_model_delete_authorization.c
+              src/model/gn-nostr-event-model.c
+              src/model/gn-nostr-event-item.c
+              src/util/relays.c
+              src/util/relay_info.c
+              src/util/utils.c
+              src/ipc/signer_ipc.c
+              src/ipc/gnostr-signer-service.c
+      LIBS gnostr-testkit nostr_gobject nostr_gtk
+           PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
+      TIMEOUT 120
+    )
+    if(APPLE)
+      target_link_options(gnostr-test-delete-authorization PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
       target_link_options(gnostr-test-delete-authorization PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
-      target_include_directories(gnostr-test-delete-authorization PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/model
-        ${PROJECT_ROOT}/nostr-gobject/include
-        ${PROJECT_ROOT}/nostr-gtk/include
-        ${PROJECT_ROOT}/libnostr/include
-        ${_NOSTR_CONFIG_DIR}
-        ${PROJECT_ROOT}/libgo/include
-        ${_NDB_VENDOR_DIR}/src
-        ${_NDB_VENDOR_DIR}/ccan
-        ${_NDB_VENDOR_DIR}/deps/flatcc/include)
-      if(TARGET nostrdb_storage)
-        target_link_libraries(gnostr-test-delete-authorization PRIVATE nostrdb_storage)
-        if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+    endif()
+    target_include_directories(gnostr-test-delete-authorization PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+      ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/nostr-gtk/include
+      ${PROJECT_ROOT}/libnostr/include
+      ${_NOSTR_CONFIG_DIR}
+      ${PROJECT_ROOT}/libgo/include
+      ${_NDB_VENDOR_DIR}/src
+      ${_NDB_VENDOR_DIR}/ccan
+      ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    if(TARGET nostrdb_storage)
+      target_link_libraries(gnostr-test-delete-authorization PRIVATE nostrdb_storage)
+      if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if(APPLE)
+          target_link_options(gnostr-test-delete-authorization PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+        else()
           target_link_options(gnostr-test-delete-authorization PRIVATE
               -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
-          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-            target_link_libraries(gnostr-test-delete-authorization PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-          endif()
+        endif()
+        if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          target_link_libraries(gnostr-test-delete-authorization PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
         endif()
       endif()
-      _gnostr_apply_sanitizers(gnostr-test-delete-authorization)
-      set_tests_properties(gnostr-test-delete-authorization PROPERTIES
-          LABELS "nip09;delete;integ;gnostr")
     endif()
+    _gnostr_apply_sanitizers(gnostr-test-delete-authorization)
+    set_tests_properties(gnostr-test-delete-authorization PROPERTIES
+        LABELS "nip09;delete;integ;gnostr")
 
     # ── Main-thread NDB violation detection test ─────────────────────
     # This is the CORE architectural test. It detects when NDB read
     # transactions are opened on the GTK main thread, which causes
     # UI stalls, latency spikes, and cascading segfaults.
-    if(NOT APPLE)
-      gn_add_gtest(gnostr-test-ndb-main-thread-violations
-        SOURCES tests/test_ndb_main_thread_violations.c
-                src/model/gn-nostr-event-model.c
-                src/model/gn-nostr-event-item.c
-                src/util/relays.c
-                src/util/relay_info.c
-                src/util/utils.c
-                src/ipc/signer_ipc.c
-                src/ipc/gnostr-signer-service.c
-        LIBS gnostr-testkit nostr_gobject nostr_gtk
-             PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
-        TIMEOUT 180
-      )
-      target_include_directories(gnostr-test-ndb-main-thread-violations PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/model
-        ${PROJECT_ROOT}/nostr-gobject/include
-        ${PROJECT_ROOT}/nostr-gtk/include
-        ${PROJECT_ROOT}/libnostr/include
-        ${_NOSTR_CONFIG_DIR}
-        ${PROJECT_ROOT}/libgo/include
-        ${_NDB_VENDOR_DIR}/src
-        ${_NDB_VENDOR_DIR}/ccan
-        ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    gn_add_gtest(gnostr-test-ndb-main-thread-violations
+      SOURCES tests/test_ndb_main_thread_violations.c
+              src/model/gn-nostr-event-model.c
+              src/model/gn-nostr-event-item.c
+              src/util/relays.c
+              src/util/relay_info.c
+              src/util/utils.c
+              src/ipc/signer_ipc.c
+              src/ipc/gnostr-signer-service.c
+      LIBS gnostr-testkit nostr_gobject nostr_gtk
+           PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
+      TIMEOUT 180
+    )
+    target_include_directories(gnostr-test-ndb-main-thread-violations PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+      ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/nostr-gtk/include
+      ${PROJECT_ROOT}/libnostr/include
+      ${_NOSTR_CONFIG_DIR}
+      ${PROJECT_ROOT}/libgo/include
+      ${_NDB_VENDOR_DIR}/src
+      ${_NDB_VENDOR_DIR}/ccan
+      ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    if(APPLE)
+      target_link_options(gnostr-test-ndb-main-thread-violations PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
       target_link_options(gnostr-test-ndb-main-thread-violations PRIVATE
         -Wl,--unresolved-symbols=ignore-in-object-files)
-      if(TARGET nostrdb_storage)
-        target_link_libraries(gnostr-test-ndb-main-thread-violations PRIVATE nostrdb_storage)
-        if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+    endif()
+    if(TARGET nostrdb_storage)
+      target_link_libraries(gnostr-test-ndb-main-thread-violations PRIVATE nostrdb_storage)
+      if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if(APPLE)
+          target_link_options(gnostr-test-ndb-main-thread-violations PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+        else()
           target_link_options(gnostr-test-ndb-main-thread-violations PRIVATE
             -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
-          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-            target_link_libraries(gnostr-test-ndb-main-thread-violations PRIVATE
-              ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-          endif()
+        endif()
+        if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          target_link_libraries(gnostr-test-ndb-main-thread-violations PRIVATE
+            ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
         endif()
       endif()
-      target_compile_definitions(gnostr-test-ndb-main-thread-violations PRIVATE GNOSTR_TESTING)
-      _gnostr_apply_sanitizers(gnostr-test-ndb-main-thread-violations)
-      set_tests_properties(gnostr-test-ndb-main-thread-violations PROPERTIES
-        LABELS "architecture;latency;ndb;integ;gnostr")
+    endif()
+    target_compile_definitions(gnostr-test-ndb-main-thread-violations PRIVATE GNOSTR_TESTING)
+    _gnostr_apply_sanitizers(gnostr-test-ndb-main-thread-violations)
+    set_tests_properties(gnostr-test-ndb-main-thread-violations PROPERTIES
+      LABELS "architecture;latency;ndb;integ;gnostr")
 
-      # ── Real-component bind latency test ─────────────────────────────
-      # Uses real GnNostrEventItem + real NDB + GtkListView (requires Xvfb)
-      gn_add_gtest_xvfb(gnostr-test-real-bind-latency
-        SOURCES tests/test_real_bind_latency.c
-                src/model/gn-nostr-event-model.c
-                src/model/gn-nostr-event-item.c
-                src/util/relays.c
-                src/util/relay_info.c
-                src/util/utils.c
-                src/ipc/signer_ipc.c
-                src/ipc/gnostr-signer-service.c
-        LIBS gnostr-testkit nostr_gobject nostr_gtk
-             PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
-        TIMEOUT 180
-      )
-      target_include_directories(gnostr-test-real-bind-latency PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/model
-        ${PROJECT_ROOT}/nostr-gobject/include
-        ${PROJECT_ROOT}/nostr-gtk/include
-        ${PROJECT_ROOT}/libnostr/include
-        ${_NOSTR_CONFIG_DIR}
-        ${PROJECT_ROOT}/libgo/include
-        ${_NDB_VENDOR_DIR}/src
-        ${_NDB_VENDOR_DIR}/ccan
-        ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    # ── Real-component bind latency test ─────────────────────────────
+    # Uses real GnNostrEventItem + real NDB + GtkListView (requires Xvfb)
+    gn_add_gtest_xvfb(gnostr-test-real-bind-latency
+      SOURCES tests/test_real_bind_latency.c
+              src/model/gn-nostr-event-model.c
+              src/model/gn-nostr-event-item.c
+              src/util/relays.c
+              src/util/relay_info.c
+              src/util/utils.c
+              src/ipc/signer_ipc.c
+              src/ipc/gnostr-signer-service.c
+      LIBS gnostr-testkit nostr_gobject nostr_gtk
+           PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
+      TIMEOUT 180
+    )
+    target_include_directories(gnostr-test-real-bind-latency PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+      ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/nostr-gtk/include
+      ${PROJECT_ROOT}/libnostr/include
+      ${_NOSTR_CONFIG_DIR}
+      ${PROJECT_ROOT}/libgo/include
+      ${_NDB_VENDOR_DIR}/src
+      ${_NDB_VENDOR_DIR}/ccan
+      ${_NDB_VENDOR_DIR}/deps/flatcc/include)
+    if(APPLE)
+      target_link_options(gnostr-test-real-bind-latency PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
       target_link_options(gnostr-test-real-bind-latency PRIVATE
         -Wl,--unresolved-symbols=ignore-in-object-files)
-      if(TARGET nostrdb_storage)
-        target_link_libraries(gnostr-test-real-bind-latency PRIVATE nostrdb_storage)
-        if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+    endif()
+    if(TARGET nostrdb_storage)
+      target_link_libraries(gnostr-test-real-bind-latency PRIVATE nostrdb_storage)
+      if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if(APPLE)
+          target_link_options(gnostr-test-real-bind-latency PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+        else()
           target_link_options(gnostr-test-real-bind-latency PRIVATE
             -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
-          if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-            target_link_libraries(gnostr-test-real-bind-latency PRIVATE
-              ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-          endif()
+        endif()
+        if(EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          target_link_libraries(gnostr-test-real-bind-latency PRIVATE
+            ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
         endif()
       endif()
-      target_compile_definitions(gnostr-test-real-bind-latency PRIVATE GNOSTR_TESTING)
-      _gnostr_apply_sanitizers(gnostr-test-real-bind-latency)
-      set_tests_properties(gnostr-test-real-bind-latency PROPERTIES
-        LABELS "latency;bind;real;integ;gnostr;gtk;widget")
     endif()
+    target_compile_definitions(gnostr-test-real-bind-latency PRIVATE GNOSTR_TESTING)
+    _gnostr_apply_sanitizers(gnostr-test-real-bind-latency)
+    set_tests_properties(gnostr-test-real-bind-latency PROPERTIES
+      LABELS "latency;bind;real;integ;gnostr;gtk;widget")
 
   endif()
 

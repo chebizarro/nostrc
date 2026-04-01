@@ -1,4 +1,5 @@
-#include "gnostr-timeline-view.h"
+#include "gnostr-timeline-view-app-factory.h"
+#include "gnostr-avatar-cache.h"
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
 #include <nostr-gtk-1.0/gnostr-timeline-view-private.h>
 #include "gnostr-main-window.h"
@@ -954,14 +955,13 @@ metadata_batch_query_thread(GTask *task, gpointer source_object,
 
   MetadataBatchResult *result = NULL;
   if (id_count > 0) {
+    const gchar *user_pubkey = g_object_get_data(G_OBJECT(task), "user-pubkey");
+
     result = g_new0(MetadataBatchResult, 1);
     result->reaction_counts = storage_ndb_count_reactions_batch(event_ids, id_count);
-
-    gchar *user_pubkey = gnostr_timeline_embed_get_current_user_pubkey_hex();
     result->user_reacted = user_pubkey
       ? storage_ndb_user_has_reacted_batch(event_ids, id_count, user_pubkey)
       : NULL;
-    g_free(user_pubkey);
 
     result->zap_stats = storage_ndb_get_zap_stats_batch(event_ids, id_count);
     result->repost_counts = storage_ndb_count_reposts_batch(event_ids, id_count);
@@ -1068,6 +1068,9 @@ static gboolean metadata_batch_idle_cb(gpointer user_data)
   GTask *task = g_task_new(self, NULL, on_metadata_batch_done, NULL);
   g_object_set_data_full(G_OBJECT(task), "items", items,
                          (GDestroyNotify)g_ptr_array_unref);
+  g_object_set_data_full(G_OBJECT(task), "user-pubkey",
+                         gnostr_timeline_embed_get_current_user_pubkey_hex(),
+                         g_free);
   g_task_run_in_thread(task, metadata_batch_query_thread);
   g_object_unref(task);
 
@@ -1714,7 +1717,7 @@ static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, 
   cleanup_bound_row(row);
 }
 
-void nostr_gtk_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
+void gnostr_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
 
   GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
@@ -1732,7 +1735,7 @@ void nostr_gtk_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
       GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_object_unref(prov);
 
-  g_debug("nostr_gtk_timeline_view_setup_app_factory: list_view=%p", (void*)self->list_view);
+  g_debug("gnostr_timeline_view_setup_app_factory: factory installed");
 }
 
 /* Child model function for GtkTreeListModel (passthrough) */
@@ -1755,4 +1758,4 @@ static GListModel *timeline_child_model_func(gpointer item, gpointer user_data) 
 
 /* ensure_list_model, scroll tracking, class_init, init, new, and all public API
  * functions are now defined in the nostr-gtk library. Only the factory setup
- * (nostr_gtk_timeline_view_setup_app_factory) remains in the app. */
+ * (gnostr_timeline_view_setup_app_factory) remains in the app. */

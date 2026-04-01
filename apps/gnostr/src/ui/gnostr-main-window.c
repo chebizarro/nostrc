@@ -5,7 +5,7 @@
 #include "gnostr-tray-icon.h"
 #include "gnostr-session-view.h"
 #include <nostr-gtk-1.0/gnostr-composer.h>
-#include "gnostr-timeline-view.h"
+#include <nostr-gtk-1.0/gnostr-timeline-view.h>
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
 #include <nostr-gtk-1.0/gnostr-profile-pane.h>
 #include <nostr-gtk-1.0/gnostr-thread-view.h>

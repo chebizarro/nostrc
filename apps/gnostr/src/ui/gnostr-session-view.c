@@ -14,7 +14,8 @@
 #include "gnostr-search-results-view.h"
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
 #include "gnostr-article-reader.h"
-#include "gnostr-timeline-view.h"
+#include <nostr-gtk-1.0/gnostr-timeline-view.h>
+#include "gnostr-timeline-view-app-factory.h"
 #include "page-discover.h"
 
 #include <gdk/gdkkeysyms.h>
@@ -1100,7 +1101,7 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
 
   /* nostrc-lx32: Install app-specific factory on the library timeline widget */
   if (self->timeline && NOSTR_GTK_IS_TIMELINE_VIEW(NOSTR_GTK_TIMELINE_VIEW(self->timeline))) {
-    nostr_gtk_timeline_view_setup_app_factory(NOSTR_GTK_TIMELINE_VIEW(self->timeline));
+    gnostr_timeline_view_setup_app_factory(NOSTR_GTK_TIMELINE_VIEW(self->timeline));
   }
 
   /* Replace header avatar button icon with avatar overlay */

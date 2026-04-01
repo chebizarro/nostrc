@@ -3,7 +3,7 @@
 #include "gnostr-main-window-private.h"
 
 #include "gnostr-session-view.h"
-#include "gnostr-timeline-view.h"
+#include <nostr-gtk-1.0/gnostr-timeline-view.h>
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-conversation-view.h"
 #include "page-discover.h"

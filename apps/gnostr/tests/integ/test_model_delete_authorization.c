@@ -54,35 +54,22 @@ make_hex(guint len, guint seed)
 }
 
 /**
- * Create a kind-1 text note JSON with a specific pubkey and event_id.
+ * Extract event id from a JSON event produced by the shared testkit helpers.
  */
 static char *
-make_note_json(const char *event_id, const char *pubkey, gint64 created_at,
-               const char *content)
+extract_event_id(const char *json)
 {
-  g_autofree char *sig = make_hex(128, 0xAA);
-  return g_strdup_printf(
-    "{\"id\":\"%s\",\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
-    "\"kind\":1,\"content\":\"%s\",\"tags\":[],\"sig\":\"%s\"}",
-    event_id, pubkey, created_at, content, sig);
-}
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, json, -1, NULL))
+    return NULL;
 
-/**
- * Create a kind-0 profile (metadata) event JSON for a pubkey.
- * The model requires kind-0 profiles in NDB before it will display
- * kind-1 notes from that author.
- */
-static char *
-make_profile_json(const char *event_id, const char *pubkey, gint64 created_at,
-                  const char *display_name)
-{
-  g_autofree char *sig = make_hex(128, 0xCC);
-  /* content is a JSON-encoded metadata object, escaped for inclusion in the outer JSON */
-  return g_strdup_printf(
-    "{\"id\":\"%s\",\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
-    "\"kind\":0,\"content\":\"{\\\"display_name\\\":\\\"%s\\\",\\\"name\\\":\\\"%s\\\"}\","
-    "\"tags\":[],\"sig\":\"%s\"}",
-    event_id, pubkey, created_at, display_name, display_name, sig);
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root))
+    return NULL;
+
+  JsonObject *obj = json_node_get_object(root);
+  const char *id = json_object_get_string_member_with_default(obj, "id", NULL);
+  return id ? g_strdup(id) : NULL;
 }
 
 /**
@@ -115,21 +102,28 @@ make_delete_json(const char *delete_event_id, const char *pubkey,
  * Helper: ingest a note AND its author's kind-0 profile,
  * so the model will display it.
  */
-static void
-ingest_note_with_profile(const char *note_id, const char *pubkey,
+static char *
+ingest_note_with_profile(const char *pubkey,
                          gint64 created_at, const char *content)
 {
   /* Ingest the kind-0 profile first (so model deems the author "ready") */
-  g_autofree char *prof_id = make_hex(64, (guint)(created_at & 0xFF) + 0xF0);
-  g_autofree char *prof_json = make_profile_json(prof_id, pubkey,
-                                                  created_at - 1, "TestUser");
+  g_autofree char *prof_json = gn_test_make_profile_event_json(pubkey,
+                                                               "TestUser",
+                                                               "Delete authorization test profile",
+                                                               NULL,
+                                                               created_at - 1);
   gboolean ok = gn_test_ndb_ingest_json(s_ndb, prof_json);
   g_assert_true(ok);
 
-  /* Now ingest the kind-1 note */
-  g_autofree char *note_json = make_note_json(note_id, pubkey, created_at, content);
+  /* Now ingest the kind-1 note using the shared generator, then capture its id
+   * so delete events can target the exact stored event. */
+  g_autofree char *note_json = gn_test_make_event_json_with_pubkey(1, content, created_at, pubkey);
+  g_autofree char *note_id = extract_event_id(note_json);
+  g_assert_nonnull(note_id);
   ok = gn_test_ndb_ingest_json(s_ndb, note_json);
   g_assert_true(ok);
+
+  return g_strdup(note_id);
 }
 
 /**
@@ -138,6 +132,10 @@ ingest_note_with_profile(const char *note_id, const char *pubkey,
 static GnNostrEventModel *
 create_and_refresh_model(void)
 {
+  /* Test ingestion is asynchronous; ensure committed events are visible before
+   * the model queries NDB. */
+  gn_test_ndb_wait_for_ingest();
+
   GnNostrEventModel *model = gn_nostr_event_model_new();
   GnNostrQueryParams params = {0};
   gint kinds[] = {1};
@@ -177,11 +175,10 @@ test_authorized_delete_removes_note(void)
   setup();
 
   g_autofree char *author_pk = make_hex(64, 0x11);
-  g_autofree char *note_id = make_hex(64, 0x22);
   g_autofree char *del_id = make_hex(64, 0x33);
 
   /* Ingest a kind-1 note WITH a kind-0 profile so the model will show it */
-  ingest_note_with_profile(note_id, author_pk, 1700000000, "hello world");
+  g_autofree char *note_id = ingest_note_with_profile(author_pk, 1700000000, "hello world");
 
   /* Create model and verify the note is visible */
   GnNostrEventModel *model = create_and_refresh_model();
@@ -200,6 +197,7 @@ test_authorized_delete_removes_note(void)
   g_autofree char *del_json = make_delete_json(del_id, author_pk, 1700000001, targets, 1);
   gboolean ok = gn_test_ndb_ingest_json(s_ndb, del_json);
   g_assert_true(ok);
+  gn_test_ndb_wait_for_ingest();
 
   /* Refresh model to pick up the deletion */
   gn_nostr_event_model_refresh(model);
@@ -227,11 +225,10 @@ test_unauthorized_delete_ignored(void)
 
   g_autofree char *author_pk = make_hex(64, 0x44);
   g_autofree char *attacker_pk = make_hex(64, 0x55);
-  g_autofree char *note_id = make_hex(64, 0x66);
   g_autofree char *del_id = make_hex(64, 0x77);
 
   /* Ingest a kind-1 note with profile */
-  ingest_note_with_profile(note_id, author_pk, 1700000000, "my note");
+  g_autofree char *note_id = ingest_note_with_profile(author_pk, 1700000000, "my note");
 
   /* Create model and verify the note is visible */
   GnNostrEventModel *model = create_and_refresh_model();
@@ -245,6 +242,7 @@ test_unauthorized_delete_ignored(void)
   g_autofree char *del_json = make_delete_json(del_id, attacker_pk, 1700000001, targets, 1);
   gboolean ok = gn_test_ndb_ingest_json(s_ndb, del_json);
   g_test_message("Unauthorized delete ingested: %s", ok ? "yes" : "no");
+  gn_test_ndb_wait_for_ingest();
 
   /* Refresh model */
   gn_nostr_event_model_refresh(model);
@@ -300,15 +298,12 @@ test_multi_target_delete(void)
   setup();
 
   g_autofree char *author_pk = make_hex(64, 0xAA);
-  g_autofree char *note_id_1 = make_hex(64, 0xBB);
-  g_autofree char *note_id_2 = make_hex(64, 0xCC);
-  g_autofree char *note_id_3 = make_hex(64, 0xDD);
   g_autofree char *del_id = make_hex(64, 0xEE);
 
   /* Ingest 3 notes from the same author, each with a profile */
-  ingest_note_with_profile(note_id_1, author_pk, 1700000000, "note 1");
-  ingest_note_with_profile(note_id_2, author_pk, 1700000001, "note 2");
-  ingest_note_with_profile(note_id_3, author_pk, 1700000002, "note 3");
+  g_autofree char *note_id_1 = ingest_note_with_profile(author_pk, 1700000000, "note 1");
+  g_autofree char *note_id_2 = ingest_note_with_profile(author_pk, 1700000001, "note 2");
+  g_autofree char *note_id_3 = ingest_note_with_profile(author_pk, 1700000002, "note 3");
 
   /* Verify all 3 appear in model */
   GnNostrEventModel *model = create_and_refresh_model();
@@ -321,6 +316,7 @@ test_multi_target_delete(void)
   g_autofree char *del_json = make_delete_json(del_id, author_pk, 1700000003, targets, 3);
   gboolean ok = gn_test_ndb_ingest_json(s_ndb, del_json);
   g_assert_true(ok);
+  gn_test_ndb_wait_for_ingest();
 
   /* Refresh model */
   gn_nostr_event_model_refresh(model);
@@ -342,21 +338,21 @@ test_delete_then_reingest(void)
   setup();
 
   g_autofree char *author_pk = make_hex(64, 0x11);
-  g_autofree char *note_id = make_hex(64, 0x22);
   g_autofree char *del_id = make_hex(64, 0x33);
 
   /* Ingest note with profile */
-  ingest_note_with_profile(note_id, author_pk, 1700000000, "original");
+  g_autofree char *note_id = ingest_note_with_profile(author_pk, 1700000000, "original");
 
   /* Delete it */
   const char *targets[] = { note_id };
   g_autofree char *del_json = make_delete_json(del_id, author_pk, 1700000001, targets, 1);
   g_assert_true(gn_test_ndb_ingest_json(s_ndb, del_json));
+  gn_test_ndb_wait_for_ingest();
   gn_test_drain_main_loop();
 
-  /* Re-ingest the same note (some relays may re-send deleted events).
-   * NDB should handle this gracefully (either reject or store as duplicate). */
-  g_autofree char *note_json = make_note_json(note_id, author_pk, 1700000000, "original");
+  /* Re-ingest an equivalent note from the same author after delete.
+   * NDB should handle this gracefully even if relays resend post-delete data. */
+  g_autofree char *note_json = gn_test_make_event_json_with_pubkey(1, "original", 1700000000, author_pk);
   gboolean ok = gn_test_ndb_ingest_json(s_ndb, note_json);
   /* Don't assert success — NDB may legitimately reject duplicates */
   g_test_message("Re-ingest after delete: %s", ok ? "accepted" : "rejected (expected)");
@@ -380,16 +376,16 @@ test_repeated_delete_cycles_no_leak(void)
 
   for (int cycle = 0; cycle < 10; cycle++) {
     g_autofree char *pk = make_hex(64, 0x10 + cycle);
-    g_autofree char *nid = make_hex(64, 0x20 + cycle);
     g_autofree char *did = make_hex(64, 0x30 + cycle);
 
     /* Ingest note with profile */
-    ingest_note_with_profile(nid, pk, 1700000000 + cycle, "cycle note");
+    g_autofree char *nid = ingest_note_with_profile(pk, 1700000000 + cycle, "cycle note");
 
     const char *targets[] = { nid };
     g_autofree char *del = make_delete_json(did, pk, 1700000001 + cycle, targets, 1);
     g_assert_true(gn_test_ndb_ingest_json(s_ndb, del));
   }
+  gn_test_ndb_wait_for_ingest();
 
   /* Create model after all cycles — should not crash or leak */
   GnNostrEventModel *model = create_and_refresh_model();

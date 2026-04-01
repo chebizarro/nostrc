@@ -11,36 +11,38 @@ As of 2026-03-27, the main-window refactor work itself compiles, but the full cl
 These are now disabled in `apps/gnostr-signer/tests/CMakeLists.txt` for `APPLE` builds:
 
 ### `signer/dbus`
-- Symptom: the test completes its assertions but does not terminate under CTest/GTestDBus.
-- Evidence: all TAP cases report `ok`, then the process remains alive until CTest timeout.
-- Current handling: disabled on Apple so it does not block the suite.
+- Prior symptom: the test completed its assertions but did not terminate under CTest/GTestDBus.
+- Status as of 2026-03-31: fixed and re-enabled on Apple.
+- Current handling: runs normally in CTest.
 
 ### `signer/ui`
-- Symptom: the test hangs immediately in the first window test on macOS.
+- Symptom: the test hangs immediately in the first window test on macOS when no usable window-server session is available.
 - Evidence: direct invocation stalls after:
   - `# Start of ui tests`
   - `# Start of window tests`
-- Current handling: disabled on Apple so it does not block the suite.
+- Status as of 2026-03-31: no longer CTest-disabled on Apple.
+- Current handling: enabled in CTest, but forced through the test binary's self-skip path in headless Apple environments.
 
 ## `apps/gnostr` integration targets incompatible on Apple
 
 These targets are not currently viable in this macOS environment because they are underlinked when built as standalone test executables against `nostr_gtk`:
 
 ### `gnostr-test-delete-authorization`
-- Symptom: linker failure on arm64.
-- Missing symbols include many app-level `gnostr_*` and follow-list/profile-pane dependencies.
-- Root cause: the target relies on symbols that are available in the full app link but not in the reduced test link definition.
-- Current handling: excluded on Apple in `apps/gnostr/CMakeLists.txt`.
+- Prior symptom: linker failure on arm64.
+- Root cause: the standalone test target depended on app/UI symbols that were only satisfied in the full app link.
+- Status as of 2026-03-31: fixed and re-enabled on Apple.
+- Current handling: builds and passes in CTest on this macOS setup.
 
 ### `gnostr-test-ndb-main-thread-violations`
-- Symptom: same class of linker failure on arm64.
-- Missing symbols again come from app/UI utility code pulled in by `nostr_gtk` widgets.
+- Prior symptom: same class of linker failure on arm64.
 - Root cause: same underlinked standalone-test composition problem.
-- Current handling: excluded on Apple in `apps/gnostr/CMakeLists.txt`.
+- Status as of 2026-03-31: fixed and re-enabled on Apple.
+- Current handling: builds and passes in CTest on this macOS setup.
 
 ### `gnostr-test-real-bind-latency`
-- Symptom: same Apple integration-test composition risk as the previous target.
-- Current handling: excluded together with the NDB main-thread violation target on Apple.
+- Prior symptom: same Apple integration-test composition risk as the previous target.
+- Status as of 2026-03-31: fixed and re-enabled on Apple.
+- Current handling: builds and passes in CTest on this macOS setup.
 
 ## Build fixes made while investigating
 
@@ -60,10 +62,9 @@ These were genuine build fixes, not Apple skips:
 
 ## Follow-up work
 
-1. Fix `signer/dbus` shutdown on macOS instead of skipping it.
-2. Fix or redesign `signer/ui` so it can run headlessly on macOS.
-3. Refactor `apps/gnostr` integration test link definitions so Apple builds do not rely on symbols only satisfied by the full app executable.
-4. Re-enable the Apple-disabled targets once they are made reliable.
+1. Replace the temporary Apple self-skip for `signer/ui` with a true headless-safe GTK/libadwaita strategy, or split out the non-windowed assertions.
+2. Replace the current Apple-specific standalone-test link workarounds with a more explicit/shared test-link strategy if we want less platform-specific linker behavior.
+3. Keep the re-enabled `apps/gnostr` integration targets covered in future Apple clean-build/CTest passes.
 
 ## Important constraint
 
