@@ -38,6 +38,7 @@ find_program(BLUEPRINT_COMPILER blueprint-compiler)
 set(NOSTR_GTK_BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/nostr-note-card-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-profile-pane.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
 )

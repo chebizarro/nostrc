@@ -35,7 +35,6 @@ set(BLUEPRINT_SOURCES
   # gnostr-composer.blp moved to nostr-gtk (nostrc-lx35)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
   # note-card-row.blp moved to nostr-gtk (nostrc-lx33)
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.blp
   # gnostr-note-embed.blp moved to nostr-gtk (regression fix)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.blp
@@ -103,7 +102,6 @@ set(UI_FILES
   # gnostr-composer.ui moved to nostr-gtk (nostrc-lx35)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
   # note-card-row.ui moved to nostr-gtk (nostrc-lx33)
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.ui

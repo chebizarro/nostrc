@@ -43,6 +43,8 @@
 
 #define UI_RESOURCE "/org/nostr/gtk/ui/nostr-note-card-row.ui"
 
+static gboolean remote_media_loading_enabled(void);
+
 /* nostrc-05yz (harden-6): Label guard macro moved to gnostr-label-guard.h
  * as GNOSTR_LABEL_SAFE (was LABEL_SAFE_TO_UPDATE). See that header for docs. */
 
