@@ -95,6 +95,16 @@ static const char *SCHEMA_V1 =
     "  failure_reason   TEXT"
     ");"
 
+    /* Key package info */
+    "CREATE TABLE IF NOT EXISTS key_package_infos ("
+    "  ref              BLOB PRIMARY KEY,"
+    "  owner_pubkey     BLOB NOT NULL,"
+    "  relay_urls       TEXT,"
+    "  created_at       INTEGER NOT NULL,"
+    "  active           INTEGER DEFAULT 1"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_kpi_pubkey ON key_package_infos(owner_pubkey);"
+
     /* Group relays */
     "CREATE TABLE IF NOT EXISTS group_relays ("
     "  mls_group_id     BLOB NOT NULL,"
@@ -1210,6 +1220,12 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
     s->pending_welcomes = sql_pending_welcomes;
     s->find_processed_welcome = sql_find_processed_welcome;
     s->save_processed_welcome = sql_save_processed_welcome;
+
+    /* Key package info ops (NULL = not yet implemented for sqlite) */
+    s->save_key_package_info = NULL;
+    s->find_key_package_by_ref = NULL;
+    s->find_key_packages_by_pubkey = NULL;
+    s->deactivate_key_packages = NULL;
 
     /* Relay ops */
     s->group_relays = sql_group_relays;

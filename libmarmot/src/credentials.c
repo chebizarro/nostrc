@@ -295,6 +295,29 @@ tag_fail:
 
 success:
 
+    /* Deactivate previous key packages for this pubkey (rotation) */
+    if (m->storage && m->storage->deactivate_key_packages) {
+        m->storage->deactivate_key_packages(m->storage->ctx, nostr_pubkey);
+    }
+
+    /* Save KeyPackageInfo metadata */
+    if (m->storage && m->storage->save_key_package_info) {
+        MarmotKeyPackageInfo info;
+        memset(&info, 0, sizeof(info));
+        memcpy(info.ref, kp_ref, 32);
+        memcpy(info.owner_pubkey, nostr_pubkey, 32);
+        info.created_at = marmot_now();
+        info.active = true;
+        if (relay_count > 0 && relay_urls) {
+            info.relay_urls = (char **)relay_urls;  /* borrowed for save */
+            info.relay_count = relay_count;
+        }
+        m->storage->save_key_package_info(m->storage->ctx, &info);
+        /* Don't free relay_urls — they're borrowed from caller */
+        info.relay_urls = NULL;
+        info.relay_count = 0;
+    }
+
     /* Store the KeyPackage private material in storage for later Welcome processing */
     if (m->storage && m->storage->mls_store) {
         /* Serialize private keys for storage */

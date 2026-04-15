@@ -1207,6 +1207,10 @@ marmot_storage_nostrdb_new(void *ndb_handle, const char *mls_state_dir)
     s->pending_welcomes = ndb_pending_welcomes;
     s->find_processed_welcome = ndb_find_processed_welcome;
     s->save_processed_welcome = ndb_save_processed_welcome;
+    s->save_key_package_info = NULL;
+    s->find_key_package_by_ref = NULL;
+    s->find_key_packages_by_pubkey = NULL;
+    s->deactivate_key_packages = NULL;
     s->group_relays = ndb_group_relays;
     s->replace_group_relays = ndb_replace_group_relays;
     s->get_exporter_secret = ndb_get_exporter_secret;

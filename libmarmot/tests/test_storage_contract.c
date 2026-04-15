@@ -510,7 +510,100 @@ test_exporter_secret_overwrite(MarmotStorage *s)
     marmot_group_id_free(&gid);
 }
 
-/* ── 6. Relay operations ───────────────────────────────────────────────── */
+/* ── 6. Key package info operations ────────────────────────────────────── */
+
+static void
+test_key_package_info_roundtrip(MarmotStorage *s)
+{
+    MarmotKeyPackageInfo info;
+    memset(&info, 0, sizeof(info));
+    memset(info.ref, 0xA1, 32);
+    memset(info.owner_pubkey, 0xB2, 32);
+    info.created_at = 1234567890;
+    info.active = true;
+    const char *urls[] = {"wss://relay1.example.com", "wss://relay2.example.com"};
+    info.relay_urls = (char **)urls;
+    info.relay_count = 2;
+
+    assert(s->save_key_package_info(s->ctx, &info) == MARMOT_OK);
+
+    /* Find by ref */
+    MarmotKeyPackageInfo *found = NULL;
+    assert(s->find_key_package_by_ref(s->ctx, info.ref, &found) == MARMOT_OK);
+    assert(found != NULL);
+    assert(memcmp(found->ref, info.ref, 32) == 0);
+    assert(memcmp(found->owner_pubkey, info.owner_pubkey, 32) == 0);
+    assert(found->relay_count == 2);
+    assert(found->active == true);
+    assert(found->created_at == 1234567890);
+    marmot_key_package_info_free(found);
+
+    /* Find by pubkey */
+    MarmotKeyPackageInfo **infos = NULL;
+    size_t count = 0;
+    assert(s->find_key_packages_by_pubkey(s->ctx, info.owner_pubkey,
+                                           &infos, &count) == MARMOT_OK);
+    assert(count == 1);
+    assert(memcmp(infos[0]->ref, info.ref, 32) == 0);
+    marmot_key_package_info_free(infos[0]);
+    free(infos);
+
+    /* Not found for different ref */
+    uint8_t bad_ref[32];
+    memset(bad_ref, 0xFF, 32);
+    found = NULL;
+    assert(s->find_key_package_by_ref(s->ctx, bad_ref, &found) == MARMOT_OK);
+    assert(found == NULL);
+}
+
+static void
+test_key_package_info_deactivate(MarmotStorage *s)
+{
+    /* Create two KP infos for same pubkey */
+    uint8_t pk[32];
+    memset(pk, 0xC3, 32);
+
+    MarmotKeyPackageInfo info1;
+    memset(&info1, 0, sizeof(info1));
+    memset(info1.ref, 0xD1, 32);
+    memcpy(info1.owner_pubkey, pk, 32);
+    info1.created_at = 1000;
+    info1.active = true;
+    assert(s->save_key_package_info(s->ctx, &info1) == MARMOT_OK);
+
+    MarmotKeyPackageInfo info2;
+    memset(&info2, 0, sizeof(info2));
+    memset(info2.ref, 0xD2, 32);
+    memcpy(info2.owner_pubkey, pk, 32);
+    info2.created_at = 2000;
+    info2.active = true;
+    assert(s->save_key_package_info(s->ctx, &info2) == MARMOT_OK);
+
+    /* Both should be active */
+    MarmotKeyPackageInfo **infos = NULL;
+    size_t count = 0;
+    assert(s->find_key_packages_by_pubkey(s->ctx, pk, &infos, &count) == MARMOT_OK);
+    assert(count == 2);
+    for (size_t i = 0; i < count; i++) marmot_key_package_info_free(infos[i]);
+    free(infos);
+
+    /* Deactivate all */
+    assert(s->deactivate_key_packages(s->ctx, pk) == MARMOT_OK);
+
+    /* Both should now be inactive */
+    MarmotKeyPackageInfo *found = NULL;
+    assert(s->find_key_package_by_ref(s->ctx, info1.ref, &found) == MARMOT_OK);
+    assert(found != NULL);
+    assert(found->active == false);
+    marmot_key_package_info_free(found);
+
+    assert(s->find_key_package_by_ref(s->ctx, info2.ref, &found) == MARMOT_OK);
+    assert(found != NULL);
+    assert(found->active == false);
+    marmot_key_package_info_free(found);
+}
+
+/* ── 7. Relay operations ───────────────────────────────────────────────── */
 
 static void
 test_relay_replace_and_list(MarmotStorage *s)
@@ -640,6 +733,12 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
 
     /* Relays */
     TEST(test_relay_replace_and_list, backend_name, s);
+
+    /* Key package info (skip if backend doesn't implement it) */
+    if (s->save_key_package_info) {
+        TEST(test_key_package_info_roundtrip, backend_name, s);
+        TEST(test_key_package_info_deactivate, backend_name, s);
+    }
 
     /* Persistence */
     if (is_persistent_expected) {

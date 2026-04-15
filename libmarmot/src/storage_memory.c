@@ -56,6 +56,11 @@ typedef struct {
     size_t proc_welcome_count;
     size_t proc_welcome_cap;
 
+    /* Key package info */
+    MarmotKeyPackageInfo **kp_infos;
+    size_t kp_info_count;
+    size_t kp_info_cap;
+
     /* Group relays */
     struct relay_entry {
         MarmotGroupId gid;
@@ -551,6 +556,117 @@ mem_save_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
     return MARMOT_OK;
 }
 
+/* ── Key package info operations ─────────────────────────────────────── */
+
+static MarmotKeyPackageInfo *
+kp_info_deep_copy(const MarmotKeyPackageInfo *src)
+{
+    MarmotKeyPackageInfo *dst = marmot_key_package_info_new();
+    if (!dst) return NULL;
+    memcpy(dst->ref, src->ref, 32);
+    memcpy(dst->owner_pubkey, src->owner_pubkey, 32);
+    dst->created_at = src->created_at;
+    dst->active = src->active;
+    if (src->relay_count > 0 && src->relay_urls) {
+        dst->relay_urls = calloc(src->relay_count, sizeof(char *));
+        if (!dst->relay_urls) { marmot_key_package_info_free(dst); return NULL; }
+        for (size_t i = 0; i < src->relay_count; i++)
+            dst->relay_urls[i] = xstrdup(src->relay_urls[i]);
+        dst->relay_count = src->relay_count;
+    }
+    return dst;
+}
+
+static MarmotError
+mem_save_key_package_info(void *ctx, const MarmotKeyPackageInfo *info)
+{
+    MemCtx *mc = ctx;
+
+    /* Upsert: if ref already exists, replace it */
+    for (size_t i = 0; i < mc->kp_info_count; i++) {
+        if (memcmp(mc->kp_infos[i]->ref, info->ref, 32) == 0) {
+            marmot_key_package_info_free(mc->kp_infos[i]);
+            mc->kp_infos[i] = kp_info_deep_copy(info);
+            return mc->kp_infos[i] ? MARMOT_OK : MARMOT_ERR_MEMORY;
+        }
+    }
+
+    /* Append */
+    if (mc->kp_info_count >= mc->kp_info_cap) {
+        size_t new_cap = mc->kp_info_cap ? mc->kp_info_cap * 2 : 16;
+        MarmotKeyPackageInfo **arr = realloc(mc->kp_infos,
+                                              new_cap * sizeof(MarmotKeyPackageInfo *));
+        if (!arr) return MARMOT_ERR_MEMORY;
+        mc->kp_infos = arr;
+        mc->kp_info_cap = new_cap;
+    }
+    mc->kp_infos[mc->kp_info_count] = kp_info_deep_copy(info);
+    if (!mc->kp_infos[mc->kp_info_count]) return MARMOT_ERR_MEMORY;
+    mc->kp_info_count++;
+    return MARMOT_OK;
+}
+
+static MarmotError
+mem_find_key_package_by_ref(void *ctx, const uint8_t ref[32],
+                             MarmotKeyPackageInfo **out)
+{
+    MemCtx *mc = ctx;
+    *out = NULL;
+    for (size_t i = 0; i < mc->kp_info_count; i++) {
+        if (memcmp(mc->kp_infos[i]->ref, ref, 32) == 0) {
+            *out = kp_info_deep_copy(mc->kp_infos[i]);
+            return *out ? MARMOT_OK : MARMOT_ERR_MEMORY;
+        }
+    }
+    return MARMOT_OK; /* not found, *out stays NULL */
+}
+
+static MarmotError
+mem_find_key_packages_by_pubkey(void *ctx, const uint8_t pubkey[32],
+                                 MarmotKeyPackageInfo ***out, size_t *out_count)
+{
+    MemCtx *mc = ctx;
+    *out = NULL;
+    *out_count = 0;
+
+    /* Count matches */
+    size_t n = 0;
+    for (size_t i = 0; i < mc->kp_info_count; i++) {
+        if (memcmp(mc->kp_infos[i]->owner_pubkey, pubkey, 32) == 0)
+            n++;
+    }
+    if (n == 0) return MARMOT_OK;
+
+    MarmotKeyPackageInfo **arr = calloc(n, sizeof(MarmotKeyPackageInfo *));
+    if (!arr) return MARMOT_ERR_MEMORY;
+    size_t added = 0;
+    for (size_t i = 0; i < mc->kp_info_count && added < n; i++) {
+        if (memcmp(mc->kp_infos[i]->owner_pubkey, pubkey, 32) == 0) {
+            arr[added] = kp_info_deep_copy(mc->kp_infos[i]);
+            if (!arr[added]) {
+                for (size_t j = 0; j < added; j++) marmot_key_package_info_free(arr[j]);
+                free(arr);
+                return MARMOT_ERR_MEMORY;
+            }
+            added++;
+        }
+    }
+    *out = arr;
+    *out_count = added;
+    return MARMOT_OK;
+}
+
+static MarmotError
+mem_deactivate_key_packages(void *ctx, const uint8_t pubkey[32])
+{
+    MemCtx *mc = ctx;
+    for (size_t i = 0; i < mc->kp_info_count; i++) {
+        if (memcmp(mc->kp_infos[i]->owner_pubkey, pubkey, 32) == 0)
+            mc->kp_infos[i]->active = false;
+    }
+    return MARMOT_OK;
+}
+
 /* ── Relay operations (simplified) ─────────────────────────────────────── */
 
 static MarmotError
@@ -809,6 +925,9 @@ mem_destroy(void *ctx)
     for (size_t i = 0; i < mc->relay_count; i++)
         relay_entry_clear(&mc->relays[i]);
     free(mc->relays);
+    for (size_t i = 0; i < mc->kp_info_count; i++)
+        marmot_key_package_info_free(mc->kp_infos[i]);
+    free(mc->kp_infos);
     free(mc);
 }
 
@@ -847,6 +966,12 @@ marmot_storage_memory_new(void)
     s->pending_welcomes = mem_pending_welcomes;
     s->find_processed_welcome = mem_find_processed_welcome;
     s->save_processed_welcome = mem_save_processed_welcome;
+
+    /* Key package info ops */
+    s->save_key_package_info = mem_save_key_package_info;
+    s->find_key_package_by_ref = mem_find_key_package_by_ref;
+    s->find_key_packages_by_pubkey = mem_find_key_packages_by_pubkey;
+    s->deactivate_key_packages = mem_deactivate_key_packages;
 
     /* Relay ops */
     s->group_relays = mem_group_relays;

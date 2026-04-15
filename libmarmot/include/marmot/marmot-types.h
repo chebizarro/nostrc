@@ -543,6 +543,34 @@ typedef struct {
 void marmot_key_package_result_free(MarmotKeyPackageResult *result);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Key package info (stored metadata for published KeyPackages)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    /** KeyPackageRef (32 bytes, primary key) */
+    uint8_t ref[32];
+
+    /** Owner's Nostr pubkey (32 bytes, x-only) */
+    uint8_t owner_pubkey[32];
+
+    /** Relay URLs (caller-owned) */
+    char **relay_urls;
+    size_t relay_count;
+
+    /** Creation timestamp */
+    int64_t created_at;
+
+    /** Whether this is the active (latest) key package for this pubkey */
+    bool active;
+} MarmotKeyPackageInfo;
+
+/** Allocate and zero-initialize a MarmotKeyPackageInfo */
+MarmotKeyPackageInfo *marmot_key_package_info_new(void);
+
+/** Deep-free a MarmotKeyPackageInfo and all its owned data */
+void marmot_key_package_info_free(MarmotKeyPackageInfo *info);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Outgoing message result
  * ──────────────────────────────────────────────────────────────────────── */
 

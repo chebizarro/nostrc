@@ -121,6 +121,27 @@ typedef struct MarmotStorage {
                                            int state,
                                            const char *failure_reason);
 
+    /* ── Key package info operations ──────────────────────────────────── */
+
+    /** Save key package info. Storage copies what it needs. */
+    MarmotError (*save_key_package_info)(void *ctx,
+                                          const MarmotKeyPackageInfo *info);
+
+    /** Find a key package by its ref. Returns NULL in *out if not found. */
+    MarmotError (*find_key_package_by_ref)(void *ctx,
+                                            const uint8_t ref[32],
+                                            MarmotKeyPackageInfo **out);
+
+    /** Find active key packages for a pubkey. Caller frees array + infos. */
+    MarmotError (*find_key_packages_by_pubkey)(void *ctx,
+                                                const uint8_t pubkey[32],
+                                                MarmotKeyPackageInfo ***out,
+                                                size_t *out_count);
+
+    /** Deactivate all key packages for a pubkey (for rotation). */
+    MarmotError (*deactivate_key_packages)(void *ctx,
+                                            const uint8_t pubkey[32]);
+
     /* ── Relay operations ─────────────────────────────────────────────── */
 
     /** Get relays for a group. Caller frees the returned array. */

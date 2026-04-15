@@ -13,11 +13,18 @@
  */
 
 #include <marmot/marmot.h>
+#include "marmot-internal.h"
 #include <sodium.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+
+/* Internal declarations needed for round-trip test */
+#include "../src/mls/mls_key_package.h"
+extern MarmotError marmot_parse_key_package_event(const char *event_json,
+                                                    MlsKeyPackage *kp_out,
+                                                    uint8_t nostr_pubkey_out[32]);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * Test harness
@@ -201,6 +208,170 @@ test_create_multiple_key_packages(void)
 
     marmot_key_package_result_free(&r1);
     marmot_key_package_result_free(&r2);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_roundtrip(void)
+{
+    TEST("MIP-00: create → parse round-trip preserves identity");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t nostr_sk[32], nostr_pk[32];
+    generate_nostr_keypair(nostr_sk, nostr_pk);
+
+    const char *relays[] = { "wss://relay.example.com" };
+    MarmotKeyPackageResult result;
+    memset(&result, 0, sizeof(result));
+
+    MarmotError err = marmot_create_key_package(m, nostr_pk, nostr_sk,
+                                                 relays, 1, &result);
+    ASSERT_OK(err, "create_key_package");
+
+    /* Parse it back */
+    MlsKeyPackage kp;
+    uint8_t parsed_pk[32];
+    err = marmot_parse_key_package_event(result.event_json, &kp, parsed_pk);
+    ASSERT_OK(err, "parse_key_package_event");
+
+    /* The credential identity should contain our nostr pubkey */
+    ASSERT(kp.leaf_node.credential_identity_len == 32,
+           "credential identity should be 32 bytes");
+    ASSERT(memcmp(kp.leaf_node.credential_identity, nostr_pk, 32) == 0,
+           "credential identity should match nostr pubkey");
+
+    /* The pubkey extracted from the event should match */
+    ASSERT(memcmp(parsed_pk, nostr_pk, 32) == 0,
+           "parsed pubkey should match original");
+
+    /* Verify the KeyPackage ref matches */
+    uint8_t parsed_ref[32];
+    ASSERT(mls_key_package_ref(&kp, parsed_ref) == 0, "compute ref");
+    ASSERT(memcmp(parsed_ref, result.key_package_ref, 32) == 0,
+           "key package ref should match after round-trip");
+
+    mls_key_package_clear(&kp);
+    marmot_key_package_result_free(&result);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_rotation(void)
+{
+    TEST("MIP-00: creating new key package deactivates old ones");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t nostr_sk[32], nostr_pk[32];
+    generate_nostr_keypair(nostr_sk, nostr_pk);
+
+    /* Create first key package */
+    MarmotKeyPackageResult r1;
+    memset(&r1, 0, sizeof(r1));
+    MarmotError err = marmot_create_key_package(m, nostr_pk, nostr_sk,
+                                                 NULL, 0, &r1);
+    ASSERT_OK(err, "create first key package");
+
+    /* Verify first is active in storage */
+    if (m->storage->find_key_package_by_ref) {
+        MarmotKeyPackageInfo *info = NULL;
+        err = m->storage->find_key_package_by_ref(m->storage->ctx,
+                                                    r1.key_package_ref, &info);
+        ASSERT_OK(err, "find first key package");
+        ASSERT(info != NULL, "first kp info should exist");
+        ASSERT(info->active == true, "first kp should be active");
+        marmot_key_package_info_free(info);
+    }
+
+    /* Create second key package (should deactivate first) */
+    MarmotKeyPackageResult r2;
+    memset(&r2, 0, sizeof(r2));
+    err = marmot_create_key_package(m, nostr_pk, nostr_sk, NULL, 0, &r2);
+    ASSERT_OK(err, "create second key package");
+
+    /* Verify first is now deactivated and second is active */
+    if (m->storage->find_key_package_by_ref) {
+        MarmotKeyPackageInfo *info1 = NULL;
+        err = m->storage->find_key_package_by_ref(m->storage->ctx,
+                                                    r1.key_package_ref, &info1);
+        ASSERT_OK(err, "find first after rotation");
+        ASSERT(info1 != NULL, "first kp should still exist");
+        ASSERT(info1->active == false, "first kp should be deactivated");
+        marmot_key_package_info_free(info1);
+
+        MarmotKeyPackageInfo *info2 = NULL;
+        err = m->storage->find_key_package_by_ref(m->storage->ctx,
+                                                    r2.key_package_ref, &info2);
+        ASSERT_OK(err, "find second after rotation");
+        ASSERT(info2 != NULL, "second kp should exist");
+        ASSERT(info2->active == true, "second kp should be active");
+        marmot_key_package_info_free(info2);
+    }
+
+    marmot_key_package_result_free(&r1);
+    marmot_key_package_result_free(&r2);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_info_storage(void)
+{
+    TEST("MIP-00: key package info stored with correct metadata");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t nostr_sk[32], nostr_pk[32];
+    generate_nostr_keypair(nostr_sk, nostr_pk);
+
+    const char *relays[] = { "wss://relay1.example.com", "wss://relay2.example.com" };
+    MarmotKeyPackageResult result;
+    memset(&result, 0, sizeof(result));
+
+    MarmotError err = marmot_create_key_package(m, nostr_pk, nostr_sk,
+                                                 relays, 2, &result);
+    ASSERT_OK(err, "create key package");
+
+    /* Look it up by ref */
+    if (m->storage->find_key_package_by_ref) {
+        MarmotKeyPackageInfo *info = NULL;
+        err = m->storage->find_key_package_by_ref(m->storage->ctx,
+                                                    result.key_package_ref, &info);
+        ASSERT_OK(err, "find by ref");
+        ASSERT(info != NULL, "info should exist");
+        ASSERT(memcmp(info->owner_pubkey, nostr_pk, 32) == 0,
+               "owner pubkey should match");
+        ASSERT(info->relay_count == 2, "should have 2 relays");
+        ASSERT(info->active == true, "should be active");
+        ASSERT(info->created_at > 0, "should have creation timestamp");
+        marmot_key_package_info_free(info);
+    }
+
+    /* Look it up by pubkey */
+    if (m->storage->find_key_packages_by_pubkey) {
+        MarmotKeyPackageInfo **infos = NULL;
+        size_t count = 0;
+        err = m->storage->find_key_packages_by_pubkey(m->storage->ctx,
+                                                       nostr_pk, &infos, &count);
+        ASSERT_OK(err, "find by pubkey");
+        ASSERT(count == 1, "should find 1 key package");
+        ASSERT(infos != NULL, "infos array should not be NULL");
+        if (count > 0 && infos) {
+            ASSERT(memcmp(infos[0]->ref, result.key_package_ref, 32) == 0,
+                   "ref should match");
+            for (size_t i = 0; i < count; i++)
+                marmot_key_package_info_free(infos[i]);
+            free(infos);
+        }
+    }
+
+    marmot_key_package_result_free(&result);
     marmot_free(m);
     PASS();
 }
@@ -836,6 +1007,9 @@ main(void)
     test_create_key_package_no_relays();
     test_create_key_package_null_args();
     test_create_multiple_key_packages();
+    test_key_package_roundtrip();
+    test_key_package_rotation();
+    test_key_package_info_storage();
 
     printf("\nMIP-01: Group Construction\n");
     test_create_group_basic();

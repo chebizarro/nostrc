@@ -239,6 +239,25 @@ marmot_key_package_result_free(MarmotKeyPackageResult *result)
     memset(result, 0, sizeof(*result));
 }
 
+MarmotKeyPackageInfo *
+marmot_key_package_info_new(void)
+{
+    MarmotKeyPackageInfo *info = calloc(1, sizeof(MarmotKeyPackageInfo));
+    return info;
+}
+
+void
+marmot_key_package_info_free(MarmotKeyPackageInfo *info)
+{
+    if (!info) return;
+    if (info->relay_urls) {
+        for (size_t i = 0; i < info->relay_count; i++)
+            free(info->relay_urls[i]);
+        free(info->relay_urls);
+    }
+    free(info);
+}
+
 void
 marmot_outgoing_message_free(MarmotOutgoingMessage *result)
 {
