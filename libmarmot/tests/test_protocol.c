@@ -1537,6 +1537,269 @@ test_get_group_not_found(void)
     PASS();
 }
 
+static void
+test_message_encrypt_decrypt_roundtrip(void)
+{
+    TEST("MIP-03: encrypt → decrypt round-trip preserves content");
+
+    /* Creator creates a solo group */
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Roundtrip Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
+    ASSERT_OK(err, "create_group");
+    ASSERT(gresult.group != NULL, "group is NULL");
+
+    /* Send a message */
+    const char *inner_json = "{\"kind\":9,\"content\":\"Hello, roundtrip!\","
+                             "\"created_at\":1700000000,\"tags\":[]}";
+
+    MarmotOutgoingMessage msg_out;
+    memset(&msg_out, 0, sizeof(msg_out));
+
+    err = marmot_create_message(m, &gresult.group->mls_group_id,
+                                 inner_json, &msg_out);
+    ASSERT_OK(err, "create_message");
+    ASSERT(msg_out.event_json != NULL, "outgoing event_json is NULL");
+
+    /* Verify the kind:445 event structure */
+    ASSERT(strstr(msg_out.event_json, "\"kind\":445") != NULL,
+           "event should be kind:445");
+
+    /* Process the same kind:445 event back (decrypt) */
+    MarmotMessageResult msg_in;
+    memset(&msg_in, 0, sizeof(msg_in));
+
+    err = marmot_process_message(m, msg_out.event_json, &msg_in);
+    ASSERT_OK(err, "process_message");
+    ASSERT(msg_in.type == MARMOT_RESULT_APPLICATION_MESSAGE,
+           "should be an application message");
+    ASSERT(msg_in.app_msg.inner_event_json != NULL,
+           "decrypted inner event is NULL");
+    ASSERT(strstr(msg_in.app_msg.inner_event_json, "Hello, roundtrip!") != NULL,
+           "decrypted content should match original");
+
+    marmot_message_result_free(&msg_in);
+    marmot_outgoing_message_free(&msg_out);
+    marmot_create_group_result_free(&gresult);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_message_two_member_exchange(void)
+{
+    TEST("MIP-03: creator sends message, member decrypts after welcome");
+
+    /* Set up creator and member */
+    Marmot *creator = create_test_instance();
+    Marmot *member  = create_test_instance();
+    ASSERT(creator != NULL, "failed to create creator");
+    ASSERT(member  != NULL, "failed to create member");
+
+    uint8_t creator_sk[32], creator_pk[32];
+    uint8_t member_sk[32],  member_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+    generate_nostr_keypair(member_sk,  member_pk);
+
+    /* Member creates a key package */
+    MarmotKeyPackageResult kp_result;
+    memset(&kp_result, 0, sizeof(kp_result));
+    MarmotError err = marmot_create_key_package(member, member_pk, member_sk,
+                                                 NULL, 0, &kp_result);
+    ASSERT_OK(err, "member create_key_package");
+
+    /* Creator creates a group with the member */
+    const char *kp_jsons[] = { kp_result.event_json };
+    MarmotGroupConfig config = {0};
+    config.name = "Two-Member Msg Test";
+    config.description = "Message exchange test";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    err = marmot_create_group(creator, creator_pk, kp_jsons, 1,
+                               &config, &gresult);
+    ASSERT_OK(err, "create_group");
+    ASSERT(gresult.welcome_count == 1, "should have 1 welcome");
+
+    /* Member processes and accepts the welcome */
+    uint8_t wrapper_id[32];
+    randombytes_buf(wrapper_id, 32);
+
+    MarmotWelcome *welcome = NULL;
+    err = marmot_process_welcome(member, wrapper_id,
+                                  gresult.welcome_rumor_jsons[0],
+                                  &welcome);
+    ASSERT_OK(err, "process_welcome");
+
+    err = marmot_accept_welcome(member, welcome);
+    ASSERT_OK(err, "accept_welcome");
+
+    /* Creator sends a message */
+    const char *inner_json = "{\"kind\":9,\"content\":\"Hello from creator!\","
+                             "\"created_at\":1700000000,\"tags\":[]}";
+
+    MarmotOutgoingMessage msg_out;
+    memset(&msg_out, 0, sizeof(msg_out));
+
+    err = marmot_create_message(creator, &gresult.group->mls_group_id,
+                                 inner_json, &msg_out);
+    ASSERT_OK(err, "creator create_message");
+    ASSERT(msg_out.event_json != NULL, "outgoing event_json is NULL");
+
+    /* Member processes the message */
+    MarmotMessageResult msg_in;
+    memset(&msg_in, 0, sizeof(msg_in));
+
+    err = marmot_process_message(member, msg_out.event_json, &msg_in);
+    ASSERT_OK(err, "member process_message");
+    ASSERT(msg_in.type == MARMOT_RESULT_APPLICATION_MESSAGE,
+           "should be application message");
+    ASSERT(msg_in.app_msg.inner_event_json != NULL,
+           "decrypted inner event is NULL");
+    ASSERT(strstr(msg_in.app_msg.inner_event_json, "Hello from creator!") != NULL,
+           "member should decrypt creator's message");
+
+    marmot_message_result_free(&msg_in);
+    marmot_outgoing_message_free(&msg_out);
+    marmot_welcome_free(welcome);
+    marmot_key_package_result_free(&kp_result);
+    marmot_create_group_result_free(&gresult);
+    marmot_free(creator);
+    marmot_free(member);
+    PASS();
+}
+
+static void
+test_message_epoch_lookback(void)
+{
+    TEST("MIP-03: process_message tries previous epochs on mismatch");
+
+    /* This test verifies the epoch lookback mechanism:
+     * 1. Create group at epoch 0
+     * 2. Send message encrypted with epoch 0 secret
+     * 3. Update group metadata (advances to epoch 1)
+     * 4. Try to decrypt the epoch-0 message — should succeed via lookback */
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Epoch Lookback Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
+    ASSERT_OK(err, "create_group");
+
+    /* Send a message at epoch 0 */
+    MarmotOutgoingMessage msg_out;
+    memset(&msg_out, 0, sizeof(msg_out));
+
+    err = marmot_create_message(m, &gresult.group->mls_group_id,
+                                 "{\"kind\":9,\"content\":\"epoch0 msg\","
+                                 "\"created_at\":1700000000,\"tags\":[]}",
+                                 &msg_out);
+    ASSERT_OK(err, "create_message at epoch 0");
+    ASSERT(msg_out.event_json != NULL, "event_json is NULL");
+
+    /* Advance epoch by updating group metadata */
+    MarmotGroupConfig update_config = {0};
+    update_config.name = "Epoch Lookback Test v2";
+    update_config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    update_config.admin_count = 1;
+    err = marmot_update_group_metadata(m, &gresult.group->mls_group_id,
+                                        &update_config);
+    ASSERT_OK(err, "update_group_metadata to advance epoch");
+
+    /* Now try to decrypt the epoch-0 message at epoch 1 */
+    MarmotMessageResult msg_in;
+    memset(&msg_in, 0, sizeof(msg_in));
+
+    err = marmot_process_message(m, msg_out.event_json, &msg_in);
+    ASSERT_OK(err, "process_message with epoch lookback");
+    ASSERT(msg_in.type == MARMOT_RESULT_APPLICATION_MESSAGE,
+           "should be application message");
+    ASSERT(strstr(msg_in.app_msg.inner_event_json, "epoch0 msg") != NULL,
+           "should decrypt epoch-0 message via lookback");
+
+    marmot_message_result_free(&msg_in);
+    marmot_outgoing_message_free(&msg_out);
+    marmot_create_group_result_free(&gresult);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_message_idempotent_processing(void)
+{
+    TEST("MIP-03: is_message_processed detects duplicates");
+
+    /*
+     * Unsigned kind:445 events from create_message don't have event IDs,
+     * so the find_message_by_id dedup path isn't triggered. Instead, test
+     * the is_message_processed + save_processed_message path that a real
+     * relay-connected client would use for dedup tracking.
+     */
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    /* Verify the storage has dedup tracking support */
+    ASSERT(m->storage->is_message_processed != NULL,
+           "storage should support is_message_processed");
+    ASSERT(m->storage->save_processed_message != NULL,
+           "storage should support save_processed_message");
+
+    /* Generate a fake event ID */
+    uint8_t event_id[32];
+    randombytes_buf(event_id, 32);
+
+    /* First check — not yet processed */
+    bool processed = false;
+    MarmotError err = m->storage->is_message_processed(m->storage->ctx,
+                                                        event_id, &processed);
+    ASSERT_OK(err, "is_message_processed");
+    ASSERT(!processed, "should not be processed initially");
+
+    /* Mark as processed */
+    uint8_t gid_data[32];
+    randombytes_buf(gid_data, 32);
+    MarmotGroupId gid = { .data = gid_data, .len = 32 };
+    err = m->storage->save_processed_message(m->storage->ctx, event_id,
+                                              NULL, marmot_now(), 0,
+                                              &gid, 0, NULL);
+    ASSERT_OK(err, "save_processed_message");
+
+    /* Second check — now processed */
+    err = m->storage->is_message_processed(m->storage->ctx,
+                                            event_id, &processed);
+    ASSERT_OK(err, "is_message_processed after save");
+    ASSERT(processed, "should be processed after save");
+
+    marmot_free(m);
+    PASS();
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Lifecycle tests
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1630,6 +1893,10 @@ main(void)
     test_process_message_wrong_kind();
     test_process_message_missing_h_tag();
     test_process_message_unknown_group();
+    test_message_encrypt_decrypt_roundtrip();
+    test_message_two_member_exchange();
+    test_message_epoch_lookback();
+    test_message_idempotent_processing();
 
     printf("\nGroup Queries\n");
     test_get_all_groups();

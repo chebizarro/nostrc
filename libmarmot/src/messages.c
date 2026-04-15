@@ -468,52 +468,45 @@ marmot_process_message(Marmot *m,
         }
     }
 
-    /* ── 4. Get exporter_secret (try current epoch, then recent ones) ── */
+    /* ── 4. Try to decrypt with current epoch, then recent epochs ─────── */
+    /*
+     * Messages may arrive out of order relative to epoch advances.
+     * Try the current epoch's exporter_secret first, then fall back to
+     * recent previous epochs if decryption fails.
+     */
     uint8_t exporter_secret[32];
-    bool found_secret = false;
-    uint64_t used_epoch = group->epoch;
-
-    /* Try current epoch first */
-    if (m->storage->get_exporter_secret(m->storage->ctx,
-                                         &group->mls_group_id,
-                                         group->epoch,
-                                         exporter_secret) == MARMOT_OK) {
-        found_secret = true;
-    }
-
-    /* Fall back to recent epochs for out-of-order delivery */
-    if (!found_secret && group->epoch > 0) {
-        uint64_t min_epoch = (group->epoch > MAX_EPOCH_LOOKBACK) ? group->epoch - MAX_EPOCH_LOOKBACK : 0;
-        for (uint64_t ep = group->epoch - 1; ep >= min_epoch && ep < group->epoch; ep--) {
-            if (m->storage->get_exporter_secret(m->storage->ctx,
-                                                 &group->mls_group_id,
-                                                 ep,
-                                                 exporter_secret) == MARMOT_OK) {
-                found_secret = true;
-                used_epoch = ep;
-                break;
-            }
-        }
-    }
-
-    if (!found_secret) {
-        marmot_group_free(group);
-        parsed_group_event_clear(&parsed);
-        return MARMOT_ERR_GROUP_EXPORTER_SECRET;
-    }
-
-    /* ── 5. NIP-44 decrypt the content ────────────────────────────────── */
     uint8_t *decrypted = NULL;
     size_t decrypted_len = 0;
+    uint64_t used_epoch = group->epoch;
+    bool decrypted_ok = false;
 
-    if (nip44_decrypt_with_secret(exporter_secret, parsed.content,
-                                   &decrypted, &decrypted_len) != 0) {
-        sodium_memzero(exporter_secret, sizeof(exporter_secret));
+    /* Collect epochs to try: current, then lookback */
+    uint64_t min_epoch = (group->epoch > MAX_EPOCH_LOOKBACK)
+                       ? group->epoch - MAX_EPOCH_LOOKBACK : 0;
+
+    for (uint64_t ep = group->epoch; ep >= min_epoch && ep <= group->epoch; ep--) {
+        if (m->storage->get_exporter_secret(m->storage->ctx,
+                                             &group->mls_group_id,
+                                             ep,
+                                             exporter_secret) != MARMOT_OK)
+            continue;
+
+        /* Attempt NIP-44 decrypt with this epoch's secret */
+        if (nip44_decrypt_with_secret(exporter_secret, parsed.content,
+                                       &decrypted, &decrypted_len) == 0) {
+            used_epoch = ep;
+            decrypted_ok = true;
+            break;
+        }
+        /* Wrong epoch — try next */
+    }
+    sodium_memzero(exporter_secret, sizeof(exporter_secret));
+
+    if (!decrypted_ok) {
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);
         return MARMOT_ERR_NIP44;
     }
-    sodium_memzero(exporter_secret, sizeof(exporter_secret));
 
     /* ── 6. Extract inner event JSON ──────────────────────────────────── */
     /*
