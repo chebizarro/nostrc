@@ -20,6 +20,8 @@
 #include "marmot-gobject-welcome.h"
 #include "marmot-gobject-storage.h"
 #include "marmot-gobject-enums.h"
+#include "marmot-gobject-key-package.h"
+#include "marmot-gobject-boxed.h"
 
 #undef MARMOT_GOBJECT_INSIDE
 

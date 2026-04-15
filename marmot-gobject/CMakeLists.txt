@@ -31,6 +31,8 @@ set(MARMOT_GOBJECT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot-gobject-message.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot-gobject-welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot-gobject-storage.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot-gobject-key-package.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot-gobject-boxed.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot-gobject-client.c
 )
 
@@ -42,6 +44,8 @@ set(MARMOT_GOBJECT_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-message.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-welcome.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-storage.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-key-package.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-boxed.h
   ${CMAKE_CURRENT_BINARY_DIR}/include/marmot-gobject-1.0/marmot-gobject-version.h
 )
 

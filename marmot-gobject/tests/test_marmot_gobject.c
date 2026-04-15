@@ -948,6 +948,250 @@ test_welcome_zero_members(void)
  * Main
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 13. Key Package tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_key_package_type_registration(void)
+{
+    GType type = MARMOT_GOBJECT_TYPE_KEY_PACKAGE;
+    g_assert_true(type != G_TYPE_INVALID);
+    g_assert_cmpstr(g_type_name(type), ==, "MarmotGobjectKeyPackage");
+    g_assert_true(g_type_is_a(type, G_TYPE_OBJECT));
+}
+
+static void
+test_key_package_new_from_data(void)
+{
+    const gchar *relay_urls[] = { "wss://relay.example.com", "wss://relay2.example.com", NULL };
+    MarmotGobjectKeyPackage *kp = marmot_gobject_key_package_new_from_data(
+        "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233",
+        "1122334455667788112233445566778811223344556677881122334455667788",
+        relay_urls,
+        1700000000,
+        TRUE);
+    g_assert_nonnull(kp);
+    g_assert_cmpstr(marmot_gobject_key_package_get_ref(kp), ==,
+                    "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233");
+    g_assert_cmpstr(marmot_gobject_key_package_get_owner_pubkey(kp), ==,
+                    "1122334455667788112233445566778811223344556677881122334455667788");
+    const gchar * const *urls = marmot_gobject_key_package_get_relay_urls(kp);
+    g_assert_nonnull(urls);
+    g_assert_cmpstr(urls[0], ==, "wss://relay.example.com");
+    g_assert_cmpstr(urls[1], ==, "wss://relay2.example.com");
+    g_assert_null(urls[2]);
+    g_assert_cmpint(marmot_gobject_key_package_get_created_at(kp), ==, 1700000000);
+    g_assert_true(marmot_gobject_key_package_is_active(kp));
+    g_object_unref(kp);
+}
+
+static void
+test_key_package_null_relay_urls(void)
+{
+    MarmotGobjectKeyPackage *kp = marmot_gobject_key_package_new_from_data(
+        "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233",
+        "1122334455667788112233445566778811223344556677881122334455667788",
+        NULL, 0, FALSE);
+    g_assert_nonnull(kp);
+    g_assert_null(marmot_gobject_key_package_get_relay_urls(kp));
+    g_assert_false(marmot_gobject_key_package_is_active(kp));
+    g_assert_cmpint(marmot_gobject_key_package_get_created_at(kp), ==, 0);
+    g_object_unref(kp);
+}
+
+static void
+test_key_package_properties_via_gvalue(void)
+{
+    const gchar *relay_urls[] = { "wss://r1.example.com", NULL };
+    MarmotGobjectKeyPackage *kp = marmot_gobject_key_package_new_from_data(
+        "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233",
+        "1122334455667788112233445566778811223344556677881122334455667788",
+        relay_urls, 42, TRUE);
+
+    GValue val = G_VALUE_INIT;
+
+    g_value_init(&val, G_TYPE_STRING);
+    g_object_get_property(G_OBJECT(kp), "ref", &val);
+    g_assert_cmpstr(g_value_get_string(&val), ==,
+                    "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233");
+    g_value_unset(&val);
+
+    g_value_init(&val, G_TYPE_STRING);
+    g_object_get_property(G_OBJECT(kp), "owner-pubkey", &val);
+    g_assert_cmpstr(g_value_get_string(&val), ==,
+                    "1122334455667788112233445566778811223344556677881122334455667788");
+    g_value_unset(&val);
+
+    g_value_init(&val, G_TYPE_STRV);
+    g_object_get_property(G_OBJECT(kp), "relay-urls", &val);
+    gchar **urls_out = (gchar **)g_value_get_boxed(&val);
+    g_assert_nonnull(urls_out);
+    g_assert_cmpstr(urls_out[0], ==, "wss://r1.example.com");
+    g_value_unset(&val);
+
+    g_value_init(&val, G_TYPE_INT64);
+    g_object_get_property(G_OBJECT(kp), "created-at", &val);
+    g_assert_cmpint(g_value_get_int64(&val), ==, 42);
+    g_value_unset(&val);
+
+    g_value_init(&val, G_TYPE_BOOLEAN);
+    g_object_get_property(G_OBJECT(kp), "active", &val);
+    g_assert_true(g_value_get_boolean(&val));
+    g_value_unset(&val);
+
+    g_object_unref(kp);
+}
+
+static void
+test_key_package_rapid_create_destroy(void)
+{
+    for (int i = 0; i < 1000; i++) {
+        MarmotGobjectKeyPackage *kp = marmot_gobject_key_package_new_from_data(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            NULL, 0, FALSE);
+        g_object_unref(kp);
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 14. Boxed type tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_config_boxed_type(void)
+{
+    GType type = MARMOT_GOBJECT_TYPE_CONFIG;
+    g_assert_true(type != G_TYPE_INVALID);
+    g_assert_true(G_TYPE_IS_BOXED(type));
+    g_assert_cmpstr(g_type_name(type), ==, "MarmotGobjectConfig");
+}
+
+static void
+test_config_defaults(void)
+{
+    MarmotGobjectConfig *config = marmot_gobject_config_new_default();
+    g_assert_nonnull(config);
+    g_assert_cmpuint(config->max_event_age_secs, ==, 3888000);
+    g_assert_cmpuint(config->max_future_skew_secs, ==, 300);
+    g_assert_cmpuint(config->out_of_order_tolerance, ==, 100);
+    g_assert_cmpuint(config->max_forward_distance, ==, 1000);
+    g_assert_cmpuint(config->epoch_snapshot_retention, ==, 5);
+    g_assert_cmpuint(config->snapshot_ttl_seconds, ==, 604800);
+    marmot_gobject_config_free(config);
+}
+
+static void
+test_config_copy(void)
+{
+    MarmotGobjectConfig *config = marmot_gobject_config_new_default();
+    config->max_event_age_secs = 12345;
+    config->out_of_order_tolerance = 42;
+
+    MarmotGobjectConfig *copy = marmot_gobject_config_copy(config);
+    g_assert_nonnull(copy);
+    g_assert_true(copy != config);  /* distinct allocation */
+    g_assert_cmpuint(copy->max_event_age_secs, ==, 12345);
+    g_assert_cmpuint(copy->out_of_order_tolerance, ==, 42);
+    g_assert_cmpuint(copy->max_future_skew_secs, ==, 300);
+
+    marmot_gobject_config_free(config);
+    marmot_gobject_config_free(copy);
+}
+
+static void
+test_config_copy_null(void)
+{
+    MarmotGobjectConfig *copy = marmot_gobject_config_copy(NULL);
+    g_assert_null(copy);
+}
+
+static void
+test_pagination_boxed_type(void)
+{
+    GType type = MARMOT_GOBJECT_TYPE_PAGINATION;
+    g_assert_true(type != G_TYPE_INVALID);
+    g_assert_true(G_TYPE_IS_BOXED(type));
+    g_assert_cmpstr(g_type_name(type), ==, "MarmotGobjectPagination");
+}
+
+static void
+test_pagination_defaults(void)
+{
+    MarmotGobjectPagination *p = marmot_gobject_pagination_new_default();
+    g_assert_nonnull(p);
+    g_assert_cmpuint(p->limit, ==, 1000);
+    g_assert_cmpuint(p->offset, ==, 0);
+    marmot_gobject_pagination_free(p);
+}
+
+static void
+test_pagination_new(void)
+{
+    MarmotGobjectPagination *p = marmot_gobject_pagination_new(50, 100);
+    g_assert_nonnull(p);
+    g_assert_cmpuint(p->limit, ==, 50);
+    g_assert_cmpuint(p->offset, ==, 100);
+    marmot_gobject_pagination_free(p);
+}
+
+static void
+test_pagination_copy(void)
+{
+    MarmotGobjectPagination *p = marmot_gobject_pagination_new(25, 75);
+    MarmotGobjectPagination *copy = marmot_gobject_pagination_copy(p);
+    g_assert_nonnull(copy);
+    g_assert_true(copy != p);
+    g_assert_cmpuint(copy->limit, ==, 25);
+    g_assert_cmpuint(copy->offset, ==, 75);
+    marmot_gobject_pagination_free(p);
+    marmot_gobject_pagination_free(copy);
+}
+
+static void
+test_pagination_copy_null(void)
+{
+    MarmotGobjectPagination *copy = marmot_gobject_pagination_copy(NULL);
+    g_assert_null(copy);
+}
+
+static void
+test_config_gvalue_roundtrip(void)
+{
+    MarmotGobjectConfig *config = marmot_gobject_config_new_default();
+    config->max_event_age_secs = 99999;
+
+    GValue val = G_VALUE_INIT;
+    g_value_init(&val, MARMOT_GOBJECT_TYPE_CONFIG);
+    g_value_set_boxed(&val, config);
+
+    const MarmotGobjectConfig *out = g_value_get_boxed(&val);
+    g_assert_nonnull(out);
+    g_assert_cmpuint(out->max_event_age_secs, ==, 99999);
+
+    g_value_unset(&val);
+    marmot_gobject_config_free(config);
+}
+
+static void
+test_pagination_gvalue_roundtrip(void)
+{
+    MarmotGobjectPagination *p = marmot_gobject_pagination_new(10, 20);
+
+    GValue val = G_VALUE_INIT;
+    g_value_init(&val, MARMOT_GOBJECT_TYPE_PAGINATION);
+    g_value_set_boxed(&val, p);
+
+    const MarmotGobjectPagination *out = g_value_get_boxed(&val);
+    g_assert_nonnull(out);
+    g_assert_cmpuint(out->limit, ==, 10);
+    g_assert_cmpuint(out->offset, ==, 20);
+
+    g_value_unset(&val);
+    marmot_gobject_pagination_free(p);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1019,6 +1263,26 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/edge/message-large-kind", test_message_large_kind);
     g_test_add_func("/marmot-gobject/edge/message-negative-timestamp", test_message_negative_timestamp);
     g_test_add_func("/marmot-gobject/edge/welcome-zero-members", test_welcome_zero_members);
+
+    /* 13. Key Package */
+    g_test_add_func("/marmot-gobject/key-package/type-registration", test_key_package_type_registration);
+    g_test_add_func("/marmot-gobject/key-package/new-from-data", test_key_package_new_from_data);
+    g_test_add_func("/marmot-gobject/key-package/null-relay-urls", test_key_package_null_relay_urls);
+    g_test_add_func("/marmot-gobject/key-package/properties-via-gvalue", test_key_package_properties_via_gvalue);
+    g_test_add_func("/marmot-gobject/key-package/rapid-create-destroy", test_key_package_rapid_create_destroy);
+
+    /* 14. Boxed types */
+    g_test_add_func("/marmot-gobject/boxed/config-type", test_config_boxed_type);
+    g_test_add_func("/marmot-gobject/boxed/config-defaults", test_config_defaults);
+    g_test_add_func("/marmot-gobject/boxed/config-copy", test_config_copy);
+    g_test_add_func("/marmot-gobject/boxed/config-copy-null", test_config_copy_null);
+    g_test_add_func("/marmot-gobject/boxed/config-gvalue-roundtrip", test_config_gvalue_roundtrip);
+    g_test_add_func("/marmot-gobject/boxed/pagination-type", test_pagination_boxed_type);
+    g_test_add_func("/marmot-gobject/boxed/pagination-defaults", test_pagination_defaults);
+    g_test_add_func("/marmot-gobject/boxed/pagination-new", test_pagination_new);
+    g_test_add_func("/marmot-gobject/boxed/pagination-copy", test_pagination_copy);
+    g_test_add_func("/marmot-gobject/boxed/pagination-copy-null", test_pagination_copy_null);
+    g_test_add_func("/marmot-gobject/boxed/pagination-gvalue-roundtrip", test_pagination_gvalue_roundtrip);
 
     return g_test_run();
 }
