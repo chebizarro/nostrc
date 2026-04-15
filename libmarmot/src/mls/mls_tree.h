@@ -242,6 +242,70 @@ int mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN]);
  * TLS serialization for tree nodes
  * ──────────────────────────────────────────────────────────────────────── */
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Parent hash (RFC 9420 §7.9)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Compute the parent hash for a parent node (RFC 9420 §7.9).
+ *
+ * parent_hash = H(ParentHashInput)
+ * ParentHashInput = { encryption_key, parent_hash_of_parent, original_sibling_tree_hash }
+ *
+ * @param tree              The ratchet tree
+ * @param parent_node_idx   Index of the parent node
+ * @param original_child    Index of the child being updated (to determine sibling)
+ * @param out               Output hash (MLS_HASH_LEN bytes)
+ * @return 0 on success
+ */
+int mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
+                          uint32_t original_child, uint8_t out[MLS_HASH_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Path secret derivation helpers (RFC 9420 §7.4)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Derive node keys from a path secret.
+ *
+ * node_secret = DeriveSecret(path_secret, "node")
+ * Then derives HPKE keypair from node_secret.
+ *
+ * @param path_secret   Input path secret (MLS_HASH_LEN bytes)
+ * @param node_sk_out   Output HPKE private key (MLS_KEM_SK_LEN)
+ * @param node_pk_out   Output HPKE public key (MLS_KEM_PK_LEN)
+ * @return 0 on success
+ */
+int mls_tree_derive_node_keypair(const uint8_t path_secret[MLS_HASH_LEN],
+                                  uint8_t node_sk_out[MLS_KEM_SK_LEN],
+                                  uint8_t node_pk_out[MLS_KEM_PK_LEN]);
+
+/**
+ * Derive the next path secret from the current one.
+ *
+ * path_secret[n+1] = DeriveSecret(path_secret[n], "path")
+ *
+ * @param current   Current path secret (MLS_HASH_LEN)
+ * @param next_out  Output next path secret (MLS_HASH_LEN)
+ * @return 0 on success
+ */
+int mls_tree_derive_next_path_secret(const uint8_t current[MLS_HASH_LEN],
+                                      uint8_t next_out[MLS_HASH_LEN]);
+
+/**
+ * Get the HPKE public key for a node in the tree.
+ *
+ * @param tree      The ratchet tree
+ * @param node_idx  Node index
+ * @return pointer to MLS_KEM_PK_LEN bytes, or NULL if node is blank
+ */
+const uint8_t *mls_tree_node_encryption_key(const MlsRatchetTree *tree,
+                                             uint32_t node_idx);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TLS serialization for tree nodes
+ * ──────────────────────────────────────────────────────────────────────── */
+
 /** Serialize a LeafNode to TLS format. */
 int mls_leaf_node_serialize(const MlsLeafNode *node, MlsTlsBuf *buf);
 

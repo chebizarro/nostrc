@@ -10,6 +10,7 @@
  */
 
 #include "mls_tree.h"
+#include <sodium.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -635,4 +636,140 @@ mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN])
 {
     if (!tree || tree->n_leaves == 0) return -1;
     return mls_tree_hash(tree, mls_tree_root(tree->n_leaves), out);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Parent hash (RFC 9420 §7.9)
+ *
+ * ParentHashInput:
+ *   opaque encryption_key<V>;
+ *   opaque parent_hash<V>;       -- of the parent of this node (or empty at root)
+ *   opaque original_sibling_tree_hash<V>;
+ *
+ * parent_hash(N) = H(ParentHashInput)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+int
+mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
+                      uint32_t original_child, uint8_t out[MLS_HASH_LEN])
+{
+    if (!tree || !out) return -1;
+    if (parent_node_idx >= tree->n_nodes) return -1;
+    if (!mls_tree_is_leaf(parent_node_idx) == 0) return -1; /* must be a parent */
+
+    const MlsNode *pnode = &tree->nodes[parent_node_idx];
+    if (pnode->type != MLS_NODE_PARENT) return -1;
+
+    /* Determine the sibling of original_child under parent_node_idx */
+    uint32_t sibling_idx;
+    uint32_t left = mls_tree_left(parent_node_idx);
+    if (original_child == left || /* child is on the left subtree */
+        (original_child < parent_node_idx && original_child >= left)) {
+        sibling_idx = mls_tree_right(parent_node_idx);
+    } else {
+        sibling_idx = mls_tree_left(parent_node_idx);
+    }
+
+    /* Compute original_sibling_tree_hash */
+    uint8_t sibling_hash[MLS_HASH_LEN];
+    if (mls_tree_hash(tree, sibling_idx, sibling_hash) != 0) return -1;
+
+    /* Get the parent_hash of this node's parent (or empty if at root) */
+    uint8_t parent_parent_hash[MLS_HASH_LEN];
+    size_t  parent_parent_hash_len = 0;
+    uint32_t r = mls_tree_root(tree->n_leaves);
+    if (parent_node_idx != r) {
+        uint32_t grandparent = mls_tree_parent(parent_node_idx, tree->n_leaves);
+        if (tree->nodes[grandparent].type == MLS_NODE_PARENT &&
+            tree->nodes[grandparent].parent.parent_hash &&
+            tree->nodes[grandparent].parent.parent_hash_len > 0) {
+            memcpy(parent_parent_hash, tree->nodes[grandparent].parent.parent_hash,
+                   MLS_HASH_LEN);
+            parent_parent_hash_len = MLS_HASH_LEN;
+        }
+    }
+
+    /* Serialize ParentHashInput */
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, 128) != 0) return -1;
+
+    /* encryption_key<V> */
+    if (mls_tls_write_opaque16(&buf, pnode->parent.encryption_key, MLS_KEM_PK_LEN) != 0)
+        goto fail;
+    /* parent_hash<V> */
+    if (mls_tls_write_opaque8(&buf, parent_parent_hash, parent_parent_hash_len) != 0)
+        goto fail;
+    /* original_sibling_tree_hash<V> */
+    if (mls_tls_write_opaque8(&buf, sibling_hash, MLS_HASH_LEN) != 0)
+        goto fail;
+
+    int rc = mls_crypto_hash(out, buf.data, buf.len);
+    mls_tls_buf_free(&buf);
+    return rc;
+
+fail:
+    mls_tls_buf_free(&buf);
+    return -1;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Path secret derivation & UpdatePath encryption (RFC 9420 §7.4–7.5)
+ *
+ * path_secret[0] = random
+ * path_secret[n] = DeriveSecret(path_secret[n-1], "path")
+ * node_secret[n] = DeriveSecret(path_secret[n], "node")
+ * node_priv[n], node_pub[n] = DeriveKeyPair(node_secret[n])
+ *
+ * For each node in the filtered direct path, encrypt the path_secret
+ * to each node in the copath resolution using HPKE.
+ *
+ * commit_secret = DeriveSecret(path_secret[n], "path")
+ *   where n is the last filtered path index
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Path secret derivation helpers (RFC 9420 §7.4)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+int
+mls_tree_derive_node_keypair(const uint8_t path_secret[MLS_HASH_LEN],
+                              uint8_t node_sk_out[MLS_KEM_SK_LEN],
+                              uint8_t node_pk_out[MLS_KEM_PK_LEN])
+{
+    if (!path_secret || !node_sk_out || !node_pk_out) return -1;
+
+    /* node_secret = DeriveSecret(path_secret, "node") */
+    uint8_t node_secret[MLS_HASH_LEN];
+    if (mls_crypto_derive_secret(node_secret, path_secret, "node") != 0) return -1;
+
+    /* Derive private key via ExpandWithLabel */
+    if (mls_crypto_expand_with_label(node_sk_out, MLS_KEM_SK_LEN, node_secret,
+                                      "key_pair", NULL, 0) != 0) {
+        memset(node_secret, 0, MLS_HASH_LEN);
+        return -1;
+    }
+    memset(node_secret, 0, MLS_HASH_LEN);
+
+    /* Derive public key from private key via X25519 base point */
+    return crypto_scalarmult_base(node_pk_out, node_sk_out);
+}
+
+int
+mls_tree_derive_next_path_secret(const uint8_t current[MLS_HASH_LEN],
+                                  uint8_t next_out[MLS_HASH_LEN])
+{
+    if (!current || !next_out) return -1;
+    return mls_crypto_derive_secret(next_out, current, "path");
+}
+
+const uint8_t *
+mls_tree_node_encryption_key(const MlsRatchetTree *tree, uint32_t node_idx)
+{
+    if (!tree || node_idx >= tree->n_nodes) return NULL;
+    const MlsNode *node = &tree->nodes[node_idx];
+    switch (node->type) {
+        case MLS_NODE_LEAF:   return node->leaf.encryption_key;
+        case MLS_NODE_PARENT: return node->parent.encryption_key;
+        default:              return NULL;
+    }
 }

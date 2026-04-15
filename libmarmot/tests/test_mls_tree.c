@@ -804,6 +804,165 @@ static void test_tree_large(void)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * Parent hash tests (RFC 9420 §7.9)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void test_parent_hash_basic(void)
+{
+    /* 4-leaf tree with populated leaves and a parent node at index 1 */
+    MlsRatchetTree tree;
+    assert(mls_tree_new(&tree, 4) == 0);
+
+    /* Populate leaves */
+    for (uint32_t i = 0; i < 4; i++) {
+        uint32_t ni = mls_tree_leaf_to_node(i);
+        tree.nodes[ni].type = MLS_NODE_LEAF;
+        make_test_leaf(&tree.nodes[ni].leaf, (uint8_t)(i + 1));
+    }
+
+    /* Set node 1 as a parent node */
+    tree.nodes[1].type = MLS_NODE_PARENT;
+    memset(tree.nodes[1].parent.encryption_key, 0xAA, MLS_KEM_PK_LEN);
+    tree.nodes[1].parent.parent_hash = NULL;
+    tree.nodes[1].parent.parent_hash_len = 0;
+    tree.nodes[1].parent.unmerged_leaves = NULL;
+    tree.nodes[1].parent.unmerged_leaf_count = 0;
+
+    /* Compute parent hash for node 1, with original_child = 0 (left child) */
+    uint8_t hash[MLS_HASH_LEN];
+    assert(mls_tree_parent_hash(&tree, 1, 0, hash) == 0);
+
+    /* Hash should be non-zero */
+    int all_zero = 1;
+    for (int i = 0; i < MLS_HASH_LEN; i++) {
+        if (hash[i] != 0) { all_zero = 0; break; }
+    }
+    assert(!all_zero);
+
+    mls_tree_free(&tree);
+}
+
+static void test_parent_hash_deterministic(void)
+{
+    /* Same tree should produce same parent hash */
+    MlsRatchetTree tree;
+    assert(mls_tree_new(&tree, 4) == 0);
+
+    for (uint32_t i = 0; i < 4; i++) {
+        uint32_t ni = mls_tree_leaf_to_node(i);
+        tree.nodes[ni].type = MLS_NODE_LEAF;
+        make_test_leaf(&tree.nodes[ni].leaf, (uint8_t)(i + 1));
+    }
+
+    tree.nodes[1].type = MLS_NODE_PARENT;
+    memset(tree.nodes[1].parent.encryption_key, 0xBB, MLS_KEM_PK_LEN);
+    tree.nodes[1].parent.parent_hash = NULL;
+    tree.nodes[1].parent.parent_hash_len = 0;
+    tree.nodes[1].parent.unmerged_leaves = NULL;
+    tree.nodes[1].parent.unmerged_leaf_count = 0;
+
+    uint8_t hash1[MLS_HASH_LEN], hash2[MLS_HASH_LEN];
+    assert(mls_tree_parent_hash(&tree, 1, 0, hash1) == 0);
+    assert(mls_tree_parent_hash(&tree, 1, 0, hash2) == 0);
+    assert(memcmp(hash1, hash2, MLS_HASH_LEN) == 0);
+
+    /* Different original_child should produce different hash (different sibling) */
+    uint8_t hash3[MLS_HASH_LEN];
+    assert(mls_tree_parent_hash(&tree, 1, 2, hash3) == 0);
+    assert(memcmp(hash1, hash3, MLS_HASH_LEN) != 0);
+
+    mls_tree_free(&tree);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Path secret derivation tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void test_derive_node_keypair(void)
+{
+    /* Derive a keypair from a path secret */
+    uint8_t path_secret[MLS_HASH_LEN];
+    memset(path_secret, 0x42, MLS_HASH_LEN);
+
+    uint8_t sk[MLS_KEM_SK_LEN], pk[MLS_KEM_PK_LEN];
+    assert(mls_tree_derive_node_keypair(path_secret, sk, pk) == 0);
+
+    /* pk should be non-zero */
+    int all_zero = 1;
+    for (int i = 0; i < MLS_KEM_PK_LEN; i++) {
+        if (pk[i] != 0) { all_zero = 0; break; }
+    }
+    assert(!all_zero);
+
+    /* Same input should produce same output */
+    uint8_t sk2[MLS_KEM_SK_LEN], pk2[MLS_KEM_PK_LEN];
+    assert(mls_tree_derive_node_keypair(path_secret, sk2, pk2) == 0);
+    assert(memcmp(sk, sk2, MLS_KEM_SK_LEN) == 0);
+    assert(memcmp(pk, pk2, MLS_KEM_PK_LEN) == 0);
+
+    /* Different path_secret should produce different keypair */
+    uint8_t path_secret2[MLS_HASH_LEN];
+    memset(path_secret2, 0x43, MLS_HASH_LEN);
+    uint8_t sk3[MLS_KEM_SK_LEN], pk3[MLS_KEM_PK_LEN];
+    assert(mls_tree_derive_node_keypair(path_secret2, sk3, pk3) == 0);
+    assert(memcmp(pk, pk3, MLS_KEM_PK_LEN) != 0);
+}
+
+static void test_derive_next_path_secret(void)
+{
+    uint8_t ps0[MLS_HASH_LEN], ps1[MLS_HASH_LEN], ps2[MLS_HASH_LEN];
+    memset(ps0, 0x01, MLS_HASH_LEN);
+
+    assert(mls_tree_derive_next_path_secret(ps0, ps1) == 0);
+    assert(mls_tree_derive_next_path_secret(ps1, ps2) == 0);
+
+    /* Each derivation should produce different output */
+    assert(memcmp(ps0, ps1, MLS_HASH_LEN) != 0);
+    assert(memcmp(ps1, ps2, MLS_HASH_LEN) != 0);
+    assert(memcmp(ps0, ps2, MLS_HASH_LEN) != 0);
+
+    /* Deterministic */
+    uint8_t ps1_check[MLS_HASH_LEN];
+    assert(mls_tree_derive_next_path_secret(ps0, ps1_check) == 0);
+    assert(memcmp(ps1, ps1_check, MLS_HASH_LEN) == 0);
+}
+
+static void test_node_encryption_key(void)
+{
+    MlsRatchetTree tree;
+    assert(mls_tree_new(&tree, 2) == 0);
+
+    /* Blank nodes should return NULL */
+    assert(mls_tree_node_encryption_key(&tree, 0) == NULL);
+    assert(mls_tree_node_encryption_key(&tree, 1) == NULL);
+
+    /* Set leaf 0 */
+    tree.nodes[0].type = MLS_NODE_LEAF;
+    make_test_leaf(&tree.nodes[0].leaf, 0x42);
+
+    const uint8_t *key = mls_tree_node_encryption_key(&tree, 0);
+    assert(key != NULL);
+    assert(key == tree.nodes[0].leaf.encryption_key);
+
+    /* Set parent node 1 */
+    tree.nodes[1].type = MLS_NODE_PARENT;
+    memset(tree.nodes[1].parent.encryption_key, 0xDD, MLS_KEM_PK_LEN);
+    tree.nodes[1].parent.parent_hash = NULL;
+    tree.nodes[1].parent.parent_hash_len = 0;
+    tree.nodes[1].parent.unmerged_leaves = NULL;
+    tree.nodes[1].parent.unmerged_leaf_count = 0;
+
+    key = mls_tree_node_encryption_key(&tree, 1);
+    assert(key != NULL);
+    assert(key == tree.nodes[1].parent.encryption_key);
+
+    /* Out of bounds */
+    assert(mls_tree_node_encryption_key(&tree, 99) == NULL);
+
+    mls_tree_free(&tree);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Main
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -858,6 +1017,15 @@ int main(void)
     TEST(test_tree_single_leaf);
     TEST(test_tree_two_leaves);
     TEST(test_tree_large);
+
+    printf("\n  --- Parent hash ---\n");
+    TEST(test_parent_hash_basic);
+    TEST(test_parent_hash_deterministic);
+
+    printf("\n  --- Path secret derivation ---\n");
+    TEST(test_derive_node_keypair);
+    TEST(test_derive_next_path_secret);
+    TEST(test_node_encryption_key);
 
     printf("\nAll MLS TreeKEM tests passed.\n");
     return 0;
