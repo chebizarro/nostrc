@@ -636,13 +636,13 @@ test_group_context_serialization(void)
     /* Verify structure:
      *   uint16  version      = 0x0001  (2 bytes)
      *   uint16  cipher_suite = 0x0001  (2 bytes)
-     *   opaque8 group_id     = 04 01020304  (1 + 4 bytes)
+     *   VLI+opaque group_id  = 04 01020304  (1 + 4 bytes)
      *   uint64  epoch        = 42      (8 bytes)
-     *   opaque8 tree_hash    = 20 AA...  (1 + 32 bytes)
-     *   opaque8 transcript   = 20 BB...  (1 + 32 bytes)
-     *   opaque32 extensions  = 00000000  (4 bytes — empty)
+     *   VLI+opaque tree_hash = 20 AA...  (1 + 32 bytes)
+     *   VLI+opaque transcript= 20 BB...  (1 + 32 bytes)
+     *   VLI    extensions    = 00       (1 byte — empty, VLI-encoded 0)
      */
-    size_t expected_len = 2 + 2 + (1 + 4) + 8 + (1 + 32) + (1 + 32) + 4;
+    size_t expected_len = 2 + 2 + (1 + 4) + 8 + (1 + 32) + (1 + 32) + 1;
     assert(gc_len == expected_len);
 
     /* version = 1 (mls10) */

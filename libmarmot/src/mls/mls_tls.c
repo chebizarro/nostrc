@@ -104,11 +104,45 @@ mls_tls_write_u64(MlsTlsBuf *buf, uint64_t val)
     return mls_tls_buf_append(buf, bytes, 8);
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * QUIC-style Variable-Length Integer (RFC 9000 §16)
+ *
+ * Used by MLS/tls_codec for opaque<V> length prefixes.
+ * Encoding:
+ *   0..63:        1 byte  (2 MSBs = 00)
+ *   64..16383:    2 bytes (2 MSBs = 01)
+ *   16384..2^30:  4 bytes (2 MSBs = 10)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+int
+mls_tls_write_vli(MlsTlsBuf *buf, size_t val)
+{
+    if (val < 0x40) {
+        uint8_t b = (uint8_t)val;
+        return mls_tls_buf_append(buf, &b, 1);
+    } else if (val < 0x4000) {
+        uint8_t bytes[2] = {
+            (uint8_t)(0x40 | ((val >> 8) & 0x3f)),
+            (uint8_t)(val & 0xff)
+        };
+        return mls_tls_buf_append(buf, bytes, 2);
+    } else if (val < 0x40000000UL) {
+        uint8_t bytes[4] = {
+            (uint8_t)(0x80 | ((val >> 24) & 0x3f)),
+            (uint8_t)((val >> 16) & 0xff),
+            (uint8_t)((val >> 8) & 0xff),
+            (uint8_t)(val & 0xff)
+        };
+        return mls_tls_buf_append(buf, bytes, 4);
+    }
+    return -1; /* too large */
+}
+
 int
 mls_tls_write_opaque8(MlsTlsBuf *buf, const uint8_t *data, size_t len)
 {
     if (len > 255) return -1;
-    if (mls_tls_write_u8(buf, (uint8_t)len) != 0) return -1;
+    if (mls_tls_write_vli(buf, len) != 0) return -1;
     if (len > 0)
         return mls_tls_buf_append(buf, data, len);
     return 0;
@@ -118,7 +152,7 @@ int
 mls_tls_write_opaque16(MlsTlsBuf *buf, const uint8_t *data, size_t len)
 {
     if (len > 65535) return -1;
-    if (mls_tls_write_u16(buf, (uint16_t)len) != 0) return -1;
+    if (mls_tls_write_vli(buf, len) != 0) return -1;
     if (len > 0)
         return mls_tls_buf_append(buf, data, len);
     return 0;
@@ -127,7 +161,7 @@ mls_tls_write_opaque16(MlsTlsBuf *buf, const uint8_t *data, size_t len)
 int
 mls_tls_write_opaque32(MlsTlsBuf *buf, const uint8_t *data, size_t len)
 {
-    if (mls_tls_write_u32(buf, (uint32_t)len) != 0) return -1;
+    if (mls_tls_write_vli(buf, len) != 0) return -1;
     if (len > 0)
         return mls_tls_buf_append(buf, data, len);
     return 0;
@@ -207,11 +241,47 @@ mls_tls_read_fixed(MlsTlsReader *r, uint8_t *out, size_t n)
     return 0;
 }
 
+/* ── VLI Read ─────────────────────────────────────────────────────────── */
+
 int
-mls_tls_read_opaque8(MlsTlsReader *r, uint8_t **out, size_t *out_len)
+mls_tls_read_vli(MlsTlsReader *r, size_t *out)
 {
-    uint8_t len;
-    if (mls_tls_read_u8(r, &len) != 0) return -1;
+    if (mls_tls_reader_remaining(r) < 1) return -1;
+
+    uint8_t first = r->data[r->pos];
+    uint8_t prefix = first >> 6;
+
+    switch (prefix) {
+    case 0: /* 1-byte: 6-bit value */
+        *out = first & 0x3f;
+        r->pos += 1;
+        return 0;
+    case 1: /* 2-byte: 14-bit value */
+        if (mls_tls_reader_remaining(r) < 2) return -1;
+        *out = ((size_t)(first & 0x3f) << 8) | r->data[r->pos + 1];
+        r->pos += 2;
+        return 0;
+    case 2: /* 4-byte: 30-bit value */
+        if (mls_tls_reader_remaining(r) < 4) return -1;
+        *out = ((size_t)(first & 0x3f) << 24) |
+               ((size_t)r->data[r->pos + 1] << 16) |
+               ((size_t)r->data[r->pos + 2] << 8) |
+               (size_t)r->data[r->pos + 3];
+        r->pos += 4;
+        return 0;
+    default: /* 8-byte (prefix=3): not supported for MLS opaque fields */
+        return -1;
+    }
+}
+
+/* ── Opaque read helpers using VLI ────────────────────────────────────── */
+
+static int
+read_opaque_vli(MlsTlsReader *r, uint8_t **out, size_t *out_len, size_t max_len)
+{
+    size_t len;
+    if (mls_tls_read_vli(r, &len) != 0) return -1;
+    if (len > max_len) return -1;
     if (mls_tls_reader_remaining(r) < len) return -1;
 
     if (len == 0) {
@@ -226,46 +296,22 @@ mls_tls_read_opaque8(MlsTlsReader *r, uint8_t **out, size_t *out_len)
     r->pos += len;
     *out_len = len;
     return 0;
+}
+
+int
+mls_tls_read_opaque8(MlsTlsReader *r, uint8_t **out, size_t *out_len)
+{
+    return read_opaque_vli(r, out, out_len, 255);
 }
 
 int
 mls_tls_read_opaque16(MlsTlsReader *r, uint8_t **out, size_t *out_len)
 {
-    uint16_t len;
-    if (mls_tls_read_u16(r, &len) != 0) return -1;
-    if (mls_tls_reader_remaining(r) < len) return -1;
-
-    if (len == 0) {
-        *out = NULL;
-        *out_len = 0;
-        return 0;
-    }
-
-    *out = malloc(len);
-    if (!*out) return -1;
-    memcpy(*out, r->data + r->pos, len);
-    r->pos += len;
-    *out_len = len;
-    return 0;
+    return read_opaque_vli(r, out, out_len, 65535);
 }
 
 int
 mls_tls_read_opaque32(MlsTlsReader *r, uint8_t **out, size_t *out_len)
 {
-    uint32_t len;
-    if (mls_tls_read_u32(r, &len) != 0) return -1;
-    if (mls_tls_reader_remaining(r) < (size_t)len) return -1;
-
-    if (len == 0) {
-        *out = NULL;
-        *out_len = 0;
-        return 0;
-    }
-
-    *out = malloc(len);
-    if (!*out) return -1;
-    memcpy(*out, r->data + r->pos, len);
-    r->pos += len;
-    *out_len = (size_t)len;
-    return 0;
+    return read_opaque_vli(r, out, out_len, 0x3FFFFFFFUL);
 }

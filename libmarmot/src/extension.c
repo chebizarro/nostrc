@@ -245,8 +245,8 @@ marmot_group_data_extension_deserialize(const uint8_t *data, size_t len)
             size_t count = 0;
             size_t save_pos = rr.pos;
             while (!mls_tls_reader_done(&rr)) {
-                uint16_t url_len;
-                if (mls_tls_read_u16(&rr, &url_len) != 0) { free(relays_data); goto fail; }
+                size_t url_len;
+                if (mls_tls_read_vli(&rr, &url_len) != 0) { free(relays_data); goto fail; }
                 if (mls_tls_reader_remaining(&rr) < url_len) { free(relays_data); goto fail; }
                 rr.pos += url_len;
                 count++;

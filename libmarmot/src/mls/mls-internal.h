@@ -188,13 +188,21 @@ int mls_tls_write_u32(MlsTlsBuf *buf, uint32_t val);
 /** Write uint64_t (big-endian). */
 int mls_tls_write_u64(MlsTlsBuf *buf, uint64_t val);
 
-/** Write variable-length opaque data with 1-byte length prefix (max 255). */
+/**
+ * Write a QUIC-style variable-length integer (RFC 9000 §16).
+ *
+ * Encoding: 0..63 → 1 byte, 64..16383 → 2 bytes, 16384..2^30-1 → 4 bytes.
+ * Used by tls_codec VLBytes for opaque<V> length prefixes.
+ */
+int mls_tls_write_vli(MlsTlsBuf *buf, size_t val);
+
+/** Write variable-length opaque data with VLI length prefix (max 255). */
 int mls_tls_write_opaque8(MlsTlsBuf *buf, const uint8_t *data, size_t len);
 
-/** Write variable-length opaque data with 2-byte length prefix (max 65535). */
+/** Write variable-length opaque data with VLI length prefix (max 65535). */
 int mls_tls_write_opaque16(MlsTlsBuf *buf, const uint8_t *data, size_t len);
 
-/** Write variable-length opaque data with 4-byte length prefix. */
+/** Write variable-length opaque data with VLI length prefix. */
 int mls_tls_write_opaque32(MlsTlsBuf *buf, const uint8_t *data, size_t len);
 
 /**
@@ -223,13 +231,18 @@ int mls_tls_read_u32(MlsTlsReader *r, uint32_t *out);
 /** Read uint64_t (big-endian). */
 int mls_tls_read_u64(MlsTlsReader *r, uint64_t *out);
 
-/** Read opaque data with 1-byte length prefix. Caller frees *out. */
+/**
+ * Read a QUIC-style variable-length integer (RFC 9000 §16).
+ */
+int mls_tls_read_vli(MlsTlsReader *r, size_t *out);
+
+/** Read opaque data with VLI length prefix (max 255). Caller frees *out. */
 int mls_tls_read_opaque8(MlsTlsReader *r, uint8_t **out, size_t *out_len);
 
-/** Read opaque data with 2-byte length prefix. Caller frees *out. */
+/** Read opaque data with VLI length prefix (max 65535). Caller frees *out. */
 int mls_tls_read_opaque16(MlsTlsReader *r, uint8_t **out, size_t *out_len);
 
-/** Read opaque data with 4-byte length prefix. Caller frees *out. */
+/** Read opaque data with VLI length prefix. Caller frees *out. */
 int mls_tls_read_opaque32(MlsTlsReader *r, uint8_t **out, size_t *out_len);
 
 /** Read exact N bytes (no length prefix). */

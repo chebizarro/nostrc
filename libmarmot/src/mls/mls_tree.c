@@ -411,13 +411,10 @@ mls_leaf_node_serialize(const MlsLeafNode *node, MlsTlsBuf *buf)
     if (mls_tls_write_opaque16(buf, node->credential_identity,
                                 node->credential_identity_len) != 0)
         return -1;
-    /* capabilities: ciphersuites<V> */
+    /* capabilities: ciphersuites<V> (VLI length prefix) */
     {
-        /* We encode as opaque: 2 bytes per ciphersuite, wrapped in opaque16 */
-        /* Check for overflow before casting to uint16_t */
-        if (node->ciphersuite_count > (UINT16_MAX / 2)) return -1;
-        uint16_t total = (uint16_t)(node->ciphersuite_count * 2);
-        if (mls_tls_write_u16(buf, total) != 0) return -1;
+        size_t total = node->ciphersuite_count * 2;
+        if (mls_tls_write_vli(buf, total) != 0) return -1;
         for (size_t i = 0; i < node->ciphersuite_count; i++) {
             if (mls_tls_write_u16(buf, node->ciphersuites[i]) != 0) return -1;
         }
@@ -452,12 +449,10 @@ mls_parent_node_serialize(const MlsParentNode *node, MlsTlsBuf *buf)
     /* parent_hash */
     if (mls_tls_write_opaque8(buf, node->parent_hash, node->parent_hash_len) != 0)
         return -1;
-    /* unmerged_leaves: uint32 list, wrapped in opaque16 */
+    /* unmerged_leaves: uint32 list (VLI length prefix) */
     {
-        /* Check for overflow before casting to uint16_t */
-        if (node->unmerged_leaf_count > (UINT16_MAX / 4)) return -1;
-        uint16_t total = (uint16_t)(node->unmerged_leaf_count * 4);
-        if (mls_tls_write_u16(buf, total) != 0) return -1;
+        size_t total = node->unmerged_leaf_count * 4;
+        if (mls_tls_write_vli(buf, total) != 0) return -1;
         for (size_t i = 0; i < node->unmerged_leaf_count; i++) {
             if (mls_tls_write_u32(buf, node->unmerged_leaves[i]) != 0) return -1;
         }
@@ -493,9 +488,9 @@ mls_leaf_node_deserialize(MlsTlsReader *reader, MlsLeafNode *node)
                                &node->credential_identity_len) != 0)
         return -1;
 
-    /* ciphersuites */
-    uint16_t cs_bytes;
-    if (mls_tls_read_u16(reader, &cs_bytes) != 0) return -1;
+    /* ciphersuites (VLI length prefix) */
+    size_t cs_bytes;
+    if (mls_tls_read_vli(reader, &cs_bytes) != 0) return -1;
     /* Validate that cs_bytes is even (2 bytes per ciphersuite) */
     if (cs_bytes % 2 != 0) return -1;
     node->ciphersuite_count = cs_bytes / 2;
@@ -550,9 +545,9 @@ mls_parent_node_deserialize(MlsTlsReader *reader, MlsParentNode *node)
                               &node->parent_hash_len) != 0)
         return -1;
 
-    /* unmerged_leaves */
-    uint16_t ul_bytes;
-    if (mls_tls_read_u16(reader, &ul_bytes) != 0) return -1;
+    /* unmerged_leaves (VLI length prefix) */
+    size_t ul_bytes;
+    if (mls_tls_read_vli(reader, &ul_bytes) != 0) return -1;
     /* Validate that ul_bytes is divisible by 4 (4 bytes per uint32) */
     if (ul_bytes % 4 != 0) return -1;
     node->unmerged_leaf_count = ul_bytes / 4;
