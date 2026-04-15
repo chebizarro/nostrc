@@ -1,0 +1,278 @@
+{
+  "description": "Marmot protocol test vectors generated from MDK reference implementation",
+  "mdk_version": "0.7.1",
+  "ciphersuite": 1,
+  "key_package": {
+    "description": "MIP-00 KeyPackage creation and serialization vectors",
+    "cases": [
+      {
+        "name": "key_package_0",
+        "nostr_pubkey": "37e64dfa54eda44221af0b695520bf9973b934046f3dbb5e963dbdec0837cc3c",
+        "relay_urls": [
+          "wss://relay.example.com"
+        ],
+        "serialized_key_package_hex": "00010001201ebb2acedc1b1aa05de7f925baefdb2855fb5d026632108c18e32644c78e3a7020f711a2b4d2fe546424ff9d8a531164d1303794eadf13b62d4f6bc57bf9963a3e202f340b404f42f4e128fadd46458142cf8f37609e50aaf5056a64eaf98610518a00012037e64dfa54eda44221af0b695520bf9973b934046f3dbb5e963dbdec0837cc3c020001040001caca06000af2ee7a7a04000ababa0400016a6a010000000069dfdfed000000006a4eabfd004040228b8f4a95b716187132d7deaba2d8f3361aaaf59de3083945c2837b82986a5a6217411ad596726681f5ce75f5416aecc44fb95a085444479efc919a7b82d30b03000a0040403fa89c7ad63c36fc6f63c425ee708feba67bdf40ad37c841a33bf5018a47a3a6c34b047f79d009cc250201f48354b190b1a32281446c5d3066d6ce4f82ad200a",
+        "event_content_base64": "AAEAASAeuyrO3BsaoF3n+SW679soVftdAmYyEIwY4yZEx446cCD3EaK00v5UZCT/nYpTEWTRMDeU6t8Tti1Pa8V7+ZY6PiAvNAtAT0L04Sj63UZFgULPjzdgnlCq9QVqZOr5hhBRigABIDfmTfpU7aRCIa8LaVUgv5lzuTQEbz27XpY9vewIN8w8AgABBAABysoGAAry7np6BAAKuroEAAFqagEAAAAAad/f7QAAAABqTqv9AEBAIouPSpW3FhhxMtfeq6LY8zYaqvWd4wg5RcKDe4KYalpiF0Ea1ZZyZoH1znX1QWrsxE+5WghUREee/JGae4LTCwMACgBAQD+onHrWPDb8b2PEJe5wj+ume99ArTfIQaM79QGKR6Omw0sEf3nQCcwlAgH0g1SxkLGjIoFEbF0wZtbOT4KtIAo=",
+        "key_package_ref": "208c70d7e50a29cffc4f0652610bd934b29ef8647c16f859d3ded52ba69235e318",
+        "event_tags": [
+          [
+            "d",
+            "94179bed223a2c4c9ffbd1953770488c06acb35ec32f490407cb1f41069ef05c"
+          ],
+          [
+            "mls_protocol_version",
+            "1.0"
+          ],
+          [
+            "mls_ciphersuite",
+            "0x0001"
+          ],
+          [
+            "mls_extensions",
+            "0x000a",
+            "0xf2ee"
+          ],
+          [
+            "mls_proposals",
+            "0x000a"
+          ],
+          [
+            "relays",
+            "wss://relay.example.com"
+          ],
+          [
+            "i",
+            "8c70d7e50a29cffc4f0652610bd934b29ef8647c16f859d3ded52ba69235e318"
+          ],
+          [
+            "client",
+            "MDK/0.7.1"
+          ],
+          [
+            "encoding",
+            "base64"
+          ]
+        ]
+      },
+      {
+        "name": "key_package_1",
+        "nostr_pubkey": "1db32779386a2abd0d1de4340000137e2ca61e031aa44e1a6fdbf75eced88758",
+        "relay_urls": [
+          "wss://relay.example.com"
+        ],
+        "serialized_key_package_hex": "00010001202147ba4fc97ee0e9c85eaace5800aa5a5eeb97049c3151d8dc3598464925da43207092ed2413c97396d89edb956dc66db5859b244bb671683df8fc28f6ded0a227209ed16947d187034a857aeb83f294a73cf049509bf27a1f9b225d139e34af6f310001201db32779386a2abd0d1de4340000137e2ca61e031aa44e1a6fdbf75eced887580200010400018a8a06000af2eeaaaa04000a4a4a040001caca010000000069dfdfed000000006a4eabfd004040057a90c01bf1d2bdae158efc03054d399e07ca6af9343ff4e725e71bb02a72de5d2b222965fa19b12f543ff23eb28394784984b6d75330d566e4ef243b52700d03000a004040dea6d433d1357022959217bf853ba4b22dc4f3013cdc234099ecbfcfbf941cab95fa27e6ca0e43537961eb1a8b5794b6436903574a1e890b2d9bf8067c0e3007",
+        "event_content_base64": "AAEAASAhR7pPyX7g6cheqs5YAKpaXuuXBJwxUdjcNZhGSSXaQyBwku0kE8lzltie25Vtxm21hZskS7ZxaD34/Cj23tCiJyCe0WlH0YcDSoV664PylKc88ElQm/J6H5siXROeNK9vMQABIB2zJ3k4aiq9DR3kNAAAE34sph4DGqROGm/b917O2IdYAgABBAABiooGAAry7qqqBAAKSkoEAAHKygEAAAAAad/f7QAAAABqTqv9AEBABXqQwBvx0r2uFY78AwVNOZ4Hymr5ND/05yXnG7Aqct5dKyIpZfoZsS9UP/I+soOUeEmEttdTMNVm5O8kO1JwDQMACgBAQN6m1DPRNXAilZIXv4U7pLItxPMBPNwjQJnsv8+/lByrlfon5soOQ1N5Yesai1eUtkNpA1dKHokLLZv4BnwOMAc=",
+        "key_package_ref": "20bf84a85d21c4993034fe02d820fa9e419c4afd242cce605c4d4c723b345c4bcc",
+        "event_tags": [
+          [
+            "d",
+            "62da173d004b38d028dc6b1e6e355b4485e1efded238e1a72ae463779e949318"
+          ],
+          [
+            "mls_protocol_version",
+            "1.0"
+          ],
+          [
+            "mls_ciphersuite",
+            "0x0001"
+          ],
+          [
+            "mls_extensions",
+            "0x000a",
+            "0xf2ee"
+          ],
+          [
+            "mls_proposals",
+            "0x000a"
+          ],
+          [
+            "relays",
+            "wss://relay.example.com"
+          ],
+          [
+            "i",
+            "bf84a85d21c4993034fe02d820fa9e419c4afd242cce605c4d4c723b345c4bcc"
+          ],
+          [
+            "client",
+            "MDK/0.7.1"
+          ],
+          [
+            "encoding",
+            "base64"
+          ]
+        ]
+      },
+      {
+        "name": "key_package_2",
+        "nostr_pubkey": "08ab03acd38f835573cecbde43b6995381aa80f17835fd660ab06ba636771323",
+        "relay_urls": [
+          "wss://relay.example.com"
+        ],
+        "serialized_key_package_hex": "0001000120089c2a4d401fbb94781e2fe34fb788da91805f5127b22d21f060edb8fd3ddc28201863a30c1359acf5f3b8511b3527af2c5e64a598317466952389d54f2cc624062058ac4e5a7836158834c5630ff0d0b9b8d7774a8e24f00397e4737d5671e2032100012008ab03acd38f835573cecbde43b6995381aa80f17835fd660ab06ba6367713230200010400017a7a06000af2ee4a4a04000acaca0400018a8a010000000069dfdfed000000006a4eabfd004040f2dcdeb419a0bc9b63f160f28a5434bb092935c70e3edc78560d1cf74fdf2a2b0f0881661a4d3e25b7f19be02e5152084c076df3a3d24772a052c0cce61d620c03000a004040e1b5fe2381cd0e2dbae0bcf08f93fefaa389fed46cf8083508e435ff34c5ef02c138d2d4b8272e77397c5ea0b06ad6607368cc67075a3696264cd337804e090d",
+        "event_content_base64": "AAEAASAInCpNQB+7lHgeL+NPt4jakYBfUSeyLSHwYO24/T3cKCAYY6MME1ms9fO4URs1J68sXmSlmDF0ZpUjidVPLMYkBiBYrE5aeDYViDTFYw/w0Lm413dKjiTwA5fkc31WceIDIQABIAirA6zTj4NVc87L3kO2mVOBqoDxeDX9Zgqwa6Y2dxMjAgABBAABenoGAAry7kpKBAAKysoEAAGKigEAAAAAad/f7QAAAABqTqv9AEBA8tzetBmgvJtj8WDyilQ0uwkpNccOPtx4Vg0c90/fKisPCIFmGk0+Jbfxm+AuUVIITAdt86PSR3KgUsDM5h1iDAMACgBAQOG1/iOBzQ4tuuC88I+T/vqjif7UbPgINQjkNf80xe8CwTjS1LgnLnc5fF6gsGrWYHNozGcHWjaWJkzTN4BOCQ0=",
+        "key_package_ref": "20e38c2be6ee978e1b3252adbb868b6b13ffa105e97be4b45b4fbcc57e1c51c8a4",
+        "event_tags": [
+          [
+            "d",
+            "05e22f51cddb864fcecf89b10cf898c74d486c44bd6a24fa9777ea8914bf88d9"
+          ],
+          [
+            "mls_protocol_version",
+            "1.0"
+          ],
+          [
+            "mls_ciphersuite",
+            "0x0001"
+          ],
+          [
+            "mls_extensions",
+            "0x000a",
+            "0xf2ee"
+          ],
+          [
+            "mls_proposals",
+            "0x000a"
+          ],
+          [
+            "relays",
+            "wss://relay.example.com"
+          ],
+          [
+            "i",
+            "e38c2be6ee978e1b3252adbb868b6b13ffa105e97be4b45b4fbcc57e1c51c8a4"
+          ],
+          [
+            "client",
+            "MDK/0.7.1"
+          ],
+          [
+            "encoding",
+            "base64"
+          ]
+        ]
+      }
+    ]
+  },
+  "group_lifecycle": {
+    "description": "Full group lifecycle: create → welcome → accept → message → decrypt",
+    "alice_pubkey": "f83310472fb38a6961f58bdc627510a71d7b4d1be750db6872be811d58fb6c85",
+    "bob_pubkey": "cd261a604655db258cceb855c8684f78a99e76f5c73b86e37a4943a237324fb0",
+    "relay_url": "wss://relay.example.com",
+    "steps": [
+      {
+        "name": "bob_key_package",
+        "description": "Bob publishes kind:30443 key package event",
+        "event_kind": 30443,
+        "event_content": "AAEAASCQo3yI3M0rWTqoSCDCjym6Fyi+9rfHZlrHsm3mxrCNECCYS82S3fBUdacl42RIV1Il6lTsojmxXJRh15siGKnbASA9KDIJqR8BWNf3aQ+4apcpnbvdViZzdA1P12SY6z+gzQABIM0mGmBGVdsljM64VchoT3ipnnb1xzuG43pJQ6I3Mk+wAgABBAABmpoGAAry7pqaBAAKSkoEAAHa2gEAAAAAad/f7QAAAABqTqv9AEBAvWdxfE3oSc7kul1wMATYWZzncvMXk2akUhhQYI9CUjJRUymxWm+Vm1c1dZPeYMIoWF0J0XZhQnr6zTjOHKIgDQMACgBAQMC795l/Ew062QFGSgt/TxPEjfBpGt24D8imKiNxW/AW2lftL+Vq24pa6hdNhkUsn5XvSpyP4ez7dz3tSKmLAwk=",
+        "event_tags": [
+          [
+            "d",
+            "28b6e0ce2d33bb4e14fb7d916ad90011e3a2a5977168b1fb5734d2dfeaa4d1f5"
+          ],
+          [
+            "mls_protocol_version",
+            "1.0"
+          ],
+          [
+            "mls_ciphersuite",
+            "0x0001"
+          ],
+          [
+            "mls_extensions",
+            "0x000a",
+            "0xf2ee"
+          ],
+          [
+            "mls_proposals",
+            "0x000a"
+          ],
+          [
+            "relays",
+            "wss://relay.example.com"
+          ],
+          [
+            "i",
+            "e144824ad19ce2d9c2ba4f9da443048cb2c7a1b49d0dc3e2ad3b8575105883a3"
+          ],
+          [
+            "client",
+            "MDK/0.7.1"
+          ],
+          [
+            "encoding",
+            "base64"
+          ]
+        ]
+      },
+      {
+        "name": "alice_creates_group",
+        "description": "Alice creates group with Bob, producing welcome rumor",
+        "event_kind": 444,
+        "event_content": "AAEAAwABQJgg4USCStGc4tnCuk+dpEMEjLLHobSdDcPirTuFdRBYg6MggQV9AzQlvfb68iFKxdoBJEzKNhGnv5IhbioLdM6rqGpAVNzFjCorDHEw5VVlSN+sR+tCzBBaqyQuLYLlyJI9Znz2HDpXXUK2R2wRM7xwiTY9+Et+63SYTGcjz8mBQz0z/YRW7htfMtDsfH+xtXrMzP2skckfi0N7zTHQ7vlKDoWHEGPeCtSGK4C/f2QPtlpQs02gKcxkvBLRAojIOEkwQu7pv1ck+YUCOjORI2K0kPHG8jq1+wMxMtFq75jmYwTx+h2VubwG+sv4YfLG6JyKThF+PfF2/u8AJLCwBe/NwUxyMa/5zY2TqmHsHROzHsrOspzagqYoz8T6fq9MCRPpugOV0Im+ONHwvcKeDUcyWTGOmu8/zco2llksqhnqodT44ETIlvL5iqifdhW0avtGL72BwSdqHii5fw82uO4mvGH8uNGwKrBA6NIno2vfOOkjPgn58qPYv29k2IlNY1u+S1lpyzwEXncSQnf09pc5XAmdvaAUTG+8EIShVwMrD27ayXTxdxaM7/BKGyKcMQwXuxET9oPfeLpao8SFpuNQuFv+q9awRBwHoFm7zLbIP3nBZQO1s7U6Vea9ZqU6akj5AT3EWCmOyPzJ/1kV0oRZlpZTKck1dBNoxSXvOv0734hHpVXvrdDKIJMTRYj/PnPGgQaZ2IHnd1OXiWv6aAJpM9uzB+IYOgOiMhE6MV2JPFYf8Xe68/bQYSUA7ipapCj1+nJkmH3yuVzxGgiokvAYWixUVRKIdifCd1f3IOnqtqqI8mM8J2qwNjJoSQiEkYayLK9d360LLQ7RMagj8VTteux3A+ZyYd31tsnKTHnsRiAHmGdKwX4P/w+6gonu6tqQt0QaygoF9o5W86ZAY//E4eBTWL9Ut+V6yaKTkefnUppGZplnjbUpDQ1NGOtEcJn5f2Ska75hdVbuUFV1iqFIMZoMnFajg2XzJrTkB08pD46xZr/NPa3dAdnjH8IWxcgAhr9wsgH8iH1ajDr3+qHYkFPbNggG8w6qw1QAWpAw40xp0XZncWs7OT7xqPUzy9kNnCtHT2Sl+kwSeuvf3L8lIIqS7m3KZ/jMzXVdg4K9Ud+SU60QJCWOftU3l7eNgBHAHdOyodZoWOERTL9OZV8GWTpAvLUvDw6uSjxYM0uC7pVG7C72hoxgky6lXnwv/10fYitLpTQIKuE4mDx3z49w33KEA8ak5s4fDOiwujICVah5RhlrtOOKaEiAZuPbyc/2A7hE7uxzJhZHWtyGBlW+3f5MS3sNTQigbVRAkgsm0yvphe/tEQ8QmaPAgRkmSKV+6tmUTb+gnLkvvT688wahr+jmoul05PhVgEIMXiLYeodWcjLg",
+        "event_tags": [
+          [
+            "relays",
+            "wss://relay.example.com"
+          ],
+          [
+            "e",
+            "01d173dfcffc96393b3e0d3016695924f4524bd5afde963a3867ebc8c487a864"
+          ],
+          [
+            "client",
+            "MDK/0.7.1"
+          ],
+          [
+            "encoding",
+            "base64"
+          ]
+        ],
+        "group_name": "Test Group",
+        "nostr_group_id": "d5ca5b82cb34f2315c96893ebd5dfdeb839f8c4124f3adbff283ac9913686434",
+        "mls_group_id": "a67e8d91efd30e964abc02507780102d",
+        "member_count": 2
+      },
+      {
+        "name": "bob_processes_welcome",
+        "description": "Bob processes welcome, sees pending invitation",
+        "group_name": "Test Group",
+        "member_count": 2
+      },
+      {
+        "name": "bob_accepts_welcome",
+        "description": "Bob accepts welcome and joins group",
+        "group_name": "Test Group",
+        "nostr_group_id": "d5ca5b82cb34f2315c96893ebd5dfdeb839f8c4124f3adbff283ac9913686434",
+        "mls_group_id": "a67e8d91efd30e964abc02507780102d",
+        "member_count": 2
+      },
+      {
+        "name": "alice_sends_message",
+        "description": "Alice encrypts and sends kind:445 group message",
+        "event_kind": 445,
+        "event_content": "kpyM5p2Ot1coUdo5HbEXELMu3J0SrHKmDsBd96P6w/5kW0qhO7UJ6FJg90Fgxsfx4IAbQHhDFkX+/vjtn4SHdnQ/XsQzGaYjpr2TGO0iY9njZ2UXc968kCZzr5jpufZHFUypIwRWAIqmBjRAcAUbiPZgqy/94G25JpvBgdc3opF/2JLj++jlgC53P9HFJBNvLgdq0So/Jj+nW37gLgKWz+SVweNbmH1/cQffPkdJeHxOG8lGWC6OKCUDCsInZ8ngFCD8p0JHhDa99WuUGdP6TifyGm+899LCu0ki0FuP097sJjHpVAFFByZIClQfyKl6QKtCrffBpRcffcuVCXx8pXmZDkXUMU1xQWf8QNmeXroINfKI61zaRtHGNdnplXcK/wWwS1KYe3MteGuRK0BxohSO8PcnIafUDK1MSOr+JTiyTWVFu6Hc0ldu5dSelT11gUdGWA3VRfU27yxXVtl/kt5FYpSa6CSaZ85RJ2TWiHUbNlyRztdLHiq5E1QgbJ2XiFKLlid5U5/4uvHH",
+        "event_tags": [
+          [
+            "h",
+            "d5ca5b82cb34f2315c96893ebd5dfdeb839f8c4124f3adbff283ac9913686434"
+          ],
+          [
+            "encoding",
+            "base64"
+          ]
+        ],
+        "message_content": "Hello from Alice!",
+        "message_kind": 9,
+        "message_pubkey": "f83310472fb38a6961f58bdc627510a71d7b4d1be750db6872be811d58fb6c85"
+      },
+      {
+        "name": "bob_decrypts_message",
+        "description": "Bob decrypts the message and verifies content",
+        "message_content": "Hello from Alice!",
+        "message_kind": 9,
+        "message_pubkey": "f83310472fb38a6961f58bdc627510a71d7b4d1be750db6872be811d58fb6c85"
+      }
+    ]
+  }
+}
