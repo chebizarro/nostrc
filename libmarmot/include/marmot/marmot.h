@@ -225,6 +225,23 @@ MarmotError marmot_remove_members(Marmot *m,
 MarmotError marmot_leave_group(Marmot *m,
                                 const MarmotGroupId *mls_group_id);
 
+/**
+ * marmot_update_group_metadata:
+ * @m: Marmot instance
+ * @mls_group_id: the group to update
+ * @config: new group configuration (non-NULL fields are applied)
+ *
+ * Update group metadata (name, description, admins, relays).
+ * Only admins can update group metadata. The update modifies the
+ * GroupData extension in the MLS GroupContext and creates a new
+ * Commit (self-update) to announce the change.
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_update_group_metadata(Marmot *m,
+                                          const MarmotGroupId *mls_group_id,
+                                          const MarmotGroupConfig *config);
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-02: Welcome Events
  * ══════════════════════════════════════════════════════════════════════════ */

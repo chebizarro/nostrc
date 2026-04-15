@@ -1850,3 +1850,209 @@ fail:
     mls_commit_clear(commit);
     return -1;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Group state serialization / deserialization
+ *
+ * Binary format for persisting MlsGroup to storage. Uses the TLS
+ * serialization primitives for consistency. NOT a wire protocol format —
+ * this is internal-only for state persistence.
+ *
+ * Format:
+ *   magic "MLSG" (4 bytes)
+ *   version u32 (currently 1)
+ *   group_id opaque32
+ *   epoch u64
+ *   n_leaves u32
+ *   For each node (0..node_width-1):
+ *     node_type u8 (0=blank, 1=leaf, 2=parent)
+ *     [LeafNode or ParentNode via TLS serialization if non-blank]
+ *   own_leaf_index u32
+ *   own_signature_key (64 bytes)
+ *   own_encryption_key (32 bytes)
+ *   epoch_secrets (12 * 32 = 384 bytes, raw)
+ *   confirmed_transcript_hash (32 bytes)
+ *   interim_transcript_hash (32 bytes)
+ *   extensions opaque32
+ *   max_forward_distance u32
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+#define MLS_GROUP_SERIAL_MAGIC  0x4D4C5347  /* "MLSG" */
+#define MLS_GROUP_SERIAL_VER    1
+
+int
+mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
+{
+    if (!group || !out_data || !out_len) return -1;
+
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, 4096) != 0) return -1;
+
+    /* Header */
+    if (mls_tls_write_u32(&buf, MLS_GROUP_SERIAL_MAGIC) != 0) goto fail;
+    if (mls_tls_write_u32(&buf, MLS_GROUP_SERIAL_VER) != 0) goto fail;
+
+    /* Group ID */
+    if (mls_tls_write_opaque32(&buf, group->group_id, group->group_id_len) != 0)
+        goto fail;
+
+    /* Epoch */
+    if (mls_tls_write_u64(&buf, group->epoch) != 0) goto fail;
+
+    /* Ratchet tree */
+    if (mls_tls_write_u32(&buf, group->tree.n_leaves) != 0) goto fail;
+
+    uint32_t n_nodes = mls_tree_node_width(group->tree.n_leaves);
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        const MlsNode *node = &group->tree.nodes[i];
+        if (node->type == MLS_NODE_BLANK) {
+            if (mls_tls_write_u8(&buf, 0) != 0) goto fail;
+        } else if (node->type == MLS_NODE_LEAF) {
+            if (mls_tls_write_u8(&buf, 1) != 0) goto fail;
+            if (mls_leaf_node_serialize(&node->leaf, &buf) != 0) goto fail;
+        } else { /* MLS_NODE_PARENT */
+            if (mls_tls_write_u8(&buf, 2) != 0) goto fail;
+            if (mls_parent_node_serialize(&node->parent, &buf) != 0) goto fail;
+        }
+    }
+
+    /* Own state */
+    if (mls_tls_write_u32(&buf, group->own_leaf_index) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->own_signature_key, MLS_SIG_SK_LEN) != 0)
+        goto fail;
+    if (mls_tls_buf_append(&buf, group->own_encryption_key, MLS_KEM_SK_LEN) != 0)
+        goto fail;
+
+    /* Epoch secrets (all fields, in order) */
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.sender_data_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.encryption_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.exporter_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.external_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.confirmation_key, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.membership_key, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.resumption_psk, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.epoch_authenticator, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.init_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.welcome_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_buf_append(&buf, group->epoch_secrets.joiner_secret, MLS_HASH_LEN) != 0) goto fail;
+
+    /* Transcript hashes */
+    if (mls_tls_buf_append(&buf, group->confirmed_transcript_hash, MLS_HASH_LEN) != 0)
+        goto fail;
+    if (mls_tls_buf_append(&buf, group->interim_transcript_hash, MLS_HASH_LEN) != 0)
+        goto fail;
+
+    /* Extensions */
+    if (mls_tls_write_opaque32(&buf, group->extensions_data, group->extensions_len) != 0)
+        goto fail;
+
+    /* Config */
+    if (mls_tls_write_u32(&buf, group->max_forward_distance) != 0) goto fail;
+
+    *out_data = buf.data;
+    *out_len = buf.len;
+    buf.data = NULL;
+    return 0;
+
+fail:
+    mls_tls_buf_free(&buf);
+    return -1;
+}
+
+int
+mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
+{
+    if (!data || !len || !group) return -1;
+
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, data, len);
+    memset(group, 0, sizeof(*group));
+
+    /* Header */
+    uint32_t magic, version;
+    if (mls_tls_read_u32(&reader, &magic) != 0 || magic != MLS_GROUP_SERIAL_MAGIC)
+        goto fail;
+    if (mls_tls_read_u32(&reader, &version) != 0 || version != MLS_GROUP_SERIAL_VER)
+        goto fail;
+
+    /* Group ID */
+    if (mls_tls_read_opaque32(&reader, &group->group_id, &group->group_id_len) != 0)
+        goto fail;
+
+    /* Epoch */
+    if (mls_tls_read_u64(&reader, &group->epoch) != 0) goto fail;
+
+    /* Ratchet tree */
+    uint32_t n_leaves;
+    if (mls_tls_read_u32(&reader, &n_leaves) != 0) goto fail;
+    if (n_leaves == 0 || n_leaves > 100000) goto fail; /* sanity */
+
+    if (mls_tree_new(&group->tree, n_leaves) != 0) goto fail;
+
+    uint32_t n_nodes = mls_tree_node_width(n_leaves);
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        uint8_t node_type;
+        if (mls_tls_read_u8(&reader, &node_type) != 0) goto fail;
+
+        if (node_type == 0) {
+            group->tree.nodes[i].type = MLS_NODE_BLANK;
+        } else if (node_type == 1) {
+            group->tree.nodes[i].type = MLS_NODE_LEAF;
+            memset(&group->tree.nodes[i].leaf, 0, sizeof(MlsLeafNode));
+            if (mls_leaf_node_deserialize(&reader, &group->tree.nodes[i].leaf) != 0)
+                goto fail;
+        } else if (node_type == 2) {
+            group->tree.nodes[i].type = MLS_NODE_PARENT;
+            memset(&group->tree.nodes[i].parent, 0, sizeof(MlsParentNode));
+            if (mls_parent_node_deserialize(&reader, &group->tree.nodes[i].parent) != 0)
+                goto fail;
+        } else {
+            goto fail; /* unknown node type */
+        }
+    }
+
+    /* Own state */
+    if (mls_tls_read_u32(&reader, &group->own_leaf_index) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->own_signature_key, MLS_SIG_SK_LEN) != 0)
+        goto fail;
+    if (mls_tls_read_fixed(&reader, group->own_encryption_key, MLS_KEM_SK_LEN) != 0)
+        goto fail;
+
+    /* Epoch secrets */
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.sender_data_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.encryption_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.exporter_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.external_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.confirmation_key, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.membership_key, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.resumption_psk, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.epoch_authenticator, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.init_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.welcome_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (mls_tls_read_fixed(&reader, group->epoch_secrets.joiner_secret, MLS_HASH_LEN) != 0) goto fail;
+
+    /* Transcript hashes */
+    if (mls_tls_read_fixed(&reader, group->confirmed_transcript_hash, MLS_HASH_LEN) != 0)
+        goto fail;
+    if (mls_tls_read_fixed(&reader, group->interim_transcript_hash, MLS_HASH_LEN) != 0)
+        goto fail;
+
+    /* Extensions */
+    if (mls_tls_read_opaque32(&reader, &group->extensions_data, &group->extensions_len) != 0)
+        goto fail;
+
+    /* Config */
+    if (mls_tls_read_u32(&reader, &group->max_forward_distance) != 0) goto fail;
+
+    /* Re-derive the secret tree from the encryption_secret */
+    if (mls_secret_tree_init(&group->secret_tree,
+                              group->epoch_secrets.encryption_secret,
+                              group->tree.n_leaves) != 0)
+        goto fail;
+
+    return 0;
+
+fail:
+    mls_group_free(group);
+    return -1;
+}

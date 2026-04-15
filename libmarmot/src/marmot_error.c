@@ -48,6 +48,8 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_OWN_COMMIT_PENDING:     return "own commit is pending — call merge first";
     case MARMOT_ERR_COMMIT_FROM_NON_ADMIN:  return "commit from non-admin member";
     case MARMOT_ERR_PROTOCOL_GROUP_MISMATCH: return "protocol group ID mismatch";
+    case MARMOT_ERR_ADMIN_ONLY:             return "operation restricted to group admins";
+    case MARMOT_ERR_MEMBER_NOT_FOUND:       return "member not found in group";
 
     /* Key package */
     case MARMOT_ERR_KEY_NOT_FOUND:           return "matching key not found";

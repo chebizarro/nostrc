@@ -44,6 +44,101 @@ base64_encode(const uint8_t *data, size_t len)
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Internal: Load / save MLS group state from storage
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static int
+load_mls_group(Marmot *m, const MarmotGroupId *gid, MlsGroup *out)
+{
+    if (!m->storage || !m->storage->mls_load) return -1;
+
+    uint8_t *state_data = NULL;
+    size_t state_len = 0;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, "mls_group",
+                                            gid->data, gid->len,
+                                            &state_data, &state_len);
+    if (err != MARMOT_OK || !state_data) return -1;
+
+    int rc = mls_group_deserialize(state_data, state_len, out);
+    free(state_data);
+    return rc;
+}
+
+static int
+save_mls_group(Marmot *m, const MlsGroup *mls)
+{
+    if (!m->storage || !m->storage->mls_store) return -1;
+
+    uint8_t *state_data = NULL;
+    size_t state_len = 0;
+    if (mls_group_serialize(mls, &state_data, &state_len) != 0)
+        return -1;
+
+    MarmotError err = m->storage->mls_store(m->storage->ctx, "mls_group",
+                                             mls->group_id, mls->group_id_len,
+                                             state_data, state_len);
+    free(state_data);
+    return (err == MARMOT_OK) ? 0 : -1;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Internal: Admin policy check
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static bool
+is_admin(const MarmotGroup *group, const uint8_t pubkey[32])
+{
+    if (!group || !pubkey) return false;
+    /* If no admins defined, anyone can modify (backwards compatibility) */
+    if (group->admin_count == 0 || !group->admin_pubkeys) return true;
+
+    for (size_t i = 0; i < group->admin_count; i++) {
+        if (memcmp(group->admin_pubkeys[i], pubkey, 32) == 0)
+            return true;
+    }
+    return false;
+}
+
+/**
+ * Get our Nostr pubkey (credential identity) from the MLS group's own leaf.
+ * Returns 0 on success with the pubkey written to out_pk.
+ */
+static int
+get_own_credential_identity(const MlsGroup *mls, uint8_t out_pk[32])
+{
+    uint32_t node_idx = mls_tree_leaf_to_node(mls->own_leaf_index);
+    if (node_idx >= mls->tree.n_nodes) return -1;
+
+    const MlsNode *node = &mls->tree.nodes[node_idx];
+    if (node->type != MLS_NODE_LEAF) return -1;
+    if (node->leaf.credential_identity_len != 32) return -1;
+
+    memcpy(out_pk, node->leaf.credential_identity, 32);
+    return 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Internal: Find a member's leaf index by their credential identity (pubkey)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static int
+find_leaf_by_pubkey(const MlsGroup *mls, const uint8_t pubkey[32],
+                    uint32_t *out_leaf_index)
+{
+    for (uint32_t i = 0; i < mls->tree.n_leaves; i++) {
+        uint32_t node_idx = mls_tree_leaf_to_node(i);
+        const MlsNode *node = &mls->tree.nodes[node_idx];
+        if (node->type != MLS_NODE_LEAF) continue;
+        if (node->leaf.credential_identity_len == 32 &&
+            memcmp(node->leaf.credential_identity, pubkey, 32) == 0) {
+            *out_leaf_index = i;
+            return 0;
+        }
+    }
+    return -1; /* not found */
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Internal: Build GroupData extension from MarmotGroupConfig
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -417,13 +512,16 @@ marmot_create_group(Marmot *m,
         m->storage->save_group(m->storage->ctx, result->group);
     }
 
-    /* Store the MLS group state binary for message processing */
+    /* Store the full MLS group state for future operations */
     if (m->storage && m->storage->mls_store) {
-        /* For now, store a marker. Full serialization would go here. */
-        uint8_t marker = 1;
-        m->storage->mls_store(m->storage->ctx, "mls_group",
-                               mls_group_id, 32,
-                               &marker, 1);
+        uint8_t *state_data = NULL;
+        size_t state_len = 0;
+        if (mls_group_serialize(&mls_group, &state_data, &state_len) == 0) {
+            m->storage->mls_store(m->storage->ctx, "mls_group",
+                                   mls_group_id, 32,
+                                   state_data, state_len);
+            free(state_data);
+        }
     }
 
     /* Store exporter secret for NIP-44 message encryption */
@@ -493,10 +591,119 @@ marmot_add_members(Marmot *m,
     *out_welcome_count = 0;
     *out_commit_json = NULL;
 
-    /* TODO: Restore MLS group state from storage, add members,
-     * produce commits and welcomes. This requires full MLS group
-     * serialization/deserialization. */
-    return MARMOT_ERR_NOT_IMPLEMENTED;
+    /* Ensure identity */
+    if (marmot_ensure_identity(m) != 0)
+        return MARMOT_ERR_CRYPTO;
+
+    /* Look up the group metadata for admin check */
+    if (!m->storage || !m->storage->find_group_by_mls_id)
+        return MARMOT_ERR_STORAGE;
+
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                                         mls_group_id, &group);
+    if (err != MARMOT_OK || !group)
+        return MARMOT_ERR_GROUP_NOT_FOUND;
+
+    if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
+        marmot_group_free(group);
+        return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+
+    /* Load MLS group state */
+    MlsGroup mls;
+    memset(&mls, 0, sizeof(mls));
+    if (load_mls_group(m, mls_group_id, &mls) != 0) {
+        marmot_group_free(group);
+        return MARMOT_ERR_MLS;
+    }
+
+    /* Admin check: look up our Nostr pubkey from our leaf in the MLS tree */
+    uint8_t our_nostr_pk[32];
+    if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
+        !is_admin(group, our_nostr_pk)) {
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_ADMIN_ONLY;
+    }
+
+    /* Allocate welcome output */
+    char **welcomes = calloc(kp_count, sizeof(char *));
+    if (!welcomes) {
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_MEMORY;
+    }
+
+    MlsAddResult last_add_result;
+    memset(&last_add_result, 0, sizeof(last_add_result));
+
+    for (size_t i = 0; i < kp_count; i++) {
+        MlsKeyPackage kp;
+        uint8_t member_pubkey[32];
+        int rc = marmot_parse_key_package_event(key_package_event_jsons[i],
+                                                 &kp, member_pubkey);
+        if (rc != 0) {
+            mls_add_result_clear(&last_add_result);
+            for (size_t j = 0; j < i; j++) free(welcomes[j]);
+            free(welcomes);
+            mls_group_free(&mls);
+            marmot_group_free(group);
+            return MARMOT_ERR_VALIDATION;
+        }
+
+        MlsAddResult add_result;
+        memset(&add_result, 0, sizeof(add_result));
+        rc = mls_group_add_member(&mls, &kp, &add_result);
+        mls_key_package_clear(&kp);
+        if (rc != 0) {
+            mls_add_result_clear(&last_add_result);
+            for (size_t j = 0; j < i; j++) free(welcomes[j]);
+            free(welcomes);
+            mls_group_free(&mls);
+            marmot_group_free(group);
+            return MARMOT_ERR_MLS;
+        }
+
+        /* Build welcome rumor */
+        welcomes[i] = build_welcome_rumor(
+            add_result.welcome_data, add_result.welcome_len,
+            NULL, NULL, 0);
+
+        mls_add_result_clear(&last_add_result);
+        last_add_result = add_result;
+    }
+
+    /* Build evolution event from final commit */
+    char *commit_json = NULL;
+    if (last_add_result.commit_data) {
+        commit_json = build_evolution_event(
+            last_add_result.commit_data, last_add_result.commit_len,
+            group->nostr_group_id);
+    }
+    mls_add_result_clear(&last_add_result);
+
+    /* Save updated MLS group state */
+    save_mls_group(m, &mls);
+
+    /* Update group metadata (epoch) */
+    group->epoch = mls.epoch;
+    m->storage->save_group(m->storage->ctx, group);
+
+    /* Store new exporter secret */
+    if (m->storage->save_exporter_secret) {
+        m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
+                                          mls.epoch,
+                                          mls.epoch_secrets.exporter_secret);
+    }
+
+    mls_group_free(&mls);
+    marmot_group_free(group);
+
+    *out_welcome_jsons = welcomes;
+    *out_welcome_count = kp_count;
+    *out_commit_json = commit_json;
+    return MARMOT_OK;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -514,9 +721,94 @@ marmot_remove_members(Marmot *m,
 
     *out_commit_json = NULL;
 
-    /* TODO: Restore MLS group state, find leaf indices for pubkeys,
-     * create remove commits. */
-    return MARMOT_ERR_NOT_IMPLEMENTED;
+    /* Ensure identity */
+    if (marmot_ensure_identity(m) != 0)
+        return MARMOT_ERR_CRYPTO;
+
+    /* Look up group metadata for admin check */
+    if (!m->storage || !m->storage->find_group_by_mls_id)
+        return MARMOT_ERR_STORAGE;
+
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                                         mls_group_id, &group);
+    if (err != MARMOT_OK || !group)
+        return MARMOT_ERR_GROUP_NOT_FOUND;
+
+    if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
+        marmot_group_free(group);
+        return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+
+    /* Load MLS group state */
+    MlsGroup mls;
+    memset(&mls, 0, sizeof(mls));
+    if (load_mls_group(m, mls_group_id, &mls) != 0) {
+        marmot_group_free(group);
+        return MARMOT_ERR_MLS;
+    }
+
+    /* Admin check using our credential identity from MLS tree */
+    uint8_t our_nostr_pk[32];
+    if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
+        !is_admin(group, our_nostr_pk)) {
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_ADMIN_ONLY;
+    }
+
+    /* Remove each member by finding their leaf index */
+    MlsCommitResult last_result;
+    memset(&last_result, 0, sizeof(last_result));
+
+    for (size_t i = 0; i < count; i++) {
+        uint32_t leaf_idx;
+        if (find_leaf_by_pubkey(&mls, member_pubkeys[i], &leaf_idx) != 0) {
+            mls_commit_result_clear(&last_result);
+            mls_group_free(&mls);
+            marmot_group_free(group);
+            return MARMOT_ERR_MEMBER_NOT_FOUND;
+        }
+
+        MlsCommitResult result;
+        memset(&result, 0, sizeof(result));
+        int rc = mls_group_remove_member(&mls, leaf_idx, &result);
+        if (rc != 0) {
+            mls_commit_result_clear(&last_result);
+            mls_group_free(&mls);
+            marmot_group_free(group);
+            return MARMOT_ERR_MLS;
+        }
+
+        mls_commit_result_clear(&last_result);
+        last_result = result;
+    }
+
+    /* Build evolution event from the final commit */
+    if (last_result.commit_data) {
+        *out_commit_json = build_evolution_event(
+            last_result.commit_data, last_result.commit_len,
+            group->nostr_group_id);
+    }
+    mls_commit_result_clear(&last_result);
+
+    /* Save updated MLS group state */
+    save_mls_group(m, &mls);
+
+    /* Update group metadata */
+    group->epoch = mls.epoch;
+    m->storage->save_group(m->storage->ctx, group);
+
+    /* Store new exporter secret */
+    if (m->storage->save_exporter_secret) {
+        m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
+                                          mls.epoch,
+                                          mls.epoch_secrets.exporter_secret);
+    }
+
+    mls_group_free(&mls);
+    marmot_group_free(group);
+    return MARMOT_OK;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -537,6 +829,107 @@ marmot_leave_group(Marmot *m, const MarmotGroupId *mls_group_id)
     if (err != MARMOT_OK || !group) return MARMOT_ERR_GROUP_NOT_FOUND;
 
     group->state = MARMOT_GROUP_STATE_INACTIVE;
+    err = m->storage->save_group(m->storage->ctx, group);
+    marmot_group_free(group);
+    return err;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Public API: marmot_update_group_metadata
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_update_group_metadata(Marmot *m,
+                              const MarmotGroupId *mls_group_id,
+                              const MarmotGroupConfig *config)
+{
+    if (!m || !mls_group_id || !config)
+        return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->find_group_by_mls_id || !m->storage->save_group)
+        return MARMOT_ERR_STORAGE;
+
+    if (marmot_ensure_identity(m) != 0)
+        return MARMOT_ERR_CRYPTO;
+
+    /* Look up group */
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                                         mls_group_id, &group);
+    if (err != MARMOT_OK || !group)
+        return MARMOT_ERR_GROUP_NOT_FOUND;
+
+    if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
+        marmot_group_free(group);
+        return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+
+    /* Load MLS group state to get our credential identity for admin check */
+    MlsGroup mls;
+    memset(&mls, 0, sizeof(mls));
+    bool mls_loaded = (load_mls_group(m, mls_group_id, &mls) == 0);
+
+    /* Admin check using our Nostr pubkey from MLS tree */
+    if (mls_loaded) {
+        uint8_t our_nostr_pk[32];
+        if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
+            !is_admin(group, our_nostr_pk)) {
+            mls_group_free(&mls);
+            marmot_group_free(group);
+            return MARMOT_ERR_ADMIN_ONLY;
+        }
+    }
+
+    /* Apply metadata updates to the MarmotGroup */
+    if (config->name) {
+        free(group->name);
+        group->name = strdup(config->name);
+    }
+    if (config->description) {
+        free(group->description);
+        group->description = strdup(config->description);
+    }
+    if (config->admin_count > 0 && config->admin_pubkeys) {
+        free(group->admin_pubkeys);
+        group->admin_pubkeys = malloc(config->admin_count * 32);
+        if (group->admin_pubkeys) {
+            memcpy(group->admin_pubkeys, config->admin_pubkeys,
+                   config->admin_count * 32);
+            group->admin_count = config->admin_count;
+        }
+    }
+
+    /* Rebuild the GroupData extension and update MLS group state */
+    if (mls_loaded) {
+        /* Build new extensions from updated config */
+        uint8_t *ext_data = NULL;
+        size_t ext_len = 0;
+        if (build_group_data_extension(config, group->nostr_group_id,
+                                        &ext_data, &ext_len) == 0) {
+            free(mls.extensions_data);
+            mls.extensions_data = ext_data;
+            mls.extensions_len = ext_len;
+        }
+
+        /* Self-update to create a new commit with updated extensions */
+        MlsCommitResult commit_result;
+        memset(&commit_result, 0, sizeof(commit_result));
+        if (mls_group_self_update(&mls, &commit_result) == 0) {
+            /* Save updated MLS state */
+            save_mls_group(m, &mls);
+            group->epoch = mls.epoch;
+
+            /* Store new exporter secret */
+            if (m->storage->save_exporter_secret) {
+                m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
+                                                  mls.epoch,
+                                                  mls.epoch_secrets.exporter_secret);
+            }
+        }
+        mls_commit_result_clear(&commit_result);
+        mls_group_free(&mls);
+    }
+
+    /* Save updated group metadata */
     err = m->storage->save_group(m->storage->ctx, group);
     marmot_group_free(group);
     return err;

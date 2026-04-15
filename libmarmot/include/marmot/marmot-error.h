@@ -60,6 +60,8 @@ typedef enum {
     MARMOT_ERR_OWN_COMMIT_PENDING      = -44,
     MARMOT_ERR_COMMIT_FROM_NON_ADMIN   = -45,
     MARMOT_ERR_PROTOCOL_GROUP_MISMATCH = -46,
+    MARMOT_ERR_ADMIN_ONLY              = -47,
+    MARMOT_ERR_MEMBER_NOT_FOUND        = -48,
 
     /* Key package errors */
     MARMOT_ERR_KEY_NOT_FOUND            = -49,

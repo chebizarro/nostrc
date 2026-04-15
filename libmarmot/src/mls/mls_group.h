@@ -408,6 +408,28 @@ int mls_group_info_deserialize(MlsTlsReader *reader, MlsGroupInfo *gi);
  */
 int mls_group_info_build(const MlsGroup *group, MlsGroupInfo *gi);
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Group state serialization (internal persistence)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Serialize an MlsGroup to a binary blob for storage.
+ * Caller frees *out_data.
+ *
+ * @return 0 on success
+ */
+int mls_group_serialize(const MlsGroup *group,
+                        uint8_t **out_data, size_t *out_len);
+
+/**
+ * Deserialize an MlsGroup from a binary blob.
+ * On success, group is fully initialized (including secret tree).
+ *
+ * @return 0 on success
+ */
+int mls_group_deserialize(const uint8_t *data, size_t len,
+                          MlsGroup *group);
+
 #ifdef __cplusplus
 }
 #endif

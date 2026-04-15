@@ -879,6 +879,426 @@ test_process_message_unknown_group(void)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * MIP-01: MLS Group State Serialization Tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* Internal declarations for serialization test */
+#include "../src/mls/mls_group.h"
+
+static void
+test_mls_group_serialize_roundtrip(void)
+{
+    TEST("MIP-01: MLS group state serialize/deserialize round-trip");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    /* Create a group with a member to make the tree non-trivial */
+    Marmot *member = create_test_instance();
+    ASSERT(member != NULL, "failed to create member instance");
+
+    uint8_t member_sk[32], member_pk[32];
+    generate_nostr_keypair(member_sk, member_pk);
+
+    MarmotKeyPackageResult kp_result;
+    memset(&kp_result, 0, sizeof(kp_result));
+    MarmotError err = marmot_create_key_package(member, member_pk, member_sk,
+                                                 NULL, 0, &kp_result);
+    ASSERT_OK(err, "member key package");
+
+    const char *kp_jsons[] = { kp_result.event_json };
+    MarmotGroupConfig config = {0};
+    config.name = "Serialize Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult result;
+    memset(&result, 0, sizeof(result));
+    err = marmot_create_group(m, pk, kp_jsons, 1, &config, &result);
+    ASSERT_OK(err, "create_group");
+    ASSERT(result.group != NULL, "group is NULL");
+
+    /* Load the serialized MLS group state from storage */
+    uint8_t *state_data = NULL;
+    size_t state_len = 0;
+    err = m->storage->mls_load(m->storage->ctx, "mls_group",
+                                result.group->mls_group_id.data,
+                                result.group->mls_group_id.len,
+                                &state_data, &state_len);
+    ASSERT_OK(err, "mls_load");
+    ASSERT(state_data != NULL, "state_data is NULL");
+    ASSERT(state_len > 100, "state_data too small");
+
+    /* Deserialize */
+    MlsGroup mls;
+    memset(&mls, 0, sizeof(mls));
+    int rc = mls_group_deserialize(state_data, state_len, &mls);
+    ASSERT(rc == 0, "deserialize failed");
+
+    /* Verify key fields */
+    ASSERT(mls.group_id_len == result.group->mls_group_id.len,
+           "group_id_len mismatch");
+    ASSERT(memcmp(mls.group_id, result.group->mls_group_id.data,
+                  mls.group_id_len) == 0,
+           "group_id mismatch");
+    ASSERT(mls.tree.n_leaves == 2, "should have 2 leaves (creator + member)");
+
+    /* Re-serialize and compare */
+    uint8_t *state_data2 = NULL;
+    size_t state_len2 = 0;
+    rc = mls_group_serialize(&mls, &state_data2, &state_len2);
+    ASSERT(rc == 0, "re-serialize failed");
+    ASSERT(state_len2 == state_len, "re-serialized length differs");
+    ASSERT(memcmp(state_data, state_data2, state_len) == 0,
+           "re-serialized data differs");
+
+    free(state_data);
+    free(state_data2);
+    mls_group_free(&mls);
+    marmot_key_package_result_free(&kp_result);
+    marmot_create_group_result_free(&result);
+    marmot_free(m);
+    marmot_free(member);
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MIP-01: Add/Remove Members Tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_add_members_to_existing_group(void)
+{
+    TEST("MIP-01: add_members to existing group");
+
+    Marmot *creator = create_test_instance();
+    ASSERT(creator != NULL, "failed to create creator");
+
+    uint8_t creator_sk[32], creator_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+
+    /* Create a solo group */
+    MarmotGroupConfig config = {0};
+    config.name = "Add Member Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult group_result;
+    memset(&group_result, 0, sizeof(group_result));
+    MarmotError err = marmot_create_group(creator, creator_pk, NULL, 0,
+                                           &config, &group_result);
+    ASSERT_OK(err, "create_group");
+    ASSERT(group_result.group != NULL, "group is NULL");
+
+    /* Create a member's key package */
+    Marmot *member = create_test_instance();
+    uint8_t member_sk[32], member_pk[32];
+    generate_nostr_keypair(member_sk, member_pk);
+
+    MarmotKeyPackageResult kp_result;
+    memset(&kp_result, 0, sizeof(kp_result));
+    err = marmot_create_key_package(member, member_pk, member_sk, NULL, 0, &kp_result);
+    ASSERT_OK(err, "member key package");
+
+    /* Add the member */
+    const char *kp_jsons[] = { kp_result.event_json };
+    char **welcome_jsons = NULL;
+    size_t welcome_count = 0;
+    char *commit_json = NULL;
+
+    err = marmot_add_members(creator, &group_result.group->mls_group_id,
+                              kp_jsons, 1,
+                              &welcome_jsons, &welcome_count, &commit_json);
+    ASSERT_OK(err, "add_members");
+    ASSERT(welcome_count == 1, "should have 1 welcome");
+    ASSERT(welcome_jsons != NULL, "welcome jsons is NULL");
+    ASSERT(welcome_jsons[0] != NULL, "welcome[0] is NULL");
+    ASSERT(commit_json != NULL, "commit json is NULL");
+
+    /* Verify the group epoch advanced */
+    MarmotGroup *updated = NULL;
+    err = marmot_get_group(creator, &group_result.group->mls_group_id, &updated);
+    ASSERT_OK(err, "get_group after add");
+    ASSERT(updated != NULL, "updated group is NULL");
+    ASSERT(updated->epoch > group_result.group->epoch,
+           "epoch should have advanced");
+
+    /* Cleanup */
+    marmot_group_free(updated);
+    for (size_t i = 0; i < welcome_count; i++) free(welcome_jsons[i]);
+    free(welcome_jsons);
+    free(commit_json);
+    marmot_key_package_result_free(&kp_result);
+    marmot_create_group_result_free(&group_result);
+    marmot_free(creator);
+    marmot_free(member);
+    PASS();
+}
+
+static void
+test_remove_members_from_group(void)
+{
+    TEST("MIP-01: remove_members from group");
+
+    Marmot *creator = create_test_instance();
+    uint8_t creator_sk[32], creator_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+
+    /* Create a member */
+    Marmot *member = create_test_instance();
+    uint8_t member_sk[32], member_pk[32];
+    generate_nostr_keypair(member_sk, member_pk);
+
+    MarmotKeyPackageResult kp_result;
+    memset(&kp_result, 0, sizeof(kp_result));
+    MarmotError err = marmot_create_key_package(member, member_pk, member_sk,
+                                                 NULL, 0, &kp_result);
+    ASSERT_OK(err, "member key package");
+
+    /* Create group with the member */
+    const char *kp_jsons[] = { kp_result.event_json };
+    MarmotGroupConfig config = {0};
+    config.name = "Remove Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult group_result;
+    memset(&group_result, 0, sizeof(group_result));
+    err = marmot_create_group(creator, creator_pk, kp_jsons, 1,
+                               &config, &group_result);
+    ASSERT_OK(err, "create_group");
+
+    uint64_t epoch_before = group_result.group->epoch;
+
+    /* Remove the member */
+    const uint8_t (*pubkeys)[32] = (const uint8_t (*)[32])&member_pk;
+    char *commit_json = NULL;
+    err = marmot_remove_members(creator, &group_result.group->mls_group_id,
+                                 pubkeys, 1, &commit_json);
+    ASSERT_OK(err, "remove_members");
+    ASSERT(commit_json != NULL, "commit json is NULL");
+
+    /* Verify epoch advanced */
+    MarmotGroup *updated = NULL;
+    err = marmot_get_group(creator, &group_result.group->mls_group_id, &updated);
+    ASSERT_OK(err, "get_group after remove");
+    ASSERT(updated->epoch > epoch_before, "epoch should have advanced");
+
+    marmot_group_free(updated);
+    free(commit_json);
+    marmot_key_package_result_free(&kp_result);
+    marmot_create_group_result_free(&group_result);
+    marmot_free(creator);
+    marmot_free(member);
+    PASS();
+}
+
+static void
+test_remove_nonexistent_member(void)
+{
+    TEST("MIP-01: remove_members fails for unknown pubkey");
+
+    Marmot *creator = create_test_instance();
+    uint8_t creator_sk[32], creator_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Remove Unknown";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult group_result;
+    memset(&group_result, 0, sizeof(group_result));
+    MarmotError err = marmot_create_group(creator, creator_pk, NULL, 0,
+                                           &config, &group_result);
+    ASSERT_OK(err, "create_group");
+
+    /* Try to remove a random pubkey */
+    uint8_t random_pk[32];
+    randombytes_buf(random_pk, 32);
+    const uint8_t (*pubkeys)[32] = (const uint8_t (*)[32])&random_pk;
+    char *commit_json = NULL;
+
+    err = marmot_remove_members(creator, &group_result.group->mls_group_id,
+                                 pubkeys, 1, &commit_json);
+    ASSERT(err == MARMOT_ERR_MEMBER_NOT_FOUND, "should return MEMBER_NOT_FOUND");
+
+    marmot_create_group_result_free(&group_result);
+    marmot_free(creator);
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MIP-01: Admin Policy Enforcement Tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_add_members_admin_only(void)
+{
+    TEST("MIP-01: add_members rejected for non-admin");
+
+    /* Create group as admin. The admin pubkey in the group config
+     * is the nostr pubkey used as credential identity in the MLS tree.
+     * The admin check compares our MLS leaf credential identity against
+     * the admin list. We'll create a second Marmot instance with a
+     * different identity to test the rejection. */
+    Marmot *admin = create_test_instance();
+    uint8_t admin_sk[32], admin_pk[32];
+    generate_nostr_keypair(admin_sk, admin_pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Admin Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&admin_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult group_result;
+    memset(&group_result, 0, sizeof(group_result));
+    MarmotError err = marmot_create_group(admin, admin_pk, NULL, 0,
+                                           &config, &group_result);
+    ASSERT_OK(err, "create_group");
+
+    /* The admin check works by looking at our credential identity in
+     * the MLS tree (leaf 0 has credential_identity = admin_pk).
+     * To simulate a non-admin, we need a separate Marmot instance
+     * with a DIFFERENT MLS identity. But since both share the same
+     * storage, we can't easily do this without copying the storage.
+     *
+     * Instead, we modify the admin list in the stored group to
+     * contain a different pubkey, making the current user non-admin. */
+    MarmotGroup *stored_group = NULL;
+    err = admin->storage->find_group_by_mls_id(admin->storage->ctx,
+                                                 &group_result.group->mls_group_id,
+                                                 &stored_group);
+    ASSERT_OK(err, "find group");
+    ASSERT(stored_group != NULL, "stored group is NULL");
+
+    /* Replace admin list with a random pubkey (not the creator) */
+    uint8_t fake_admin_pk[32];
+    randombytes_buf(fake_admin_pk, 32);
+    memcpy(stored_group->admin_pubkeys[0], fake_admin_pk, 32);
+    admin->storage->save_group(admin->storage->ctx, stored_group);
+    marmot_group_free(stored_group);
+
+    /* Try to add a member as non-admin */
+    Marmot *member = create_test_instance();
+    uint8_t member_sk[32], member_pk[32];
+    generate_nostr_keypair(member_sk, member_pk);
+
+    MarmotKeyPackageResult kp_result;
+    memset(&kp_result, 0, sizeof(kp_result));
+    err = marmot_create_key_package(member, member_pk, member_sk, NULL, 0, &kp_result);
+    ASSERT_OK(err, "member kp");
+
+    const char *kp_jsons[] = { kp_result.event_json };
+    char **welcomes = NULL;
+    size_t wcount = 0;
+    char *commit = NULL;
+
+    err = marmot_add_members(admin, &group_result.group->mls_group_id,
+                              kp_jsons, 1, &welcomes, &wcount, &commit);
+    ASSERT(err == MARMOT_ERR_ADMIN_ONLY, "should reject non-admin");
+
+    marmot_key_package_result_free(&kp_result);
+    marmot_create_group_result_free(&group_result);
+    marmot_free(admin);
+    marmot_free(member);
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MIP-01: Group Metadata Update Tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_update_group_metadata(void)
+{
+    TEST("MIP-01: update_group_metadata changes name and description");
+
+    Marmot *m = create_test_instance();
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Original Name";
+    config.description = "Original Desc";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult result;
+    memset(&result, 0, sizeof(result));
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &result);
+    ASSERT_OK(err, "create_group");
+
+    /* Update metadata */
+    MarmotGroupConfig new_config = {0};
+    new_config.name = "Updated Name";
+    new_config.description = "Updated Desc";
+    new_config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    new_config.admin_count = 1;
+
+    err = marmot_update_group_metadata(m, &result.group->mls_group_id, &new_config);
+    ASSERT_OK(err, "update_group_metadata");
+
+    /* Verify the update took effect */
+    MarmotGroup *updated = NULL;
+    err = marmot_get_group(m, &result.group->mls_group_id, &updated);
+    ASSERT_OK(err, "get_group after update");
+    ASSERT(updated != NULL, "updated group is NULL");
+    ASSERT(strcmp(updated->name, "Updated Name") == 0, "name not updated");
+    ASSERT(strcmp(updated->description, "Updated Desc") == 0, "desc not updated");
+    ASSERT(updated->epoch > result.group->epoch, "epoch should advance on update");
+
+    marmot_group_free(updated);
+    marmot_create_group_result_free(&result);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_update_group_metadata_non_admin(void)
+{
+    TEST("MIP-01: update_group_metadata rejected for non-admin");
+
+    Marmot *m = create_test_instance();
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Admin Only Update";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult result;
+    memset(&result, 0, sizeof(result));
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &result);
+    ASSERT_OK(err, "create_group");
+
+    /* Make the current user non-admin by changing the stored admin list */
+    MarmotGroup *stored = NULL;
+    err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                            &result.group->mls_group_id, &stored);
+    ASSERT_OK(err, "find group");
+    uint8_t fake_admin[32];
+    randombytes_buf(fake_admin, 32);
+    memcpy(stored->admin_pubkeys[0], fake_admin, 32);
+    m->storage->save_group(m->storage->ctx, stored);
+    marmot_group_free(stored);
+
+    MarmotGroupConfig new_config = {0};
+    new_config.name = "Hacked Name";
+
+    err = marmot_update_group_metadata(m, &result.group->mls_group_id, &new_config);
+    ASSERT(err == MARMOT_ERR_ADMIN_ONLY, "should reject non-admin update");
+
+    marmot_create_group_result_free(&result);
+    marmot_free(m);
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Group query tests
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -1017,6 +1437,13 @@ main(void)
     test_create_group_null_args();
     test_merge_pending_commit();
     test_leave_group();
+    test_mls_group_serialize_roundtrip();
+    test_add_members_to_existing_group();
+    test_remove_members_from_group();
+    test_remove_nonexistent_member();
+    test_add_members_admin_only();
+    test_update_group_metadata();
+    test_update_group_metadata_non_admin();
 
     printf("\nMIP-02: Welcome Events\n");
     test_process_welcome_basic();
