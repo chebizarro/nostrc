@@ -332,6 +332,21 @@ success:
                                kp_ref, MLS_HASH_LEN,
                                priv_blob, sizeof(priv_blob));
         sodium_memzero(priv_blob, sizeof(priv_blob));
+
+        /* Also store the full serialized KeyPackage for Welcome processing.
+         * mls_welcome_process_parsed needs the complete KP to compute the
+         * KeyPackageRef and populate the ratchet tree leaf node. */
+        {
+            MlsTlsBuf kp_buf;
+            if (mls_tls_buf_init(&kp_buf, 1024) == 0) {
+                if (mls_key_package_serialize(&kp, &kp_buf) == 0) {
+                    m->storage->mls_store(m->storage->ctx, "kp_full",
+                                           kp_ref, MLS_HASH_LEN,
+                                           kp_buf.data, kp_buf.len);
+                }
+                mls_tls_buf_free(&kp_buf);
+            }
+        }
     }
 
     /* Clean up */

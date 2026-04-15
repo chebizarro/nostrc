@@ -653,6 +653,175 @@ test_decline_welcome(void)
     PASS();
 }
 
+static void
+test_welcome_end_to_end(void)
+{
+    TEST("MIP-02: end-to-end create → welcome → accept → group");
+
+    /* --- Set up creator and member instances --- */
+    Marmot *creator = create_test_instance();
+    Marmot *member  = create_test_instance();
+    ASSERT(creator != NULL, "failed to create creator instance");
+    ASSERT(member  != NULL, "failed to create member instance");
+
+    uint8_t creator_sk[32], creator_pk[32];
+    uint8_t member_sk[32],  member_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+    generate_nostr_keypair(member_sk,  member_pk);
+
+    /* Member creates a key package (stores private keys internally) */
+    MarmotKeyPackageResult kp_result;
+    memset(&kp_result, 0, sizeof(kp_result));
+    MarmotError err = marmot_create_key_package(member, member_pk, member_sk,
+                                                 NULL, 0, &kp_result);
+    ASSERT_OK(err, "member create_key_package");
+
+    /* Creator creates a group, inviting the member */
+    const char *kp_jsons[] = { kp_result.event_json };
+    MarmotGroupConfig config = {0};
+    config.name = "Welcome E2E Group";
+    config.description = "End-to-end welcome test";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult group_result;
+    memset(&group_result, 0, sizeof(group_result));
+
+    err = marmot_create_group(creator, creator_pk, kp_jsons, 1,
+                               &config, &group_result);
+    ASSERT_OK(err, "create_group");
+    ASSERT(group_result.welcome_count == 1, "should have 1 welcome");
+    ASSERT(group_result.welcome_rumor_jsons != NULL, "welcome jsons NULL");
+    ASSERT(group_result.welcome_rumor_jsons[0] != NULL, "welcome[0] NULL");
+
+    /* --- Member processes the welcome rumor --- */
+    uint8_t wrapper_id[32];
+    randombytes_buf(wrapper_id, 32);
+
+    MarmotWelcome *welcome = NULL;
+    err = marmot_process_welcome(member, wrapper_id,
+                                  group_result.welcome_rumor_jsons[0],
+                                  &welcome);
+    ASSERT_OK(err, "process_welcome");
+    ASSERT(welcome != NULL, "welcome is NULL");
+    ASSERT(welcome->state == MARMOT_WELCOME_STATE_PENDING,
+           "welcome should be pending");
+
+    /* --- Member accepts the welcome --- */
+    err = marmot_accept_welcome(member, welcome);
+    ASSERT_OK(err, "accept_welcome");
+
+    /* --- Verify the member now has the group --- */
+    MarmotGroup **groups = NULL;
+    size_t group_count = 0;
+    err = marmot_get_all_groups(member, &groups, &group_count);
+    ASSERT_OK(err, "get_all_groups for member");
+    ASSERT(group_count >= 1, "member should have at least 1 group");
+
+    /* Find the group and verify metadata */
+    bool found_group = false;
+    for (size_t i = 0; i < group_count; i++) {
+        if (groups[i]->name && strcmp(groups[i]->name, "Welcome E2E Group") == 0) {
+            found_group = true;
+            ASSERT(groups[i]->state == MARMOT_GROUP_STATE_ACTIVE,
+                   "member group should be active");
+            ASSERT(groups[i]->description != NULL &&
+                   strcmp(groups[i]->description, "End-to-end welcome test") == 0,
+                   "group description should match");
+            ASSERT(groups[i]->admin_count == 1,
+                   "group should have 1 admin");
+            ASSERT(memcmp(groups[i]->admin_pubkeys, creator_pk, 32) == 0,
+                   "admin should be the creator");
+        }
+        marmot_group_free(groups[i]);
+    }
+    free(groups);
+    ASSERT(found_group, "member should have the Welcome E2E Group");
+
+    /* Verify MLS state was persisted (can load it back) */
+    if (member->storage && member->storage->mls_load) {
+        uint8_t *state_data = NULL;
+        size_t state_len = 0;
+        int rc = member->storage->mls_load(member->storage->ctx, "mls_group",
+                                            group_result.group->mls_group_id.data,
+                                            group_result.group->mls_group_id.len,
+                                            &state_data, &state_len);
+        ASSERT(rc == 0 && state_data != NULL && state_len > 0,
+               "MLS group state should be persisted after accept");
+        free(state_data);
+    }
+
+    marmot_welcome_free(welcome);
+    marmot_key_package_result_free(&kp_result);
+    marmot_create_group_result_free(&group_result);
+    marmot_free(creator);
+    marmot_free(member);
+    PASS();
+}
+
+static void
+test_welcome_duplicate_detection(void)
+{
+    TEST("MIP-02: duplicate welcome is rejected");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    /* Create a minimal kind:444 rumor event JSON */
+    const char *rumor_json =
+        "{\"kind\":444,\"content\":\"dGVzdA==\","
+        "\"created_at\":1700000000,"
+        "\"tags\":[[\"encoding\",\"base64\"],"
+        "[\"relays\",\"wss://relay.example.com\"]]}";
+
+    uint8_t wrapper_id[32];
+    randombytes_buf(wrapper_id, 32);
+
+    /* First process should succeed */
+    MarmotWelcome *welcome1 = NULL;
+    MarmotError err = marmot_process_welcome(m, wrapper_id, rumor_json, &welcome1);
+    ASSERT_OK(err, "first process_welcome");
+    ASSERT(welcome1 != NULL, "first welcome is NULL");
+
+    /* Mark this welcome as processed (simulating accept) */
+    if (m->storage && m->storage->save_processed_welcome) {
+        m->storage->save_processed_welcome(m->storage->ctx,
+                                            wrapper_id, NULL,
+                                            1700000000,
+                                            MARMOT_WELCOME_STATE_ACCEPTED,
+                                            NULL);
+    }
+
+    /* Second process with same wrapper_id should be rejected */
+    MarmotWelcome *welcome2 = NULL;
+    err = marmot_process_welcome(m, wrapper_id, rumor_json, &welcome2);
+    ASSERT(err == MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED,
+           "duplicate welcome should be rejected");
+    ASSERT(welcome2 == NULL, "duplicate welcome should return NULL");
+
+    marmot_welcome_free(welcome1);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_accept_welcome_null_args(void)
+{
+    TEST("MIP-02: accept_welcome rejects NULL args");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    MarmotError err = marmot_accept_welcome(m, NULL);
+    ASSERT(err == MARMOT_ERR_INVALID_ARG, "should reject NULL welcome");
+
+    err = marmot_accept_welcome(NULL, NULL);
+    ASSERT(err == MARMOT_ERR_INVALID_ARG, "should reject NULL marmot");
+
+    marmot_free(m);
+    PASS();
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-03: Message Tests
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1449,6 +1618,9 @@ main(void)
     test_process_welcome_basic();
     test_process_welcome_wrong_kind();
     test_decline_welcome();
+    test_welcome_end_to_end();
+    test_welcome_duplicate_detection();
+    test_accept_welcome_null_args();
 
     printf("\nMIP-03: Group Messages\n");
     test_create_message_no_group();

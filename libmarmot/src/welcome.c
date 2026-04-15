@@ -16,6 +16,7 @@
 
 #include "marmot-internal.h"
 #include "mls/mls_welcome.h"
+#include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
 #include "mls/mls-internal.h"
 #include <nostr-event.h>
@@ -92,6 +93,25 @@ marmot_process_welcome(Marmot *m,
         return MARMOT_ERR_INVALID_ARG;
 
     *out_welcome = NULL;
+
+    /* Check for duplicate: was this wrapper event already processed? */
+    if (m->storage && m->storage->find_processed_welcome) {
+        bool already_processed = false;
+        int state = 0;
+        char *reason = NULL;
+        if (m->storage->find_processed_welcome(m->storage->ctx,
+                                                 wrapper_event_id,
+                                                 &already_processed,
+                                                 &state, &reason) == MARMOT_OK &&
+            already_processed) {
+            free(reason);
+            return MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED;
+        }
+        free(reason);
+    }
+
+    /* Check welcome expiry: reject events older than max_event_age */
+    /* (Applied after parsing below, since we need created_at) */
 
     /* Parse the rumor event (kind:444, unsigned) */
     NostrEvent rumor;
@@ -274,13 +294,36 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
                    priv_data + MLS_KEM_SK_LEN + MLS_KEM_SK_LEN, MLS_SIG_SK_LEN);
             free(priv_data);
 
-            /* We don't have the full KeyPackage here, but mls_welcome_process_parsed
-             * needs it. We'll create a minimal one. */
+            /* Load the full serialized KeyPackage so mls_welcome_process_parsed
+             * can compute the correct KeyPackageRef and populate the tree. */
             memset(&matched_kp, 0, sizeof(matched_kp));
-            matched_kp.version = 1; /* mls10 */
-            matched_kp.cipher_suite = MARMOT_CIPHERSUITE;
-            /* Derive public keys from private */
-            crypto_scalarmult_base(matched_kp.init_key, matched_priv.init_key_private);
+
+            uint8_t *kp_data = NULL;
+            size_t kp_len = 0;
+            if (m->storage->mls_load(m->storage->ctx, "kp_full",
+                                      mls_welcome.secrets[i].key_package_ref,
+                                      MLS_HASH_LEN,
+                                      &kp_data, &kp_len) == 0 && kp_data) {
+                MlsTlsReader kp_reader;
+                mls_tls_reader_init(&kp_reader, kp_data, kp_len);
+                if (mls_key_package_deserialize(&kp_reader, &matched_kp) != 0) {
+                    free(kp_data);
+                    /* Fallback: create minimal KP (may fail ref check) */
+                    matched_kp.version = 1;
+                    matched_kp.cipher_suite = MARMOT_CIPHERSUITE;
+                    crypto_scalarmult_base(matched_kp.init_key,
+                                           matched_priv.init_key_private);
+                } else {
+                    free(kp_data);
+                }
+            } else {
+                free(kp_data);
+                /* Fallback: create minimal KP (may fail ref check) */
+                matched_kp.version = 1;
+                matched_kp.cipher_suite = MARMOT_CIPHERSUITE;
+                crypto_scalarmult_base(matched_kp.init_key,
+                                       matched_priv.init_key_private);
+            }
             found = true;
             break;
         }
@@ -368,6 +411,18 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
             if (group->image_nonce) memcpy(group->image_nonce, gde->image_nonce, 12);
         }
     }
+
+    /* Extract relay URLs from gde before freeing */
+    char **gde_relays = NULL;
+    size_t gde_relay_count = 0;
+    if (gde && gde->relay_count > 0 && gde->relays) {
+        gde_relay_count = gde->relay_count;
+        gde_relays = calloc(gde_relay_count, sizeof(char *));
+        if (gde_relays) {
+            for (size_t i = 0; i < gde_relay_count; i++)
+                gde_relays[i] = gde->relays[i] ? strdup(gde->relays[i]) : NULL;
+        }
+    }
     marmot_group_data_extension_free(gde);
 
     /* Store exporter secret */
@@ -378,13 +433,57 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
                                           mls_group.epoch_secrets.exporter_secret);
     }
 
-    /* Store the group */
+    /* Persist the full MLS group state for future operations
+     * (add/remove members, send/receive messages) */
+    if (m->storage && m->storage->mls_store) {
+        uint8_t *state_data = NULL;
+        size_t state_len = 0;
+        if (mls_group_serialize(&mls_group, &state_data, &state_len) == 0) {
+            m->storage->mls_store(m->storage->ctx, "mls_group",
+                                   mls_group.group_id, mls_group.group_id_len,
+                                   state_data, state_len);
+            free(state_data);
+        }
+    }
+
+    /* Store the group metadata */
     if (m->storage && m->storage->save_group) {
         m->storage->save_group(m->storage->ctx, group);
     }
 
+    /* Store group relays */
+    if (gde_relays && gde_relay_count > 0 &&
+        m->storage && m->storage->replace_group_relays) {
+        m->storage->replace_group_relays(m->storage->ctx,
+                                          &group->mls_group_id,
+                                          (const char **)gde_relays,
+                                          gde_relay_count);
+    }
+
+    /* Record the welcome as processed */
+    if (m->storage && m->storage->save_processed_welcome) {
+        m->storage->save_processed_welcome(m->storage->ctx,
+                                            welcome->wrapper_event_id,
+                                            welcome->id,
+                                            marmot_now(),
+                                            MARMOT_WELCOME_STATE_ACCEPTED,
+                                            NULL);
+    }
+
+    /* Clean up stored raw welcome data */
+    if (m->storage && m->storage->mls_delete) {
+        m->storage->mls_delete(m->storage->ctx, "welcome_data",
+                                welcome->wrapper_event_id, 32);
+    }
+
     mls_group_free(&mls_group);
     marmot_group_free(group);
+
+    /* Free relay copies */
+    if (gde_relays) {
+        for (size_t i = 0; i < gde_relay_count; i++) free(gde_relays[i]);
+        free(gde_relays);
+    }
 
     return MARMOT_OK;
 }
