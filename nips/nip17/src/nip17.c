@@ -141,7 +141,7 @@ NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
     nostr_event_set_kind(seal, NOSTR_KIND_SEAL);
     nostr_event_set_pubkey(seal, sender_pubkey);
     nostr_event_set_content(seal, encrypted);
-    nostr_event_set_created_at(seal, get_current_time());
+    nostr_event_set_created_at(seal, get_randomized_time());
 
     free(sender_pubkey);
     free(encrypted);
