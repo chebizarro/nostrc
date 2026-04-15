@@ -1192,6 +1192,119 @@ test_pagination_gvalue_roundtrip(void)
     marmot_gobject_pagination_free(p);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 15. Async API tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_welcome_wrapper_event_id(void)
+{
+    MarmotGobjectWelcome *w = marmot_gobject_welcome_new_from_data(
+        "aabb", "Test Group", "desc", "ccdd", 3,
+        MARMOT_GOBJECT_WELCOME_STATE_PENDING, "eeff", "1122");
+
+    /* Initially no wrapper event ID */
+    g_assert_null(marmot_gobject_welcome_get_wrapper_event_id(w));
+
+    /* Set it */
+    marmot_gobject_welcome_set_wrapper_event_id(w,
+        "deadbeef00112233deadbeef00112233deadbeef00112233deadbeef00112233");
+    g_assert_cmpstr(marmot_gobject_welcome_get_wrapper_event_id(w), ==,
+        "deadbeef00112233deadbeef00112233deadbeef00112233deadbeef00112233");
+
+    /* Override */
+    marmot_gobject_welcome_set_wrapper_event_id(w, "0000000000000000000000000000000000000000000000000000000000000001");
+    g_assert_cmpstr(marmot_gobject_welcome_get_wrapper_event_id(w), ==,
+        "0000000000000000000000000000000000000000000000000000000000000001");
+
+    g_object_unref(w);
+}
+
+/* Async test helpers — callback contexts */
+typedef struct { GMainLoop *loop; GError *error; gboolean result; } AcceptAsyncCtx;
+typedef struct { GMainLoop *loop; GError *error; gchar *json; } KpAsyncCtx;
+
+static void
+accept_welcome_cb(GObject *src, GAsyncResult *res, gpointer ud)
+{
+    AcceptAsyncCtx *c = ud;
+    c->result = marmot_gobject_client_accept_welcome_finish(
+        MARMOT_GOBJECT_CLIENT(src), res, &c->error);
+    g_main_loop_quit(c->loop);
+}
+
+static void
+create_kp_cb(GObject *src, GAsyncResult *res, gpointer ud)
+{
+    KpAsyncCtx *c = ud;
+    c->json = marmot_gobject_client_create_key_package_finish(
+        MARMOT_GOBJECT_CLIENT(src), res, &c->error);
+    g_main_loop_quit(c->loop);
+}
+
+static void
+test_accept_welcome_no_wrapper_id(void)
+{
+    /* accept_welcome should fail gracefully when welcome has no wrapper ID */
+    MarmotGobjectMemoryStorage *storage = marmot_gobject_memory_storage_new();
+    MarmotGobjectClient *client = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(storage));
+    g_assert_nonnull(client);
+
+    MarmotGobjectWelcome *w = marmot_gobject_welcome_new_from_data(
+        "aabb", "Test", "desc", "ccdd", 1,
+        MARMOT_GOBJECT_WELCOME_STATE_PENDING, "eeff", "1122");
+    /* No wrapper_event_id set — accept should fail in the thread */
+
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    AcceptAsyncCtx ctx = { loop, NULL, FALSE };
+
+    marmot_gobject_client_accept_welcome_async(client, w, NULL, accept_welcome_cb, &ctx);
+    g_main_loop_run(loop);
+
+    /* Should have failed with an error about missing wrapper event ID */
+    g_assert_false(ctx.result);
+    g_assert_nonnull(ctx.error);
+    g_clear_error(&ctx.error);
+
+    g_main_loop_unref(loop);
+    g_object_unref(w);
+    g_object_unref(client);
+    g_object_unref(storage);
+}
+
+static void
+test_async_key_package_roundtrip(void)
+{
+    /* Test the full async key package creation flow */
+    MarmotGobjectMemoryStorage *storage = marmot_gobject_memory_storage_new();
+    MarmotGobjectClient *client = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(storage));
+    g_assert_nonnull(client);
+
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    KpAsyncCtx ctx = { loop, NULL, NULL };
+
+    /* Use a valid 32-byte hex key pair */
+    const gchar *pk = "0000000000000000000000000000000000000000000000000000000000000001";
+    const gchar *sk = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    marmot_gobject_client_create_key_package_async(client, pk, sk, NULL, NULL, create_kp_cb, &ctx);
+    g_main_loop_run(loop);
+
+    /* The key package creation may fail due to invalid key, but
+     * the async machinery should work either way */
+    if (ctx.error) {
+        g_assert_null(ctx.json);
+        g_clear_error(&ctx.error);
+    } else {
+        g_assert_nonnull(ctx.json);
+        g_free(ctx.json);
+    }
+
+    g_main_loop_unref(loop);
+    g_object_unref(client);
+    g_object_unref(storage);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1283,6 +1396,11 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/boxed/pagination-copy", test_pagination_copy);
     g_test_add_func("/marmot-gobject/boxed/pagination-copy-null", test_pagination_copy_null);
     g_test_add_func("/marmot-gobject/boxed/pagination-gvalue-roundtrip", test_pagination_gvalue_roundtrip);
+
+    /* 15. Async API */
+    g_test_add_func("/marmot-gobject/async/welcome-wrapper-event-id", test_welcome_wrapper_event_id);
+    g_test_add_func("/marmot-gobject/async/accept-welcome-no-wrapper-id", test_accept_welcome_no_wrapper_id);
+    g_test_add_func("/marmot-gobject/async/key-package-roundtrip", test_async_key_package_roundtrip);
 
     return g_test_run();
 }

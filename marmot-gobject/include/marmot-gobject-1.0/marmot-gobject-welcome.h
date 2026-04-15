@@ -64,6 +64,25 @@ const gchar *marmot_gobject_welcome_get_nostr_group_id(MarmotGobjectWelcome *sel
  */
 const gchar * const *marmot_gobject_welcome_get_relay_urls(MarmotGobjectWelcome *self);
 
+/**
+ * marmot_gobject_welcome_get_wrapper_event_id:
+ * @self: a #MarmotGobjectWelcome
+ *
+ * Returns: (transfer none) (nullable): the gift-wrap event ID as hex,
+ *   needed for accept/decline operations
+ */
+const gchar *marmot_gobject_welcome_get_wrapper_event_id(MarmotGobjectWelcome *self);
+
+/**
+ * marmot_gobject_welcome_set_wrapper_event_id:
+ * @self: a #MarmotGobjectWelcome
+ * @wrapper_event_id_hex: gift-wrap event ID as hex string
+ *
+ * Sets the wrapper event ID. Called internally by process_welcome.
+ */
+void marmot_gobject_welcome_set_wrapper_event_id(MarmotGobjectWelcome *self,
+                                                   const gchar *wrapper_event_id_hex);
+
 G_END_DECLS
 
 #endif /* MARMOT_GOBJECT_WELCOME_H */

@@ -325,6 +325,86 @@ gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
                                                      GError **error);
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * MIP-04: Media Encryption (async)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * marmot_gobject_client_encrypt_media_async:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: target group MLS ID as hex
+ * @file_data: raw file data
+ * @mime_type: (nullable): MIME type
+ * @filename: (nullable): original filename
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback
+ * @user_data: data for @callback
+ *
+ * Asynchronously encrypts media for sharing in an MLS group.
+ */
+void marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
+                                                const gchar *mls_group_id_hex,
+                                                GBytes *file_data,
+                                                const gchar *mime_type,
+                                                const gchar *filename,
+                                                GCancellable *cancellable,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
+
+/**
+ * marmot_gobject_client_encrypt_media_finish:
+ * @self: a #MarmotGobjectClient
+ * @result: a #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Returns: (transfer full) (nullable): encrypted data as #GBytes, or NULL on error
+ */
+GBytes *marmot_gobject_client_encrypt_media_finish(MarmotGobjectClient *self,
+                                                    GAsyncResult *result,
+                                                    GError **error);
+
+/**
+ * marmot_gobject_client_decrypt_media_async:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: group MLS ID as hex
+ * @encrypted_data: encrypted file data
+ * @mime_type: (nullable): MIME type from imeta tag
+ * @filename: (nullable): filename from imeta tag
+ * @original_size: original plaintext size
+ * @file_hash: (nullable): SHA-256 hash of plaintext (32 bytes)
+ * @nonce: (nullable): ChaCha20-Poly1305 nonce (12 bytes)
+ * @epoch: MLS epoch when encryption key was derived
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback
+ * @user_data: data for @callback
+ *
+ * Asynchronously decrypts media from an MLS group.
+ */
+void marmot_gobject_client_decrypt_media_async(MarmotGobjectClient *self,
+                                                const gchar *mls_group_id_hex,
+                                                GBytes *encrypted_data,
+                                                const gchar *mime_type,
+                                                const gchar *filename,
+                                                gsize original_size,
+                                                const guint8 file_hash[32],
+                                                const guint8 nonce[12],
+                                                guint64 epoch,
+                                                GCancellable *cancellable,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
+
+/**
+ * marmot_gobject_client_decrypt_media_finish:
+ * @self: a #MarmotGobjectClient
+ * @result: a #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Returns: (transfer full) (nullable): decrypted data as #GBytes, or NULL on error
+ */
+GBytes *marmot_gobject_client_decrypt_media_finish(MarmotGobjectClient *self,
+                                                    GAsyncResult *result,
+                                                    GError **error);
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Synchronous queries
  * ══════════════════════════════════════════════════════════════════════════ */
 

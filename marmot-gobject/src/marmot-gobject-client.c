@@ -10,6 +10,7 @@
 
 #include "marmot-gobject-1.0/marmot-gobject-client.h"
 #include <marmot/marmot.h>
+#include "marmot-gobject-1.0/marmot-gobject-key-package.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -612,6 +613,9 @@ process_welcome_thread(GTask *task, gpointer source_object,
     g_free(evt_hex);
     marmot_welcome_free(welcome);
 
+    /* Store the wrapper event ID for accept/decline */
+    marmot_gobject_welcome_set_wrapper_event_id(gobj, d->wrapper_event_id_hex);
+
     g_task_return_pointer(task, gobj, g_object_unref);
 }
 
@@ -650,11 +654,51 @@ static void
 accept_welcome_thread(GTask *task, gpointer source_object,
                        gpointer task_data, GCancellable *cancellable)
 {
-    (void)task_data;
+    MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    MarmotGobjectWelcome *gobj = MARMOT_GOBJECT_WELCOME(task_data);
     (void)cancellable;
-    /* Accept welcome is a stub for now — the real implementation
-     * needs the MarmotWelcome C struct reconstructed from the GObject.
-     * For now, return success. */
+
+    /* Reconstruct a minimal MarmotWelcome with the wrapper_event_id
+     * that marmot_accept_welcome needs to look up raw data from storage. */
+    const gchar *wrapper_hex = marmot_gobject_welcome_get_wrapper_event_id(gobj);
+    if (!wrapper_hex) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_INPUT,
+                                "Welcome has no wrapper event ID");
+        return;
+    }
+
+    MarmotWelcome *welcome = marmot_welcome_new();
+    if (!welcome) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_MARMOT,
+                                "Failed to allocate welcome");
+        return;
+    }
+
+    /* Set wrapper_event_id from the GObject */
+    if (!hex_to_bytes(wrapper_hex, welcome->wrapper_event_id, 32)) {
+        marmot_welcome_free(welcome);
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                                "Invalid wrapper event ID hex");
+        return;
+    }
+
+    /* Set event ID */
+    const gchar *evt_hex = marmot_gobject_welcome_get_event_id(gobj);
+    if (evt_hex)
+        hex_to_bytes(evt_hex, welcome->id, 32);
+
+    MarmotError err = marmot_accept_welcome(self->marmot, welcome);
+    marmot_welcome_free(welcome);
+
+    if (err != MARMOT_OK) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
+                                "%s", marmot_error_string(err));
+        return;
+    }
+
     g_task_return_boolean(task, TRUE);
 }
 
@@ -844,6 +888,222 @@ marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
     if (out_result_type)
         *out_result_type = result_type;
     return json;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MIP-04: Media Encryption (async)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    gchar *mls_group_id_hex;
+    guint8 *file_data;
+    gsize file_len;
+    gchar *mime_type;
+    gchar *filename;
+} EncryptMediaData;
+
+static void
+encrypt_media_data_free(gpointer data)
+{
+    EncryptMediaData *d = data;
+    g_free(d->mls_group_id_hex);
+    g_free(d->file_data);
+    g_free(d->mime_type);
+    g_free(d->filename);
+    g_free(d);
+}
+
+static void
+encrypt_media_thread(GTask *task, gpointer source_object,
+                      gpointer task_data, GCancellable *cancellable)
+{
+    MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    EncryptMediaData *d = task_data;
+    (void)cancellable;
+
+    size_t hex_len = strlen(d->mls_group_id_hex);
+    size_t byte_len = hex_len / 2;
+    uint8_t mls_gid_bytes[128];
+    if (byte_len > sizeof(mls_gid_bytes) ||
+        !hex_to_bytes(d->mls_group_id_hex, mls_gid_bytes, byte_len)) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                                "Invalid MLS group ID hex");
+        return;
+    }
+
+    MarmotGroupId gid = marmot_group_id_new(mls_gid_bytes, byte_len);
+
+    MarmotEncryptedMedia result = { 0 };
+    MarmotError err = marmot_encrypt_media(
+        self->marmot, &gid,
+        d->file_data, d->file_len,
+        d->mime_type, d->filename,
+        &result);
+    marmot_group_id_free(&gid);
+
+    if (err != MARMOT_OK) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
+                                "%s", marmot_error_string(err));
+        return;
+    }
+
+    /* Return the encrypted data as GBytes */
+    GBytes *encrypted = g_bytes_new_take(result.encrypted_data, result.encrypted_len);
+    result.encrypted_data = NULL;  /* ownership transferred */
+    marmot_encrypted_media_clear(&result);
+    g_task_return_pointer(task, encrypted, (GDestroyNotify)g_bytes_unref);
+}
+
+void
+marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
+                                            const gchar *mls_group_id_hex,
+                                            GBytes *file_data,
+                                            const gchar *mime_type,
+                                            const gchar *filename,
+                                            GCancellable *cancellable,
+                                            GAsyncReadyCallback callback,
+                                            gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(mls_group_id_hex != NULL);
+    g_return_if_fail(file_data != NULL);
+
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+
+    gsize data_len;
+    const guint8 *data = g_bytes_get_data(file_data, &data_len);
+
+    EncryptMediaData *d = g_new0(EncryptMediaData, 1);
+    d->mls_group_id_hex = g_strdup(mls_group_id_hex);
+    d->file_data = g_memdup2(data, data_len);
+    d->file_len = data_len;
+    d->mime_type = g_strdup(mime_type);
+    d->filename = g_strdup(filename);
+    g_task_set_task_data(task, d, encrypt_media_data_free);
+
+    g_task_run_in_thread(task, encrypt_media_thread);
+    g_object_unref(task);
+}
+
+GBytes *
+marmot_gobject_client_encrypt_media_finish(MarmotGobjectClient *self,
+                                            GAsyncResult *result,
+                                            GError **error)
+{
+    g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+    return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+/* ── Decrypt Media ────────────────────────────────────────────── */
+
+typedef struct {
+    gchar *mls_group_id_hex;
+    guint8 *encrypted_data;
+    gsize encrypted_len;
+    MarmotImetaInfo imeta;
+} DecryptMediaData;
+
+static void
+decrypt_media_data_free(gpointer data)
+{
+    DecryptMediaData *d = data;
+    g_free(d->mls_group_id_hex);
+    g_free(d->encrypted_data);
+    g_free(d->imeta.mime_type);
+    g_free(d->imeta.filename);
+    g_free(d->imeta.url);
+    g_free(d);
+}
+
+static void
+decrypt_media_thread(GTask *task, gpointer source_object,
+                      gpointer task_data, GCancellable *cancellable)
+{
+    MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    DecryptMediaData *d = task_data;
+    (void)cancellable;
+
+    size_t hex_len = strlen(d->mls_group_id_hex);
+    size_t byte_len = hex_len / 2;
+    uint8_t mls_gid_bytes[128];
+    if (byte_len > sizeof(mls_gid_bytes) ||
+        !hex_to_bytes(d->mls_group_id_hex, mls_gid_bytes, byte_len)) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                                "Invalid MLS group ID hex");
+        return;
+    }
+
+    MarmotGroupId gid = marmot_group_id_new(mls_gid_bytes, byte_len);
+
+    uint8_t *plaintext = NULL;
+    size_t plaintext_len = 0;
+    MarmotError err = marmot_decrypt_media(
+        self->marmot, &gid,
+        d->encrypted_data, d->encrypted_len,
+        &d->imeta,
+        &plaintext, &plaintext_len);
+    marmot_group_id_free(&gid);
+
+    if (err != MARMOT_OK) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
+                                "%s", marmot_error_string(err));
+        return;
+    }
+
+    GBytes *result = g_bytes_new_take(plaintext, plaintext_len);
+    g_task_return_pointer(task, result, (GDestroyNotify)g_bytes_unref);
+}
+
+void
+marmot_gobject_client_decrypt_media_async(MarmotGobjectClient *self,
+                                            const gchar *mls_group_id_hex,
+                                            GBytes *encrypted_data,
+                                            const gchar *mime_type,
+                                            const gchar *filename,
+                                            gsize original_size,
+                                            const guint8 file_hash[32],
+                                            const guint8 nonce[12],
+                                            guint64 epoch,
+                                            GCancellable *cancellable,
+                                            GAsyncReadyCallback callback,
+                                            gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(mls_group_id_hex != NULL);
+    g_return_if_fail(encrypted_data != NULL);
+
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+
+    gsize enc_len;
+    const guint8 *enc_bytes = g_bytes_get_data(encrypted_data, &enc_len);
+
+    DecryptMediaData *d = g_new0(DecryptMediaData, 1);
+    d->mls_group_id_hex = g_strdup(mls_group_id_hex);
+    d->encrypted_data = g_memdup2(enc_bytes, enc_len);
+    d->encrypted_len = enc_len;
+    d->imeta.mime_type = g_strdup(mime_type);
+    d->imeta.filename = g_strdup(filename);
+    d->imeta.original_size = original_size;
+    d->imeta.epoch = epoch;
+    if (file_hash)
+        memcpy(d->imeta.file_hash, file_hash, 32);
+    if (nonce)
+        memcpy(d->imeta.nonce, nonce, 12);
+    g_task_set_task_data(task, d, decrypt_media_data_free);
+
+    g_task_run_in_thread(task, decrypt_media_thread);
+    g_object_unref(task);
+}
+
+GBytes *
+marmot_gobject_client_decrypt_media_finish(MarmotGobjectClient *self,
+                                            GAsyncResult *result,
+                                            GError **error)
+{
+    g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+    return g_task_propagate_pointer(G_TASK(result), error);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

@@ -31,6 +31,7 @@ struct _MarmotGobjectWelcome {
     MarmotGobjectWelcomeState state;
     gchar *mls_group_id_hex;
     gchar *nostr_group_id_hex;
+    gchar *wrapper_event_id_hex;
     gchar **relay_urls;  /* NULL-terminated */
 };
 
@@ -64,6 +65,7 @@ marmot_gobject_welcome_finalize(GObject *object)
     g_clear_pointer(&self->welcomer_hex, g_free);
     g_clear_pointer(&self->mls_group_id_hex, g_free);
     g_clear_pointer(&self->nostr_group_id_hex, g_free);
+    g_clear_pointer(&self->wrapper_event_id_hex, g_free);
     g_clear_pointer(&self->relay_urls, g_strfreev);
     G_OBJECT_CLASS(marmot_gobject_welcome_parent_class)->finalize(object);
 }
@@ -136,4 +138,18 @@ const gchar * const *
 marmot_gobject_welcome_get_relay_urls(MarmotGobjectWelcome *self)
 {
     return (const gchar * const *)self->relay_urls;
+}
+
+const gchar *
+marmot_gobject_welcome_get_wrapper_event_id(MarmotGobjectWelcome *self)
+{
+    return self->wrapper_event_id_hex;
+}
+
+void
+marmot_gobject_welcome_set_wrapper_event_id(MarmotGobjectWelcome *self,
+                                              const gchar *wrapper_event_id_hex)
+{
+    g_free(self->wrapper_event_id_hex);
+    self->wrapper_event_id_hex = g_strdup(wrapper_event_id_hex);
 }
