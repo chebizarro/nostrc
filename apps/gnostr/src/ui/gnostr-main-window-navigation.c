@@ -151,6 +151,22 @@ gnostr_main_window_on_notification_open_profile_internal(GnostrNotificationsView
     gtk_popover_popdown(GTK_POPOVER(popover));
 }
 
+/* nostrc-hz5v.4: DM notification click opens the conversation with the peer */
+void
+gnostr_main_window_on_notification_open_conversation_internal(GnostrNotificationsView *view,
+                                                               const char *peer_pubkey,
+                                                               gpointer user_data)
+{
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !peer_pubkey)
+    return;
+
+  gnostr_main_window_navigate_to_dm_conversation_internal(self, peer_pubkey);
+  GtkWidget *popover = gtk_widget_get_ancestor(GTK_WIDGET(view), GTK_TYPE_POPOVER);
+  if (popover)
+    gtk_popover_popdown(GTK_POPOVER(popover));
+}
+
 void
 gnostr_main_window_on_classifieds_open_profile_internal(GnostrClassifiedsView *view,
                                                         const char *pubkey_hex,

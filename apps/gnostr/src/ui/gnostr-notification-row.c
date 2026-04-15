@@ -38,6 +38,7 @@ G_DEFINE_TYPE(GnostrNotificationRow, gnostr_notification_row, GTK_TYPE_WIDGET)
 enum {
     SIGNAL_OPEN_NOTE,
     SIGNAL_OPEN_PROFILE,
+    SIGNAL_OPEN_CONVERSATION,
     SIGNAL_MARK_READ,
     N_SIGNALS
 };
@@ -113,12 +114,26 @@ on_row_clicked(GtkGestureClick *gesture, int n_press, double x, double y, Gnostr
         g_signal_emit(self, signals[SIGNAL_MARK_READ], 0, self->notification_id);
     }
 
-    /* Navigate based on notification type */
-    if (self->target_note_id) {
-        g_signal_emit(self, signals[SIGNAL_OPEN_NOTE], 0, self->target_note_id);
-    } else if (self->actor_pubkey) {
-        /* For follow notifications, open profile */
-        g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, self->actor_pubkey);
+    /* Navigate based on notification type — nostrc-hz5v.4 */
+    switch (self->type) {
+    case GNOSTR_NOTIFICATION_DM:
+        /* DMs open the conversation with the sender */
+        if (self->actor_pubkey)
+            g_signal_emit(self, signals[SIGNAL_OPEN_CONVERSATION], 0, self->actor_pubkey);
+        break;
+    case GNOSTR_NOTIFICATION_FOLLOWER:
+    case GNOSTR_NOTIFICATION_LIST:
+        /* Follows and list additions open the actor's profile */
+        if (self->actor_pubkey)
+            g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, self->actor_pubkey);
+        break;
+    default:
+        /* Mentions, replies, reposts, reactions, zaps open the target note */
+        if (self->target_note_id)
+            g_signal_emit(self, signals[SIGNAL_OPEN_NOTE], 0, self->target_note_id);
+        else if (self->actor_pubkey)
+            g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, self->actor_pubkey);
+        break;
     }
 }
 
@@ -157,6 +172,13 @@ gnostr_notification_row_class_init(GnostrNotificationRowClass *klass)
 
     signals[SIGNAL_OPEN_PROFILE] = g_signal_new(
         "open-profile",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 1, G_TYPE_STRING);
+
+    signals[SIGNAL_OPEN_CONVERSATION] = g_signal_new(
+        "open-conversation",
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
@@ -234,6 +256,10 @@ get_type_icon_name(GnostrNotificationType type)
             return "weather-storm-symbolic";
         case GNOSTR_NOTIFICATION_TYPE_FOLLOW:
             return "contact-new-symbolic";
+        case GNOSTR_NOTIFICATION_DM:
+            return "mail-unread-symbolic";
+        case GNOSTR_NOTIFICATION_LIST:
+            return "view-list-symbolic";
         default:
             return "dialog-information-symbolic";
     }
@@ -261,6 +287,10 @@ get_action_text(GnostrNotificationType type, guint64 zap_amount_msats)
             return "zapped your note";
         case GNOSTR_NOTIFICATION_TYPE_FOLLOW:
             return "started following you";
+        case GNOSTR_NOTIFICATION_DM:
+            return "sent you a message";
+        case GNOSTR_NOTIFICATION_LIST:
+            return "added you to";
         default:
             return "interacted with you";
     }

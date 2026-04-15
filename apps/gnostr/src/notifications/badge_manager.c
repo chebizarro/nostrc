@@ -1581,6 +1581,88 @@ history_process_zaps(HistoryLoadData *data, char **results, int count)
   }
 }
 
+/* Process DMs (kind 1059 gift wraps) from query results.
+ * Gift wraps are encrypted, so we can only extract sender pubkey and timestamp.
+ * Content preview is not available for DM history. */
+static void
+history_process_dms(HistoryLoadData *data, char **results, int count)
+{
+  gint64 last_read = data->last_read[GNOSTR_NOTIFICATION_DM];
+
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    char *pubkey = gnostr_json_get_string(results[i], "pubkey", NULL);
+    if (!pubkey) continue;
+
+    /* Skip self-notifications */
+    if (g_strcmp0(pubkey, data->user_pubkey) == 0) {
+      g_free(pubkey);
+      continue;
+    }
+
+    char *id = gnostr_json_get_string(results[i], "id", NULL);
+    if (!id) { g_free(pubkey); continue; }
+
+    gint64 created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
+
+    GnostrNotification *notif = g_new0(GnostrNotification, 1);
+    notif->id = id;
+    notif->type = GNOSTR_NOTIFICATION_DM;
+    notif->actor_pubkey = pubkey;
+    notif->target_note_id = g_strdup(id);  /* DM target is the event itself */
+    notif->created_at = created_at;
+    notif->is_read = (created_at <= last_read);
+
+    g_ptr_array_add(data->notifs, notif);
+  }
+}
+
+/* Process NIP-51 list additions (kinds 10000, 10001, 30000, 30001) from query results */
+static void
+history_process_lists(HistoryLoadData *data, char **results, int count)
+{
+  gint64 last_read = data->last_read[GNOSTR_NOTIFICATION_LIST];
+
+  for (int i = 0; i < count; i++) {
+    if (!results[i] || !gnostr_json_is_valid(results[i])) continue;
+
+    char *pubkey = gnostr_json_get_string(results[i], "pubkey", NULL);
+    if (!pubkey) continue;
+
+    /* Skip self-notifications */
+    if (g_strcmp0(pubkey, data->user_pubkey) == 0) {
+      g_free(pubkey);
+      continue;
+    }
+
+    char *id = gnostr_json_get_string(results[i], "id", NULL);
+    if (!id) { g_free(pubkey); continue; }
+
+    gint64 created_at = gnostr_json_get_int64(results[i], "created_at", NULL);
+
+    /* Determine list type from kind for content preview */
+    gint64 kind = gnostr_json_get_int64(results[i], "kind", NULL);
+    const char *list_type = "a list";
+    switch ((int)kind) {
+      case KIND_MUTE_LIST:     list_type = "their mute list"; break;
+      case KIND_PIN_LIST:      list_type = "their pinned list"; break;
+      case KIND_PEOPLE_LIST:   list_type = "a people list"; break;
+      case KIND_BOOKMARK_LIST: list_type = "a bookmark list"; break;
+    }
+
+    GnostrNotification *notif = g_new0(GnostrNotification, 1);
+    notif->id = id;
+    notif->type = GNOSTR_NOTIFICATION_LIST;
+    notif->actor_pubkey = pubkey;
+    notif->content_preview = g_strdup(list_type);
+    notif->created_at = created_at;
+    notif->is_read = (created_at <= last_read);
+
+    g_ptr_array_add(data->notifs, notif);
+  }
+}
+
 /* Process followers (kind 3) from query results */
 static void
 history_process_followers(HistoryLoadData *data, char **results, int count)
@@ -1698,6 +1780,35 @@ history_load_thread_func(GTask *task, gpointer source_object,
     int count = 0;
     if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
       history_process_followers(data, results, count);
+    }
+    if (results) storage_ndb_free_results(results, count);
+    g_free(filter);
+  }
+
+  /* 6. DMs (kind 1059 gift wraps) — nostrc-hz5v.3 */
+  {
+    gchar *filter = g_strdup_printf(
+        "{\"kinds\":[%d],\"#p\":[\"%s\"],\"limit\":%d}",
+        KIND_GIFT_WRAP, data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
+    char **results = NULL;
+    int count = 0;
+    if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
+      history_process_dms(data, results, count);
+    }
+    if (results) storage_ndb_free_results(results, count);
+    g_free(filter);
+  }
+
+  /* 7. Lists (NIP-51 kinds 10000, 10001, 30000, 30001) — nostrc-hz5v.3 */
+  {
+    gchar *filter = g_strdup_printf(
+        "{\"kinds\":[%d,%d,%d,%d],\"#p\":[\"%s\"],\"limit\":%d}",
+        KIND_MUTE_LIST, KIND_PIN_LIST, KIND_PEOPLE_LIST, KIND_BOOKMARK_LIST,
+        data->user_pubkey, HISTORY_LIMIT_PER_TYPE);
+    char **results = NULL;
+    int count = 0;
+    if (storage_ndb_query(txn, filter, &results, &count, NULL) == 0 && count > 0) {
+      history_process_lists(data, results, count);
     }
     if (results) storage_ndb_free_results(results, count);
     g_free(filter);

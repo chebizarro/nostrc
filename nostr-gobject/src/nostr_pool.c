@@ -1028,7 +1028,10 @@ connect_one_relay_cb(GObject      *source,
     if (gnostr_relay_connect_finish(relay, result, &error)) {
         data->succeeded++;
     } else {
-        g_debug("Relay connect failed: %s", error ? error->message : "unknown");
+        /* nostrc-8mb8.1: Include relay URL in connect failure log */
+        const char *url = gnostr_relay_get_url(relay);
+        g_debug("[RELAY] connect_failed url=%s error=%s",
+                url ? url : "?", error ? error->message : "unknown");
     }
 
     data->completed++;

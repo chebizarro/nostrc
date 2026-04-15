@@ -26,6 +26,9 @@ uint64_t gn_ndb_subscribe(
 
 void gn_ndb_unsubscribe(uint64_t subid);
 
+/* nostrc-8mb8.2: Return the number of active NDB subscriptions (diagnostics). */
+guint gn_ndb_get_active_subscription_count(void);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NDB_SUB_DISPATCHER_H */

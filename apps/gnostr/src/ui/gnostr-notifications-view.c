@@ -35,6 +35,7 @@ G_DEFINE_TYPE(GnostrNotificationsView, gnostr_notifications_view, GTK_TYPE_WIDGE
 enum {
     SIGNAL_OPEN_NOTE,
     SIGNAL_OPEN_PROFILE,
+    SIGNAL_OPEN_CONVERSATION,
     N_SIGNALS
 };
 
@@ -75,6 +76,13 @@ on_row_open_profile(GnostrNotificationRow *row, const char *pubkey, GnostrNotifi
 {
     (void)row;
     g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey);
+}
+
+static void
+on_row_open_conversation(GnostrNotificationRow *row, const char *peer_pubkey, GnostrNotificationsView *self)
+{
+    (void)row;
+    g_signal_emit(self, signals[SIGNAL_OPEN_CONVERSATION], 0, peer_pubkey);
 }
 
 static void
@@ -184,6 +192,13 @@ gnostr_notifications_view_class_init(GnostrNotificationsViewClass *klass)
         0, NULL, NULL, NULL,
         G_TYPE_NONE, 1, G_TYPE_STRING);
 
+    signals[SIGNAL_OPEN_CONVERSATION] = g_signal_new(
+        "open-conversation",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 1, G_TYPE_STRING);
+
     /* CSS */
     gtk_widget_class_set_css_name(widget_class, "notifications-view");
 
@@ -240,6 +255,8 @@ gnostr_notifications_view_add_notification(GnostrNotificationsView *self,
                      G_CALLBACK(on_row_open_note), self);
     g_signal_connect(row, "open-profile",
                      G_CALLBACK(on_row_open_profile), self);
+    g_signal_connect(row, "open-conversation",
+                     G_CALLBACK(on_row_open_conversation), self);
     g_signal_connect(row, "mark-read",
                      G_CALLBACK(on_row_mark_read), self);
 

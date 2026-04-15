@@ -228,6 +228,7 @@ void gnostr_main_window_on_search_open_profile_internal(GnostrSearchResultsView 
 void gnostr_main_window_on_search_search_hashtag_internal(GnostrSearchResultsView *view, const char *hashtag, gpointer user_data);
 void gnostr_main_window_on_notification_open_note_internal(GnostrNotificationsView *view, const char *note_id, gpointer user_data);
 void gnostr_main_window_on_notification_open_profile_internal(GnostrNotificationsView *view, const char *pubkey_hex, gpointer user_data);
+void gnostr_main_window_on_notification_open_conversation_internal(GnostrNotificationsView *view, const char *peer_pubkey, gpointer user_data);
 void gnostr_main_window_on_classifieds_open_profile_internal(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data);
 void gnostr_main_window_on_classifieds_contact_seller_internal(GnostrClassifiedsView *view, const char *pubkey_hex, const char *lud16, gpointer user_data);
 void gnostr_main_window_on_classifieds_listing_clicked_internal(GnostrClassifiedsView *view, const char *event_id, const char *naddr, gpointer user_data);
@@ -237,6 +238,9 @@ void gnostr_main_window_on_repo_refresh_requested_internal(GnostrRepoBrowser *br
 void gnostr_main_window_on_repo_browser_need_profile_internal(GnostrRepoBrowser *browser, const char *pubkey_hex, gpointer user_data);
 void gnostr_main_window_on_repo_browser_open_profile_internal(GnostrRepoBrowser *browser, const char *pubkey_hex, gpointer user_data);
 void gnostr_main_window_start_pool_live_internal(GnostrMainWindow *self);
+
+/* nostrc-8mb8.2: Protocol diagnostics dump (Ctrl+Shift+D) */
+void gnostr_debug_dump_protocol_state(GnostrMainWindow *self);
 void gnostr_main_window_start_profile_subscription_internal(GnostrMainWindow *self);
 void gnostr_main_window_on_relay_config_changed_internal(gpointer user_data);
 void gnostr_main_window_build_urls_and_filters_for_kinds_internal(GnostrMainWindow *self,
@@ -330,8 +334,9 @@ void gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
                                                      GCallback search_open_note_cb,
                                                      GCallback search_open_profile_cb,
                                                      GCallback search_hashtag_cb,
-                                                     GCallback notification_open_note_cb,
-                                                     GCallback notification_open_profile_cb,
+                                                      GCallback notification_open_note_cb,
+                                                      GCallback notification_open_profile_cb,
+                                                      GCallback notification_open_conversation_cb,
                                                      GCallback classifieds_open_profile_cb,
                                                      GCallback classifieds_contact_seller_cb,
                                                      GCallback classifieds_listing_clicked_cb);

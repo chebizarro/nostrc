@@ -16,6 +16,8 @@ G_DECLARE_FINAL_TYPE(GnostrNotificationRow, gnostr_notification_row, GNOSTR, NOT
  *   - Emitted when user clicks to open the related note
  * "open-profile" (gchar* pubkey_hex, gpointer user_data)
  *   - Emitted when user clicks avatar to view profile
+ * "open-conversation" (gchar* peer_pubkey_hex, gpointer user_data)
+ *   - Emitted when user clicks a DM notification to open the conversation
  * "mark-read" (gchar* notification_id, gpointer user_data)
  *   - Emitted when notification should be marked as read
  */

@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "gnostr-label-guard.h"
 #include "../util/markdown_pango.h"
+#include "../util/utils.h"
 #include <nostr-gtk-1.0/content_renderer.h>
 #include "../util/nip05.h"
 #include "../util/nip84_highlights.h"
@@ -608,6 +609,9 @@ static void on_header_image_loaded(GObject *source, GAsyncResult *res, gpointer 
 
 static void load_header_image(GnostrArticleCard *self, const char *url) {
   if (!url || !*url) return;
+
+  /* nostrc-jvdv.2: Respect remote media privacy setting */
+  if (!gnostr_is_remote_media_allowed()) return;
 
   SoupSession *session = gnostr_get_shared_soup_session();
   if (!session) return;

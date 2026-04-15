@@ -16,6 +16,8 @@ G_DECLARE_FINAL_TYPE(GnostrNotificationsView, gnostr_notifications_view, GNOSTR,
  *   - Emitted when user clicks to view a note
  * "open-profile" (gchar* pubkey_hex, gpointer user_data)
  *   - Emitted when user clicks to view a profile
+ * "open-conversation" (gchar* peer_pubkey_hex, gpointer user_data)
+ *   - Emitted when user clicks a DM notification to open the conversation
  */
 
 typedef struct _GnostrNotificationsView GnostrNotificationsView;

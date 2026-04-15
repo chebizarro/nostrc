@@ -125,6 +125,19 @@ core_state_to_gobject(NostrRelayConnectionState core_state)
     }
 }
 
+/* nostrc-8mb8.1: Human-readable state name for structured logging */
+static const char *
+gnostr_relay_state_nick(GNostrRelayState state)
+{
+    switch (state) {
+    case GNOSTR_RELAY_STATE_DISCONNECTED: return "disconnected";
+    case GNOSTR_RELAY_STATE_CONNECTING:   return "connecting";
+    case GNOSTR_RELAY_STATE_CONNECTED:    return "connected";
+    case GNOSTR_RELAY_STATE_ERROR:        return "error";
+    default:                              return "unknown";
+    }
+}
+
 /* Internal state change helper */
 static void
 gnostr_relay_set_state_internal(GNostrRelay *self, GNostrRelayState new_state)
@@ -137,6 +150,12 @@ gnostr_relay_set_state_internal(GNostrRelay *self, GNostrRelayState new_state)
     gboolean is_connected = (new_state == GNOSTR_RELAY_STATE_CONNECTED);
 
     self->state = new_state;
+
+    /* nostrc-8mb8.1: Structured relay state logging */
+    g_debug("[RELAY] state=%s→%s url=%s",
+            gnostr_relay_state_nick(old_state),
+            gnostr_relay_state_nick(new_state),
+            self->url ? self->url : "(null)");
 
     /* Reset auth state on disconnect (nostrc-7og) */
     if (new_state == GNOSTR_RELAY_STATE_DISCONNECTED ||
@@ -263,6 +282,17 @@ ok_response_on_main_thread(gpointer user_data)
     OkResponseData *data = user_data;
     GNostrRelay *self = g_weak_ref_get(&data->cb_data->weak_relay);
     if (self) {
+        /* nostrc-8mb8.1: Structured publish OK/reject logging */
+        if (data->accepted) {
+            g_debug("[PUBLISH] OK relay=%s event=%.16s",
+                    self->url ? self->url : "?",
+                    data->event_id ? data->event_id : "?");
+        } else {
+            g_debug("[PUBLISH] REJECTED relay=%s event=%.16s reason=%s",
+                    self->url ? self->url : "?",
+                    data->event_id ? data->event_id : "?",
+                    data->message ? data->message : "(none)");
+        }
         g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_OK], 0,
                       data->event_id, data->accepted, data->message);
         g_object_unref(self);

@@ -323,3 +323,14 @@ void gn_ndb_unsubscribe(uint64_t subid) {
 
   g_debug("unsubscribed: subid=%" G_GUINT64_FORMAT, (guint64)subid);
 }
+
+/* nostrc-8mb8.2: Return the number of active NDB subscriptions (for diagnostics). */
+guint gn_ndb_get_active_subscription_count(void) {
+  GnNdbDispatcher *disp = gn_ndb_dispatcher_get();
+  if (!disp) return 0;
+
+  g_mutex_lock(&disp->lock);
+  guint count = disp->handlers ? g_hash_table_size(disp->handlers) : 0;
+  g_mutex_unlock(&disp->lock);
+  return count;
+}

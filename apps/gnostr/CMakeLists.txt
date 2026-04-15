@@ -809,7 +809,8 @@ if (BUILD_TESTING)
 
   add_executable(gnostr-test-image-viewer-remote-media
     tests/test_image_viewer_remote_media.c
-    src/ui/gnostr-image-viewer.c)
+    src/ui/gnostr-image-viewer.c
+    src/util/utils.c)
   target_compile_features(gnostr-test-image-viewer-remote-media PRIVATE c_std_11)
   target_compile_definitions(gnostr-test-image-viewer-remote-media PRIVATE GNOSTR_TESTING)
   if (SOUP3_FOUND)

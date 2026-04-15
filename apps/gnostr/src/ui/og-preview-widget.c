@@ -911,6 +911,12 @@ void og_preview_widget_set_url(OgPreviewWidget *self, const char *url) {
     og_preview_widget_clear(self);
     return;
   }
+
+  /* nostrc-jvdv.2: Respect remote media privacy setting */
+  if (!gnostr_is_remote_media_allowed()) {
+    og_preview_widget_clear(self);
+    return;
+  }
   
   /* Check if same URL */
   if (self->current_url && strcmp(self->current_url, url) == 0) {

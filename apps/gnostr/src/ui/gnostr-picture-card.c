@@ -1021,6 +1021,12 @@ load_image(GnostrPictureCard *self) {
     return;
   }
 
+  /* nostrc-jvdv.2: Respect remote media privacy setting */
+  if (!gnostr_is_remote_media_allowed()) {
+    gtk_widget_set_visible(self->image_picture, FALSE);
+    return;
+  }
+
 #ifdef HAVE_SOUP3
   /* nostrc-soup-dblf: Don't cancel old requests — let them complete harmlessly.
    * The GWeakRef in ThumbnailLoadCtx will detect the widget is gone. */

@@ -334,30 +334,11 @@ GnostrImageViewer *gnostr_image_viewer_new(GtkWindow *parent) {
   return self;
 }
 
+/* nostrc-jvdv.2: Delegate to shared utility in utils.c */
 static gboolean
 gnostr_image_viewer_remote_media_allowed(void)
 {
-  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
-  if (!source) {
-    g_debug("ImageViewer: GSettings schema source unavailable; blocking remote media");
-    return FALSE;
-  }
-
-  g_autoptr(GSettingsSchema) schema =
-    g_settings_schema_source_lookup(source, GNOSTR_CLIENT_SCHEMA_ID, TRUE);
-  if (!schema ||
-      !g_settings_schema_has_key(schema, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY)) {
-    g_debug("ImageViewer: GSettings schema/key unavailable; blocking remote media");
-    return FALSE;
-  }
-
-  g_autoptr(GSettings) settings = g_settings_new(GNOSTR_CLIENT_SCHEMA_ID);
-  if (!settings) {
-    g_debug("ImageViewer: failed to open GSettings; blocking remote media");
-    return FALSE;
-  }
-
-  return g_settings_get_boolean(settings, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY);
+  return gnostr_is_remote_media_allowed();
 }
 
 static void

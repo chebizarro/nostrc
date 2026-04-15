@@ -444,6 +444,13 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return GDK_EVENT_PROPAGATE;
 
+  /* nostrc-8mb8.2: Ctrl+Shift+D → protocol diagnostic dump */
+  if (keyval == GDK_KEY_D &&
+      (state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
+    gnostr_debug_dump_protocol_state(self);
+    return GDK_EVENT_STOP;
+  }
+
   if (keyval == GDK_KEY_Escape) {
     /* Close panel if it's open */
     if (gnostr_main_window_is_panel_visible_internal(self)) {
@@ -551,8 +558,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                                                    G_CALLBACK(gnostr_main_window_on_search_open_note_internal),
                                                    G_CALLBACK(gnostr_main_window_on_search_open_profile_internal),
                                                    G_CALLBACK(gnostr_main_window_on_search_search_hashtag_internal),
-                                                   G_CALLBACK(gnostr_main_window_on_notification_open_note_internal),
-                                                   G_CALLBACK(gnostr_main_window_on_notification_open_profile_internal),
+                                                    G_CALLBACK(gnostr_main_window_on_notification_open_note_internal),
+                                                    G_CALLBACK(gnostr_main_window_on_notification_open_profile_internal),
+                                                    G_CALLBACK(gnostr_main_window_on_notification_open_conversation_internal),
                                                    G_CALLBACK(gnostr_main_window_on_classifieds_open_profile_internal),
                                                    G_CALLBACK(gnostr_main_window_on_classifieds_contact_seller_internal),
                                                    G_CALLBACK(gnostr_main_window_on_classifieds_listing_clicked_internal));

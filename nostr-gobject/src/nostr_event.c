@@ -340,6 +340,11 @@ gnostr_event_verify(GNostrEvent *self, GError **error)
 
     gboolean valid = nostr_event_check_signature(self->event);
     if (!valid) {
+        /* nostrc-8mb8.1: Structured validation failure logging */
+        g_debug("[VALIDATE] FAIL class=sig_invalid event=%.16s pubkey=%.16s kind=%d",
+                self->event->id ? self->event->id : "?",
+                self->event->pubkey ? self->event->pubkey : "?",
+                self->event->kind);
         g_set_error(error,
                     NOSTR_ERROR,
                     NOSTR_ERROR_SIGNATURE_INVALID,

@@ -29,6 +29,20 @@ SoupSession *gnostr_get_shared_soup_session(void);
  */
 void gnostr_cleanup_shared_soup_session(void);
 
+/**
+ * gnostr_is_remote_media_allowed:
+ *
+ * Checks the "load-remote-media" GSettings key to determine if automatic
+ * remote media fetching is permitted. Returns FALSE if the setting is
+ * disabled or the schema is unavailable.
+ *
+ * Intentionally exempt paths (avatars) should not call this.
+ * nostrc-jvdv.2: Centralised privacy gate for all media fetch paths.
+ *
+ * Returns: TRUE if remote media loading is allowed
+ */
+gboolean gnostr_is_remote_media_allowed(void);
+
 #endif /* HAVE_SOUP3 */
 
 #include <nostr-gobject-1.0/nostr_pool.h>

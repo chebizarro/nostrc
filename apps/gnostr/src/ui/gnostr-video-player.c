@@ -7,6 +7,7 @@
  */
 
 #include "gnostr-video-player.h"
+#include "../util/utils.h"
 #include <adwaita.h>
 #include <glib/gi18n.h>
 
@@ -987,6 +988,12 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
 
   /* Skip if same URI already set */
   if (g_strcmp0(self->uri, uri) == 0) {
+    return;
+  }
+
+  /* nostrc-jvdv.2: Respect remote media privacy setting */
+  if (!gnostr_is_remote_media_allowed()) {
+    show_error_state(self, "Remote media loading is disabled");
     return;
   }
 

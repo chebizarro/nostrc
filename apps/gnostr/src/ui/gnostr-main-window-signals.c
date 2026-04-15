@@ -109,8 +109,9 @@ gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
                                                  GCallback search_open_note_cb,
                                                  GCallback search_open_profile_cb,
                                                  GCallback search_hashtag_cb,
-                                                 GCallback notification_open_note_cb,
-                                                 GCallback notification_open_profile_cb,
+                                                  GCallback notification_open_note_cb,
+                                                  GCallback notification_open_profile_cb,
+                                                  GCallback notification_open_conversation_cb,
                                                  GCallback classifieds_open_profile_cb,
                                                  GCallback classifieds_contact_seller_cb,
                                                  GCallback classifieds_listing_clicked_cb)
@@ -138,7 +139,8 @@ gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
   if (notif_view && GNOSTR_IS_NOTIFICATIONS_VIEW(notif_view)) {
     g_signal_connect(notif_view, "open-note", notification_open_note_cb, self);
     g_signal_connect(notif_view, "open-profile", notification_open_profile_cb, self);
-  }
+    g_signal_connect(notif_view, "open-conversation", notification_open_conversation_cb, self);
+    }
 
   GtkWidget *classifieds_view = self->session_view ? gnostr_session_view_get_classifieds_view(self->session_view) : NULL;
   if (classifieds_view && GNOSTR_IS_CLASSIFIEDS_VIEW(classifieds_view)) {

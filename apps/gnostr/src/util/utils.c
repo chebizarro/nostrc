@@ -59,6 +59,33 @@ void gnostr_cleanup_shared_soup_session(void) {
   g_mutex_unlock(&s_session_mutex);
 }
 
+/* nostrc-jvdv.2: Centralised privacy gate for remote media fetching.
+ * Reads the "load-remote-media" boolean from org.gnostr.Client GSettings.
+ * Returns FALSE if the setting is disabled or the schema is unavailable. */
+#define GNOSTR_CLIENT_SCHEMA_ID "org.gnostr.Client"
+#define GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY "load-remote-media"
+
+gboolean
+gnostr_is_remote_media_allowed(void)
+{
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  if (!source) return FALSE;
+
+  g_autoptr(GSettingsSchema) schema =
+      g_settings_schema_source_lookup(source, GNOSTR_CLIENT_SCHEMA_ID, TRUE);
+  if (!schema ||
+      !g_settings_schema_has_key(schema, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY)) {
+    g_debug("Remote media: GSettings schema/key unavailable; blocking");
+    return FALSE;
+  }
+
+  g_autoptr(GSettings) settings =
+      g_settings_new_full(schema, NULL, NULL);
+  if (!settings) return FALSE;
+
+  return g_settings_get_boolean(settings, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY);
+}
+
 #endif /* HAVE_SOUP3 */
 
 /* Event sink adapter: persists relay query results to nostrdb automatically */

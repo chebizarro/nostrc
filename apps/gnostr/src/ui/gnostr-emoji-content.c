@@ -161,8 +161,9 @@ static void add_emoji_image(GnostrEmojiContent *self, GnostrCustomEmoji *emoji) 
   if (cached) {
     gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(cached));
     g_object_unref(cached);
-  } else {
-    /* Load asynchronously - use shared session to reduce memory overhead */
+  } else if (gnostr_is_remote_media_allowed()) {
+    /* nostrc-jvdv.2: Only fetch remote emoji when remote media is allowed.
+     * Cached emoji above still display regardless of the setting. */
 #ifdef HAVE_SOUP3
     SoupSession *session = gnostr_get_shared_soup_session();
     if (session) {
