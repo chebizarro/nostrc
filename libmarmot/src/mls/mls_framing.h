@@ -197,6 +197,248 @@ int mls_build_content_aad(const uint8_t *group_id, size_t group_id_len,
 void mls_apply_reuse_guard(uint8_t nonce[MLS_AEAD_NONCE_LEN],
                            const uint8_t reuse_guard[4]);
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * FramedContent (RFC 9420 §6.1)
+ *
+ * struct {
+ *   opaque group_id<V>;
+ *   uint64 epoch;
+ *   Sender sender;
+ *   opaque authenticated_data<V>;
+ *   ContentType content_type;
+ *   select (ContentType) {
+ *     case application: opaque application_data<V>;
+ *     case proposal: Proposal proposal;
+ *     case commit: Commit commit;
+ *   };
+ * } FramedContent;
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * MlsSender:
+ *
+ * Identifies the sender of a message. For member senders, includes
+ * the leaf index in the ratchet tree.
+ */
+typedef struct {
+    uint8_t  sender_type;     /**< MLS_SENDER_TYPE_* */
+    uint32_t leaf_index;      /**< Only valid for MEMBER type */
+} MlsSender;
+
+/**
+ * MlsFramedContent:
+ *
+ * The inner envelope for MLS messages carrying the actual content
+ * along with group context (group_id, epoch, sender).
+ */
+typedef struct {
+    uint8_t  *group_id;
+    size_t    group_id_len;
+    uint64_t  epoch;
+    MlsSender sender;
+    uint8_t  *authenticated_data;
+    size_t    authenticated_data_len;
+    uint8_t   content_type;       /**< MLS_CONTENT_TYPE_* */
+    uint8_t  *content;            /**< Serialized content body */
+    size_t    content_len;
+} MlsFramedContent;
+
+/** Free a FramedContent's heap data. */
+void mls_framed_content_clear(MlsFramedContent *fc);
+
+/** Serialize FramedContent to TLS wire format. */
+int mls_framed_content_serialize(const MlsFramedContent *fc, MlsTlsBuf *buf);
+
+/** Deserialize FramedContent from TLS wire format. */
+int mls_framed_content_deserialize(MlsTlsReader *reader, MlsFramedContent *fc);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * FramedContentTBS (RFC 9420 §6.1)
+ *
+ * The to-be-signed structure for content authentication.
+ *
+ * struct {
+ *   ProtocolVersion version = mls10;
+ *   WireFormat wire_format;
+ *   FramedContent content;
+ *   select (Sender.sender_type) {
+ *     case member:
+ *       GroupContext context;
+ *   };
+ * } FramedContentTBS;
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Serialize FramedContentTBS for signing.
+ *
+ * @param fc                 The FramedContent to sign
+ * @param wire_format        Wire format (MLS_WIRE_FORMAT_PUBLIC_MESSAGE or _PRIVATE_MESSAGE)
+ * @param group_context      Serialized GroupContext (required for member senders)
+ * @param group_context_len  Length of group_context
+ * @param out                Output buffer (caller frees)
+ * @param out_len            Output length
+ * @return 0 on success
+ */
+int mls_framed_content_tbs_serialize(const MlsFramedContent *fc,
+                                      uint16_t wire_format,
+                                      const uint8_t *group_context, size_t group_context_len,
+                                      uint8_t **out, size_t *out_len);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * FramedContentAuthData (RFC 9420 §6.1)
+ *
+ * struct {
+ *   opaque signature<V>;
+ *   select (content_type) {
+ *     case commit: MAC confirmation_tag;
+ *   };
+ * } FramedContentAuthData;
+ * ──────────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    uint8_t  signature[MLS_SIG_LEN]; /**< Ed25519 signature */
+    bool     has_confirmation_tag;   /**< true for commit content type */
+    uint8_t  confirmation_tag[MLS_HASH_LEN]; /**< MAC for commit messages */
+} MlsFramedContentAuthData;
+
+/**
+ * Sign FramedContent.
+ *
+ * Computes SignWithLabel(signature_key, "FramedContentTBS", FramedContentTBS).
+ *
+ * @param fc                 Content to sign
+ * @param wire_format        Wire format
+ * @param group_context      Serialized GroupContext (for member senders)
+ * @param group_context_len  Length of group_context
+ * @param signature_key      Ed25519 private key
+ * @param auth               Output auth data
+ * @return 0 on success
+ */
+int mls_framed_content_sign(const MlsFramedContent *fc,
+                             uint16_t wire_format,
+                             const uint8_t *group_context, size_t group_context_len,
+                             const uint8_t signature_key[MLS_SIG_SK_LEN],
+                             MlsFramedContentAuthData *auth);
+
+/**
+ * Verify FramedContent signature.
+ *
+ * @param fc                 Content to verify
+ * @param auth               Auth data containing signature
+ * @param wire_format        Wire format
+ * @param group_context      Serialized GroupContext (for member senders)
+ * @param group_context_len  Length of group_context
+ * @param verification_key   Ed25519 public key
+ * @return 0 on valid signature
+ */
+int mls_framed_content_verify(const MlsFramedContent *fc,
+                               const MlsFramedContentAuthData *auth,
+                               uint16_t wire_format,
+                               const uint8_t *group_context, size_t group_context_len,
+                               const uint8_t verification_key[MLS_SIG_PK_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * PublicMessage (RFC 9420 §6.2)
+ *
+ * struct {
+ *   FramedContent content;
+ *   FramedContentAuthData auth;
+ *   select (content.sender.sender_type) {
+ *     case member: MAC membership_tag;
+ *   };
+ * } PublicMessage;
+ * ──────────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    MlsFramedContent         content;
+    MlsFramedContentAuthData auth;
+    bool                     has_membership_tag;
+    uint8_t                  membership_tag[MLS_HASH_LEN];
+} MlsPublicMessage;
+
+/** Free a PublicMessage's heap data. */
+void mls_public_message_clear(MlsPublicMessage *msg);
+
+/** Serialize a PublicMessage to TLS wire format. */
+int mls_public_message_serialize(const MlsPublicMessage *msg, MlsTlsBuf *buf);
+
+/** Deserialize a PublicMessage from TLS wire format. */
+int mls_public_message_deserialize(MlsTlsReader *reader, MlsPublicMessage *msg);
+
+/**
+ * Compute the membership tag for a PublicMessage.
+ *
+ * membership_tag = MAC(membership_key, AuthenticatedContentTBM)
+ *
+ * @param msg              The PublicMessage (content + auth must be filled)
+ * @param membership_key   From epoch secrets
+ * @param group_context    Serialized GroupContext
+ * @param group_context_len Length of group_context
+ * @return 0 on success (fills msg->membership_tag)
+ */
+int mls_public_message_compute_membership_tag(MlsPublicMessage *msg,
+                                               const uint8_t membership_key[MLS_HASH_LEN],
+                                               const uint8_t *group_context, size_t group_context_len);
+
+/**
+ * Verify the membership tag on a PublicMessage.
+ */
+int mls_public_message_verify_membership_tag(const MlsPublicMessage *msg,
+                                              const uint8_t membership_key[MLS_HASH_LEN],
+                                              const uint8_t *group_context, size_t group_context_len);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Confirmation tag (RFC 9420 §8.1)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Compute confirmation tag for a Commit message.
+ *
+ * confirmation_tag = MAC(confirmation_key, confirmed_transcript_hash)
+ *
+ * @param confirmation_key  From epoch secrets
+ * @param confirmed_transcript_hash Current transcript hash
+ * @param out               Output tag
+ * @return 0 on success
+ */
+int mls_compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
+                                  const uint8_t confirmed_transcript_hash[MLS_HASH_LEN],
+                                  uint8_t out[MLS_HASH_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * MLSMessage (RFC 9420 §6)
+ *
+ * Top-level container for all MLS messages on the wire.
+ *
+ * struct {
+ *   ProtocolVersion version = mls10;
+ *   CipherSuite cipher_suite;
+ *   WireFormat wire_format;
+ *   select (wire_format) {
+ *     case mls_public_message:  PublicMessage;
+ *     case mls_private_message: PrivateMessage;
+ *   };
+ * } MLSMessage;
+ * ──────────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    uint16_t wire_format;     /**< MLS_WIRE_FORMAT_* */
+    uint16_t cipher_suite;    /**< 0x0001 for our suite */
+    union {
+        MlsPublicMessage  public_message;
+        MlsPrivateMessage private_message;
+    };
+} MlsMLSMessage;
+
+/** Free an MLSMessage's heap data. */
+void mls_message_clear(MlsMLSMessage *msg);
+
+/** Serialize an MLSMessage to TLS wire format. */
+int mls_message_serialize(const MlsMLSMessage *msg, MlsTlsBuf *buf);
+
+/** Deserialize an MLSMessage from TLS wire format. */
+int mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg);
+
 #ifdef __cplusplus
 }
 #endif

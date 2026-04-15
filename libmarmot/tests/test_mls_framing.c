@@ -645,6 +645,576 @@ static void test_private_message_tamper_ciphertext(void)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * FramedContent tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void test_framed_content_serialize_roundtrip(void)
+{
+    MlsFramedContent fc;
+    memset(&fc, 0, sizeof(fc));
+
+    uint8_t gid[] = "test-group";
+    fc.group_id = malloc(sizeof(gid) - 1);
+    memcpy(fc.group_id, gid, sizeof(gid) - 1);
+    fc.group_id_len = sizeof(gid) - 1;
+    fc.epoch = 42;
+    fc.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    fc.sender.leaf_index = 3;
+    fc.content_type = MLS_CONTENT_TYPE_APPLICATION;
+
+    uint8_t body[] = "Hello world";
+    fc.content = malloc(sizeof(body) - 1);
+    memcpy(fc.content, body, sizeof(body) - 1);
+    fc.content_len = sizeof(body) - 1;
+
+    /* Serialize */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 128) == 0);
+    assert(mls_framed_content_serialize(&fc, &buf) == 0);
+
+    /* Deserialize */
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    MlsFramedContent fc2;
+    assert(mls_framed_content_deserialize(&reader, &fc2) == 0);
+
+    assert(fc2.group_id_len == fc.group_id_len);
+    assert(memcmp(fc2.group_id, fc.group_id, fc.group_id_len) == 0);
+    assert(fc2.epoch == 42);
+    assert(fc2.sender.sender_type == MLS_SENDER_TYPE_MEMBER);
+    assert(fc2.sender.leaf_index == 3);
+    assert(fc2.content_type == MLS_CONTENT_TYPE_APPLICATION);
+    assert(fc2.content_len == fc.content_len);
+    assert(memcmp(fc2.content, body, fc.content_len) == 0);
+
+    mls_tls_buf_free(&buf);
+    mls_framed_content_clear(&fc);
+    mls_framed_content_clear(&fc2);
+}
+
+static void test_framed_content_tbs_deterministic(void)
+{
+    MlsFramedContent fc;
+    memset(&fc, 0, sizeof(fc));
+
+    uint8_t gid[] = "grp";
+    fc.group_id = malloc(3);
+    memcpy(fc.group_id, gid, 3);
+    fc.group_id_len = 3;
+    fc.epoch = 0;
+    fc.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    fc.sender.leaf_index = 0;
+    fc.content_type = MLS_CONTENT_TYPE_APPLICATION;
+    fc.content = malloc(4);
+    memcpy(fc.content, "test", 4);
+    fc.content_len = 4;
+
+    /* Need a GroupContext for member senders */
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(th, 0x11, sizeof(th));
+    memset(cth, 0x22, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, 3, 0, th, cth, NULL, 0, &gc, &gc_len) == 0);
+
+    uint8_t *tbs1 = NULL, *tbs2 = NULL;
+    size_t len1 = 0, len2 = 0;
+    assert(mls_framed_content_tbs_serialize(&fc, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                             gc, gc_len, &tbs1, &len1) == 0);
+    assert(mls_framed_content_tbs_serialize(&fc, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                             gc, gc_len, &tbs2, &len2) == 0);
+
+    assert(len1 == len2);
+    assert(memcmp(tbs1, tbs2, len1) == 0);
+
+    free(tbs1);
+    free(tbs2);
+    free(gc);
+    mls_framed_content_clear(&fc);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Content signing / verification tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** Helper: create a FramedContent for signing tests. Caller must clear. */
+static void
+make_test_framed_content(MlsFramedContent *fc, const char *body,
+                         uint32_t leaf_index, uint64_t epoch)
+{
+    memset(fc, 0, sizeof(*fc));
+
+    uint8_t gid[] = "sign-test-group";
+    fc->group_id = malloc(sizeof(gid) - 1);
+    memcpy(fc->group_id, gid, sizeof(gid) - 1);
+    fc->group_id_len = sizeof(gid) - 1;
+    fc->epoch = epoch;
+    fc->sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    fc->sender.leaf_index = leaf_index;
+    fc->content_type = MLS_CONTENT_TYPE_APPLICATION;
+    size_t blen = strlen(body);
+    fc->content = malloc(blen);
+    memcpy(fc->content, body, blen);
+    fc->content_len = blen;
+}
+
+static void test_framed_content_sign_verify(void)
+{
+    /* Sign and verify a FramedContent */
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+
+    MlsFramedContent fc;
+    make_test_framed_content(&fc, "signed message", 0, 0);
+
+    uint8_t gid[] = "sign-test-group";
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(th, 0, sizeof(th));
+    memset(cth, 0, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, sizeof(gid) - 1, 0, th, cth,
+                                        NULL, 0, &gc, &gc_len) == 0);
+
+    MlsFramedContentAuthData auth;
+    assert(mls_framed_content_sign(&fc, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                    gc, gc_len, sk, &auth) == 0);
+
+    /* Verify should succeed with correct key */
+    assert(mls_framed_content_verify(&fc, &auth, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                      gc, gc_len, pk) == 0);
+
+    free(gc);
+    mls_framed_content_clear(&fc);
+}
+
+static void test_framed_content_sign_wrong_key(void)
+{
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+
+    uint8_t sk2[MLS_SIG_SK_LEN], pk2[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk2, pk2) == 0);
+
+    MlsFramedContent fc;
+    make_test_framed_content(&fc, "wrong key test", 0, 0);
+
+    uint8_t gid[] = "sign-test-group";
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(th, 0, sizeof(th));
+    memset(cth, 0, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, sizeof(gid) - 1, 0, th, cth,
+                                        NULL, 0, &gc, &gc_len) == 0);
+
+    MlsFramedContentAuthData auth;
+    assert(mls_framed_content_sign(&fc, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                    gc, gc_len, sk, &auth) == 0);
+
+    /* Verify with wrong key should fail */
+    assert(mls_framed_content_verify(&fc, &auth, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                      gc, gc_len, pk2) != 0);
+
+    free(gc);
+    mls_framed_content_clear(&fc);
+}
+
+static void test_framed_content_sign_tampered_content(void)
+{
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+
+    MlsFramedContent fc;
+    make_test_framed_content(&fc, "original", 0, 0);
+
+    uint8_t gid[] = "sign-test-group";
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(th, 0, sizeof(th));
+    memset(cth, 0, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, sizeof(gid) - 1, 0, th, cth,
+                                        NULL, 0, &gc, &gc_len) == 0);
+
+    MlsFramedContentAuthData auth;
+    assert(mls_framed_content_sign(&fc, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                    gc, gc_len, sk, &auth) == 0);
+
+    /* Tamper with content */
+    fc.content[0] ^= 0xFF;
+
+    /* Verify should fail */
+    assert(mls_framed_content_verify(&fc, &auth, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                      gc, gc_len, pk) != 0);
+
+    free(gc);
+    mls_framed_content_clear(&fc);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Confirmation tag tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void test_confirmation_tag_deterministic(void)
+{
+    uint8_t conf_key[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(conf_key, 0xAA, sizeof(conf_key));
+    memset(cth, 0xBB, sizeof(cth));
+
+    uint8_t tag1[MLS_HASH_LEN], tag2[MLS_HASH_LEN];
+    assert(mls_compute_confirmation_tag(conf_key, cth, tag1) == 0);
+    assert(mls_compute_confirmation_tag(conf_key, cth, tag2) == 0);
+    assert(memcmp(tag1, tag2, MLS_HASH_LEN) == 0);
+}
+
+static void test_confirmation_tag_different_inputs(void)
+{
+    uint8_t key1[MLS_HASH_LEN], key2[MLS_HASH_LEN];
+    memset(key1, 0x11, sizeof(key1));
+    memset(key2, 0x22, sizeof(key2));
+
+    uint8_t cth[MLS_HASH_LEN];
+    memset(cth, 0x33, sizeof(cth));
+
+    uint8_t tag1[MLS_HASH_LEN], tag2[MLS_HASH_LEN];
+    assert(mls_compute_confirmation_tag(key1, cth, tag1) == 0);
+    assert(mls_compute_confirmation_tag(key2, cth, tag2) == 0);
+    assert(memcmp(tag1, tag2, MLS_HASH_LEN) != 0);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * PublicMessage tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void test_public_message_serialize_roundtrip(void)
+{
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+
+    MlsPublicMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    make_test_framed_content(&msg.content, "public msg", 0, 5);
+
+    uint8_t gid[] = "sign-test-group";
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(th, 0, sizeof(th));
+    memset(cth, 0, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, sizeof(gid) - 1, 5, th, cth,
+                                        NULL, 0, &gc, &gc_len) == 0);
+
+    /* Sign */
+    assert(mls_framed_content_sign(&msg.content, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                    gc, gc_len, sk, &msg.auth) == 0);
+
+    /* Compute membership tag */
+    uint8_t membership_key[MLS_HASH_LEN];
+    memset(membership_key, 0xCC, sizeof(membership_key));
+    assert(mls_public_message_compute_membership_tag(&msg, membership_key,
+                                                      gc, gc_len) == 0);
+    assert(msg.has_membership_tag);
+
+    /* Serialize */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 256) == 0);
+    assert(mls_public_message_serialize(&msg, &buf) == 0);
+
+    /* Deserialize */
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    MlsPublicMessage msg2;
+    assert(mls_public_message_deserialize(&reader, &msg2) == 0);
+
+    /* Verify fields */
+    assert(msg2.content.epoch == 5);
+    assert(msg2.content.sender.leaf_index == 0);
+    assert(msg2.content.content_type == MLS_CONTENT_TYPE_APPLICATION);
+    assert(msg2.content.content_len == msg.content.content_len);
+    assert(memcmp(msg2.auth.signature, msg.auth.signature, MLS_SIG_LEN) == 0);
+    assert(msg2.has_membership_tag);
+    assert(memcmp(msg2.membership_tag, msg.membership_tag, MLS_HASH_LEN) == 0);
+
+    /* Verify signature on deserialized message */
+    assert(mls_framed_content_verify(&msg2.content, &msg2.auth,
+                                      MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                      gc, gc_len, pk) == 0);
+
+    /* Verify membership tag */
+    assert(mls_public_message_verify_membership_tag(&msg2, membership_key,
+                                                     gc, gc_len) == 0);
+
+    mls_tls_buf_free(&buf);
+    mls_public_message_clear(&msg);
+    mls_public_message_clear(&msg2);
+    free(gc);
+}
+
+static void test_public_message_membership_tag_wrong_key(void)
+{
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    (void)pk;
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+
+    MlsPublicMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    make_test_framed_content(&msg.content, "member tag test", 0, 0);
+
+    uint8_t gid[] = "sign-test-group";
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(th, 0, sizeof(th));
+    memset(cth, 0, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, sizeof(gid) - 1, 0, th, cth,
+                                        NULL, 0, &gc, &gc_len) == 0);
+
+    assert(mls_framed_content_sign(&msg.content, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                    gc, gc_len, sk, &msg.auth) == 0);
+
+    uint8_t key1[MLS_HASH_LEN], key2[MLS_HASH_LEN];
+    memset(key1, 0xAA, sizeof(key1));
+    memset(key2, 0xBB, sizeof(key2));
+
+    assert(mls_public_message_compute_membership_tag(&msg, key1, gc, gc_len) == 0);
+
+    /* Verify with wrong key should fail */
+    assert(mls_public_message_verify_membership_tag(&msg, key2, gc, gc_len) != 0);
+
+    mls_public_message_clear(&msg);
+    free(gc);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MLSMessage container tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void test_mls_message_public_roundtrip(void)
+{
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    (void)pk;
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+
+    MlsMLSMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    msg.cipher_suite = 0x0001;
+
+    make_test_framed_content(&msg.public_message.content, "mls msg test", 1, 10);
+
+    uint8_t gid[] = "sign-test-group";
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    memset(th, 0, sizeof(th));
+    memset(cth, 0, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, sizeof(gid) - 1, 10, th, cth,
+                                        NULL, 0, &gc, &gc_len) == 0);
+
+    assert(mls_framed_content_sign(&msg.public_message.content,
+                                    MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                    gc, gc_len, sk, &msg.public_message.auth) == 0);
+
+    uint8_t mkey[MLS_HASH_LEN];
+    memset(mkey, 0xDD, sizeof(mkey));
+    assert(mls_public_message_compute_membership_tag(&msg.public_message,
+                                                      mkey, gc, gc_len) == 0);
+
+    /* Serialize */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 512) == 0);
+    assert(mls_message_serialize(&msg, &buf) == 0);
+
+    /* Deserialize */
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    MlsMLSMessage msg2;
+    assert(mls_message_deserialize(&reader, &msg2) == 0);
+
+    assert(msg2.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE);
+    assert(msg2.cipher_suite == 0x0001);
+    assert(msg2.public_message.content.epoch == 10);
+    assert(msg2.public_message.content.sender.leaf_index == 1);
+
+    mls_tls_buf_free(&buf);
+    mls_message_clear(&msg);
+    mls_message_clear(&msg2);
+    free(gc);
+}
+
+static void test_mls_message_private_roundtrip(void)
+{
+    TestEpochCtx ctx;
+    setup_epoch(&ctx, 2, 0, 0x90);
+
+    MlsMessageKeys keys;
+    assert(mls_secret_tree_derive_keys(&ctx.secret_tree, 0, false, &keys) == 0);
+
+    uint8_t reuse_guard[4];
+    mls_crypto_random(reuse_guard, 4);
+
+    const uint8_t pt[] = "private in mls message";
+
+    MlsMLSMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.wire_format = MLS_WIRE_FORMAT_PRIVATE_MESSAGE;
+    msg.cipher_suite = 0x0001;
+
+    assert(mls_private_message_encrypt(
+        ctx.group_id, ctx.group_id_len, ctx.epoch,
+        MLS_CONTENT_TYPE_APPLICATION,
+        NULL, 0, pt, sizeof(pt) - 1,
+        ctx.secrets.sender_data_secret,
+        &keys, 0, reuse_guard,
+        &msg.private_message) == 0);
+
+    /* Serialize */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 512) == 0);
+    assert(mls_message_serialize(&msg, &buf) == 0);
+
+    /* Deserialize */
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    MlsMLSMessage msg2;
+    assert(mls_message_deserialize(&reader, &msg2) == 0);
+
+    assert(msg2.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE);
+    assert(msg2.cipher_suite == 0x0001);
+    assert(msg2.private_message.epoch == ctx.epoch);
+
+    /* Decrypt from deserialized message */
+    MlsSecretTree dec_tree;
+    assert(mls_secret_tree_init(&dec_tree, ctx.secrets.encryption_secret, 2) == 0);
+
+    uint8_t *decrypted = NULL;
+    size_t dec_len = 0;
+    MlsSenderData sender;
+    assert(mls_private_message_decrypt(
+        &msg2.private_message, ctx.secrets.sender_data_secret,
+        &dec_tree, 100, &decrypted, &dec_len, &sender) == 0);
+
+    assert(dec_len == sizeof(pt) - 1);
+    assert(memcmp(decrypted, pt, dec_len) == 0);
+
+    free(decrypted);
+    mls_tls_buf_free(&buf);
+    mls_message_clear(&msg);
+    mls_message_clear(&msg2);
+    mls_secret_tree_free(&dec_tree);
+    teardown_epoch(&ctx);
+}
+
+static void test_mls_message_wrong_version(void)
+{
+    /* Manually create a buffer with wrong version */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 16) == 0);
+    mls_tls_write_u16(&buf, 99); /* wrong version */
+    mls_tls_write_u16(&buf, 0x0001);
+    mls_tls_write_u16(&buf, MLS_WIRE_FORMAT_PUBLIC_MESSAGE);
+
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    MlsMLSMessage msg;
+    assert(mls_message_deserialize(&reader, &msg) != 0);
+
+    mls_tls_buf_free(&buf);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Integration: full sign → public message → serialize → verify
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void test_full_public_message_flow(void)
+{
+    /* Simulate: member signs a proposal, serializes as MLSMessage,
+     * receiver deserializes, verifies signature and membership tag */
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+
+    /* Build group context */
+    uint8_t gid[] = "integration-group";
+    uint8_t th[MLS_HASH_LEN], cth[MLS_HASH_LEN];
+    mls_crypto_random(th, sizeof(th));
+    mls_crypto_random(cth, sizeof(cth));
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(gid, sizeof(gid) - 1, 7, th, cth,
+                                        NULL, 0, &gc, &gc_len) == 0);
+
+    /* Derive epoch secrets for membership key */
+    uint8_t commit_secret[MLS_HASH_LEN];
+    mls_crypto_random(commit_secret, sizeof(commit_secret));
+    MlsEpochSecrets secrets;
+    assert(mls_key_schedule_derive(NULL, commit_secret, gc, gc_len, NULL, &secrets) == 0);
+
+    /* Build content (simulate a proposal body) */
+    MlsMLSMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    msg.cipher_suite = 0x0001;
+
+    const uint8_t proposal_body[5] = {0x03 /* Remove */, 0x00, 0x00, 0x00, 0x02};
+    const size_t proposal_body_len = sizeof(proposal_body);
+    msg.public_message.content.group_id = malloc(sizeof(gid) - 1);
+    memcpy(msg.public_message.content.group_id, gid, sizeof(gid) - 1);
+    msg.public_message.content.group_id_len = sizeof(gid) - 1;
+    msg.public_message.content.epoch = 7;
+    msg.public_message.content.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    msg.public_message.content.sender.leaf_index = 0;
+    msg.public_message.content.content_type = MLS_CONTENT_TYPE_PROPOSAL;
+    msg.public_message.content.content = malloc(proposal_body_len);
+    memcpy(msg.public_message.content.content, proposal_body, proposal_body_len);
+    msg.public_message.content.content_len = proposal_body_len;
+
+    /* Sign */
+    assert(mls_framed_content_sign(&msg.public_message.content,
+                                    MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                    gc, gc_len, sk,
+                                    &msg.public_message.auth) == 0);
+
+    /* Membership tag */
+    assert(mls_public_message_compute_membership_tag(&msg.public_message,
+                                                      secrets.membership_key,
+                                                      gc, gc_len) == 0);
+
+    /* Serialize as MLSMessage */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 512) == 0);
+    assert(mls_message_serialize(&msg, &buf) == 0);
+
+    /* ── Receiver side ── */
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    MlsMLSMessage received;
+    assert(mls_message_deserialize(&reader, &received) == 0);
+
+    assert(received.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE);
+    MlsPublicMessage *pm = &received.public_message;
+
+    /* Verify signature */
+    assert(mls_framed_content_verify(&pm->content, &pm->auth,
+                                      MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                      gc, gc_len, pk) == 0);
+
+    /* Verify membership tag */
+    assert(mls_public_message_verify_membership_tag(pm, secrets.membership_key,
+                                                     gc, gc_len) == 0);
+
+    /* Verify content */
+    assert(pm->content.content_type == MLS_CONTENT_TYPE_PROPOSAL);
+    assert(pm->content.content_len == proposal_body_len);
+    assert(memcmp(pm->content.content, proposal_body, proposal_body_len) == 0);
+
+    mls_tls_buf_free(&buf);
+    mls_message_clear(&msg);
+    mls_message_clear(&received);
+    free(gc);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Main
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -681,6 +1251,31 @@ int main(void)
     TEST(test_private_message_serialize_roundtrip);
     TEST(test_private_message_empty_plaintext);
     TEST(test_private_message_tamper_ciphertext);
+
+    printf("\n  --- FramedContent ---\n");
+    TEST(test_framed_content_serialize_roundtrip);
+    TEST(test_framed_content_tbs_deterministic);
+
+    printf("\n  --- Content signing ---\n");
+    TEST(test_framed_content_sign_verify);
+    TEST(test_framed_content_sign_wrong_key);
+    TEST(test_framed_content_sign_tampered_content);
+
+    printf("\n  --- Confirmation tag ---\n");
+    TEST(test_confirmation_tag_deterministic);
+    TEST(test_confirmation_tag_different_inputs);
+
+    printf("\n  --- PublicMessage ---\n");
+    TEST(test_public_message_serialize_roundtrip);
+    TEST(test_public_message_membership_tag_wrong_key);
+
+    printf("\n  --- MLSMessage container ---\n");
+    TEST(test_mls_message_public_roundtrip);
+    TEST(test_mls_message_private_roundtrip);
+    TEST(test_mls_message_wrong_version);
+
+    printf("\n  --- Integration ---\n");
+    TEST(test_full_public_message_flow);
 
     printf("\nAll MLS Message Framing tests passed.\n");
     return 0;
