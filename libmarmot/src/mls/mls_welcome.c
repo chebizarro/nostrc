@@ -210,15 +210,26 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
     }
     sodium_memzero(shared_secret, sizeof(shared_secret));
 
-    /* Derive welcome_secret from joiner_secret:
-     * welcome_secret = DeriveSecret(joiner_secret, "welcome")
+    /* Derive welcome_secret per RFC 9420 §8.3:
+     * member_secret = Extract(joiner_secret, psk_secret_or_zero)
+     * welcome_secret = DeriveSecret(member_secret, "welcome")
      * welcome_key = ExpandWithLabel(welcome_secret, "key", "", key_len)
      * welcome_nonce = ExpandWithLabel(welcome_secret, "nonce", "", nonce_len) */
-    uint8_t welcome_secret[MLS_HASH_LEN];
-    if (mls_crypto_derive_secret(welcome_secret, joiner_secret, "welcome") != 0) {
+    uint8_t zero_psk[MLS_HASH_LEN];
+    memset(zero_psk, 0, MLS_HASH_LEN);
+    uint8_t member_secret_early[MLS_HASH_LEN];
+    if (mls_crypto_hkdf_extract(member_secret_early, joiner_secret, MLS_HASH_LEN,
+                                 zero_psk, MLS_HASH_LEN) != 0) {
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
         return MARMOT_ERR_INTERNAL;
     }
+    uint8_t welcome_secret[MLS_HASH_LEN];
+    if (mls_crypto_derive_secret(welcome_secret, member_secret_early, "welcome") != 0) {
+        sodium_memzero(joiner_secret, sizeof(joiner_secret));
+        sodium_memzero(member_secret_early, sizeof(member_secret_early));
+        return MARMOT_ERR_INTERNAL;
+    }
+    sodium_memzero(member_secret_early, sizeof(member_secret_early));
 
     uint8_t welcome_key[MLS_AEAD_KEY_LEN];
     uint8_t welcome_nonce[MLS_AEAD_NONCE_LEN];
@@ -399,31 +410,23 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* For the joiner, the key schedule processes the joiner_secret
-     * as if it were derived from (init_secret, commit_secret).
-     * We use the key_schedule_derive with a special path:
-     * joiner_secret is already computed, so we pass it as the
-     * commit_secret with a zero init_secret_prev. */
+    /* Per RFC 9420 §8.3, the joiner derives secrets from joiner_secret
+     * through the same key schedule as the creator:
+     *
+     * 1. member_secret = Extract(joiner_secret, psk_secret_or_zero)
+     * 2. welcome_secret = DeriveSecret(member_secret, "welcome")
+     * 3. epoch_secret = ExpandWithLabel(member_secret, "epoch", GroupContext, Nh)
+     * 4. All epoch secrets derived from epoch_secret
+     *
+     * This matches mls_key_schedule_derive steps 3-6. */
     uint8_t zero[MLS_HASH_LEN];
     memset(zero, 0, MLS_HASH_LEN);
 
-    /* Actually, per RFC 9420, the joiner derives:
-     * welcome_secret = DeriveSecret(joiner_secret, "welcome")
-     * epoch_secret = ExpandWithLabel(joiner_secret, "epoch", GroupContext, Hash.length)
-     * Then all epoch secrets from epoch_secret.
-     *
-     * Our key_schedule_derive already does this internally from
-     * init_secret + commit_secret -> joiner_secret -> epoch_secret.
-     * We need to match the same joiner_secret, so we arrange
-     * the inputs to produce it. Since:
-     * joiner_secret = ExpandWithLabel(commit_secret XOR init_secret, ...)
-     * This is complex. Simpler: derive directly. */
-
-    /* Derive epoch_secret from joiner_secret */
-    uint8_t epoch_secret[MLS_HASH_LEN];
-    if (mls_crypto_expand_with_label(epoch_secret, MLS_HASH_LEN,
-                                      joiner_secret, "epoch",
-                                      gc_data, gc_len) != 0) {
+    /* Step 1: member_secret = Extract(joiner_secret, psk_secret)
+     * salt = joiner_secret, ikm = psk_secret (zero if no PSK) */
+    uint8_t member_secret[MLS_HASH_LEN];
+    if (mls_crypto_hkdf_extract(member_secret, joiner_secret, MLS_HASH_LEN,
+                                 zero, MLS_HASH_LEN) != 0) {
         free(gc_data);
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
@@ -431,9 +434,33 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* Derive individual epoch secrets from epoch_secret */
+    /* Step 2: welcome_secret = DeriveSecret(member_secret, "welcome") */
     MlsEpochSecrets *es = &group_out->epoch_secrets;
+    memcpy(es->joiner_secret, joiner_secret, MLS_HASH_LEN);
+    if (mls_crypto_derive_secret(es->welcome_secret, member_secret, "welcome") != 0) {
+        free(gc_data);
+        mls_group_info_clear(&gi);
+        sodium_memzero(joiner_secret, sizeof(joiner_secret));
+        sodium_memzero(member_secret, sizeof(member_secret));
+        mls_group_free(group_out);
+        return MARMOT_ERR_INTERNAL;
+    }
 
+    /* Step 3: epoch_secret = ExpandWithLabel(member_secret, "epoch", GroupContext, Nh) */
+    uint8_t epoch_secret[MLS_HASH_LEN];
+    if (mls_crypto_expand_with_label(epoch_secret, MLS_HASH_LEN,
+                                      member_secret, "epoch",
+                                      gc_data, gc_len) != 0) {
+        free(gc_data);
+        mls_group_info_clear(&gi);
+        sodium_memzero(joiner_secret, sizeof(joiner_secret));
+        sodium_memzero(member_secret, sizeof(member_secret));
+        mls_group_free(group_out);
+        return MARMOT_ERR_INTERNAL;
+    }
+    sodium_memzero(member_secret, sizeof(member_secret));
+
+    /* Step 4: Derive all epoch secrets from epoch_secret */
     if (mls_crypto_derive_secret(es->sender_data_secret, epoch_secret, "sender data") != 0 ||
         mls_crypto_derive_secret(es->encryption_secret, epoch_secret, "encryption") != 0 ||
         mls_crypto_derive_secret(es->exporter_secret, epoch_secret, "exporter") != 0 ||
@@ -450,19 +477,8 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* init_secret for next epoch */
+    /* Step 5: init_secret for next epoch */
     if (mls_crypto_derive_secret(es->init_secret, epoch_secret, "init") != 0) {
-        free(gc_data);
-        mls_group_info_clear(&gi);
-        sodium_memzero(joiner_secret, sizeof(joiner_secret));
-        sodium_memzero(epoch_secret, sizeof(epoch_secret));
-        mls_group_free(group_out);
-        return MARMOT_ERR_INTERNAL;
-    }
-
-    /* Store joiner_secret and welcome_secret for reference */
-    memcpy(es->joiner_secret, joiner_secret, MLS_HASH_LEN);
-    if (mls_crypto_derive_secret(es->welcome_secret, joiner_secret, "welcome") != 0) {
         free(gc_data);
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
