@@ -179,6 +179,17 @@ int mls_exporter(const uint8_t exporter_secret[MLS_HASH_LEN],
                  const uint8_t *context, size_t context_len,
                  uint8_t *out, size_t out_len);
 
+/**
+ * MLS-Exporter with binary label (RFC 9420 §8.5).
+ *
+ * Same as mls_exporter but accepts a raw binary label with explicit length,
+ * needed for RFC 9420 test vector validation where labels are arbitrary bytes.
+ */
+int mls_exporter_raw(const uint8_t exporter_secret[MLS_HASH_LEN],
+                     const uint8_t *label, size_t label_len,
+                     const uint8_t *context, size_t context_len,
+                     uint8_t *out, size_t out_len);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * GroupContext serialization (RFC 9420 §8.1)
  * ──────────────────────────────────────────────────────────────────────── */

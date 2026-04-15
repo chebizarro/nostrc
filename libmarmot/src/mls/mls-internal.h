@@ -89,6 +89,17 @@ int mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
                               const uint8_t secret[MLS_HASH_LEN],
                               const char *label);
 
+/** ExpandWithLabel with raw binary label (explicit length, no strlen). */
+int mls_crypto_expand_with_label_raw(uint8_t *out, size_t out_len,
+                                      const uint8_t secret[MLS_HASH_LEN],
+                                      const uint8_t *label, size_t label_len,
+                                      const uint8_t *context, size_t ctx_len);
+
+/** DeriveSecret with raw binary label. */
+int mls_crypto_derive_secret_raw(uint8_t out[MLS_HASH_LEN],
+                                  const uint8_t secret[MLS_HASH_LEN],
+                                  const uint8_t *label, size_t label_len);
+
 /* ── AEAD (AES-128-GCM) ─────────────────────────────────────────────── */
 
 /** Encrypt. out must have room for pt_len + MLS_AEAD_TAG_LEN bytes. */

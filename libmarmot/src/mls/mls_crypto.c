@@ -125,33 +125,76 @@ mls_crypto_expand_with_label(uint8_t *out, size_t out_len,
                               const char *label,
                               const uint8_t *context, size_t ctx_len)
 {
+    return mls_crypto_expand_with_label_raw(out, out_len, secret,
+                                             (const uint8_t *)label,
+                                             label ? strlen(label) : 0,
+                                             context, ctx_len);
+}
+
+int
+mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
+                          const uint8_t secret[MLS_HASH_LEN],
+                          const char *label)
+{
+    return mls_crypto_expand_with_label(out, MLS_HASH_LEN,
+                                         secret, label, NULL, 0);
+}
+
+/**
+ * Encode a QUIC variable-length integer (RFC 9000 §16).
+ * Returns number of bytes written (1, 2, 4, or 8).
+ */
+static size_t
+quic_varint_encode(uint64_t value, uint8_t *out)
+{
+    if (value < 64) {
+        out[0] = (uint8_t)value;
+        return 1;
+    } else if (value < 16384) {
+        out[0] = (uint8_t)(0x40 | (value >> 8));
+        out[1] = (uint8_t)(value & 0xFF);
+        return 2;
+    } else if (value < 1073741824ULL) {
+        out[0] = (uint8_t)(0x80 | (value >> 24));
+        out[1] = (uint8_t)((value >> 16) & 0xFF);
+        out[2] = (uint8_t)((value >> 8) & 0xFF);
+        out[3] = (uint8_t)(value & 0xFF);
+        return 4;
+    } else {
+        out[0] = (uint8_t)(0xC0 | (value >> 56));
+        out[1] = (uint8_t)((value >> 48) & 0xFF);
+        out[2] = (uint8_t)((value >> 40) & 0xFF);
+        out[3] = (uint8_t)((value >> 32) & 0xFF);
+        out[4] = (uint8_t)((value >> 24) & 0xFF);
+        out[5] = (uint8_t)((value >> 16) & 0xFF);
+        out[6] = (uint8_t)((value >> 8) & 0xFF);
+        out[7] = (uint8_t)(value & 0xFF);
+        return 8;
+    }
+}
+
+int
+mls_crypto_expand_with_label_raw(uint8_t *out, size_t out_len,
+                                  const uint8_t secret[MLS_HASH_LEN],
+                                  const uint8_t *label, size_t label_len,
+                                  const uint8_t *context, size_t ctx_len)
+{
     /*
-     * MLS §5.1 ExpandWithLabel:
+     * MLS §5.1 ExpandWithLabel — KDFLabel uses QUIC variable-length
+     * integer encoding (RFC 9000 §16) for the <V> length prefixes:
      *
      * struct {
      *   uint16 length = out_len;
      *   opaque label<V> = "MLS 1.0 " + Label;
      *   opaque context<V> = Context;
      * } KDFLabel;
-     *
-     * ExpandWithLabel(Secret, Label, Context, Length) =
-     *   KDF.Expand(Secret, KDFLabel, Length)
      */
     const char prefix[] = "MLS 1.0 ";
     size_t prefix_len = sizeof(prefix) - 1;
-    size_t label_len = label ? strlen(label) : 0;
     size_t full_label_len = prefix_len + label_len;
 
-    /* Build KDFLabel serialization:
-     * uint16 length
-     * uint8  label_len_byte  (TLS opaque<0..255>)
-     * opaque full_label[full_label_len]
-     * uint8  context_len_byte (or uint16/uint32 for larger)
-     * opaque context[ctx_len]
-     *
-     * For MLS, we use variable-length encoding per TLS presentation.
-     */
-    size_t info_size = 2 + 1 + full_label_len + 1 + ctx_len;
+    /* Max info size: 2 (length) + 8 (varint) + label + 8 (varint) + context */
+    size_t info_size = 2 + 8 + full_label_len + 8 + ctx_len;
     uint8_t *info = malloc(info_size);
     if (!info) return -1;
 
@@ -159,16 +202,16 @@ mls_crypto_expand_with_label(uint8_t *out, size_t out_len,
     /* uint16 length (big-endian) */
     info[pos++] = (uint8_t)(out_len >> 8);
     info[pos++] = (uint8_t)(out_len & 0xff);
-    /* opaque label<0..255> */
-    info[pos++] = (uint8_t)full_label_len;
+    /* label<V>: QUIC varint length prefix */
+    pos += quic_varint_encode(full_label_len, info + pos);
     memcpy(info + pos, prefix, prefix_len);
     pos += prefix_len;
     if (label_len > 0) {
         memcpy(info + pos, label, label_len);
         pos += label_len;
     }
-    /* opaque context<0..255> */
-    info[pos++] = (uint8_t)ctx_len;
+    /* context<V>: QUIC varint length prefix */
+    pos += quic_varint_encode(ctx_len, info + pos);
     if (ctx_len > 0) {
         memcpy(info + pos, context, ctx_len);
         pos += ctx_len;
@@ -180,12 +223,13 @@ mls_crypto_expand_with_label(uint8_t *out, size_t out_len,
 }
 
 int
-mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
-                          const uint8_t secret[MLS_HASH_LEN],
-                          const char *label)
+mls_crypto_derive_secret_raw(uint8_t out[MLS_HASH_LEN],
+                              const uint8_t secret[MLS_HASH_LEN],
+                              const uint8_t *label, size_t label_len)
 {
-    return mls_crypto_expand_with_label(out, MLS_HASH_LEN,
-                                         secret, label, NULL, 0);
+    return mls_crypto_expand_with_label_raw(out, MLS_HASH_LEN,
+                                             secret, label, label_len,
+                                             NULL, 0);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

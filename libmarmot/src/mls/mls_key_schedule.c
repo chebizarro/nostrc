@@ -414,6 +414,36 @@ mls_exporter(const uint8_t exporter_secret[MLS_HASH_LEN],
     return rc;
 }
 
+int
+mls_exporter_raw(const uint8_t exporter_secret[MLS_HASH_LEN],
+                  const uint8_t *label, size_t label_len,
+                  const uint8_t *context, size_t context_len,
+                  uint8_t *out, size_t out_len)
+{
+    if (!exporter_secret || !out) return -1;
+
+    /* Step 1: derived_secret = DeriveSecret(exporter_secret, label) */
+    uint8_t derived[MLS_HASH_LEN];
+    if (mls_crypto_derive_secret_raw(derived, exporter_secret, label, label_len) != 0)
+        return -1;
+
+    /* Step 2: context_hash = Hash(context) */
+    uint8_t context_hash[MLS_HASH_LEN];
+    if (context && context_len > 0) {
+        if (mls_crypto_hash(context_hash, context, context_len) != 0)
+            return -1;
+    } else {
+        if (mls_crypto_hash(context_hash, (const uint8_t *)"", 0) != 0)
+            return -1;
+    }
+
+    /* Step 3: ExpandWithLabel(derived, "exported", context_hash, length) */
+    int rc = mls_crypto_expand_with_label(out, out_len, derived, "exported",
+                                           context_hash, MLS_HASH_LEN);
+    sodium_memzero(derived, sizeof(derived));
+    return rc;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * GroupContext serialization (RFC 9420 §8.1)
  *
