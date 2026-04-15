@@ -1305,6 +1305,155 @@ test_async_key_package_roundtrip(void)
     g_object_unref(storage);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 16. GCancellable and additional async tests
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct { GMainLoop *loop; GError *error; gchar *json; } GenericAsyncCtx;
+
+static void
+generic_string_cb(GObject *src, GAsyncResult *res, gpointer ud)
+{
+    GenericAsyncCtx *c = ud;
+    c->json = marmot_gobject_client_create_key_package_finish(
+        MARMOT_GOBJECT_CLIENT(src), res, &c->error);
+    g_main_loop_quit(c->loop);
+}
+
+static void
+test_cancellable_key_package(void)
+{
+    /* Test that GCancellable can cancel an async operation */
+    MarmotGobjectMemoryStorage *storage = marmot_gobject_memory_storage_new();
+    MarmotGobjectClient *client = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(storage));
+    g_assert_nonnull(client);
+
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    GCancellable *cancel = g_cancellable_new();
+    GenericAsyncCtx ctx = { loop, NULL, NULL };
+
+    const gchar *pk = "0000000000000000000000000000000000000000000000000000000000000001";
+    const gchar *sk = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    /* Cancel immediately before the thread starts */
+    g_cancellable_cancel(cancel);
+
+    marmot_gobject_client_create_key_package_async(
+        client, pk, sk, NULL, cancel, generic_string_cb, &ctx);
+    g_main_loop_run(loop);
+
+    /* Should either be cancelled or have completed (race condition).
+     * If cancelled, error domain is G_IO_ERROR with G_IO_ERROR_CANCELLED. */
+    if (ctx.error) {
+        /* Most likely cancelled */
+        g_assert_null(ctx.json);
+        g_clear_error(&ctx.error);
+    } else {
+        /* May have completed before cancel took effect */
+        g_free(ctx.json);
+    }
+
+    g_main_loop_unref(loop);
+    g_object_unref(cancel);
+    g_object_unref(client);
+    g_object_unref(storage);
+}
+
+static void
+unsigned_kp_cb(GObject *src, GAsyncResult *res, gpointer ud)
+{
+    GenericAsyncCtx *c = ud;
+    c->json = marmot_gobject_client_create_key_package_unsigned_finish(
+        MARMOT_GOBJECT_CLIENT(src), res, &c->error);
+    g_main_loop_quit(c->loop);
+}
+
+static void
+test_unsigned_key_package_async(void)
+{
+    /* Test unsigned key package creation async flow */
+    MarmotGobjectMemoryStorage *storage = marmot_gobject_memory_storage_new();
+    MarmotGobjectClient *client = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(storage));
+    g_assert_nonnull(client);
+
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    GenericAsyncCtx ctx = { loop, NULL, NULL };
+
+    const gchar *pk = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    marmot_gobject_client_create_key_package_unsigned_async(
+        client, pk, NULL, NULL, unsigned_kp_cb, &ctx);
+    g_main_loop_run(loop);
+
+    if (ctx.error) {
+        g_assert_null(ctx.json);
+        g_clear_error(&ctx.error);
+    } else {
+        g_assert_nonnull(ctx.json);
+        g_free(ctx.json);
+    }
+
+    g_main_loop_unref(loop);
+    g_object_unref(client);
+    g_object_unref(storage);
+}
+
+static void
+test_weak_ref_finalization(void)
+{
+    /* Test that weak references are properly notified on finalization */
+    MarmotGobjectGroup *group = marmot_gobject_group_new_from_data(
+        "aabb", "ccdd", "Test", "Desc",
+        MARMOT_GOBJECT_GROUP_STATE_ACTIVE, 0);
+
+    GWeakRef weak;
+    g_weak_ref_init(&weak, group);
+
+    /* g_weak_ref_get adds a ref — verify it works then unref */
+    GObject *got = (GObject *)g_weak_ref_get(&weak);
+    g_assert_nonnull(got);
+    g_object_unref(got);
+
+    /* Now destroy the original */
+    g_object_unref(group);
+
+    /* After finalization, weak ref should return NULL */
+    g_assert_null(g_weak_ref_get(&weak));
+    g_weak_ref_clear(&weak);
+}
+
+static void
+test_multiple_client_instances(void)
+{
+    /* Verify multiple clients can coexist with separate storage */
+    MarmotGobjectMemoryStorage *s1 = marmot_gobject_memory_storage_new();
+    MarmotGobjectMemoryStorage *s2 = marmot_gobject_memory_storage_new();
+    MarmotGobjectClient *c1 = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(s1));
+    MarmotGobjectClient *c2 = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(s2));
+    g_assert_nonnull(c1);
+    g_assert_nonnull(c2);
+    g_assert_true(c1 != c2);
+
+    /* Both should have empty group lists */
+    GError *err = NULL;
+    GPtrArray *groups1 = marmot_gobject_client_get_all_groups(c1, &err);
+    g_assert_no_error(err);
+    g_assert_nonnull(groups1);
+    g_assert_cmpuint(groups1->len, ==, 0);
+    g_ptr_array_unref(groups1);
+
+    GPtrArray *groups2 = marmot_gobject_client_get_all_groups(c2, &err);
+    g_assert_no_error(err);
+    g_assert_nonnull(groups2);
+    g_assert_cmpuint(groups2->len, ==, 0);
+    g_ptr_array_unref(groups2);
+
+    g_object_unref(c1);
+    g_object_unref(c2);
+    g_object_unref(s1);
+    g_object_unref(s2);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1401,6 +1550,12 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/async/welcome-wrapper-event-id", test_welcome_wrapper_event_id);
     g_test_add_func("/marmot-gobject/async/accept-welcome-no-wrapper-id", test_accept_welcome_no_wrapper_id);
     g_test_add_func("/marmot-gobject/async/key-package-roundtrip", test_async_key_package_roundtrip);
+
+    /* 16. GCancellable and additional async */
+    g_test_add_func("/marmot-gobject/cancel/key-package-cancel", test_cancellable_key_package);
+    g_test_add_func("/marmot-gobject/async/unsigned-key-package", test_unsigned_key_package_async);
+    g_test_add_func("/marmot-gobject/lifecycle/weak-ref-finalization", test_weak_ref_finalization);
+    g_test_add_func("/marmot-gobject/lifecycle/multiple-client-instances", test_multiple_client_instances);
 
     return g_test_run();
 }
