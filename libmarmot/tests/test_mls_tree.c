@@ -220,11 +220,23 @@ make_test_leaf(MlsLeafNode *leaf, uint8_t seed)
     assert(leaf->credential_identity);
     snprintf((char *)leaf->credential_identity, 8, "user_%02x", seed);
 
-    /* Capabilities: support ciphersuite 0x0001 */
+    /* Capabilities (RFC 9420 §7.2) */
+    leaf->version_count = 1;
+    leaf->versions = malloc(sizeof(uint16_t));
+    assert(leaf->versions);
+    leaf->versions[0] = 1;
     leaf->ciphersuite_count = 1;
     leaf->ciphersuites = malloc(sizeof(uint16_t));
     assert(leaf->ciphersuites);
     leaf->ciphersuites[0] = 0x0001;
+    leaf->cap_extension_count = 0;
+    leaf->cap_extensions = NULL;
+    leaf->proposal_count = 0;
+    leaf->proposals = NULL;
+    leaf->cap_credential_count = 1;
+    leaf->cap_credentials = malloc(sizeof(uint16_t));
+    assert(leaf->cap_credentials);
+    leaf->cap_credentials[0] = 0x0001;
 
     /* No extensions */
     leaf->extensions_data = NULL;

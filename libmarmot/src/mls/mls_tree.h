@@ -98,9 +98,28 @@ typedef struct {
     uint8_t *credential_identity;              /**< Basic credential identity */
     size_t   credential_identity_len;
 
-    /** Capabilities */
+    /** Capabilities (RFC 9420 §7.2) */
+    uint16_t *versions;                        /**< Supported protocol versions */
+    size_t    version_count;
     uint16_t *ciphersuites;                    /**< Supported ciphersuites */
     size_t    ciphersuite_count;
+    uint16_t *cap_extensions;                  /**< Supported extension types */
+    size_t    cap_extension_count;
+    uint16_t *proposals;                       /**< Supported proposal types */
+    size_t    proposal_count;
+    uint16_t *cap_credentials;                 /**< Supported credential types */
+    size_t    cap_credential_count;
+
+    /** Leaf node source: key_package(1), update(2), commit(3) */
+    uint8_t   leaf_node_source;
+
+    /** Lifetime (present when leaf_node_source == key_package) */
+    uint64_t  lifetime_not_before;
+    uint64_t  lifetime_not_after;
+
+    /** Parent hash (present when leaf_node_source == commit) */
+    uint8_t  *parent_hash;
+    size_t    parent_hash_len;
 
     /** Extensions (serialized TLS) */
     uint8_t  *extensions_data;
@@ -109,13 +128,6 @@ typedef struct {
     /** Signature over LeafNodeTBS */
     uint8_t   signature[MLS_SIG_LEN];
     size_t    signature_len;                   /**< 0 if not yet signed */
-
-    /** Parent hash (set when leaf_node_source == commit) */
-    uint8_t  *parent_hash;
-    size_t    parent_hash_len;
-
-    /** Leaf node source: key_package(1), update(2), commit(3) */
-    uint8_t   leaf_node_source;
 } MlsLeafNode;
 
 /**

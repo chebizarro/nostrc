@@ -144,7 +144,11 @@ mls_leaf_node_clear(MlsLeafNode *node)
 {
     if (!node) return;
     free(node->credential_identity);
+    free(node->versions);
     free(node->ciphersuites);
+    free(node->cap_extensions);
+    free(node->proposals);
+    free(node->cap_credentials);
     free(node->extensions_data);
     free(node->parent_hash);
     memset(node, 0, sizeof(*node));
@@ -189,7 +193,11 @@ mls_leaf_node_clone(MlsLeafNode *dst, const MlsLeafNode *src)
     memcpy(dst->signature_key, src->signature_key, MLS_SIG_PK_LEN);
     dst->credential_type = src->credential_type;
     dst->credential_identity_len = src->credential_identity_len;
+    dst->version_count = src->version_count;
     dst->ciphersuite_count = src->ciphersuite_count;
+    dst->cap_extension_count = src->cap_extension_count;
+    dst->proposal_count = src->proposal_count;
+    dst->cap_credential_count = src->cap_credential_count;
     dst->extensions_len = src->extensions_len;
     memcpy(dst->signature, src->signature, MLS_SIG_LEN);
     dst->signature_len = src->signature_len;
@@ -198,21 +206,32 @@ mls_leaf_node_clone(MlsLeafNode *dst, const MlsLeafNode *src)
 
     /* Deep-copy heap allocations */
     dst->credential_identity = NULL;
+    dst->versions = NULL;
     dst->ciphersuites = NULL;
+    dst->cap_extensions = NULL;
+    dst->proposals = NULL;
+    dst->cap_credentials = NULL;
     dst->extensions_data = NULL;
     dst->parent_hash = NULL;
+
+#define CLONE_U16_VEC(field, count_field) \
+    if (src->field && src->count_field > 0) { \
+        size_t sz = src->count_field * sizeof(uint16_t); \
+        dst->field = malloc(sz); \
+        if (!dst->field) goto fail; \
+        memcpy(dst->field, src->field, sz); \
+    }
 
     if (src->credential_identity && src->credential_identity_len > 0) {
         dst->credential_identity = malloc(src->credential_identity_len);
         if (!dst->credential_identity) goto fail;
         memcpy(dst->credential_identity, src->credential_identity, src->credential_identity_len);
     }
-    if (src->ciphersuites && src->ciphersuite_count > 0) {
-        size_t sz = src->ciphersuite_count * sizeof(uint16_t);
-        dst->ciphersuites = malloc(sz);
-        if (!dst->ciphersuites) goto fail;
-        memcpy(dst->ciphersuites, src->ciphersuites, sz);
-    }
+    CLONE_U16_VEC(versions, version_count)
+    CLONE_U16_VEC(ciphersuites, ciphersuite_count)
+    CLONE_U16_VEC(cap_extensions, cap_extension_count)
+    CLONE_U16_VEC(proposals, proposal_count)
+    CLONE_U16_VEC(cap_credentials, cap_credential_count)
     if (src->extensions_data && src->extensions_len > 0) {
         dst->extensions_data = malloc(src->extensions_len);
         if (!dst->extensions_data) goto fail;
@@ -223,6 +242,8 @@ mls_leaf_node_clone(MlsLeafNode *dst, const MlsLeafNode *src)
         if (!dst->parent_hash) goto fail;
         memcpy(dst->parent_hash, src->parent_hash, src->parent_hash_len);
     }
+
+#undef CLONE_U16_VEC
     return 0;
 
 fail:
@@ -411,27 +432,38 @@ mls_leaf_node_serialize(const MlsLeafNode *node, MlsTlsBuf *buf)
     if (mls_tls_write_opaque16(buf, node->credential_identity,
                                 node->credential_identity_len) != 0)
         return -1;
-    /* capabilities: ciphersuites<V> (VLI length prefix) */
-    {
-        size_t total = node->ciphersuite_count * 2;
-        if (mls_tls_write_vli(buf, total) != 0) return -1;
-        for (size_t i = 0; i < node->ciphersuite_count; i++) {
-            if (mls_tls_write_u16(buf, node->ciphersuites[i]) != 0) return -1;
-        }
-    }
+    /* capabilities (RFC 9420 §7.2): versions, ciphersuites, extensions, proposals, credentials */
+#define WRITE_U16_VEC(arr, count) do { \
+        size_t total = (count) * 2; \
+        if (mls_tls_write_vli(buf, total) != 0) return -1; \
+        for (size_t _i = 0; _i < (count); _i++) { \
+            if (mls_tls_write_u16(buf, (arr)[_i]) != 0) return -1; \
+        } \
+    } while (0)
+
+    WRITE_U16_VEC(node->versions, node->version_count);
+    WRITE_U16_VEC(node->ciphersuites, node->ciphersuite_count);
+    WRITE_U16_VEC(node->cap_extensions, node->cap_extension_count);
+    WRITE_U16_VEC(node->proposals, node->proposal_count);
+    WRITE_U16_VEC(node->cap_credentials, node->cap_credential_count);
+
+#undef WRITE_U16_VEC
     /* leaf_node_source: uint8 */
     if (mls_tls_write_u8(buf, node->leaf_node_source) != 0) return -1;
+    /* source-dependent fields (RFC 9420 §7.2) */
+    if (node->leaf_node_source == 1) { /* key_package: Lifetime */
+        if (mls_tls_write_u64(buf, node->lifetime_not_before) != 0) return -1;
+        if (mls_tls_write_u64(buf, node->lifetime_not_after) != 0) return -1;
+    } else if (node->leaf_node_source == 3) { /* commit: parent_hash */
+        if (mls_tls_write_opaque8(buf, node->parent_hash, node->parent_hash_len) != 0)
+            return -1;
+    }
     /* extensions: opaque<V> */
     if (mls_tls_write_opaque32(buf, node->extensions_data, node->extensions_len) != 0)
         return -1;
     /* signature: opaque<V> */
     if (mls_tls_write_opaque16(buf, node->signature, node->signature_len) != 0)
         return -1;
-    /* parent_hash (optional, present when leaf_node_source == commit) */
-    if (node->leaf_node_source == 3) { /* commit */
-        if (mls_tls_write_opaque8(buf, node->parent_hash, node->parent_hash_len) != 0)
-            return -1;
-    }
     return 0;
 }
 
@@ -488,22 +520,41 @@ mls_leaf_node_deserialize(MlsTlsReader *reader, MlsLeafNode *node)
                                &node->credential_identity_len) != 0)
         return -1;
 
-    /* ciphersuites (VLI length prefix) */
-    size_t cs_bytes;
-    if (mls_tls_read_vli(reader, &cs_bytes) != 0) return -1;
-    /* Validate that cs_bytes is even (2 bytes per ciphersuite) */
-    if (cs_bytes % 2 != 0) return -1;
-    node->ciphersuite_count = cs_bytes / 2;
-    if (node->ciphersuite_count > 0) {
-        node->ciphersuites = malloc(node->ciphersuite_count * sizeof(uint16_t));
-        if (!node->ciphersuites) return -1;
-        for (size_t i = 0; i < node->ciphersuite_count; i++) {
-            if (mls_tls_read_u16(reader, &node->ciphersuites[i]) != 0) return -1;
-        }
-    }
+    /* capabilities (RFC 9420 §7.2): versions, ciphersuites, extensions, proposals, credentials */
+#define READ_U16_VEC(field, count_field) do { \
+        size_t _bytes; \
+        if (mls_tls_read_vli(reader, &_bytes) != 0) return -1; \
+        if (_bytes % 2 != 0) return -1; \
+        node->count_field = _bytes / 2; \
+        if (node->count_field > 0) { \
+            node->field = malloc(node->count_field * sizeof(uint16_t)); \
+            if (!node->field) return -1; \
+            for (size_t _i = 0; _i < node->count_field; _i++) { \
+                if (mls_tls_read_u16(reader, &node->field[_i]) != 0) return -1; \
+            } \
+        } \
+    } while (0)
+
+    READ_U16_VEC(versions, version_count);
+    READ_U16_VEC(ciphersuites, ciphersuite_count);
+    READ_U16_VEC(cap_extensions, cap_extension_count);
+    READ_U16_VEC(proposals, proposal_count);
+    READ_U16_VEC(cap_credentials, cap_credential_count);
+
+#undef READ_U16_VEC
 
     /* leaf_node_source */
     if (mls_tls_read_u8(reader, &node->leaf_node_source) != 0) return -1;
+
+    /* source-dependent fields (RFC 9420 §7.2) */
+    if (node->leaf_node_source == 1) { /* key_package: Lifetime */
+        if (mls_tls_read_u64(reader, &node->lifetime_not_before) != 0) return -1;
+        if (mls_tls_read_u64(reader, &node->lifetime_not_after) != 0) return -1;
+    } else if (node->leaf_node_source == 3) { /* commit: parent_hash */
+        if (mls_tls_read_opaque8(reader, &node->parent_hash,
+                                  &node->parent_hash_len) != 0)
+            return -1;
+    }
 
     /* extensions */
     if (mls_tls_read_opaque32(reader, &node->extensions_data,
@@ -518,12 +569,6 @@ mls_leaf_node_deserialize(MlsTlsReader *reader, MlsLeafNode *node)
     node->signature_len = sig_len;
     free(sig);
 
-    /* parent_hash (if commit) */
-    if (node->leaf_node_source == 3) {
-        if (mls_tls_read_opaque8(reader, &node->parent_hash,
-                                  &node->parent_hash_len) != 0)
-            return -1;
-    }
     return 0;
 }
 

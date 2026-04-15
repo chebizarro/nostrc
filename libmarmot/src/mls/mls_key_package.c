@@ -64,18 +64,33 @@ leaf_node_tbs_serialize(const MlsLeafNode *node, MlsTlsBuf *buf)
     if (mls_tls_write_opaque16(buf, node->credential_identity,
                                 node->credential_identity_len) != 0)
         return -1;
-    /* capabilities: ciphersuites */
-    {
-        if (node->ciphersuite_count > (UINT16_MAX / 2)) return -1;
-        uint16_t total = (uint16_t)(node->ciphersuite_count * 2);
-        if (mls_tls_write_u16(buf, total) != 0) return -1;
-        for (size_t i = 0; i < node->ciphersuite_count; i++) {
-            if (mls_tls_write_u16(buf, node->ciphersuites[i]) != 0) return -1;
-        }
-    }
+    /* capabilities (RFC 9420 §7.2): versions, ciphersuites, extensions, proposals, credentials */
+#define WRITE_U16_VEC(arr, count) do { \
+        size_t total = (count) * 2; \
+        if (mls_tls_write_vli(buf, total) != 0) return -1; \
+        for (size_t _i = 0; _i < (count); _i++) { \
+            if (mls_tls_write_u16(buf, (arr)[_i]) != 0) return -1; \
+        } \
+    } while (0)
+
+    WRITE_U16_VEC(node->versions, node->version_count);
+    WRITE_U16_VEC(node->ciphersuites, node->ciphersuite_count);
+    WRITE_U16_VEC(node->cap_extensions, node->cap_extension_count);
+    WRITE_U16_VEC(node->proposals, node->proposal_count);
+    WRITE_U16_VEC(node->cap_credentials, node->cap_credential_count);
+
+#undef WRITE_U16_VEC
     /* leaf_node_source */
     if (mls_tls_write_u8(buf, node->leaf_node_source) != 0)
         return -1;
+    /* source-dependent fields (RFC 9420 §7.2) */
+    if (node->leaf_node_source == 1) { /* key_package: Lifetime */
+        if (mls_tls_write_u64(buf, node->lifetime_not_before) != 0) return -1;
+        if (mls_tls_write_u64(buf, node->lifetime_not_after) != 0) return -1;
+    } else if (node->leaf_node_source == 3) { /* commit: parent_hash */
+        if (mls_tls_write_opaque8(buf, node->parent_hash, node->parent_hash_len) != 0)
+            return -1;
+    }
     /* extensions */
     if (mls_tls_write_opaque32(buf, node->extensions_data, node->extensions_len) != 0)
         return -1;
@@ -125,11 +140,32 @@ mls_key_package_create(MlsKeyPackage *kp,
            credential_identity_len);
     kp->leaf_node.credential_identity_len = credential_identity_len;
 
-    /* Capabilities: support only ciphersuite 0x0001 */
+    /* Capabilities (RFC 9420 §7.2) */
+    /* versions: MLS 1.0 */
+    kp->leaf_node.version_count = 1;
+    kp->leaf_node.versions = malloc(sizeof(uint16_t));
+    if (!kp->leaf_node.versions) goto fail;
+    kp->leaf_node.versions[0] = 1;  /* mls10 */
+
+    /* ciphersuites: 0x0001 */
     kp->leaf_node.ciphersuite_count = 1;
     kp->leaf_node.ciphersuites = malloc(sizeof(uint16_t));
     if (!kp->leaf_node.ciphersuites) goto fail;
     kp->leaf_node.ciphersuites[0] = MARMOT_CIPHERSUITE;
+
+    /* extensions: none */
+    kp->leaf_node.cap_extensions = NULL;
+    kp->leaf_node.cap_extension_count = 0;
+
+    /* proposals: none */
+    kp->leaf_node.proposals = NULL;
+    kp->leaf_node.proposal_count = 0;
+
+    /* credentials: basic (0x0001) */
+    kp->leaf_node.cap_credential_count = 1;
+    kp->leaf_node.cap_credentials = malloc(sizeof(uint16_t));
+    if (!kp->leaf_node.cap_credentials) goto fail;
+    kp->leaf_node.cap_credentials[0] = MLS_CREDENTIAL_BASIC;
 
     /* Leaf node source: key_package (1) */
     kp->leaf_node.leaf_node_source = 1;

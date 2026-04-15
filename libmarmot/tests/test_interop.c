@@ -646,6 +646,79 @@ test_mdk_protocol_lifecycle_kp(const char *json, size_t json_len)
     printf("PASS\n");
 }
 
+/*
+ * Test: Deserialize MDK KeyPackages through our full TLS deserializer.
+ * This validates that our Capabilities struct handles all 5 vectors
+ * (versions, ciphersuites, extensions, proposals, credentials).
+ */
+static void
+test_mdk_protocol_kp_deserialize(const char *json, size_t json_len)
+{
+    const char *kp_section = json_find_object(json, json + json_len, "key_package");
+    const char *kp_end = json_find_object_end(kp_section);
+    const char *cases = json_find_array(kp_section, kp_end, "cases");
+
+    int deserialized = 0;
+    const char *pos = cases + 1;
+    while (pos < kp_end) {
+        pos = strchr(pos, '{');
+        if (!pos || pos >= kp_end) break;
+        const char *case_end = json_find_object_end(pos);
+        if (!case_end) break;
+
+        char *hex = json_extract_string(pos, case_end, "serialized_key_package_hex");
+        if (!hex) { pos = case_end + 1; continue; }
+
+        size_t hex_len = strlen(hex);
+        size_t kp_len = hex_len / 2;
+        uint8_t *kp_data = malloc(kp_len);
+        assert(kp_data);
+        assert(hex_decode(kp_data, hex, kp_len));
+
+        /* Deserialize through our TLS parser */
+        MlsKeyPackage kp;
+        MlsTlsReader reader;
+        mls_tls_reader_init(&reader, kp_data, kp_len);
+        int rc = mls_key_package_deserialize(&reader, &kp);
+        assert(rc == 0 && "MDK KeyPackage should deserialize successfully");
+
+        /* All bytes consumed */
+        assert(mls_tls_reader_remaining(&reader) == 0 &&
+               "all MDK KP bytes should be consumed");
+
+        /* Basic field validation */
+        assert(kp.version == 1);
+        assert(kp.cipher_suite == MARMOT_CIPHERSUITE);
+        assert(kp.leaf_node.credential_type == MLS_CREDENTIAL_BASIC);
+        assert(kp.leaf_node.credential_identity_len == 32);
+
+        /* Capabilities should have at least version and ciphersuite vectors */
+        assert(kp.leaf_node.version_count >= 1);
+        assert(kp.leaf_node.ciphersuite_count >= 1);
+
+        /* Verify re-serialization round-trips correctly */
+        {
+            MlsTlsBuf rebuf;
+            assert(mls_tls_buf_init(&rebuf, 512) == 0);
+            assert(mls_key_package_serialize(&kp, &rebuf) == 0);
+            assert(rebuf.len == kp_len &&
+                   "re-serialized KP should be same length");
+            assert(memcmp(rebuf.data, kp_data, kp_len) == 0 &&
+                   "re-serialized KP should match original bytes");
+            mls_tls_buf_free(&rebuf);
+        }
+
+        mls_key_package_clear(&kp);
+        free(kp_data);
+        free(hex);
+        deserialized++;
+        pos = case_end + 1;
+    }
+
+    assert(deserialized == 3);
+    printf("PASS (%d KPs deserialized)\n", deserialized);
+}
+
 /* Run all protocol vector tests */
 static void
 run_protocol_vector_tests(const char *vector_dir)
@@ -688,6 +761,9 @@ run_protocol_vector_tests(const char *vector_dir)
 
     printf("  %-55s", "protocol: lifecycle KP belongs to bob");
     test_mdk_protocol_lifecycle_kp(json, json_len);
+
+    printf("  %-55s", "protocol: MDK KP deserializes via TLS parser");
+    test_mdk_protocol_kp_deserialize(json, json_len);
 
     free(json);
 }
