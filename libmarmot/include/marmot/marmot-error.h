@@ -83,6 +83,7 @@ typedef enum {
     MARMOT_ERR_WELCOME_INVALID          = -71,
     MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED = -72,
     MARMOT_ERR_WELCOME_NOT_FOUND        = -73,
+    MARMOT_ERR_WELCOME_EXPIRED          = -74,
 
     /* Extension errors */
     MARMOT_ERR_EXTENSION                = -80,

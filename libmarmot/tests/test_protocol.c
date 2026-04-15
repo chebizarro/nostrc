@@ -580,7 +580,7 @@ test_process_welcome_basic(void)
     /* Create a minimal kind:444 rumor event JSON */
     const char *rumor_json =
         "{\"kind\":444,\"content\":\"dGVzdA==\","  /* "test" in base64 */
-        "\"created_at\":1700000000,"
+        "\"created_at\":2000000000,"
         "\"tags\":[[\"encoding\",\"base64\"],"
         "[\"relays\",\"wss://relay.example.com\"]]}";
 
@@ -616,7 +616,7 @@ test_process_welcome_wrong_kind(void)
     /* kind:443 instead of 444 */
     const char *bad_json =
         "{\"kind\":443,\"content\":\"dGVzdA==\","
-        "\"created_at\":1700000000,"
+        "\"created_at\":2000000000,"
         "\"tags\":[[\"encoding\",\"base64\"]]}";
 
     uint8_t wrapper_id[32];
@@ -767,10 +767,11 @@ test_welcome_duplicate_detection(void)
     Marmot *m = create_test_instance();
     ASSERT(m != NULL, "failed to create instance");
 
-    /* Create a minimal kind:444 rumor event JSON */
+    /* Create a minimal kind:444 rumor event JSON with a far-future timestamp
+     * to avoid triggering the welcome expiry check. */
     const char *rumor_json =
         "{\"kind\":444,\"content\":\"dGVzdA==\","
-        "\"created_at\":1700000000,"
+        "\"created_at\":2000000000,"
         "\"tags\":[[\"encoding\",\"base64\"],"
         "[\"relays\",\"wss://relay.example.com\"]]}";
 
@@ -1801,6 +1802,301 @@ test_message_idempotent_processing(void)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * Comprehensive Protocol Tests (mm35)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_reject_invalid_key_package_events(void)
+{
+    TEST("MIP-00: reject invalid KeyPackage events");
+
+    MlsKeyPackage kp;
+    uint8_t pk[32];
+
+    /* Bad base64 content */
+    const char *bad_b64 =
+        "{\"kind\":443,\"content\":\"!!!not-base64!!!\","
+        "\"created_at\":1700000000,"
+        "\"tags\":[[\"encoding\",\"base64\"]]}";
+    MarmotError err = marmot_parse_key_package_event(bad_b64, &kp, pk);
+    ASSERT(err != MARMOT_OK, "should reject bad base64");
+
+    /* Wrong kind (kind:444 instead of 443) */
+    const char *wrong_kind =
+        "{\"kind\":444,\"content\":\"dGVzdA==\","
+        "\"created_at\":1700000000,"
+        "\"tags\":[[\"encoding\",\"base64\"]]}";
+    err = marmot_parse_key_package_event(wrong_kind, &kp, pk);
+    ASSERT(err != MARMOT_OK, "should reject wrong kind");
+
+    /* Empty content */
+    const char *empty_content =
+        "{\"kind\":443,\"content\":\"\","
+        "\"created_at\":1700000000,"
+        "\"tags\":[[\"encoding\",\"base64\"]]}";
+    err = marmot_parse_key_package_event(empty_content, &kp, pk);
+    ASSERT(err != MARMOT_OK, "should reject empty content");
+
+    /* NULL input */
+    err = marmot_parse_key_package_event(NULL, &kp, pk);
+    ASSERT(err != MARMOT_OK, "should reject NULL");
+
+    PASS();
+}
+
+static void
+test_create_group_with_member_and_message_exchange(void)
+{
+    TEST("MIP-01+03: create group with member, exchange messages");
+
+    /* Creator creates a group with Alice, both exchange messages */
+    Marmot *creator = create_test_instance();
+    Marmot *alice   = create_test_instance();
+    ASSERT(creator && alice, "failed to create instances");
+
+    uint8_t creator_sk[32], creator_pk[32];
+    uint8_t alice_sk[32], alice_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+    generate_nostr_keypair(alice_sk, alice_pk);
+
+    /* Alice creates key package */
+    MarmotKeyPackageResult alice_kp;
+    memset(&alice_kp, 0, sizeof(alice_kp));
+    ASSERT_OK(marmot_create_key_package(alice, alice_pk, alice_sk, NULL, 0, &alice_kp),
+              "alice create_key_package");
+
+    /* Creator creates group with Alice */
+    const char *kps[] = { alice_kp.event_json };
+    MarmotGroupConfig config = {0};
+    config.name = "Exchange Group";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    ASSERT_OK(marmot_create_group(creator, creator_pk, kps, 1,
+                                   &config, &gresult),
+              "create_group");
+    ASSERT(gresult.welcome_count == 1, "should have 1 welcome");
+
+    /* Alice accepts welcome */
+    uint8_t wid[32];
+    randombytes_buf(wid, 32);
+    MarmotWelcome *aw = NULL;
+    ASSERT_OK(marmot_process_welcome(alice, wid,
+                                      gresult.welcome_rumor_jsons[0], &aw),
+              "alice process_welcome");
+    ASSERT_OK(marmot_accept_welcome(alice, aw), "alice accept_welcome");
+
+    /* Creator sends → Alice receives */
+    MarmotOutgoingMessage msg1;
+    memset(&msg1, 0, sizeof(msg1));
+    ASSERT_OK(marmot_create_message(creator, &gresult.group->mls_group_id,
+                                     "{\"kind\":9,\"content\":\"Msg from creator\","
+                                     "\"created_at\":1700000001,\"tags\":[]}",
+                                     &msg1),
+              "creator send");
+
+    MarmotMessageResult recv1;
+    memset(&recv1, 0, sizeof(recv1));
+    ASSERT_OK(marmot_process_message(alice, msg1.event_json, &recv1),
+              "alice receive");
+    ASSERT(recv1.type == MARMOT_RESULT_APPLICATION_MESSAGE, "should be app msg");
+    ASSERT(strstr(recv1.app_msg.inner_event_json, "Msg from creator") != NULL,
+           "alice should decrypt creator's message");
+
+    /* Creator also round-trips own message */
+    MarmotMessageResult self1;
+    memset(&self1, 0, sizeof(self1));
+    ASSERT_OK(marmot_process_message(creator, msg1.event_json, &self1),
+              "creator self-decrypt");
+    ASSERT(strstr(self1.app_msg.inner_event_json, "Msg from creator") != NULL,
+           "creator should decrypt own message");
+
+    marmot_message_result_free(&recv1);
+    marmot_message_result_free(&self1);
+    marmot_outgoing_message_free(&msg1);
+    marmot_welcome_free(aw);
+    marmot_key_package_result_free(&alice_kp);
+    marmot_create_group_result_free(&gresult);
+    marmot_free(creator);
+    marmot_free(alice);
+    PASS();
+}
+
+static void
+test_welcome_expiry(void)
+{
+    TEST("MIP-02: reject expired welcome event");
+
+    /* Create instance with short max_event_age (1 second) */
+    MarmotStorage *storage = marmot_storage_memory_new();
+    ASSERT(storage != NULL, "failed to create storage");
+    MarmotConfig cfg = marmot_config_default();
+    cfg.max_event_age_secs = 1; /* 1 second */
+    Marmot *m = marmot_new_with_config(storage, &cfg);
+    ASSERT(m != NULL, "failed to create instance");
+
+    /* Create a welcome rumor with an old timestamp (far in the past) */
+    const char *old_rumor =
+        "{\"kind\":444,\"content\":\"dGVzdA==\","
+        "\"created_at\":1000000000,"  /* year ~2001 — definitely expired */
+        "\"tags\":[[\"encoding\",\"base64\"]]}";
+
+    uint8_t wrapper_id[32];
+    randombytes_buf(wrapper_id, 32);
+
+    MarmotWelcome *welcome = NULL;
+    MarmotError err = marmot_process_welcome(m, wrapper_id, old_rumor, &welcome);
+    ASSERT(err == MARMOT_ERR_WELCOME_EXPIRED, "should reject expired welcome");
+    ASSERT(welcome == NULL, "welcome should be NULL for expired");
+
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_full_protocol_lifecycle(void)
+{
+    TEST("Full lifecycle: create → welcome → message → remove → update");
+
+    /* ── Setup: creator + 2 members ─────────────────────────────────── */
+    Marmot *creator = create_test_instance();
+    Marmot *alice   = create_test_instance();
+    Marmot *bob     = create_test_instance();
+    ASSERT(creator && alice && bob, "failed to create instances");
+
+    uint8_t creator_sk[32], creator_pk[32];
+    uint8_t alice_sk[32], alice_pk[32];
+    uint8_t bob_sk[32], bob_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+    generate_nostr_keypair(alice_sk, alice_pk);
+    generate_nostr_keypair(bob_sk, bob_pk);
+
+    /* ── Step 1: Key packages ───────────────────────────────────────── */
+    MarmotKeyPackageResult alice_kp, bob_kp;
+    memset(&alice_kp, 0, sizeof(alice_kp));
+    memset(&bob_kp, 0, sizeof(bob_kp));
+
+    ASSERT_OK(marmot_create_key_package(alice, alice_pk, alice_sk, NULL, 0, &alice_kp),
+              "alice create_key_package");
+    ASSERT_OK(marmot_create_key_package(bob, bob_pk, bob_sk, NULL, 0, &bob_kp),
+              "bob create_key_package");
+
+    /* ── Step 2: Create solo group ───────────────────────────────────── */
+    MarmotGroupConfig config = {0};
+    config.name = "Lifecycle Group";
+    config.description = "Full protocol lifecycle";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    ASSERT_OK(marmot_create_group(creator, creator_pk, NULL, 0,
+                                   &config, &gresult),
+              "create_group (solo)");
+    MarmotGroupId gid = gresult.group->mls_group_id;
+
+    /* ── Step 3: Add Alice via add_members ──────────────────────────── */
+    const char *alice_kps[] = { alice_kp.event_json };
+    char **add_alice_jsons = NULL;
+    size_t add_alice_count = 0;
+    char *add_alice_commit = NULL;
+
+    MarmotError err = marmot_add_members(creator, &gid,
+                                          alice_kps, 1,
+                                          &add_alice_jsons, &add_alice_count,
+                                          &add_alice_commit);
+    ASSERT_OK(err, "add alice to group");
+    ASSERT(add_alice_count == 1, "should have 1 welcome for alice");
+
+    /* Alice accepts welcome */
+    uint8_t wid[32];
+    randombytes_buf(wid, 32);
+
+    MarmotWelcome *alice_welcome = NULL;
+    ASSERT_OK(marmot_process_welcome(alice, wid,
+                                      add_alice_jsons[0],
+                                      &alice_welcome),
+              "alice process_welcome");
+    ASSERT_OK(marmot_accept_welcome(alice, alice_welcome),
+              "alice accept_welcome");
+
+    /* ── Step 4: Creator sends a message ────────────────────────────── */
+    MarmotOutgoingMessage msg1;
+    memset(&msg1, 0, sizeof(msg1));
+    ASSERT_OK(marmot_create_message(creator, &gid,
+                                     "{\"kind\":9,\"content\":\"Hello Alice!\","
+                                     "\"created_at\":1700000001,\"tags\":[]}",
+                                     &msg1),
+              "creator send message");
+
+    /* Alice decrypts it */
+    MarmotMessageResult alice_msg;
+    memset(&alice_msg, 0, sizeof(alice_msg));
+    ASSERT_OK(marmot_process_message(alice, msg1.event_json, &alice_msg),
+              "alice process message");
+    ASSERT(alice_msg.type == MARMOT_RESULT_APPLICATION_MESSAGE,
+           "alice should get application message");
+    ASSERT(strstr(alice_msg.app_msg.inner_event_json, "Hello Alice!") != NULL,
+           "alice should decrypt the content");
+
+    /* ── Step 5: Update group metadata ─────────────────────────────── */
+    MarmotGroupConfig update_cfg = {0};
+    update_cfg.name = "Renamed Lifecycle Group";
+    update_cfg.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    update_cfg.admin_count = 1;
+    ASSERT_OK(marmot_update_group_metadata(creator, &gid, &update_cfg),
+              "update group name");
+
+    /* Verify updated name */
+    MarmotGroup *updated = NULL;
+    ASSERT_OK(marmot_get_group(creator, &gid, &updated), "get_group after rename");
+    ASSERT(updated != NULL, "updated group is NULL");
+    ASSERT(strcmp(updated->name, "Renamed Lifecycle Group") == 0,
+           "group name should be updated");
+    marmot_group_free(updated);
+
+    /* ── Step 6: Creator sends another message after epoch advance ─── */
+    MarmotOutgoingMessage msg3;
+    memset(&msg3, 0, sizeof(msg3));
+    ASSERT_OK(marmot_create_message(creator, &gid,
+                                     "{\"kind\":9,\"content\":\"After rename!\","
+                                     "\"created_at\":1700000003,\"tags\":[]}",
+                                     &msg3),
+              "creator send message 3");
+
+    /* Creator decrypts own message (round-trip) */
+    MarmotMessageResult self_msg;
+    memset(&self_msg, 0, sizeof(self_msg));
+    ASSERT_OK(marmot_process_message(creator, msg3.event_json, &self_msg),
+              "creator process own message");
+    ASSERT(strstr(self_msg.app_msg.inner_event_json, "After rename!") != NULL,
+           "creator should decrypt own message");
+
+    /* ── Cleanup ────────────────────────────────────────────────────── */
+    marmot_message_result_free(&alice_msg);
+    marmot_message_result_free(&self_msg);
+    marmot_outgoing_message_free(&msg1);
+    marmot_outgoing_message_free(&msg3);
+    marmot_welcome_free(alice_welcome);
+    if (add_alice_jsons) {
+        for (size_t i = 0; i < add_alice_count; i++) free(add_alice_jsons[i]);
+        free(add_alice_jsons);
+    }
+    free(add_alice_commit);
+    marmot_key_package_result_free(&alice_kp);
+    marmot_key_package_result_free(&bob_kp);
+    marmot_create_group_result_free(&gresult);
+    marmot_free(creator);
+    marmot_free(alice);
+    marmot_free(bob);
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Lifecycle tests
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -1897,6 +2193,12 @@ main(void)
     test_message_two_member_exchange();
     test_message_epoch_lookback();
     test_message_idempotent_processing();
+
+    printf("\nComprehensive Protocol Tests\n");
+    test_reject_invalid_key_package_events();
+    test_create_group_with_member_and_message_exchange();
+    test_welcome_expiry();
+    test_full_protocol_lifecycle();
 
     printf("\nGroup Queries\n");
     test_get_all_groups();

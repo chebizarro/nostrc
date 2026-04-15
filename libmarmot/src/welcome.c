@@ -110,9 +110,6 @@ marmot_process_welcome(Marmot *m,
         free(reason);
     }
 
-    /* Check welcome expiry: reject events older than max_event_age */
-    /* (Applied after parsing below, since we need created_at) */
-
     /* Parse the rumor event (kind:444, unsigned) */
     NostrEvent rumor;
     memset(&rumor, 0, sizeof(rumor));
@@ -125,6 +122,17 @@ marmot_process_welcome(Marmot *m,
         free(rumor.id); free(rumor.pubkey); free(rumor.content);
         free(rumor.sig); nostr_tags_free(rumor.tags);
         return MARMOT_ERR_INVALID_ARG;
+    }
+
+    /* Check welcome expiry: reject events older than max_event_age */
+    if (rumor.created_at > 0 && m->config.max_event_age_secs > 0) {
+        int64_t now = marmot_now();
+        int64_t age = now - rumor.created_at;
+        if (age > (int64_t)m->config.max_event_age_secs) {
+            free(rumor.id); free(rumor.pubkey); free(rumor.content);
+            free(rumor.sig); nostr_tags_free(rumor.tags);
+            return MARMOT_ERR_WELCOME_EXPIRED;
+        }
     }
 
     /* Get content */
