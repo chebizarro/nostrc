@@ -9,7 +9,7 @@ extern "C" {
 #include "nostr-core.h"
 
 #if defined(NOSTR_HAVE_GLIB) && NOSTR_HAVE_GLIB
-#include "nostr-glib.h"
+#include "nostr-gobject.h"
 #endif
 
 #ifdef __cplusplus

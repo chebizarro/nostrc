@@ -211,6 +211,6 @@ Defined in `libnostr/include/nostr-connection.h` and implemented in `libnostr/sr
   - Returns: whether the background service thread is running (false in test mode)
 
 ## Notes
-- Add GLib/GError variants where appropriate in `nostr-glib.h` during Phase 3.
+- Add GLib/GError variants where appropriate in `nostr-gobject.h` during Phase 3.
 - Hyphenated header renames will follow (e.g., `nostr-relay.h`, `nostr-event.h`).
 - Update examples and tests as each module is migrated.

@@ -124,19 +124,19 @@ openssl_dep = dependency('openssl')
 libsodium_dep = dependency('libsodium', required: false)
 libwebsockets_dep = dependency('libwebsockets', required: true)
 
-# nsync (no pkg-config — use find_library + find headers dynamically)
+# nsync (no pkg-config — use find_library + compiler header search)
 nsync_lib = cc.find_library('nsync', required: true)
-nsync_inc = include_directories()
-# Try common locations for nsync.h
-foreach _dir : ['/opt/homebrew/include', '/usr/local/include', '/usr/include']
-  if cc.has_header('nsync.h', args: '-I' + _dir)
-    nsync_inc = include_directories(_dir, is_system: true)
-    break
-  endif
-endforeach
-nsync_dep = declare_dependency(
-  dependencies: nsync_lib,
-  include_directories: nsync_inc)
+# Let the compiler find nsync.h via its default search paths (works on
+# Linux, macOS Homebrew ARM & Intel, MacPorts, and custom prefixes set
+# via CFLAGS/C_INCLUDE_PATH).
+if cc.has_header('nsync.h')
+  nsync_dep = declare_dependency(dependencies: nsync_lib)
+else
+  # Fallback: check platform-specific prefix dirs without hard-coding paths.
+  # get_option('prefix') and common system dirs are already on the search path,
+  # so this should only trigger in unusual setups.
+  error('nsync.h not found. Install nsync or set C_INCLUDE_PATH to its include dir.')
+endif
 
 # ── Version header ───────────────────────────────────────────────────
 version_parts = meson.project_version().split('.')

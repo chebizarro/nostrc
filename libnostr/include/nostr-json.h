@@ -12,7 +12,7 @@
 
 #include "json.h"
 #include "nostr-filter.h"
-#include "nostr-glib.h"
+#include "nostr-gobject.h"
 
 #ifdef __cplusplus
 extern "C" {
