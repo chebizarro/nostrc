@@ -540,42 +540,46 @@ template $GnostrSessionView: Adw.Bin {
                             }
 
                             [overlay]
-                            Revealer new_notes_revealer {
-                                reveal-child: false;
-                                transition-type: slide_down;
+                            Box {
                                 halign: center;
                                 valign: start;
+                                hexpand: false;
+                                vexpand: false;
 
-                                child: Button btn_new_notes {
-                                    halign: center;
-                                    margin-top: 8;
-                                    margin-bottom: 8;
+                                Revealer new_notes_revealer {
+                                    reveal-child: false;
+                                    transition-type: slide_down;
 
-                                    styles [
-                                        "pill",
-                                        "osd",
-                                    ]
+                                    child: Button btn_new_notes {
+                                        margin-top: 8;
+                                        margin-bottom: 8;
 
-                                    child: Box {
-                                        orientation: horizontal;
-                                        spacing: 6;
+                                        styles [
+                                            "pill",
+                                            "osd",
+                                        ]
 
-                                        Image img_new_notes_arrow {
-                                            icon-name: "go-up-symbolic";
-                                        }
+                                        child: Box {
+                                            orientation: horizontal;
+                                            spacing: 6;
 
-                                        Spinner spinner_new_notes {
-                                            visible: false;
-                                            spinning: true;
-                                            width-request: 16;
-                                            height-request: 16;
-                                        }
+                                            Image img_new_notes_arrow {
+                                                icon-name: "go-up-symbolic";
+                                            }
 
-                                        Label lbl_new_notes_count {
-                                            label: _("New notes");
-                                        }
+                                            Spinner spinner_new_notes {
+                                                visible: false;
+                                                spinning: true;
+                                                width-request: 16;
+                                                height-request: 16;
+                                            }
+
+                                            Label lbl_new_notes_count {
+                                                label: _("New notes");
+                                            }
+                                        };
                                     };
-                                };
+                                }
                             }
                         };
 
