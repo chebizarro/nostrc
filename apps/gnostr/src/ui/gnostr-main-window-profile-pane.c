@@ -124,6 +124,90 @@ gnostr_main_window_on_profile_pane_follow_requested_internal(NostrGtkProfilePane
   gnostr_contact_list_save_async(cl, on_follow_save_complete, ctx);
 }
 
+/* --- Discover page follow/unfollow handlers --- */
+
+void
+gnostr_main_window_on_discover_follow_requested_internal(GnostrPageDiscover *page,
+                                                         const char *pubkey_hex,
+                                                         gpointer user_data)
+{
+  (void)page;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self))
+    return;
+  if (!pubkey_hex || strlen(pubkey_hex) != 64)
+    return;
+
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Please log in to follow users");
+    return;
+  }
+
+  GnostrContactList *cl = gnostr_contact_list_get_default();
+  if (!gnostr_contact_list_get_user_pubkey(cl)) {
+    const char *my_pk = gnostr_signer_service_get_pubkey(signer);
+    if (my_pk)
+      gnostr_contact_list_load_from_ndb(cl, my_pk);
+  }
+
+  if (gnostr_contact_list_is_following(cl, pubkey_hex)) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Already following");
+    return;
+  }
+
+  gnostr_contact_list_add(cl, pubkey_hex, NULL);
+
+  FollowContext *ctx = g_new0(FollowContext, 1);
+  ctx->self = self;
+  ctx->pane = NULL;
+  ctx->pubkey_hex = g_strdup(pubkey_hex);
+  ctx->was_following = FALSE;
+
+  gnostr_contact_list_save_async(cl, on_follow_save_complete, ctx);
+}
+
+void
+gnostr_main_window_on_discover_unfollow_requested_internal(GnostrPageDiscover *page,
+                                                           const char *pubkey_hex,
+                                                           gpointer user_data)
+{
+  (void)page;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self))
+    return;
+  if (!pubkey_hex || strlen(pubkey_hex) != 64)
+    return;
+
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Please log in to manage follows");
+    return;
+  }
+
+  GnostrContactList *cl = gnostr_contact_list_get_default();
+  if (!gnostr_contact_list_get_user_pubkey(cl)) {
+    const char *my_pk = gnostr_signer_service_get_pubkey(signer);
+    if (my_pk)
+      gnostr_contact_list_load_from_ndb(cl, my_pk);
+  }
+
+  if (!gnostr_contact_list_is_following(cl, pubkey_hex)) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Not following this user");
+    return;
+  }
+
+  gnostr_contact_list_remove(cl, pubkey_hex);
+
+  FollowContext *ctx = g_new0(FollowContext, 1);
+  ctx->self = self;
+  ctx->pane = NULL;
+  ctx->pubkey_hex = g_strdup(pubkey_hex);
+  ctx->was_following = TRUE;
+
+  gnostr_contact_list_save_async(cl, on_follow_save_complete, ctx);
+}
+
 void
 gnostr_main_window_on_profile_pane_message_requested_internal(NostrGtkProfilePane *pane,
                                                               const char *pubkey_hex,

@@ -223,6 +223,8 @@ void gnostr_main_window_on_discover_open_communities_internal(GnostrPageDiscover
 void gnostr_main_window_on_discover_open_article_internal(GnostrPageDiscover *page, const char *event_id, gint kind, gpointer user_data);
 void gnostr_main_window_on_discover_zap_article_internal(GnostrPageDiscover *page, const char *event_id, const char *pubkey_hex, const char *lud16, gpointer user_data);
 void gnostr_main_window_on_discover_search_hashtag_internal(GnostrPageDiscover *page, const char *hashtag, gpointer user_data);
+void gnostr_main_window_on_discover_follow_requested_internal(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
+void gnostr_main_window_on_discover_unfollow_requested_internal(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
 void gnostr_main_window_on_search_open_note_internal(GnostrSearchResultsView *view, const char *event_id_hex, gpointer user_data);
 void gnostr_main_window_on_search_open_profile_internal(GnostrSearchResultsView *view, const char *pubkey_hex, gpointer user_data);
 void gnostr_main_window_on_search_search_hashtag_internal(GnostrSearchResultsView *view, const char *hashtag, gpointer user_data);
@@ -331,6 +333,8 @@ void gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
                                                      GCallback discover_open_article_cb,
                                                      GCallback discover_zap_article_cb,
                                                      GCallback discover_search_hashtag_cb,
+                                                     GCallback discover_follow_requested_cb,
+                                                     GCallback discover_unfollow_requested_cb,
                                                      GCallback search_open_note_cb,
                                                      GCallback search_open_profile_cb,
                                                      GCallback search_hashtag_cb,

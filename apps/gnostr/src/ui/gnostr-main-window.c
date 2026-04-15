@@ -555,6 +555,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                                                    G_CALLBACK(gnostr_main_window_on_discover_open_article_internal),
                                                    G_CALLBACK(gnostr_main_window_on_discover_zap_article_internal),
                                                    G_CALLBACK(gnostr_main_window_on_discover_search_hashtag_internal),
+                                                   G_CALLBACK(gnostr_main_window_on_discover_follow_requested_internal),
+                                                   G_CALLBACK(gnostr_main_window_on_discover_unfollow_requested_internal),
                                                    G_CALLBACK(gnostr_main_window_on_search_open_note_internal),
                                                    G_CALLBACK(gnostr_main_window_on_search_open_profile_internal),
                                                    G_CALLBACK(gnostr_main_window_on_search_search_hashtag_internal),

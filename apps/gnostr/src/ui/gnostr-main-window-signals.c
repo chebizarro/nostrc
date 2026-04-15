@@ -106,6 +106,8 @@ gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
                                                  GCallback discover_open_article_cb,
                                                  GCallback discover_zap_article_cb,
                                                  GCallback discover_search_hashtag_cb,
+                                                 GCallback discover_follow_requested_cb,
+                                                 GCallback discover_unfollow_requested_cb,
                                                  GCallback search_open_note_cb,
                                                  GCallback search_open_profile_cb,
                                                  GCallback search_hashtag_cb,
@@ -126,6 +128,8 @@ gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
     g_signal_connect(discover_page, "open-article", discover_open_article_cb, self);
     g_signal_connect(discover_page, "zap-article-requested", discover_zap_article_cb, self);
     g_signal_connect(discover_page, "search-hashtag", discover_search_hashtag_cb, self);
+    g_signal_connect(discover_page, "follow-requested", discover_follow_requested_cb, self);
+    g_signal_connect(discover_page, "unfollow-requested", discover_unfollow_requested_cb, self);
   }
 
   GtkWidget *search_view = self->session_view ? gnostr_session_view_get_search_results_view(self->session_view) : NULL;
