@@ -66,6 +66,8 @@ marmot_gobject_sources = files(
   'src/marmot-gobject-message.c',
   'src/marmot-gobject-welcome.c',
   'src/marmot-gobject-storage.c',
+  'src/marmot-gobject-key-package.c',
+  'src/marmot-gobject-boxed.c',
   'src/marmot-gobject-client.c',
 )
 
@@ -77,6 +79,8 @@ marmot_gobject_headers = files(
   'include/marmot-gobject-1.0/marmot-gobject-message.h',
   'include/marmot-gobject-1.0/marmot-gobject-welcome.h',
   'include/marmot-gobject-1.0/marmot-gobject-storage.h',
+  'include/marmot-gobject-1.0/marmot-gobject-key-package.h',
+  'include/marmot-gobject-1.0/marmot-gobject-boxed.h',
 )
 
 # ── Include directories ──────────────────────────────────────────────
