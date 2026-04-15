@@ -247,6 +247,12 @@ if(BUILD_TESTING)
   target_include_directories(test_media PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_media COMMAND test_media)
 
+  # Test: MLS TreeKEM RFC 9420 test vectors
+  add_executable(test_mls_tree_vectors ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_tree_vectors.c)
+  target_link_libraries(test_mls_tree_vectors PRIVATE marmot)
+  target_include_directories(test_mls_tree_vectors PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_mls_tree_vectors COMMAND test_mls_tree_vectors)
+
   # Test: RFC 9420 test vectors & crypto validation
   add_executable(test_rfc9420_vectors ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rfc9420_vectors.c)
   target_link_libraries(test_rfc9420_vectors PRIVATE marmot)
