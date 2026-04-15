@@ -493,6 +493,36 @@ mls_crypto_verify(const uint8_t sig[MLS_SIG_LEN],
  * Ref Hash (MLS §5.3.1)
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/*
+ * Encode a length as a QUIC-style variable-length integer (RFC 9000 §16).
+ *
+ * Used by MLS TLS serialization for opaque<V> fields:
+ *   0..63:       1 byte  (6-bit value, 2 MSBs = 00)
+ *   64..16383:   2 bytes (14-bit value, 2 MSBs = 01)
+ *   16384..2^30: 4 bytes (30-bit value, 2 MSBs = 10)
+ *
+ * Returns number of bytes written (1, 2, or 4), or 0 on error.
+ */
+static size_t
+mls_vli_encode(uint8_t *out, size_t val)
+{
+    if (val < 0x40) {
+        out[0] = (uint8_t)val;
+        return 1;
+    } else if (val < 0x4000) {
+        out[0] = 0x40 | (uint8_t)((val >> 8) & 0x3f);
+        out[1] = (uint8_t)(val & 0xff);
+        return 2;
+    } else if (val < 0x40000000UL) {
+        out[0] = 0x80 | (uint8_t)((val >> 24) & 0x3f);
+        out[1] = (uint8_t)((val >> 16) & 0xff);
+        out[2] = (uint8_t)((val >> 8) & 0xff);
+        out[3] = (uint8_t)(val & 0xff);
+        return 4;
+    }
+    return 0; /* too large */
+}
+
 int
 mls_crypto_ref_hash(uint8_t out[MLS_HASH_LEN],
                     const char *label,
@@ -504,23 +534,28 @@ mls_crypto_ref_hash(uint8_t out[MLS_HASH_LEN],
      *   opaque label<V>;
      *   opaque value<V>;
      * } RefHashInput;
+     *
+     * MLS uses QUIC-style variable-length integer encoding (tls_codec VLBytes)
+     * for the length prefix of opaque<V> fields.
      */
     size_t label_len = label ? strlen(label) : 0;
-    /* TLS encoding: 1-byte length for label + label + 4-byte length for value + value */
-    size_t buf_len = 1 + label_len + 4 + value_len;
+
+    uint8_t label_prefix[4], value_prefix[4];
+    size_t lp_len = mls_vli_encode(label_prefix, label_len);
+    size_t vp_len = mls_vli_encode(value_prefix, value_len);
+    if (lp_len == 0 || vp_len == 0) return -1;
+
+    size_t buf_len = lp_len + label_len + vp_len + value_len;
     uint8_t *buf = malloc(buf_len);
     if (!buf) return -1;
 
     size_t pos = 0;
-    buf[pos++] = (uint8_t)label_len;
+    memcpy(buf + pos, label_prefix, lp_len); pos += lp_len;
     if (label_len > 0) {
         memcpy(buf + pos, label, label_len);
         pos += label_len;
     }
-    buf[pos++] = (uint8_t)((value_len >> 24) & 0xff);
-    buf[pos++] = (uint8_t)((value_len >> 16) & 0xff);
-    buf[pos++] = (uint8_t)((value_len >> 8) & 0xff);
-    buf[pos++] = (uint8_t)(value_len & 0xff);
+    memcpy(buf + pos, value_prefix, vp_len); pos += vp_len;
     if (value_len > 0) {
         memcpy(buf + pos, value, value_len);
         pos += value_len;
