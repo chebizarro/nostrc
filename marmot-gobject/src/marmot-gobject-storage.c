@@ -29,6 +29,15 @@ marmot_gobject_storage_get_raw_storage(MarmotGobjectStorage *self)
     return iface->get_raw_storage(self);
 }
 
+void
+marmot_gobject_storage_clear_raw_storage(MarmotGobjectStorage *self)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_STORAGE(self));
+    MarmotGobjectStorageInterface *iface = MARMOT_GOBJECT_STORAGE_GET_IFACE(self);
+    if (iface->clear_raw_storage)
+        iface->clear_raw_storage(self);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MarmotGobjectMemoryStorage
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -50,17 +59,21 @@ static gpointer
 memory_storage_get_raw(MarmotGobjectStorage *self)
 {
     MarmotGobjectMemoryStorage *mem_storage = MARMOT_GOBJECT_MEMORY_STORAGE(self);
-    MarmotStorage *raw = mem_storage->storage;
-    /* Transfer ownership: marmot_new() will take ownership of this pointer.
-     * Set to NULL to prevent double-free in finalizer. */
+    return mem_storage->storage;
+}
+
+static void
+memory_storage_clear_raw(MarmotGobjectStorage *self)
+{
+    MarmotGobjectMemoryStorage *mem_storage = MARMOT_GOBJECT_MEMORY_STORAGE(self);
     mem_storage->storage = NULL;
-    return raw;
 }
 
 static void
 marmot_gobject_memory_storage_iface_init(MarmotGobjectStorageInterface *iface)
 {
     iface->get_raw_storage = memory_storage_get_raw;
+    iface->clear_raw_storage = memory_storage_clear_raw;
 }
 
 static void
@@ -114,17 +127,21 @@ static gpointer
 sqlite_storage_get_raw(MarmotGobjectStorage *self)
 {
     MarmotGobjectSqliteStorage *sql_storage = MARMOT_GOBJECT_SQLITE_STORAGE(self);
-    MarmotStorage *raw = sql_storage->storage;
-    /* Transfer ownership: marmot_new() will take ownership of this pointer.
-     * Set to NULL to prevent double-free in finalizer. */
+    return sql_storage->storage;
+}
+
+static void
+sqlite_storage_clear_raw(MarmotGobjectStorage *self)
+{
+    MarmotGobjectSqliteStorage *sql_storage = MARMOT_GOBJECT_SQLITE_STORAGE(self);
     sql_storage->storage = NULL;
-    return raw;
 }
 
 static void
 marmot_gobject_sqlite_storage_iface_init(MarmotGobjectStorageInterface *iface)
 {
     iface->get_raw_storage = sqlite_storage_get_raw;
+    iface->clear_raw_storage = sqlite_storage_clear_raw;
 }
 
 static void

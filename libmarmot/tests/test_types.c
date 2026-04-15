@@ -194,12 +194,13 @@ static void test_marmot_with_config(void)
     Marmot *m = marmot_new_with_config(s, &cfg);
     assert(m != NULL);
 
-    /* Stubs should return NOT_IMPLEMENTED */
+    /* Key package creation is now implemented — verify it succeeds */
     MarmotKeyPackageResult kp;
     memset(&kp, 0, sizeof(kp));
     uint8_t pk[32] = {0};
     uint8_t sk[32] = {0};
-    assert(marmot_create_key_package(m, pk, sk, NULL, 0, &kp) == MARMOT_ERR_NOT_IMPLEMENTED);
+    assert(marmot_create_key_package(m, pk, sk, NULL, 0, &kp) == MARMOT_OK);
+    marmot_key_package_result_free(&kp);
 
     marmot_free(m);
 }

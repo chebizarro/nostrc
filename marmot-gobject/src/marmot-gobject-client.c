@@ -137,12 +137,16 @@ marmot_gobject_client_new(MarmotGobjectStorage *storage)
      * We keep a reference to the GObject wrapper to maintain the lifetime
      * contract, but the underlying MarmotStorage* is now owned by Marmot.
      *
-     * The storage implementation must set its internal pointer to NULL
-     * after returning it via get_raw_storage() to avoid double-free.
+     * After marmot_new() succeeds, we clear the internal pointer in the
+     * storage wrapper to prevent double-free.
      */
     Marmot *m = marmot_new(raw);
     if (!m)
         return NULL;
+
+    /* Prevent double-free: clear the wrapper's internal pointer
+     * now that marmot_new() owns the storage. */
+    marmot_gobject_storage_clear_raw_storage(storage);
 
     MarmotGobjectClient *self = g_object_new(MARMOT_GOBJECT_TYPE_CLIENT, NULL);
     self->marmot = m;

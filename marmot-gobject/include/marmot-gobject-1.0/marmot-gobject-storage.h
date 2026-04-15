@@ -49,6 +49,16 @@ struct _MarmotGobjectStorageInterface {
      * Returns: (transfer none): the underlying MarmotStorage
      */
     gpointer (*get_raw_storage)(MarmotGobjectStorage *self);
+
+    /**
+     * clear_raw_storage:
+     * @self: a #MarmotGobjectStorage
+     *
+     * Clear the internal storage pointer after ownership transfer.
+     * After calling this, get_raw_storage() will return NULL and
+     * the finalizer will not free the storage.
+     */
+    void (*clear_raw_storage)(MarmotGobjectStorage *self);
 };
 
 /**
@@ -58,6 +68,15 @@ struct _MarmotGobjectStorageInterface {
  * Returns: (transfer none): the underlying C MarmotStorage pointer
  */
 gpointer marmot_gobject_storage_get_raw_storage(MarmotGobjectStorage *self);
+
+/**
+ * marmot_gobject_storage_clear_raw_storage:
+ * @self: a #MarmotGobjectStorage
+ *
+ * Clear the internal storage pointer after ownership has been transferred
+ * to a MarmotGobjectClient. Prevents double-free in the finalizer.
+ */
+void marmot_gobject_storage_clear_raw_storage(MarmotGobjectStorage *self);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MarmotGobjectMemoryStorage — in-memory implementation

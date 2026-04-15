@@ -46,6 +46,24 @@ typedef struct {
     MarmotExporterSecret *secrets;
     size_t secret_count;
     size_t secret_cap;
+
+    /* Processed welcomes */
+    struct processed_welcome {
+        uint8_t wrapper_id[32];
+        int     state;
+        char   *reason;
+    } *proc_welcomes;
+    size_t proc_welcome_count;
+    size_t proc_welcome_cap;
+
+    /* Group relays */
+    struct relay_entry {
+        MarmotGroupId gid;
+        char **urls;
+        size_t url_count;
+    } *relays;
+    size_t relay_count;
+    size_t relay_cap;
 } MemCtx;
 
 /* ── Deep copy helpers ─────────────────────────────────────────────────── */
@@ -336,10 +354,31 @@ mem_save_processed_message(void *ctx, const uint8_t wrapper_id[32],
                             uint64_t epoch, const MarmotGroupId *gid,
                             int state, const char *reason)
 {
-    /* In-memory: just track via the message itself. For the memory backend,
-     * we store a minimal message record. */
-    (void)ctx; (void)wrapper_id; (void)msg_id; (void)processed_at;
-    (void)epoch; (void)gid; (void)state; (void)reason;
+    MemCtx *mc = ctx;
+    (void)reason;
+
+    /* Grow messages array if needed */
+    if (mc->msg_count >= mc->msg_cap) {
+        size_t new_cap = mc->msg_cap ? mc->msg_cap * 2 : 16;
+        MarmotMessage **arr = realloc(mc->messages, new_cap * sizeof(MarmotMessage *));
+        if (!arr) return MARMOT_ERR_MEMORY;
+        mc->messages = arr;
+        mc->msg_cap = new_cap;
+    }
+
+    MarmotMessage *m = marmot_message_new();
+    if (!m) return MARMOT_ERR_MEMORY;
+
+    memcpy(m->wrapper_event_id, wrapper_id, 32);
+    if (msg_id)
+        memcpy(m->id, msg_id, 32);
+    m->processed_at = processed_at;
+    m->epoch = epoch;
+    if (gid)
+        m->mls_group_id = marmot_group_id_new(gid->data, gid->len);
+    m->state = (MarmotMessageState)state;
+
+    mc->messages[mc->msg_count++] = m;
     return MARMOT_OK;
 }
 
@@ -472,10 +511,19 @@ static MarmotError
 mem_find_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
                             bool *out_found, int *out_state, char **out_reason)
 {
-    (void)ctx; (void)wrapper_id;
+    MemCtx *mc = ctx;
     *out_found = false;
     *out_state = 0;
     *out_reason = NULL;
+    for (size_t i = 0; i < mc->proc_welcome_count; i++) {
+        if (memcmp(mc->proc_welcomes[i].wrapper_id, wrapper_id, 32) == 0) {
+            *out_found = true;
+            *out_state = mc->proc_welcomes[i].state;
+            if (mc->proc_welcomes[i].reason)
+                *out_reason = xstrdup(mc->proc_welcomes[i].reason);
+            return MARMOT_OK;
+        }
+    }
     return MARMOT_OK;
 }
 
@@ -484,8 +532,22 @@ mem_save_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
                             const uint8_t *welcome_event_id, int64_t processed_at,
                             int state, const char *reason)
 {
-    (void)ctx; (void)wrapper_id; (void)welcome_event_id;
-    (void)processed_at; (void)state; (void)reason;
+    MemCtx *mc = ctx;
+    (void)welcome_event_id;
+    (void)processed_at;
+
+    if (mc->proc_welcome_count >= mc->proc_welcome_cap) {
+        size_t new_cap = mc->proc_welcome_cap ? mc->proc_welcome_cap * 2 : 16;
+        struct processed_welcome *arr = realloc(mc->proc_welcomes,
+                                                 new_cap * sizeof(struct processed_welcome));
+        if (!arr) return MARMOT_ERR_MEMORY;
+        mc->proc_welcomes = arr;
+        mc->proc_welcome_cap = new_cap;
+    }
+    struct processed_welcome *pw = &mc->proc_welcomes[mc->proc_welcome_count++];
+    memcpy(pw->wrapper_id, wrapper_id, 32);
+    pw->state = state;
+    pw->reason = reason ? xstrdup(reason) : NULL;
     return MARMOT_OK;
 }
 
@@ -495,17 +557,78 @@ static MarmotError
 mem_group_relays(void *ctx, const MarmotGroupId *gid,
                   MarmotGroupRelay **out, size_t *out_count)
 {
-    (void)ctx; (void)gid;
+    MemCtx *mc = ctx;
     *out = NULL;
     *out_count = 0;
+
+    /* Find the relay entry for this group */
+    for (size_t i = 0; i < mc->relay_count; i++) {
+        if (marmot_group_id_equal(&mc->relays[i].gid, gid)) {
+            size_t n = mc->relays[i].url_count;
+            if (n == 0) return MARMOT_OK;
+            MarmotGroupRelay *arr = calloc(n, sizeof(MarmotGroupRelay));
+            if (!arr) return MARMOT_ERR_MEMORY;
+            for (size_t j = 0; j < n; j++) {
+                arr[j].relay_url = xstrdup(mc->relays[i].urls[j]);
+                arr[j].mls_group_id = marmot_group_id_new(gid->data, gid->len);
+            }
+            *out = arr;
+            *out_count = n;
+            return MARMOT_OK;
+        }
+    }
     return MARMOT_OK;
+}
+
+static void
+relay_entry_clear(struct relay_entry *e)
+{
+    marmot_group_id_free(&e->gid);
+    for (size_t i = 0; i < e->url_count; i++)
+        free(e->urls[i]);
+    free(e->urls);
+    e->urls = NULL;
+    e->url_count = 0;
 }
 
 static MarmotError
 mem_replace_group_relays(void *ctx, const MarmotGroupId *gid,
                           const char **urls, size_t count)
 {
-    (void)ctx; (void)gid; (void)urls; (void)count;
+    MemCtx *mc = ctx;
+
+    /* Find existing entry for this group */
+    for (size_t i = 0; i < mc->relay_count; i++) {
+        if (marmot_group_id_equal(&mc->relays[i].gid, gid)) {
+            /* Clear old URLs */
+            for (size_t j = 0; j < mc->relays[i].url_count; j++)
+                free(mc->relays[i].urls[j]);
+            free(mc->relays[i].urls);
+            /* Set new */
+            mc->relays[i].urls = calloc(count, sizeof(char *));
+            if (!mc->relays[i].urls) return MARMOT_ERR_MEMORY;
+            for (size_t j = 0; j < count; j++)
+                mc->relays[i].urls[j] = xstrdup(urls[j]);
+            mc->relays[i].url_count = count;
+            return MARMOT_OK;
+        }
+    }
+
+    /* New entry */
+    if (mc->relay_count >= mc->relay_cap) {
+        size_t new_cap = mc->relay_cap ? mc->relay_cap * 2 : 16;
+        struct relay_entry *arr = realloc(mc->relays, new_cap * sizeof(struct relay_entry));
+        if (!arr) return MARMOT_ERR_MEMORY;
+        mc->relays = arr;
+        mc->relay_cap = new_cap;
+    }
+    struct relay_entry *e = &mc->relays[mc->relay_count++];
+    e->gid = marmot_group_id_new(gid->data, gid->len);
+    e->urls = calloc(count, sizeof(char *));
+    if (!e->urls) return MARMOT_ERR_MEMORY;
+    for (size_t j = 0; j < count; j++)
+        e->urls[j] = xstrdup(urls[j]);
+    e->url_count = count;
     return MARMOT_OK;
 }
 
@@ -531,6 +654,16 @@ mem_save_exporter_secret(void *ctx, const MarmotGroupId *gid,
                           uint64_t epoch, const uint8_t secret[32])
 {
     MemCtx *mc = ctx;
+
+    /* Update existing entry if one matches (group_id, epoch) */
+    for (size_t i = 0; i < mc->secret_count; i++) {
+        if (mc->secrets[i].epoch == epoch &&
+            marmot_group_id_equal(&mc->secrets[i].mls_group_id, gid)) {
+            memcpy(mc->secrets[i].secret, secret, 32);
+            return MARMOT_OK;
+        }
+    }
+
     if (mc->secret_count >= mc->secret_cap) {
         size_t new_cap = mc->secret_cap ? mc->secret_cap * 2 : 16;
         MarmotExporterSecret *arr = realloc(mc->secrets, new_cap * sizeof(MarmotExporterSecret));
@@ -670,6 +803,12 @@ mem_destroy(void *ctx)
     for (size_t i = 0; i < mc->secret_count; i++)
         marmot_group_id_free(&mc->secrets[i].mls_group_id);
     free(mc->secrets);
+    for (size_t i = 0; i < mc->proc_welcome_count; i++)
+        free(mc->proc_welcomes[i].reason);
+    free(mc->proc_welcomes);
+    for (size_t i = 0; i < mc->relay_count; i++)
+        relay_entry_clear(&mc->relays[i]);
+    free(mc->relays);
     free(mc);
 }
 

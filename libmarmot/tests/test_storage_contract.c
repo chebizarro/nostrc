@@ -196,12 +196,22 @@ test_group_list_all(MarmotStorage *s)
     marmot_group_free(g2);
 }
 
+/* Helper: ensure a group exists (needed for sqlite FK constraints) */
+static void
+ensure_group(MarmotStorage *s, const MarmotGroupId *gid, const char *name)
+{
+    MarmotGroup *g = make_test_group(gid->data, gid->len, name, 1);
+    s->save_group(s->ctx, g);  /* ignore error if already exists */
+    marmot_group_free(g);
+}
+
 /* ── 2. Message operations ─────────────────────────────────────────────── */
 
 static void
 test_message_save_and_find(MarmotStorage *s)
 {
     MarmotGroupId gid = marmot_group_id_new((uint8_t *)"msg_grp", 7);
+    ensure_group(s, &gid, "msg_grp");
     MarmotMessage *m = make_test_message(&gid, 1, 1000);
     assert(s->save_message(s->ctx, m) == MARMOT_OK);
 
@@ -220,6 +230,7 @@ static void
 test_message_pagination(MarmotStorage *s)
 {
     MarmotGroupId gid = marmot_group_id_new((uint8_t *)"page_grp", 8);
+    ensure_group(s, &gid, "page_grp");
 
     /* Insert 10 messages */
     for (int i = 0; i < 10; i++) {
@@ -252,6 +263,7 @@ static void
 test_message_last(MarmotStorage *s)
 {
     MarmotGroupId gid = marmot_group_id_new((uint8_t *)"last_grp", 8);
+    ensure_group(s, &gid, "last_grp");
 
     for (int i = 0; i < 5; i++) {
         MarmotMessage *m = make_test_message(&gid, 200 + i, 3000 + i);
@@ -504,6 +516,7 @@ static void
 test_relay_replace_and_list(MarmotStorage *s)
 {
     MarmotGroupId gid = marmot_group_id_new((uint8_t *)"relay_grp", 9);
+    ensure_group(s, &gid, "relay_grp");
 
     const char *urls[] = {"wss://relay1.example.com", "wss://relay2.example.com"};
     assert(s->replace_group_relays(s->ctx, &gid, urls, 2) == MARMOT_OK);
