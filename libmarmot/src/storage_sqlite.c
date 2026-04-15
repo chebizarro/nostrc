@@ -848,6 +848,176 @@ sql_save_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
     return (rc == SQLITE_DONE) ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
+/* ── Key package info operations ────────────────────────────────────────── */
+
+static MarmotError
+sql_save_key_package_info(void *ctx, const MarmotKeyPackageInfo *info)
+{
+    SqliteCtx *sc = ctx;
+
+    /* Serialize relay URLs as tab-separated string */
+    char *relay_str = NULL;
+    if (info->relay_count > 0 && info->relay_urls) {
+        size_t total = 0;
+        for (size_t i = 0; i < info->relay_count; i++) {
+            if (info->relay_urls[i]) total += strlen(info->relay_urls[i]) + 1;
+        }
+        relay_str = malloc(total + 1);
+        if (relay_str) {
+            char *p = relay_str;
+            for (size_t i = 0; i < info->relay_count; i++) {
+                if (info->relay_urls[i]) {
+                    if (p != relay_str) *p++ = '\t';
+                    size_t len = strlen(info->relay_urls[i]);
+                    memcpy(p, info->relay_urls[i], len);
+                    p += len;
+                }
+            }
+            *p = '\0';
+        }
+    }
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(sc->db,
+        "INSERT OR REPLACE INTO key_package_infos "
+        "(ref, owner_pubkey, relay_urls, created_at, active) "
+        "VALUES (?,?,?,?,?)", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) { free(relay_str); return MARMOT_ERR_STORAGE; }
+
+    sqlite3_bind_blob(stmt, 1, info->ref, 32, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, info->owner_pubkey, 32, SQLITE_TRANSIENT);
+    if (relay_str) sqlite3_bind_text(stmt, 3, relay_str, -1, SQLITE_TRANSIENT);
+    else sqlite3_bind_null(stmt, 3);
+    sqlite3_bind_int64(stmt, 4, info->created_at);
+    sqlite3_bind_int(stmt, 5, info->active ? 1 : 0);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    free(relay_str);
+    return (rc == SQLITE_DONE) ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
+static MarmotKeyPackageInfo *
+kpi_from_row(sqlite3_stmt *stmt)
+{
+    MarmotKeyPackageInfo *info = marmot_key_package_info_new();
+    if (!info) return NULL;
+
+    read_fixed32(stmt, 0, info->ref);
+    read_fixed32(stmt, 1, info->owner_pubkey);
+
+    /* Parse tab-separated relay URLs */
+    const char *relays_txt = (const char *)sqlite3_column_text(stmt, 2);
+    if (relays_txt && *relays_txt) {
+        size_t count = 1;
+        for (const char *p = relays_txt; *p; p++) {
+            if (*p == '\t') count++;
+        }
+        info->relay_urls = calloc(count, sizeof(char *));
+        if (info->relay_urls) {
+            char *copy = strdup(relays_txt);
+            if (copy) {
+                size_t idx = 0;
+                char *saveptr = NULL;
+                char *tok = strtok_r(copy, "\t", &saveptr);
+                while (tok && idx < count) {
+                    info->relay_urls[idx++] = strdup(tok);
+                    tok = strtok_r(NULL, "\t", &saveptr);
+                }
+                info->relay_count = idx;
+                free(copy);
+            }
+        }
+    }
+
+    info->created_at = sqlite3_column_int64(stmt, 3);
+    info->active = sqlite3_column_int(stmt, 4) != 0;
+    return info;
+}
+
+static MarmotError
+sql_find_key_package_by_ref(void *ctx, const uint8_t ref[32],
+                             MarmotKeyPackageInfo **out)
+{
+    SqliteCtx *sc = ctx;
+    *out = NULL;
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(sc->db,
+        "SELECT ref, owner_pubkey, relay_urls, created_at, active "
+        "FROM key_package_infos WHERE ref = ?", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
+
+    sqlite3_bind_blob(stmt, 1, ref, 32, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        *out = kpi_from_row(stmt);
+    }
+    sqlite3_finalize(stmt);
+    return MARMOT_OK;
+}
+
+static MarmotError
+sql_find_key_packages_by_pubkey(void *ctx, const uint8_t pubkey[32],
+                                 MarmotKeyPackageInfo ***out, size_t *out_count)
+{
+    SqliteCtx *sc = ctx;
+    *out = NULL;
+    *out_count = 0;
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(sc->db,
+        "SELECT ref, owner_pubkey, relay_urls, created_at, active "
+        "FROM key_package_infos WHERE owner_pubkey = ?", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
+
+    sqlite3_bind_blob(stmt, 1, pubkey, 32, SQLITE_TRANSIENT);
+
+    size_t cap = 8;
+    MarmotKeyPackageInfo **arr = calloc(cap, sizeof(MarmotKeyPackageInfo *));
+    if (!arr) { sqlite3_finalize(stmt); return MARMOT_ERR_MEMORY; }
+
+    size_t count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (count >= cap) {
+            cap *= 2;
+            MarmotKeyPackageInfo **new_arr = realloc(arr, cap * sizeof(MarmotKeyPackageInfo *));
+            if (!new_arr) goto oom;
+            arr = new_arr;
+        }
+        arr[count] = kpi_from_row(stmt);
+        if (!arr[count]) goto oom;
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    *out = arr;
+    *out_count = count;
+    return MARMOT_OK;
+
+oom:
+    for (size_t i = 0; i < count; i++) marmot_key_package_info_free(arr[i]);
+    free(arr);
+    sqlite3_finalize(stmt);
+    return MARMOT_ERR_MEMORY;
+}
+
+static MarmotError
+sql_deactivate_key_packages(void *ctx, const uint8_t pubkey[32])
+{
+    SqliteCtx *sc = ctx;
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(sc->db,
+        "UPDATE key_package_infos SET active = 0 WHERE owner_pubkey = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
+
+    sqlite3_bind_blob(stmt, 1, pubkey, 32, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return MARMOT_OK;
+}
+
 /* ── Relay operations ──────────────────────────────────────────────────── */
 
 static MarmotError
@@ -1221,11 +1391,11 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
     s->find_processed_welcome = sql_find_processed_welcome;
     s->save_processed_welcome = sql_save_processed_welcome;
 
-    /* Key package info ops (NULL = not yet implemented for sqlite) */
-    s->save_key_package_info = NULL;
-    s->find_key_package_by_ref = NULL;
-    s->find_key_packages_by_pubkey = NULL;
-    s->deactivate_key_packages = NULL;
+    /* Key package info ops */
+    s->save_key_package_info = sql_save_key_package_info;
+    s->find_key_package_by_ref = sql_find_key_package_by_ref;
+    s->find_key_packages_by_pubkey = sql_find_key_packages_by_pubkey;
+    s->deactivate_key_packages = sql_deactivate_key_packages;
 
     /* Relay ops */
     s->group_relays = sql_group_relays;
