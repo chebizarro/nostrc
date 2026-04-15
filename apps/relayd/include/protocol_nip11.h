@@ -11,6 +11,9 @@ extern "C" {
 /* Serve NIP-11 relay information document for GET /. */
 int relayd_handle_nip11_root(struct lws *wsi, const RelaydCtx *ctx);
 
+/* Respond to CORS preflight (OPTIONS) for NIP-11 endpoint. */
+int relayd_handle_nip11_options(struct lws *wsi);
+
 #ifdef __cplusplus
 }
 #endif

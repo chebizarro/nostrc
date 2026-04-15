@@ -5,18 +5,38 @@
 #include "protocol_nip11.h"
 #include "nip11.h"
 
-static void ws_http_send_json(struct lws *wsi, const char *json) {
+/* Helper macro for adding a custom header; bails out on failure. */
+#define ADD_HDR(wsi, name, val, p, end) do {                                \
+  if (lws_add_http_header_by_name((wsi),                                    \
+        (const unsigned char *)(name),                                      \
+        (const unsigned char *)(val),                                       \
+        (int)strlen(val), &(p), (end))) {                                   \
+    free(buf); return;                                                      \
+  }                                                                         \
+} while (0)
+
+static void ws_http_send_nip11_json(struct lws *wsi, const char *json) {
   if (!wsi || !json) return;
   size_t blen = strlen(json);
-  /* headers + body */
-  unsigned char *buf = (unsigned char*)malloc(LWS_PRE + blen + 512);
+  /* headers + body — generous buffer for CORS headers */
+  unsigned char *buf = (unsigned char*)malloc(LWS_PRE + blen + 1024);
   if (!buf) return;
   unsigned char *p = &buf[LWS_PRE];
-  if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/json", blen, &p, buf + LWS_PRE + blen + 512)) {
+  unsigned char *end = buf + LWS_PRE + blen + 1024;
+
+  /* NIP-11: Content-Type MUST be application/nostr+json */
+  if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
+        "application/nostr+json", blen, &p, end)) {
     free(buf);
     return;
   }
-  if (lws_finalize_http_header(wsi, &p, buf + LWS_PRE + blen + 512)) {
+
+  /* CORS headers required by NIP-11 for browser-based clients */
+  ADD_HDR(wsi, "Access-Control-Allow-Origin:", "*", p, end);
+  ADD_HDR(wsi, "Access-Control-Allow-Headers:", "Accept, Content-Type, Authorization", p, end);
+  ADD_HDR(wsi, "Access-Control-Allow-Methods:", "GET, OPTIONS", p, end);
+
+  if (lws_finalize_http_header(wsi, &p, end)) {
     free(buf);
     return;
   }
@@ -24,6 +44,33 @@ static void ws_http_send_json(struct lws *wsi, const char *json) {
   lws_write(wsi, &buf[LWS_PRE], (size_t)(p - &buf[LWS_PRE]) + blen, LWS_WRITE_HTTP);
   free(buf);
 }
+
+/* Send a CORS preflight response (no body). */
+static void ws_http_send_cors_preflight(struct lws *wsi) {
+  if (!wsi) return;
+  unsigned char *buf = (unsigned char*)malloc(LWS_PRE + 512);
+  if (!buf) return;
+  unsigned char *p = &buf[LWS_PRE];
+  unsigned char *end = buf + LWS_PRE + 512;
+
+  if (lws_add_http_common_headers(wsi, HTTP_STATUS_NO_CONTENT, NULL, 0, &p, end)) {
+    free(buf);
+    return;
+  }
+  ADD_HDR(wsi, "Access-Control-Allow-Origin:", "*", p, end);
+  ADD_HDR(wsi, "Access-Control-Allow-Headers:", "Accept, Content-Type, Authorization", p, end);
+  ADD_HDR(wsi, "Access-Control-Allow-Methods:", "GET, OPTIONS", p, end);
+  ADD_HDR(wsi, "Access-Control-Max-Age:", "86400", p, end);
+
+  if (lws_finalize_http_header(wsi, &p, end)) {
+    free(buf);
+    return;
+  }
+  lws_write(wsi, &buf[LWS_PRE], (size_t)(p - &buf[LWS_PRE]), LWS_WRITE_HTTP_HEADERS);
+  free(buf);
+}
+
+#undef ADD_HDR
 
 int relayd_handle_nip11_root(struct lws *wsi, const RelaydCtx *ctx) {
   char *body = NULL; int need_free = 0;
@@ -60,7 +107,12 @@ int relayd_handle_nip11_root(struct lws *wsi, const RelaydCtx *ctx) {
   need_free = 1;
 #endif
   if (!body) body = (char*)"{\"name\":\"nostrc-relayd\"}";
-  ws_http_send_json(wsi, body);
+  ws_http_send_nip11_json(wsi, body);
   if (need_free && body && body[0] == '{') free(body);
+  return 0;
+}
+
+int relayd_handle_nip11_options(struct lws *wsi) {
+  ws_http_send_cors_preflight(wsi);
   return 0;
 }

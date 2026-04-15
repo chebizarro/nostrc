@@ -93,6 +93,11 @@ static int http_cb(struct lws *wsi, enum lws_callback_reasons reason,
         return 0;
       }
       if (uri && strcmp(uri, "/") == 0) {
+        /* Handle CORS preflight for NIP-11 endpoint */
+        if (lws_hdr_total_length(wsi, WSI_TOKEN_OPTIONS_URI) > 0) {
+          (void)relayd_handle_nip11_options(wsi);
+          return -1;
+        }
         const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
         (void)relayd_handle_nip11_root(wsi, ctx);
         return -1; /* close connection */
