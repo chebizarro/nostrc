@@ -2175,31 +2175,12 @@ static void set_avatar_initials(NostrGtkNoteCardRow *self, const char *display, 
   gtk_widget_set_visible(self->avatar_initials, TRUE);
 }
 
+/* nostrc-9ic8: Removed dead on_avatar_http_done callback.
+ * Avatar loading is now handled by gnostr-avatar-cache.c with proper
+ * GWeakRef + triple validation (native/mapped checks). The old callback
+ * used a raw self pointer as user_data, which was a use-after-free risk
+ * if the widget was recycled during the HTTP fetch. */
 #ifdef HAVE_SOUP3
-static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* CRITICAL: Check NULL before type-check macro. Type-check macros dereference
-   * the pointer which crashes if widget was recycled during HTTP fetch.
-   * nostrc-ofq: Fix crash during fast scrolling in timeline. */
-  if (user_data == NULL) return;
-  NostrGtkNoteCardRow *self = (NostrGtkNoteCardRow *)user_data;
-  /* Check disposed flag BEFORE type-check macro */
-  if (self->disposed) return;
-  /* Now safe to use type-check since disposed==FALSE means widget is valid */
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
-  GError *error = NULL;
-  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-  if (!bytes) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
-  if (self->disposed) { g_bytes_unref(bytes); return; }
-  GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
-  if (!tex) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
-  if (!self->disposed && GTK_IS_PICTURE(self->avatar_image)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(tex));
-    gtk_widget_set_visible(self->avatar_image, TRUE);
-  }
-  if (!self->disposed && GTK_IS_WIDGET(self->avatar_initials)) gtk_widget_set_visible(self->avatar_initials, FALSE);
-  g_object_unref(tex);
-}
 
 /* Helper to show broken image fallback in container */
 static void show_broken_image_fallback(GtkWidget *container) {
@@ -2283,10 +2264,19 @@ static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer us
 
   /* CRITICAL: Use g_weak_ref_get to safely check if widget still exists.
    * If widget was recycled/disposed during decode, weak ref returns NULL
-   * and we skip the update, preventing use-after-free crash. */
+   * and we skip the update, preventing use-after-free crash.
+   *
+   * nostrc-9ic8: Also check gtk_widget_get_native() and gtk_widget_get_mapped().
+   * g_weak_ref_get returns non-NULL for recycled (not finalized) GtkListView
+   * row widgets. A widget without a native surface is in a transitional state;
+   * calling set_paintable on it corrupts GtkPicture's internal
+   * GtkImageDefinition, causing g_rc_box_release_full SIGSEGV in dispose.
+   * Same triple validation as gnostr-avatar-cache.c. */
   GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
   if (picture) {
-    if (GTK_IS_PICTURE(picture)) {
+    if (GTK_IS_PICTURE(picture) &&
+        gtk_widget_get_native(picture) != NULL &&
+        gtk_widget_get_mapped(picture)) {
       const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
       if (url) {
         media_image_cache_put(url, texture);
@@ -2294,6 +2284,10 @@ static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer us
       gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
       GtkWidget *container = gtk_widget_get_parent(picture);
       if (container) show_loaded_image(container);
+    } else {
+      g_debug("Media: picture widget not ready (mapped=%d native=%p), skipping",
+              picture ? gtk_widget_get_mapped(picture) : 0,
+              picture ? (void*)gtk_widget_get_native(picture) : NULL);
     }
     g_object_unref(picture); /* g_weak_ref_get returns a ref */
   } else {
@@ -5390,7 +5384,15 @@ static void on_video_thumb_decode_done(GObject *source, GAsyncResult *res, gpoin
     return;
   }
 
-  if (ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
+  /* nostrc-9ic8: Triple validation before setting paintable on video thumbnail.
+   * g_object_weak_ref (destroy notification) only NULLs ctx->picture on
+   * finalize, not on recycle. During GtkListView recycling the widget is
+   * unparented/unrealized but not finalized, so ctx->picture is stale.
+   * Setting paintable in this state corrupts GtkImageDefinition, causing
+   * g_rc_box_release_full SIGSEGV in dispose. Check native + mapped first. */
+  if (ctx->picture && GTK_IS_PICTURE(ctx->picture) &&
+      gtk_widget_get_native(ctx->picture) != NULL &&
+      gtk_widget_get_mapped(ctx->picture)) {
     gtk_picture_set_paintable(GTK_PICTURE(ctx->picture), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(ctx->picture, TRUE);
   }
