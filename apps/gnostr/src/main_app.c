@@ -305,6 +305,21 @@ int main(int argc, char **argv) {
   g_action_map_add_action_entries(G_ACTION_MAP(app), app_entries, G_N_ELEMENTS(app_entries), app);
   const char *quit_accels[] = { "<Primary>q", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.quit", quit_accels);
+
+  /* Filter-set quick-switch accelerators (<Primary>1..9 → slot 1..9).
+   * Each action-detail string targets win.activate-filter-set(i) with a
+   * different int32 parameter, so GTK dispatches the right slot on key
+   * press. The action itself is installed per-window in
+   * gnostr_main_window_install_actions_internal. nostrc-yg8j.5 */
+  for (int i = 1; i <= 9; i++) {
+    gchar *detailed = g_strdup_printf("win.activate-filter-set(%d)", i);
+    gchar *accel    = g_strdup_printf("<Primary>%d", i);
+    const char *accels[] = { accel, NULL };
+    gtk_application_set_accels_for_action(GTK_APPLICATION(app), detailed, accels);
+    g_free(accel);
+    g_free(detailed);
+  }
+
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
 
   /* Initialize subscription dispatcher BEFORE storage to register callback */

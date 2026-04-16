@@ -11,6 +11,7 @@
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "gnostr-avatar-cache.h"
 #include "gnostr-repo-browser.h"
+#include "gnostr-filter-switcher.h"
 #include "gnostr-search-results-view.h"
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
 #include "gnostr-article-reader.h"
@@ -92,6 +93,7 @@ struct _GnostrSessionView {
   GtkMenuButton *btn_avatar;
   GtkButton *btn_compose;
   GtkButton *btn_search;
+  GnostrFilterSwitcher *filter_switcher;
 
   /* Search bar */
   GtkSearchBar *search_bar;
@@ -1027,6 +1029,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       0);
 
   /* Ensure custom widget types used in the template are registered */
+  g_type_ensure(GNOSTR_TYPE_FILTER_SWITCHER);
   g_type_ensure(NOSTR_GTK_TYPE_TIMELINE_VIEW);
   g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
   g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
@@ -1071,6 +1074,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_avatar);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_compose);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_search);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, filter_switcher);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, search_bar);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, search_entry);
 
@@ -1406,6 +1410,11 @@ void gnostr_session_view_show_toast(GnostrSessionView *self, const char *message
 GtkWidget *gnostr_session_view_get_timeline(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
   return self->timeline;
+}
+
+GtkWidget *gnostr_session_view_get_filter_switcher(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
+  return GTK_WIDGET(self->filter_switcher);
 }
 
 GtkWidget *gnostr_session_view_get_notifications_view(GnostrSessionView *self) {

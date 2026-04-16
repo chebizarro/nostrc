@@ -1,0 +1,498 @@
+/* gnostr-filter-switcher.c — Popover-backed filter-set picker.
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * Two GtkListBoxes — "predefined" and "custom" — are bound to filtered
+ * views of the default #GnostrFilterSetManager's GListModel. The
+ * predefined section is pinned at the top; custom sets live under a
+ * separator that auto-hides when the list is empty.
+ *
+ * The widget is deliberately passive: it does not own any routing
+ * logic. Selecting a row emits "filter-set-activated" with the
+ * filter-set id, and a higher-level component (the main window)
+ * decides whether to select an existing tab or open a new CUSTOM one.
+ *
+ * nostrc-yg8j.5
+ */
+
+#define G_LOG_DOMAIN "gnostr-filter-switcher"
+
+#include "gnostr-filter-switcher.h"
+
+#include <glib/gi18n.h>
+
+#include "../model/gnostr-filter-set.h"
+#include "../model/gnostr-filter-set-manager.h"
+
+#define FALLBACK_ICON      "view-list-symbolic"
+#define FALLBACK_LABEL_KEY N_("Feeds")
+
+struct _GnostrFilterSwitcher {
+  GtkWidget parent_instance;
+
+  /* Template children — structural skeleton. */
+  GtkMenuButton    *button;
+  GtkImage         *button_icon;
+  GtkLabel         *button_label;
+  GtkPopover       *popover;
+  GtkBox           *content_box;      /* vertical container inside the popover */
+
+  /* Built programmatically inside content_box. */
+  GtkListBox       *predefined_list;
+  GtkListBox       *custom_list;
+  GtkWidget        *custom_section;   /* box that contains separator + header + custom_list */
+
+  /* Filtered views of the manager model. Owned by the widget. */
+  GtkFilterListModel *predefined_model;
+  GtkFilterListModel *custom_model;
+
+  /* The manager model reference we took — released on dispose. */
+  GListModel        *manager_model;
+
+  /* Currently-active filter-set id (copy, nullable). Used for the
+   * "checkmark" row indicator. */
+  gchar             *active_id;
+};
+
+G_DEFINE_FINAL_TYPE(GnostrFilterSwitcher, gnostr_filter_switcher, GTK_TYPE_WIDGET)
+
+enum {
+  SIGNAL_FILTER_SET_ACTIVATED,
+  N_SIGNALS
+};
+
+static guint signals[N_SIGNALS];
+
+/* ------------------------------------------------------------------------
+ * Row factory
+ * ------------------------------------------------------------------------ */
+
+typedef struct {
+  GtkListBoxRow *row;
+  GtkImage      *checkmark;
+  gchar         *id;
+} RowData;
+
+static void
+row_data_free(gpointer data)
+{
+  RowData *rd = data;
+  g_free(rd->id);
+  g_free(rd);
+}
+
+static GtkWidget *
+create_row_cb(gpointer item, gpointer user_data)
+{
+  (void)user_data;
+  GnostrFilterSet *fs = GNOSTR_FILTER_SET(item);
+
+  GtkWidget *row = gtk_list_box_row_new();
+  gtk_widget_set_focusable(row, TRUE);
+
+  GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_start(hbox, 8);
+  gtk_widget_set_margin_end  (hbox, 8);
+  gtk_widget_set_margin_top  (hbox, 6);
+  gtk_widget_set_margin_bottom(hbox, 6);
+
+  const gchar *icon_name = gnostr_filter_set_get_icon(fs);
+  GtkWidget *icon = gtk_image_new_from_icon_name(
+      (icon_name && *icon_name) ? icon_name : FALLBACK_ICON);
+  gtk_box_append(GTK_BOX(hbox), icon);
+
+  const gchar *name = gnostr_filter_set_get_name(fs);
+  GtkWidget *label = gtk_label_new(name && *name ? name : gnostr_filter_set_get_id(fs));
+  gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+  gtk_widget_set_hexpand(label, TRUE);
+  gtk_box_append(GTK_BOX(hbox), label);
+
+  GtkWidget *checkmark = gtk_image_new_from_icon_name("emblem-ok-symbolic");
+  gtk_widget_set_visible(checkmark, FALSE);
+  gtk_box_append(GTK_BOX(hbox), checkmark);
+
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), hbox);
+
+  RowData *rd = g_new0(RowData, 1);
+  rd->row = GTK_LIST_BOX_ROW(row);
+  rd->checkmark = GTK_IMAGE(checkmark);
+  rd->id = g_strdup(gnostr_filter_set_get_id(fs));
+  /* Attach as "filter-set-row-data" — freed with the row. */
+  g_object_set_data_full(G_OBJECT(row), "filter-set-row-data", rd, row_data_free);
+
+  return row;
+}
+
+/* ------------------------------------------------------------------------
+ * Filter predicates for the two sub-lists.
+ * ------------------------------------------------------------------------ */
+
+static gboolean
+is_predefined(gpointer item, gpointer user_data)
+{
+  (void)user_data;
+  return GNOSTR_IS_FILTER_SET(item) &&
+         gnostr_filter_set_get_source(GNOSTR_FILTER_SET(item)) ==
+             GNOSTR_FILTER_SET_SOURCE_PREDEFINED;
+}
+
+static gboolean
+is_custom(gpointer item, gpointer user_data)
+{
+  (void)user_data;
+  return GNOSTR_IS_FILTER_SET(item) &&
+         gnostr_filter_set_get_source(GNOSTR_FILTER_SET(item)) ==
+             GNOSTR_FILTER_SET_SOURCE_CUSTOM;
+}
+
+/* ------------------------------------------------------------------------
+ * Active-id indicator + button state
+ * ------------------------------------------------------------------------ */
+
+static void
+update_row_checkmarks(GnostrFilterSwitcher *self)
+{
+  GtkListBox *boxes[] = { self->predefined_list, self->custom_list };
+  for (size_t b = 0; b < G_N_ELEMENTS(boxes); b++) {
+    GtkListBox *box = boxes[b];
+    if (!box) continue;
+    GtkListBoxRow *row = NULL;
+    guint i = 0;
+    while ((row = gtk_list_box_get_row_at_index(box, (gint)i))) {
+      RowData *rd = g_object_get_data(G_OBJECT(row), "filter-set-row-data");
+      if (rd && rd->checkmark) {
+        gboolean match = self->active_id &&
+                         g_strcmp0(rd->id, self->active_id) == 0;
+        gtk_widget_set_visible(GTK_WIDGET(rd->checkmark), match);
+      }
+      i++;
+    }
+  }
+}
+
+static void
+update_button_state(GnostrFilterSwitcher *self)
+{
+  const gchar *icon = FALLBACK_ICON;
+  const gchar *name = NULL;
+
+  if (self->active_id && *self->active_id) {
+    GnostrFilterSetManager *mgr = gnostr_filter_set_manager_get_default();
+    GnostrFilterSet *fs = mgr ?
+        gnostr_filter_set_manager_get(mgr, self->active_id) : NULL;
+    if (fs) {
+      const gchar *fs_icon = gnostr_filter_set_get_icon(fs);
+      const gchar *fs_name = gnostr_filter_set_get_name(fs);
+      if (fs_icon && *fs_icon) icon = fs_icon;
+      if (fs_name && *fs_name) name = fs_name;
+    }
+  }
+
+  gtk_image_set_from_icon_name(self->button_icon, icon);
+  gtk_label_set_text(self->button_label, name ? name : _(FALLBACK_LABEL_KEY));
+}
+
+/* ------------------------------------------------------------------------
+ * Custom section visibility — hide when there are no custom sets.
+ * ------------------------------------------------------------------------ */
+
+static void
+on_custom_items_n_items_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+  (void)pspec;
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(obj));
+  if (self->custom_section)
+    gtk_widget_set_visible(self->custom_section, n > 0);
+}
+
+/* ------------------------------------------------------------------------
+ * Row activation
+ * ------------------------------------------------------------------------ */
+
+static void
+on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data)
+{
+  (void)box;
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
+  RowData *rd = g_object_get_data(G_OBJECT(row), "filter-set-row-data");
+  if (!rd || !rd->id || !*rd->id) return;
+
+  g_signal_emit(self, signals[SIGNAL_FILTER_SET_ACTIVATED], 0, rd->id);
+  gtk_popover_popdown(self->popover);
+}
+
+/* ------------------------------------------------------------------------
+ * Public API
+ * ------------------------------------------------------------------------ */
+
+void
+gnostr_filter_switcher_set_active_id(GnostrFilterSwitcher *self,
+                                      const gchar *id)
+{
+  g_return_if_fail(GNOSTR_IS_FILTER_SWITCHER(self));
+  if (g_strcmp0(self->active_id, id) == 0)
+    return;
+  g_free(self->active_id);
+  self->active_id = id ? g_strdup(id) : NULL;
+
+  update_button_state(self);
+  update_row_checkmarks(self);
+}
+
+gboolean
+gnostr_filter_switcher_activate_position(GnostrFilterSwitcher *self,
+                                          guint position)
+{
+  g_return_val_if_fail(GNOSTR_IS_FILTER_SWITCHER(self), FALSE);
+  if (position == 0 || !self->manager_model)
+    return FALSE;
+
+  guint n = g_list_model_get_n_items(self->manager_model);
+  if (position > n)
+    return FALSE;
+
+  GnostrFilterSet *fs = g_list_model_get_item(self->manager_model, position - 1);
+  if (!fs)
+    return FALSE;
+
+  const gchar *id = gnostr_filter_set_get_id(fs);
+  gboolean ok = (id && *id);
+  if (ok)
+    g_signal_emit(self, signals[SIGNAL_FILTER_SET_ACTIVATED], 0, id);
+
+  g_object_unref(fs);
+  return ok;
+}
+
+/* ------------------------------------------------------------------------
+ * Construction helpers
+ * ------------------------------------------------------------------------ */
+
+static GtkWidget *
+section_header(const char *label_text)
+{
+  GtkWidget *lbl = gtk_label_new(label_text);
+  gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+  gtk_widget_add_css_class(lbl, "caption-heading");
+  gtk_widget_add_css_class(lbl, "dim-label");
+  gtk_widget_set_margin_start(lbl, 12);
+  gtk_widget_set_margin_top(lbl, 8);
+  gtk_widget_set_margin_bottom(lbl, 4);
+  return lbl;
+}
+
+static void
+build_popover_content(GnostrFilterSwitcher *self)
+{
+  /* Predefined header + list */
+  gtk_box_append(self->content_box, section_header(_("Predefined")));
+
+  self->predefined_list = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_list_box_set_selection_mode(self->predefined_list, GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(GTK_WIDGET(self->predefined_list), "boxed-list");
+  gtk_widget_set_margin_start (GTK_WIDGET(self->predefined_list), 6);
+  gtk_widget_set_margin_end   (GTK_WIDGET(self->predefined_list), 6);
+  gtk_box_append(self->content_box, GTK_WIDGET(self->predefined_list));
+  g_signal_connect(self->predefined_list, "row-activated",
+                   G_CALLBACK(on_row_activated), self);
+
+  /* Custom section (separator + header + list) — hidden when empty. */
+  self->custom_section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_box_append(GTK_BOX(self->custom_section), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+  gtk_box_append(GTK_BOX(self->custom_section), section_header(_("Custom Filters")));
+
+  self->custom_list = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_list_box_set_selection_mode(self->custom_list, GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(GTK_WIDGET(self->custom_list), "boxed-list");
+  gtk_widget_set_margin_start (GTK_WIDGET(self->custom_list), 6);
+  gtk_widget_set_margin_end   (GTK_WIDGET(self->custom_list), 6);
+  gtk_widget_set_margin_bottom(GTK_WIDGET(self->custom_list), 6);
+  gtk_box_append(GTK_BOX(self->custom_section), GTK_WIDGET(self->custom_list));
+
+  gtk_box_append(self->content_box, self->custom_section);
+  g_signal_connect(self->custom_list, "row-activated",
+                   G_CALLBACK(on_row_activated), self);
+}
+
+static void
+bind_models(GnostrFilterSwitcher *self)
+{
+  GnostrFilterSetManager *mgr = gnostr_filter_set_manager_get_default();
+  if (!mgr) {
+    g_warning("filter switcher: default manager unavailable");
+    return;
+  }
+
+  /* Hold a strong reference so we can unbind cleanly on dispose. */
+  self->manager_model = g_object_ref(gnostr_filter_set_manager_get_model(mgr));
+
+  GtkCustomFilter *pf =
+      gtk_custom_filter_new((GtkCustomFilterFunc)is_predefined, NULL, NULL);
+  self->predefined_model = gtk_filter_list_model_new(
+      g_object_ref(self->manager_model), GTK_FILTER(pf));
+  gtk_list_box_bind_model(self->predefined_list,
+                          G_LIST_MODEL(self->predefined_model),
+                          create_row_cb, self, NULL);
+
+  GtkCustomFilter *cf =
+      gtk_custom_filter_new((GtkCustomFilterFunc)is_custom, NULL, NULL);
+  self->custom_model = gtk_filter_list_model_new(
+      g_object_ref(self->manager_model), GTK_FILTER(cf));
+  gtk_list_box_bind_model(self->custom_list,
+                          G_LIST_MODEL(self->custom_model),
+                          create_row_cb, self, NULL);
+
+  /* Drive custom-section visibility off the filtered model's n-items. */
+  g_signal_connect_object(self->custom_model, "notify::n-items",
+                          G_CALLBACK(on_custom_items_n_items_changed),
+                          self, G_CONNECT_DEFAULT);
+  on_custom_items_n_items_changed(G_OBJECT(self->custom_model), NULL, self);
+}
+
+/* ------------------------------------------------------------------------
+ * GObject plumbing
+ * ------------------------------------------------------------------------ */
+
+static void
+on_popover_visible(GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+  (void)pspec;
+  if (!gtk_widget_get_visible(GTK_WIDGET(obj)))
+    return;
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
+  /* Re-apply the indicator in case the manager list changed while
+   * closed or the active id was updated without an open popover. */
+  update_row_checkmarks(self);
+}
+
+static void
+gnostr_filter_switcher_init(GnostrFilterSwitcher *self)
+{
+  /* Build the button + popover programmatically (no template — the
+   * widget is small enough that a .blp adds no clarity and would add
+   * a resource-loading dependency). */
+  GtkLayoutManager *layout = gtk_bin_layout_new();
+  gtk_widget_set_layout_manager(GTK_WIDGET(self), layout);
+
+  self->button = GTK_MENU_BUTTON(gtk_menu_button_new());
+  gtk_menu_button_set_direction(self->button, GTK_ARROW_NONE);
+  gtk_menu_button_set_always_show_arrow(self->button, TRUE);
+  gtk_widget_add_css_class(GTK_WIDGET(self->button), "flat");
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->button), _("Switch feed"));
+  gtk_widget_set_parent(GTK_WIDGET(self->button), GTK_WIDGET(self));
+
+  /* Button content: icon + label */
+  GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  self->button_icon = GTK_IMAGE(gtk_image_new_from_icon_name(FALLBACK_ICON));
+  self->button_label = GTK_LABEL(gtk_label_new(_(FALLBACK_LABEL_KEY)));
+  gtk_label_set_max_width_chars(self->button_label, 16);
+  gtk_label_set_ellipsize(self->button_label, PANGO_ELLIPSIZE_END);
+  gtk_box_append(GTK_BOX(btn_box), GTK_WIDGET(self->button_icon));
+  gtk_box_append(GTK_BOX(btn_box), GTK_WIDGET(self->button_label));
+  gtk_menu_button_set_child(self->button, btn_box);
+
+  /* Popover scaffolding. */
+  self->popover = GTK_POPOVER(gtk_popover_new());
+  gtk_popover_set_has_arrow(self->popover, TRUE);
+  /* Use g_signal_connect_object so the callback ties its lifetime to
+   * @self; consistent with how bind_models() connects the custom
+   * model's notify::n-items handler. */
+  g_signal_connect_object(self->popover, "notify::visible",
+                          G_CALLBACK(on_popover_visible), self,
+                          G_CONNECT_DEFAULT);
+
+  GtkWidget *scroll = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE);
+  gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), 420);
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+
+  self->content_box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
+  gtk_widget_set_size_request(GTK_WIDGET(self->content_box), 260, -1);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), GTK_WIDGET(self->content_box));
+
+  gtk_popover_set_child(self->popover, scroll);
+  gtk_menu_button_set_popover(self->button, GTK_WIDGET(self->popover));
+
+  /* Build list content + bind models. */
+  build_popover_content(self);
+  bind_models(self);
+  update_button_state(self);
+}
+
+static void
+gnostr_filter_switcher_dispose(GObject *object)
+{
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(object);
+
+  /* Drop model references FIRST. `g_signal_connect_object` disconnects
+   * on finalize, not dispose, so the notify::n-items callback could
+   * otherwise fire against dangling widget pointers during button
+   * teardown. Clearing the filter models here drops our owning ref;
+   * once the list boxes also release theirs (during widget teardown
+   * below) the custom_model is finalized and its signal is
+   * disconnected. */
+  g_clear_object(&self->predefined_model);
+  g_clear_object(&self->custom_model);
+  g_clear_object(&self->manager_model);
+
+  /* Now unparent the button — this destroys the subtree (popover,
+   * list boxes, content box, etc). Null out every struct-field
+   * pointer that referenced a child of the button so any accidental
+   * later use (e.g. a late signal emission) becomes a clean no-op
+   * rather than a use-after-free. */
+  if (self->button) {
+    gtk_widget_unparent(GTK_WIDGET(self->button));
+    self->button          = NULL;
+    self->button_icon     = NULL;
+    self->button_label    = NULL;
+    self->popover         = NULL;
+    self->content_box     = NULL;
+    self->predefined_list = NULL;
+    self->custom_list     = NULL;
+    self->custom_section  = NULL;
+  }
+
+  g_clear_pointer(&self->active_id, g_free);
+
+  G_OBJECT_CLASS(gnostr_filter_switcher_parent_class)->dispose(object);
+}
+
+static void
+gnostr_filter_switcher_class_init(GnostrFilterSwitcherClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+
+  object_class->dispose = gnostr_filter_switcher_dispose;
+
+  gtk_widget_class_set_css_name(widget_class, "filterswitcher");
+
+  /**
+   * GnostrFilterSwitcher::filter-set-activated:
+   * @self: the switcher
+   * @filter_set_id: the id of the chosen filter set
+   *
+   * Emitted when a filter set is chosen from the popover or when
+   * gnostr_filter_switcher_activate_position() activates a slot.
+   */
+  signals[SIGNAL_FILTER_SET_ACTIVATED] = g_signal_new(
+      "filter-set-activated",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0, NULL, NULL, NULL,
+      G_TYPE_NONE,
+      1, G_TYPE_STRING);
+}
+
+/* ------------------------------------------------------------------------
+ * Public constructor
+ * ------------------------------------------------------------------------ */
+
+GtkWidget *
+gnostr_filter_switcher_new(void)
+{
+  return g_object_new(GNOSTR_TYPE_FILTER_SWITCHER, NULL);
+}

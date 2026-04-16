@@ -319,6 +319,16 @@ void gnostr_main_window_refresh_current_tab_filter_internal(GnostrMainWindow *se
 void gnostr_main_window_open_filter_set_tab_internal(GnostrMainWindow *self,
                                                       const char *filter_set_id);
 
+/* Activate a filter set by id. Well-known predefined ids
+ * (predefined-global, predefined-follows) are routed onto the built-in
+ * Global / Following tabs so the UI doesn't end up with duplicate tabs
+ * showing identical content. Unknown ids fall through to
+ * gnostr_main_window_open_filter_set_tab_internal() and open or focus a
+ * CUSTOM tab.
+ * nostrc-yg8j.5. */
+void gnostr_main_window_activate_filter_set_by_id_internal(GnostrMainWindow *self,
+                                                            const char *filter_set_id);
+
 /* Search-committed: user pressed Enter in the search bar. Creates or
  * selects a Search tab in the timeline and navigates to the timeline page.
  * nostrc-e03f.4. */

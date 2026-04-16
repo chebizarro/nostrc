@@ -280,6 +280,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child type="top">
                       <object class="AdwHeaderBar" id="header_bar">
                         <child type="start">
+                          <object class="GnostrFilterSwitcher" id="filter_switcher"></object>
+                        </child>
+                        <child type="start">
                           <object class="GtkMenuButton" id="btn_relays">
                             <property name="tooltip-text" translatable="yes">Relay Status</property>
                             <style>

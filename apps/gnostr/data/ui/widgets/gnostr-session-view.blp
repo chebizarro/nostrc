@@ -248,6 +248,9 @@ template $GnostrSessionView: Adw.Bin {
                     [top]
                     Adw.HeaderBar header_bar {
                         [start]
+                        $GnostrFilterSwitcher filter_switcher {}
+
+                        [start]
                         MenuButton btn_relays {
                             tooltip-text: _("Relay Status");
 

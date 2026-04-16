@@ -3,6 +3,7 @@
 #include "gnostr-main-window-private.h"
 
 #include "gnostr-session-view.h"
+#include "gnostr-filter-switcher.h"
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
 
 #include "../model/gn-nostr-event-model.h"
@@ -194,6 +195,43 @@ gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView 
     gn_nostr_event_model_refresh_async(self->event_model);
     gnostr_timeline_query_free(query);
   }
+
+  /* Reflect the new tab selection in the filter-switcher button so its
+   * label/icon stays in sync with whichever tab is active. Built-in tabs
+   * map back to their predefined filter-set ids; CUSTOM tabs pass their
+   * backing filter-set id through directly. Anything else clears the
+   * indicator. nostrc-yg8j.5 */
+  if (self->session_view) {
+    GtkWidget *switcher = gnostr_session_view_get_filter_switcher(self->session_view);
+    if (switcher && GNOSTR_IS_FILTER_SWITCHER(switcher)) {
+      const gchar *id = NULL;
+      switch ((GnTimelineTabType)type) {
+        case GN_TIMELINE_TAB_GLOBAL:    id = "predefined-global";  break;
+        case GN_TIMELINE_TAB_FOLLOWING: id = "predefined-follows"; break;
+        case GN_TIMELINE_TAB_CUSTOM:    id = filter_value;         break;
+        default: id = NULL; break;
+      }
+      gnostr_filter_switcher_set_active_id(GNOSTR_FILTER_SWITCHER(switcher), id);
+    }
+  }
+}
+
+/* Signal handler for GnostrFilterSwitcher::filter-set-activated. Routes
+ * the chosen filter-set id into the main window's activate helper, which
+ * redirects well-known predefined ids onto built-in tabs and opens
+ * CUSTOM tabs for everything else.
+ * nostrc-yg8j.5 */
+static void
+on_filter_switcher_activated(GnostrFilterSwitcher *switcher,
+                              const gchar *filter_set_id,
+                              gpointer user_data)
+{
+  (void)switcher;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !filter_set_id || !*filter_set_id)
+    return;
+
+  gnostr_main_window_activate_filter_set_by_id_internal(self, filter_set_id);
 }
 
 static gboolean
@@ -336,6 +374,21 @@ gnostr_main_window_setup_initial_tabs_internal(GnostrMainWindow *self)
                               G_CONNECT_DEFAULT);
     }
   }
+
+  /* Wire the filter-switcher's "filter-set-activated" signal into the
+   * window's activate helper. Using g_signal_connect_object with
+   * G_CONNECT_DEFAULT means the handler automatically disconnects when
+   * the window is finalized, so the switcher (whose lifetime is tied to
+   * the session view) won't call back into a dead window.
+   * nostrc-yg8j.5 */
+  GtkWidget *switcher = gnostr_session_view_get_filter_switcher(self->session_view);
+  if (switcher && GNOSTR_IS_FILTER_SWITCHER(switcher)) {
+    g_signal_connect_object(switcher,
+                            "filter-set-activated",
+                            G_CALLBACK(on_filter_switcher_activated),
+                            self,
+                            G_CONNECT_DEFAULT);
+  }
 }
 
 /* Open (or focus) a custom tab backed by the filter set with the given
@@ -401,6 +454,66 @@ gnostr_main_window_open_filter_set_tab_internal(GnostrMainWindow *self,
    * programmatic entry point (switcher sidebar, deep links, tests) gets
    * consistent navigation behaviour. */
   gnostr_session_view_show_page(self->session_view, "timeline");
+}
+
+/* Maps a small number of well-known predefined filter-set ids to the
+ * built-in tab types so the switcher UI can reuse existing tabs (e.g.
+ * activating the "Global" filter-set flips to the Global tab instead of
+ * opening a CUSTOM clone of it).
+ *
+ * Anything not in this map is treated as a generic custom filter-set and
+ * routed through gnostr_main_window_open_filter_set_tab_internal().
+ * nostrc-yg8j.5 */
+typedef struct {
+  const char *filter_set_id;
+  GnTimelineTabType tab_type;
+} BuiltinTabMapping;
+
+static const BuiltinTabMapping k_builtin_tab_map[] = {
+  { "predefined-global",  GN_TIMELINE_TAB_GLOBAL },
+  { "predefined-follows", GN_TIMELINE_TAB_FOLLOWING },
+};
+
+/* Activate a filter set by id. Redirects well-known predefined ids onto
+ * their corresponding built-in tab (Global / Following) so users don't
+ * see two tabs with identical content. Unknown / user-defined ids open
+ * (or focus) a CUSTOM tab backed by the filter set.
+ *
+ * Safe to call with invalid input (NULL window, empty id) — it will
+ * silently return. nostrc-yg8j.5 */
+void
+gnostr_main_window_activate_filter_set_by_id_internal(GnostrMainWindow *self,
+                                                       const char *filter_set_id)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !filter_set_id || !*filter_set_id)
+    return;
+  if (!self->session_view)
+    return;
+
+  /* Check for built-in tab redirect. */
+  for (gsize i = 0; i < G_N_ELEMENTS(k_builtin_tab_map); i++) {
+    if (g_strcmp0(k_builtin_tab_map[i].filter_set_id, filter_set_id) == 0) {
+      GtkWidget *timeline = gnostr_session_view_get_timeline(self->session_view);
+      if (!timeline || !NOSTR_GTK_IS_TIMELINE_VIEW(timeline))
+        return;
+
+      NostrGtkTimelineView *tv = NOSTR_GTK_TIMELINE_VIEW(timeline);
+      NostrGtkTimelineTabs *tabs = nostr_gtk_timeline_view_get_tabs(tv);
+      if (!tabs)
+        return;
+
+      gint existing = nostr_gtk_timeline_tabs_find_tab_by_type(
+          tabs, k_builtin_tab_map[i].tab_type);
+      if (existing >= 0)
+        nostr_gtk_timeline_tabs_set_selected(tabs, (guint)existing);
+
+      gnostr_session_view_show_page(self->session_view, "timeline");
+      return;
+    }
+  }
+
+  /* Fall through to the generic CUSTOM tab path. */
+  gnostr_main_window_open_filter_set_tab_internal(self, filter_set_id);
 }
 
 /* Re-trigger the currently-selected tab's filter dispatch. Used after

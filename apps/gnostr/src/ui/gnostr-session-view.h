@@ -36,6 +36,7 @@ void gnostr_session_view_show_toast(GnostrSessionView *self, const char *message
 
 /* Access to child widgets for main window to wire up models/signals */
 GtkWidget *gnostr_session_view_get_timeline(GnostrSessionView *self);
+GtkWidget *gnostr_session_view_get_filter_switcher(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_notifications_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_dm_inbox(GnostrSessionView *self);
 GtkStack  *gnostr_session_view_get_dm_stack(GnostrSessionView *self);
