@@ -55,6 +55,23 @@ gboolean gnostr_filter_switcher_activate_position(GnostrFilterSwitcher *self,
                                                    guint position);
 
 /**
+ * gnostr_filter_switcher_set_pubkey:
+ * @self: a switcher
+ * @pubkey_hex: (nullable): 64-character hex pubkey of the currently
+ *   connected signer, or %NULL when none is connected
+ *
+ * Tells the switcher which pubkey to thread into the create / seeded
+ * dialogs so the "Import from NIP-51 list…" shortcut can query NDB
+ * for the user's kind-30000 lists. Passing %NULL (or an empty string)
+ * disables the shortcut on subsequently-presented dialogs. Safe to
+ * call at any time.
+ *
+ * nostrc-yg8j.8: List-based filter sets (NIP-51).
+ */
+void gnostr_filter_switcher_set_pubkey(GnostrFilterSwitcher *self,
+                                        const gchar *pubkey_hex);
+
+/**
  * gnostr_filter_switcher_set_active_hashtag:
  * @self: a switcher
  * @hashtag: (nullable): hashtag of the currently-visible timeline tab

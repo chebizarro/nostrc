@@ -54,6 +54,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="AdwPreferencesPage">
                     <child>
+                      <object class="AdwPreferencesGroup" id="import_group">
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="AdwActionRow" id="import_row">
+                            <property name="title" translatable="yes">Import from NIP-51 list…</property>
+                            <property name="subtitle" translatable="yes">Pre-fill this form from one of your kind 30000 lists.</property>
+                            <property name="activatable">true</property>
+                            <child type="suffix">
+                              <object class="GtkImage">
+                                <property name="icon-name">go-next-symbolic</property>
+                                <property name="valign">3</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwPreferencesGroup">
                         <child>
                           <object class="AdwEntryRow" id="row_name">

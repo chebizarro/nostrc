@@ -48,6 +48,25 @@ template $GnostrFilterSetDialog: Adw.Dialog {
         margin-end: 12;
 
         Adw.PreferencesPage {
+          /* Import group: offered only when a signer is connected so
+           * we have a pubkey to query NDB for kind-30000 lists.
+           * nostrc-yg8j.8 */
+          Adw.PreferencesGroup import_group {
+            visible: false;
+
+            Adw.ActionRow import_row {
+              title: _("Import from NIP-51 list…");
+              subtitle: _("Pre-fill this form from one of your kind 30000 lists.");
+              activatable: true;
+
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+                valign: center;
+              }
+            }
+          }
+
           /* Identity group: name + description. */
           Adw.PreferencesGroup {
             Adw.EntryRow row_name {

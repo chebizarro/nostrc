@@ -70,6 +70,7 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-filter-set-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nip51-list-picker-dialog.blp
 )
 
 # Compile Blueprint files to UI files if blueprint-compiler is available
@@ -137,6 +138,7 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-filter-set-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nip51-list-picker-dialog.ui
 )
 
 # Compile Gtk resources
@@ -275,6 +277,10 @@ if (TARGET nip04)
 endif()
 if (TARGET nostr_nip44_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip44_core)
+endif()
+# nostrc-yg8j.8: Link NIP-51 for list-based filter sets
+if (TARGET nostr_nip51_core)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip51_core)
 endif()
 # hq-cj8e8: Link NIP-49 for GNostrNip49 encrypted key wrapper
 if (TARGET nostr_nip49_core)
@@ -1108,6 +1114,32 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-filter-set-query PROPERTIES
     TIMEOUT 30
     LABELS "model;filter-set;timeline-query;unit;gnostr")
+
+  # ── NIP-51 loader / converter tests (nostrc-yg8j.8) ──────────────
+  # Exercises only the pure converter + lifecycle helpers. The async
+  # NDB loader itself is integration-tested elsewhere.
+  if(TARGET nostr_nip51_core)
+    add_executable(gnostr-test-nip51-loader
+      tests/test_nip51_loader.c
+      src/model/gnostr-filter-set.c
+      src/model/gnostr-nip51-loader.c)
+    target_compile_features(gnostr-test-nip51-loader PRIVATE c_std_11)
+    target_include_directories(gnostr-test-nip51-loader PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${PROJECT_ROOT}/libnostr/include
+      ${PROJECT_ROOT}/nostr-gobject/include
+      ${PROJECT_ROOT}/nips/nip51/include)
+    target_link_libraries(gnostr-test-nip51-loader PRIVATE
+      PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB
+      nostr_gobject
+      nostr_nip51_core)
+    _gnostr_apply_sanitizers(gnostr-test-nip51-loader)
+    add_test(NAME gnostr-test-nip51-loader
+      COMMAND gnostr-test-nip51-loader)
+    set_tests_properties(gnostr-test-nip51-loader PROPERTIES
+      TIMEOUT 30
+      LABELS "model;filter-set;nip51;unit;gnostr")
+  endif()
 
   # ── Event model windowing tests (require testkit + NDB) ──────────
   if(TARGET gnostr-testkit)

@@ -30,8 +30,10 @@
 #include <nostr-gobject-1.0/nostr_utils.h>
 
 #include "../model/gnostr-filter-set-manager.h"
+#include "../model/gnostr-nip51-loader.h"
 #include "../util/trending-hashtags.h"
 #include "../util/utils.h"
+#include "gnostr-nip51-list-picker-dialog.h"
 
 /* Common kind presets shown as quick-check pills. Anything else goes
  * into the free-form "Other kinds" entry row. */
@@ -69,6 +71,11 @@ struct _GnostrFilterSetDialog {
   AdwPreferencesGroup *suggestions_group;
   GtkFlowBox          *suggestions_box;
   GCancellable        *suggestions_cancellable;
+
+  /* NIP-51 list import (nostrc-yg8j.8). */
+  AdwPreferencesGroup *import_group;
+  AdwActionRow        *import_row;
+  gchar               *pubkey_hex;  /* owned copy, set by gnostr_filter_set_dialog_set_pubkey() */
 
   /* Built programmatically inside kinds_box / authors_box. */
   GtkCheckButton *kind_checks[G_N_ELEMENTS(kKindPresets)];
@@ -705,8 +712,101 @@ switch_to_edit_mode(GnostrFilterSetDialog *self, GnostrFilterSet *fs)
   if (self->suggestions_group)
     gtk_widget_set_visible(GTK_WIDGET(self->suggestions_group), FALSE);
 
+  /* Importing a NIP-51 list in edit mode would reset_form() then
+   * repopulate, which would update() the original set with an entirely
+   * different payload under its original id. Forbid that up-front:
+   * the import affordance is a create-time tool only. nostrc-yg8j.8. */
+  if (self->import_group)
+    gtk_widget_set_visible(GTK_WIDGET(self->import_group), FALSE);
+
   populate_from_filter_set(self, fs);
   refresh_summary(self);
+}
+
+/* ------------------------------------------------------------------------
+ * NIP-51 list import (nostrc-yg8j.8)
+ *
+ * When a signer is connected, the dialog exposes an "Import from NIP-51
+ * list…" row at the top of the form. Activation opens a picker dialog
+ * that lists the user's kind-30000 categorized people lists (cached in
+ * NDB); selecting one converts the list into a #GnostrFilterSet and
+ * pre-populates the form. The name is left as the list's title so the
+ * user can easily refine before saving.
+ * ------------------------------------------------------------------------ */
+
+/* Reset every field the dialog drives so a fresh import starts from a
+ * clean slate instead of merging on top of whatever was there before.
+ * Keeps the user's Save-button state in sync via refresh_summary(). */
+static void
+reset_form(GnostrFilterSetDialog *self)
+{
+  gtk_editable_set_text(GTK_EDITABLE(self->row_name), "");
+  gtk_editable_set_text(GTK_EDITABLE(self->row_description), "");
+  gtk_editable_set_text(GTK_EDITABLE(self->row_hashtags), "");
+  gtk_editable_set_text(GTK_EDITABLE(self->row_other_kinds), "");
+  gtk_editable_set_text(GTK_EDITABLE(self->row_since), "");
+  gtk_editable_set_text(GTK_EDITABLE(self->row_until), "");
+
+  for (gsize i = 0; i < G_N_ELEMENTS(kKindPresets); i++) {
+    if (self->kind_checks[i])
+      gtk_check_button_set_active(self->kind_checks[i], FALSE);
+  }
+
+  if (self->authors_buffer)
+    gtk_text_buffer_set_text(self->authors_buffer, "", 0);
+
+  if (self->limit_row)
+    adw_spin_row_set_value(self->limit_row, 0.0);
+}
+
+static void
+on_nip51_list_selected(GtkWidget   *picker,
+                        const gchar *title,
+                        const gchar *identifier,
+                        gpointer     nostr_list_ptr,
+                        gpointer     user_data)
+{
+  (void)picker;
+  (void)identifier;
+  GnostrFilterSetDialog *self = GNOSTR_FILTER_SET_DIALOG(user_data);
+  if (!nostr_list_ptr) return;
+
+  /* The picker hands us a *borrowed* NostrList* that is only valid
+   * during this emission (see gnostr-nip51-list-picker-dialog.h).
+   * Convert synchronously before the picker closes. */
+  g_autoptr(GnostrFilterSet) fs =
+      gnostr_nip51_list_to_filter_set(nostr_list_ptr, title);
+  if (!fs) {
+    /* Converter returns NULL for lists with no p-tag entries; the
+     * picker already filters those out, so this is defensive. */
+    g_warning("filter-set-dialog: NIP-51 list produced no filter set");
+    return;
+  }
+
+  /* Replace rather than merge so the user sees exactly what the list
+   * encodes. They can then tweak name/kinds/etc. before Save. */
+  reset_form(self);
+  populate_from_filter_set(self, fs);
+  refresh_summary(self);
+}
+
+static void
+on_import_row_activated(AdwActionRow *row, gpointer user_data)
+{
+  (void)row;
+  GnostrFilterSetDialog *self = GNOSTR_FILTER_SET_DIALOG(user_data);
+  if (!self->pubkey_hex || !*self->pubkey_hex)
+    return;
+
+  GtkWidget *picker = gnostr_nip51_list_picker_dialog_new(self->pubkey_hex);
+  if (!picker) return;
+
+  /* Tie the signal lifetime to @self so an unusual teardown path can't
+   * fire the handler against a stale dialog pointer. */
+  g_signal_connect_object(picker, "list-selected",
+                           G_CALLBACK(on_nip51_list_selected), self,
+                           G_CONNECT_DEFAULT);
+  adw_dialog_present(ADW_DIALOG(picker), GTK_WIDGET(self));
 }
 
 /* ------------------------------------------------------------------------
@@ -735,6 +835,7 @@ gnostr_filter_set_dialog_finalize(GObject *object)
 {
   GnostrFilterSetDialog *self = GNOSTR_FILTER_SET_DIALOG(object);
   g_clear_pointer(&self->editing_id, g_free);
+  g_clear_pointer(&self->pubkey_hex, g_free);
   G_OBJECT_CLASS(gnostr_filter_set_dialog_parent_class)->finalize(object);
 }
 
@@ -767,6 +868,8 @@ gnostr_filter_set_dialog_class_init(GnostrFilterSetDialogClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, summary_label);
   gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, suggestions_group);
   gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, suggestions_box);
+  gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, import_group);
+  gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, import_row);
 
   /**
    * GnostrFilterSetDialog::filter-set-saved:
@@ -838,6 +941,13 @@ gnostr_filter_set_dialog_init(GnostrFilterSetDialog *self)
   /* Buttons. */
   g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel_clicked), self);
   g_signal_connect(self->btn_save,   "clicked", G_CALLBACK(on_save_clicked),   self);
+
+  /* NIP-51 import row. The group stays invisible until a caller
+   * hands us a pubkey via gnostr_filter_set_dialog_set_pubkey().
+   * nostrc-yg8j.8 */
+  if (self->import_row)
+    g_signal_connect(self->import_row, "activated",
+                     G_CALLBACK(on_import_row_activated), self);
 
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_save), FALSE);
 
@@ -922,4 +1032,20 @@ gnostr_filter_set_dialog_present_edit(GtkWidget *parent,
   g_return_if_fail(GNOSTR_IS_FILTER_SET(fs));
   GtkWidget *dlg = gnostr_filter_set_dialog_new_for_edit(fs);
   adw_dialog_present(ADW_DIALOG(dlg), parent);
+}
+
+void
+gnostr_filter_set_dialog_set_pubkey(GnostrFilterSetDialog *self,
+                                     const gchar *pubkey_hex)
+{
+  g_return_if_fail(GNOSTR_IS_FILTER_SET_DIALOG(self));
+
+  g_clear_pointer(&self->pubkey_hex, g_free);
+
+  gboolean have_pubkey = pubkey_hex && *pubkey_hex;
+  if (have_pubkey)
+    self->pubkey_hex = g_strdup(pubkey_hex);
+
+  if (self->import_group)
+    gtk_widget_set_visible(GTK_WIDGET(self->import_group), have_pubkey);
 }

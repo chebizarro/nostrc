@@ -101,6 +101,25 @@ void gnostr_filter_set_dialog_present_edit(GtkWidget *parent,
                                             GnostrFilterSet *fs);
 
 /**
+ * gnostr_filter_set_dialog_set_pubkey:
+ * @self: a dialog
+ * @pubkey_hex: (nullable): 64-character hex pubkey of the currently
+ *   connected signer, or %NULL when none is connected
+ *
+ * Tells the dialog which pubkey to use when offering the NIP-51 list
+ * import shortcut. When a valid pubkey is set the dialog exposes an
+ * "Import from NIP-51 list…" row at the top of the form; passing %NULL
+ * (or an empty string) hides the row.
+ *
+ * Safe to call before or after presentation. The pubkey is used only
+ * by the import flow — all other form state is independent.
+ *
+ * nostrc-yg8j.8: List-based filter sets (NIP-51).
+ */
+void gnostr_filter_set_dialog_set_pubkey(GnostrFilterSetDialog *self,
+                                          const gchar *pubkey_hex);
+
+/**
  * Signals:
  *
  *   "filter-set-saved" (const gchar *filter_set_id)

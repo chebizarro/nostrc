@@ -4,6 +4,7 @@
 
 #include "gnostr-session-view.h"
 #include "gnostr-dm-service.h"
+#include "gnostr-filter-switcher.h"
 #include "gnostr-login.h"
 #include "gnostr-notifications-view.h"
 #include "../ipc/gnostr-signer-service.h"
@@ -551,6 +552,15 @@ on_login_signed_in_local(GnostrLogin *login, const char *npub, gpointer user_dat
     GtkWidget *pp = gnostr_session_view_get_profile_pane(self->session_view);
     if (pp && NOSTR_GTK_IS_PROFILE_PANE(pp))
       nostr_gtk_profile_pane_set_own_pubkey(NOSTR_GTK_PROFILE_PANE(pp), self->user_pubkey_hex);
+
+    /* Thread the pubkey into the filter-switcher so its "New Custom
+     * Filter…" dialog can offer the NIP-51 list import shortcut.
+     * nostrc-yg8j.8. */
+    GtkWidget *fs_switcher =
+        gnostr_session_view_get_filter_switcher(self->session_view);
+    if (fs_switcher && GNOSTR_IS_FILTER_SWITCHER(fs_switcher))
+      gnostr_filter_switcher_set_pubkey(
+          GNOSTR_FILTER_SWITCHER(fs_switcher), self->user_pubkey_hex);
   }
 
   if (self->user_pubkey_hex) {
@@ -712,6 +722,16 @@ gnostr_main_window_on_avatar_logout_clicked_internal(GtkButton *btn, gpointer us
     g_settings_set_string(settings, "current-npub", "");
 
   gnostr_sync_bridge_set_user_pubkey(NULL);
+
+  /* Clear the filter-switcher pubkey so any subsequently-presented
+   * filter-set dialog hides its NIP-51 import row. nostrc-yg8j.8. */
+  if (self->session_view) {
+    GtkWidget *fs_switcher =
+        gnostr_session_view_get_filter_switcher(self->session_view);
+    if (fs_switcher && GNOSTR_IS_FILTER_SWITCHER(fs_switcher))
+      gnostr_filter_switcher_set_pubkey(
+          GNOSTR_FILTER_SWITCHER(fs_switcher), NULL);
+  }
 
   g_free(self->user_pubkey_hex);
   self->user_pubkey_hex = NULL;

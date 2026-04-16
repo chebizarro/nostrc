@@ -1,0 +1,95 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrNip51ListPickerDialog: Adw.Dialog {
+  title: _("Import NIP-51 List");
+  content-width: 460;
+  content-height: 520;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-end-title-buttons: false;
+      show-start-title-buttons: false;
+
+      [start]
+      Button btn_cancel {
+        label: _("Cancel");
+      }
+
+      title-widget: Label {
+        label: _("Import NIP-51 List");
+
+        styles [
+          "title",
+        ]
+      };
+    }
+
+    Stack stack {
+      transition-type: crossfade;
+
+      StackPage {
+        name: "loading";
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner spinner {
+            width-request: 32;
+            height-request: 32;
+            spinning: true;
+          }
+
+          Label {
+            label: _("Loading your NIP-51 lists…");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+        child: Adw.StatusPage status_empty {
+          icon-name: "view-list-symbolic";
+          title: _("No NIP-51 Lists Found");
+          description: _("You don't appear to have any kind-30000 people lists cached locally. Try again after syncing from your relays.");
+        };
+      }
+
+      StackPage {
+        name: "list";
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          propagate-natural-height: true;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            Adw.PreferencesGroup {
+              title: _("Your Lists");
+              description: _("Pick a list to import its members as a new Custom filter set.");
+
+              ListBox list_box {
+                selection-mode: single;
+
+                styles [
+                  "boxed-list",
+                ]
+              }
+            }
+          }
+        };
+      }
+    }
+  }
+}

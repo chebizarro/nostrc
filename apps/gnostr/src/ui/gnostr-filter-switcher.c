@@ -61,6 +61,11 @@ struct _GnostrFilterSwitcher {
    * or NULL when the active tab is not a hashtag tab. Drives the
    * "Save #tag as filter set…" footer row. nostrc-yg8j.7. */
   gchar             *active_hashtag;
+
+  /* Currently-connected signer pubkey (hex, nullable). Threaded into
+   * dialogs we present so the "Import from NIP-51 list…" shortcut can
+   * query NDB for the user's kind-30000 lists. nostrc-yg8j.8. */
+  gchar             *pubkey_hex;
 };
 
 G_DEFINE_FINAL_TYPE(GnostrFilterSwitcher, gnostr_filter_switcher, GTK_TYPE_WIDGET)
@@ -263,6 +268,7 @@ typedef struct {
   GWeakRef self_ref;     /* resolved back to the switcher in the idle callback */
   gchar   *seed_hashtag; /* nullable */
   gchar   *seed_name;    /* nullable */
+  gchar   *pubkey_hex;   /* nullable — snapshot of self->pubkey_hex */
 } PresentIdleCtx;
 
 static void
@@ -272,6 +278,7 @@ present_idle_ctx_free(gpointer data)
   g_weak_ref_clear(&ctx->self_ref);
   g_free(ctx->seed_hashtag);
   g_free(ctx->seed_name);
+  g_free(ctx->pubkey_hex);
   g_free(ctx);
 }
 
@@ -290,6 +297,12 @@ present_create_dialog_idle(gpointer data)
                                                  ctx->seed_name);
     } else {
       dlg = gnostr_filter_set_dialog_new();
+    }
+    /* Thread the pubkey in *before* presentation so the Import row is
+     * visible the first time the user sees the form. nostrc-yg8j.8. */
+    if (ctx->pubkey_hex && *ctx->pubkey_hex) {
+      gnostr_filter_set_dialog_set_pubkey(
+          GNOSTR_FILTER_SET_DIALOG(dlg), ctx->pubkey_hex);
     }
     g_signal_connect_object(dlg, "filter-set-saved",
                              G_CALLBACK(on_dialog_filter_set_saved),
@@ -311,6 +324,9 @@ queue_present_dialog(GnostrFilterSwitcher *self,
   g_weak_ref_init(&ctx->self_ref, self);
   ctx->seed_hashtag = (seed_hashtag && *seed_hashtag) ? g_strdup(seed_hashtag) : NULL;
   ctx->seed_name    = (seed_name && *seed_name)       ? g_strdup(seed_name)    : NULL;
+  ctx->pubkey_hex   = (self->pubkey_hex && *self->pubkey_hex)
+                          ? g_strdup(self->pubkey_hex)
+                          : NULL;
   /* Use the _full variant so our destroy notify runs even if the
    * application shuts down before the idle fires; otherwise the
    * GWeakRef would leak. */
@@ -375,6 +391,17 @@ gnostr_filter_switcher_set_active_id(GnostrFilterSwitcher *self,
 
   update_button_state(self);
   update_row_checkmarks(self);
+}
+
+void
+gnostr_filter_switcher_set_pubkey(GnostrFilterSwitcher *self,
+                                   const gchar *pubkey_hex)
+{
+  g_return_if_fail(GNOSTR_IS_FILTER_SWITCHER(self));
+
+  g_clear_pointer(&self->pubkey_hex, g_free);
+  if (pubkey_hex && *pubkey_hex)
+    self->pubkey_hex = g_strdup(pubkey_hex);
 }
 
 void
@@ -677,6 +704,7 @@ gnostr_filter_switcher_dispose(GObject *object)
 
   g_clear_pointer(&self->active_id,      g_free);
   g_clear_pointer(&self->active_hashtag, g_free);
+  g_clear_pointer(&self->pubkey_hex,     g_free);
 
   G_OBJECT_CLASS(gnostr_filter_switcher_parent_class)->dispose(object);
 }
