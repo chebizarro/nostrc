@@ -185,6 +185,13 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
     g_free(tmp);
   }
 
+  tmp = gnostr_json_get_string(profile_json, "about", NULL);
+  if (tmp && *tmp) {
+    m->about = tmp;
+  } else {
+    g_free(tmp);
+  }
+
   /* Extract created_at from kind-0 event if available */
   g_autoptr(GError) err = NULL;
   gint64 created_at = gnostr_json_get_int64(json_str, "created_at", &err);
@@ -230,10 +237,10 @@ static GnostrProfileMeta *meta_from_db(const char *pk) {
   m->banner       = fb.banner;
   m->nip05        = fb.nip05;
   m->lud16        = fb.lud16;
+  m->about        = fb.about;   /* transfer ownership */
   m->created_at   = (gint64)fb.created_at;
 
-  /* about, website, lud06 are not in GnostrProfileMeta -- free them */
-  g_free(fb.about);
+  /* website, lud06 are not in GnostrProfileMeta -- free them */
   g_free(fb.website);
   g_free(fb.lud06);
 
@@ -254,6 +261,7 @@ static GnostrProfileMeta *meta_copy(const GnostrProfileMeta *src) {
   c->banner = src->banner ? g_strdup(src->banner) : NULL;
   c->nip05 = src->nip05 ? g_strdup(src->nip05) : NULL;
   c->lud16 = src->lud16 ? g_strdup(src->lud16) : NULL;
+  c->about = src->about ? g_strdup(src->about) : NULL;
   c->created_at = src->created_at;
   return c;
 }
@@ -410,6 +418,7 @@ void gnostr_profile_meta_free(GnostrProfileMeta *m) {
   g_free(m->banner);
   g_free(m->nip05);
   g_free(m->lud16);
+  g_free(m->about);
   g_free(m);
 }
 

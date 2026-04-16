@@ -10,6 +10,8 @@
 #include "../util/utils.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/nostr_profile_provider.h>
+#include <nostr-gobject-1.0/nostr_profile_service.h>
 #include <nostr-event.h>
 #include <nostr-filter.h>
 #include <nostr-gobject-1.0/nostr_json.h>
@@ -96,8 +98,10 @@ static guint signals[N_SIGNALS];
 /* Forward declarations */
 static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id32[32]);
 static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex);
-static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char pk32[32]);
-static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_hex);
+static void request_profile_via_service(GnostrNoteEmbed *self, const char *pubkey_hex);
+static void on_profile_service_result(const char *pubkey_hex,
+                                       const GnostrProfileMeta *meta,
+                                       gpointer user_data);
 static void update_ui_state(GnostrNoteEmbed *self);
 
 /* Helper: get effective cancellable (external from parent if set, otherwise internal) */
@@ -109,6 +113,11 @@ static void gnostr_note_embed_dispose(GObject *obj) {
   GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(obj);
 
   self->disposed = TRUE;
+
+  /* nostrc-pb01: Cancel any pending profile service callbacks for this widget.
+   * get_default() is documented as always returning a valid singleton. */
+  gnostr_profile_service_cancel_for_user_data(
+      gnostr_profile_service_get_default(), self);
 
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
@@ -537,6 +546,11 @@ static gboolean parse_nostr_uri(const char *uri, EmbedType *type, char **target_
 void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri) {
   g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
 
+  /* nostrc-pb01: clear disposed flag in case prepare_for_unbind set it before
+   * this list-view recycling rebind.  Async profile-service callbacks check
+   * this flag and drop results when it is TRUE. */
+  self->disposed = FALSE;
+
   /* Cancel any pending operations */
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
@@ -594,7 +608,8 @@ void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri) {
   unsigned char bytes32[32];
   if (hex_to_bytes_32(target_hex, bytes32)) {
     if (type == EMBED_TYPE_PROFILE) {
-      fetch_profile_from_local(self, bytes32);
+      /* nostrc-pb01: delegate profile loading to centralized service */
+      request_profile_via_service(self, target_hex);
     } else {
       fetch_event_from_local(self, bytes32);
     }
@@ -611,6 +626,9 @@ void gnostr_note_embed_set_event_id(GnostrNoteEmbed *self,
                                      const char *event_id_hex,
                                      const char * const *relay_hints) {
   g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
+
+  /* nostrc-pb01: clear disposed flag on rebind (see set_nostr_uri) */
+  self->disposed = FALSE;
 
   g_clear_pointer(&self->target_id, g_free);
   self->target_id = g_strdup(event_id_hex);
@@ -652,6 +670,9 @@ void gnostr_note_embed_set_pubkey(GnostrNoteEmbed *self,
                                    const char * const *relay_hints) {
   g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
 
+  /* nostrc-pb01: clear disposed flag on rebind (see set_nostr_uri) */
+  self->disposed = FALSE;
+
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
   g_clear_pointer(&self->target_id, g_free);
@@ -683,10 +704,9 @@ void gnostr_note_embed_set_pubkey(GnostrNoteEmbed *self,
   self->state = EMBED_STATE_LOADING;
   update_ui_state(self);
 
-  unsigned char pk32[32];
-  if (hex_to_bytes_32(pubkey_hex, pk32)) {
-    fetch_profile_from_local(self, pk32);
-  }
+  /* nostrc-pb01: delegate to centralized profile service (checks LRU cache,
+   * NDB, then batches network fetches). */
+  request_profile_via_service(self, self->target_id);
 }
 
 void gnostr_note_embed_set_loading(GnostrNoteEmbed *self, gboolean loading) {
@@ -1138,277 +1158,88 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
   nostr_filter_free(filter);
 }
 
-/* Forward declaration for profile fallback */
-static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubkey_hex);
+/* nostrc-pb01: Profile loading now goes through the centralized profile
+ * service (nostr-gobject/src/nostr_profile_service.c) which:
+ *   1. Checks the in-memory LRU cache (GnostrProfileProvider)
+ *   2. Falls back to NostrDB (local persisted profiles)
+ *   3. Batches 150ms-debounced network fetches across all widgets
+ *   4. Deduplicates concurrent requests for the same pubkey
+ *
+ * The callback is invoked on the main thread. Widget disposal cancels
+ * any pending callbacks via gnostr_profile_service_cancel_for_user_data.
+ */
 
-/* Callback for profile relay query */
-static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GError *err = NULL;
-  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
-
-  /* ASAN fix: We hold a ref on self during async, so it's always valid.
-   * Cast immediately - the ref ensures the object stays alive until we unref. */
+/* Callback invoked by the profile service when a profile request completes. */
+static void on_profile_service_result(const char *pubkey_hex,
+                                       const GnostrProfileMeta *meta,
+                                       gpointer user_data) {
   GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
 
-  /* Check for cancellation - widget may be disposing but we still hold a ref */
-  if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-    g_error_free(err);
-    if (results) g_ptr_array_unref(results);
-    goto cleanup;
+  /* Widget may have been destroyed; cancel_for_user_data removes the
+   * callback during dispose so we shouldn't get here, but defend anyway. */
+  if (!self || !GNOSTR_IS_NOTE_EMBED(self) || self->disposed) return;
+
+  /* Only accept results for the pubkey this widget is currently bound to. */
+  if (!self->target_id || !pubkey_hex ||
+      g_ascii_strcasecmp(self->target_id, pubkey_hex) != 0) {
+    return;
   }
 
-  /* Check disposed flag - widget is disposing, don't do work but still unref */
-  if (self->disposed) {
-    g_clear_error(&err);
-    if (results) g_ptr_array_unref(results);
-    goto cleanup;
-  }
-
-  if (err) {
-    /* If hints were tried and failed (but main pool not yet), fall back to main pool */
-    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
-      g_error_free(err);
-      fetch_profile_from_main_pool(self, self->target_id);
-      goto cleanup;
-    }
-    /* Show basic profile with just pubkey on error */
+  if (!meta) {
+    /* Profile not found - show basic profile with just pubkey */
     gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
-    g_error_free(err);
-    goto cleanup;
+    return;
   }
 
-  if (!results || results->len == 0) {
-    /* If hints were tried and found nothing (but main pool not yet), fall back to main pool */
-    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
-      if (results) g_ptr_array_unref(results);
-      fetch_profile_from_main_pool(self, self->target_id);
-      goto cleanup;
-    }
-    /* Show basic profile with just pubkey */
-    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
-    if (results) g_ptr_array_unref(results);
-    goto cleanup;
+  /* Prefer display_name, fall back to name for the display string. */
+  const char *display_name = NULL;
+  if (meta->display_name && *meta->display_name) {
+    display_name = meta->display_name;
+  } else if (meta->name && *meta->name) {
+    display_name = meta->name;
   }
 
-  const char *json = (const char*)g_ptr_array_index(results, 0);
-  if (!json) {
-    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
-    g_ptr_array_unref(results);
-    goto cleanup;
-  }
-
-  /* Ingest into local store (background) */
-  {
-    GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
-    g_ptr_array_add(b, g_strdup(json));
-    storage_ndb_ingest_events_async(b);
-  }
-
-  /* Parse profile and display */
-  char *display_name = NULL;
-  char *handle = NULL;
-  char *about = NULL;
-  char *picture = NULL;
-
-  NostrEvent *evt = nostr_event_new();
-  if (evt && nostr_event_deserialize(evt, json) == 0) {
-    const char *content = nostr_event_get_content(evt);
-    if (content && *content) {
-      /* Parse profile content JSON using nostr_json helpers */
-      char *dn = NULL;
-      if ((dn = gnostr_json_get_string(content, "display_name", NULL)) != NULL && dn && *dn) {
-        display_name = g_strdup(dn);
-      }
-      free(dn);
-      if (!display_name) {
-        char *nm = NULL;
-        if ((nm = gnostr_json_get_string(content, "name", NULL)) != NULL && nm && *nm) {
-          display_name = g_strdup(nm);
-        }
-        free(nm);
-      }
-      char *name = NULL;
-      if ((name = gnostr_json_get_string(content, "name", NULL)) != NULL && name && *name) {
-        handle = g_strdup(name);
-      }
-      free(name);
-      char *ab = NULL;
-      if ((ab = gnostr_json_get_string(content, "about", NULL)) != NULL && ab && *ab) {
-        about = g_strdup(ab);
-      }
-      free(ab);
-      char *pic = NULL;
-      if ((pic = gnostr_json_get_string(content, "picture", NULL)) != NULL && pic && *pic) {
-        picture = g_strdup(pic);
-      }
-      free(pic);
-    }
-  }
-  if (evt) nostr_event_free(evt);
-
-  gnostr_note_embed_set_profile(self, display_name, handle, about, picture, self->target_id);
-
-  g_free(display_name);
-  g_free(handle);
-  g_free(about);
-  g_free(picture);
-  g_ptr_array_unref(results);
-
-cleanup:
-  /* Release the ref we took when starting this async operation */
-  g_object_unref(self);
+  gnostr_note_embed_set_profile(self,
+                                 display_name,
+                                 meta->name,
+                                 meta->about,
+                                 meta->picture,
+                                 self->target_id);
 }
 
-/* Fetch profile from relays - try hints first, then main pool */
-static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_hex) {
-  if (!pubkey_hex) {
+/* Request a profile for the given pubkey via the centralized profile service.
+ * Cancels any prior in-flight request for this widget to avoid stale results.
+ *
+ * NOTE (nostrc-pb01): nprofile-encoded relay hints stored in self->relay_hints
+ * are intentionally NOT forwarded to the service - the service currently fetches
+ * from its shared configured pool. Profiles reachable only via a hint relay
+ * (e.g., private community relays) may fall back to a pubkey-only display.
+ * A future enhancement could extend the service to accept per-request hints. */
+static void request_profile_via_service(GnostrNoteEmbed *self, const char *pubkey_hex) {
+  if (!pubkey_hex || !*pubkey_hex) {
     gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
     return;
   }
 
-  /* Ensure pool is initialized */
-  ensure_embed_pool_initialized();
-
-  /* If we have relay hints and haven't tried them yet, use hints only first */
-  if (self->relay_hints && self->relay_hints_count > 0 && !self->hints_attempted) {
-    self->hints_attempted = TRUE;
-
-    const char **url_arr = g_new0(const char*, self->relay_hints_count);
-    for (size_t i = 0; i < self->relay_hints_count; i++) {
-      url_arr[i] = self->relay_hints[i];
-    }
-
-    /* Hold ref during async - callback will unref */
-    g_object_ref(self);
-    gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, self->relay_hints_count);
-    {
-      /* Build kind-0 filter with author for profile fetch */
-      NostrFilter *filter = nostr_filter_new();
-      int kind0 = 0;
-      nostr_filter_set_kinds(filter, &kind0, 1);
-      const char *authors[1] = { pubkey_hex };
-      nostr_filter_set_authors(filter, authors, 1);
-      nostr_filter_set_limit(filter, 1);
-      NostrFilters *_qf = nostr_filters_new();
-      nostr_filters_add(_qf, filter);
-      gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_profile_relay_query_done, self);
-      nostr_filter_free(filter);
-    }
-
-    g_free(url_arr);
+  /* Fast-path: synchronous check of the provider cache.  This restores the
+   * old behaviour where a cache hit rendered immediately without waiting for
+   * the 150 ms service debounce, and avoids dropping results on widgets that
+   * were marked disposed by a recent prepare_for_unbind + rebind. */
+  GnostrProfileMeta *cached = gnostr_profile_provider_get(pubkey_hex);
+  if (cached) {
+    on_profile_service_result(pubkey_hex, cached, self);
+    gnostr_profile_meta_free(cached);
     return;
   }
 
-  /* No hints or hints already tried - use main pool */
-  fetch_profile_from_main_pool(self, pubkey_hex);
-}
+  /* get_default() is documented as always returning a valid singleton. */
+  gpointer svc = gnostr_profile_service_get_default();
 
-/* Fetch profile from main relay pool (fallback) */
-static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubkey_hex) {
-  self->main_pool_attempted = TRUE;
+  /* Drop any pending callbacks for this widget before queuing a new request,
+   * in case set_pubkey/set_nostr_uri is called repeatedly on the same widget. */
+  gnostr_profile_service_cancel_for_user_data(svc, self);
 
-  /* Get read-capable relays for fetching (NIP-65) */
-  GPtrArray *urls = gnostr_get_read_relay_urls();
-
-  /* Convert GPtrArray to const char** */
-  const char **url_arr = g_new0(const char*, urls->len);
-  for (guint i = 0; i < urls->len; i++) {
-    url_arr[i] = (const char*)g_ptr_array_index(urls, i);
-  }
-
-  /* Hold ref during async - callback will unref */
-  g_object_ref(self);
-  gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
-  {
-    /* Build kind-0 filter with author for profile fetch */
-    NostrFilter *filter = nostr_filter_new();
-    int kind0 = 0;
-    nostr_filter_set_kinds(filter, &kind0, 1);
-    const char *authors[1] = { pubkey_hex };
-    nostr_filter_set_authors(filter, authors, 1);
-    nostr_filter_set_limit(filter, 1);
-    NostrFilters *_qf = nostr_filters_new();
-    nostr_filters_add(_qf, filter);
-    gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_profile_relay_query_done, self);
-    nostr_filter_free(filter);
-  }
-
-  g_free(url_arr);
-  g_ptr_array_free(urls, TRUE);
-}
-
-/* Local database fetch for profiles */
-static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char pk32[32]) {
-  void *txn = NULL;
-  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
-    /* Try relays since local query failed */
-    fetch_profile_from_relays(self, self->target_id);
-    return;
-  }
-
-  char *event_json = NULL;
-  int event_json_len = 0;
-  if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_json_len, NULL) == 0 && event_json) {
-    /* Parse kind-0 event to get profile content JSON */
-    char *display_name = NULL;
-    char *handle = NULL;
-    char *about = NULL;
-    char *picture = NULL;
-
-    NostrEvent *evt = nostr_event_new();
-    if (evt && nostr_event_deserialize(evt, event_json) == 0) {
-      const char *content = nostr_event_get_content(evt);
-      if (content && *content) {
-        /* Parse the profile content JSON using nostr_json helpers */
-        char *dn = NULL;
-        if ((dn = gnostr_json_get_string(content, "display_name", NULL)) != NULL && dn && *dn) {
-          display_name = g_strdup(dn);
-        }
-        free(dn);
-        if (!display_name) {
-          char *nm = NULL;
-          if ((nm = gnostr_json_get_string(content, "name", NULL)) != NULL && nm && *nm) {
-            display_name = g_strdup(nm);
-          }
-          free(nm);
-        }
-        /* Get handle/name */
-        char *name = NULL;
-        if ((name = gnostr_json_get_string(content, "name", NULL)) != NULL && name && *name) {
-          handle = g_strdup(name);
-        }
-        free(name);
-        /* Get about text */
-        char *ab = NULL;
-        if ((ab = gnostr_json_get_string(content, "about", NULL)) != NULL && ab && *ab) {
-          about = g_strdup(ab);
-        }
-        free(ab);
-        /* Get picture URL */
-        char *pic = NULL;
-        if ((pic = gnostr_json_get_string(content, "picture", NULL)) != NULL && pic && *pic) {
-          picture = g_strdup(pic);
-        }
-        free(pic);
-      }
-    }
-    if (evt) nostr_event_free(evt);
-    g_free(event_json);
-
-    gnostr_note_embed_set_profile(self, display_name, handle, about, picture, self->target_id);
-
-    g_free(display_name);
-    g_free(handle);
-    g_free(about);
-    g_free(picture);
-  } else {
-    /* Not in local cache, try relays */
-    storage_ndb_end_query(txn);
-    fetch_profile_from_relays(self, self->target_id);
-    return;
-  }
-
-  storage_ndb_end_query(txn);
+  gnostr_profile_service_request(svc, pubkey_hex, on_profile_service_result, self);
 }
 
 /**
@@ -1454,8 +1285,14 @@ void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self) {
     gtk_label_set_text(GTK_LABEL(self->profile_about_label), "");
 
   /* Mark as disposed to prevent any async callbacks from running.
-   * This is the same pattern as note_card_row_prepare_for_unbind. */
+   * This is the same pattern as note_card_row_prepare_for_unbind.
+   * If the widget is later rebound via set_pubkey/set_nostr_uri/set_event_id,
+   * those setters clear this flag so new async callbacks can run. */
   self->disposed = TRUE;
+
+  /* nostrc-pb01: Cancel any pending profile service callbacks for this widget */
+  gnostr_profile_service_cancel_for_user_data(
+      gnostr_profile_service_get_default(), self);
 
   /* Cancel internal cancellable - external one will be cancelled by parent */
   if (self->cancellable) {

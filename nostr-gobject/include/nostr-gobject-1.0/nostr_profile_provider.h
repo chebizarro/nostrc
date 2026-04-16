@@ -29,6 +29,7 @@ typedef struct {
   char *banner;          /* owned, nullable - banner image URL */
   char *nip05;           /* owned, nullable - NIP-05 identifier */
   char *lud16;           /* owned, nullable - Lightning address */
+  char *about;           /* owned, nullable - profile "about" / bio text */
   gint64 created_at;     /* timestamp for staleness checks */
 } GnostrProfileMeta;
 
