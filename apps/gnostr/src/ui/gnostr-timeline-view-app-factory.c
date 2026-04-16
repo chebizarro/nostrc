@@ -1,7 +1,6 @@
 #include "gnostr-timeline-view-app-factory.h"
 #include "gnostr-avatar-cache.h"
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
-#include <nostr-gtk-1.0/gnostr-timeline-view-private.h>
 #include "gnostr-main-window.h"
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include "gnostr-zap-dialog.h"
@@ -41,70 +40,12 @@
 
 /* Avatar cache helpers are implemented in avatar_cache.c */
 
-/* TimelineItem type defined in nostr-gtk library (gnostr-timeline-view-private.h) */
-
-/* TimelineItem type lifecycle (property/class/init) defined in nostr-gtk library */
-
-static TimelineItem *timeline_item_new(const char *display, const char *handle, const char *ts, const char *content, guint depth) {
-  TimelineItem *it = g_object_new(timeline_item_get_type(),
-                                  "display-name", display ? display : "Anonymous",
-                                  "handle",       handle  ? handle  : "@anon",
-                                  "timestamp",    ts      ? ts      : "now",
-                                  "content",      content ? content : "",
-                                  "depth",        depth,
-                                  NULL);
-  it->children = g_list_store_new(timeline_item_get_type());
-  return it;
-}
-
-static void timeline_item_set_meta(TimelineItem *it, const char *id, const char *pubkey, gint64 created_at) {
-  if (!it) return;
-  g_object_set(it,
-               "id", id,
-               "pubkey", pubkey,
-               "created-at", created_at,
-               NULL);
-}
-
-/* NIP-18: Set repost info on a timeline item */
-static void timeline_item_set_repost_info(TimelineItem *it,
-                                           const char *reposter_pubkey,
-                                           const char *reposter_display_name,
-                                           gint64 repost_created_at) {
-  if (!it) return;
-  g_clear_pointer(&it->reposter_pubkey, g_free);
-  g_clear_pointer(&it->reposter_display_name, g_free);
-  it->is_repost = TRUE;
-  it->reposter_pubkey = g_strdup(reposter_pubkey);
-  it->reposter_display_name = g_strdup(reposter_display_name);
-  it->repost_created_at = repost_created_at;
-}
-
-/* NIP-18: Set quote info on a timeline item */
-static void timeline_item_set_quote_info(TimelineItem *it,
-                                          const char *quoted_event_id,
-                                          const char *quoted_content,
-                                          const char *quoted_author) {
-  if (!it) return;
-  g_clear_pointer(&it->quoted_event_id, g_free);
-  g_clear_pointer(&it->quoted_content, g_free);
-  g_clear_pointer(&it->quoted_author, g_free);
-  it->has_quote = TRUE;
-  it->quoted_event_id = g_strdup(quoted_event_id);
-  it->quoted_content = g_strdup(quoted_content);
-  it->quoted_author = g_strdup(quoted_author);
-}
-
-static GListModel *timeline_item_get_children_model(TimelineItem *it) {
-  return it ? G_LIST_MODEL(it->children) : NULL;
-}
-
-static void timeline_item_add_child(TimelineItem *parent, TimelineItem *child) {
-  if (!parent || !child) return;
-  g_list_store_append(parent->children, child);
-}
-
-/* Public wrappers now in nostr-gtk library */
+/* nostrc-lkoa: `TimelineItem` is library-internal (nostr-gtk).
+ * This app standardizes on `GnNostrEventItem` for all timeline rows.
+ * The previous app-side helpers and legacy `TimelineItem` bind/child-model
+ * paths were removed along with the private-header include. If a future
+ * consumer outside nostr-gtk needs `TimelineItem`, it must go through the
+ * public API declared in <nostr-gtk-1.0/gnostr-timeline-view.h>. */
 
 /* NostrGtkTimelineView type, struct, signals, dispose/finalize, and tab handler
  * all defined in nostr-gtk library (gnostr-timeline-view.c). */
@@ -633,7 +574,7 @@ get_bound_note_card_row_for_item(gpointer user_data, GObject *expected_item)
   return NOSTR_GTK_NOTE_CARD_ROW(row);
 }
 
-/* Notify handlers to react to TimelineItem property changes after initial bind */
+/* Notify handlers to react to GnNostrEventItem property changes after initial bind */
 static void on_item_notify_display_name(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   if (!obj || !G_IS_OBJECT(obj)) return;
@@ -998,6 +939,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     return;
   }
 
+  /* nostrc-lkoa: The gnostr app factory exclusively handles GnNostrEventItem.
+   * The library still offers nostr_gtk_timeline_view_prepend()/set_tree_roots()
+   * which insert TimelineItems, but those are library-internal helpers that
+   * this factory is not wired for. Fail loudly in debug rather than silently
+   * rendering an empty row if a caller mixes item types. */
+  if (!GN_IS_NOSTR_EVENT_ITEM(obj)) {
+    g_critical("factory_bind_cb: unexpected item type %s — only GnNostrEventItem is supported",
+               G_OBJECT_TYPE_NAME(obj));
+    return;
+  }
+
   g_object_set_data_full(G_OBJECT(item), "tv-bound-item",
                          g_object_ref(obj), g_object_unref);
   
@@ -1046,22 +998,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
     /* Debug logging removed - too verbose for per-item binding */
   }
-  /* OLD: TimelineItem binding (fallback for compatibility) */
-  else if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
-    g_object_get(obj,
-                 "display-name", &display,
-                 "handle",       &handle,
-                 "timestamp",    &ts,
-                 "content",      &content,
-                 "depth",        &depth,
-                 "id",           &id_hex,
-                 "root-id",      &root_id,
-                 "created-at",   &created_at,
-                 "avatar-url",   &avatar_url,
-                 "pubkey",       &pubkey,
-                 NULL);
-    is_reply = depth > 0;
-  }
+  /* nostrc-lkoa: Legacy `TimelineItem` bind fallback was removed here.
+   * The app only binds `GnNostrEventItem` rows; anything else is a
+   * programmer error and will fall through to an unpopulated row. */
   GtkWidget *row = gtk_list_item_get_child(item);
   if (GTK_IS_WIDGET(row)) {
     cleanup_bound_row(row);
@@ -1249,26 +1188,16 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                           NULL, /* parent_author_name - will be resolved asynchronously if needed */
                                           is_reply);
 
-    /* NIP-18: Set repost info if this is a TimelineItem with repost data */
-    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
-      TimelineItem *ti = (TimelineItem *)obj;
-      if (ti->is_repost) {
-        nostr_gtk_note_card_row_set_is_repost(NOSTR_GTK_NOTE_CARD_ROW(row), TRUE);
-        nostr_gtk_note_card_row_set_repost_info(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                              ti->reposter_pubkey,
-                                              ti->reposter_display_name,
-                                              ti->repost_created_at);
-      }
-      /* NIP-18: Set quote info if this item has a quote */
-      if (ti->has_quote && ti->quoted_event_id) {
-        nostr_gtk_note_card_row_set_quote_info(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                             ti->quoted_event_id,
-                                             ti->quoted_content,
-                                             ti->quoted_author);
-      }
-    }
-    /* NIP-18: Handle GnNostrEventItem kind 6 reposts */
-    else if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+    /* NIP-18: Handle GnNostrEventItem kind 6 reposts.
+     * nostrc-lkoa: The legacy `TimelineItem` repost/quote branch was
+     * removed; repost state is sourced from `GnNostrEventItem` below.
+     * TODO(quote-support): `GnNostrEventItem` does not yet model NIP-18
+     * q-tag quote state. The old `TimelineItem` path called
+     * `nostr_gtk_note_card_row_set_quote_info()` but was dead (the app
+     * never created `TimelineItem` instances). When quote-repost support
+     * is added to `GnNostrEventItem`, wire a corresponding `set_quote_info`
+     * call here. Tracked separately — see beads follow-up. */
+    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       gboolean is_repost = gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj));
       if (is_repost) {
         /* Get the referenced event ID from the repost's tags */
@@ -1565,24 +1494,9 @@ void gnostr_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
   g_debug("gnostr_timeline_view_setup_app_factory: factory installed");
 }
 
-/* Child model function for GtkTreeListModel (passthrough) */
-static GListModel *timeline_child_model_func(gpointer item, gpointer user_data) {
-  (void)user_data;
-  g_debug("[TREE] Child model func called for item %p", item);
-  
-  if (!item || !G_TYPE_CHECK_INSTANCE_TYPE(item, timeline_item_get_type())) {
-    g_debug("[TREE] Child model func: invalid item type");
-    return NULL;
-  }
-  
-  TimelineItem *timeline_item = (TimelineItem*)item;
-  GListModel *children = timeline_item_get_children_model(timeline_item);
-  guint child_count = children ? g_list_model_get_n_items(children) : 0;
-  g_debug("[TREE] Child model func: returning %u children", child_count);
-  
-  return children;
-}
-
 /* ensure_list_model, scroll tracking, class_init, init, new, and all public API
  * functions are now defined in the nostr-gtk library. Only the factory setup
- * (gnostr_timeline_view_setup_app_factory) remains in the app. */
+ * (gnostr_timeline_view_setup_app_factory) remains in the app.
+ *
+ * nostrc-lkoa: The app no longer references `TimelineItem` internals;
+ * the child-model passthrough that required them was removed. */
