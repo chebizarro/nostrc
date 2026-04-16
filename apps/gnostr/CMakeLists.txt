@@ -1033,6 +1033,21 @@ if (BUILD_TESTING)
     TIMEOUT 60
     LABELS "chess;engine;nip64;unit;gnostr")
 
+  # ── FilterSet data model tests (nostrc-yg8j.1) ──────────────────
+  add_executable(gnostr-test-filter-set
+    tests/test_filter_set.c
+    src/model/gnostr-filter-set.c)
+  target_compile_features(gnostr-test-filter-set PRIVATE c_std_11)
+  target_include_directories(gnostr-test-filter-set PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-filter-set PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-filter-set)
+  add_test(NAME gnostr-test-filter-set COMMAND gnostr-test-filter-set)
+  set_tests_properties(gnostr-test-filter-set PROPERTIES
+    TIMEOUT 30
+    LABELS "model;filter-set;unit;gnostr")
+
   # ── Event model windowing tests (require testkit + NDB) ──────────
   if(TARGET gnostr-testkit)
     include(${PROJECT_ROOT}/cmake/GnTest.cmake)
