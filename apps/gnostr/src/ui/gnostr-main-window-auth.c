@@ -14,6 +14,7 @@
 #include "../util/nip51_settings.h"
 #include "../util/profile_event_validation.h"
 #include "../sync/gnostr-sync-bridge.h"
+#include "../model/gnostr-filter-set-sync.h"
 
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/gnostr-relays.h>
@@ -611,6 +612,10 @@ on_login_signed_in_local(GnostrLogin *login, const char *npub, gpointer user_dat
     gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);
     gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
     gnostr_sync_bridge_set_user_pubkey(self->user_pubkey_hex);
+    /* nostrc-yg8j.9: Sync custom filter sets via NIP-78. Pulls remote
+     * tabs into the manager on login and debounces pushes on every
+     * local mutation. */
+    gnostr_filter_set_sync_enable(self->user_pubkey_hex);
     gnostr_profile_provider_prewarm_async(self->user_pubkey_hex);
 
     {
@@ -722,6 +727,9 @@ gnostr_main_window_on_avatar_logout_clicked_internal(GtkButton *btn, gpointer us
     g_settings_set_string(settings, "current-npub", "");
 
   gnostr_sync_bridge_set_user_pubkey(NULL);
+
+  /* nostrc-yg8j.9: tear down filter-set NIP-78 sync. */
+  gnostr_filter_set_sync_disable();
 
   /* Clear the filter-switcher pubkey so any subsequently-presented
    * filter-set dialog hides its NIP-51 import row. nostrc-yg8j.8. */
@@ -933,6 +941,8 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
 
   gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
   gnostr_sync_bridge_set_user_pubkey(self->user_pubkey_hex);
+  /* nostrc-yg8j.9: restore filter-set sync on session rehydrate. */
+  gnostr_filter_set_sync_enable(self->user_pubkey_hex);
   gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);
 
   GtkWidget *pp = self->session_view

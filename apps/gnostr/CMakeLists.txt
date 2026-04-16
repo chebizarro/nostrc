@@ -1115,6 +1115,29 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "model;filter-set;timeline-query;unit;gnostr")
 
+  # ── FilterSet sync (NIP-78) tests (nostrc-yg8j.9) ────────────────
+  # Pure serialize/apply round-trip — the relay-facing push/pull paths
+  # are compiled out via GNOSTR_FILTER_SET_SYNC_TEST_ONLY so the test
+  # doesn't pull in the app-data manager and its dependencies.
+  add_executable(gnostr-test-filter-set-sync
+    tests/test_filter_set_sync.c
+    src/model/gnostr-filter-set.c
+    src/model/gnostr-filter-set-manager.c
+    src/model/gnostr-filter-set-sync.c)
+  target_compile_features(gnostr-test-filter-set-sync PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-filter-set-sync PRIVATE
+    GNOSTR_FILTER_SET_SYNC_TEST_ONLY=1)
+  target_include_directories(gnostr-test-filter-set-sync PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-filter-set-sync PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-filter-set-sync)
+  add_test(NAME gnostr-test-filter-set-sync
+    COMMAND gnostr-test-filter-set-sync)
+  set_tests_properties(gnostr-test-filter-set-sync PROPERTIES
+    TIMEOUT 30
+    LABELS "model;filter-set;sync;nip78;unit;gnostr")
+
   # ── NIP-51 loader / converter tests (nostrc-yg8j.8) ──────────────
   # Exercises only the pure converter + lifecycle helpers. The async
   # NDB loader itself is integration-tested elsewhere.
