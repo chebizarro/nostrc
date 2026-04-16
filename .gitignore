@@ -91,6 +91,10 @@ package-lock.json
 .beads/beads.db
 .beads/last-touched
 
+# Cargo/Rust build artifacts (libmarmot test vector generator)
+libmarmot/tests/vectors/generator/target/
+libmarmot/tests/vectors/generator/Cargo.lock
+
 # Gas Town (added by gt)
 .runtime/
 .claude/
