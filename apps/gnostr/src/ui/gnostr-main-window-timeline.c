@@ -148,7 +148,17 @@ gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView 
       }
       break;
 
+    case GN_TIMELINE_TAB_SEARCH:
+      if (filter_value && *filter_value) {
+        query = gnostr_timeline_query_new_for_search(filter_value);
+        g_debug("[TAB_FILTER] Created search query for '%s'", filter_value);
+      } else {
+        query = gnostr_timeline_query_new_global();
+      }
+      break;
+
     case GN_TIMELINE_TAB_CUSTOM:
+      /* Reserved for GnostrFilterSet wiring — nostrc-yg8j.4 */
       query = gnostr_timeline_query_new_global();
       break;
   }
@@ -179,6 +189,74 @@ scroll_to_top_idle(gpointer user_data)
 
   g_object_unref(self);
   return G_SOURCE_REMOVE;
+}
+
+/* Show the tab bar and install the persistent non-closable tabs (Global
+ * and Following) on top of the default Global tab baked into the widget.
+ *
+ * Called from gnostr_main_window_init_widget_state_internal after the
+ * session view's timeline widget has been created. Safe to call only
+ * once — later calls are a no-op.
+ *
+ * Part of nostrc-e03f.4: Multiple Timeline Views Support. */
+void
+gnostr_main_window_setup_initial_tabs_internal(GnostrMainWindow *self)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->session_view)
+    return;
+
+  GtkWidget *timeline = gnostr_session_view_get_timeline(self->session_view);
+  if (!timeline || !NOSTR_GTK_IS_TIMELINE_VIEW(timeline))
+    return;
+
+  NostrGtkTimelineView *tv = NOSTR_GTK_TIMELINE_VIEW(timeline);
+  nostr_gtk_timeline_view_set_tabs_visible(tv, TRUE);
+
+  NostrGtkTimelineTabs *tabs = nostr_gtk_timeline_view_get_tabs(tv);
+  if (!tabs) return;
+
+  /* Guard against duplicate setup. */
+  if (nostr_gtk_timeline_tabs_find_tab_by_type(tabs, GN_TIMELINE_TAB_FOLLOWING) >= 0)
+    return;
+
+  /* Global is installed by the widget init at index 0. Add Following
+   * alongside it at index 1, non-closable. Before login it falls back
+   * to the global query; after login the dispatcher in
+   * on_timeline_tab_filter_changed_internal picks up the followed authors
+   * via storage_ndb_get_followed_pubkeys when the user activates it. */
+  guint idx = nostr_gtk_timeline_tabs_add_tab(tabs,
+                                              GN_TIMELINE_TAB_FOLLOWING,
+                                              "Following",
+                                              NULL);
+  nostr_gtk_timeline_tabs_set_closable(tabs, idx, FALSE);
+}
+
+/* Re-trigger the currently-selected tab's filter dispatch. Used after
+ * login to refresh the Following tab's author list without requiring
+ * the user to re-click it. */
+void
+gnostr_main_window_refresh_current_tab_filter_internal(GnostrMainWindow *self)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->session_view)
+    return;
+
+  GtkWidget *timeline = gnostr_session_view_get_timeline(self->session_view);
+  if (!timeline || !NOSTR_GTK_IS_TIMELINE_VIEW(timeline))
+    return;
+
+  NostrGtkTimelineView *tv = NOSTR_GTK_TIMELINE_VIEW(timeline);
+  NostrGtkTimelineTabs *tabs = nostr_gtk_timeline_view_get_tabs(tv);
+  if (!tabs || nostr_gtk_timeline_tabs_get_n_tabs(tabs) == 0)
+    return;
+
+  guint sel = nostr_gtk_timeline_tabs_get_selected(tabs);
+  GnTimelineTabType type = nostr_gtk_timeline_tabs_get_tab_type(tabs, sel);
+  const char *value = nostr_gtk_timeline_tabs_get_tab_filter_value(tabs, sel);
+
+  gnostr_main_window_on_timeline_tab_filter_changed_internal(tv,
+                                                              (guint)type,
+                                                              value,
+                                                              self);
 }
 
 void

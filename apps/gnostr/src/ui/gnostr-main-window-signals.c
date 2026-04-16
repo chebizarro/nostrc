@@ -24,7 +24,8 @@ gnostr_main_window_connect_session_view_signals_internal(GnostrMainWindow *self,
                                                          GCallback view_profile_cb,
                                                          GCallback account_switch_cb,
                                                          GCallback new_notes_cb,
-                                                         GCallback compose_cb)
+                                                         GCallback compose_cb,
+                                                         GCallback search_committed_cb)
 {
   g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
 
@@ -40,6 +41,8 @@ gnostr_main_window_connect_session_view_signals_internal(GnostrMainWindow *self,
   g_signal_connect(self->session_view, "account-switch-requested", account_switch_cb, self);
   g_signal_connect(self->session_view, "new-notes-clicked", new_notes_cb, self);
   g_signal_connect(self->session_view, "compose-requested", compose_cb, self);
+  if (search_committed_cb)
+    g_signal_connect(self->session_view, "search-committed", search_committed_cb, self);
 }
 
 void

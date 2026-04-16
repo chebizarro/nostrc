@@ -47,6 +47,7 @@ typedef enum {
   SIGNAL_NEW_NOTES_CLICKED,
   SIGNAL_COMPOSE_REQUESTED,
   SIGNAL_SEARCH_CHANGED,
+  SIGNAL_SEARCH_COMMITTED,
   SIGNAL_VIEW_PROFILE_REQUESTED,
   N_SIGNALS
 } GnostrSessionViewSignal;
@@ -796,6 +797,18 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
   g_signal_emit(self, signals[SIGNAL_SEARCH_CHANGED], 0, text);
 }
 
+/* Emitted on Enter / search-entry activate. Distinct from search-changed,
+ * which fires on every keystroke. Consumers use this to materialize a
+ * Search tab in the timeline view (nostrc-e03f.4). */
+static void on_search_activate(GtkSearchEntry *entry, gpointer user_data) {
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+
+  const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+  if (!text || !*text) return;
+  g_signal_emit(self, signals[SIGNAL_SEARCH_COMMITTED], 0, text);
+}
+
 static void gnostr_session_view_dispose(GObject *object) {
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(object);
 
@@ -980,6 +993,18 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
 
   signals[SIGNAL_SEARCH_CHANGED] = g_signal_new(
       "search-changed",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      g_cclosure_marshal_VOID__STRING,
+      G_TYPE_NONE,
+      1,
+      G_TYPE_STRING);
+
+  signals[SIGNAL_SEARCH_COMMITTED] = g_signal_new(
+      "search-committed",
       G_TYPE_FROM_CLASS(klass),
       G_SIGNAL_RUN_LAST,
       0,
@@ -1184,6 +1209,7 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
   if (self->search_bar && self->search_entry) {
     gtk_search_bar_connect_entry(self->search_bar, GTK_EDITABLE(self->search_entry));
     g_signal_connect(self->search_entry, "search-changed", G_CALLBACK(on_search_changed), self);
+    g_signal_connect(self->search_entry, "activate", G_CALLBACK(on_search_activate), self);
   }
 
   /* Start on Timeline by default */

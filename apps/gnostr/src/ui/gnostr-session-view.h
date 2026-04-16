@@ -76,6 +76,8 @@ const char *gnostr_session_view_get_search_text(GnostrSessionView *self);
  * - "new-notes-clicked": Emitted when new notes toast clicked
  * - "compose-requested": Emitted when compose button clicked
  * - "search-changed" (const char *text): Emitted when search text changes
+ * - "search-committed" (const char *text): Emitted when user submits the
+ *     current search (Enter key). Empty text is suppressed.
  */
 
 /**

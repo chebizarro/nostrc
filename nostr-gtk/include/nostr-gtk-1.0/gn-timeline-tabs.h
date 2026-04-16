@@ -23,13 +23,15 @@ G_DECLARE_FINAL_TYPE(NostrGtkTimelineTabs, nostr_gtk_timeline_tabs, NOSTR_GTK, T
  * @GN_TIMELINE_TAB_FOLLOWING: Notes from followed users
  * @GN_TIMELINE_TAB_HASHTAG: Notes with a specific hashtag
  * @GN_TIMELINE_TAB_AUTHOR: Notes from a specific author
- * @GN_TIMELINE_TAB_CUSTOM: Custom filter
+ * @GN_TIMELINE_TAB_SEARCH: Full-text search results (filter_value = query text)
+ * @GN_TIMELINE_TAB_CUSTOM: Custom filter (reserved for GnostrFilterSet wiring)
  */
 typedef enum {
   GN_TIMELINE_TAB_GLOBAL,
   GN_TIMELINE_TAB_FOLLOWING,
   GN_TIMELINE_TAB_HASHTAG,
   GN_TIMELINE_TAB_AUTHOR,
+  GN_TIMELINE_TAB_SEARCH,
   GN_TIMELINE_TAB_CUSTOM,
 } GnTimelineTabType;
 
@@ -53,6 +55,29 @@ const char *nostr_gtk_timeline_tabs_get_tab_filter_value(NostrGtkTimelineTabs *s
 guint nostr_gtk_timeline_tabs_get_n_tabs(NostrGtkTimelineTabs *self);
 
 void nostr_gtk_timeline_tabs_set_closable(NostrGtkTimelineTabs *self, guint index, gboolean closable);
+
+/**
+ * nostr_gtk_timeline_tabs_find_tab_by_type:
+ * @self: the tab bar
+ * @type: tab type to look up
+ *
+ * Returns the index of the first tab matching @type, or -1 if none.
+ */
+gint nostr_gtk_timeline_tabs_find_tab_by_type(NostrGtkTimelineTabs *self,
+                                               GnTimelineTabType type);
+
+/**
+ * nostr_gtk_timeline_tabs_find_tab_by_type_and_value:
+ * @self: the tab bar
+ * @type: tab type to look up
+ * @filter_value: (nullable): filter value to match (via g_strcmp0)
+ *
+ * Returns the index of the first tab with matching @type AND @filter_value,
+ * or -1 if none. Used for deduplicating e.g. Search tabs by query text.
+ */
+gint nostr_gtk_timeline_tabs_find_tab_by_type_and_value(NostrGtkTimelineTabs *self,
+                                                        GnTimelineTabType type,
+                                                        const char *filter_value);
 
 G_END_DECLS
 

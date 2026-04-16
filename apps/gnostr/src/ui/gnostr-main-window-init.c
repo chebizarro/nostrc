@@ -24,6 +24,15 @@ gnostr_main_window_init_widget_state_internal(GnostrMainWindow *self)
   }
 
   gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_LOADING);
+
+  /* nostrc-e03f.4: Install the persistent Following tab alongside the
+   * default Global tab synchronously, during widget init. We install here
+   * rather than from the deferred heavy-init callback so the tab bar is
+   * fully populated before the window becomes visible and before any
+   * G_PRIORITY_DEFAULT user input (e.g. typing in the search entry) can
+   * race with G_PRIORITY_LOW setup. Safe to call this early because it
+   * only manipulates the GTK widget tree established by init_template. */
+  gnostr_main_window_setup_initial_tabs_internal(self);
 }
 
 void

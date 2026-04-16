@@ -673,6 +673,21 @@ gnostr_main_window_on_signer_state_changed_internal(GnostrSignerService *signer,
       gnostr_session_view_set_authenticated(self->session_view, FALSE);
     }
   }
+
+  /* nostrc-e03f.4: the Following tab's query depends on self->user_pubkey_hex
+   * and the NDB contact list. When the signer reaches a stable identity
+   * transition (fully connected or fully disconnected), refresh the
+   * currently-selected tab's query so the Following tab (if active) picks
+   * up the new author set without the user having to re-click it.
+   *
+   * We intentionally ignore intermediate states (CONNECTING, PAIRING, etc.)
+   * because user_pubkey_hex / the NDB contact list won't have settled yet
+   * and refreshing on every transition would run the query dispatcher
+   * multiple times per login. */
+  if (new_state == GNOSTR_SIGNER_STATE_CONNECTED ||
+      new_state == GNOSTR_SIGNER_STATE_DISCONNECTED) {
+    gnostr_main_window_refresh_current_tab_filter_internal(self);
+  }
 }
 
 void

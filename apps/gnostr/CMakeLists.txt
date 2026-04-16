@@ -159,8 +159,6 @@ list(APPEND APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-timeline-view-app-
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
 # NostrGtkComposer is now provided by nostr-gtk library (nostrc-lx35)
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-composer.c)
-# NostrGtkTimelineTabs moved to nostr-gtk library (nostrc-lx32) - exclude app copy to avoid duplicate symbols
-list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gn-timeline-tabs.c)
 # Platform-specific files: on macOS, exclude the Linux C implementations
 # (the macOS Objective-C implementations are added later via target_sources)
 if (APPLE)

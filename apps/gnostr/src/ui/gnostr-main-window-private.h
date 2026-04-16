@@ -298,6 +298,24 @@ void gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimeline
                                                                 const char *filter_value,
                                                                 gpointer user_data);
 void gnostr_main_window_on_new_notes_clicked_internal(GtkButton *btn, gpointer user_data);
+
+/* Install the persistent tab bar and Following tab on the timeline widget.
+ * Safe to call after session_view + timeline widget are ready. Idempotent.
+ * nostrc-e03f.4. */
+void gnostr_main_window_setup_initial_tabs_internal(GnostrMainWindow *self);
+
+/* Re-trigger the dispatch for the currently-selected timeline tab. Used
+ * after signer state changes so the Following tab picks up the newly
+ * known user pubkey without requiring user interaction.
+ * nostrc-e03f.4. */
+void gnostr_main_window_refresh_current_tab_filter_internal(GnostrMainWindow *self);
+
+/* Search-committed: user pressed Enter in the search bar. Creates or
+ * selects a Search tab in the timeline and navigates to the timeline page.
+ * nostrc-e03f.4. */
+void gnostr_main_window_on_session_search_committed_internal(GnostrSessionView *sv,
+                                                              const char *text,
+                                                              gpointer user_data);
 void gnostr_main_window_connect_session_view_signals_internal(GnostrMainWindow *self,
                                                              GCallback settings_cb,
                                                              GCallback relays_cb,
@@ -307,7 +325,8 @@ void gnostr_main_window_connect_session_view_signals_internal(GnostrMainWindow *
                                                              GCallback view_profile_cb,
                                                              GCallback account_switch_cb,
                                                              GCallback new_notes_cb,
-                                                             GCallback compose_cb);
+                                                             GCallback compose_cb,
+                                                             GCallback search_committed_cb);
 void gnostr_main_window_connect_child_view_signals_internal(GnostrMainWindow *self,
                                                            GCallback profile_close_cb,
                                                            GCallback profile_mute_cb,

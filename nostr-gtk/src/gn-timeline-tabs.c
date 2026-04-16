@@ -100,6 +100,9 @@ guint nostr_gtk_timeline_tabs_add_tab(NostrGtkTimelineTabs *self,
     case GN_TIMELINE_TAB_AUTHOR:
       icon_name = "avatar-default-symbolic";
       break;
+    case GN_TIMELINE_TAB_SEARCH:
+      icon_name = "system-search-symbolic";
+      break;
     case GN_TIMELINE_TAB_CUSTOM:
       icon_name = "view-list-symbolic";
       break;
@@ -201,6 +204,30 @@ const char *nostr_gtk_timeline_tabs_get_tab_filter_value(NostrGtkTimelineTabs *s
 
   TabInfo *info = g_ptr_array_index(self->tabs, index);
   return info->filter_value;
+}
+
+gint nostr_gtk_timeline_tabs_find_tab_by_type(NostrGtkTimelineTabs *self,
+                                              GnTimelineTabType type) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self), -1);
+
+  for (guint i = 0; i < self->tabs->len; i++) {
+    TabInfo *info = g_ptr_array_index(self->tabs, i);
+    if (info->type == type) return (gint)i;
+  }
+  return -1;
+}
+
+gint nostr_gtk_timeline_tabs_find_tab_by_type_and_value(NostrGtkTimelineTabs *self,
+                                                        GnTimelineTabType type,
+                                                        const char *filter_value) {
+  g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_TABS(self), -1);
+
+  for (guint i = 0; i < self->tabs->len; i++) {
+    TabInfo *info = g_ptr_array_index(self->tabs, i);
+    if (info->type == type && g_strcmp0(info->filter_value, filter_value) == 0)
+      return (gint)i;
+  }
+  return -1;
 }
 
 guint nostr_gtk_timeline_tabs_get_n_tabs(NostrGtkTimelineTabs *self) {

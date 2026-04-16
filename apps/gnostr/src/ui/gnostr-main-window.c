@@ -483,7 +483,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                                                            G_CALLBACK(gnostr_main_window_on_view_profile_requested_internal),
                                                            G_CALLBACK(gnostr_main_window_on_account_switch_requested_internal),
                                                            G_CALLBACK(gnostr_main_window_on_new_notes_clicked_internal),
-                                                           G_CALLBACK(gnostr_main_window_on_compose_requested_internal));
+                                                           G_CALLBACK(gnostr_main_window_on_compose_requested_internal),
+                                                           G_CALLBACK(gnostr_main_window_on_session_search_committed_internal));
 
   /* Connect to signer service state-changed signal for dynamic UI updates */
   GnostrSignerService *signer = gnostr_signer_service_get_default();
@@ -591,6 +592,10 @@ deferred_heavy_init_cb(gpointer data)
                                                     G_CALLBACK(gnostr_main_window_on_event_model_new_items_pending_internal),
                                                     G_CALLBACK(gnostr_main_window_on_timeline_scroll_value_changed_internal),
                                                     G_CALLBACK(gnostr_main_window_on_timeline_tab_filter_changed_internal));
+
+  /* nostrc-e03f.4: Initial tab bar setup is done synchronously in
+   * gnostr_main_window_init_widget_state_internal so that user input can't
+   * race with our tab installation. Nothing more to do here. */
 
   /* Seed initial items so Timeline page isn't empty.
    * The follow-on profile/gift-wrap startup now runs in stage2 from the

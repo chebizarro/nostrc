@@ -10,6 +10,7 @@
 #include "page-discover.h"
 #include "gnostr-article-reader.h"
 
+#include <nostr-gtk-1.0/gn-timeline-tabs.h>
 #include <nostr-gtk-1.0/gnostr-profile-pane.h>
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
 
@@ -119,6 +120,49 @@ gnostr_main_window_on_search_search_hashtag_internal(GnostrSearchResultsView *vi
       gnostr_session_view_show_page(self->session_view, "timeline");
     g_debug("[SEARCH] Navigated to hashtag #%s from search results", hashtag);
   }
+}
+
+/* Handler for GnostrSessionView::search-committed. Creates (or selects an
+ * existing) Search tab in the timeline view and navigates there so the
+ * results become visible. nostrc-e03f.4. */
+void
+gnostr_main_window_on_session_search_committed_internal(GnostrSessionView *sv,
+                                                         const char *text,
+                                                         gpointer user_data)
+{
+  (void)sv;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !text || !*text)
+    return;
+
+  GtkWidget *timeline = self->session_view
+    ? gnostr_session_view_get_timeline(self->session_view) : NULL;
+  if (!timeline || !NOSTR_GTK_IS_TIMELINE_VIEW(timeline))
+    return;
+
+  NostrGtkTimelineView *tv = NOSTR_GTK_TIMELINE_VIEW(timeline);
+  NostrGtkTimelineTabs *tabs = nostr_gtk_timeline_view_get_tabs(tv);
+  if (!tabs)
+    return;
+
+  /* Make sure the tab bar is actually visible (in case setup hasn't run). */
+  nostr_gtk_timeline_view_set_tabs_visible(tv, TRUE);
+
+  gint existing = nostr_gtk_timeline_tabs_find_tab_by_type_and_value(
+      tabs, GN_TIMELINE_TAB_SEARCH, text);
+  if (existing >= 0) {
+    nostr_gtk_timeline_tabs_set_selected(tabs, (guint)existing);
+  } else {
+    g_autofree char *label = g_strdup_printf("\"%s\"", text);
+    guint idx = nostr_gtk_timeline_tabs_add_tab(tabs,
+                                                 GN_TIMELINE_TAB_SEARCH,
+                                                 label,
+                                                 text);
+    nostr_gtk_timeline_tabs_set_selected(tabs, idx);
+  }
+
+  if (self->session_view)
+    gnostr_session_view_show_page(self->session_view, "timeline");
 }
 
 void
