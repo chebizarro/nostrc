@@ -1085,6 +1085,28 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "model;filter-set;predefined;unit;gnostr")
 
+  # ── FilterSet → TimelineQuery converter tests (nostrc-yg8j.4) ───
+  # Pure C converter — no GTK, no NDB. Links the filter-set model and
+  # the nostr_gobject library (for GNostrTimelineQuery) so the test
+  # tracks real library flags instead of pulling source files directly.
+  add_executable(gnostr-test-filter-set-query
+    tests/test_filter_set_query.c
+    src/model/gnostr-filter-set.c
+    src/model/gnostr-filter-set-query.c)
+  target_compile_features(gnostr-test-filter-set-query PRIVATE c_std_11)
+  target_include_directories(gnostr-test-filter-set-query PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-filter-set-query PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB
+    nostr_gobject)
+  _gnostr_apply_sanitizers(gnostr-test-filter-set-query)
+  add_test(NAME gnostr-test-filter-set-query
+    COMMAND gnostr-test-filter-set-query)
+  set_tests_properties(gnostr-test-filter-set-query PROPERTIES
+    TIMEOUT 30
+    LABELS "model;filter-set;timeline-query;unit;gnostr")
+
   # ── Event model windowing tests (require testkit + NDB) ──────────
   if(TARGET gnostr-testkit)
     include(${PROJECT_ROOT}/cmake/GnTest.cmake)

@@ -310,6 +310,15 @@ void gnostr_main_window_setup_initial_tabs_internal(GnostrMainWindow *self);
  * nostrc-e03f.4. */
 void gnostr_main_window_refresh_current_tab_filter_internal(GnostrMainWindow *self);
 
+/* Open or focus a CUSTOM timeline tab backed by the filter set with the
+ * given id. Idempotent per id: calling with a filter-set id that already
+ * has a tab selects that tab instead of opening another. Intended to be
+ * called by the filter-set switcher UI (nostrc-yg8j.5) and any other
+ * programmatic entry point.
+ * nostrc-yg8j.4. */
+void gnostr_main_window_open_filter_set_tab_internal(GnostrMainWindow *self,
+                                                      const char *filter_set_id);
+
 /* Search-committed: user pressed Enter in the search bar. Creates or
  * selects a Search tab in the timeline and navigates to the timeline page.
  * nostrc-e03f.4. */
