@@ -31,6 +31,17 @@ static const gchar *test_hashtags[] = { "bitcoin", "nostr", "zaps", NULL };
 
 static const gint test_kinds[] = { 1, 6, 30023 };
 
+static const gchar *test_ids[] = {
+  "aaaabbbbccccddddeeeeffff00001111222233334444555566667777aaaabbbb",
+  "bbbbccccddddeeeeffff00001111222233334444555566667777888899990000",
+  NULL
+};
+
+static const gchar *test_excluded[] = {
+  "deadbeef00000000000000000000000000000000000000000000000000000000",
+  NULL
+};
+
 static GnostrFilterSet *
 make_populated_filter_set(void)
 {
@@ -41,12 +52,14 @@ make_populated_filter_set(void)
   gnostr_filter_set_set_color      (fs, "#3584e4");
   gnostr_filter_set_set_source     (fs, GNOSTR_FILTER_SET_SOURCE_PREDEFINED);
 
-  gnostr_filter_set_set_authors (fs, test_authors);
-  gnostr_filter_set_set_hashtags(fs, test_hashtags);
-  gnostr_filter_set_set_kinds   (fs, test_kinds, G_N_ELEMENTS(test_kinds));
-  gnostr_filter_set_set_since   (fs, 1700000000);
-  gnostr_filter_set_set_until   (fs, 1800000000);
-  gnostr_filter_set_set_limit   (fs, 200);
+  gnostr_filter_set_set_authors         (fs, test_authors);
+  gnostr_filter_set_set_hashtags        (fs, test_hashtags);
+  gnostr_filter_set_set_kinds           (fs, test_kinds, G_N_ELEMENTS(test_kinds));
+  gnostr_filter_set_set_ids             (fs, test_ids);
+  gnostr_filter_set_set_excluded_authors(fs, test_excluded);
+  gnostr_filter_set_set_since           (fs, 1700000000);
+  gnostr_filter_set_set_until           (fs, 1800000000);
+  gnostr_filter_set_set_limit           (fs, 200);
   return fs;
 }
 
@@ -71,6 +84,8 @@ test_construction_defaults(void)
   g_assert_cmpint(gnostr_filter_set_get_source(fs), ==, GNOSTR_FILTER_SET_SOURCE_CUSTOM);
   g_assert_null(gnostr_filter_set_get_authors(fs));
   g_assert_null(gnostr_filter_set_get_hashtags(fs));
+  g_assert_null(gnostr_filter_set_get_ids(fs));
+  g_assert_null(gnostr_filter_set_get_excluded_authors(fs));
   gsize n = 42;
   g_assert_null(gnostr_filter_set_get_kinds(fs, &n));
   g_assert_cmpuint(n, ==, 0);
@@ -154,6 +169,17 @@ test_setters_roundtrip(void)
   g_assert_cmpstr(h[2], ==, "zaps");
   g_assert_null(h[3]);
 
+  const gchar * const *ids = gnostr_filter_set_get_ids(fs);
+  g_assert_nonnull(ids);
+  g_assert_cmpstr(ids[0], ==, test_ids[0]);
+  g_assert_cmpstr(ids[1], ==, test_ids[1]);
+  g_assert_null(ids[2]);
+
+  const gchar * const *excl = gnostr_filter_set_get_excluded_authors(fs);
+  g_assert_nonnull(excl);
+  g_assert_cmpstr(excl[0], ==, test_excluded[0]);
+  g_assert_null(excl[1]);
+
   gsize nk = 0;
   const gint *k = gnostr_filter_set_get_kinds(fs, &nk);
   g_assert_nonnull(k);
@@ -167,6 +193,27 @@ test_setters_roundtrip(void)
   g_assert_cmpint(gnostr_filter_set_get_limit(fs), ==, 200);
 
   g_assert_false(gnostr_filter_set_is_empty(fs));
+
+  g_object_unref(fs);
+}
+
+static void
+test_ids_and_excluded_affect_is_empty(void)
+{
+  GnostrFilterSet *fs = gnostr_filter_set_new();
+  g_assert_true(gnostr_filter_set_is_empty(fs));
+
+  /* ids alone should make is_empty FALSE */
+  gnostr_filter_set_set_ids(fs, test_ids);
+  g_assert_false(gnostr_filter_set_is_empty(fs));
+  gnostr_filter_set_set_ids(fs, NULL);
+  g_assert_true(gnostr_filter_set_is_empty(fs));
+
+  /* excluded_authors alone likewise */
+  gnostr_filter_set_set_excluded_authors(fs, test_excluded);
+  g_assert_false(gnostr_filter_set_is_empty(fs));
+  gnostr_filter_set_set_excluded_authors(fs, NULL);
+  g_assert_true(gnostr_filter_set_is_empty(fs));
 
   g_object_unref(fs);
 }
@@ -359,6 +406,7 @@ main(int argc, char **argv)
   g_test_add_func("/filter-set/new-with-name",            test_new_with_name);
   g_test_add_func("/filter-set/id-null-regenerates",      test_id_setter_regenerates_on_null);
   g_test_add_func("/filter-set/is-empty",                 test_is_empty);
+  g_test_add_func("/filter-set/ids-excluded-is-empty",    test_ids_and_excluded_affect_is_empty);
   g_test_add_func("/filter-set/setters-roundtrip",        test_setters_roundtrip);
   g_test_add_func("/filter-set/setters-clear-with-null",  test_setters_clear_with_null);
   g_test_add_func("/filter-set/clone-deep-copy",          test_clone_deep_copy);

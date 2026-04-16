@@ -1065,6 +1065,28 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "model;filter-set;manager;unit;gnostr")
 
+  # ── FilterSet predefined provider tests (nostrc-yg8j.3) ─────────
+  # Only the pure builders + install path are linked here. The
+  # refresh-from-services helper lives in a separate TU that depends on
+  # the bookmark / follow-list / mute-list services, so it's intentionally
+  # excluded from this test binary.
+  add_executable(gnostr-test-filter-set-predefined
+    tests/test_filter_set_predefined.c
+    src/model/gnostr-filter-set.c
+    src/model/gnostr-filter-set-manager.c
+    src/model/gnostr-filter-set-predefined.c)
+  target_compile_features(gnostr-test-filter-set-predefined PRIVATE c_std_11)
+  target_include_directories(gnostr-test-filter-set-predefined PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-filter-set-predefined PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-filter-set-predefined)
+  add_test(NAME gnostr-test-filter-set-predefined
+    COMMAND gnostr-test-filter-set-predefined)
+  set_tests_properties(gnostr-test-filter-set-predefined PROPERTIES
+    TIMEOUT 30
+    LABELS "model;filter-set;predefined;unit;gnostr")
+
   # ── Event model windowing tests (require testkit + NDB) ──────────
   if(TARGET gnostr-testkit)
     include(${PROJECT_ROOT}/cmake/GnTest.cmake)

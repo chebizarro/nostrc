@@ -138,6 +138,36 @@ void gnostr_filter_set_set_kinds(GnostrFilterSet *self, const gint *kinds, gsize
 const gchar * const *gnostr_filter_set_get_hashtags(GnostrFilterSet *self);
 void gnostr_filter_set_set_hashtags(GnostrFilterSet *self, const gchar * const *hashtags);
 
+/**
+ * gnostr_filter_set_get_ids:
+ * @self: a filter set
+ *
+ * Event-id constraint (standard Nostr filter `ids`). Typically used by
+ * bookmark/thread timelines where the view is pinned to a finite set of
+ * events.
+ *
+ * Returns: (transfer none) (nullable): NULL-terminated array of hex event
+ *   ids, or NULL if no id constraint is set.
+ */
+const gchar * const *gnostr_filter_set_get_ids(GnostrFilterSet *self);
+void gnostr_filter_set_set_ids(GnostrFilterSet *self, const gchar * const *ids);
+
+/**
+ * gnostr_filter_set_get_excluded_authors:
+ * @self: a filter set
+ *
+ * Client-side exclusion of hex pubkeys. This is *not* a Nostr filter
+ * field — relays still return notes from these authors. Consumers must
+ * apply the exclusion when rendering or after fetch. Primarily used to
+ * implement "muted (inverse)" predefined feeds.
+ *
+ * Returns: (transfer none) (nullable): NULL-terminated array of hex
+ *   pubkeys to exclude, or NULL.
+ */
+const gchar * const *gnostr_filter_set_get_excluded_authors(GnostrFilterSet *self);
+void gnostr_filter_set_set_excluded_authors(GnostrFilterSet *self,
+                                             const gchar * const *authors);
+
 gint64 gnostr_filter_set_get_since(GnostrFilterSet *self);
 void   gnostr_filter_set_set_since(GnostrFilterSet *self, gint64 since);
 

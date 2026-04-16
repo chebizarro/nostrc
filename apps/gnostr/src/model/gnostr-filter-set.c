@@ -24,9 +24,11 @@ struct _GnostrFilterSet {
   GnostrFilterSetSource source;
 
   /* Filter criteria */
-  gchar **authors;    /* NULL-terminated, may be NULL */
-  GArray *kinds;      /* element-type=gint, may be NULL */
-  gchar **hashtags;   /* NULL-terminated, may be NULL */
+  gchar **authors;          /* NULL-terminated, may be NULL */
+  GArray *kinds;            /* element-type=gint, may be NULL */
+  gchar **hashtags;         /* NULL-terminated, may be NULL */
+  gchar **ids;              /* NULL-terminated event ids, may be NULL */
+  gchar **excluded_authors; /* NULL-terminated, client-side exclude */
   gint64 since;
   gint64 until;
   gint   limit;
@@ -124,13 +126,15 @@ gnostr_filter_set_init(GnostrFilterSet *self)
   self->description = NULL;
   self->icon        = NULL;
   self->color       = NULL;
-  self->source      = GNOSTR_FILTER_SET_SOURCE_CUSTOM;
-  self->authors     = NULL;
-  self->kinds       = NULL;
-  self->hashtags    = NULL;
-  self->since       = 0;
-  self->until       = 0;
-  self->limit       = 0;
+  self->source           = GNOSTR_FILTER_SET_SOURCE_CUSTOM;
+  self->authors          = NULL;
+  self->kinds            = NULL;
+  self->hashtags         = NULL;
+  self->ids              = NULL;
+  self->excluded_authors = NULL;
+  self->since            = 0;
+  self->until            = 0;
+  self->limit            = 0;
 }
 
 static void
@@ -143,8 +147,10 @@ gnostr_filter_set_finalize(GObject *obj)
   g_clear_pointer(&self->description, g_free);
   g_clear_pointer(&self->icon,        g_free);
   g_clear_pointer(&self->color,       g_free);
-  g_clear_pointer(&self->authors,     g_strfreev);
-  g_clear_pointer(&self->hashtags,    g_strfreev);
+  g_clear_pointer(&self->authors,          g_strfreev);
+  g_clear_pointer(&self->hashtags,         g_strfreev);
+  g_clear_pointer(&self->ids,              g_strfreev);
+  g_clear_pointer(&self->excluded_authors, g_strfreev);
   if (self->kinds) {
     g_array_free(self->kinds, TRUE);
     self->kinds = NULL;
@@ -194,8 +200,10 @@ gnostr_filter_set_clone(GnostrFilterSet *self)
   copy->icon        = g_strdup(self->icon);
   copy->color       = g_strdup(self->color);
   copy->source      = self->source;
-  copy->authors     = strv_dup_or_null((const gchar * const *)self->authors);
-  copy->hashtags    = strv_dup_or_null((const gchar * const *)self->hashtags);
+  copy->authors          = strv_dup_or_null((const gchar * const *)self->authors);
+  copy->hashtags         = strv_dup_or_null((const gchar * const *)self->hashtags);
+  copy->ids              = strv_dup_or_null((const gchar * const *)self->ids);
+  copy->excluded_authors = strv_dup_or_null((const gchar * const *)self->excluded_authors);
   if (self->kinds && self->kinds->len > 0) {
     copy->kinds = int_array_dup_or_null(&g_array_index(self->kinds, gint, 0),
                                          self->kinds->len);
@@ -323,6 +331,39 @@ gnostr_filter_set_set_hashtags(GnostrFilterSet *self, const gchar * const *hasht
   g_strfreev(old);
 }
 
+const gchar * const *
+gnostr_filter_set_get_ids(GnostrFilterSet *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_FILTER_SET(self), NULL);
+  return (const gchar * const *)self->ids;
+}
+
+void
+gnostr_filter_set_set_ids(GnostrFilterSet *self, const gchar * const *ids)
+{
+  g_return_if_fail(GNOSTR_IS_FILTER_SET(self));
+  gchar **old = self->ids;
+  self->ids = strv_dup_or_null(ids);
+  g_strfreev(old);
+}
+
+const gchar * const *
+gnostr_filter_set_get_excluded_authors(GnostrFilterSet *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_FILTER_SET(self), NULL);
+  return (const gchar * const *)self->excluded_authors;
+}
+
+void
+gnostr_filter_set_set_excluded_authors(GnostrFilterSet *self,
+                                        const gchar * const *authors)
+{
+  g_return_if_fail(GNOSTR_IS_FILTER_SET(self));
+  gchar **old = self->excluded_authors;
+  self->excluded_authors = strv_dup_or_null(authors);
+  g_strfreev(old);
+}
+
 gint64 gnostr_filter_set_get_since(GnostrFilterSet *self)
 {
   g_return_val_if_fail(GNOSTR_IS_FILTER_SET(self), 0);
@@ -362,11 +403,13 @@ gboolean
 gnostr_filter_set_is_empty(GnostrFilterSet *self)
 {
   g_return_val_if_fail(GNOSTR_IS_FILTER_SET(self), TRUE);
-  if (self->authors  && self->authors[0])            return FALSE;
-  if (self->hashtags && self->hashtags[0])           return FALSE;
-  if (self->kinds    && self->kinds->len > 0)        return FALSE;
-  if (self->since != 0 || self->until != 0)          return FALSE;
-  if (self->limit != 0)                              return FALSE;
+  if (self->authors          && self->authors[0])          return FALSE;
+  if (self->hashtags         && self->hashtags[0])         return FALSE;
+  if (self->ids              && self->ids[0])              return FALSE;
+  if (self->excluded_authors && self->excluded_authors[0]) return FALSE;
+  if (self->kinds            && self->kinds->len > 0)      return FALSE;
+  if (self->since != 0 || self->until != 0)                return FALSE;
+  if (self->limit != 0)                                    return FALSE;
   return TRUE;
 }
 
@@ -388,10 +431,14 @@ gnostr_filter_set_equal(GnostrFilterSet *a, GnostrFilterSet *b)
   if (a->until  != b->until)                          return FALSE;
   if (a->limit  != b->limit)                          return FALSE;
   if (!strv_equal((const gchar * const *)a->authors,
-                   (const gchar * const *)b->authors))    return FALSE;
+                   (const gchar * const *)b->authors))            return FALSE;
   if (!strv_equal((const gchar * const *)a->hashtags,
-                   (const gchar * const *)b->hashtags))   return FALSE;
-  if (!int_array_equal(a->kinds, b->kinds))               return FALSE;
+                   (const gchar * const *)b->hashtags))           return FALSE;
+  if (!strv_equal((const gchar * const *)a->ids,
+                   (const gchar * const *)b->ids))                return FALSE;
+  if (!strv_equal((const gchar * const *)a->excluded_authors,
+                   (const gchar * const *)b->excluded_authors))   return FALSE;
+  if (!int_array_equal(a->kinds, b->kinds))                       return FALSE;
   return TRUE;
 }
 
@@ -459,12 +506,14 @@ gnostr_filter_set_to_json(GnostrFilterSet *self)
 
   json_builder_set_member_name(b, "filter");
   json_builder_begin_object(b);
-  add_strv_member (b, "authors",  self->authors);
-  add_kinds_member(b, "kinds",    self->kinds);
-  add_strv_member (b, "hashtags", self->hashtags);
-  add_int_member  (b, "since",    self->since);
-  add_int_member  (b, "until",    self->until);
-  add_int_member  (b, "limit",    self->limit);
+  add_strv_member (b, "authors",           self->authors);
+  add_kinds_member(b, "kinds",             self->kinds);
+  add_strv_member (b, "hashtags",          self->hashtags);
+  add_strv_member (b, "ids",               self->ids);
+  add_strv_member (b, "excluded_authors",  self->excluded_authors);
+  add_int_member  (b, "since",             self->since);
+  add_int_member  (b, "until",             self->until);
+  add_int_member  (b, "limit",             self->limit);
   json_builder_end_object(b); /* filter */
 
   json_builder_end_object(b); /* root */
@@ -588,12 +637,14 @@ gnostr_filter_set_new_from_json(const gchar *json, GError **error)
     JsonNode *fnode = json_object_get_member(obj, "filter");
     if (JSON_NODE_HOLDS_OBJECT(fnode)) {
       JsonObject *filt = json_node_get_object(fnode);
-      self->authors  = read_strv_member (filt, "authors");
-      self->kinds    = read_kinds_member(filt, "kinds");
-      self->hashtags = read_strv_member (filt, "hashtags");
-      self->since    = read_int_member  (filt, "since");
-      self->until    = read_int_member  (filt, "until");
-      self->limit    = (gint)read_int_member(filt, "limit");
+      self->authors          = read_strv_member (filt, "authors");
+      self->kinds            = read_kinds_member(filt, "kinds");
+      self->hashtags         = read_strv_member (filt, "hashtags");
+      self->ids              = read_strv_member (filt, "ids");
+      self->excluded_authors = read_strv_member (filt, "excluded_authors");
+      self->since            = read_int_member  (filt, "since");
+      self->until            = read_int_member  (filt, "until");
+      self->limit            = (gint)read_int_member(filt, "limit");
     }
   }
 
@@ -634,6 +685,15 @@ gnostr_filter_set_to_variant(GnostrFilterSet *self)
   if (self->hashtags && self->hashtags[0]) {
     g_variant_builder_add(&b, "{sv}", "hashtags",
                           g_variant_new_strv((const gchar * const *)self->hashtags, -1));
+  }
+  if (self->ids && self->ids[0]) {
+    g_variant_builder_add(&b, "{sv}", "ids",
+                          g_variant_new_strv((const gchar * const *)self->ids, -1));
+  }
+  if (self->excluded_authors && self->excluded_authors[0]) {
+    g_variant_builder_add(&b, "{sv}", "excluded_authors",
+                          g_variant_new_strv(
+                              (const gchar * const *)self->excluded_authors, -1));
   }
   if (self->kinds && self->kinds->len > 0) {
     GVariantBuilder kb;
@@ -699,6 +759,14 @@ gnostr_filter_set_new_from_variant(GVariant *variant)
                g_variant_is_of_type(val, G_VARIANT_TYPE_STRING_ARRAY)) {
       g_strfreev(self->hashtags);
       self->hashtags = g_variant_dup_strv(val, NULL);
+    } else if (g_strcmp0(key, "ids") == 0 &&
+               g_variant_is_of_type(val, G_VARIANT_TYPE_STRING_ARRAY)) {
+      g_strfreev(self->ids);
+      self->ids = g_variant_dup_strv(val, NULL);
+    } else if (g_strcmp0(key, "excluded_authors") == 0 &&
+               g_variant_is_of_type(val, G_VARIANT_TYPE_STRING_ARRAY)) {
+      g_strfreev(self->excluded_authors);
+      self->excluded_authors = g_variant_dup_strv(val, NULL);
     } else if (g_strcmp0(key, "kinds") == 0 &&
                g_variant_is_of_type(val, G_VARIANT_TYPE("ai"))) {
       if (self->kinds) {
