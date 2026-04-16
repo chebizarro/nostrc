@@ -286,9 +286,12 @@ load_trending_hashtags(GnostrPageDiscover *self)
   /* Create cancellable for this operation */
   self->trending_cancellable = g_cancellable_new();
 
-  /* Compute in background: scan last 500 kind-1 events, return top 15 */
+  /* Compute in background: scan last 500 kind-1 events, return top 15.
+   * `self` is a borrowed reference kept alive by the widget tree; no
+   * destroy function is needed. */
   gnostr_compute_trending_hashtags_async(500, 15,
                                          on_trending_hashtags_ready, self,
+                                         NULL,
                                          self->trending_cancellable);
 }
 

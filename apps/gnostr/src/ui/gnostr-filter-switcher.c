@@ -43,6 +43,8 @@ struct _GnostrFilterSwitcher {
   GtkListBox       *custom_list;
   GtkWidget        *custom_section;   /* box that contains separator + header + custom_list */
   GtkButton        *add_filter_btn;   /* footer "New Custom Filter…" button */
+  GtkButton        *save_hashtag_btn; /* footer "Save #tag as filter set…" row, hidden by default */
+  GtkLabel         *save_hashtag_label; /* inside save_hashtag_btn; rewritten per tag */
 
   /* Filtered views of the manager model. Owned by the widget. */
   GtkFilterListModel *predefined_model;
@@ -54,6 +56,11 @@ struct _GnostrFilterSwitcher {
   /* Currently-active filter-set id (copy, nullable). Used for the
    * "checkmark" row indicator. */
   gchar             *active_id;
+
+  /* Currently-visible timeline hashtag (without the leading '#'),
+   * or NULL when the active tab is not a hashtag tab. Drives the
+   * "Save #tag as filter set…" footer row. nostrc-yg8j.7. */
+  gchar             *active_hashtag;
 };
 
 G_DEFINE_FINAL_TYPE(GnostrFilterSwitcher, gnostr_filter_switcher, GTK_TYPE_WIDGET)
@@ -247,9 +254,15 @@ on_dialog_filter_set_saved(GnostrFilterSetDialog *dialog,
 /* Present the create dialog. We popdown() our popover first so the
  * dialog isn't dismissed the moment it grabs focus; we also present
  * on the idle loop to let the popover unmap cleanly before the
- * AdwDialog takes the keyboard focus. */
+ * AdwDialog takes the keyboard focus.
+ *
+ * Optional @seed_hashtag / @seed_name (both heap-allocated, owned by
+ * the context) pre-fill the dialog form so the "Save active hashtag"
+ * flow ends up in a ready-to-save state. NULL means "leave empty". */
 typedef struct {
-  GWeakRef self_ref;   /* resolved back to the switcher in the idle callback */
+  GWeakRef self_ref;     /* resolved back to the switcher in the idle callback */
+  gchar   *seed_hashtag; /* nullable */
+  gchar   *seed_name;    /* nullable */
 } PresentIdleCtx;
 
 static void
@@ -257,6 +270,8 @@ present_idle_ctx_free(gpointer data)
 {
   PresentIdleCtx *ctx = data;
   g_weak_ref_clear(&ctx->self_ref);
+  g_free(ctx->seed_hashtag);
+  g_free(ctx->seed_name);
   g_free(ctx);
 }
 
@@ -268,7 +283,14 @@ present_create_dialog_idle(gpointer data)
       (GnostrFilterSwitcher *)g_weak_ref_get(&ctx->self_ref);
   if (self) {
     GtkWidget *parent = GTK_WIDGET(self);
-    GtkWidget *dlg = gnostr_filter_set_dialog_new();
+    GtkWidget *dlg;
+    if ((ctx->seed_hashtag && *ctx->seed_hashtag) ||
+        (ctx->seed_name && *ctx->seed_name)) {
+      dlg = gnostr_filter_set_dialog_new_seeded(ctx->seed_hashtag,
+                                                 ctx->seed_name);
+    } else {
+      dlg = gnostr_filter_set_dialog_new();
+    }
     g_signal_connect_object(dlg, "filter-set-saved",
                              G_CALLBACK(on_dialog_filter_set_saved),
                              self, G_CONNECT_DEFAULT);
@@ -278,18 +300,17 @@ present_create_dialog_idle(gpointer data)
 }
 
 static void
-on_add_custom_clicked(GtkButton *btn, gpointer user_data)
+queue_present_dialog(GnostrFilterSwitcher *self,
+                      const gchar *seed_hashtag,
+                      const gchar *seed_name)
 {
-  (void)btn;
-  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
-  if (!GNOSTR_IS_FILTER_SWITCHER(self))
-    return;
-
   if (self->popover)
     gtk_popover_popdown(self->popover);
 
   PresentIdleCtx *ctx = g_new0(PresentIdleCtx, 1);
   g_weak_ref_init(&ctx->self_ref, self);
+  ctx->seed_hashtag = (seed_hashtag && *seed_hashtag) ? g_strdup(seed_hashtag) : NULL;
+  ctx->seed_name    = (seed_name && *seed_name)       ? g_strdup(seed_name)    : NULL;
   /* Use the _full variant so our destroy notify runs even if the
    * application shuts down before the idle fires; otherwise the
    * GWeakRef would leak. */
@@ -297,6 +318,45 @@ on_add_custom_clicked(GtkButton *btn, gpointer user_data)
                   present_create_dialog_idle,
                   ctx,
                   present_idle_ctx_free);
+}
+
+static void
+on_add_custom_clicked(GtkButton *btn, gpointer user_data)
+{
+  (void)btn;
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
+  if (!GNOSTR_IS_FILTER_SWITCHER(self))
+    return;
+  queue_present_dialog(self, NULL, NULL);
+}
+
+/* Title-case the hashtag (just the first letter) so "bitcoin" becomes
+ * "Bitcoin" in the seeded Name row — a minor polish that saves most
+ * users a keystroke. */
+static gchar *
+propose_name_for_hashtag(const gchar *tag)
+{
+  if (!tag || !*tag) return NULL;
+  gunichar c = g_utf8_get_char(tag);
+  const gchar *rest = g_utf8_next_char(tag);
+  gunichar upper = g_unichar_toupper(c);
+  gchar buf[8];
+  gint len = g_unichar_to_utf8(upper, buf);
+  buf[len] = '\0';
+  return g_strconcat(buf, rest, NULL);
+}
+
+static void
+on_save_hashtag_clicked(GtkButton *btn, gpointer user_data)
+{
+  (void)btn;
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
+  if (!GNOSTR_IS_FILTER_SWITCHER(self) ||
+      !self->active_hashtag || !*self->active_hashtag)
+    return;
+
+  g_autofree gchar *proposed = propose_name_for_hashtag(self->active_hashtag);
+  queue_present_dialog(self, self->active_hashtag, proposed);
 }
 
 /* ------------------------------------------------------------------------
@@ -315,6 +375,36 @@ gnostr_filter_switcher_set_active_id(GnostrFilterSwitcher *self,
 
   update_button_state(self);
   update_row_checkmarks(self);
+}
+
+void
+gnostr_filter_switcher_set_active_hashtag(GnostrFilterSwitcher *self,
+                                           const gchar *hashtag)
+{
+  g_return_if_fail(GNOSTR_IS_FILTER_SWITCHER(self));
+
+  /* Strip any leading '#' so comparisons + labels stay consistent with
+   * the rest of the filter-set plumbing, which always stores tags
+   * without the prefix. Empty → NULL. */
+  const gchar *tag = (hashtag && *hashtag == '#') ? hashtag + 1 : hashtag;
+  if (tag && !*tag) tag = NULL;
+
+  if (g_strcmp0(self->active_hashtag, tag) == 0)
+    return;
+
+  g_free(self->active_hashtag);
+  self->active_hashtag = tag ? g_strdup(tag) : NULL;
+
+  if (self->save_hashtag_btn) {
+    gtk_widget_set_visible(GTK_WIDGET(self->save_hashtag_btn),
+                           self->active_hashtag != NULL);
+  }
+  if (self->active_hashtag && self->save_hashtag_label) {
+    g_autofree gchar *label =
+        g_strdup_printf(_("Save \u201c#%s\u201d as filter set\u2026"),
+                        self->active_hashtag);
+    gtk_label_set_text(self->save_hashtag_label, label);
+  }
 }
 
 gboolean
@@ -416,6 +506,31 @@ build_popover_content(GnostrFilterSwitcher *self)
   g_signal_connect(self->add_filter_btn, "clicked",
                    G_CALLBACK(on_add_custom_clicked), self);
   gtk_box_append(self->content_box, GTK_WIDGET(self->add_filter_btn));
+
+  /* Quick-create: "Save active hashtag as filter set…". Hidden until
+   * the main window calls gnostr_filter_switcher_set_active_hashtag()
+   * with a non-NULL value. nostrc-yg8j.7. */
+  self->save_hashtag_btn = GTK_BUTTON(gtk_button_new());
+  gtk_widget_add_css_class(GTK_WIDGET(self->save_hashtag_btn), "flat");
+  gtk_widget_set_margin_bottom(GTK_WIDGET(self->save_hashtag_btn), 6);
+  gtk_widget_set_margin_start (GTK_WIDGET(self->save_hashtag_btn), 6);
+  gtk_widget_set_margin_end   (GTK_WIDGET(self->save_hashtag_btn), 6);
+  gtk_widget_set_visible(GTK_WIDGET(self->save_hashtag_btn), FALSE);
+
+  GtkWidget *save_child = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_box_append(GTK_BOX(save_child),
+                 gtk_image_new_from_icon_name("starred-symbolic"));
+  self->save_hashtag_label = GTK_LABEL(
+      gtk_label_new(_("Save active hashtag as filter set…")));
+  gtk_widget_set_hexpand(GTK_WIDGET(self->save_hashtag_label), TRUE);
+  gtk_label_set_xalign(self->save_hashtag_label, 0.0);
+  gtk_label_set_ellipsize(self->save_hashtag_label, PANGO_ELLIPSIZE_END);
+  gtk_box_append(GTK_BOX(save_child), GTK_WIDGET(self->save_hashtag_label));
+  gtk_button_set_child(self->save_hashtag_btn, save_child);
+
+  g_signal_connect(self->save_hashtag_btn, "clicked",
+                   G_CALLBACK(on_save_hashtag_clicked), self);
+  gtk_box_append(self->content_box, GTK_WIDGET(self->save_hashtag_btn));
 }
 
 static void
@@ -556,9 +671,12 @@ gnostr_filter_switcher_dispose(GObject *object)
     self->custom_list     = NULL;
     self->custom_section  = NULL;
     self->add_filter_btn  = NULL;
+    self->save_hashtag_btn   = NULL;
+    self->save_hashtag_label = NULL;
   }
 
-  g_clear_pointer(&self->active_id, g_free);
+  g_clear_pointer(&self->active_id,      g_free);
+  g_clear_pointer(&self->active_hashtag, g_free);
 
   G_OBJECT_CLASS(gnostr_filter_switcher_parent_class)->dispose(object);
 }

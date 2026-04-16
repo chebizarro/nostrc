@@ -125,6 +125,83 @@ static void test_query_not_equal_different_event_ids(void) {
   gnostr_timeline_query_free(q2);
 }
 
+/* Test: Multi-hashtag builder produces a single `#t` array
+ * carrying every tag. nostrc-yg8j.7 */
+static void test_multi_hashtag_builder(void) {
+  GNostrTimelineQueryBuilder *b = gnostr_timeline_query_builder_new();
+  gnostr_timeline_query_builder_add_kind(b, 1);
+  gnostr_timeline_query_builder_add_hashtag(b, "bitcoin");
+  gnostr_timeline_query_builder_add_hashtag(b, "nostr");
+  gnostr_timeline_query_builder_add_hashtag(b, "zaps");
+  GNostrTimelineQuery *q = gnostr_timeline_query_builder_build(b);
+
+  g_assert_nonnull(q);
+  g_assert_cmpuint(q->n_hashtags, ==, 3);
+  g_assert_cmpstr(q->hashtags[0], ==, "bitcoin");
+  g_assert_cmpstr(q->hashtags[1], ==, "nostr");
+  g_assert_cmpstr(q->hashtags[2], ==, "zaps");
+  /* Legacy single-field mirror points at the first tag. */
+  g_assert_cmpstr(q->hashtag, ==, "bitcoin");
+
+  const char *json = gnostr_timeline_query_to_json(q);
+  g_assert_nonnull(strstr(json, "\"#t\":[\"bitcoin\",\"nostr\",\"zaps\"]"));
+
+  gnostr_timeline_query_free(q);
+}
+
+/* Test: set_hashtag() and add_hashtag() are mutually exclusive —
+ * whichever is called last wins. */
+static void test_hashtag_mutex(void) {
+  /* add → set: set wins (single-tag). */
+  {
+    GNostrTimelineQueryBuilder *b = gnostr_timeline_query_builder_new();
+    gnostr_timeline_query_builder_add_hashtag(b, "nostr");
+    gnostr_timeline_query_builder_add_hashtag(b, "zaps");
+    gnostr_timeline_query_builder_set_hashtag(b, "bitcoin");
+    GNostrTimelineQuery *q = gnostr_timeline_query_builder_build(b);
+    g_assert_cmpuint(q->n_hashtags, ==, 0);
+    g_assert_cmpstr(q->hashtag, ==, "bitcoin");
+    const char *json = gnostr_timeline_query_to_json(q);
+    g_assert_nonnull(strstr(json, "\"#t\":[\"bitcoin\"]"));
+    g_assert_null(strstr(json, "nostr"));
+    gnostr_timeline_query_free(q);
+  }
+  /* set → add: add wins (multi-tag). */
+  {
+    GNostrTimelineQueryBuilder *b = gnostr_timeline_query_builder_new();
+    gnostr_timeline_query_builder_set_hashtag(b, "bitcoin");
+    gnostr_timeline_query_builder_add_hashtag(b, "nostr");
+    gnostr_timeline_query_builder_add_hashtag(b, "zaps");
+    GNostrTimelineQuery *q = gnostr_timeline_query_builder_build(b);
+    g_assert_cmpuint(q->n_hashtags, ==, 2);
+    g_assert_cmpstr(q->hashtags[0], ==, "nostr");
+    g_assert_cmpstr(q->hashtags[1], ==, "zaps");
+    const char *json = gnostr_timeline_query_to_json(q);
+    g_assert_nonnull(strstr(json, "\"#t\":[\"nostr\",\"zaps\"]"));
+    gnostr_timeline_query_free(q);
+  }
+}
+
+/* Test: copy preserves the full hashtags array. */
+static void test_multi_hashtag_copy(void) {
+  GNostrTimelineQueryBuilder *b = gnostr_timeline_query_builder_new();
+  gnostr_timeline_query_builder_add_hashtag(b, "a");
+  gnostr_timeline_query_builder_add_hashtag(b, "b");
+  GNostrTimelineQuery *src = gnostr_timeline_query_builder_build(b);
+
+  GNostrTimelineQuery *dup = gnostr_timeline_query_copy(src);
+  g_assert_cmpuint(dup->n_hashtags, ==, src->n_hashtags);
+  /* Independent allocations (deep copy) and identical content. */
+  g_assert_true(dup->hashtags != src->hashtags);
+  g_assert_true(dup->hashtags[0] != src->hashtags[0]);
+  g_assert_cmpstr(dup->hashtags[0], ==, src->hashtags[0]);
+  g_assert_cmpstr(dup->hashtags[1], ==, src->hashtags[1]);
+  g_assert_true(gnostr_timeline_query_equal(src, dup));
+
+  gnostr_timeline_query_free(src);
+  gnostr_timeline_query_free(dup);
+}
+
 /* Test: Global query (no event_ids) */
 static void test_global_query_no_event_ids(void) {
   GNostrTimelineQuery *query = gnostr_timeline_query_new_global();
@@ -149,6 +226,9 @@ int main(int argc, char *argv[]) {
   g_test_add_func("/timeline_query/equal_event_ids", test_query_equal_event_ids);
   g_test_add_func("/timeline_query/not_equal_different_event_ids", test_query_not_equal_different_event_ids);
   g_test_add_func("/timeline_query/global_no_event_ids", test_global_query_no_event_ids);
+  g_test_add_func("/timeline_query/multi_hashtag_builder", test_multi_hashtag_builder);
+  g_test_add_func("/timeline_query/hashtag_mutex", test_hashtag_mutex);
+  g_test_add_func("/timeline_query/multi_hashtag_copy", test_multi_hashtag_copy);
 
   return g_test_run();
 }

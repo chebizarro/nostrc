@@ -11,17 +11,20 @@
  *     bookmark-style feeds.
  *
  *   - #GNostrTimelineQuery is the **runtime query** the event model
- *     dispatches to NDB / relays. It supports a single hashtag, no
- *     excluded-authors, and uses `event_ids` for the `#e` tag filter
- *     (thread view), NOT the top-level `ids` field.
+ *     dispatches to NDB / relays. It accepts a multi-hashtag list (OR
+ *     semantics in NIP-01 `#t`), has no excluded-authors, and uses
+ *     `event_ids` for the `#e` tag filter (thread view), NOT the
+ *     top-level `ids` field.
  *
  * Known limitations of the conversion — documented here so callers know
  * what the resulting query will and will not honour:
  *
- *   1. **Multi-hashtag** — #GNostrTimelineQuery only carries one hashtag.
- *      When a filter set lists several, the **first** hashtag wins and a
- *      g_warning() is logged so the limitation is visible during
- *      development. Multi-hashtag support is tracked separately.
+ *   1. **Hashtags** — every non-empty hashtag in the filter set is
+ *      forwarded to the runtime query via
+ *      gnostr_timeline_query_builder_add_hashtag(). NIP-01 treats
+ *      multiple values inside a single `#t` filter as OR, so notes
+ *      tagged with any one of them match. Single-tag filters map
+ *      straight through. nostrc-yg8j.7.
  *
  *   2. **FilterSet.ids** (top-level Nostr `ids` filter for e.g. a
  *      bookmark feed) is **not** mapped. Populating
@@ -62,8 +65,8 @@ G_BEGIN_DECLS
  *
  * Produce a newly-allocated #GNostrTimelineQuery that approximates the
  * criteria of @self as closely as the runtime query type allows. See the
- * file-level comment for the list of known lossy fields (multi-hashtag,
- * ids, excluded_authors).
+ * file-level comment for the list of known lossy fields (ids and
+ * excluded_authors; hashtags are forwarded as multi-value `#t`).
  *
  * If @self is %NULL or empty (see gnostr_filter_set_is_empty()) the
  * returned query is the global timeline query.

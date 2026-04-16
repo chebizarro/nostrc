@@ -45,23 +45,14 @@ gnostr_filter_set_to_timeline_query(GnostrFilterSet *self)
     }
   }
 
-  /* ── Hashtag (first wins) ─────────────────────────────────────────
-   * GNostrTimelineQuery only carries a single hashtag today. If the
-   * filter set lists several we warn so the truncation is visible. */
+  /* ── Hashtags ─────────────────────────────────────────────────────
+   * Emit every non-empty hashtag; the builder combines them into a
+   * single NIP-01 `#t` array with OR semantics across values. */
   const gchar * const *hashtags = gnostr_filter_set_get_hashtags(self);
-  if (hashtags && hashtags[0] && *hashtags[0]) {
-    gnostr_timeline_query_builder_set_hashtag(b, hashtags[0]);
-
-    /* Count remaining tags for the warning only (cheap; 0–few entries). */
-    gsize n_tags = 0;
-    for (const gchar * const *p = hashtags; *p; p++) n_tags++;
-    if (n_tags > 1) {
-      g_warning("filter set '%s': timeline query only supports a single "
-                "hashtag; using '#%s' and dropping %zu additional tag(s)",
-                gnostr_filter_set_get_name(self) ?
-                    gnostr_filter_set_get_name(self) : "(unnamed)",
-                hashtags[0],
-                (size_t)(n_tags - 1));
+  if (hashtags) {
+    for (const gchar * const *p = hashtags; *p; p++) {
+      if (**p)
+        gnostr_timeline_query_builder_add_hashtag(b, *p);
     }
   }
 

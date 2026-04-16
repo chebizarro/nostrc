@@ -15,6 +15,7 @@ struct _GNostrTimelineQueryBuilder {
   GArray *kinds;
   GPtrArray *authors;
   GPtrArray *event_ids;
+  GPtrArray *hashtags;    /* char*, owned via g_free when > 1 entries */
   gint64 since;
   gint64 until;
   guint limit;
@@ -151,6 +152,7 @@ GNostrTimelineQueryBuilder *gnostr_timeline_query_builder_new(void) {
   b->kinds = g_array_new(FALSE, FALSE, sizeof(gint));
   b->authors = g_ptr_array_new_with_free_func(g_free);
   b->event_ids = g_ptr_array_new_with_free_func(g_free);
+  b->hashtags = g_ptr_array_new_with_free_func(g_free);
   b->limit = DEFAULT_LIMIT;
   b->include_replies = TRUE;
   return b;
@@ -201,6 +203,19 @@ void gnostr_timeline_query_builder_set_hashtag(GNostrTimelineQueryBuilder *build
   g_return_if_fail(builder != NULL);
   g_free(builder->hashtag);
   builder->hashtag = g_strdup(hashtag);
+  /* Single-tag path is mutually exclusive with the multi-tag list so
+   * the final JSON only emits one "#t" array regardless of call order. */
+  if (builder->hashtags && builder->hashtags->len > 0)
+    g_ptr_array_set_size(builder->hashtags, 0);
+}
+
+void gnostr_timeline_query_builder_add_hashtag(GNostrTimelineQueryBuilder *builder, const char *hashtag) {
+  g_return_if_fail(builder != NULL);
+  if (!hashtag || !*hashtag) return;
+  /* Multi-tag path wins over any single-tag value set earlier; see the
+   * mirror branch in gnostr_timeline_query_builder_set_hashtag(). */
+  g_clear_pointer(&builder->hashtag, g_free);
+  g_ptr_array_add(builder->hashtags, g_strdup(hashtag));
 }
 
 GNostrTimelineQuery *gnostr_timeline_query_builder_build(GNostrTimelineQueryBuilder *builder) {
@@ -240,6 +255,20 @@ GNostrTimelineQuery *gnostr_timeline_query_builder_build(GNostrTimelineQueryBuil
   q->include_replies = builder->include_replies;
   q->hashtag = g_strdup(builder->hashtag);
 
+  /* Multi-hashtag copy. Also back-fill q->hashtag with the first entry
+   * so legacy readers that only inspect the single field still observe
+   * *something* sensible; to_json() always prefers q->hashtags when
+   * populated. */
+  if (builder->hashtags && builder->hashtags->len > 0) {
+    q->n_hashtags = builder->hashtags->len;
+    q->hashtags = g_new0(char *, q->n_hashtags + 1);
+    for (gsize i = 0; i < q->n_hashtags; i++)
+      q->hashtags[i] = g_strdup(g_ptr_array_index(builder->hashtags, i));
+    q->hashtags[q->n_hashtags] = NULL;
+    if (!q->hashtag)
+      q->hashtag = g_strdup(q->hashtags[0]);
+  }
+
   gnostr_timeline_query_builder_free(builder);
 
   return q;
@@ -251,6 +280,7 @@ void gnostr_timeline_query_builder_free(GNostrTimelineQueryBuilder *builder) {
   g_array_free(builder->kinds, TRUE);
   g_ptr_array_free(builder->authors, TRUE);
   g_ptr_array_free(builder->event_ids, TRUE);
+  if (builder->hashtags) g_ptr_array_free(builder->hashtags, TRUE);
   g_free(builder->search);
   g_free(builder->hashtag);
   g_free(builder);
@@ -319,8 +349,17 @@ const char *gnostr_timeline_query_to_json(GNostrTimelineQuery *query) {
     g_string_append_c(json, ']');
   }
 
-  /* Hashtag (as #t tag) */
-  if (query->hashtag) {
+  /* Hashtags (as #t tag). Multi-tag list wins when populated; single
+   * @hashtag is the fallback for legacy callers that never touched the
+   * multi-hashtag builder API. */
+  if (query->n_hashtags > 0 && query->hashtags) {
+    g_string_append(json, ",\"#t\":[");
+    for (gsize i = 0; i < query->n_hashtags; i++) {
+      if (i > 0) g_string_append_c(json, ',');
+      g_string_append_printf(json, "\"%s\"", query->hashtags[i]);
+    }
+    g_string_append_c(json, ']');
+  } else if (query->hashtag) {
     g_string_append_printf(json, ",\"#t\":[\"%s\"]", query->hashtag);
   }
 
@@ -387,8 +426,15 @@ char *gnostr_timeline_query_to_json_with_until(GNostrTimelineQuery *query, gint6
     g_string_append_c(json, ']');
   }
 
-  /* Hashtag */
-  if (query->hashtag) {
+  /* Hashtags — multi-tag list wins when populated (see to_json()). */
+  if (query->n_hashtags > 0 && query->hashtags) {
+    g_string_append(json, ",\"#t\":[");
+    for (gsize i = 0; i < query->n_hashtags; i++) {
+      if (i > 0) g_string_append_c(json, ',');
+      g_string_append_printf(json, "\"%s\"", query->hashtags[i]);
+    }
+    g_string_append_c(json, ']');
+  } else if (query->hashtag) {
     g_string_append_printf(json, ",\"#t\":[\"%s\"]", query->hashtag);
   }
 
@@ -430,7 +476,13 @@ guint gnostr_timeline_query_hash(GNostrTimelineQuery *query) {
   if (query->search) {
     hash = hash * 31 + g_str_hash(query->search);
   }
-  if (query->hashtag) {
+  /* Hash the multi-tag list when present so queries that differ only
+   * in their additional hashtags are not collapsed by the dedup cache.
+   * The fallback single-@hashtag branch handles legacy callers. */
+  if (query->n_hashtags > 0 && query->hashtags) {
+    for (gsize i = 0; i < query->n_hashtags; i++)
+      hash = hash * 31 + g_str_hash(query->hashtags[i]);
+  } else if (query->hashtag) {
     hash = hash * 31 + g_str_hash(query->hashtag);
   }
 
@@ -470,6 +522,11 @@ gboolean gnostr_timeline_query_equal(GNostrTimelineQuery *a, GNostrTimelineQuery
   if (g_strcmp0(a->search, b->search) != 0) return FALSE;
   if (g_strcmp0(a->hashtag, b->hashtag) != 0) return FALSE;
 
+  if (a->n_hashtags != b->n_hashtags) return FALSE;
+  for (gsize i = 0; i < a->n_hashtags; i++) {
+    if (g_strcmp0(a->hashtags[i], b->hashtags[i]) != 0) return FALSE;
+  }
+
   return TRUE;
 }
 
@@ -507,6 +564,14 @@ GNostrTimelineQuery *gnostr_timeline_query_copy(GNostrTimelineQuery *query) {
   copy->include_replies = query->include_replies;
   copy->hashtag = g_strdup(query->hashtag);
 
+  if (query->n_hashtags > 0 && query->hashtags) {
+    copy->n_hashtags = query->n_hashtags;
+    copy->hashtags = g_new0(char *, copy->n_hashtags + 1);
+    for (gsize i = 0; i < copy->n_hashtags; i++)
+      copy->hashtags[i] = g_strdup(query->hashtags[i]);
+    copy->hashtags[copy->n_hashtags] = NULL;
+  }
+
   return copy;
 }
 
@@ -531,6 +596,11 @@ void gnostr_timeline_query_free(GNostrTimelineQuery *query) {
 
   g_free(query->search);
   g_free(query->hashtag);
+  if (query->hashtags) {
+    for (gsize i = 0; i < query->n_hashtags; i++)
+      g_free(query->hashtags[i]);
+    g_free(query->hashtags);
+  }
   g_free(query->_cached_json);
   g_free(query);
 }

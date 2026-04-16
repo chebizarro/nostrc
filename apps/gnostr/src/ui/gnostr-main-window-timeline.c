@@ -212,6 +212,14 @@ gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView 
         default: id = NULL; break;
       }
       gnostr_filter_switcher_set_active_id(GNOSTR_FILTER_SWITCHER(switcher), id);
+
+      /* When the active tab is an ephemeral hashtag feed, offer a quick
+       * "Save #tag as filter set…" shortcut in the switcher popover.
+       * Any other tab type clears the shortcut. nostrc-yg8j.7 */
+      const gchar *active_hashtag =
+          ((GnTimelineTabType)type == GN_TIMELINE_TAB_HASHTAG) ? filter_value : NULL;
+      gnostr_filter_switcher_set_active_hashtag(GNOSTR_FILTER_SWITCHER(switcher),
+                                                active_hashtag);
     }
   }
 }

@@ -36,7 +36,26 @@ struct _GNostrTimelineQuery {
   guint limit;              /* Max items per query page (default: 50) */
   char *search;             /* Full-text search query (NULL = none) */
   gboolean include_replies; /* Whether to include reply notes */
-  char *hashtag;            /* Filter by hashtag (NULL = none) */
+  char *hashtag;            /* Filter by hashtag (NULL = none; single-tag path) */
+  char **hashtags;          /* Multi-hashtag filter (NULL = none).
+                             * When populated, supersedes @hashtag during
+                             * JSON emission: all entries are combined into a
+                             * single "#t" array which NIP-01 evaluates with
+                             * OR semantics across values. Set via
+                             * gnostr_timeline_query_builder_add_hashtag().
+                             *
+                             * NOTE: queries built with
+                             * gnostr_timeline_query_new_for_hashtag() and
+                             * queries built by a single
+                             * gnostr_timeline_query_builder_add_hashtag()
+                             * call emit identical "#t" JSON but compare
+                             * unequal via gnostr_timeline_query_equal()
+                             * (n_hashtags differs: 0 vs 1). Use to_json()
+                             * as the canonical form for relay-level
+                             * deduplication; reserve equal() for
+                             * comparisons between queries built the same
+                             * way. nostrc-yg8j.7 */
+  gsize n_hashtags;
 
   /* Internal: cached JSON representation */
   char *_cached_json;
@@ -125,6 +144,21 @@ void gnostr_timeline_query_builder_set_limit(GNostrTimelineQueryBuilder *builder
 void gnostr_timeline_query_builder_set_search(GNostrTimelineQueryBuilder *builder, const char *search);
 void gnostr_timeline_query_builder_set_include_replies(GNostrTimelineQueryBuilder *builder, gboolean include);
 void gnostr_timeline_query_builder_set_hashtag(GNostrTimelineQueryBuilder *builder, const char *hashtag);
+
+/**
+ * gnostr_timeline_query_builder_add_hashtag:
+ * @builder: the builder
+ * @hashtag: a single hashtag (without the '#' prefix)
+ *
+ * Append @hashtag to the builder's multi-hashtag list. When the
+ * resulting query carries two or more tags they are emitted together
+ * as a single NIP-01 `"#t"` array (OR semantics across values).
+ *
+ * Calling this resets any single-hashtag value set via
+ * gnostr_timeline_query_builder_set_hashtag(); the two APIs are mutually
+ * exclusive so callers get consistent JSON regardless of order.
+ */
+void gnostr_timeline_query_builder_add_hashtag(GNostrTimelineQueryBuilder *builder, const char *hashtag);
 
 /**
  * gnostr_timeline_query_builder_build:

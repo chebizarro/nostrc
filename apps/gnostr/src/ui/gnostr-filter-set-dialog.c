@@ -30,6 +30,7 @@
 #include <nostr-gobject-1.0/nostr_utils.h>
 
 #include "../model/gnostr-filter-set-manager.h"
+#include "../util/trending-hashtags.h"
 #include "../util/utils.h"
 
 /* Common kind presets shown as quick-check pills. Anything else goes
@@ -62,6 +63,12 @@ struct _GnostrFilterSetDialog {
   AdwEntryRow    *row_since;
   AdwEntryRow    *row_until;
   GtkLabel       *summary_label;
+
+  /* Suggestions (trending hashtags) — populated asynchronously from NDB.
+   * nostrc-yg8j.7 */
+  AdwPreferencesGroup *suggestions_group;
+  GtkFlowBox          *suggestions_box;
+  GCancellable        *suggestions_cancellable;
 
   /* Built programmatically inside kinds_box / authors_box. */
   GtkCheckButton *kind_checks[G_N_ELEMENTS(kKindPresets)];
@@ -418,6 +425,178 @@ on_save_clicked(GtkButton *btn, gpointer user_data)
 }
 
 /* ------------------------------------------------------------------------
+ * Trending-hashtag suggestions (nostrc-yg8j.7)
+ *
+ * We kick off a local NDB scan on construction and, if any tags come
+ * back, light up a row of pill chips above the Criteria group. Clicking
+ * a chip appends its tag to the Hashtags row (skipping duplicates), so
+ * the user only has to tick presets + review the name before hitting
+ * Save. The computation is bounded (400 events / top 12) so it never
+ * measurably delays dialog presentation, and the group stays hidden
+ * until we have something useful to show.
+ * ------------------------------------------------------------------------ */
+
+/* Return TRUE if the comma/space-separated hashtag row already
+ * contains @tag (case-insensitive, `#` prefix ignored). */
+static gboolean
+row_contains_hashtag(AdwEntryRow *row, const char *tag)
+{
+  if (!row || !tag || !*tag) return FALSE;
+  const gchar *raw = gtk_editable_get_text(GTK_EDITABLE(row));
+  if (!raw || !*raw) return FALSE;
+
+  gchar **existing = g_strsplit_set(raw, " ,\t\n\r", -1);
+  gboolean found = FALSE;
+  for (gchar **p = existing; *p && !found; p++) {
+    gchar *e = g_strstrip(*p);
+    if (!*e) continue;
+    if (*e == '#') e++;
+    if (!*e) continue;
+    if (g_ascii_strcasecmp(e, tag) == 0)
+      found = TRUE;
+  }
+  g_strfreev(existing);
+  return found;
+}
+
+static void
+on_suggestion_chip_clicked(GtkButton *btn, gpointer user_data)
+{
+  GnostrFilterSetDialog *self = GNOSTR_FILTER_SET_DIALOG(user_data);
+  const char *tag = g_object_get_data(G_OBJECT(btn), "hashtag");
+  if (!tag || !*tag) return;
+
+  if (row_contains_hashtag(self->row_hashtags, tag)) {
+    /* Already present \u2014 nothing to do; briefly dim the chip so the
+     * user sees their click landed somewhere. */
+    gtk_widget_set_sensitive(GTK_WIDGET(btn), FALSE);
+    return;
+  }
+
+  const gchar *current = gtk_editable_get_text(GTK_EDITABLE(self->row_hashtags));
+  g_autofree gchar *joined = NULL;
+  if (current && *current) {
+    /* Preserve the user's whitespace style by appending with a space
+     * separator; tokenize_multi() handles both comma and whitespace. */
+    joined = g_strdup_printf("%s %s", current, tag);
+  } else {
+    joined = g_strdup(tag);
+  }
+  gtk_editable_set_text(GTK_EDITABLE(self->row_hashtags), joined);
+  /* refresh_summary() runs via row_hashtags "changed". */
+
+  /* Dim the chip so the user sees it's been consumed. */
+  gtk_widget_set_sensitive(GTK_WIDGET(btn), FALSE);
+}
+
+static void
+populate_suggestions(GnostrFilterSetDialog *self, GPtrArray *hashtags)
+{
+  if (!self->suggestions_box || !self->suggestions_group) return;
+
+  /* Clear prior children (defensive \u2014 init only runs once, but a future
+   * refresh path could reuse this helper). */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->suggestions_box))) != NULL)
+    gtk_flow_box_remove(self->suggestions_box, child);
+
+  guint shown = 0;
+  if (hashtags) {
+    for (guint i = 0; i < hashtags->len; i++) {
+      GnostrTrendingHashtag *ht = g_ptr_array_index(hashtags, i);
+      if (!ht || !ht->tag || !*ht->tag) continue;
+
+      g_autofree gchar *label = g_strdup_printf("#%s", ht->tag);
+      GtkWidget *btn = gtk_button_new_with_label(label);
+      gtk_widget_add_css_class(btn, "pill");
+      gtk_widget_add_css_class(btn, "flat");
+
+      /* If the tag is already in the row (seeded or manually typed),
+       * present the chip as already-consumed. */
+      if (row_contains_hashtag(self->row_hashtags, ht->tag))
+        gtk_widget_set_sensitive(btn, FALSE);
+
+      g_object_set_data_full(G_OBJECT(btn), "hashtag",
+                             g_strdup(ht->tag), g_free);
+      g_signal_connect(btn, "clicked",
+                       G_CALLBACK(on_suggestion_chip_clicked), self);
+
+      gtk_flow_box_append(self->suggestions_box, btn);
+      shown++;
+    }
+  }
+
+  gtk_widget_set_visible(GTK_WIDGET(self->suggestions_group), shown > 0);
+}
+
+/* Async delivery context. We can't hand @self directly to the
+ * compute thread because the dialog may be dismissed (and finalized)
+ * before the scan completes. A #GWeakRef plus a dedicated
+ * #GCancellable gives us the belt-and-braces: the cancellable asks
+ * the worker to skip delivery, and the weak ref guards against the
+ * unlikely race where the callback fires after finalization anyway. */
+typedef struct {
+  GWeakRef      weak_self;
+  GCancellable *cancellable;
+} SuggestionsLoadCtx;
+
+static void
+suggestions_load_ctx_free(gpointer data)
+{
+  SuggestionsLoadCtx *ctx = data;
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->weak_self);
+  g_clear_object(&ctx->cancellable);
+  g_free(ctx);
+}
+
+static void
+on_suggestions_ready(GPtrArray *hashtags, gpointer user_data)
+{
+  SuggestionsLoadCtx *ctx = user_data;
+
+  /* If the dialog is gone, or its scan was cancelled, drop the
+   * result. ctx itself is freed by the trending module's
+   * user_data_free destroy notify on every completion path. */
+  GObject *obj = g_weak_ref_get(&ctx->weak_self);
+  if (!obj || g_cancellable_is_cancelled(ctx->cancellable)) {
+    g_clear_object(&obj);
+    if (hashtags) g_ptr_array_unref(hashtags);
+    return;
+  }
+
+  GnostrFilterSetDialog *self = GNOSTR_FILTER_SET_DIALOG(obj);
+  populate_suggestions(self, hashtags);
+
+  g_object_unref(obj);
+  if (hashtags) g_ptr_array_unref(hashtags);
+}
+
+static void
+load_suggestions_async(GnostrFilterSetDialog *self)
+{
+  if (self->suggestions_cancellable) return;  /* already running */
+
+  self->suggestions_cancellable = g_cancellable_new();
+
+  SuggestionsLoadCtx *ctx = g_new0(SuggestionsLoadCtx, 1);
+  g_weak_ref_init(&ctx->weak_self, self);
+  ctx->cancellable = g_object_ref(self->suggestions_cancellable);
+
+  /* 400 recent kind-1 events, top 12 tags — enough for a useful
+   * chip row without stressing the worker or crowding the form.
+   * Pass suggestions_load_ctx_free as the user_data destroy notify
+   * so ctx is freed on every completion path (success OR cancel),
+   * closing the leak that would otherwise accumulate each time the
+   * user opens + dismisses the dialog before the 400-event scan
+   * finishes. */
+  gnostr_compute_trending_hashtags_async(400, 12,
+                                         on_suggestions_ready, ctx,
+                                         suggestions_load_ctx_free,
+                                         self->suggestions_cancellable);
+}
+
+/* ------------------------------------------------------------------------
  * Population helpers (edit mode)
  * ------------------------------------------------------------------------ */
 
@@ -514,6 +693,18 @@ switch_to_edit_mode(GnostrFilterSetDialog *self, GnostrFilterSet *fs)
   gtk_label_set_text(self->lbl_title, _("Edit Filter Set"));
   gtk_button_set_label(self->btn_save, _("Save Changes"));
 
+  /* Trending suggestions are a create-time discovery aid; in edit
+   * mode the Hashtags row is already populated from the existing
+   * filter set, so the chip row would just echo pre-existing tags
+   * back at the user. Cancel the in-flight scan (kicked off in _init
+   * before we knew we were editing) and hide the group. */
+  if (self->suggestions_cancellable) {
+    g_cancellable_cancel(self->suggestions_cancellable);
+    g_clear_object(&self->suggestions_cancellable);
+  }
+  if (self->suggestions_group)
+    gtk_widget_set_visible(GTK_WIDGET(self->suggestions_group), FALSE);
+
   populate_from_filter_set(self, fs);
   refresh_summary(self);
 }
@@ -521,6 +712,23 @@ switch_to_edit_mode(GnostrFilterSetDialog *self, GnostrFilterSet *fs)
 /* ------------------------------------------------------------------------
  * GObject plumbing
  * ------------------------------------------------------------------------ */
+
+static void
+gnostr_filter_set_dialog_dispose(GObject *object)
+{
+  GnostrFilterSetDialog *self = GNOSTR_FILTER_SET_DIALOG(object);
+
+  /* Cancel the trending-hashtags worker before we start tearing down
+   * the template. The callback guards with a #GWeakRef on top of this,
+   * but cancelling gives us an immediate “drop the result” signal that
+   * avoids any accidental populate work during dispose. */
+  if (self->suggestions_cancellable) {
+    g_cancellable_cancel(self->suggestions_cancellable);
+    g_clear_object(&self->suggestions_cancellable);
+  }
+
+  G_OBJECT_CLASS(gnostr_filter_set_dialog_parent_class)->dispose(object);
+}
 
 static void
 gnostr_filter_set_dialog_finalize(GObject *object)
@@ -536,6 +744,7 @@ gnostr_filter_set_dialog_class_init(GnostrFilterSetDialogClass *klass)
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 
+  object_class->dispose  = gnostr_filter_set_dialog_dispose;
   object_class->finalize = gnostr_filter_set_dialog_finalize;
 
   gtk_widget_class_set_template_from_resource(
@@ -556,6 +765,8 @@ gnostr_filter_set_dialog_class_init(GnostrFilterSetDialogClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, row_since);
   gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, row_until);
   gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, summary_label);
+  gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, suggestions_group);
+  gtk_widget_class_bind_template_child(widget_class, GnostrFilterSetDialog, suggestions_box);
 
   /**
    * GnostrFilterSetDialog::filter-set-saved:
@@ -632,6 +843,11 @@ gnostr_filter_set_dialog_init(GnostrFilterSetDialog *self)
 
   /* Clear any leftover "error" styling when name becomes non-empty. */
   refresh_summary(self);
+
+  /* Kick off the trending-hashtags suggestion scan. The group stays
+   * hidden until at least one tag comes back, so a dark / empty NDB
+   * just shows no extra UI. nostrc-yg8j.7 */
+  load_suggestions_async(self);
 }
 
 /* ------------------------------------------------------------------------
@@ -659,10 +875,43 @@ gnostr_filter_set_dialog_new_for_edit(GnostrFilterSet *fs)
   return w;
 }
 
+GtkWidget *
+gnostr_filter_set_dialog_new_seeded(const char *hashtag,
+                                     const char *proposed_name)
+{
+  GnostrFilterSetDialog *self =
+      g_object_new(GNOSTR_TYPE_FILTER_SET_DIALOG, NULL);
+
+  /* Strip a leading '#' if the caller left it on — the Hashtags row is
+   * tokenised without the prefix and treats it as a syntax artefact of
+   * the display form. */
+  if (hashtag && *hashtag) {
+    const char *tag = (*hashtag == '#') ? hashtag + 1 : hashtag;
+    if (*tag)
+      gtk_editable_set_text(GTK_EDITABLE(self->row_hashtags), tag);
+  }
+  if (proposed_name && *proposed_name) {
+    gtk_editable_set_text(GTK_EDITABLE(self->row_name), proposed_name);
+  }
+  /* refresh_summary() (fired through the entry "changed" signal from
+   * gtk_editable_set_text) also flips btn_save sensitive when the
+   * name row becomes non-empty, so no manual state-poking needed. */
+  return GTK_WIDGET(self);
+}
+
 void
 gnostr_filter_set_dialog_present(GtkWidget *parent)
 {
   GtkWidget *dlg = gnostr_filter_set_dialog_new();
+  adw_dialog_present(ADW_DIALOG(dlg), parent);
+}
+
+void
+gnostr_filter_set_dialog_present_seeded(GtkWidget *parent,
+                                         const char *hashtag,
+                                         const char *proposed_name)
+{
+  GtkWidget *dlg = gnostr_filter_set_dialog_new_seeded(hashtag, proposed_name);
   adw_dialog_present(ADW_DIALOG(dlg), parent);
 }
 

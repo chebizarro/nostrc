@@ -257,15 +257,38 @@ typedef struct {
   guint top_n;
   GnostrTrendingHashtagsCallback callback;
   gpointer user_data;
+  GDestroyNotify user_data_free;   /* optional, may be NULL */
   GPtrArray *result;
   GCancellable *cancellable;
 } TrendingAsyncData;
+
+static void
+trending_async_data_free(gpointer ptr)
+{
+  TrendingAsyncData *data = ptr;
+  if (!data) return;
+  /* On the cancelled / error path the worker never populated result,
+   * so `data->result` is NULL. On the success path the main-thread
+   * callback transfers ownership of the array to the user callback
+   * and sets `data->result = NULL` before returning, so this unref
+   * only ever runs if neither path got a chance to consume it (e.g.
+   * a defensive safety net). */
+  g_clear_pointer(&data->result, g_ptr_array_unref);
+  g_clear_object(&data->cancellable);
+  /* Free caller-owned user_data on every completion path. Callers
+   * holding a borrowed reference (e.g. a GObject already kept alive
+   * elsewhere) pass NULL and this is a no-op. */
+  if (data->user_data && data->user_data_free)
+    data->user_data_free(data->user_data);
+  g_free(data);
+}
 
 static void
 trending_async_thread(GTask *task, gpointer source_object,
                       gpointer task_data, GCancellable *cancellable)
 {
   (void)source_object;
+  (void)cancellable;
   TrendingAsyncData *data = task_data;
 
   /* Check if cancelled before doing work */
@@ -275,8 +298,10 @@ trending_async_thread(GTask *task, gpointer source_object,
 
   data->result = gnostr_compute_trending_hashtags(data->max_events, data->top_n);
 
-  /* Return result via GTask - this handles main thread delivery automatically */
-  g_task_return_pointer(task, data, NULL);
+  /* Completion signal only — `data` is owned by task_data and freed
+   * by trending_async_data_free regardless of whether we hit the
+   * cancel branch above or this success branch. */
+  g_task_return_boolean(task, TRUE);
 }
 
 static void
@@ -284,19 +309,24 @@ trending_async_callback(GObject *source_object, GAsyncResult *result, gpointer u
 {
   (void)source_object;
   (void)user_data;
-  
+
   GTask *task = G_TASK(result);
-  TrendingAsyncData *data = g_task_propagate_pointer(task, NULL);
-  
-  if (data) {
-    /* Deliver result to original callback */
-    if (data->result) {
-      data->callback(data->result, data->user_data);
-    }
-    
-    g_clear_object(&data->cancellable);
-    g_free(data);
+  TrendingAsyncData *data = g_task_get_task_data(task);
+  if (!data) return;
+
+  if (g_task_had_error(task)) {
+    /* Cancelled or failed — drop the (absent) result; destroy notify
+     * frees `data`. */
+    return;
   }
+
+  /* Transfer ownership of the result array to the user callback and
+   * null it out so the destroy notify doesn't touch it. */
+  GPtrArray *res = data->result;
+  data->result = NULL;
+  if (res)
+    data->callback(res, data->user_data);
+  /* `data` freed by trending_async_data_free via task_data destroy. */
 }
 
 void
@@ -304,6 +334,7 @@ gnostr_compute_trending_hashtags_async(guint max_events,
                                        guint top_n,
                                        GnostrTrendingHashtagsCallback callback,
                                        gpointer user_data,
+                                       GDestroyNotify user_data_free,
                                        GCancellable *cancellable)
 {
   g_return_if_fail(callback != NULL);
@@ -313,10 +344,16 @@ gnostr_compute_trending_hashtags_async(guint max_events,
   data->top_n = top_n;
   data->callback = callback;
   data->user_data = user_data;
+  data->user_data_free = user_data_free;
   data->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
 
   GTask *task = g_task_new(NULL, cancellable, trending_async_callback, NULL);
-  g_task_set_task_data(task, data, NULL); /* data freed in callback */
+  /* Destroy notify guarantees `data` is freed on every completion
+   * path — including cancellation, where propagate_pointer would
+   * previously return NULL and leak the struct (plus its strong
+   * cancellable ref and any caller-side context hanging off
+   * user_data). */
+  g_task_set_task_data(task, data, trending_async_data_free);
   g_task_run_in_thread(task, trending_async_thread);
   g_object_unref(task);
 }

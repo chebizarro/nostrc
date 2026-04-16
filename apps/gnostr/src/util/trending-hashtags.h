@@ -63,11 +63,18 @@ GPtrArray *gnostr_compute_trending_hashtags(guint max_events, guint top_n);
  * @top_n: Number of top hashtags to return.
  * @callback: (scope async): Called on the main thread with the result.
  * @user_data: Passed to @callback.
+ * @user_data_free: (nullable): Destroy function for @user_data, invoked
+ *   once the task completes (success or cancellation). Pass %NULL if
+ *   @user_data is a borrowed reference (e.g. a GObject held alive by
+ *   the caller); pass a real destroy function when @user_data is
+ *   caller-allocated context that would otherwise leak when the task
+ *   is cancelled before the callback runs.
  * @cancellable: (nullable): Optional GCancellable to cancel the operation.
  *
  * Async wrapper that runs the computation in a GLib worker thread and
  * delivers results via @callback on the main thread. If @cancellable is
- * cancelled before completion, the callback will not be invoked.
+ * cancelled before completion, @callback is NOT invoked but
+ * @user_data_free still runs, guaranteeing no owned context is leaked.
  */
 typedef void (*GnostrTrendingHashtagsCallback)(GPtrArray *hashtags, gpointer user_data);
 
@@ -75,6 +82,7 @@ void gnostr_compute_trending_hashtags_async(guint max_events,
                                             guint top_n,
                                             GnostrTrendingHashtagsCallback callback,
                                             gpointer user_data,
+                                            GDestroyNotify user_data_free,
                                             GCancellable *cancellable);
 
 G_END_DECLS

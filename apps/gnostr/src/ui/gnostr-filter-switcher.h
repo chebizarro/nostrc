@@ -55,6 +55,24 @@ gboolean gnostr_filter_switcher_activate_position(GnostrFilterSwitcher *self,
                                                    guint position);
 
 /**
+ * gnostr_filter_switcher_set_active_hashtag:
+ * @self: a switcher
+ * @hashtag: (nullable): hashtag of the currently-visible timeline tab
+ *   (without the leading `#`), or %NULL when the active tab is not a
+ *   hashtag tab
+ *
+ * Tells the switcher that the user is currently looking at a hashtag
+ * feed. When non-%NULL, the popover footer grows a "Save "#tag" as
+ * filter set…" row that opens the create dialog pre-seeded with the
+ * tag and a proposed name. Call with %NULL to hide the row when the
+ * user navigates off the hashtag tab.
+ *
+ * nostrc-yg8j.7: Hashtag-based filter sets.
+ */
+void gnostr_filter_switcher_set_active_hashtag(GnostrFilterSwitcher *self,
+                                                const gchar *hashtag);
+
+/**
  * Signals:
  *
  *   "filter-set-activated" (const gchar *filter_set_id)

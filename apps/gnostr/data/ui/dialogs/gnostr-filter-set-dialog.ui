@@ -70,6 +70,27 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
+                      <object class="AdwPreferencesGroup" id="suggestions_group">
+                        <property name="title" translatable="yes">Trending hashtags</property>
+                        <property name="description" translatable="yes">Tap a tag to add it to the Hashtags row above.</property>
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="GtkFlowBox" id="suggestions_box">
+                            <property name="selection-mode">0</property>
+                            <property name="homogeneous">false</property>
+                            <property name="min-children-per-line">1</property>
+                            <property name="max-children-per-line">8</property>
+                            <property name="row-spacing">6</property>
+                            <property name="column-spacing">6</property>
+                            <property name="margin-top">4</property>
+                            <property name="margin-bottom">4</property>
+                            <property name="margin-start">2</property>
+                            <property name="margin-end">2</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title">Criteria</property>
                         <property name="description">Leave a field empty for no constraint on that dimension.</property>

@@ -61,6 +61,28 @@ template $GnostrFilterSetDialog: Adw.Dialog {
             }
           }
 
+          /* Trending suggestions — populated async from NDB; stays hidden
+           * until we have results so the form doesn't visibly reflow on open.
+           * nostrc-yg8j.7 */
+          Adw.PreferencesGroup suggestions_group {
+            title: _("Trending hashtags");
+            description: _("Tap a tag to add it to the Hashtags row above.");
+            visible: false;
+
+            FlowBox suggestions_box {
+              selection-mode: none;
+              homogeneous: false;
+              min-children-per-line: 1;
+              max-children-per-line: 8;
+              row-spacing: 6;
+              column-spacing: 6;
+              margin-top: 4;
+              margin-bottom: 4;
+              margin-start: 2;
+              margin-end: 2;
+            }
+          }
+
           /* Criteria group: hashtags, kinds, authors. */
           Adw.PreferencesGroup {
             title: "Criteria";

@@ -50,12 +50,45 @@ GtkWidget *gnostr_filter_set_dialog_new(void);
 GtkWidget *gnostr_filter_set_dialog_new_for_edit(GnostrFilterSet *fs);
 
 /**
+ * gnostr_filter_set_dialog_new_seeded:
+ * @hashtag: (nullable): a hashtag to pre-fill the Hashtags row with
+ *   (without the leading `#`); %NULL leaves the field empty
+ * @proposed_name: (nullable): a suggested display name for the new
+ *   filter set; %NULL leaves the Name row empty
+ *
+ * Construct a create-mode dialog with its form pre-populated. Used by
+ * "quick create from hashtag" flows so the user only has to review and
+ * hit Save. Both arguments are independent — callers can seed just
+ * the hashtag, just the name, or both.
+ *
+ * Returns: (transfer full): a new dialog instance.
+ *
+ * nostrc-yg8j.7: Hashtag-based filter sets.
+ */
+GtkWidget *gnostr_filter_set_dialog_new_seeded(const char *hashtag,
+                                                const char *proposed_name);
+
+/**
  * gnostr_filter_set_dialog_present:
  * @parent: the widget providing the parent window
  *
  * Convenience: construct a create-mode dialog and present it.
  */
 void gnostr_filter_set_dialog_present(GtkWidget *parent);
+
+/**
+ * gnostr_filter_set_dialog_present_seeded:
+ * @parent: the widget providing the parent window
+ * @hashtag: (nullable): seed value for the Hashtags row
+ * @proposed_name: (nullable): seed value for the Name row
+ *
+ * Convenience: construct a seeded create-mode dialog and present it.
+ *
+ * nostrc-yg8j.7.
+ */
+void gnostr_filter_set_dialog_present_seeded(GtkWidget *parent,
+                                              const char *hashtag,
+                                              const char *proposed_name);
 
 /**
  * gnostr_filter_set_dialog_present_edit:

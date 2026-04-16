@@ -8,7 +8,8 @@
  *   - Authors + kinds passthrough
  *   - Default kinds when unspecified ([1, 6])
  *   - Hashtag single pass-through
- *   - Multi-hashtag → first wins + g_warning()
+ *   - Multi-hashtag → all tags forwarded as a single `#t` array
+ *     (NIP-01 OR semantics; nostrc-yg8j.7)
  *   - since / until / limit pass-through
  *   - ids dropped (semantic mismatch with #e tag filter)
  *   - excluded_authors dropped
@@ -123,7 +124,11 @@ test_single_hashtag(void)
 
   GNostrTimelineQuery *q = gnostr_filter_set_to_timeline_query(fs);
   g_assert_nonnull(q);
+  /* Single-tag path: still populates q->hashtag for legacy readers,
+   * and the multi-tag list carries the same lone entry. */
   g_assert_cmpstr(q->hashtag, ==, "bitcoin");
+  g_assert_cmpuint(q->n_hashtags, ==, 1);
+  g_assert_cmpstr(q->hashtags[0], ==, "bitcoin");
   g_assert_true(has_default_kinds(q));
 
   gnostr_timeline_query_free(q);
@@ -131,28 +136,52 @@ test_single_hashtag(void)
 }
 
 static void
-test_multi_hashtag_first_wins_with_warning(void)
+test_multi_hashtag_forwards_all(void)
 {
-  /* We assert on the exact behaviour — first hashtag wins + a single
-   * g_warning() is emitted — using g_test_expect_message so the test
-   * runs in-process and doesn't hit the subprocess fatal-warnings
-   * default. */
-  g_test_expect_message("gnostr-filter-set-query",
-                        G_LOG_LEVEL_WARNING,
-                        "*timeline query only supports a single hashtag*");
-
+  /* nostrc-yg8j.7 — Every non-empty tag from the filter set now flows
+   * into q->hashtags; to_json() combines them into a single `#t` array
+   * which NIP-01 treats as OR across values. No warning is emitted. */
   GnostrFilterSet *fs = gnostr_filter_set_new_with_name("Multi");
   static const gchar *tags[] = { "bitcoin", "nostr", "zaps", NULL };
   gnostr_filter_set_set_hashtags(fs, tags);
 
   GNostrTimelineQuery *q = gnostr_filter_set_to_timeline_query(fs);
   g_assert_nonnull(q);
+  g_assert_cmpuint(q->n_hashtags, ==, 3);
+  g_assert_cmpstr(q->hashtags[0], ==, "bitcoin");
+  g_assert_cmpstr(q->hashtags[1], ==, "nostr");
+  g_assert_cmpstr(q->hashtags[2], ==, "zaps");
+  /* Legacy single-field mirror points at the first entry so older
+   * callers reading q->hashtag directly still see a sensible value. */
   g_assert_cmpstr(q->hashtag, ==, "bitcoin");
+
+  /* JSON emission: a single `#t` array carrying all three tags. */
+  const char *json = gnostr_timeline_query_to_json(q);
+  g_assert_nonnull(json);
+  g_assert_nonnull(strstr(json, "\"#t\":[\"bitcoin\",\"nostr\",\"zaps\"]"));
 
   gnostr_timeline_query_free(q);
   g_object_unref(fs);
+}
 
-  g_test_assert_expected_messages();
+static void
+test_multi_hashtag_skips_empty(void)
+{
+  /* Defensive: empty-string entries inside hashtags[] must never end
+   * up in the emitted filter — they would produce "\"\"" inside the
+   * `#t` array and confuse relays. */
+  GnostrFilterSet *fs = gnostr_filter_set_new_with_name("Multi-with-holes");
+  static const gchar *tags[] = { "bitcoin", "", "zaps", NULL };
+  gnostr_filter_set_set_hashtags(fs, tags);
+
+  GNostrTimelineQuery *q = gnostr_filter_set_to_timeline_query(fs);
+  g_assert_nonnull(q);
+  g_assert_cmpuint(q->n_hashtags, ==, 2);
+  g_assert_cmpstr(q->hashtags[0], ==, "bitcoin");
+  g_assert_cmpstr(q->hashtags[1], ==, "zaps");
+
+  gnostr_timeline_query_free(q);
+  g_object_unref(fs);
 }
 
 static void
@@ -296,8 +325,10 @@ main(int argc, char **argv)
   g_test_add_func("/filter-set-query/empty",               test_empty_filter_set_returns_global);
   g_test_add_func("/filter-set-query/authors",             test_authors_passthrough);
   g_test_add_func("/filter-set-query/kinds",               test_kinds_passthrough);
-  g_test_add_func("/filter-set-query/hashtag/single",      test_single_hashtag);
-  g_test_add_func("/filter-set-query/hashtag/multi-warns", test_multi_hashtag_first_wins_with_warning);
+  g_test_add_func("/filter-set-query/hashtag/single",        test_single_hashtag);
+  g_test_add_func("/filter-set-query/hashtag/multi-forwards", test_multi_hashtag_forwards_all);
+  g_test_add_func("/filter-set-query/hashtag/multi-skip-empty",
+                                                              test_multi_hashtag_skips_empty);
   g_test_add_func("/filter-set-query/time-and-limit",      test_time_and_limit_passthrough);
   g_test_add_func("/filter-set-query/ids-only-fallback",   test_ids_only_still_global);
   g_test_add_func("/filter-set-query/ids-dropped",         test_ids_dropped);
