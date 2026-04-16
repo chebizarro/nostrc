@@ -733,13 +733,12 @@ apply_profile_to_thread_author(GnostrNip7dThreadView *self, GnostrProfileMeta *m
 
 #ifdef HAVE_SOUP3
     if (meta->picture && *meta->picture && GTK_IS_PICTURE(self->thread_author_avatar)) {
-        GdkTexture *cached = gnostr_avatar_try_load_cached(meta->picture);
+        g_autoptr(GdkTexture) cached = gnostr_avatar_try_load_cached(meta->picture);
         if (cached) {
             gtk_picture_set_paintable(GTK_PICTURE(self->thread_author_avatar),
                 GDK_PAINTABLE(cached));
             gtk_widget_set_visible(self->thread_author_avatar, TRUE);
             gtk_widget_set_visible(self->thread_author_initials, FALSE);
-            g_object_unref(cached);
         } else {
             gnostr_avatar_download_async(meta->picture,
                 self->thread_author_avatar, self->thread_author_initials);
@@ -767,7 +766,7 @@ apply_profile_to_reply_row(GnostrNip7dThreadView *self, GtkWidget *row, GnostrPr
 #ifdef HAVE_SOUP3
     GtkWidget *avatar_image = g_object_get_data(G_OBJECT(row), "avatar-image");
     if (meta->picture && *meta->picture && GTK_IS_PICTURE(avatar_image)) {
-        GdkTexture *cached = gnostr_avatar_try_load_cached(meta->picture);
+        g_autoptr(GdkTexture) cached = gnostr_avatar_try_load_cached(meta->picture);
         if (cached) {
             gtk_picture_set_paintable(GTK_PICTURE(avatar_image),
                 GDK_PAINTABLE(cached));
@@ -775,7 +774,6 @@ apply_profile_to_reply_row(GnostrNip7dThreadView *self, GtkWidget *row, GnostrPr
             if (GTK_IS_WIDGET(avatar_initials)) {
                 gtk_widget_set_visible(avatar_initials, FALSE);
             }
-            g_object_unref(cached);
         } else {
             gnostr_avatar_download_async(meta->picture, avatar_image, avatar_initials);
         }

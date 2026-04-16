@@ -319,11 +319,10 @@ on_setup_button_clicked(GtkButton *button, gpointer user_data)
   GError *error = NULL;
   if (!hw_keystore_manager_setup_master_key(self->manager, &error)) {
     GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
-    GtkAlertDialog *dialog = gtk_alert_dialog_new(
+    g_autoptr(GtkAlertDialog) dialog = gtk_alert_dialog_new(
       "Failed to create master key: %s",
       error ? error->message : "Unknown error");
     gtk_alert_dialog_show(dialog, parent);
-    g_object_unref(dialog);
     g_clear_error(&error);
     return;
   }
@@ -332,10 +331,9 @@ on_setup_button_clicked(GtkButton *button, gpointer user_data)
 
   /* Show success message */
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
-  GtkAlertDialog *dialog = gtk_alert_dialog_new(
+  g_autoptr(GtkAlertDialog) dialog = gtk_alert_dialog_new(
     "Master key created successfully. Hardware-backed signing is now available.");
   gtk_alert_dialog_show(dialog, parent);
-  g_object_unref(dialog);
 }
 
 static void
@@ -356,11 +354,10 @@ on_reset_confirm(GObject *source, GAsyncResult *res, gpointer user_data)
   GError *error = NULL;
   if (!hw_keystore_manager_reset_master_key(self->manager, &error)) {
     GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
-    GtkAlertDialog *dialog = gtk_alert_dialog_new(
+    g_autoptr(GtkAlertDialog) dialog = gtk_alert_dialog_new(
       "Failed to reset master key: %s",
       error ? error->message : "Unknown error");
     gtk_alert_dialog_show(dialog, parent);
-    g_object_unref(dialog);
     g_clear_error(&error);
     return;
   }
@@ -404,11 +401,10 @@ on_delete_confirm(GObject *source, GAsyncResult *res, gpointer user_data)
   GError *error = NULL;
   if (!hw_keystore_manager_delete_master_key(self->manager, &error)) {
     GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
-    GtkAlertDialog *dialog = gtk_alert_dialog_new(
+    g_autoptr(GtkAlertDialog) dialog = gtk_alert_dialog_new(
       "Failed to delete master key: %s",
       error ? error->message : "Unknown error");
     gtk_alert_dialog_show(dialog, parent);
-    g_object_unref(dialog);
     g_clear_error(&error);
     return;
   }

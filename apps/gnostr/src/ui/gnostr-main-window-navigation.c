@@ -315,9 +315,8 @@ gnostr_main_window_on_article_reader_open_url_internal(GnostrArticleReader *read
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !url)
     return;
 
-  GtkUriLauncher *launcher = gtk_uri_launcher_new(url);
+  g_autoptr(GtkUriLauncher) launcher = gtk_uri_launcher_new(url);
   gtk_uri_launcher_launch(launcher, GTK_WINDOW(self), NULL, NULL, NULL);
-  g_object_unref(launcher);
 }
 
 void

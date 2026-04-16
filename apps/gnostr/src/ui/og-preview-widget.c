@@ -376,7 +376,7 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
   SoupSession *session = gnostr_get_shared_soup_session();
   if (!session) return;
   
-  SoupMessage *msg = soup_message_new("GET", url);
+  g_autoptr(SoupMessage) msg = soup_message_new("GET", url);
   if (!msg) {
     g_debug("OG: Invalid image URL: %s", url);
     return;
@@ -397,8 +397,6 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
     on_image_loaded,
     weak_ref
   );
-  
-  g_object_unref(msg);
 }
 
 /* Update UI with parsed metadata */
@@ -570,7 +568,7 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
   gtk_widget_set_visible(self->spinner, TRUE);
   
   /* Create request */
-  SoupMessage *msg = soup_message_new("GET", url);
+  g_autoptr(SoupMessage) msg = soup_message_new("GET", url);
   if (!msg) {
     g_debug("OG: Invalid URL: %s", url);
     gtk_widget_set_visible(self->spinner, FALSE);
@@ -594,8 +592,6 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
     on_html_fetched,
     weak_ref
   );
-  
-  g_object_unref(msg);
 }
 
 /* Widget lifecycle */
@@ -805,9 +801,8 @@ static void on_card_clicked(GtkGestureClick *gesture, int n_press, double x, dou
   }
 
   /* Default: open in browser */
-  GtkUriLauncher *launcher = gtk_uri_launcher_new(self->current_url);
+  g_autoptr(GtkUriLauncher) launcher = gtk_uri_launcher_new(self->current_url);
   gtk_uri_launcher_launch(launcher, NULL, NULL, NULL, NULL);
-  g_object_unref(launcher);
 }
 
 static void og_preview_widget_init(OgPreviewWidget *self) {

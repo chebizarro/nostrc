@@ -364,9 +364,8 @@ on_network_search_complete(GPtrArray *results, GError *error, gpointer user_data
         g_message("discover: got %u network results", results->len);
         for (guint i = 0; i < results->len; i++) {
             GnostrSearchResult *result = g_ptr_array_index(results, i);
-            GnostrNetworkResultItem *item = gnostr_network_result_item_new_from_search_result(result);
+            g_autoptr(GnostrNetworkResultItem) item = gnostr_network_result_item_new_from_search_result(result);
             g_list_store_append(self->network_results_model, item);
-            g_object_unref(item);
         }
     }
 

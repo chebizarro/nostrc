@@ -276,9 +276,8 @@ static void on_start_rotation(GtkButton *btn, gpointer user_data) {
   /* Create rotation context */
   self->rotation = key_rotation_new(self->npub);
   if (!self->rotation) {
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to initialize key rotation");
+    g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Failed to initialize key rotation");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(ad);
     return;
   }
 
@@ -308,10 +307,9 @@ static void on_start_rotation(GtkButton *btn, gpointer user_data) {
     gtk_spinner_stop(self->spinner_progress);
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack_main), "info");
 
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to start key rotation. "
+    g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Failed to start key rotation. "
         "Make sure the source key is accessible.");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(ad);
 
     key_rotation_free(self->rotation);
     self->rotation = NULL;
@@ -352,10 +350,9 @@ static void on_copy_event(GtkButton *btn, gpointer user_data) {
       GtkWidget *window = gtk_widget_get_ancestor(GTK_WIDGET(self), GTK_TYPE_WINDOW);
       if (window) {
         /* Just use an alert dialog as fallback since we don't have toast overlay */
-        GtkAlertDialog *ad = gtk_alert_dialog_new("Migration event copied to clipboard!\n\n"
+        g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Migration event copied to clipboard!\n\n"
             "You can publish this event to your relays to announce your key migration.");
         gtk_alert_dialog_show(ad, GTK_WINDOW(window));
-        g_object_unref(ad);
       }
     }
   }

@@ -335,15 +335,13 @@ static void on_pubkey_entry_response(GObject *source, GAsyncResult *result, gpoi
     /* Show success message */
     g_autofree gchar *display_npub = (npub && strlen(npub) > 20) ?
         g_strdup_printf("%.12s...%.8s", npub, npub + strlen(npub) - 8) : g_strdup(npub);
-    GtkAlertDialog *success = gtk_alert_dialog_new("Watch-only account added!\n\nPublic key: %s\n\nThis account can only view events, not sign them.",
+    g_autoptr(GtkAlertDialog) success = gtk_alert_dialog_new("Watch-only account added!\n\nPublic key: %s\n\nThis account can only view events, not sign them.",
                                                     display_npub);
     gtk_alert_dialog_show(success, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(success);
   } else {
     /* Show error */
-    GtkAlertDialog *error = gtk_alert_dialog_new("Failed to import public key.\n\nMake sure the key is a valid npub (npub1...) or 64-character hex public key.");
+    g_autoptr(GtkAlertDialog) error = gtk_alert_dialog_new("Failed to import public key.\n\nMake sure the key is a valid npub (npub1...) or 64-character hex public key.");
     gtk_alert_dialog_show(error, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(error);
   }
   g_free(npub);
 }
@@ -458,17 +456,15 @@ static void on_import_pubkey_submit(GtkButton *btn, gpointer user_data) {
     /* Show success message */
     g_autofree gchar *display_npub = (npub && strlen(npub) > 20) ?
         g_strdup_printf("%.12s...%.8s", npub, npub + strlen(npub) - 8) : g_strdup(npub);
-    GtkAlertDialog *success = gtk_alert_dialog_new("Watch-only account added!\n\nPublic key: %s\n\nThis account can view events but cannot sign them.",
+    g_autoptr(GtkAlertDialog) success = gtk_alert_dialog_new("Watch-only account added!\n\nPublic key: %s\n\nThis account can view events but cannot sign them.",
                                                     display_npub);
     gtk_alert_dialog_show(success, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(success);
   } else {
     adw_dialog_close(dialog);
 
     /* Show error */
-    GtkAlertDialog *error = gtk_alert_dialog_new("Failed to import public key.\n\nMake sure the key is a valid npub (npub1...) or 64-character hex public key.");
+    g_autoptr(GtkAlertDialog) error = gtk_alert_dialog_new("Failed to import public key.\n\nMake sure the key is a valid npub (npub1...) or 64-character hex public key.");
     gtk_alert_dialog_show(error, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(error);
   }
   g_free(npub);
 }

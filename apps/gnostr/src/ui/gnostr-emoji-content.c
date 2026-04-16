@@ -157,23 +157,21 @@ static void add_emoji_image(GnostrEmojiContent *self, GnostrCustomEmoji *emoji) 
   gtk_widget_set_tooltip_text(picture, emoji->shortcode);
 
   /* Try to load from cache first */
-  GdkTexture *cached = gnostr_emoji_try_load_cached(emoji->url);
+  g_autoptr(GdkTexture) cached = gnostr_emoji_try_load_cached(emoji->url);
   if (cached) {
     gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(cached));
-    g_object_unref(cached);
   } else if (gnostr_is_remote_media_allowed()) {
     /* nostrc-jvdv.2: Only fetch remote emoji when remote media is allowed.
      * Cached emoji above still display regardless of the setting. */
 #ifdef HAVE_SOUP3
     SoupSession *session = gnostr_get_shared_soup_session();
     if (session) {
-      SoupMessage *msg = soup_message_new("GET", emoji->url);
+      g_autoptr(SoupMessage) msg = soup_message_new("GET", emoji->url);
       if (msg) {
         EmojiLoadCtx *ctx = g_new0(EmojiLoadCtx, 1);
         ctx->picture = GTK_PICTURE(g_object_ref(picture));
         ctx->url = g_strdup(emoji->url);
         soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, NULL, on_emoji_loaded, ctx);
-        g_object_unref(msg);
       }
     }
 #endif
@@ -192,9 +190,8 @@ static void emoji_content_decode_thread(GTask *task, gpointer source_object,
   (void)source_object; (void)cancellable;
   GBytes *bytes = (GBytes *)task_data;
 
-  GInputStream *stream = g_memory_input_stream_new_from_bytes(bytes);
-  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream_at_scale(stream, 24, 24, TRUE, NULL, NULL);
-  g_object_unref(stream);
+  g_autoptr(GInputStream) stream = g_memory_input_stream_new_from_bytes(bytes);
+  g_autoptr(GdkPixbuf) pixbuf = gdk_pixbuf_new_from_stream_at_scale(stream, 24, 24, TRUE, NULL, NULL);
 
   if (!pixbuf) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to decode emoji pixbuf");
@@ -205,13 +202,10 @@ static void emoji_content_decode_thread(GTask *task, gpointer source_object,
   int height = gdk_pixbuf_get_height(pixbuf);
   int rowstride = gdk_pixbuf_get_rowstride(pixbuf);
   gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
-  GBytes *pix_bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
+  g_autoptr(GBytes) pix_bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
 
   GdkMemoryFormat format = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
   GdkTexture *texture = gdk_memory_texture_new(width, height, format, pix_bytes, rowstride);
-
-  g_bytes_unref(pix_bytes);
-  g_object_unref(pixbuf);
 
   g_task_return_pointer(task, texture, g_object_unref);
 }
@@ -222,12 +216,10 @@ static void on_emoji_content_decode_done(GObject *source, GAsyncResult *res, gpo
   EmojiLoadCtx *ctx = (EmojiLoadCtx *)user_data;
   GError *error = NULL;
 
-  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
+  g_autoptr(GdkTexture) texture = g_task_propagate_pointer(G_TASK(res), &error);
   if (texture && ctx->picture && GTK_IS_PICTURE(ctx->picture)) {
     gtk_picture_set_paintable(ctx->picture, GDK_PAINTABLE(texture));
   }
-
-  if (texture) g_object_unref(texture);
   if (error) {
     g_debug("Emoji: failed to decode: %s", error->message);
     g_error_free(error);

@@ -535,9 +535,8 @@ static void on_badge_clicked(GtkGestureClick *gesture G_GNUC_UNUSED,
                              gpointer user_data) {
   const char *url = (const char *)user_data;
   if (url && *url) {
-    GtkUriLauncher *launcher = gtk_uri_launcher_new(url);
+    g_autoptr(GtkUriLauncher) launcher = gtk_uri_launcher_new(url);
     gtk_uri_launcher_launch(launcher, NULL, NULL, NULL, NULL);
-    g_object_unref(launcher);
   }
 }
 

@@ -740,12 +740,11 @@ void gnostr_torrent_card_set_author(GnostrTorrentCard *self,
 
 #ifdef HAVE_SOUP3
   if (avatar_url && *avatar_url && GTK_IS_PICTURE(self->avatar_image)) {
-    GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
+    g_autoptr(GdkTexture) cached = gnostr_avatar_try_load_cached(avatar_url);
     if (cached) {
       gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(cached));
       gtk_widget_set_visible(self->avatar_image, TRUE);
       gtk_widget_set_visible(self->avatar_initials, FALSE);
-      g_object_unref(cached);
     } else {
       gnostr_avatar_download_async(avatar_url, self->avatar_image, self->avatar_initials);
     }

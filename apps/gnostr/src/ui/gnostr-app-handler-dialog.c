@@ -257,9 +257,8 @@ on_open_clicked(GtkButton *button, GnostrAppHandlerDialog *self)
   GtkWidget *toplevel = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(self)));
   GtkWindow *window = GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel) : NULL;
 
-  GtkUriLauncher *launcher = gtk_uri_launcher_new(url);
+  g_autoptr(GtkUriLauncher) launcher = gtk_uri_launcher_new(url);
   gtk_uri_launcher_launch(launcher, window, NULL, NULL, NULL);
-  g_object_unref(launcher);
 
   g_free(url);
 

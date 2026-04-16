@@ -263,9 +263,8 @@ static void on_save(GtkButton *btn, gpointer user_data) {
   /* Build the unsigned event JSON */
   gchar *event_json = build_profile_json(self);
   if (!event_json) {
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to build profile event");
+    g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Failed to build profile event");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(ad);
     return;
   }
 
@@ -290,9 +289,8 @@ static void on_save(GtkButton *btn, gpointer user_data) {
       err_msg = "Invalid key format";
     }
 
-    GtkAlertDialog *ad = gtk_alert_dialog_new("%s", err_msg);
+    g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("%s", err_msg);
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(ad);
     g_free(event_json);
     return;
   }

@@ -78,9 +78,8 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
   if (err){
     const char *domain = g_quark_to_string(err->domain);
     g_warning("StoreKey DBus error: [%s] code=%d msg=%s", domain?domain:"?", err->code, err->message);
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Import failed: %s (%s:%d)", err->message, domain?domain:"?", err->code);
+    g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Import failed: %s (%s:%d)", err->message, domain?domain:"?", err->code);
     gtk_alert_dialog_show(ad, ctx && ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(ctx->self))));
-    g_object_unref(ad);
     g_clear_error(&err);
   } else if (ret){
     /* Expect (b,s): ok, npub. Duplicate string before unref */
@@ -92,7 +91,7 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
     if (ok){
       /* Fallback: if npub wasn't returned, query active public key */
       if (!(npub && *npub)){
-        GError *e2=NULL; GDBusConnection *bus2 = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &e2);
+        GError *e2=NULL; g_autoptr(GDBusConnection) bus2 = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &e2);
         if (bus2){
           GVariant *ret2 = g_dbus_connection_call_sync(bus2,
                                "org.nostr.Signer",
@@ -110,14 +109,12 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
             if (np && *np) { if (npub) g_free(npub); npub = g_strdup(np); }
             g_variant_unref(ret2);
           }
-          g_object_unref(bus2);
         }
         if (e2){ g_clear_error(&e2); }
       }
       const char *npub_show = (npub && *npub) ? npub : "(npub unavailable)";
-      GtkAlertDialog *ad = gtk_alert_dialog_new("Account added and set active for %s\n(npub copied to clipboard)", npub_show);
+      g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Account added and set active for %s\n(npub copied to clipboard)", npub_show);
       gtk_alert_dialog_show(ad, ctx && ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(ctx->self))));
-      g_object_unref(ad);
       /* Copy npub to clipboard for convenience */
       if (npub && *npub) {
         GtkWidget *w = GTK_WIDGET(ctx->self);
@@ -136,9 +133,8 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
       const char *kind = entered && g_str_has_prefix(entered, "nsec1") ? "nsec" : (entered && g_str_has_prefix(entered, "ncrypt") ? "ncrypt" : "hex/other");
       g_message("StoreKey returned ok=false. input_kind=%s len=%zu", kind, entered ? strlen(entered) : 0ul);
       const char *hint = "\n\nHints:\n• Ensure the daemon was started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1\n• Verify the key is a valid nsec..., 64-hex, or ncrypt...";
-      GtkAlertDialog *ad = gtk_alert_dialog_new("Import failed.%s", hint);
+      g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Import failed.%s", hint);
       gtk_alert_dialog_show(ad, ctx && ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(ctx->self))));
-      g_object_unref(ad);
       /* Keep dialog open for correction */
       /* Re-enable buttons */
       if (ctx->self->btn_ok) gtk_widget_set_sensitive(GTK_WIDGET(ctx->self->btn_ok), TRUE);
@@ -200,9 +196,8 @@ static void on_ok(GtkButton *b, gpointer user_data){
   g_strstrip(secret);
   /* Basic validation: accept nsec..., ncrypt..., or 64-hex */
   if (!(g_str_has_prefix(secret, "nsec1") || g_str_has_prefix(secret, "ncrypt") || is_hex64(secret))){
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Invalid key format. Enter nsec..., 64-hex, or ncrypt...");
+    g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Invalid key format. Enter nsec..., 64-hex, or ncrypt...");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(ad);
     /* Securely shred the secret before freeing */
     gn_secure_shred_string(secret);
     g_free(secret);
@@ -212,11 +207,10 @@ static void on_ok(GtkButton *b, gpointer user_data){
   const char *identity = "";
   /* Optionally could use chk_link_user in the future; current DBus has no flag */
 
-  GError *e=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &e);
+  GError *e=NULL; g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &e);
   if (!bus){
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to get session bus: %s", e?e->message:"unknown");
+    g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Failed to get session bus: %s", e?e->message:"unknown");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-    g_object_unref(ad);
     if (e) g_clear_error(&e);
     /* Securely shred the secret before freeing */
     gn_secure_shred_string(secret);
@@ -249,7 +243,6 @@ static void on_ok(GtkButton *b, gpointer user_data){
   /* Disable buttons while request is in-flight */
   if (self->btn_ok) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), FALSE);
   if (self->btn_cancel) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_cancel), FALSE);
-  g_object_unref(bus);
 }
 
 static void sheet_import_key_class_init(SheetImportKeyClass *klass){

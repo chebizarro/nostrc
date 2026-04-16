@@ -588,9 +588,8 @@ static gboolean on_label_activate_link(GtkLabel *label, const char *uri, gpointe
   if (!uri || !*uri) return FALSE;
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(label));
   GtkWindow *win = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
-  GtkUriLauncher *launcher = gtk_uri_launcher_new(uri);
+  g_autoptr(GtkUriLauncher) launcher = gtk_uri_launcher_new(uri);
   gtk_uri_launcher_launch(launcher, win, NULL, NULL, NULL);
-  g_object_unref(launcher);
   return TRUE;
 }
 

@@ -781,9 +781,8 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
     /* Open URL in the default browser using GtkUriLauncher */
     GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
     GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
-    GtkUriLauncher *launcher = gtk_uri_launcher_new(uri);
+    g_autoptr(GtkUriLauncher) launcher = gtk_uri_launcher_new(uri);
     gtk_uri_launcher_launch(launcher, parent, NULL, NULL, NULL);
-    g_object_unref(launcher);
     g_signal_emit(self, signals[SIGNAL_OPEN_URL], 0, uri);
     return TRUE;
   }

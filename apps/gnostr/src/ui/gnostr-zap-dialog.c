@@ -539,11 +539,10 @@ static void show_qr_invoice(GnostrZapDialog *self, const gchar *bolt11_invoice) 
 #ifdef HAVE_QRENCODE
   /* Generate and display QR code - uppercase for better QR density */
   g_autofree gchar *upper_invoice = g_ascii_strup(bolt11_invoice, -1);
-  GdkTexture *texture = generate_qr_texture(upper_invoice);
+  g_autoptr(GdkTexture) texture = generate_qr_texture(upper_invoice);
 
   if (texture && GTK_IS_PICTURE(self->qr_picture)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->qr_picture), GDK_PAINTABLE(texture));
-    g_object_unref(texture);
   }
 #else
   /* No QR code library - just show invoice text */

@@ -251,7 +251,7 @@ static GdkPixbuf *pixbuf_crop_to_square(GdkPixbuf *src, int target_size) {
   int scaled_h = (int)(src_h * scale + 0.5);
 
   /* Scale the image preserving aspect ratio */
-  GdkPixbuf *scaled = gdk_pixbuf_scale_simple(src, scaled_w, scaled_h, GDK_INTERP_BILINEAR);
+  g_autoptr(GdkPixbuf) scaled = gdk_pixbuf_scale_simple(src, scaled_w, scaled_h, GDK_INTERP_BILINEAR);
   if (!scaled) return NULL;
 
   /* Calculate crop offset to center the image */
@@ -265,16 +265,13 @@ static GdkPixbuf *pixbuf_crop_to_square(GdkPixbuf *src, int target_size) {
   if (crop_y + target_size > scaled_h) crop_y = scaled_h - target_size;
 
   /* Create the cropped square pixbuf */
-  GdkPixbuf *cropped = gdk_pixbuf_new_subpixbuf(scaled, crop_x, crop_y, target_size, target_size);
+  g_autoptr(GdkPixbuf) cropped = gdk_pixbuf_new_subpixbuf(scaled, crop_x, crop_y, target_size, target_size);
   if (!cropped) {
-    g_object_unref(scaled);
     return NULL;
   }
 
   /* gdk_pixbuf_new_subpixbuf shares data with parent, so we need to copy */
   GdkPixbuf *result = gdk_pixbuf_copy(cropped);
-  g_object_unref(cropped);
-  g_object_unref(scaled);
 
   return result;
 }
@@ -292,7 +289,7 @@ static GdkTexture *avatar_texture_from_file_scaled(const char *path, GError **er
   int load_size = s_avatar_size * 2; /* Load at 2x for better quality after crop */
   if (load_size > 512) load_size = 512; /* Cap at reasonable max */
 
-  GdkPixbuf *loaded = gdk_pixbuf_new_from_file_at_scale(
+  g_autoptr(GdkPixbuf) loaded = gdk_pixbuf_new_from_file_at_scale(
     path,
     load_size,  /* width */
     load_size,  /* height */
@@ -305,8 +302,7 @@ static GdkTexture *avatar_texture_from_file_scaled(const char *path, GError **er
   }
 
   /* Crop to centered square */
-  GdkPixbuf *cropped = pixbuf_crop_to_square(loaded, s_avatar_size);
-  g_object_unref(loaded);
+  g_autoptr(GdkPixbuf) cropped = pixbuf_crop_to_square(loaded, s_avatar_size);
 
   if (!cropped) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to crop avatar to square");
@@ -315,7 +311,6 @@ static GdkTexture *avatar_texture_from_file_scaled(const char *path, GError **er
 
   /* Create texture from cropped pixbuf */
   GdkTexture *texture = texture_new_from_pixbuf(cropped);
-  g_object_unref(cropped);
 
   return texture;
 }
@@ -327,7 +322,7 @@ static GdkTexture *avatar_texture_from_bytes_scaled(GBytes *bytes, GError **erro
   g_return_val_if_fail(bytes != NULL, NULL);
 
   /* Create input stream from bytes */
-  GInputStream *stream = g_memory_input_stream_new_from_bytes(bytes);
+  g_autoptr(GInputStream) stream = g_memory_input_stream_new_from_bytes(bytes);
   if (!stream) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create input stream");
     return NULL;
@@ -338,7 +333,7 @@ static GdkTexture *avatar_texture_from_bytes_scaled(GBytes *bytes, GError **erro
   if (load_size > 512) load_size = 512;
 
   /* Load and scale using GdkPixbuf, preserving aspect ratio */
-  GdkPixbuf *loaded = gdk_pixbuf_new_from_stream_at_scale(
+  g_autoptr(GdkPixbuf) loaded = gdk_pixbuf_new_from_stream_at_scale(
     stream,
     load_size,  /* width */
     load_size,  /* height */
@@ -347,15 +342,12 @@ static GdkTexture *avatar_texture_from_bytes_scaled(GBytes *bytes, GError **erro
     error
   );
 
-  g_object_unref(stream);
-
   if (!loaded) {
     return NULL;
   }
 
   /* Crop to centered square */
-  GdkPixbuf *cropped = pixbuf_crop_to_square(loaded, s_avatar_size);
-  g_object_unref(loaded);
+  g_autoptr(GdkPixbuf) cropped = pixbuf_crop_to_square(loaded, s_avatar_size);
 
   if (!cropped) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to crop avatar to square");
@@ -364,7 +356,6 @@ static GdkTexture *avatar_texture_from_bytes_scaled(GBytes *bytes, GError **erro
 
   /* Create texture from cropped pixbuf */
   GdkTexture *texture = texture_new_from_pixbuf(cropped);
-  g_object_unref(cropped);
 
   return texture;
 }
