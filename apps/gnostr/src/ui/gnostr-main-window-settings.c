@@ -20,6 +20,9 @@
 #include "../util/nwc.h"
 #include "gnostr-nwc-connect.h"
 #include "gnostr-plugin-manager-panel.h"
+#include "gnostr-mute-row-data.h"
+#include <nostr-gobject-1.0/gnostr-mute-list.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <gtk/gtk.h>
 #include <libadwaita-1/adwaita.h>
 #include <string.h>
@@ -1338,6 +1341,263 @@ static void settings_dialog_setup_wallet_panel(SettingsDialogCtx *ctx) {
   }
 }
 
+/* ---- Mute List Panel ---- */
+
+typedef struct {
+  SettingsDialogCtx *dialog_ctx;
+  char *canonical_value;
+  GnostrMuteRowType type;
+} MutePanelRowData;
+
+static void mute_panel_row_data_free(gpointer data) {
+  MutePanelRowData *rd = (MutePanelRowData *)data;
+  if (rd) { g_free(rd->canonical_value); g_free(rd); }
+}
+
+static void mute_panel_refresh(SettingsDialogCtx *ctx);
+
+static void on_mute_panel_remove_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  MutePanelRowData *rd = (MutePanelRowData *)user_data;
+  if (!rd || !rd->dialog_ctx) return;
+  GNostrMuteList *mute = gnostr_mute_list_get_default();
+  switch (rd->type) {
+    case GNOSTR_MUTE_ROW_USER:    gnostr_mute_list_remove_pubkey(mute, rd->canonical_value);  break;
+    case GNOSTR_MUTE_ROW_WORD:    gnostr_mute_list_remove_word(mute, rd->canonical_value);    break;
+    case GNOSTR_MUTE_ROW_HASHTAG: gnostr_mute_list_remove_hashtag(mute, rd->canonical_value); break;
+  }
+  mute_panel_refresh(rd->dialog_ctx);
+}
+
+static GtkWidget *mute_panel_create_row(SettingsDialogCtx *ctx,
+                                         const char *display, const char *canonical,
+                                         GnostrMuteRowType type) {
+  GtkWidget *row = gtk_list_box_row_new();
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_start(box, 8);
+  gtk_widget_set_margin_end(box, 8);
+  gtk_widget_set_margin_top(box, 6);
+  gtk_widget_set_margin_bottom(box, 6);
+
+  GtkWidget *label = gtk_label_new(display);
+  gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_widget_set_hexpand(label, TRUE);
+  gtk_box_append(GTK_BOX(box), label);
+
+  GtkWidget *remove_btn = gtk_button_new_from_icon_name("list-remove-symbolic");
+  gtk_widget_add_css_class(remove_btn, "flat");
+  gtk_widget_set_tooltip_text(remove_btn, "Remove");
+  gtk_box_append(GTK_BOX(box), remove_btn);
+
+  MutePanelRowData *rd = g_new0(MutePanelRowData, 1);
+  rd->dialog_ctx = ctx;
+  rd->canonical_value = g_strdup(canonical);
+  rd->type = type;
+  g_signal_connect_data(remove_btn, "clicked",
+                        G_CALLBACK(on_mute_panel_remove_clicked),
+                        rd, (GClosureNotify)mute_panel_row_data_free, 0);
+
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+  return row;
+}
+
+static void mute_panel_clear_list(GtkListBox *lb) {
+  GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(lb));
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_list_box_remove(lb, child);
+    child = next;
+  }
+}
+
+static void mute_panel_refresh(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+  GNostrMuteList *mute = gnostr_mute_list_get_default();
+
+  /* Users */
+  GtkListBox *list_users = GTK_LIST_BOX(gtk_builder_get_object(ctx->builder, "list_mute_users"));
+  if (list_users) {
+    mute_panel_clear_list(list_users);
+    size_t count = 0;
+    const char **pubkeys = gnostr_mute_list_get_pubkeys(mute, &count);
+    for (size_t i = 0; i < count; i++) {
+      /* Try to show npub for readability */
+      g_autofree char *display = NULL;
+      g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(pubkeys[i], NULL);
+      if (n19) {
+        display = g_strdup(gnostr_nip19_get_bech32(n19));
+      }
+      GtkWidget *row = mute_panel_create_row(ctx,
+                                              display ? display : pubkeys[i],
+                                              pubkeys[i],
+                                              GNOSTR_MUTE_ROW_USER);
+      gtk_list_box_append(list_users, row);
+    }
+    g_free((void *)pubkeys);
+  }
+
+  /* Words */
+  GtkListBox *list_words = GTK_LIST_BOX(gtk_builder_get_object(ctx->builder, "list_mute_words"));
+  if (list_words) {
+    mute_panel_clear_list(list_words);
+    size_t count = 0;
+    const char **words = gnostr_mute_list_get_words(mute, &count);
+    for (size_t i = 0; i < count; i++) {
+      GtkWidget *row = mute_panel_create_row(ctx, words[i], words[i], GNOSTR_MUTE_ROW_WORD);
+      gtk_list_box_append(list_words, row);
+    }
+    g_free((void *)words);
+  }
+
+  /* Hashtags */
+  GtkListBox *list_hashtags = GTK_LIST_BOX(gtk_builder_get_object(ctx->builder, "list_mute_hashtags"));
+  if (list_hashtags) {
+    mute_panel_clear_list(list_hashtags);
+    size_t count = 0;
+    const char **hashtags = gnostr_mute_list_get_hashtags(mute, &count);
+    for (size_t i = 0; i < count; i++) {
+      g_autofree char *display = g_strdup_printf("#%s", hashtags[i]);
+      GtkWidget *row = mute_panel_create_row(ctx, display, hashtags[i], GNOSTR_MUTE_ROW_HASHTAG);
+      gtk_list_box_append(list_hashtags, row);
+    }
+    g_free((void *)hashtags);
+  }
+
+  /* Update save button sensitivity */
+  GtkWidget *btn_save = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "btn_mute_save"));
+  GtkWidget *status_bar = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "mute_status_bar"));
+  if (btn_save) {
+    gboolean dirty = gnostr_mute_list_is_dirty(mute);
+    gtk_widget_set_sensitive(btn_save, dirty);
+    if (status_bar) gtk_widget_set_visible(status_bar, dirty);
+  }
+}
+
+static void on_mute_fetch_done(GNostrMuteList *mute, gboolean success, gpointer user_data) {
+  (void)mute;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  if (!ctx || !ctx->builder) return;
+  if (success) {
+    mute_panel_refresh(ctx);
+  } else {
+    g_warning("mute_list: settings panel fetch failed");
+  }
+}
+
+static void on_mute_save_done(GNostrMuteList *mute, gboolean success,
+                               const char *error_msg, gpointer user_data) {
+  (void)mute;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  if (!ctx || !ctx->builder) return;
+
+  GtkLabel *status_lbl = GTK_LABEL(gtk_builder_get_object(ctx->builder, "mute_status_label"));
+  GtkWidget *status_bar = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "mute_status_bar"));
+
+  if (success) {
+    if (status_lbl) gtk_label_set_text(status_lbl, "Mute list saved!");
+    if (status_bar) gtk_widget_set_visible(status_bar, TRUE);
+    mute_panel_refresh(ctx);
+  } else {
+    g_autofree char *msg = g_strdup_printf("Save failed: %s", error_msg ? error_msg : "unknown");
+    if (status_lbl) gtk_label_set_text(status_lbl, msg);
+    if (status_bar) gtk_widget_set_visible(status_bar, TRUE);
+  }
+}
+
+static void on_mute_panel_save_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  gnostr_mute_list_save_async(gnostr_mute_list_get_default(), on_mute_save_done, ctx);
+}
+
+static void on_mute_panel_add_user(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  GtkEditable *entry = GTK_EDITABLE(gtk_builder_get_object(ctx->builder, "entry_mute_user"));
+  if (!entry) return;
+  const char *input = gtk_editable_get_text(entry);
+  if (!input || !*input) return;
+
+  char pubkey_hex[65] = {0};
+  gboolean valid = FALSE;
+
+  if (g_str_has_prefix(input, "npub1")) {
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(input, NULL);
+    if (n19) {
+      g_strlcpy(pubkey_hex, gnostr_nip19_get_pubkey(n19), sizeof(pubkey_hex));
+      valid = TRUE;
+    }
+  } else if (strlen(input) == 64) {
+    gboolean all_hex = TRUE;
+    for (int i = 0; i < 64 && all_hex; i++) {
+      if (!g_ascii_isxdigit(input[i])) all_hex = FALSE;
+    }
+    if (all_hex) { g_strlcpy(pubkey_hex, input, sizeof(pubkey_hex)); valid = TRUE; }
+  }
+
+  if (!valid) return;
+  gnostr_mute_list_add_pubkey(gnostr_mute_list_get_default(), pubkey_hex, FALSE);
+  gtk_editable_set_text(entry, "");
+  mute_panel_refresh(ctx);
+}
+
+static void on_mute_panel_add_word(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  GtkEditable *entry = GTK_EDITABLE(gtk_builder_get_object(ctx->builder, "entry_mute_word"));
+  if (!entry) return;
+  const char *word = gtk_editable_get_text(entry);
+  if (!word || !*word) return;
+  gnostr_mute_list_add_word(gnostr_mute_list_get_default(), word, FALSE);
+  gtk_editable_set_text(entry, "");
+  mute_panel_refresh(ctx);
+}
+
+static void on_mute_panel_add_hashtag(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  GtkEditable *entry = GTK_EDITABLE(gtk_builder_get_object(ctx->builder, "entry_mute_hashtag"));
+  if (!entry) return;
+  const char *hashtag = gtk_editable_get_text(entry);
+  if (!hashtag || !*hashtag) return;
+  /* Strip leading # if present */
+  if (hashtag[0] == '#') hashtag++;
+  if (!*hashtag) return;
+  gnostr_mute_list_add_hashtag(gnostr_mute_list_get_default(), hashtag, FALSE);
+  gtk_editable_set_text(GTK_EDITABLE(gtk_builder_get_object(ctx->builder, "entry_mute_hashtag")), "");
+  mute_panel_refresh(ctx);
+}
+
+static void settings_dialog_setup_mute_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  /* Wire up buttons */
+  GtkButton *btn_save = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_mute_save"));
+  GtkButton *btn_add_user = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_mute_add_user"));
+  GtkButton *btn_add_word = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_mute_add_word"));
+  GtkButton *btn_add_hashtag = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_mute_add_hashtag"));
+
+  if (btn_save) g_signal_connect(btn_save, "clicked", G_CALLBACK(on_mute_panel_save_clicked), ctx);
+  if (btn_add_user) g_signal_connect(btn_add_user, "clicked", G_CALLBACK(on_mute_panel_add_user), ctx);
+  if (btn_add_word) g_signal_connect(btn_add_word, "clicked", G_CALLBACK(on_mute_panel_add_word), ctx);
+  if (btn_add_hashtag) g_signal_connect(btn_add_hashtag, "clicked", G_CALLBACK(on_mute_panel_add_hashtag), ctx);
+
+  /* Fetch and populate if logged in */
+  const char *pubkey = ctx->main_window->user_pubkey_hex;
+  if (pubkey && *pubkey) {
+    GNostrMuteList *mute = gnostr_mute_list_get_default();
+    gint64 last_time = gnostr_mute_list_get_last_event_time(mute);
+    if (last_time > 0) {
+      /* Already have data - just populate */
+      mute_panel_refresh(ctx);
+    } else {
+      /* Need to fetch from relays */
+      gnostr_mute_list_fetch_async(mute, pubkey, NULL, on_mute_fetch_done, ctx);
+    }
+  }
+}
+
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
@@ -1401,6 +1661,7 @@ void gnostr_main_window_on_settings_clicked_internal(GtkButton *btn, gpointer us
   settings_dialog_setup_blossom_panel(ctx);
   settings_dialog_setup_media_panel(ctx);
   settings_dialog_setup_metrics_panel(ctx);
+  settings_dialog_setup_mute_panel(ctx);
   settings_dialog_setup_wallet_panel(ctx);
 
   /* Connect plugin manager panel signals */
