@@ -23,6 +23,7 @@
 
 #include "../model/gnostr-filter-set.h"
 #include "../model/gnostr-filter-set-manager.h"
+#include "gnostr-filter-set-dialog.h"
 
 #define FALLBACK_ICON      "view-list-symbolic"
 #define FALLBACK_LABEL_KEY N_("Feeds")
@@ -41,6 +42,7 @@ struct _GnostrFilterSwitcher {
   GtkListBox       *predefined_list;
   GtkListBox       *custom_list;
   GtkWidget        *custom_section;   /* box that contains separator + header + custom_list */
+  GtkButton        *add_filter_btn;   /* footer "New Custom Filter…" button */
 
   /* Filtered views of the manager model. Owned by the widget. */
   GtkFilterListModel *predefined_model;
@@ -224,6 +226,80 @@ on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data)
 }
 
 /* ------------------------------------------------------------------------
+ * Custom-filter creation (footer "New Custom Filter…" button)
+ * ------------------------------------------------------------------------ */
+
+/* Re-emit the dialog's "filter-set-saved" as our own
+ * "filter-set-activated" so a fresh save snaps the user straight into
+ * the new feed. */
+static void
+on_dialog_filter_set_saved(GnostrFilterSetDialog *dialog,
+                            const gchar *id,
+                            gpointer user_data)
+{
+  (void)dialog;
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
+  if (!GNOSTR_IS_FILTER_SWITCHER(self) || !id || !*id)
+    return;
+  g_signal_emit(self, signals[SIGNAL_FILTER_SET_ACTIVATED], 0, id);
+}
+
+/* Present the create dialog. We popdown() our popover first so the
+ * dialog isn't dismissed the moment it grabs focus; we also present
+ * on the idle loop to let the popover unmap cleanly before the
+ * AdwDialog takes the keyboard focus. */
+typedef struct {
+  GWeakRef self_ref;   /* resolved back to the switcher in the idle callback */
+} PresentIdleCtx;
+
+static void
+present_idle_ctx_free(gpointer data)
+{
+  PresentIdleCtx *ctx = data;
+  g_weak_ref_clear(&ctx->self_ref);
+  g_free(ctx);
+}
+
+static gboolean
+present_create_dialog_idle(gpointer data)
+{
+  PresentIdleCtx *ctx = data;
+  g_autoptr(GnostrFilterSwitcher) self =
+      (GnostrFilterSwitcher *)g_weak_ref_get(&ctx->self_ref);
+  if (self) {
+    GtkWidget *parent = GTK_WIDGET(self);
+    GtkWidget *dlg = gnostr_filter_set_dialog_new();
+    g_signal_connect_object(dlg, "filter-set-saved",
+                             G_CALLBACK(on_dialog_filter_set_saved),
+                             self, G_CONNECT_DEFAULT);
+    adw_dialog_present(ADW_DIALOG(dlg), parent);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_add_custom_clicked(GtkButton *btn, gpointer user_data)
+{
+  (void)btn;
+  GnostrFilterSwitcher *self = GNOSTR_FILTER_SWITCHER(user_data);
+  if (!GNOSTR_IS_FILTER_SWITCHER(self))
+    return;
+
+  if (self->popover)
+    gtk_popover_popdown(self->popover);
+
+  PresentIdleCtx *ctx = g_new0(PresentIdleCtx, 1);
+  g_weak_ref_init(&ctx->self_ref, self);
+  /* Use the _full variant so our destroy notify runs even if the
+   * application shuts down before the idle fires; otherwise the
+   * GWeakRef would leak. */
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                  present_create_dialog_idle,
+                  ctx,
+                  present_idle_ctx_free);
+}
+
+/* ------------------------------------------------------------------------
  * Public API
  * ------------------------------------------------------------------------ */
 
@@ -314,6 +390,32 @@ build_popover_content(GnostrFilterSwitcher *self)
   gtk_box_append(self->content_box, self->custom_section);
   g_signal_connect(self->custom_list, "row-activated",
                    G_CALLBACK(on_row_activated), self);
+
+  /* Footer: separator + "New Custom Filter…" button. Always visible —
+   * the create flow is useful whether or not any custom sets already
+   * exist. */
+  gtk_box_append(self->content_box,
+                 gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+  self->add_filter_btn = GTK_BUTTON(gtk_button_new());
+  gtk_widget_add_css_class(GTK_WIDGET(self->add_filter_btn), "flat");
+  gtk_widget_set_margin_top   (GTK_WIDGET(self->add_filter_btn), 6);
+  gtk_widget_set_margin_bottom(GTK_WIDGET(self->add_filter_btn), 6);
+  gtk_widget_set_margin_start (GTK_WIDGET(self->add_filter_btn), 6);
+  gtk_widget_set_margin_end   (GTK_WIDGET(self->add_filter_btn), 6);
+
+  GtkWidget *btn_child = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_box_append(GTK_BOX(btn_child),
+                 gtk_image_new_from_icon_name("list-add-symbolic"));
+  GtkWidget *btn_label = gtk_label_new(_("New Custom Filter…"));
+  gtk_widget_set_hexpand(btn_label, TRUE);
+  gtk_label_set_xalign(GTK_LABEL(btn_label), 0.0);
+  gtk_box_append(GTK_BOX(btn_child), btn_label);
+  gtk_button_set_child(self->add_filter_btn, btn_child);
+
+  g_signal_connect(self->add_filter_btn, "clicked",
+                   G_CALLBACK(on_add_custom_clicked), self);
+  gtk_box_append(self->content_box, GTK_WIDGET(self->add_filter_btn));
 }
 
 static void
@@ -453,6 +555,7 @@ gnostr_filter_switcher_dispose(GObject *object)
     self->predefined_list = NULL;
     self->custom_list     = NULL;
     self->custom_section  = NULL;
+    self->add_filter_btn  = NULL;
   }
 
   g_clear_pointer(&self->active_id, g_free);

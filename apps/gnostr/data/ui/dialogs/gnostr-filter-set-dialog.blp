@@ -1,0 +1,174 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrFilterSetDialog: Adw.Dialog {
+  title: "New Filter Set";
+  content-width: 520;
+  content-height: -1;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar header_bar {
+      show-end-title-buttons: false;
+      show-start-title-buttons: false;
+
+      [start]
+      Button btn_cancel {
+        label: "Cancel";
+      }
+
+      title-widget: Label lbl_title {
+        label: "New Filter Set";
+
+        styles [
+          "title",
+        ]
+      };
+
+      [end]
+      Button btn_save {
+        label: "Save";
+        sensitive: false;
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      propagate-natural-height: true;
+
+      Adw.Clamp {
+        maximum-size: 560;
+        margin-top: 12;
+        margin-bottom: 18;
+        margin-start: 12;
+        margin-end: 12;
+
+        Adw.PreferencesPage {
+          /* Identity group: name + description. */
+          Adw.PreferencesGroup {
+            Adw.EntryRow row_name {
+              title: "Name";
+              input-purpose: free_form;
+            }
+
+            Adw.EntryRow row_description {
+              title: "Description (optional)";
+              input-purpose: free_form;
+            }
+          }
+
+          /* Criteria group: hashtags, kinds, authors. */
+          Adw.PreferencesGroup {
+            title: "Criteria";
+            description: "Leave a field empty for no constraint on that dimension.";
+
+            Adw.EntryRow row_hashtags {
+              title: "Hashtags (comma or space separated, without #)";
+              input-purpose: free_form;
+            }
+
+            Adw.ActionRow {
+              title: "Kinds";
+              subtitle: "Common event kinds to match.";
+              activatable: false;
+              selectable: false;
+
+              styles [
+                "property",
+              ]
+
+              child: Box kinds_box {
+                orientation: horizontal;
+                spacing: 8;
+                margin-top: 6;
+                margin-bottom: 6;
+                margin-start: 6;
+                margin-end: 6;
+                halign: start;
+                valign: center;
+                /* Populated with CheckButtons at runtime. */
+              };
+            }
+
+            Adw.EntryRow row_other_kinds {
+              title: "Other kinds (comma separated integers)";
+              input-purpose: digits;
+            }
+
+            Adw.ActionRow {
+              title: "Authors";
+              subtitle: "Hex pubkeys or npub…, one per line.";
+              activatable: false;
+              selectable: false;
+
+              child: Box authors_box {
+                orientation: vertical;
+                margin-top: 6;
+                margin-bottom: 6;
+                margin-start: 6;
+                margin-end: 6;
+                /* Populated with a GtkTextView at runtime. */
+              };
+            }
+          }
+
+          /* Advanced group: expandable window/limit. */
+          Adw.PreferencesGroup {
+            Adw.ExpanderRow advanced_row {
+              title: "Advanced";
+              subtitle: "Time window and result limit.";
+
+              Adw.SpinRow limit_row {
+                title: "Limit";
+                subtitle: "Maximum events per relay. 0 = no limit.";
+
+                adjustment: Adjustment {
+                  lower: 0;
+                  upper: 5000;
+                  step-increment: 10;
+                  page-increment: 100;
+                  value: 0;
+                };
+              }
+
+              Adw.EntryRow row_since {
+                title: "Since (unix timestamp, optional)";
+                input-purpose: digits;
+              }
+
+              Adw.EntryRow row_until {
+                title: "Until (unix timestamp, optional)";
+                input-purpose: digits;
+              }
+            }
+          }
+
+          /* Preview group: live summary label. */
+          Adw.PreferencesGroup {
+            title: "Preview";
+            description: "This is what the saved filter will match.";
+
+            Label summary_label {
+              label: "Enter a name to enable save.";
+              wrap: true;
+              wrap-mode: word_char;
+              xalign: 0.0;
+              margin-top: 4;
+              margin-bottom: 4;
+              margin-start: 6;
+              margin-end: 6;
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

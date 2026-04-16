@@ -69,6 +69,7 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-filter-set-dialog.blp
 )
 
 # Compile Blueprint files to UI files if blueprint-compiler is available
@@ -135,6 +136,7 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-filter-set-dialog.ui
 )
 
 # Compile Gtk resources
