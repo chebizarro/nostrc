@@ -193,12 +193,10 @@ static void nostr_gtk_timeline_view_dispose(GObject *obj) {
   g_clear_object(&self->flattened_model);
   g_clear_object(&self->list_model);
 
-  /* App-level batch metadata cleanup */
-  if (self->metadata_batch_idle_id > 0) {
-    g_source_remove(self->metadata_batch_idle_id);
-    self->metadata_batch_idle_id = 0;
-  }
-  g_clear_pointer(&self->pending_metadata_items, g_ptr_array_unref);
+  /* nostrc-hiei: GNostr-specific batch metadata state now lives in
+   * GnostrTimelineMetadataController in the app. It is attached to
+   * this widget via qdata so GObject clears it automatically during
+   * disposal via the qdata destroy notify. */
 
   gtk_widget_dispose_template(GTK_WIDGET(obj), NOSTR_GTK_TYPE_TIMELINE_VIEW);
   self->root_scroller = NULL;

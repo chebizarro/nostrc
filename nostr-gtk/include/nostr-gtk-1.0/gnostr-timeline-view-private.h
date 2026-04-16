@@ -72,10 +72,12 @@ struct _NostrGtkTimelineView {
   gboolean is_fast_scrolling;
   guint scroll_idle_id;
 
-  /* App-level slots: debounced batch metadata loading.
-   * The library doesn't use these; factory code may. */
-  GPtrArray *pending_metadata_items;
-  guint metadata_batch_idle_id;
+  /* nostrc-hiei: GNostr-specific metadata batching state previously
+   * lived here (pending_metadata_items, metadata_batch_idle_id) and was
+   * used only by the app factory. That state now lives in
+   * GnostrTimelineMetadataController (apps/gnostr) and is attached to
+   * this view via qdata. The library carries no app-specific scratch
+   * fields. */
 };
 
 G_END_DECLS

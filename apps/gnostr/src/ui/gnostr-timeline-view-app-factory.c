@@ -33,6 +33,7 @@
 #include <libsoup/soup.h>
 #endif
 #include "gnostr-timeline-embed-private.h"
+#include "gnostr-timeline-metadata-controller.h"
 
 /* Widget template now loaded from nostr-gtk library resource */
 
@@ -898,203 +899,24 @@ static gchar *parse_content_warning_from_tags_json(const char *tags_json) {
  * Reaction counts are handled entirely by nostrdb's ndb_note_meta (O(1) lookup).
  * The relay-fetch path was O(A*R) network overhead for negligible marginal reactions. */
 
-/* nostrc-qff: Batch metadata idle callback.
- * Fires after all factory_bind_cb calls in the current main loop iteration,
- * processes pending items' reaction/zap metadata in batch. */
-/* Data passed from the NDB query worker thread back to the main thread. */
-typedef struct {
-  GHashTable *reaction_counts;  /* event_id -> GUINT count */
-  GHashTable *user_reacted;     /* event_id -> TRUE */
-  GHashTable *zap_stats;        /* event_id -> StorageNdbZapStats* */
-  GHashTable *repost_counts;    /* event_id -> GUINT count */
-  GHashTable *reply_counts;     /* hq-vvmzu: event_id -> GUINT count */
-  GPtrArray  *items;            /* refs to pending GObjects */
-} MetadataBatchResult;
-
-static void metadata_batch_result_free(MetadataBatchResult *r) {
-  if (!r) return;
-  g_clear_pointer(&r->reaction_counts, g_hash_table_unref);
-  g_clear_pointer(&r->user_reacted, g_hash_table_unref);
-  g_clear_pointer(&r->zap_stats, g_hash_table_unref);
-  g_clear_pointer(&r->repost_counts, g_hash_table_unref);
-  g_clear_pointer(&r->reply_counts, g_hash_table_unref);
-  g_clear_pointer(&r->items, g_ptr_array_unref);
-  g_free(r);
-}
-
-/* Worker thread: runs NDB batch queries off the main thread. */
-static void
-metadata_batch_query_thread(GTask *task, gpointer source_object,
-                            gpointer task_data G_GNUC_UNUSED,
-                            GCancellable *cancellable G_GNUC_UNUSED)
+/* nostrc-qff / nostrc-hiei: Batch metadata loading.
+ *
+ * The batching machinery (worker-thread NDB queries, debounced idle
+ * dispatch, result application) now lives in GnostrTimelineMetadataController
+ * (apps/gnostr/src/ui/gnostr-timeline-metadata-controller.{c,h}). The
+ * controller is attached to the view via qdata in
+ * gnostr_timeline_view_setup_app_factory() so that this wrapper only
+ * needs a fast qdata lookup in the bind hot path. A future refactor
+ * (nostrc-hqtn) may fold this into an explicit adapter object.
+ *
+ * The item is narrowed to GnNostrEventItem: schedule_metadata_batch is
+ * only called from the GnNostrEventItem bind branch of factory_bind_cb,
+ * and the controller's result application applies only to that type. */
+static void schedule_metadata_batch(NostrGtkTimelineView *self, GnNostrEventItem *item)
 {
-  GPtrArray *items = g_object_get_data(G_OBJECT(task), "items");
-  if (!items || items->len == 0) {
-    g_task_return_pointer(task, NULL, NULL);
-    return;
-  }
-
-  guint n = items->len;
-  const char **event_ids = g_new0(const char *, n);
-  gchar **owned_ids = g_new0(gchar *, n);
-  guint id_count = 0;
-
-  for (guint i = 0; i < n; i++) {
-    GObject *obj = g_ptr_array_index(items, i);
-    if (!G_IS_OBJECT(obj)) continue;
-    gchar *id_hex = NULL;
-    g_object_get(obj, "event-id", &id_hex, NULL);
-    if (id_hex && strlen(id_hex) == 64) {
-      owned_ids[id_count] = id_hex;
-      event_ids[id_count] = id_hex;
-      id_count++;
-    } else {
-      g_free(id_hex);
-    }
-  }
-
-  MetadataBatchResult *result = NULL;
-  if (id_count > 0) {
-    const gchar *user_pubkey = g_object_get_data(G_OBJECT(task), "user-pubkey");
-
-    result = g_new0(MetadataBatchResult, 1);
-    result->reaction_counts = storage_ndb_count_reactions_batch(event_ids, id_count);
-    result->user_reacted = user_pubkey
-      ? storage_ndb_user_has_reacted_batch(event_ids, id_count, user_pubkey)
-      : NULL;
-
-    result->zap_stats = storage_ndb_get_zap_stats_batch(event_ids, id_count);
-    result->repost_counts = storage_ndb_count_reposts_batch(event_ids, id_count);
-    result->reply_counts = storage_ndb_count_replies_batch(event_ids, id_count);
-    result->items = g_ptr_array_ref(items);
-  }
-
-  for (guint i = 0; i < id_count; i++)
-    g_free(owned_ids[i]);
-  g_free(owned_ids);
-  g_free(event_ids);
-
-  g_task_return_pointer(task, result, (GDestroyNotify)metadata_batch_result_free);
-}
-
-/* Main thread callback: applies NDB query results to GObject items. */
-static void
-on_metadata_batch_done(GObject *source, GAsyncResult *res, gpointer user_data)
-{
-  (void)user_data;
-  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(source);
-  if (!NOSTR_GTK_IS_TIMELINE_VIEW(self)) return;
-
-  MetadataBatchResult *r = g_task_propagate_pointer(G_TASK(res), NULL);
-  if (!r || !r->items) {
-    metadata_batch_result_free(r);
-    return;
-  }
-
-  guint n = r->items->len;
-  for (guint i = 0; i < n; i++) {
-    GObject *obj = g_ptr_array_index(r->items, i);
-    if (!G_IS_OBJECT(obj)) continue;
-
-    gchar *id_hex = NULL;
-    g_object_get(obj, "event-id", &id_hex, NULL);
-    if (!id_hex || strlen(id_hex) != 64) { g_free(id_hex); continue; }
-
-    if (r->reaction_counts) {
-      gpointer val = g_hash_table_lookup(r->reaction_counts, id_hex);
-      if (val) {
-        guint count = GPOINTER_TO_UINT(val);
-        if (count > 0)
-          gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), count);
-      }
-    }
-
-    if (r->user_reacted && g_hash_table_lookup(r->user_reacted, id_hex)) {
-      gn_nostr_event_item_set_is_liked(GN_NOSTR_EVENT_ITEM(obj), TRUE);
-    }
-
-    if (r->zap_stats) {
-      StorageNdbZapStats *zs = g_hash_table_lookup(r->zap_stats, id_hex);
-      if (zs && zs->zap_count > 0) {
-        gn_nostr_event_item_set_zap_count(GN_NOSTR_EVENT_ITEM(obj), zs->zap_count);
-        gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), zs->total_msat);
-      }
-    }
-
-    if (r->repost_counts) {
-      gpointer rval = g_hash_table_lookup(r->repost_counts, id_hex);
-      if (rval) {
-        guint rcount = GPOINTER_TO_UINT(rval);
-        if (rcount > 0)
-          gn_nostr_event_item_set_repost_count(GN_NOSTR_EVENT_ITEM(obj), rcount);
-      }
-    }
-
-    /* hq-vvmzu: Reply counts from ndb_note_meta */
-    if (r->reply_counts) {
-      gpointer rpval = g_hash_table_lookup(r->reply_counts, id_hex);
-      if (rpval) {
-        guint rpcount = GPOINTER_TO_UINT(rpval);
-        if (rpcount > 0)
-          gn_nostr_event_item_set_reply_count(GN_NOSTR_EVENT_ITEM(obj), rpcount);
-      }
-    }
-
-    g_free(id_hex);
-  }
-
-  g_debug("[BATCH] Completed async metadata load for %u events", n);
-  metadata_batch_result_free(r);
-}
-
-/* Idle callback: collects pending items and dispatches NDB queries to worker thread.
- * The NDB queries (reactions, zaps, reposts, replies) run off the main thread to avoid
- * blocking the UI — storage_ndb_begin_query_retry can usleep up to 512ms. */
-static gboolean metadata_batch_idle_cb(gpointer user_data)
-{
-  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(user_data);
-  self->metadata_batch_idle_id = 0;
-
-  if (!self->pending_metadata_items || self->pending_metadata_items->len == 0)
-    return G_SOURCE_REMOVE;
-
-  g_debug("[BATCH] Dispatching %u metadata items to worker thread",
-          self->pending_metadata_items->len);
-
-  /* Move items to the task — the worker thread owns them now */
-  GPtrArray *items = self->pending_metadata_items;
-  self->pending_metadata_items = g_ptr_array_new_with_free_func(g_object_unref);
-
-  GTask *task = g_task_new(self, NULL, on_metadata_batch_done, NULL);
-  g_object_set_data_full(G_OBJECT(task), "items", items,
-                         (GDestroyNotify)g_ptr_array_unref);
-  g_object_set_data_full(G_OBJECT(task), "user-pubkey",
-                         gnostr_timeline_embed_get_current_user_pubkey_hex(),
-                         g_free);
-  g_task_run_in_thread(task, metadata_batch_query_thread);
-  g_object_unref(task);
-
-  return G_SOURCE_REMOVE;
-}
-
-/* nostrc-qff: Schedule a batch metadata load for items that need it.
- * Adds the item to the pending list and schedules an idle callback. */
-static void schedule_metadata_batch(NostrGtkTimelineView *self, GObject *item)
-{
-  if (!self->pending_metadata_items) {
-    self->pending_metadata_items = g_ptr_array_new_with_free_func(g_object_unref);
-  }
-
-  g_ptr_array_add(self->pending_metadata_items, g_object_ref(item));
-
-  if (self->metadata_batch_idle_id == 0) {
-    /* nostrc-x52i: Use _full variant with g_object_ref/unref to prevent UAF if
-     * widget is destroyed while idle callback is pending. */
-    self->metadata_batch_idle_id = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
-                                                    metadata_batch_idle_cb,
-                                                    g_object_ref(self),
-                                                    g_object_unref);
-  }
+  GnostrTimelineMetadataController *ctrl =
+      gnostr_timeline_metadata_controller_ensure(G_OBJECT(self));
+  gnostr_timeline_metadata_controller_schedule(ctrl, item);
 }
 
 /*
@@ -1629,7 +1451,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
        * 3 total queries instead of 3*N. */
       if (!defer_metadata) {
         if ((like_count == 0 || zap_count == 0) && id_hex && strlen(id_hex) == 64) {
-          schedule_metadata_batch(self, obj);
+          schedule_metadata_batch(self, GN_NOSTR_EVENT_ITEM(obj));
         }
         gtk_widget_remove_css_class(row, "needs-metadata-refresh");
       } else {
@@ -1719,6 +1541,11 @@ static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, 
 
 void gnostr_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
+
+  /* nostrc-hiei: Eagerly create the metadata controller and attach it
+   * to the view via qdata so schedule_metadata_batch() in the bind hot
+   * path only pays for a qdata lookup (no allocation / NULL-branch). */
+  (void)gnostr_timeline_metadata_controller_ensure(G_OBJECT(self));
 
   GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
   g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), self);
