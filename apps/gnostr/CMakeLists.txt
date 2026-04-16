@@ -1048,6 +1048,23 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "model;filter-set;unit;gnostr")
 
+  # ── FilterSet manager tests (nostrc-yg8j.2) ─────────────────────
+  add_executable(gnostr-test-filter-set-manager
+    tests/test_filter_set_manager.c
+    src/model/gnostr-filter-set.c
+    src/model/gnostr-filter-set-manager.c)
+  target_compile_features(gnostr-test-filter-set-manager PRIVATE c_std_11)
+  target_include_directories(gnostr-test-filter-set-manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-filter-set-manager PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-filter-set-manager)
+  add_test(NAME gnostr-test-filter-set-manager
+    COMMAND gnostr-test-filter-set-manager)
+  set_tests_properties(gnostr-test-filter-set-manager PROPERTIES
+    TIMEOUT 30
+    LABELS "model;filter-set;manager;unit;gnostr")
+
   # ── Event model windowing tests (require testkit + NDB) ──────────
   if(TARGET gnostr-testkit)
     include(${PROJECT_ROOT}/cmake/GnTest.cmake)
