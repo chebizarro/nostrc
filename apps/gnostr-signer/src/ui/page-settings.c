@@ -512,14 +512,13 @@ static GtkWidget *create_policy_entry_row(PolicyEntry *entry, PolicyStore *store
   AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
 
   /* Title: app_id truncated */
-  gchar *title = g_strdup(entry->app_id);
+  g_autofree gchar *title = g_strdup(entry->app_id);
   if (strlen(title) > 16) {
     gchar *truncated = g_strdup_printf("%.12s...%.4s", title, title + strlen(title) - 4);
     g_free(title);
     title = truncated;
   }
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-  g_free(title);
 
   /* Subtitle: decision and expiration */
   const gchar *decision_str = entry->decision ? "Allowed" : "Denied";

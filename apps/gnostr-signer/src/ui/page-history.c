@@ -399,14 +399,13 @@ create_history_row(GnEventHistoryEntry *entry)
 
   if (content_preview && *content_preview) {
     /* Truncate preview for display */
-    gchar *preview = g_strndup(content_preview, 60);
+    g_autofree gchar *preview = g_strndup(content_preview, 60);
     if (strlen(content_preview) > 60) {
       gchar *tmp = g_strdup_printf("%s...", preview);
       g_free(preview);
       preview = tmp;
     }
     g_string_append_printf(subtitle, "\n%s", preview);
-    g_free(preview);
   }
 
   adw_action_row_set_subtitle(row, subtitle->str);
