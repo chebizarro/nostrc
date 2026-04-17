@@ -344,9 +344,12 @@ on_listing_clicked(GnostrClassifiedsView *view,
                    gpointer user_data)
 {
   (void)view;
-  (void)user_data;
+  (void)naddr;
+  Nip99MarketplacePlugin *self = NIP99_MARKETPLACE_PLUGIN(user_data);
   g_debug("[NIP-99] Listing clicked: %s (naddr: %s)", event_id, naddr ? naddr : "none");
-  /* TODO: Open listing detail view */
+
+  if (self->context && event_id)
+    gnostr_plugin_context_open_thread_view(self->context, event_id);
 }
 
 static void
@@ -360,9 +363,8 @@ on_contact_seller(GnostrClassifiedsView *view,
   g_debug("[NIP-99] Contact seller: %s (lud16: %s)", pubkey_hex, lud16 ? lud16 : "none");
 
   /* Open DM to seller via plugin context */
-  if (self->context && pubkey_hex) {
-    /* TODO: Use plugin context to open DM view */
-  }
+  if (self->context && pubkey_hex)
+    gnostr_plugin_context_open_dm_conversation(self->context, pubkey_hex);
 }
 
 static void
@@ -371,9 +373,11 @@ on_open_profile(GnostrClassifiedsView *view,
                 gpointer user_data)
 {
   (void)view;
-  (void)user_data;
+  Nip99MarketplacePlugin *self = NIP99_MARKETPLACE_PLUGIN(user_data);
   g_debug("[NIP-99] Open profile: %s", pubkey_hex);
-  /* TODO: Implement profile navigation when plugin API supports it */
+
+  if (self->context && pubkey_hex)
+    gnostr_plugin_context_open_profile_panel(self->context, pubkey_hex);
 }
 
 static GtkWidget *

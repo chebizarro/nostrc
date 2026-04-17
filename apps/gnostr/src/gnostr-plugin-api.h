@@ -924,6 +924,32 @@ void gnostr_plugin_context_open_profile_panel(GnostrPluginContext *context,
                                               const char          *pubkey_hex);
 
 /**
+ * gnostr_plugin_context_open_dm_conversation:
+ * @context: A #GnostrPluginContext
+ * @peer_pubkey_hex: Public key of the DM peer (64-char hex)
+ *
+ * Open or navigate to a DM conversation with the specified user.
+ * Navigates to the DM inbox and opens the conversation.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_open_dm_conversation(GnostrPluginContext *context,
+                                                const char          *peer_pubkey_hex);
+
+/**
+ * gnostr_plugin_context_open_thread_view:
+ * @context: A #GnostrPluginContext
+ * @event_id: The event ID to focus in the thread view (64-char hex)
+ *
+ * Open the thread view focused on the specified event.
+ * This navigates the main UI to show the thread panel.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_open_thread_view(GnostrPluginContext *context,
+                                            const char          *event_id);
+
+/**
  * gnostr_plugin_context_request_sign_event:
  * @context: A #GnostrPluginContext
  * @unsigned_event_json: Unsigned event JSON (id and sig fields will be set)

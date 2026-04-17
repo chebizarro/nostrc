@@ -24,6 +24,7 @@
 #include "nostr-filter.h"
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include "ui/gnostr-main-window.h"
+#include "ui/gnostr-main-window-private.h"
 #include "ui/gnostr-repo-browser.h"
 #include <json-glib/json-glib.h>
 #include <string.h>
@@ -1051,6 +1052,43 @@ gnostr_plugin_context_open_profile_panel(GnostrPluginContext *context,
 
   /* Navigate to the profile panel */
   gnostr_main_window_open_profile(GTK_WIDGET(context->main_window), pubkey_hex);
+}
+
+void
+gnostr_plugin_context_open_dm_conversation(GnostrPluginContext *context,
+                                           const char          *peer_pubkey_hex)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(peer_pubkey_hex != NULL);
+
+  if (!context->main_window)
+    return;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(context->main_window))
+    return;
+
+  g_debug("[plugin-api] Opening DM conversation with: %s", peer_pubkey_hex);
+
+  gnostr_main_window_navigate_to_dm_conversation_internal(
+      GNOSTR_MAIN_WINDOW(context->main_window), peer_pubkey_hex);
+}
+
+void
+gnostr_plugin_context_open_thread_view(GnostrPluginContext *context,
+                                       const char          *event_id)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(event_id != NULL);
+
+  if (!context->main_window)
+    return;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(context->main_window))
+    return;
+
+  g_debug("[plugin-api] Opening thread view for event: %s", event_id);
+
+  gnostr_main_window_view_thread(GTK_WIDGET(context->main_window), event_id);
 }
 
 /* Async sign context */
