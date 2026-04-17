@@ -31,6 +31,8 @@ struct _GNostrTimelineQuery {
   gsize n_authors;
   char **event_ids;         /* Array of event ID hex strings for #e tag filter */
   gsize n_event_ids;
+  char **p_tags;             /* Array of pubkey hex strings for #p tag filter (mentions) */
+  gsize n_p_tags;
   gint64 since;             /* Unix timestamp lower bound (0 = no limit) */
   gint64 until;             /* Unix timestamp upper bound (0 = no limit) */
   guint limit;              /* Max items per query page (default: 50) */
@@ -138,6 +140,7 @@ GNostrTimelineQueryBuilder *gnostr_timeline_query_builder_new(void);
 void gnostr_timeline_query_builder_add_kind(GNostrTimelineQueryBuilder *builder, gint kind);
 void gnostr_timeline_query_builder_add_author(GNostrTimelineQueryBuilder *builder, const char *pubkey);
 void gnostr_timeline_query_builder_add_event_id(GNostrTimelineQueryBuilder *builder, const char *event_id);
+void gnostr_timeline_query_builder_add_p_tag(GNostrTimelineQueryBuilder *builder, const char *pubkey);
 void gnostr_timeline_query_builder_set_since(GNostrTimelineQueryBuilder *builder, gint64 since);
 void gnostr_timeline_query_builder_set_until(GNostrTimelineQueryBuilder *builder, gint64 until);
 void gnostr_timeline_query_builder_set_limit(GNostrTimelineQueryBuilder *builder, guint limit);

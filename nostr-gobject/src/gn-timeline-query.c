@@ -15,6 +15,7 @@ struct _GNostrTimelineQueryBuilder {
   GArray *kinds;
   GPtrArray *authors;
   GPtrArray *event_ids;
+  GPtrArray *p_tags;      /* char*, pubkey hex for #p tag filter */
   GPtrArray *hashtags;    /* char*, owned via g_free when > 1 entries */
   gint64 since;
   gint64 until;
@@ -152,6 +153,7 @@ GNostrTimelineQueryBuilder *gnostr_timeline_query_builder_new(void) {
   b->kinds = g_array_new(FALSE, FALSE, sizeof(gint));
   b->authors = g_ptr_array_new_with_free_func(g_free);
   b->event_ids = g_ptr_array_new_with_free_func(g_free);
+  b->p_tags = g_ptr_array_new_with_free_func(g_free);
   b->hashtags = g_ptr_array_new_with_free_func(g_free);
   b->limit = DEFAULT_LIMIT;
   b->include_replies = TRUE;
@@ -171,6 +173,11 @@ void gnostr_timeline_query_builder_add_author(GNostrTimelineQueryBuilder *builde
 void gnostr_timeline_query_builder_add_event_id(GNostrTimelineQueryBuilder *builder, const char *event_id) {
   g_return_if_fail(builder != NULL && event_id != NULL);
   g_ptr_array_add(builder->event_ids, g_strdup(event_id));
+}
+
+void gnostr_timeline_query_builder_add_p_tag(GNostrTimelineQueryBuilder *builder, const char *pubkey) {
+  g_return_if_fail(builder != NULL && pubkey != NULL);
+  g_ptr_array_add(builder->p_tags, g_strdup(pubkey));
 }
 
 void gnostr_timeline_query_builder_set_since(GNostrTimelineQueryBuilder *builder, gint64 since) {
@@ -248,6 +255,15 @@ GNostrTimelineQuery *gnostr_timeline_query_builder_build(GNostrTimelineQueryBuil
     }
   }
 
+  /* Copy p_tags (#p mention filter) */
+  if (builder->p_tags->len > 0) {
+    q->n_p_tags = builder->p_tags->len;
+    q->p_tags = g_new(char *, q->n_p_tags);
+    for (gsize i = 0; i < q->n_p_tags; i++) {
+      q->p_tags[i] = g_strdup(g_ptr_array_index(builder->p_tags, i));
+    }
+  }
+
   q->since = builder->since;
   q->until = builder->until;
   q->limit = builder->limit;
@@ -280,6 +296,7 @@ void gnostr_timeline_query_builder_free(GNostrTimelineQueryBuilder *builder) {
   g_array_free(builder->kinds, TRUE);
   g_ptr_array_free(builder->authors, TRUE);
   g_ptr_array_free(builder->event_ids, TRUE);
+  g_ptr_array_free(builder->p_tags, TRUE);
   if (builder->hashtags) g_ptr_array_free(builder->hashtags, TRUE);
   g_free(builder->search);
   g_free(builder->hashtag);
@@ -345,6 +362,16 @@ const char *gnostr_timeline_query_to_json(GNostrTimelineQuery *query) {
     for (gsize i = 0; i < query->n_event_ids; i++) {
       if (i > 0) g_string_append_c(json, ',');
       g_string_append_printf(json, "\"%s\"", query->event_ids[i]);
+    }
+    g_string_append_c(json, ']');
+  }
+
+  /* Pubkey tags (as #p tag filter for mentions/notifications) */
+  if (query->n_p_tags > 0) {
+    g_string_append(json, ",\"#p\":[");
+    for (gsize i = 0; i < query->n_p_tags; i++) {
+      if (i > 0) g_string_append_c(json, ',');
+      g_string_append_printf(json, "\"%s\"", query->p_tags[i]);
     }
     g_string_append_c(json, ']');
   }
@@ -426,6 +453,16 @@ char *gnostr_timeline_query_to_json_with_until(GNostrTimelineQuery *query, gint6
     g_string_append_c(json, ']');
   }
 
+  /* Pubkey tags (as #p tag filter for mentions/notifications) */
+  if (query->n_p_tags > 0) {
+    g_string_append(json, ",\"#p\":[");
+    for (gsize i = 0; i < query->n_p_tags; i++) {
+      if (i > 0) g_string_append_c(json, ',');
+      g_string_append_printf(json, "\"%s\"", query->p_tags[i]);
+    }
+    g_string_append_c(json, ']');
+  }
+
   /* Hashtags — multi-tag list wins when populated (see to_json()). */
   if (query->n_hashtags > 0 && query->hashtags) {
     g_string_append(json, ",\"#t\":[");
@@ -465,6 +502,11 @@ guint gnostr_timeline_query_hash(GNostrTimelineQuery *query) {
   /* Hash event_ids */
   for (gsize i = 0; i < query->n_event_ids; i++) {
     hash = hash * 31 + g_str_hash(query->event_ids[i]);
+  }
+
+  /* Hash p_tags */
+  for (gsize i = 0; i < query->n_p_tags; i++) {
+    hash = hash * 31 + g_str_hash(query->p_tags[i]);
   }
 
   /* Hash other fields */
@@ -515,6 +557,11 @@ gboolean gnostr_timeline_query_equal(GNostrTimelineQuery *a, GNostrTimelineQuery
     if (g_strcmp0(a->event_ids[i], b->event_ids[i]) != 0) return FALSE;
   }
 
+  if (a->n_p_tags != b->n_p_tags) return FALSE;
+  for (gsize i = 0; i < a->n_p_tags; i++) {
+    if (g_strcmp0(a->p_tags[i], b->p_tags[i]) != 0) return FALSE;
+  }
+
   if (a->since != b->since) return FALSE;
   if (a->until != b->until) return FALSE;
   if (a->limit != b->limit) return FALSE;
@@ -557,6 +604,14 @@ GNostrTimelineQuery *gnostr_timeline_query_copy(GNostrTimelineQuery *query) {
     }
   }
 
+  if (query->n_p_tags > 0) {
+    copy->n_p_tags = query->n_p_tags;
+    copy->p_tags = g_new(char *, copy->n_p_tags);
+    for (gsize i = 0; i < copy->n_p_tags; i++) {
+      copy->p_tags[i] = g_strdup(query->p_tags[i]);
+    }
+  }
+
   copy->since = query->since;
   copy->until = query->until;
   copy->limit = query->limit;
@@ -592,6 +647,13 @@ void gnostr_timeline_query_free(GNostrTimelineQuery *query) {
       g_free(query->event_ids[i]);
     }
     g_free(query->event_ids);
+  }
+
+  if (query->p_tags) {
+    for (gsize i = 0; i < query->n_p_tags; i++) {
+      g_free(query->p_tags[i]);
+    }
+    g_free(query->p_tags);
   }
 
   g_free(query->search);
