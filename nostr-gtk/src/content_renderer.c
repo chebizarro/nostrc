@@ -225,7 +225,8 @@ void gnostr_content_render_result_free(GnContentRenderResult *result) {
   g_free(result);
 }
 
-static gchar *gnostr_render_fallback_markup_from_text(const char *content) {
+static gchar *gnostr_render_fallback_markup_from_text(const char *content,
+                                                      GnContentRenderResult *res) {
   g_autofree gchar *safe_content = gnostr_sanitize_utf8(content);
   if (!safe_content || !*safe_content) {
     return g_strdup("");
@@ -236,6 +237,7 @@ static gchar *gnostr_render_fallback_markup_from_text(const char *content) {
   GString *fallback = g_string_new("");
 
   while (p < end) {
+    /* Detect http:// or https:// URL tokens */
     const char *url_start = NULL;
     if (p + 7 <= end && g_ascii_strncasecmp(p, "http://", 7) == 0) {
       url_start = p;
@@ -248,9 +250,27 @@ static gchar *gnostr_render_fallback_markup_from_text(const char *content) {
       while (url_end < end && !g_ascii_isspace(*url_end)) {
         url_end++;
       }
-      g_autofree gchar *url = g_strndup(url_start, url_end - url_start);
+      gsize url_len = url_end - url_start;
+      g_autofree gchar *url = g_strndup(url_start, url_len);
+
+      /* nostrc-epgb: Populate result URL fields from raw text fallback,
+       * so media/embed widgets still work when block parsing fails. */
+      if (res) {
+        if (!res->all_urls)
+          res->all_urls = g_ptr_array_new_with_free_func(g_free);
+        g_ptr_array_add(res->all_urls, g_strdup(url));
+
+        if (is_image_url_n(url, url_len) || is_video_url_n(url, url_len)) {
+          if (!res->media_urls)
+            res->media_urls = g_ptr_array_new_with_free_func(g_free);
+          g_ptr_array_add(res->media_urls, g_strdup(url));
+        } else if (!res->first_og_url) {
+          res->first_og_url = g_strdup(url);
+        }
+      }
+
       g_autofree gchar *display = NULL;
-      if ((url_end - url_start) > 40) {
+      if (url_len > 40) {
         display = g_strdup_printf("%.35s...", url);
       } else {
         display = g_strdup(url);
@@ -259,6 +279,33 @@ static gchar *gnostr_render_fallback_markup_from_text(const char *content) {
       g_string_append(fallback, esc_display);
       g_free(esc_display);
       p = url_end;
+
+    /* Detect nostr: URI tokens for NIP-21 embeds */
+    } else if (p + 6 <= end && strncmp(p, "nostr:", 6) == 0) {
+      const char *ref_end = p;
+      while (ref_end < end && !g_ascii_isspace(*ref_end)) {
+        ref_end++;
+      }
+      gsize ref_len = ref_end - p;
+      g_autofree gchar *ref = g_strndup(p, ref_len);
+
+      /* nostrc-epgb: Capture first nostr: ref for NIP-21 embed widget */
+      if (res && !res->first_nostr_ref && ref_len > 6) {
+        const char *payload = ref + 6; /* skip "nostr:" */
+        if (g_str_has_prefix(payload, "npub1")    ||
+            g_str_has_prefix(payload, "nprofile1") ||
+            g_str_has_prefix(payload, "note1")     ||
+            g_str_has_prefix(payload, "nevent1")   ||
+            g_str_has_prefix(payload, "naddr1")) {
+          res->first_nostr_ref = g_strdup(ref);
+        }
+      }
+
+      gchar *escaped = g_markup_escape_text(p, ref_len);
+      g_string_append(fallback, escaped);
+      g_free(escaped);
+      p = ref_end;
+
     } else {
       const char *next = g_utf8_next_char(p);
       gchar *escaped = g_markup_escape_text(p, next - p);
@@ -300,7 +347,8 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
 
   storage_ndb_blocks *blocks = storage_ndb_parse_content_blocks(content, content_len);
   if (!blocks) {
-    res->markup = gnostr_render_fallback_markup_from_text(content);
+    res->used_block_fallback = TRUE;
+    res->markup = gnostr_render_fallback_markup_from_text(content, res);
     return res;
   }
 
@@ -504,7 +552,7 @@ fallback_from_blocks:
   g_string_free(out, TRUE);
   if (had_invalid_block_range) {
     res->used_block_fallback = TRUE;
-    res->markup = gnostr_render_fallback_markup_from_text(content);
+    res->markup = gnostr_render_fallback_markup_from_text(content, res);
   } else {
     res->markup = g_strdup("");
   }

@@ -3242,9 +3242,10 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
     g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
     self->media_widgets_created = FALSE;
 
-    if (render->used_block_fallback) {
-      return;
-    }
+    /* nostrc-epgb: Removed used_block_fallback early return.
+     * The fallback path now populates media_urls/first_nostr_ref/first_og_url
+     * from raw text, so media/embed creation is safe on fallback rows.
+     * The Pango label guard above still prevents unsafe markup. */
 
     if (render->media_urls && render->media_urls->len > 0) {
       self->pending_media_items = g_ptr_array_new_with_free_func(pending_media_item_free);
