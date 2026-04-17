@@ -9,6 +9,7 @@
  */
 
 #include "marmot-gobject-1.0/marmot-gobject-client.h"
+#include "marmot-gobject-1.0/marmot-gobject-storage.h"
 #include <marmot/marmot.h>
 #include "marmot-gobject-1.0/marmot-gobject-key-package.h"
 #include <string.h>
@@ -1279,4 +1280,62 @@ marmot_gobject_client_get_marmot(MarmotGobjectClient *self)
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
     return self->marmot;
+}
+
+gchar **
+marmot_gobject_client_get_group_relay_urls(MarmotGobjectClient *self,
+                                            const gchar *mls_group_id_hex,
+                                            gsize *out_count)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
+    g_return_val_if_fail(mls_group_id_hex != NULL, NULL);
+
+    if (out_count) *out_count = 0;
+
+    /* Get the raw MarmotStorage from the GObject storage backend */
+    MarmotStorage *storage = marmot_gobject_storage_get_raw_storage(self->storage);
+    if (storage == NULL || storage->group_relays == NULL)
+        return NULL;
+
+    /* Convert hex → MarmotGroupId */
+    gsize hex_len = strlen(mls_group_id_hex);
+    gsize gid_len = hex_len / 2;
+    uint8_t *gid_bytes = g_malloc(gid_len);
+
+    for (gsize i = 0; i < gid_len; i++) {
+        unsigned int byte_val = 0;
+        sscanf(mls_group_id_hex + (i * 2), "%02x", &byte_val);
+        gid_bytes[i] = (uint8_t)byte_val;
+    }
+    MarmotGroupId mls_gid = marmot_group_id_new(gid_bytes, gid_len);
+    g_free(gid_bytes);
+
+    /* Query storage for group relays */
+    MarmotGroupRelay *relays = NULL;
+    size_t relay_count = 0;
+    MarmotError err = storage->group_relays(storage->ctx, &mls_gid,
+                                             &relays, &relay_count);
+    marmot_group_id_free(&mls_gid);
+
+    if (err != MARMOT_OK || relay_count == 0) {
+        if (relays) {
+            for (size_t i = 0; i < relay_count; i++)
+                free(relays[i].relay_url);
+            free(relays);
+        }
+        return NULL;
+    }
+
+    /* Convert to GLib strv */
+    gchar **urls = g_new0(gchar *, relay_count + 1);
+    for (size_t i = 0; i < relay_count; i++) {
+        urls[i] = g_strdup(relays[i].relay_url);
+        free(relays[i].relay_url);
+        marmot_group_id_free(&relays[i].mls_group_id);
+    }
+    urls[relay_count] = NULL;
+    free(relays);
+
+    if (out_count) *out_count = relay_count;
+    return urls;
 }

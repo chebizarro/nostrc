@@ -344,14 +344,16 @@ on_gift_wrap_unwrapped(GnostrUnwrapResult *unwrap_result, gpointer user_data)
  * ══════════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-  GnMlsEventRouter *router;   /* strong ref */
+  GnMlsEventRouter *router;       /* strong ref */
   GTask             *task;
+  gchar            *group_id_hex; /* for relay lookup */
 } SendMsgData;
 
 static void
 send_msg_data_free(SendMsgData *data)
 {
   g_clear_object(&data->router);
+  g_free(data->group_id_hex);
   g_free(data);
 }
 
@@ -425,15 +427,28 @@ on_msg_encrypted(GObject      *source,
   g_debug("MLS EventRouter: message encrypted, publishing kind:445 event");
 
   /*
-   * The kind:445 event is already signed with an ephemeral key by marmot.
-   * We just need to publish it directly to the group's relays.
-   *
-   * TODO: Publish to group-specific relays rather than user's default relays.
-   * For now, use the default publish which goes to user's write relays.
+   * Publish to the group's designated relays for proper routing.
+   * Falls back to user's default write relays if no group relays are configured.
    */
-  gnostr_plugin_context_publish_event_async(
+  g_auto(GStrv) group_relays = NULL;
+  if (data->group_id_hex != NULL)
+    {
+      MarmotGobjectClient *client = gn_marmot_service_get_client(data->router->service);
+      if (client != NULL)
+        {
+          gsize relay_count = 0;
+          group_relays = marmot_gobject_client_get_group_relay_urls(
+            client, data->group_id_hex, &relay_count);
+          if (relay_count > 0)
+            g_debug("MLS EventRouter: publishing to %zu group-specific relay(s)",
+                    relay_count);
+        }
+    }
+
+  gnostr_plugin_context_publish_event_to_relays_async(
     data->router->context,
     event_json,
+    (const char * const *)group_relays,
     g_task_get_cancellable(data->task),
     on_msg_published,
     data);
@@ -605,8 +620,9 @@ gn_mls_event_router_send_message_async(GnMlsEventRouter   *self,
   g_autofree gchar *inner_event_json = json_generator_to_data(gen, NULL);
 
   SendMsgData *data = g_new0(SendMsgData, 1);
-  data->router = g_object_ref(self);   /* strong ref for async safety */
-  data->task   = task;
+  data->router       = g_object_ref(self);   /* strong ref for async safety */
+  data->task         = task;
+  data->group_id_hex = g_strdup(group_id_hex);
 
   marmot_gobject_client_send_message_async(
     client,

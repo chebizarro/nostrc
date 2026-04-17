@@ -723,6 +723,27 @@ gboolean gnostr_plugin_context_publish_event_finish(GnostrPluginContext *context
                                                     GError             **error);
 
 /**
+ * gnostr_plugin_context_publish_event_to_relays_async:
+ * @context: A #GnostrPluginContext
+ * @event_json: The event as a JSON string (must be signed)
+ * @relay_urls: (array zero-terminated=1): relay URLs to publish to
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when complete
+ * @user_data: User data for callback
+ *
+ * Publish an event to specific relay URLs instead of the user's defaults.
+ * Falls back to user's write relays if @relay_urls is NULL or empty.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_publish_event_to_relays_async(GnostrPluginContext *context,
+                                                          const char          *event_json,
+                                                          const char * const  *relay_urls,
+                                                          GCancellable        *cancellable,
+                                                          GAsyncReadyCallback  callback,
+                                                          gpointer             user_data);
+
+/**
  * gnostr_plugin_context_request_relay_events_async:
  * @context: A #GnostrPluginContext
  * @kinds: Array of event kinds to request

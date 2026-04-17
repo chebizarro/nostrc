@@ -485,6 +485,22 @@ GPtrArray *marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self,
  */
 struct Marmot *marmot_gobject_client_get_marmot(MarmotGobjectClient *self);
 
+/**
+ * marmot_gobject_client_get_group_relay_urls:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: MLS group ID as hex string
+ * @out_count: (out) (nullable): number of relay URLs returned
+ *
+ * Get the relay URLs associated with a group from storage.
+ * Returns NULL if no group-specific relays are configured.
+ *
+ * Returns: (transfer full) (array zero-terminated=1) (nullable):
+ *   NULL-terminated array of relay URL strings, or NULL. Free with g_strfreev().
+ */
+gchar **marmot_gobject_client_get_group_relay_urls(MarmotGobjectClient *self,
+                                                    const gchar *mls_group_id_hex,
+                                                    gsize *out_count);
+
 G_END_DECLS
 
 #endif /* MARMOT_GOBJECT_CLIENT_H */

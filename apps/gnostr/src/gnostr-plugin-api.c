@@ -577,6 +577,7 @@ typedef struct
 {
   GnostrPluginContext *context;
   char *event_json;
+  char **relay_urls;     /* NULL for default write relays */
   GTask *task;
 } PublishAsyncData;
 
@@ -585,7 +586,82 @@ publish_async_data_free(PublishAsyncData *data)
 {
   if (!data) return;
   g_clear_pointer(&data->event_json, g_free);
+  g_strfreev(data->relay_urls);
   g_free(data);
+}
+
+static void
+publish_to_relays_thread_func(GTask        *task,
+                               gpointer      source_object,
+                               gpointer      task_data,
+                               GCancellable *cancellable)
+{
+  (void)source_object;
+  (void)cancellable;
+
+  PublishAsyncData *data = task_data;
+  GError *error = NULL;
+
+  /* If no targeted relays, use the default publish */
+  if (data->relay_urls == NULL || data->relay_urls[0] == NULL)
+    {
+      gboolean result = gnostr_plugin_context_publish_event(data->context,
+                                                            data->event_json,
+                                                            &error);
+      if (result)
+        g_task_return_boolean(task, TRUE);
+      else
+        g_task_return_error(task, error);
+      return;
+    }
+
+  /* Parse the signed event */
+  NostrEvent *event = nostr_event_new();
+  int rc = nostr_event_deserialize_compact(event, data->event_json, NULL);
+  if (rc != 1) {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                            "Failed to parse event JSON");
+    nostr_event_free(event);
+    return;
+  }
+
+  guint success_count = 0;
+  GError *last_error = NULL;
+
+  for (gsize i = 0; data->relay_urls[i] != NULL; i++) {
+    g_autoptr(GNostrRelay) relay = gnostr_relay_new(data->relay_urls[i]);
+    if (!relay) continue;
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_clear_error(&last_error);
+      last_error = conn_err;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, event, &pub_err)) {
+      success_count++;
+    } else {
+      g_clear_error(&last_error);
+      last_error = pub_err;
+    }
+  }
+
+  nostr_event_free(event);
+
+  if (success_count == 0) {
+    if (last_error)
+      g_task_return_error(task, last_error);
+    else
+      g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                              GNOSTR_PLUGIN_ERROR_NETWORK,
+                              "Failed to publish to any relay");
+  } else {
+    g_clear_error(&last_error);
+    g_task_return_boolean(task, TRUE);
+  }
 }
 
 static void
@@ -594,20 +670,8 @@ publish_async_thread_func(GTask        *task,
                           gpointer      task_data,
                           GCancellable *cancellable)
 {
-  (void)source_object;
-  (void)cancellable;
-
-  PublishAsyncData *data = task_data;
-  GError *error = NULL;
-
-  gboolean result = gnostr_plugin_context_publish_event(data->context,
-                                                        data->event_json,
-                                                        &error);
-  if (result) {
-    g_task_return_boolean(task, TRUE);
-  } else {
-    g_task_return_error(task, error);
-  }
+  /* Default publish delegates to the relay-targeted version with NULL urls */
+  publish_to_relays_thread_func(task, source_object, task_data, cancellable);
 }
 
 void
@@ -639,6 +703,29 @@ gnostr_plugin_context_publish_event_finish(GnostrPluginContext *context,
   (void)context;
   g_return_val_if_fail(G_IS_TASK(result), FALSE);
   return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+void
+gnostr_plugin_context_publish_event_to_relays_async(GnostrPluginContext *context,
+                                                     const char          *event_json,
+                                                     const char * const  *relay_urls,
+                                                     GCancellable        *cancellable,
+                                                     GAsyncReadyCallback  callback,
+                                                     gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(event_json != NULL);
+
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+
+  PublishAsyncData *data = g_new0(PublishAsyncData, 1);
+  data->context = context;
+  data->event_json = g_strdup(event_json);
+  data->relay_urls = g_strdupv((gchar **)relay_urls);
+
+  g_task_set_task_data(task, data, (GDestroyNotify)publish_async_data_free);
+  g_task_run_in_thread(task, publish_to_relays_thread_func);
+  g_object_unref(task);
 }
 
 /* --- Relay Event Request --- */
