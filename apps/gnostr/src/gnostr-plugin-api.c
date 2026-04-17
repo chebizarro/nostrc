@@ -44,6 +44,9 @@ struct _GnostrPluginContext
   GNostrPool       *pool;
   char           *plugin_id;  /* For namespacing plugin data */
 
+  /* Optional navigation view for plugins that push detail pages */
+  GtkWidget      *navigation_view;  /* weak — host owns it, may be NULL */
+
   /* Event subscriptions */
   GHashTable     *subscriptions;  /* subid (guint64) -> PluginSubscription* */
   guint64         next_sub_id;
@@ -129,6 +132,12 @@ void
 gnostr_plugin_context_set_pool(GnostrPluginContext *ctx, GNostrPool *pool)
 {
   if (ctx) ctx->pool = pool;
+}
+
+void
+gnostr_plugin_context_set_navigation_view(GnostrPluginContext *ctx, GtkWidget *nav_view)
+{
+  if (ctx) ctx->navigation_view = nav_view;
 }
 
 #endif /* !GNOSTR_PLUGIN_BUILD */
@@ -424,6 +433,13 @@ gnostr_plugin_context_get_main_window(GnostrPluginContext *context)
 {
   g_return_val_if_fail(context != NULL, NULL);
   return context->main_window;
+}
+
+GtkWidget *
+gnostr_plugin_context_get_navigation_view(GnostrPluginContext *context)
+{
+  g_return_val_if_fail(context != NULL, NULL);
+  return context->navigation_view;
 }
 
 /* --- Repository Browser (NIP-34) --- */

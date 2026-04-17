@@ -26,6 +26,7 @@
 #include "ui/gn-group-chat-view.h"
 #include "ui/gn-welcome-list-view.h"
 #include "ui/gn-mls-dm-list-view.h"
+#include <adwaita.h>
 #include <json-glib/json-glib.h>
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
@@ -551,15 +552,18 @@ mls_groups_create_panel_widget(GnostrUIExtension  *extension,
         }
 
       /*
-       * The navigation view is created by the host.  We don't have
-       * access to it here, so we pass NULL and the list view will
-       * handle navigation via a fallback mechanism (GtkWindow / toast).
-       *
-       * TODO: Accept AdwNavigationView via plugin context or
-       * create_panel_widget parameter.
+       * Retrieve the optional navigation view from the plugin context.
+       * If the host has set one, the list view can push detail pages
+       * (group chat, settings) into the navigation stack.  Otherwise
+       * it falls back to a new-window / toast mechanism.
        */
+      GtkWidget *nav_widget = gnostr_plugin_context_get_navigation_view(self->context);
+      AdwNavigationView *nav = NULL;
+      if (nav_widget != NULL && ADW_IS_NAVIGATION_VIEW(nav_widget))
+        nav = ADW_NAVIGATION_VIEW(nav_widget);
+
       GnGroupListView *list = gn_group_list_view_new(
-        service, self->event_router, NULL, self->context);
+        service, self->event_router, nav, self->context);
       return GTK_WIDGET(list);
     }
 
@@ -598,27 +602,134 @@ mls_groups_create_panel_widget(GnostrUIExtension  *extension,
   return NULL;
 }
 
+/* ── Settings page signal handlers ──────────────────────────────── */
+
+static void
+on_kp_rotation_finished(GObject      *source,
+                        GAsyncResult *res,
+                        gpointer      user_data)
+{
+  GnKeyPackageManager *mgr = GN_KEY_PACKAGE_MANAGER(source);
+  g_autoptr(GError) error = NULL;
+  gboolean ok = gn_key_package_manager_rotate_finish(mgr, res, &error);
+
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (row && GTK_IS_WIDGET(row))
+    {
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row),
+                                  ok ? "Key package rotated successfully"
+                                     : "Rotation failed — try again later");
+    }
+}
+
+static void
+on_rotate_kp_activated(AdwActionRow *row, gpointer user_data)
+{
+  MlsGroupsPlugin *self = MLS_GROUPS_PLUGIN(user_data);
+  if (self->kp_manager == NULL)
+    return;
+
+  adw_action_row_set_subtitle(row, "Rotating…");
+  gn_key_package_manager_rotate_async(self->kp_manager,
+                                      NULL,
+                                      on_kp_rotation_finished,
+                                      row);
+}
+
 static GtkWidget *
 mls_groups_create_settings_page(GnostrUIExtension  *extension,
                                 GnostrPluginContext *context)
 {
-  /* TODO Phase 2: Settings for key package management, relay preferences */
+  MlsGroupsPlugin *self = MLS_GROUPS_PLUGIN(extension);
+
   GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-  gtk_widget_set_margin_start(page, 24);
-  gtk_widget_set_margin_end(page, 24);
-  gtk_widget_set_margin_top(page, 24);
-  gtk_widget_set_margin_bottom(page, 24);
 
-  GtkWidget *title = gtk_label_new("MLS Group Messaging");
-  gtk_widget_add_css_class(title, "title-2");
-  gtk_box_append(GTK_BOX(page), title);
+  /* ── Key Package Management ──────────────────────────────────── */
 
-  GtkWidget *desc = gtk_label_new(
-    "Secure group messaging using the Marmot protocol.\n"
-    "Interoperable with Whitenoise and other MLS clients.");
-  gtk_label_set_wrap(GTK_LABEL(desc), TRUE);
-  gtk_widget_add_css_class(desc, "dim-label");
-  gtk_box_append(GTK_BOX(page), desc);
+  GtkWidget *kp_group = adw_preferences_group_new();
+  adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(kp_group),
+                                  "Key Package Management");
+  adw_preferences_group_set_description(ADW_PREFERENCES_GROUP(kp_group),
+    "Key packages let other users invite you to MLS groups. "
+    "They are automatically rotated every 24 hours.");
+  gtk_box_append(GTK_BOX(page), kp_group);
+
+  /* Status row */
+  GtkWidget *status_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(status_row),
+                                "Key Package Status");
+  if (self->kp_manager != NULL)
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(status_row), "Active");
+  else
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(status_row), "Not initialized");
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(kp_group), status_row);
+
+  /* Force rotate action row */
+  GtkWidget *rotate_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(rotate_row),
+                                "Rotate Key Package");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(rotate_row),
+                              "Force publish a fresh key package now");
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(rotate_row), TRUE);
+
+  GtkWidget *rotate_icon = gtk_image_new_from_icon_name("view-refresh-symbolic");
+  adw_action_row_add_suffix(ADW_ACTION_ROW(rotate_row), rotate_icon);
+
+  g_signal_connect(rotate_row, "activated",
+                   G_CALLBACK(on_rotate_kp_activated), self);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(kp_group), rotate_row);
+
+  /* ── Relay Preferences ───────────────────────────────────────── */
+
+  GtkWidget *relay_group = adw_preferences_group_new();
+  adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(relay_group),
+                                  "Relay Preferences");
+  adw_preferences_group_set_description(ADW_PREFERENCES_GROUP(relay_group),
+    "Relays used for key package discovery (kind:10051) and "
+    "group message delivery.");
+  gtk_box_append(GTK_BOX(page), relay_group);
+
+  /* Show configured relay count */
+  gsize n_relays = 0;
+  g_auto(GStrv) relay_urls = gnostr_plugin_context_get_relay_urls(context, &n_relays);
+  g_autofree char *relay_str = g_strdup_printf("%zu relay%s configured",
+                                               n_relays, n_relays == 1 ? "" : "s");
+
+  GtkWidget *relay_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(relay_row),
+                                "Write Relays");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(relay_row), relay_str);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(relay_group), relay_row);
+
+  /* KP relay cache size */
+  guint cache_size = self->kp_relay_cache
+    ? g_hash_table_size(self->kp_relay_cache) : 0;
+  g_autofree char *cache_str = g_strdup_printf("%u pubkey%s cached",
+                                               cache_size, cache_size == 1 ? "" : "s");
+
+  GtkWidget *cache_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(cache_row),
+                                "Key Package Relay Cache");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(cache_row), cache_str);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(relay_group), cache_row);
+
+  /* ── About ───────────────────────────────────────────────────── */
+
+  GtkWidget *about_group = adw_preferences_group_new();
+  adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(about_group), "About");
+  gtk_box_append(GTK_BOX(page), about_group);
+
+  GtkWidget *proto_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(proto_row), "Protocol");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(proto_row),
+                              "Marmot (MIP-00 through MIP-04) / MLS RFC 9420");
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(about_group), proto_row);
+
+  GtkWidget *compat_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(compat_row), "Compatibility");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(compat_row),
+                              "Whitenoise, MDK-compatible MLS clients");
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(about_group), compat_row);
 
   return page;
 }

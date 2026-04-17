@@ -595,6 +595,19 @@ void gnostr_plugin_context_set_main_window(GnostrPluginContext *context, GtkWind
  */
 void gnostr_plugin_context_set_pool(GnostrPluginContext *context, GNostrPool *pool);
 
+/**
+ * gnostr_plugin_context_set_navigation_view:
+ * @context: A #GnostrPluginContext
+ * @nav_view: (nullable): An AdwNavigationView widget for pushing detail pages
+ *
+ * Set an optional navigation view that plugins can use to push
+ * detail views (e.g. group settings, member profiles) into the
+ * host's navigation stack.
+ *
+ * @stability: Private
+ */
+void gnostr_plugin_context_set_navigation_view(GnostrPluginContext *context, GtkWidget *nav_view);
+
 /* --- Application Access --- */
 
 /**
@@ -618,6 +631,19 @@ GtkApplication *gnostr_plugin_context_get_application(GnostrPluginContext *conte
  * @stability: Stable
  */
 GtkWindow *gnostr_plugin_context_get_main_window(GnostrPluginContext *context);
+
+/**
+ * gnostr_plugin_context_get_navigation_view:
+ * @context: A #GnostrPluginContext
+ *
+ * Get the optional navigation view for pushing detail pages.
+ * Plugins can use this to push sub-pages (group settings, member profiles)
+ * into the host's navigation stack.
+ *
+ * Returns: (transfer none) (nullable): The navigation view widget, or %NULL
+ * @stability: Stable
+ */
+GtkWidget *gnostr_plugin_context_get_navigation_view(GnostrPluginContext *context);
 
 /* --- Repository Browser (NIP-34) --- */
 
