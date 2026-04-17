@@ -1125,9 +1125,15 @@ gboolean gnostr_chess_board_undo_move(GnostrChessBoard *self) {
 
   if (!self->game || self->game->current_ply <= 0) return FALSE;
 
-  /* For now, just reset and replay to previous position */
-  /* A more sophisticated implementation would track move history */
-  return FALSE;  /* TODO: Implement proper undo */
+  /* Navigate back one ply — resets board and replays to previous position */
+  gboolean moved = gnostr_chess_game_prev(self->game);
+  if (!moved) return FALSE;
+
+  clear_selection(self);
+  sync_engine_position(self);
+  gtk_widget_queue_draw(self->board_drawing);
+
+  return TRUE;
 }
 
 gboolean gnostr_chess_board_get_selected_square(GnostrChessBoard *self,
