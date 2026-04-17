@@ -120,6 +120,24 @@ void gnostr_filter_set_dialog_set_pubkey(GnostrFilterSetDialog *self,
                                           const gchar *pubkey_hex);
 
 /**
+ * gnostr_filter_set_dialog_set_suggestion_authors:
+ * @self: a dialog
+ * @authors: (nullable) (array zero-terminated=1): A %NULL-terminated
+ *   array of 64-character hex pubkeys whose notes should be scanned
+ *   for trending hashtag suggestions. Pass %NULL to scan all authors
+ *   (the default behaviour). The array is deep-copied internally.
+ *
+ * Scopes the trending-hashtag chip suggestions to notes authored by
+ * the given pubkeys (typically the user's follow list). Must be called
+ * before presentation for the scoping to take effect, since the async
+ * scan starts during realize.
+ *
+ * nostrc-spue: author-scoped trending hashtag suggestions.
+ */
+void gnostr_filter_set_dialog_set_suggestion_authors(GnostrFilterSetDialog *self,
+                                                      const GStrv authors);
+
+/**
  * Signals:
  *
  *   "filter-set-saved" (const gchar *filter_set_id)

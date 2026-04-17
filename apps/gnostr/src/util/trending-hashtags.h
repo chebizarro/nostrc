@@ -41,9 +41,14 @@ void gnostr_trending_hashtag_free(GnostrTrendingHashtag *ht);
  * @max_events: Maximum number of recent kind-1 events to scan (e.g. 500).
  *              Larger values give better results but take longer.
  * @top_n: Number of top hashtags to return (e.g. 15).
+ * @authors_allowlist: (nullable) (array zero-terminated=1): A %NULL-terminated
+ *   array of 64-character hex pubkeys. When non-%NULL, only events authored
+ *   by one of these pubkeys are considered. Pass %NULL to scan all authors.
  *
  * Scans the most recent @max_events kind-1 notes in NDB, extracts all "t"
  * tags, and returns the @top_n most frequently occurring hashtags.
+ * When @authors_allowlist is provided, only notes from those authors are
+ * included — this produces suggestions scoped to the user's social graph.
  *
  * Hashtags are normalized to lowercase for counting. Single-character tags
  * and common spam patterns are filtered out.
@@ -55,12 +60,17 @@ void gnostr_trending_hashtag_free(GnostrTrendingHashtag *ht);
  *          The array has g_free as element destructor. May be empty but never NULL.
  *          Caller owns the array and must call g_ptr_array_unref() when done.
  */
-GPtrArray *gnostr_compute_trending_hashtags(guint max_events, guint top_n);
+GPtrArray *gnostr_compute_trending_hashtags(guint max_events,
+                                            guint top_n,
+                                            const char * const *authors_allowlist);
 
 /**
  * gnostr_compute_trending_hashtags_async:
  * @max_events: Maximum number of recent kind-1 events to scan.
  * @top_n: Number of top hashtags to return.
+ * @authors_allowlist: (nullable) (array zero-terminated=1): Hex pubkey
+ *   allowlist, as for gnostr_compute_trending_hashtags(). The array is
+ *   deep-copied internally — callers may free it after this call returns.
  * @callback: (scope async): Called on the main thread with the result.
  * @user_data: Passed to @callback.
  * @user_data_free: (nullable): Destroy function for @user_data, invoked
@@ -80,6 +90,7 @@ typedef void (*GnostrTrendingHashtagsCallback)(GPtrArray *hashtags, gpointer use
 
 void gnostr_compute_trending_hashtags_async(guint max_events,
                                             guint top_n,
+                                            const char * const *authors_allowlist,
                                             GnostrTrendingHashtagsCallback callback,
                                             gpointer user_data,
                                             GDestroyNotify user_data_free,

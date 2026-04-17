@@ -290,6 +290,7 @@ load_trending_hashtags(GnostrPageDiscover *self)
    * `self` is a borrowed reference kept alive by the widget tree; no
    * destroy function is needed. */
   gnostr_compute_trending_hashtags_async(500, 15,
+                                         NULL, /* all authors */
                                          on_trending_hashtags_ready, self,
                                          NULL,
                                          self->trending_cancellable);

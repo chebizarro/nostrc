@@ -92,10 +92,26 @@ compare_by_count_desc(gconstpointer a, gconstpointer b)
   return g_strcmp0(ha->tag, hb->tag);
 }
 
+/* Convert a 64-char hex string to 32 raw bytes.
+ * Returns TRUE on success, FALSE on bad input. */
+static gboolean
+hex_to_bytes32(const char *hex, unsigned char out[32])
+{
+  if (!hex || strlen(hex) != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + 2 * i, "%2x", &byte) != 1) return FALSE;
+    out[i] = (unsigned char)byte;
+  }
+  return TRUE;
+}
+
 /* --- Core computation --- */
 
 GPtrArray *
-gnostr_compute_trending_hashtags(guint max_events, guint top_n)
+gnostr_compute_trending_hashtags(guint max_events,
+                                 guint top_n,
+                                 const char * const *authors_allowlist)
 {
   GPtrArray *result = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_trending_hashtag_free);
 
@@ -111,6 +127,18 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
   ndb_filter_start_field(&filter, NDB_FILTER_LIMIT);
   ndb_filter_add_int_element(&filter, (int)max_events);
   ndb_filter_end_field(&filter);
+
+  /* Optional author scoping — only scan notes from these pubkeys.
+   * nostrc-spue: author-scoped trending hashtag suggestions. */
+  if (authors_allowlist && authors_allowlist[0]) {
+    ndb_filter_start_field(&filter, NDB_FILTER_AUTHORS);
+    for (const char * const *p = authors_allowlist; *p; p++) {
+      unsigned char pk[32];
+      if (hex_to_bytes32(*p, pk))
+        ndb_filter_add_id_element(&filter, pk);
+    }
+    ndb_filter_end_field(&filter);
+  }
 
   /* Open read transaction */
   void *txn = NULL;
@@ -255,6 +283,7 @@ gnostr_compute_trending_hashtags(guint max_events, guint top_n)
 typedef struct {
   guint max_events;
   guint top_n;
+  GStrv authors_allowlist;         /* owned deep copy, nullable */
   GnostrTrendingHashtagsCallback callback;
   gpointer user_data;
   GDestroyNotify user_data_free;   /* optional, may be NULL */
@@ -274,6 +303,7 @@ trending_async_data_free(gpointer ptr)
    * only ever runs if neither path got a chance to consume it (e.g.
    * a defensive safety net). */
   g_clear_pointer(&data->result, g_ptr_array_unref);
+  g_strfreev(data->authors_allowlist);
   g_clear_object(&data->cancellable);
   /* Free caller-owned user_data on every completion path. Callers
    * holding a borrowed reference (e.g. a GObject already kept alive
@@ -296,7 +326,9 @@ trending_async_thread(GTask *task, gpointer source_object,
     return;
   }
 
-  data->result = gnostr_compute_trending_hashtags(data->max_events, data->top_n);
+  data->result = gnostr_compute_trending_hashtags(data->max_events,
+                                                    data->top_n,
+                                                    (const char * const *)data->authors_allowlist);
 
   /* Completion signal only — `data` is owned by task_data and freed
    * by trending_async_data_free regardless of whether we hit the
@@ -332,6 +364,7 @@ trending_async_callback(GObject *source_object, GAsyncResult *result, gpointer u
 void
 gnostr_compute_trending_hashtags_async(guint max_events,
                                        guint top_n,
+                                       const char * const *authors_allowlist,
                                        GnostrTrendingHashtagsCallback callback,
                                        gpointer user_data,
                                        GDestroyNotify user_data_free,
@@ -342,6 +375,7 @@ gnostr_compute_trending_hashtags_async(guint max_events,
   TrendingAsyncData *data = g_new0(TrendingAsyncData, 1);
   data->max_events = max_events;
   data->top_n = top_n;
+  data->authors_allowlist = authors_allowlist ? g_strdupv((gchar **)authors_allowlist) : NULL;
   data->callback = callback;
   data->user_data = user_data;
   data->user_data_free = user_data_free;

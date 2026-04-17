@@ -31,6 +31,7 @@
 
 #include "../model/gnostr-filter-set-manager.h"
 #include "../model/gnostr-nip51-loader.h"
+#include "../util/follow_list.h"
 #include "../util/trending-hashtags.h"
 #include "../util/utils.h"
 #include "gnostr-nip51-list-picker-dialog.h"
@@ -80,6 +81,9 @@ struct _GnostrFilterSetDialog {
   /* Built programmatically inside kinds_box / authors_box. */
   GtkCheckButton *kind_checks[G_N_ELEMENTS(kKindPresets)];
   GtkTextBuffer  *authors_buffer;
+
+  /* Author scoping for trending hashtag suggestions (nostrc-spue). */
+  GStrv           suggestion_authors;
 
   /* Editing state. NULL → create mode. */
   gchar          *editing_id;
@@ -590,6 +594,16 @@ load_suggestions_async(GnostrFilterSetDialog *self)
   g_weak_ref_init(&ctx->weak_self, self);
   ctx->cancellable = g_object_ref(self->suggestions_cancellable);
 
+  /* Resolve author scoping: use explicit suggestion_authors if set,
+   * otherwise derive from the connected user's follow list (NDB cache).
+   * nostrc-spue: author-scoped trending hashtag suggestions. */
+  g_auto(GStrv) authors = NULL;
+  if (self->suggestion_authors) {
+    authors = g_strdupv(self->suggestion_authors);
+  } else if (self->pubkey_hex && *self->pubkey_hex) {
+    authors = gnostr_follow_list_get_pubkeys_cached(self->pubkey_hex);
+  }
+
   /* 400 recent kind-1 events, top 12 tags — enough for a useful
    * chip row without stressing the worker or crowding the form.
    * Pass suggestions_load_ctx_free as the user_data destroy notify
@@ -598,6 +612,7 @@ load_suggestions_async(GnostrFilterSetDialog *self)
    * user opens + dismisses the dialog before the 400-event scan
    * finishes. */
   gnostr_compute_trending_hashtags_async(400, 12,
+                                         (const char * const *)authors,
                                          on_suggestions_ready, ctx,
                                          suggestions_load_ctx_free,
                                          self->suggestions_cancellable);
@@ -836,6 +851,7 @@ gnostr_filter_set_dialog_finalize(GObject *object)
   GnostrFilterSetDialog *self = GNOSTR_FILTER_SET_DIALOG(object);
   g_clear_pointer(&self->editing_id, g_free);
   g_clear_pointer(&self->pubkey_hex, g_free);
+  g_clear_pointer(&self->suggestion_authors, g_strfreev);
   G_OBJECT_CLASS(gnostr_filter_set_dialog_parent_class)->finalize(object);
 }
 
@@ -1048,4 +1064,15 @@ gnostr_filter_set_dialog_set_pubkey(GnostrFilterSetDialog *self,
 
   if (self->import_group)
     gtk_widget_set_visible(GTK_WIDGET(self->import_group), have_pubkey);
+}
+
+void
+gnostr_filter_set_dialog_set_suggestion_authors(GnostrFilterSetDialog *self,
+                                                 const GStrv authors)
+{
+  g_return_if_fail(GNOSTR_IS_FILTER_SET_DIALOG(self));
+
+  g_clear_pointer(&self->suggestion_authors, g_strfreev);
+  if (authors && authors[0])
+    self->suggestion_authors = g_strdupv(authors);
 }
