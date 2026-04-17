@@ -58,6 +58,10 @@ struct _GnNostrEventItem {
   guint zap_count;
   gint64 zap_total_msat;
 
+  /* NIP-18: Quote repost ("q" tag) */
+  char *cached_quoted_event_id;  /* hex event ID from first "q" tag, or NULL */
+  gboolean quote_loaded;         /* TRUE after q-tag lookup attempted */
+
   /* NIP-40: Expiration timestamp (cached) */
   gint64 expiration;
   gboolean expiration_loaded;
@@ -154,6 +158,12 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
     /* Extract hashtags directly (avoids the corruption from full tags_json) */
     self->cached_hashtags = storage_ndb_note_get_hashtags(note);
 
+    /* NIP-18: Cache q-tag for quote repost detection */
+    if (!self->quote_loaded) {
+      self->cached_quoted_event_id = storage_ndb_note_get_qtag(note);
+      self->quote_loaded = TRUE;
+    }
+
     /* NIP-40: Cache expiration timestamp */
     self->expiration = storage_ndb_note_get_expiration(note);
     self->expiration_loaded = TRUE;
@@ -238,6 +248,12 @@ void gn_nostr_event_item_populate_from_note(GnNostrEventItem *self, struct ndb_n
   /* Extract hashtags directly */
   self->cached_hashtags = storage_ndb_note_get_hashtags((storage_ndb_note *)note);
 
+  /* NIP-18: Cache q-tag for quote repost detection */
+  if (!self->quote_loaded) {
+    self->cached_quoted_event_id = storage_ndb_note_get_qtag((storage_ndb_note *)note);
+    self->quote_loaded = TRUE;
+  }
+
   /* NIP-40: Cache expiration timestamp */
   self->expiration = storage_ndb_note_get_expiration((storage_ndb_note *)note);
   self->expiration_loaded = TRUE;
@@ -271,6 +287,7 @@ static void gn_nostr_event_item_finalize(GObject *object) {
   g_strfreev(self->cached_hashtags);
   g_strfreev(self->cached_relay_urls);
   gnostr_content_render_result_free(self->cached_render);
+  g_free(self->cached_quoted_event_id);
   g_free(self->thread_root_id);
   g_free(self->parent_id);
 
@@ -932,4 +949,17 @@ char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self) {
     return glib_result;
   }
   return NULL;
+}
+
+/* NIP-18: Quote repost getters (nostrc-cj8p) */
+gboolean gn_nostr_event_item_get_has_quote(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  ensure_note_loaded(self);
+  return self->cached_quoted_event_id != NULL;
+}
+
+const char *gn_nostr_event_item_get_quoted_event_id(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  ensure_note_loaded(self);
+  return self->cached_quoted_event_id;
 }

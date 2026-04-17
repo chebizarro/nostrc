@@ -802,15 +802,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                           NULL, /* parent_author_name - will be resolved asynchronously if needed */
                                           is_reply);
 
-    /* NIP-18: Handle GnNostrEventItem kind 6 reposts.
-     * nostrc-lkoa: The legacy `TimelineItem` repost/quote branch was
-     * removed; repost state is sourced from `GnNostrEventItem` below.
-     * TODO(quote-support): `GnNostrEventItem` does not yet model NIP-18
-     * q-tag quote state. The old `TimelineItem` path called
-     * `nostr_gtk_note_card_row_set_quote_info()` but was dead (the app
-     * never created `TimelineItem` instances). When quote-repost support
-     * is added to `GnNostrEventItem`, wire a corresponding `set_quote_info`
-     * call here. Tracked separately — see beads follow-up. */
+    /* NIP-18: Handle GnNostrEventItem kind 6 reposts and q-tag quote reposts.
+     * nostrc-lkoa: Repost state sourced from GnNostrEventItem.
+     * nostrc-cj8p: Quote repost state (q-tag) now modelled on GnNostrEventItem. */
     if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       gboolean is_repost = gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj));
       if (is_repost) {
@@ -912,6 +906,71 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
             g_signal_emit_by_name(row, "request-embed", nostr_uri);
           }
           g_free(reposted_id);
+        }
+      }
+    }
+
+    /* NIP-18 (nostrc-cj8p): Handle q-tag quote reposts.
+     * Any note (not just kind 6) can contain a "q" tag referencing a quoted note.
+     * Fetch the quoted note from local storage and render inline.
+     * Skip when is_repost (kind 6) — the repost block above already handles those. */
+    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type()) &&
+        !gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj))) {
+      const char *quoted_id = gn_nostr_event_item_get_quoted_event_id(GN_NOSTR_EVENT_ITEM(obj));
+      if (quoted_id) {
+        char *quoted_json = NULL;
+        int quoted_len = 0;
+        const char *quoted_content = NULL;
+        const char *quoted_author = NULL;
+
+        if (storage_ndb_get_note_by_id_nontxn(quoted_id, &quoted_json, &quoted_len) == 0 && quoted_json) {
+          NostrEvent *quoted_evt = nostr_event_new();
+          if (quoted_evt && nostr_event_deserialize(quoted_evt, quoted_json) == 0) {
+            quoted_content = nostr_event_get_content(quoted_evt);
+            const char *quoted_pk = nostr_event_get_pubkey(quoted_evt);
+
+            /* Try to get quoted author's display name from profile */
+            if (quoted_pk && strlen(quoted_pk) == 64) {
+              void *txn = NULL;
+              if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
+                unsigned char pk_bytes[32];
+                if (gnostr_timeline_embed_hex32_from_string(quoted_pk, pk_bytes)) {
+                  char *profile_json = NULL;
+                  int profile_len = 0;
+                  if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len, NULL) == 0 && profile_json) {
+                    if (gnostr_json_is_valid(profile_json)) {
+                      char *profile_content = gnostr_json_get_string(profile_json, "content", NULL);
+                      if (profile_content && gnostr_json_is_valid(profile_content)) {
+                        char *qname = gnostr_json_get_string(profile_content, "display_name", NULL);
+                        if (!qname || !*qname) {
+                          free(qname);
+                          qname = gnostr_json_get_string(profile_content, "name", NULL);
+                        }
+                        if (qname && *qname) {
+                          quoted_author = qname; /* owned — freed after set_quote_info call */
+                        } else {
+                          free(qname);
+                        }
+                        free(profile_content);
+                      }
+                    }
+                    free(profile_json);
+                  }
+                }
+                storage_ndb_end_query(txn);
+              }
+            }
+
+            nostr_gtk_note_card_row_set_quote_info(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                   quoted_id, quoted_content, quoted_author);
+            if (quoted_author) free((char *)quoted_author);
+          }
+          if (quoted_evt) nostr_event_free(quoted_evt);
+          free(quoted_json);
+        } else {
+          /* Quoted note not in local storage — request async fetch via embed mechanism */
+          g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", quoted_id);
+          g_signal_emit_by_name(row, "request-embed", nostr_uri);
         }
       }
     }

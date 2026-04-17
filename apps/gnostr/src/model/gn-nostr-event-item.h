@@ -90,6 +90,13 @@ gboolean gn_nostr_event_item_get_is_expired(GnNostrEventItem *self);
  * Caller must g_free() the result. */
 char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self);
 
+/* NIP-18: Quote repost support — "q" tag presence and quoted event ID.
+ * has_quote is TRUE when a "q" tag is present (any kind, not just kind 6).
+ * quoted_event_id returns the hex event ID from the first "q" tag, or NULL.
+ * Owned by the item; do NOT free. */
+gboolean gn_nostr_event_item_get_has_quote(GnNostrEventItem *self);
+const char *gn_nostr_event_item_get_quoted_event_id(GnNostrEventItem *self);
+
 /* nostrc-slot: Populate item data from a note pointer (avoids opening new transaction).
  * Call this during batch processing while the transaction is still open.
  * The note pointer must be valid (from storage_ndb_get_note_ptr with open txn). */

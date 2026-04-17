@@ -1993,6 +1993,38 @@ char *storage_ndb_note_get_last_etag(storage_ndb_note *note)
   return g_strdup(last_e_hex);
 }
 
+/* NIP-18: Get first "q" (quote) tag from a note.
+ * Returns hex event ID or NULL. Caller must g_free(). */
+char *storage_ndb_note_get_qtag(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return NULL;
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    if (ndb_tag_count(tag) < 2) continue;
+
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (!key.str || strcmp(key.str, "q") != 0) continue;
+
+    struct ndb_str val = ndb_tag_str(note, tag, 1);
+    if (val.flag == NDB_PACKED_ID && val.id) {
+      char hex[65];
+      storage_ndb_hex_encode(val.id, hex);
+      return g_strdup(hex);
+    } else if (val.flag != NDB_PACKED_ID && val.str && strlen(val.str) == 64) {
+      return g_strdup(val.str);
+    }
+  }
+
+  return NULL;
+}
+
 /* ============== Hashtag Extraction API ============== */
 
 /* Extract hashtags ("t" tags) from note.

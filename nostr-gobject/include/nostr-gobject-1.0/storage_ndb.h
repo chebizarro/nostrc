@@ -413,6 +413,11 @@ void storage_ndb_note_get_nip10_thread_full(storage_ndb_note *note,
  * Returns g_strdup'd hex string, or NULL. Caller must g_free(). */
 char *storage_ndb_note_get_last_etag(storage_ndb_note *note);
 
+/* NIP-18: Get the first "q" (quote) tag from a note via direct tag iteration.
+	* Returns g_strdup'd hex event ID string, or NULL if no q-tag found.
+	* Caller must g_free(). */
+char *storage_ndb_note_get_qtag(storage_ndb_note *note);
+
 /* ============== Content Blocks API ============== */
 
 /* Opaque blocks handle - actually struct ndb_blocks* from nostrdb */
