@@ -261,6 +261,34 @@ template $GnostrSessionView: Adw.Bin {
                                 };
                             }
 
+                            ListBoxRow row_calendar {
+                                accessibility {
+                                    label: _("Events");
+                                }
+
+                                child: Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "x-office-calendar-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Events");
+                                        xalign: 0;
+                                    }
+                                };
+                            }
+
                             /* Plugin sidebar items are added dynamically after row_repos.
                              * A separator is automatically inserted before the first plugin item.
                              * See gnostr_session_view_add_plugin_sidebar_item() */
@@ -563,6 +591,17 @@ template $GnostrSessionView: Adw.Bin {
                                         icon-name: "folder-remote-symbolic";
 
                                         child: $GnostrRepoBrowser repo_browser {
+                                            hexpand: true;
+                                            vexpand: true;
+                                        };
+                                    }
+
+                                    Adw.ViewStackPage {
+                                        name: "calendar";
+                                        title: _("Events");
+                                        icon-name: "x-office-calendar-symbolic";
+
+                                        child: $GnostrCalendarEventsView calendar_events_view {
                                             hexpand: true;
                                             vexpand: true;
                                         };

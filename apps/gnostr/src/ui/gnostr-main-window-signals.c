@@ -6,6 +6,7 @@
 #include "gnostr-search-results-view.h"
 #include "gnostr-notifications-view.h"
 #include "gnostr-classifieds-view.h"
+#include "gnostr-calendar-events-view.h"
 #include "gnostr-repo-browser.h"
 #include "page-discover.h"
 #include "gnostr-article-reader.h"
@@ -154,6 +155,12 @@ gnostr_main_window_connect_page_signals_internal(GnostrMainWindow *self,
     g_signal_connect(classifieds_view, "open-profile", classifieds_open_profile_cb, self);
     g_signal_connect(classifieds_view, "contact-seller", classifieds_contact_seller_cb, self);
     g_signal_connect(classifieds_view, "listing-clicked", classifieds_listing_clicked_cb, self);
+  }
+
+  /* NIP-52 Calendar Events — reuse the classifieds open-profile handler (same signature) */
+  GtkWidget *calendar_view = self->session_view ? gnostr_session_view_get_calendar_events_view(self->session_view) : NULL;
+  if (calendar_view && GNOSTR_IS_CALENDAR_EVENTS_VIEW(calendar_view)) {
+    g_signal_connect(calendar_view, "open-profile", classifieds_open_profile_cb, self);
   }
 }
 

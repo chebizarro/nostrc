@@ -71,6 +71,7 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-filter-set-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nip51-list-picker-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-calendar-events-view.blp
 )
 
 # Compile Blueprint files to UI files if blueprint-compiler is available
@@ -139,6 +140,7 @@ set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-filter-set-dialog.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nip51-list-picker-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-calendar-events-view.ui
 )
 
 # Compile Gtk resources

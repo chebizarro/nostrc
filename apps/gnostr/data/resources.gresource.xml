@@ -45,6 +45,7 @@
     <file>ui/widgets/gnostr-apps-page.ui</file>
     <file>ui/widgets/gnostr-plugin-manager-panel.ui</file>
     <file>ui/widgets/gnostr-plugin-row.ui</file>
+    <file>ui/widgets/gnostr-calendar-events-view.ui</file>
     <file>ui/styles/gnostr.css</file>
   </gresource>
   <gresource prefix="/org/gnostr/assets">

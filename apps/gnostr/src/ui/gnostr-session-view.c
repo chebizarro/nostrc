@@ -11,6 +11,7 @@
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "gnostr-avatar-cache.h"
 #include "gnostr-repo-browser.h"
+#include "gnostr-calendar-events-view.h"
 #include "gnostr-filter-switcher.h"
 #include "gnostr-search-results-view.h"
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
@@ -145,6 +146,9 @@ struct _GnostrSessionView {
   GtkWidget *search_results_view;
   GtkWidget *classifieds_view;
   GtkWidget *repo_browser;
+  GtkWidget *calendar_events_view;
+
+  GtkListBoxRow *row_calendar;
 
   AdwViewSwitcherBar *bottom_bar;
 
@@ -177,6 +181,7 @@ static const char *page_name_for_row(GnostrSessionView *self, GtkListBoxRow *row
   if (row == self->row_search) return "search";
   if (row == self->row_classifieds) return "classifieds";
   if (row == self->row_repos) return "repos";
+  if (row == self->row_calendar) return "calendar";
 
   /* Check plugin rows */
   if (self->plugin_rows) {
@@ -202,6 +207,7 @@ static GtkListBoxRow *row_for_page_name(GnostrSessionView *self, const char *pag
   if (g_strcmp0(page_name, "search") == 0) return self->row_search;
   if (g_strcmp0(page_name, "classifieds") == 0) return self->row_classifieds;
   if (g_strcmp0(page_name, "repos") == 0) return self->row_repos;
+  if (g_strcmp0(page_name, "calendar") == 0) return self->row_calendar;
 
   /* Check plugin rows */
   if (self->plugin_rows) {
@@ -220,6 +226,7 @@ static const char *title_for_page_name(GnostrSessionView *self, const char *page
   if (g_strcmp0(page_name, "search") == 0) return _("Search");
   if (g_strcmp0(page_name, "classifieds") == 0) return _("Marketplace");
   if (g_strcmp0(page_name, "repos") == 0) return _("Git Repos");
+  if (g_strcmp0(page_name, "calendar") == 0) return _("Events");
 
   /* Check plugin labels */
   if (self && self->plugin_labels) {
@@ -1036,6 +1043,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   g_type_ensure(GNOSTR_TYPE_PAGE_DISCOVER);
   g_type_ensure(GNOSTR_TYPE_CLASSIFIEDS_VIEW);
   g_type_ensure(GNOSTR_TYPE_REPO_BROWSER);
+  g_type_ensure(GNOSTR_TYPE_CALENDAR_EVENTS_VIEW);
   g_type_ensure(NOSTR_GTK_TYPE_PROFILE_PANE);
   g_type_ensure(NOSTR_GTK_TYPE_THREAD_VIEW);
   g_type_ensure(GNOSTR_TYPE_ARTICLE_READER);
@@ -1105,6 +1113,8 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, search_results_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, classifieds_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, repo_browser);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, calendar_events_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_calendar);
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, bottom_bar);
 }
@@ -1455,6 +1465,11 @@ GtkWidget *gnostr_session_view_get_classifieds_view(GnostrSessionView *self) {
 GtkWidget *gnostr_session_view_get_repo_browser(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
   return self->repo_browser;
+}
+
+GtkWidget *gnostr_session_view_get_calendar_events_view(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
+  return self->calendar_events_view;
 }
 
 GtkWidget *gnostr_session_view_get_profile_pane(GnostrSessionView *self) {

@@ -45,6 +45,7 @@ GtkWidget *gnostr_session_view_get_discover_page(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_search_results_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_classifieds_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_repo_browser(GnostrSessionView *self);
+GtkWidget *gnostr_session_view_get_calendar_events_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_profile_pane(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_thread_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_article_reader(GnostrSessionView *self);

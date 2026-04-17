@@ -1,0 +1,174 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrCalendarEventsView: Widget {
+  accessibility {
+    label: _("Calendar Events");
+  }
+
+  Box root {
+    orientation: vertical;
+    hexpand: true;
+    vexpand: true;
+
+    Box header_box {
+      orientation: horizontal;
+      spacing: 8;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 8;
+
+      Label {
+        label: _("Events");
+        xalign: 0.0;
+        hexpand: true;
+
+        styles [
+          "title-2",
+        ]
+      }
+
+      Label lbl_count {
+        label: "";
+
+        styles [
+          "dim-label",
+        ]
+      }
+    }
+
+    Box filter_row {
+      orientation: horizontal;
+      spacing: 6;
+      margin-start: 12;
+      margin-end: 12;
+      margin-bottom: 8;
+
+      ToggleButton btn_all {
+        label: _("All");
+        active: true;
+
+        styles [
+          "pill",
+        ]
+      }
+
+      ToggleButton btn_upcoming {
+        label: _("Upcoming");
+        group: btn_all;
+
+        styles [
+          "pill",
+        ]
+      }
+
+      ToggleButton btn_ongoing {
+        label: _("Now");
+        group: btn_all;
+
+        styles [
+          "pill",
+        ]
+      }
+
+      ToggleButton btn_past {
+        label: _("Past");
+        group: btn_all;
+
+        styles [
+          "pill",
+        ]
+      }
+    }
+
+    Separator {
+      orientation: horizontal;
+    }
+
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "results";
+
+        child: ScrolledWindow {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          child: ListView events_list {
+            hexpand: true;
+            vexpand: true;
+          };
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "x-office-calendar-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: _("No Events Found");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: _("NIP-52 calendar events will appear here as you browse the network.");
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: _("Loading events…");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+    }
+  }
+}
