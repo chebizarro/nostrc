@@ -9,7 +9,7 @@
 #include "../util/markdown_pango.h"
 #include <nostr-gtk-1.0/content_renderer.h>
 #include "../util/nip54_wiki.h"
-#include "../util/nip05.h"
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>

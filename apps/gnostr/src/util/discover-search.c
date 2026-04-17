@@ -12,7 +12,7 @@
 
 #include "discover-search.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
-#include "nip05.h"
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include <nostr-gobject-1.0/nostr_pool.h>

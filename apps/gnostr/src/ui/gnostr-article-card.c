@@ -10,7 +10,7 @@
 #include "../util/markdown_pango.h"
 #include "../util/utils.h"
 #include <nostr-gtk-1.0/content_renderer.h>
-#include "../util/nip05.h"
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "../util/nip84_highlights.h"
 #include "../util/utils.h"
 #include <glib/gi18n.h>

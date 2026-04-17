@@ -7,7 +7,7 @@
 #include "gnostr-picture-card.h"
 #include "gnostr-avatar-cache.h"
 #include "gnostr-image-viewer.h"
-#include "../util/nip05.h"
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <string.h>

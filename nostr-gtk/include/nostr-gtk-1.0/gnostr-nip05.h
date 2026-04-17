@@ -11,7 +11,10 @@ G_BEGIN_DECLS
  */
 typedef enum {
   GNOSTR_NIP05_STATUS_UNKNOWN = 0,   /* Not yet verified */
-  GNOSTR_NIP05_STATUS_VERIFYING,     /* Verification in progress */
+  GNOSTR_NIP05_STATUS_VERIFYING,     /* Reserved — not currently emitted by the library;
+                                        * callers should treat absence of a callback as
+                                        * "verifying" (the shared subscriber model handles
+                                        * deduplication internally). */
   GNOSTR_NIP05_STATUS_VERIFIED,      /* Successfully verified */
   GNOSTR_NIP05_STATUS_FAILED,        /* Verification failed */
   GNOSTR_NIP05_STATUS_INVALID        /* Invalid NIP-05 format */
@@ -38,6 +41,25 @@ typedef struct {
 typedef void (*GnostrNip05VerifyCallback)(GnostrNip05Result *result, gpointer user_data);
 
 /**
+ * gnostr_nip05_set_soup_session:
+ * @session: (transfer none): A SoupSession to use for HTTP requests.
+ *
+ * Set the SoupSession used by NIP-05 async verification.
+ * Must be called once by the application at startup, before any widget
+ * triggers NIP-05 verification. The session is borrowed (not ref'd) and
+ * must outlive all NIP-05 calls.
+ *
+ * If never called, gnostr_nip05_verify_async() will return
+ * %GNOSTR_NIP05_STATUS_UNKNOWN (same as the !HAVE_SOUP3 fallback).
+ */
+#ifdef HAVE_SOUP3
+typedef struct _SoupSession SoupSession;
+void gnostr_nip05_set_soup_session(SoupSession *session);
+#else
+void gnostr_nip05_set_soup_session(gpointer session);
+#endif
+
+/**
  * Parse NIP-05 identifier into local-part and domain.
  *
  * @param identifier The NIP-05 identifier (e.g., "user@example.com" or "_@example.com")
@@ -53,6 +75,9 @@ gboolean gnostr_nip05_parse(const char *identifier, char **out_local, char **out
  * The verification transport is globally deduplicated per (identifier, pubkey)
  * pair so repeated UI requests behave like a shared cache/background fetch,
  * rather than each caller owning its own network request.
+ *
+ * Requires gnostr_nip05_set_soup_session() to have been called; otherwise
+ * the callback receives %GNOSTR_NIP05_STATUS_UNKNOWN immediately.
  *
  * @param identifier The NIP-05 identifier to verify
  * @param expected_pubkey The expected pubkey in hex (64 chars)

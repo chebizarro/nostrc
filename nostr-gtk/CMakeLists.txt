@@ -97,6 +97,7 @@ set(NOSTR_GTK_SOURCES
   src/gnostr-timeline-view.c
   src/gnostr-note-embed.c
   src/content_renderer.c
+  src/gnostr-nip05.c
   ${GRESOURCE_C}
 )
 
@@ -110,6 +111,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gnostr-timeline-view.h
   include/nostr-gtk-1.0/gnostr-note-embed.h
   include/nostr-gtk-1.0/content_renderer.h
+  include/nostr-gtk-1.0/gnostr-nip05.h
 )
 
 # ── Library target ───────────────────────────────────────────────────

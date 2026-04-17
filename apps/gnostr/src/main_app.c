@@ -13,6 +13,7 @@
 #include "util/gnostr_e2e.h"
 #include "util/cache_prune.h"
 #include "util/utils.h"
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "util/gnostr-plugin-manager.h"
 #include <nostr-gobject-1.0/gnostr-sync-service.h>
 #include "sync/gnostr-sync-bridge.h"
@@ -350,6 +351,13 @@ int main(int argc, char **argv) {
 
     /* Initialize nostr-gtk widget library AFTER storage is ready (nostrc-lx33 fix) */
     nostr_gtk_init();
+
+    /* nostrc-reb8: Inject shared SoupSession into library NIP-05 module.
+     * Must happen after nostr_gtk_init() and before any widget triggers
+     * NIP-05 verification (i.e. before window creation). */
+#ifdef HAVE_SOUP3
+    gnostr_nip05_set_soup_session(gnostr_get_shared_soup_session());
+#endif
 
     if (gnostr_e2e_enabled()) {
       GError *seed_err = NULL;

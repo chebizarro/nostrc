@@ -21,7 +21,7 @@
 
 /* App utilities (resolved via private include paths, transitional) */
 #include "utils.h"
-#include "nip05.h"
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "imeta.h"
 #include "zap.h"
 #include "custom_emoji.h"

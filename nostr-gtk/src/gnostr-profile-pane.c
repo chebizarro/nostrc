@@ -20,8 +20,8 @@
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/content_renderer.h>
 
-/* App-specific NIP utilities — temporary cross-includes until moved to nostr-gobject */
-#include "nip05.h"
+/* NIP-05 verification — now part of nostr-gtk (nostrc-reb8) */
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "utils.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include "nip58_badges.h"

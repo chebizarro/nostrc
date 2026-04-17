@@ -1,8 +1,13 @@
-#include "nip05.h"
-#include "utils.h"
+/**
+ * gnostr-nip05.c — NIP-05 verification, cache, and badge for nostr-gtk
+ *
+ * Moved from apps/gnostr/src/util/nip05.c to the library so that library
+ * widgets (note-card-row, profile-pane) no longer depend on app symbols.
+ * The only app-side obligation is a single startup call to
+ * gnostr_nip05_set_soup_session() before any widget triggers verification.
+ */
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include <string.h>
-#include <ctype.h>
-#include <time.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -11,6 +16,14 @@
 /* Cache configuration */
 #define NIP05_CACHE_TTL_SECONDS (60 * 60)  /* 1 hour cache validity */
 #define NIP05_CACHE_MAX_ENTRIES 500        /* Max cached entries */
+
+/* Injected SoupSession — set once by the app at startup via
+ * gnostr_nip05_set_soup_session(). Borrowed reference; must outlive all
+ * NIP-05 calls. Written once on the main thread before any widget is
+ * created, then read-only — no mutex needed. */
+#ifdef HAVE_SOUP3
+static SoupSession *s_nip05_session = NULL;
+#endif
 
 /* NIP-05 verification cache */
 static GHashTable *nip05_cache = NULL;  /* key: char* identifier, value: GnostrNip05Result* */
@@ -43,6 +56,21 @@ static gboolean is_valid_domain(const char *domain);
 static gboolean is_valid_local_part(const char *local);
 static char *nip05_make_request_key(const char *identifier, const char *expected_pubkey);
 static void nip05_deliver_result_to_subscribers(GPtrArray *subscribers, GnostrNip05Result *result);
+
+void
+#ifdef HAVE_SOUP3
+gnostr_nip05_set_soup_session(SoupSession *session)
+{
+  s_nip05_session = session;
+  g_debug("nip05: SoupSession injected by app");
+}
+#else
+gnostr_nip05_set_soup_session(gpointer session)
+{
+  (void)session;
+  g_debug("nip05: set_soup_session called but HAVE_SOUP3 is not defined — no-op");
+}
+#endif
 
 const char *gnostr_nip05_status_to_string(GnostrNip05Status status) {
   switch (status) {
@@ -283,7 +311,7 @@ void gnostr_nip05_cache_cleanup(void) {
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   GHashTableIter iter;
   gpointer key, value;
-  GPtrArray *to_remove = g_ptr_array_new();
+  GPtrArray *to_remove = g_ptr_array_new_with_free_func(g_free);
 
   g_hash_table_iter_init(&iter, nip05_cache);
   while (g_hash_table_iter_next(&iter, &key, &value)) {
@@ -377,7 +405,7 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
 
   if (strlen(found_pubkey) != 64) {
     g_debug("nip05: invalid pubkey format for %s", ctx->identifier);
-    free(found_pubkey);
+    g_free(found_pubkey);
     g_free(json_str);
     goto done;
   }
@@ -386,7 +414,7 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
   if (g_ascii_strcasecmp(found_pubkey, ctx->expected_pubkey) != 0) {
     g_debug("nip05: pubkey mismatch for %s (expected %s, got %s)",
             ctx->identifier, ctx->expected_pubkey, found_pubkey);
-    free(found_pubkey);
+    g_free(found_pubkey);
     g_free(json_str);
     goto done;
   }
@@ -418,7 +446,7 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
     }
   }
 
-  free(found_pubkey);
+  g_free(found_pubkey);
   g_free(json_str);
 
 done:
@@ -488,6 +516,22 @@ void gnostr_nip05_verify_async(const char *identifier,
     return;
   }
 
+  /* Require an injected session — if the app never called
+   * gnostr_nip05_set_soup_session(), behave like !HAVE_SOUP3. */
+  SoupSession *session = s_nip05_session;
+  if (!session) {
+    g_debug("nip05: no SoupSession set — returning UNKNOWN for %s", identifier);
+    g_free(local);
+    g_free(domain);
+    if (callback) {
+      GnostrNip05Result *result = g_new0(GnostrNip05Result, 1);
+      result->identifier = g_strdup(identifier);
+      result->status = GNOSTR_NIP05_STATUS_UNKNOWN;
+      callback(result, user_data);
+    }
+    return;
+  }
+
   Nip05VerifySubscriber *subscriber = g_new0(Nip05VerifySubscriber, 1);
   subscriber->callback = callback;
   subscriber->user_data = user_data;
@@ -524,9 +568,6 @@ void gnostr_nip05_verify_async(const char *identifier,
   g_free(encoded_local);
 
   g_debug("nip05: verifying %s via %s", identifier, url);
-
-  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
-  SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", url);
   g_free(url);
@@ -565,7 +606,7 @@ void gnostr_nip05_verify_async(const char *identifier,
   soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, NULL, on_nip05_http_done, ctx);
 
   g_object_unref(msg);
-  /* Note: Don't unref shared session - we don't own it */
+  /* Note: Don't unref session - it's a borrowed reference from the app */
 }
 
 #else /* !HAVE_SOUP3 */

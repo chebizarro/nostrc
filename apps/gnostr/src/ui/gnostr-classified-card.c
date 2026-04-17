@@ -6,7 +6,7 @@
 
 #include "gnostr-classified-card.h"
 #include "gnostr-avatar-cache.h"
-#include "../util/nip05.h"
+#include <nostr-gtk-1.0/gnostr-nip05.h>
 #include "../util/markdown_pango.h"
 #include "../util/utils.h"
 #include <glib/gi18n.h>
