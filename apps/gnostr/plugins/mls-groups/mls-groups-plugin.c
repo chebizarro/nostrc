@@ -152,15 +152,8 @@ on_gift_wrap_received(const gchar *event_json,
 
   g_debug("MLS: Received gift wrap event — checking for welcome/group message");
 
-  /*
-   * TODO Phase 3: Unwrap NIP-59 gift wrap and route:
-   *
-   * 1. gnostr_nip59_unwrap_async(gift_wrap, user_pubkey, ...)
-   * 2. Check inner event kind:
-   *    - 444 (welcome): marmot_gobject_client_process_welcome_async()
-   *    - 445 (group msg): marmot_gobject_client_process_message_async()
-   * 3. Emit appropriate signal on GnMarmotService
-   */
+  if (self->event_router != NULL && event_json != NULL)
+    gn_mls_event_router_process_gift_wrap(self->event_router, event_json);
 }
 
 static void
@@ -173,16 +166,8 @@ on_group_message_received(const gchar *event_json,
 
   g_debug("MLS: Received kind:445 group message event");
 
-  /*
-   * TODO Phase 3: Process group message:
-   *
-   * 1. Extract h tag → nostr_group_id
-   * 2. NIP-44 decrypt content to get MLS ciphertext
-   * 3. marmot_gobject_client_process_message_async()
-   * 4. Handle result:
-   *    - APPLICATION_MESSAGE: emit message-received with decrypted content
-   *    - COMMIT: emit group-updated
-   */
+  if (self->event_router != NULL && event_json != NULL)
+    gn_mls_event_router_process_group_message(self->event_router, event_json);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
