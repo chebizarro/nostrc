@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrChatMessageRow: Widget {
+  accessibility {
+    label: _("Chat message");
+  }
+
   Box content_box {
     orientation: horizontal;
     spacing: 10;

@@ -225,6 +225,33 @@ headerbar button:hover image {
 	box-shadow: 0 2px 6px alpha(black, 0.06), 0 4px 12px alpha(black, 0.04);
 }
 
+/* Keyboard navigation focus ring — HIG requires a visible focus indicator
+	* distinguishable from hover shadow. Uses outline instead of box-shadow to
+	* avoid compounding with the existing card shadow. nostrc-e27u. */
+.note-card:focus-within {
+	outline: 2px solid @accent_bg_color;
+	outline-offset: -2px;
+}
+
+/* Suppress GTK default ListViewRow fade-in animation for items added outside
+	* the visible viewport. The C factory applies this class via
+	* gn_nostr_event_item_get_skip_animation(). nostrc-e27u / nostrc-7o7. */
+listview row.no-animation,
+listview row.no-animation > * {
+	transition: none;
+}
+
+/* Deferred metadata placeholder state — action buttons are dimmed to signal
+	* that full metadata (author, counts) is still loading. Applied during fast
+	* scroll; removed once metadata batch arrives. nostrc-e27u. */
+.note-card.needs-metadata-refresh .note-actions {
+	opacity: 0.3;
+}
+
+.note-card.needs-metadata-refresh .note-avatar {
+	opacity: 0.5;
+}
+
 /* Note: @keyframes / animation not supported in GTK4 CSS — removed */
 
 /* Note author name - bold and prominent */

@@ -25,7 +25,7 @@ template $GnostrSessionView: Adw.Bin {
         child: Adw.NavigationSplitView split_view {
             min-sidebar-width: 200;
             max-sidebar-width: 280;
-            sidebar-width-fraction: 0.25;
+            sidebar-width-fraction: 0.28;
             collapsed: bind template.compact;
 
             sidebar: Adw.NavigationPage sidebar_page {
@@ -66,6 +66,10 @@ template $GnostrSessionView: Adw.Bin {
                             ]
 
                             ListBoxRow row_timeline {
+                                accessibility {
+                                    label: _("Timeline");
+                                }
+
                                 child: Box {
                                     orientation: horizontal;
                                     spacing: 12;
@@ -90,6 +94,10 @@ template $GnostrSessionView: Adw.Bin {
                             }
 
                             ListBoxRow row_notifications {
+                                accessibility {
+                                    label: _("Notifications");
+                                }
+
                                 child: Box {
                                     orientation: horizontal;
                                     spacing: 12;
@@ -114,6 +122,10 @@ template $GnostrSessionView: Adw.Bin {
                             }
 
                             ListBoxRow row_messages {
+                                accessibility {
+                                    label: _("Messages");
+                                }
+
                                 child: Box {
                                     orientation: horizontal;
                                     spacing: 12;
@@ -138,6 +150,10 @@ template $GnostrSessionView: Adw.Bin {
                             }
 
                             ListBoxRow row_discover {
+                                accessibility {
+                                    label: _("Discover");
+                                }
+
                                 child: Box {
                                     orientation: horizontal;
                                     spacing: 12;
@@ -162,6 +178,10 @@ template $GnostrSessionView: Adw.Bin {
                             }
 
                             ListBoxRow row_search {
+                                accessibility {
+                                    label: _("Search");
+                                }
+
                                 child: Box {
                                     orientation: horizontal;
                                     spacing: 12;
@@ -186,6 +206,10 @@ template $GnostrSessionView: Adw.Bin {
                             }
 
                             ListBoxRow row_classifieds {
+                                accessibility {
+                                    label: _("Marketplace");
+                                }
+
                                 child: Box {
                                     orientation: horizontal;
                                     spacing: 12;
@@ -210,6 +234,10 @@ template $GnostrSessionView: Adw.Bin {
                             }
 
                             ListBoxRow row_repos {
+                                accessibility {
+                                    label: _("Git Repos");
+                                }
+
                                 child: Box {
                                     orientation: horizontal;
                                     spacing: 12;
@@ -572,7 +600,7 @@ template $GnostrSessionView: Adw.Bin {
 
                                             Spinner spinner_new_notes {
                                                 visible: false;
-                                                spinning: true;
+                                                spinning: false;
                                                 width-request: 16;
                                                 height-request: 16;
                                             }

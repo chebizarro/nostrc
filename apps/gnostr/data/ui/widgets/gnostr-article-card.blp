@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrArticleCard: Widget {
+  accessibility {
+    label: _("Article");
+  }
+
   Frame root {
     hexpand: true;
     vexpand: false;

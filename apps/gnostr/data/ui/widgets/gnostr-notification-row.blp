@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrNotificationRow: Widget {
+  accessibility {
+    label: _("Notification");
+  }
+
   Box root {
     orientation: horizontal;
     spacing: 12;

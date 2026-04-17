@@ -7,6 +7,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrArticleCard" parent="GtkWidget">
+    <accessibility>
+      <property name="label" translatable="yes">Article</property>
+    </accessibility>
     <child>
       <object class="GtkFrame" id="root">
         <property name="hexpand">true</property>

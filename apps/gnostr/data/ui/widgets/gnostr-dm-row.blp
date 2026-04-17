@@ -1,6 +1,10 @@
 using Gtk 4.0;
 
 template $GnostrDmRow: Widget {
+  accessibility {
+    label: _("Conversation");
+  }
+
   Box root {
     orientation: horizontal;
     spacing: 12;
