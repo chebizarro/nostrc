@@ -4,6 +4,10 @@
 #include "../../profile_store.h"
 #include "../../cache-manager.h"
 #include "../../relay_store.h"
+#include "../../secret_store.h"
+#include <nostr-relay.h>
+#include <nostr-event.h>
+#include <json.h>
 
 #include <gio/gio.h>
 #include <gdk/gdk.h>
@@ -465,6 +469,97 @@ static void sync_context_free(SyncContext *ctx) {
   g_free(ctx);
 }
 
+static void on_sync_complete(gpointer user_data);
+
+/* Async relay sync: sign the event and publish to all write relays */
+typedef struct {
+  gchar *signed_event_json;
+  GPtrArray *write_relays;
+  SyncContext *sync_ctx;       /* must be touched only on main thread */
+} RelaySyncData;
+
+static void
+relay_sync_data_free(RelaySyncData *data)
+{
+  if (!data) return;
+  g_free(data->signed_event_json);
+  g_clear_pointer(&data->write_relays, g_ptr_array_unref);
+  /* sync_ctx is NOT freed here — it's freed by on_sync_complete */
+  g_free(data);
+}
+
+static void
+relay_sync_thread_func(GTask        *task,
+                       gpointer      source_object,
+                       gpointer      task_data,
+                       GCancellable *cancellable)
+{
+  (void)source_object;
+  (void)cancellable;
+
+  RelaySyncData *data = task_data;
+
+  NostrEvent *event = nostr_event_new();
+  int rc = nostr_event_deserialize(event, data->signed_event_json);
+  if (rc != 1) {
+    g_warning("Failed to parse signed event JSON for relay sync");
+    nostr_event_free(event);
+    g_task_return_boolean(task, FALSE);
+    return;
+  }
+
+  guint success_count = 0;
+
+  for (guint i = 0; i < data->write_relays->len; i++) {
+    const gchar *url = g_ptr_array_index(data->write_relays, i);
+
+    Error *err = NULL;
+    NostrRelay *relay = nostr_relay_new(NULL, url, &err);
+    if (!relay) {
+      g_warning("Relay sync: failed to create relay %s: %s",
+                url, err ? err->message : "unknown");
+      if (err) free(err);
+      continue;
+    }
+
+    nostr_relay_set_auto_reconnect(relay, false);
+
+    Error *conn_err = NULL;
+    if (!nostr_relay_connect(relay, &conn_err)) {
+      g_warning("Relay sync: failed to connect to %s: %s",
+                url, conn_err ? conn_err->message : "unknown");
+      if (conn_err) free(conn_err);
+      nostr_relay_free(relay);
+      continue;
+    }
+
+    nostr_relay_publish(relay, event);
+    success_count++;
+    g_message("Relay sync: published to %s", url);
+
+    nostr_relay_disconnect(relay);
+    nostr_relay_free(relay);
+  }
+
+  nostr_event_free(event);
+  g_task_return_boolean(task, success_count > 0);
+}
+
+static void
+on_relay_sync_finished(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  SyncContext *ctx = user_data;
+  g_autoptr(GError) error = NULL;
+  gboolean ok = g_task_propagate_boolean(G_TASK(result), &error);
+
+  if (!ok)
+    g_warning("Relay sync failed: %s", error ? error->message : "no relays reachable");
+
+  /* Complete the UI flow on the main thread (we're already on it via GTask) */
+  on_sync_complete(ctx);
+}
+
 static void on_sync_complete(gpointer user_data) {
   SyncContext *ctx = user_data;
   if (!ctx || !ctx->self) return;
@@ -496,16 +591,6 @@ static void on_sync_complete(gpointer user_data) {
   }
 
   sync_context_free(ctx);
-}
-
-/* Simulate sync timeout (will be replaced with actual relay response handling) */
-static gboolean on_sync_timeout(gpointer user_data) {
-  SyncContext *ctx = user_data;
-  if (ctx) {
-    ctx->timeout_id = 0; /* Mark as handled */
-    on_sync_complete(ctx);
-  }
-  return G_SOURCE_REMOVE;
 }
 
 static void on_sync(GtkButton *btn, gpointer user_data) {
@@ -557,29 +642,49 @@ static void on_sync(GtkButton *btn, gpointer user_data) {
   /* Get write relays for publishing */
   GPtrArray *write_relays = relay_store_get_write_relays(relay_store);
 
-  /* Build the unsigned event JSON for the user list */
-  gchar *event_json = user_list_store_build_event_json(self->store);
+  /* Build the unsigned event JSON and sign it */
+  g_autofree gchar *event_json = user_list_store_build_event_json(self->store);
   g_message("Event to sync: %s", event_json);
 
-  /* In a full implementation, we would:
-   * 1. Connect to relays via WebSocket
-   * 2. Subscribe with the filter to fetch the current list
-   * 3. Merge any new entries from the fetched event
-   * 4. Sign and publish our updated list
-   *
-   * For now, simulate the sync with a timeout to show the UI flow works.
-   * The actual WebSocket relay connection will be added when the relay
-   * connection infrastructure is complete.
-   */
+  /* Sign the event with the current identity */
+  gchar *npub = NULL;
+  SecretStoreResult sign_rc = secret_store_get_public_key(NULL, &npub);
+  if (sign_rc != SECRET_STORE_OK || !npub) {
+    g_warning("Cannot sign event: no active identity");
+    on_sync_complete(ctx);
+    g_ptr_array_unref(write_relays);
+    relay_store_free(relay_store);
+    g_free(filter);
+    return;
+  }
 
-    /* Timeout-audit: Replaced 1.5s simulated delay with idle callback.
-     * TODO: Replace with actual relay sync when infrastructure is ready. */
-    ctx->timeout_id = g_idle_add(on_sync_timeout, ctx);
+  gchar *signed_json = NULL;
+  sign_rc = secret_store_sign_event(event_json, npub, &signed_json);
+  if (sign_rc != SECRET_STORE_OK || !signed_json) {
+    g_warning("Failed to sign event for relay sync");
+    on_sync_complete(ctx);
+    g_free(npub);
+    g_ptr_array_unref(write_relays);
+    relay_store_free(relay_store);
+    g_free(filter);
+    return;
+  }
+
+  /* Dispatch relay publish to a background thread */
+  RelaySyncData *sync_data = g_new0(RelaySyncData, 1);
+  sync_data->signed_event_json = signed_json;  /* takes ownership */
+  sync_data->write_relays = g_ptr_array_ref(write_relays);
+  sync_data->sync_ctx = ctx;
+
+  GTask *task = g_task_new(NULL, NULL, on_relay_sync_finished, ctx);
+  g_task_set_task_data(task, sync_data, (GDestroyNotify)relay_sync_data_free);
+  g_task_run_in_thread(task, relay_sync_thread_func);
+  g_object_unref(task);
 
   /* Cleanup */
+  g_free(npub);
   g_ptr_array_unref(write_relays);
   relay_store_free(relay_store);
-  g_free(event_json);
   g_free(filter);
 }
 

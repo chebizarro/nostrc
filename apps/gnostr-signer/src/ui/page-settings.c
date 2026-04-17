@@ -21,6 +21,9 @@
 #include "../i18n.h"
 #include "../event_history.h"
 #include "../policy_store.h"
+#include <nostr-relay.h>
+#include <nostr-event.h>
+#include <json.h>
 
 /* Forward declarations for relay publish helpers */
 static void publish_signed_event_to_relays(const gchar *signed_event_json, const gchar *event_type);
@@ -225,9 +228,90 @@ static void on_profile_save(const gchar *npub, const gchar *event_json, gpointer
   /* The profile is saved to local cache by the editor */
 }
 
-/* Helper to publish signed events to configured relays.
- * In a full implementation, this would use WebSocket connections to relays.
- * For now, it verifies relay configuration and logs the publish attempt. */
+/* Async context for relay publishing in a thread pool */
+typedef struct {
+  gchar *signed_event_json;
+  gchar *event_type;
+  GPtrArray *write_relays;   /* element-type: gchar* */
+} RelayPublishData;
+
+static void
+relay_publish_data_free(RelayPublishData *data)
+{
+  if (!data) return;
+  g_free(data->signed_event_json);
+  g_free(data->event_type);
+  g_clear_pointer(&data->write_relays, g_ptr_array_unref);
+  g_free(data);
+}
+
+static void
+relay_publish_thread_func(GTask        *task,
+                          gpointer      source_object,
+                          gpointer      task_data,
+                          GCancellable *cancellable)
+{
+  (void)source_object;
+  (void)cancellable;
+
+  RelayPublishData *data = task_data;
+
+  /* Parse the signed event JSON into a NostrEvent */
+  NostrEvent *event = nostr_event_new();
+  int rc = nostr_event_deserialize(event, data->signed_event_json);
+  if (rc != 1) {
+    g_warning("Failed to parse %s event JSON for relay publish", data->event_type);
+    nostr_event_free(event);
+    g_task_return_boolean(task, FALSE);
+    return;
+  }
+
+  guint success_count = 0;
+
+  for (guint i = 0; i < data->write_relays->len; i++) {
+    const gchar *relay_url = g_ptr_array_index(data->write_relays, i);
+
+    Error *err = NULL;
+    NostrRelay *relay = nostr_relay_new(NULL, relay_url, &err);
+    if (!relay) {
+      g_warning("Failed to create relay %s: %s", relay_url,
+                err ? err->message : "unknown");
+      if (err) free(err);
+      continue;
+    }
+
+    nostr_relay_set_auto_reconnect(relay, false);
+
+    Error *conn_err = NULL;
+    if (!nostr_relay_connect(relay, &conn_err)) {
+      g_warning("Failed to connect to relay %s: %s", relay_url,
+                conn_err ? conn_err->message : "unknown");
+      if (conn_err) free(conn_err);
+      nostr_relay_free(relay);
+      continue;
+    }
+
+    nostr_relay_publish(relay, event);
+    success_count++;
+    g_message("Published %s event to %s", data->event_type, relay_url);
+
+    nostr_relay_disconnect(relay);
+    nostr_relay_free(relay);
+  }
+
+  nostr_event_free(event);
+
+  if (success_count == 0)
+    g_warning("Failed to publish %s event to any relay", data->event_type);
+  else
+    g_message("Published %s event to %u/%u relays",
+              data->event_type, success_count, data->write_relays->len);
+
+  g_task_return_boolean(task, success_count > 0);
+}
+
+/* Publish a signed event to all configured write relays via WebSocket.
+ * Relay I/O runs in a GTask thread to avoid blocking the UI. */
 static void publish_signed_event_to_relays(const gchar *signed_event_json, const gchar *event_type) {
   if (!signed_event_json || !event_type) return;
 
@@ -244,24 +328,18 @@ static void publish_signed_event_to_relays(const gchar *signed_event_json, const
     return;
   }
 
-  g_message("Publishing %s event to %u relays:", event_type, write_relays->len);
-  for (guint i = 0; i < write_relays->len; i++) {
-    const gchar *relay_url = g_ptr_array_index(write_relays, i);
-    g_message("  - %s", relay_url);
-  }
+  g_message("Publishing %s event to %u relays", event_type, write_relays->len);
 
-  /* In a full implementation, we would:
-   * 1. Connect to each write relay via WebSocket
-   * 2. Send ["EVENT", signed_event_json]
-   * 3. Wait for ["OK", event_id, true, ""] response
-   * 4. Handle errors and retry logic
-   *
-   * For now, just log that we would publish. The actual WebSocket
-   * relay publishing will be implemented when the relay connection
-   * infrastructure is complete.
-   */
-  g_message("Event JSON: %.200s%s", signed_event_json,
-            strlen(signed_event_json) > 200 ? "..." : "");
+  /* Build async context and dispatch to thread pool */
+  RelayPublishData *data = g_new0(RelayPublishData, 1);
+  data->signed_event_json = g_strdup(signed_event_json);
+  data->event_type = g_strdup(event_type);
+  data->write_relays = g_ptr_array_ref(write_relays);
+
+  GTask *task = g_task_new(NULL, NULL, NULL, NULL);
+  g_task_set_task_data(task, data, (GDestroyNotify)relay_publish_data_free);
+  g_task_run_in_thread(task, relay_publish_thread_func);
+  g_object_unref(task);
 
   g_ptr_array_unref(write_relays);
   relay_store_free(relay_store);
