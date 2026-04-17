@@ -1,27 +1,34 @@
 /**
  * GnostrChannelListView - NIP-28 Public Chat Channel Browser
  *
- * Displays a scrollable list of public chat channels.
+ * Displays a scrollable list of public chat channels using GListStore
+ * + GtkFilterListModel + GtkListView with a GtkSignalListItemFactory.
  */
 
 #include "gnostr-channel-list-view.h"
 #include "gnostr-channel-row.h"
+#include "../model/gnostr-channel-item.h"
 
 struct _GnostrChannelListView {
     GtkWidget parent_instance;
 
     /* Template widgets */
     GtkScrolledWindow *scroller;
-    GtkListBox *list_box;
+    GtkListView *list_view;
     GtkStack *content_stack;
     GtkBox *empty_state;
     GtkSpinner *loading_spinner;
     GtkButton *btn_create;
     GtkSearchEntry *search_entry;
 
+    /* Model pipeline */
+    GListStore *store;                    /* GnostrChannelItem objects */
+    GtkFilterListModel *filter_model;
+    GtkCustomFilter *custom_filter;
+
     /* Data */
     char *user_pubkey;
-    GHashTable *channels;  /* channel_id -> GnostrChannelRow */
+    GHashTable *index;  /* channel_id (char*) -> guint position */
 };
 
 G_DEFINE_TYPE(GnostrChannelListView, gnostr_channel_list_view, GTK_TYPE_WIDGET)
@@ -35,40 +42,80 @@ enum {
 
 static guint signals[N_SIGNALS];
 
+/* --- Index rebuild --- */
+
 static void
-gnostr_channel_list_view_dispose(GObject *object)
+rebuild_index(GnostrChannelListView *self)
 {
-    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(object);
-
-    GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self));
-    if (child)
-        gtk_widget_unparent(child);
-
-    G_OBJECT_CLASS(gnostr_channel_list_view_parent_class)->dispose(object);
+    g_hash_table_remove_all(self->index);
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->store));
+    for (guint i = 0; i < n; i++) {
+        g_autoptr(GnostrChannelItem) item = g_list_model_get_item(G_LIST_MODEL(self->store), i);
+        const char *cid = gnostr_channel_item_get_channel_id(item);
+        if (cid)
+            g_hash_table_insert(self->index, (gpointer)cid, GUINT_TO_POINTER(i));
+    }
 }
 
-static void
-gnostr_channel_list_view_finalize(GObject *object)
+/* --- Filter function --- */
+
+static gboolean
+channel_filter_func(gpointer item, gpointer user_data)
 {
-    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(object);
+    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(user_data);
+    GnostrChannelItem *channel_item = GNOSTR_CHANNEL_ITEM(item);
 
-    g_clear_pointer(&self->user_pubkey, g_free);
-    g_clear_pointer(&self->channels, g_hash_table_destroy);
+    const char *search_text = gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
+    if (!search_text || !*search_text)
+        return TRUE;
 
-    G_OBJECT_CLASS(gnostr_channel_list_view_parent_class)->finalize(object);
+    const char *name = gnostr_channel_item_get_name(channel_item);
+    const char *about = gnostr_channel_item_get_about(channel_item);
+
+    g_autofree char *search_lower = g_utf8_strdown(search_text, -1);
+
+    if (name) {
+        g_autofree char *name_lower = g_utf8_strdown(name, -1);
+        if (strstr(name_lower, search_lower))
+            return TRUE;
+    }
+
+    if (about) {
+        g_autofree char *about_lower = g_utf8_strdown(about, -1);
+        if (strstr(about_lower, search_lower))
+            return TRUE;
+    }
+
+    return FALSE;
 }
 
+/* --- UI state --- */
+
 static void
-on_row_channel_selected(GnostrChannelRow *row, const char *channel_id, GnostrChannelListView *self)
+update_state(GnostrChannelListView *self)
+{
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->filter_model));
+    if (n > 0)
+        gtk_stack_set_visible_child_name(self->content_stack, "list");
+    else
+        gtk_stack_set_visible_child_name(self->content_stack, "empty");
+}
+
+/* --- Signal callbacks from factory-bound rows --- */
+
+static void
+on_row_channel_selected(GnostrChannelRow *row, const char *channel_id, gpointer user_data)
 {
     (void)row;
+    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(user_data);
     g_signal_emit(self, signals[SIGNAL_CHANNEL_SELECTED], 0, channel_id);
 }
 
 static void
-on_row_open_profile(GnostrChannelRow *row, const char *pubkey, GnostrChannelListView *self)
+on_row_open_profile(GnostrChannelRow *row, const char *pubkey, gpointer user_data)
 {
     (void)row;
+    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(user_data);
     g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey);
 }
 
@@ -79,52 +126,82 @@ on_create_clicked(GtkButton *button, GnostrChannelListView *self)
     g_signal_emit(self, signals[SIGNAL_CREATE_CHANNEL], 0);
 }
 
-static gboolean
-filter_func(GtkListBoxRow *row, gpointer user_data)
-{
-    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(user_data);
-    if (!self->search_entry)
-        return TRUE;
-
-    const char *search_text = gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
-    if (!search_text || !*search_text)
-        return TRUE;
-
-    /* Get the channel row and check if name/about contains search text */
-    GtkWidget *child = gtk_list_box_row_get_child(row);
-    if (!child || !GNOSTR_IS_CHANNEL_ROW(child))
-        return TRUE;
-
-    GnostrChannelRow *channel_row = GNOSTR_CHANNEL_ROW(child);
-    const char *name = gnostr_channel_row_get_name(channel_row);
-    const char *about = gnostr_channel_row_get_about(channel_row);
-
-    gchar *search_lower = g_utf8_strdown(search_text, -1);
-    gboolean visible = FALSE;
-
-    if (name) {
-        gchar *name_lower = g_utf8_strdown(name, -1);
-        if (strstr(name_lower, search_lower))
-            visible = TRUE;
-        g_free(name_lower);
-    }
-
-    if (!visible && about) {
-        gchar *about_lower = g_utf8_strdown(about, -1);
-        if (strstr(about_lower, search_lower))
-            visible = TRUE;
-        g_free(about_lower);
-    }
-
-    g_free(search_lower);
-    return visible;
-}
-
 static void
 on_search_changed(GtkSearchEntry *entry, GnostrChannelListView *self)
 {
     (void)entry;
-    gtk_list_box_invalidate_filter(self->list_box);
+    gtk_filter_changed(GTK_FILTER(self->custom_filter), GTK_FILTER_CHANGE_DIFFERENT);
+    update_state(self);
+}
+
+/* --- Factory callbacks --- */
+
+static void
+factory_setup(GtkSignalListItemFactory *factory G_GNUC_UNUSED,
+              GtkListItem *list_item,
+              gpointer user_data G_GNUC_UNUSED)
+{
+    GnostrChannelRow *row = gnostr_channel_row_new();
+    gtk_list_item_set_child(list_item, GTK_WIDGET(row));
+}
+
+static void
+factory_bind(GtkSignalListItemFactory *factory G_GNUC_UNUSED,
+             GtkListItem *list_item,
+             gpointer user_data)
+{
+    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(user_data);
+    GnostrChannelItem *item = gtk_list_item_get_item(list_item);
+    GnostrChannelRow *row = GNOSTR_CHANNEL_ROW(gtk_list_item_get_child(list_item));
+
+    if (!item || !row)
+        return;
+
+    const GnostrChannel *channel = gnostr_channel_item_get_channel(item);
+    if (channel)
+        gnostr_channel_row_set_channel(row, channel);
+
+    g_signal_connect(row, "channel-selected", G_CALLBACK(on_row_channel_selected), self);
+    g_signal_connect(row, "open-profile", G_CALLBACK(on_row_open_profile), self);
+}
+
+static void
+factory_unbind(GtkSignalListItemFactory *factory G_GNUC_UNUSED,
+               GtkListItem *list_item,
+               gpointer user_data)
+{
+    GnostrChannelRow *row = GNOSTR_CHANNEL_ROW(gtk_list_item_get_child(list_item));
+    if (row)
+        g_signal_handlers_disconnect_by_data(row, user_data);
+}
+
+/* --- GObject lifecycle --- */
+
+static void
+gnostr_channel_list_view_dispose(GObject *object)
+{
+    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(object);
+
+    GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self));
+    if (child)
+        gtk_widget_unparent(child);
+
+    g_clear_object(&self->filter_model);
+    g_clear_object(&self->custom_filter);
+    g_clear_object(&self->store);
+
+    G_OBJECT_CLASS(gnostr_channel_list_view_parent_class)->dispose(object);
+}
+
+static void
+gnostr_channel_list_view_finalize(GObject *object)
+{
+    GnostrChannelListView *self = GNOSTR_CHANNEL_LIST_VIEW(object);
+
+    g_clear_pointer(&self->user_pubkey, g_free);
+    g_clear_pointer(&self->index, g_hash_table_destroy);
+
+    G_OBJECT_CLASS(gnostr_channel_list_view_parent_class)->finalize(object);
 }
 
 static void
@@ -142,7 +219,7 @@ gnostr_channel_list_view_class_init(GnostrChannelListViewClass *klass)
 
     /* Bind template children */
     gtk_widget_class_bind_template_child(widget_class, GnostrChannelListView, scroller);
-    gtk_widget_class_bind_template_child(widget_class, GnostrChannelListView, list_box);
+    gtk_widget_class_bind_template_child(widget_class, GnostrChannelListView, list_view);
     gtk_widget_class_bind_template_child(widget_class, GnostrChannelListView, content_stack);
     gtk_widget_class_bind_template_child(widget_class, GnostrChannelListView, empty_state);
     gtk_widget_class_bind_template_child(widget_class, GnostrChannelListView, loading_spinner);
@@ -184,19 +261,36 @@ gnostr_channel_list_view_init(GnostrChannelListView *self)
     gtk_widget_init_template(GTK_WIDGET(self));
 
     self->user_pubkey = NULL;
-    self->channels = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    self->index = g_hash_table_new(g_str_hash, g_str_equal);
 
-    /* Connect create button */
+    /* Model pipeline: GListStore → GtkFilterListModel → GtkNoSelection → ListView */
+    self->store = g_list_store_new(GNOSTR_TYPE_CHANNEL_ITEM);
+
+    self->custom_filter = gtk_custom_filter_new(channel_filter_func, self, NULL);
+    self->filter_model = gtk_filter_list_model_new(
+        G_LIST_MODEL(g_object_ref(self->store)),
+        GTK_FILTER(g_object_ref(self->custom_filter)));
+
+    GtkNoSelection *selection = gtk_no_selection_new(
+        G_LIST_MODEL(g_object_ref(self->filter_model)));
+
+    /* Factory */
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(factory_setup), self);
+    g_signal_connect(factory, "bind", G_CALLBACK(factory_bind), self);
+    g_signal_connect(factory, "unbind", G_CALLBACK(factory_unbind), self);
+
+    gtk_list_view_set_model(self->list_view, GTK_SELECTION_MODEL(selection));
+    gtk_list_view_set_factory(self->list_view, factory);
+    g_object_unref(selection);
+    g_object_unref(factory);
+
+    /* Connect UI signals */
     g_signal_connect(self->btn_create, "clicked", G_CALLBACK(on_create_clicked), self);
-
-    /* Connect search */
     g_signal_connect(self->search_entry, "search-changed", G_CALLBACK(on_search_changed), self);
-
-    /* Configure list box */
-    gtk_list_box_set_selection_mode(self->list_box, GTK_SELECTION_NONE);
-    gtk_list_box_set_activate_on_single_click(self->list_box, FALSE);
-    gtk_list_box_set_filter_func(self->list_box, filter_func, self, NULL);
 }
+
+/* --- Public API (preserved for callers) --- */
 
 GnostrChannelListView *
 gnostr_channel_list_view_new(void)
@@ -212,29 +306,26 @@ gnostr_channel_list_view_upsert_channel(GnostrChannelListView *self,
     g_return_if_fail(channel != NULL);
     g_return_if_fail(channel->channel_id != NULL);
 
-    /* Check if channel already exists */
-    GnostrChannelRow *row = g_hash_table_lookup(self->channels, channel->channel_id);
-
-    if (!row) {
-        /* Create new row */
-        row = gnostr_channel_row_new();
-
-        /* Connect signals */
-        g_signal_connect(row, "channel-selected",
-                         G_CALLBACK(on_row_channel_selected), self);
-        g_signal_connect(row, "open-profile",
-                         G_CALLBACK(on_row_open_profile), self);
-
-        /* Add to list */
-        gtk_list_box_prepend(self->list_box, GTK_WIDGET(row));
-        g_hash_table_insert(self->channels, g_strdup(channel->channel_id), row);
+    gpointer pos_ptr;
+    if (g_hash_table_lookup_extended(self->index, channel->channel_id, NULL, &pos_ptr)) {
+        /* Update existing item */
+        guint pos = GPOINTER_TO_UINT(pos_ptr);
+        g_autoptr(GnostrChannelItem) item = g_list_model_get_item(G_LIST_MODEL(self->store), pos);
+        if (item) {
+            gnostr_channel_item_update(item, channel);
+            /* Notify the store of the change by removing and re-inserting */
+            g_list_store_remove(self->store, pos);
+            g_list_store_insert(self->store, pos, item);
+            /* Index stays the same for this position */
+        }
+    } else {
+        /* Append new item */
+        g_autoptr(GnostrChannelItem) item = gnostr_channel_item_new(channel);
+        g_list_store_append(self->store, item);
+        rebuild_index(self);
     }
 
-    /* Update row data */
-    gnostr_channel_row_set_channel(row, channel);
-
-    /* Show list, hide empty state */
-    gtk_stack_set_visible_child_name(self->content_stack, "list");
+    update_state(self);
 }
 
 void
@@ -244,19 +335,14 @@ gnostr_channel_list_view_remove_channel(GnostrChannelListView *self,
     g_return_if_fail(GNOSTR_IS_CHANNEL_LIST_VIEW(self));
     g_return_if_fail(channel_id != NULL);
 
-    GnostrChannelRow *row = g_hash_table_lookup(self->channels, channel_id);
-    if (row) {
-        GtkWidget *parent = gtk_widget_get_parent(GTK_WIDGET(row));
-        if (parent && GTK_IS_LIST_BOX_ROW(parent)) {
-            gtk_list_box_remove(self->list_box, parent);
-        }
-        g_hash_table_remove(self->channels, channel_id);
+    gpointer pos_ptr;
+    if (g_hash_table_lookup_extended(self->index, channel_id, NULL, &pos_ptr)) {
+        guint pos = GPOINTER_TO_UINT(pos_ptr);
+        g_list_store_remove(self->store, pos);
+        rebuild_index(self);
     }
 
-    /* Check if empty */
-    if (g_hash_table_size(self->channels) == 0) {
-        gtk_stack_set_visible_child_name(self->content_stack, "empty");
-    }
+    update_state(self);
 }
 
 void
@@ -264,13 +350,8 @@ gnostr_channel_list_view_clear(GnostrChannelListView *self)
 {
     g_return_if_fail(GNOSTR_IS_CHANNEL_LIST_VIEW(self));
 
-    /* Remove all children from list box */
-    GtkWidget *child;
-    while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->list_box))) != NULL) {
-        gtk_list_box_remove(self->list_box, child);
-    }
-
-    g_hash_table_remove_all(self->channels);
+    g_list_store_remove_all(self->store);
+    g_hash_table_remove_all(self->index);
     gtk_stack_set_visible_child_name(self->content_stack, "empty");
 }
 
@@ -285,12 +366,7 @@ gnostr_channel_list_view_set_loading(GnostrChannelListView *self,
         gtk_spinner_start(self->loading_spinner);
     } else {
         gtk_spinner_stop(self->loading_spinner);
-        /* Switch to list or empty based on content */
-        if (g_hash_table_size(self->channels) > 0) {
-            gtk_stack_set_visible_child_name(self->content_stack, "list");
-        } else {
-            gtk_stack_set_visible_child_name(self->content_stack, "empty");
-        }
+        update_state(self);
     }
 }
 
@@ -300,26 +376,19 @@ gnostr_channel_list_view_set_empty(GnostrChannelListView *self,
 {
     g_return_if_fail(GNOSTR_IS_CHANNEL_LIST_VIEW(self));
 
-    if (is_empty) {
+    if (is_empty)
         gtk_stack_set_visible_child_name(self->content_stack, "empty");
-    } else {
+    else
         gtk_stack_set_visible_child_name(self->content_stack, "list");
-    }
 }
 
 const char *
 gnostr_channel_list_view_get_selected_id(GnostrChannelListView *self)
 {
     g_return_val_if_fail(GNOSTR_IS_CHANNEL_LIST_VIEW(self), NULL);
-
-    GtkListBoxRow *selected = gtk_list_box_get_selected_row(self->list_box);
-    if (!selected) return NULL;
-
-    GtkWidget *child = gtk_list_box_row_get_child(selected);
-    if (!child || !GNOSTR_IS_CHANNEL_ROW(child))
-        return NULL;
-
-    return gnostr_channel_row_get_channel_id(GNOSTR_CHANNEL_ROW(child));
+    /* GtkListView with GtkNoSelection has no selected item.
+     * Selection is handled via "channel-selected" signal on row click. */
+    return NULL;
 }
 
 void

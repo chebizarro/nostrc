@@ -57,14 +57,12 @@ template $GnostrChannelListView: Widget {
           vexpand: true;
           hscrollbar-policy: never;
 
-          ListBox list_box {
+          ListView list_view {
             hexpand: true;
             vexpand: true;
-            selection-mode: none;
 
             styles [
               "channel-list",
-              "boxed-list",
             ]
           }
         };
