@@ -2,12 +2,14 @@
  * gnostr-chess-games-browser.c - Chess Games Browser Widget
  *
  * Displays a list of chess games from Nostr relays (NIP-64).
+ * Uses GListStore + GtkListView for scalable list rendering.
  *
  * Copyright (C) 2026 Gnostr Contributors
  */
 
 #include "gnostr-chess-games-browser.h"
 #include "gnostr-chess-card.h"
+#include "../model/gnostr-chess-game-item.h"
 #include <string.h>
 
 struct _GnostrChessGamesBrowser {
@@ -20,12 +22,12 @@ struct _GnostrChessGamesBrowser {
     GtkWidget *refresh_button;
     GtkWidget *loading_spinner;
     GtkWidget *scroll;
-    GtkWidget *games_list;
+    GtkWidget *list_view;
     GtkWidget *empty_label;
 
-    /* Data */
-    GHashTable *games;          /* Reference to plugin's games table */
-    GHashTable *game_rows;      /* event_id -> GtkListBoxRow */
+    /* Model pipeline */
+    GListStore *store;
+    GtkSortListModel *sort_model;
 };
 
 G_DEFINE_TYPE(GnostrChessGamesBrowser, gnostr_chess_games_browser, GTK_TYPE_WIDGET)
@@ -41,9 +43,114 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void on_refresh_clicked(GtkButton *button, gpointer user_data);
-static void on_row_activated(GtkListBox *list_box, GtkListBoxRow *row, gpointer user_data);
 static void populate_games_list(GnostrChessGamesBrowser *self);
-static void clear_games_list(GnostrChessGamesBrowser *self);
+
+/* ============================================================================
+ * Factory Callbacks
+ * ============================================================================ */
+
+static void
+factory_setup(GtkSignalListItemFactory *factory,
+              GtkListItem              *list_item,
+              gpointer                  user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_set_margin_start(row_box, 8);
+    gtk_widget_set_margin_end(row_box, 8);
+    gtk_widget_set_margin_top(row_box, 8);
+    gtk_widget_set_margin_bottom(row_box, 8);
+
+    GtkWidget *players_label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(players_label), 0);
+    gtk_widget_add_css_class(players_label, "heading");
+    gtk_box_append(GTK_BOX(row_box), players_label);
+
+    GtkWidget *info_label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(info_label), 0);
+    gtk_widget_add_css_class(info_label, "dim-label");
+    gtk_box_append(GTK_BOX(row_box), info_label);
+
+    gtk_list_item_set_child(list_item, row_box);
+}
+
+static void
+factory_bind(GtkSignalListItemFactory *factory,
+             GtkListItem              *list_item,
+             gpointer                  user_data)
+{
+    (void)factory;
+    (void)user_data;
+
+    GnostrChessGameItem *item = gtk_list_item_get_item(list_item);
+    GnostrChessGame *game = gnostr_chess_game_item_get_game(item);
+    if (!game)
+        return;
+
+    GtkWidget *row_box = gtk_list_item_get_child(list_item);
+    GtkWidget *players_label = gtk_widget_get_first_child(row_box);
+    GtkWidget *info_label = gtk_widget_get_next_sibling(players_label);
+
+    g_autofree gchar *players = g_strdup_printf("%s vs %s",
+        game->white_player ? game->white_player : "Unknown",
+        game->black_player ? game->black_player : "Unknown");
+    gtk_label_set_text(GTK_LABEL(players_label), players);
+
+    g_autofree gchar *info = g_strdup_printf("%s - %zu moves",
+        game->result_string ? game->result_string : "*",
+        game->moves_count / 2);
+    gtk_label_set_text(GTK_LABEL(info_label), info);
+}
+
+static void
+factory_unbind(GtkSignalListItemFactory *factory,
+               GtkListItem              *list_item,
+               gpointer                  user_data)
+{
+    (void)factory;
+    (void)list_item;
+    (void)user_data;
+}
+
+/* ============================================================================
+ * Sort + Selection
+ * ============================================================================ */
+
+static int
+sort_by_date_desc(gconstpointer a, gconstpointer b, gpointer user_data)
+{
+    (void)user_data;
+
+    GnostrChessGameItem *item_a = (GnostrChessGameItem *)a;
+    GnostrChessGameItem *item_b = (GnostrChessGameItem *)b;
+
+    gint64 ta = gnostr_chess_game_item_get_created_at(item_a);
+    gint64 tb = gnostr_chess_game_item_get_created_at(item_b);
+
+    if (ta > tb) return -1;
+    if (ta < tb) return  1;
+    return 0;
+}
+
+static void
+on_selection_activated(GtkListView *view, guint position, gpointer user_data)
+{
+    GnostrChessGamesBrowser *self = GNOSTR_CHESS_GAMES_BROWSER(user_data);
+    (void)view;
+
+    GtkSelectionModel *sel = gtk_list_view_get_model(GTK_LIST_VIEW(self->list_view));
+    GnostrChessGameItem *item = g_list_model_get_item(G_LIST_MODEL(sel), position);
+    if (!item)
+        return;
+
+    const char *event_id = gnostr_chess_game_item_get_event_id(item);
+    if (event_id)
+        g_signal_emit(self, signals[SIGNAL_GAME_SELECTED], 0, event_id);
+
+    g_object_unref(item);
+}
 
 /* ============================================================================
  * GObject Lifecycle
@@ -59,7 +166,8 @@ gnostr_chess_games_browser_dispose(GObject *object)
         self->main_box = NULL;
     }
 
-    g_clear_pointer(&self->game_rows, g_hash_table_destroy);
+    g_clear_object(&self->store);
+    g_clear_object(&self->sort_model);
 
     G_OBJECT_CLASS(gnostr_chess_games_browser_parent_class)->dispose(object);
 }
@@ -74,13 +182,6 @@ gnostr_chess_games_browser_class_init(GnostrChessGamesBrowserClass *klass)
 
     gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
 
-    /**
-     * GnostrChessGamesBrowser::game-selected:
-     * @browser: The browser
-     * @event_id: The event ID of the selected game
-     *
-     * Emitted when a user clicks on a game in the list.
-     */
     signals[SIGNAL_GAME_SELECTED] = g_signal_new(
         "game-selected",
         G_TYPE_FROM_CLASS(klass),
@@ -91,12 +192,6 @@ gnostr_chess_games_browser_class_init(GnostrChessGamesBrowserClass *klass)
         G_TYPE_NONE, 1,
         G_TYPE_STRING);
 
-    /**
-     * GnostrChessGamesBrowser::refresh-requested:
-     * @browser: The browser
-     *
-     * Emitted when the user clicks the refresh button.
-     */
     signals[SIGNAL_REFRESH_REQUESTED] = g_signal_new(
         "refresh-requested",
         G_TYPE_FROM_CLASS(klass),
@@ -112,7 +207,22 @@ gnostr_chess_games_browser_class_init(GnostrChessGamesBrowserClass *klass)
 static void
 gnostr_chess_games_browser_init(GnostrChessGamesBrowser *self)
 {
-    self->game_rows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    /* Model pipeline: GListStore → GtkSortListModel → GtkNoSelection → ListView */
+    self->store = g_list_store_new(GNOSTR_TYPE_CHESS_GAME_ITEM);
+
+    GtkCustomSorter *sorter = gtk_custom_sorter_new(sort_by_date_desc, NULL, NULL);
+    self->sort_model = gtk_sort_list_model_new(
+        G_LIST_MODEL(g_object_ref(self->store)),
+        GTK_SORTER(sorter));
+
+    GtkNoSelection *selection = gtk_no_selection_new(
+        G_LIST_MODEL(g_object_ref(self->sort_model)));
+
+    /* Factory */
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup",  G_CALLBACK(factory_setup),  self);
+    g_signal_connect(factory, "bind",   G_CALLBACK(factory_bind),   self);
+    g_signal_connect(factory, "unbind", G_CALLBACK(factory_unbind), self);
 
     /* Main container */
     self->main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -145,14 +255,12 @@ gnostr_chess_games_browser_init(GnostrChessGamesBrowser *self)
     gtk_widget_set_vexpand(self->scroll, TRUE);
     gtk_box_append(GTK_BOX(self->main_box), self->scroll);
 
-    self->games_list = gtk_list_box_new();
-    gtk_list_box_set_selection_mode(GTK_LIST_BOX(self->games_list),
-                                     GTK_SELECTION_SINGLE);
-    gtk_widget_add_css_class(self->games_list, "boxed-list");
-    g_signal_connect(self->games_list, "row-activated",
-                     G_CALLBACK(on_row_activated), self);
+    self->list_view = gtk_list_view_new(GTK_SELECTION_MODEL(selection), factory);
+    gtk_list_view_set_single_click_activate(GTK_LIST_VIEW(self->list_view), FALSE);
+    g_signal_connect(self->list_view, "activate",
+                     G_CALLBACK(on_selection_activated), self);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(self->scroll),
-                                   self->games_list);
+                                   self->list_view);
 
     /* Empty state label */
     self->empty_label = gtk_label_new("No games found.\nClick refresh to load games from relays.");
@@ -181,112 +289,22 @@ on_refresh_clicked(GtkButton *button, gpointer user_data)
     g_signal_emit(self, signals[SIGNAL_REFRESH_REQUESTED], 0);
 }
 
-static void
-on_row_activated(GtkListBox *list_box, GtkListBoxRow *row, gpointer user_data)
-{
-    GnostrChessGamesBrowser *self = GNOSTR_CHESS_GAMES_BROWSER(user_data);
-    (void)list_box;
-
-    const char *event_id = g_object_get_data(G_OBJECT(row), "event-id");
-    if (event_id) {
-        g_signal_emit(self, signals[SIGNAL_GAME_SELECTED], 0, event_id);
-    }
-}
-
 /* ============================================================================
  * Helper Functions
  * ============================================================================ */
 
-static gint
-compare_games_by_date(gconstpointer a, gconstpointer b)
-{
-    const GnostrChessGame *game_a = *(const GnostrChessGame **)a;
-    const GnostrChessGame *game_b = *(const GnostrChessGame **)b;
-
-    /* Sort by created_at descending (newest first) */
-    if (game_a->created_at > game_b->created_at) return -1;
-    if (game_a->created_at < game_b->created_at) return 1;
-    return 0;
-}
-
-static void
-clear_games_list(GnostrChessGamesBrowser *self)
-{
-    GtkWidget *child;
-    while ((child = gtk_widget_get_first_child(self->games_list)) != NULL) {
-        gtk_list_box_remove(GTK_LIST_BOX(self->games_list), child);
-    }
-    g_hash_table_remove_all(self->game_rows);
-}
-
 static void
 populate_games_list(GnostrChessGamesBrowser *self)
 {
-    clear_games_list(self);
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->store));
 
-    if (!self->games || g_hash_table_size(self->games) == 0) {
+    if (n == 0) {
         gtk_widget_set_visible(self->scroll, FALSE);
         gtk_widget_set_visible(self->empty_label, TRUE);
-        return;
+    } else {
+        gtk_widget_set_visible(self->scroll, TRUE);
+        gtk_widget_set_visible(self->empty_label, FALSE);
     }
-
-    gtk_widget_set_visible(self->scroll, TRUE);
-    gtk_widget_set_visible(self->empty_label, FALSE);
-
-    /* Collect games into array for sorting */
-    guint n_games = g_hash_table_size(self->games);
-    GPtrArray *games_array = g_ptr_array_new();
-
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, self->games);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        g_ptr_array_add(games_array, value);
-    }
-
-    /* Sort by date (newest first) */
-    g_ptr_array_sort(games_array, compare_games_by_date);
-
-    /* Create rows for each game */
-    for (guint i = 0; i < games_array->len; i++) {
-        GnostrChessGame *game = g_ptr_array_index(games_array, i);
-
-        /* Create a simple row with game info */
-        GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-        gtk_widget_set_margin_start(row_box, 8);
-        gtk_widget_set_margin_end(row_box, 8);
-        gtk_widget_set_margin_top(row_box, 8);
-        gtk_widget_set_margin_bottom(row_box, 8);
-
-        /* Players line */
-        g_autofree gchar *players = g_strdup_printf("%s vs %s",
-            game->white_player ? game->white_player : "Unknown",
-            game->black_player ? game->black_player : "Unknown");
-        GtkWidget *players_label = gtk_label_new(players);
-        gtk_label_set_xalign(GTK_LABEL(players_label), 0);
-        gtk_widget_add_css_class(players_label, "heading");
-        gtk_box_append(GTK_BOX(row_box), players_label);
-
-        /* Result and moves line */
-        g_autofree gchar *info = g_strdup_printf("%s - %zu moves",
-            game->result_string ? game->result_string : "*",
-            game->moves_count / 2);
-        GtkWidget *info_label = gtk_label_new(info);
-        gtk_label_set_xalign(GTK_LABEL(info_label), 0);
-        gtk_widget_add_css_class(info_label, "dim-label");
-        gtk_box_append(GTK_BOX(row_box), info_label);
-
-        /* Create row and store event ID */
-        GtkWidget *row = gtk_list_box_row_new();
-        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
-        g_object_set_data_full(G_OBJECT(row), "event-id",
-                               g_strdup(game->event_id), g_free);
-
-        gtk_list_box_append(GTK_LIST_BOX(self->games_list), row);
-        g_hash_table_insert(self->game_rows, g_strdup(game->event_id), row);
-    }
-
-    g_ptr_array_free(games_array, TRUE);
 }
 
 /* ============================================================================
@@ -305,7 +323,20 @@ gnostr_chess_games_browser_set_games(GnostrChessGamesBrowser *self,
 {
     g_return_if_fail(GNOSTR_IS_CHESS_GAMES_BROWSER(self));
 
-    self->games = games;
+    g_list_store_remove_all(self->store);
+
+    if (games) {
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, games);
+        while (g_hash_table_iter_next(&iter, &key, &value)) {
+            GnostrChessGame *game = value;
+            GnostrChessGameItem *item = gnostr_chess_game_item_new(game);
+            g_list_store_append(self->store, item);
+            g_object_unref(item);
+        }
+    }
+
     populate_games_list(self);
 }
 
