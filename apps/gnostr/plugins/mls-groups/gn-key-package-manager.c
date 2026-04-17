@@ -6,6 +6,7 @@
 
 #include "gn-key-package-manager.h"
 #include <gnostr-plugin-api.h>
+#include <json-glib/json-glib.h>
 
 struct _GnKeyPackageManager
 {
@@ -19,6 +20,9 @@ struct _GnKeyPackageManager
 
   /* Last published key package reference (for rotation tracking) */
   gchar *last_kp_event_id;
+
+  /* Timestamp of last successful key package publish (monotonic, microseconds) */
+  gint64 last_kp_publish_time;
 
   /* Auto-rotation source ID (0 if inactive) */
   guint rotation_source_id;
@@ -56,6 +60,7 @@ gn_key_package_manager_finalize(GObject *object)
   GnKeyPackageManager *self = GN_KEY_PACKAGE_MANAGER(object);
 
   g_clear_pointer(&self->last_kp_event_id, g_free);
+  self->last_kp_publish_time = 0;
 
   G_OBJECT_CLASS(gn_key_package_manager_parent_class)->finalize(object);
 }
@@ -73,9 +78,10 @@ gn_key_package_manager_init(GnKeyPackageManager *self)
 {
   self->service            = NULL;
   self->context            = NULL;
-  self->cancellable        = g_cancellable_new();
-  self->last_kp_event_id   = NULL;
-  self->rotation_source_id = 0;
+  self->cancellable          = g_cancellable_new();
+  self->last_kp_event_id     = NULL;
+  self->last_kp_publish_time = 0;
+  self->rotation_source_id   = 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -122,6 +128,7 @@ on_kp_published(GObject      *source,
   if (ok)
     {
       g_info("KeyPackageManager: key package published successfully");
+      data->manager->last_kp_publish_time = g_get_monotonic_time();
       g_task_return_boolean(data->task, TRUE);
     }
   else
@@ -329,12 +336,23 @@ gn_key_package_manager_ensure_key_package_async(GnKeyPackageManager *self,
   g_task_set_source_tag(task, gn_key_package_manager_ensure_key_package_async);
 
   /*
-   * TODO: Check if a valid key package already exists on relays
-   * before creating a new one. For now, always create fresh.
-   *
-   * Future: Query kind:443 from relays with {"authors": [pubkey]}
-   * and check if any are still valid (not consumed, not expired).
+   * Skip if we published a key package recently (within the rotation
+   * interval). This avoids unnecessary relay bandwidth on repeated
+   * ensure calls (e.g. app restart, re-login).
    */
+  if (self->last_kp_publish_time > 0)
+    {
+      gint64 elapsed_secs = (g_get_monotonic_time() - self->last_kp_publish_time)
+                            / G_USEC_PER_SEC;
+      if (elapsed_secs < KP_ROTATION_INTERVAL_SECS)
+        {
+          g_info("KeyPackageManager: valid key package published %"G_GINT64_FORMAT
+                 "s ago, skipping", elapsed_secs);
+          g_task_return_boolean(task, TRUE);
+          g_object_unref(task);
+          return;
+        }
+    }
 
   g_info("KeyPackageManager: ensuring key package exists");
   create_and_publish_key_package(self, task);
@@ -385,25 +403,79 @@ gn_key_package_manager_publish_relay_list_async(GnKeyPackageManager  *self,
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gn_key_package_manager_publish_relay_list_async);
 
-  /*
-   * TODO: Build a kind:10051 event with relay URLs:
-   *   {
-   *     "kind": 10051,
-   *     "tags": [
-   *       ["relay", "wss://relay1.example.com"],
-   *       ["relay", "wss://relay2.example.com"]
-   *     ],
-   *     "content": ""
-   *   }
-   *
-   * Sign and publish via plugin context.
-   */
-
   g_info("KeyPackageManager: publishing key package relay list (kind:10051)");
 
-  /* Placeholder - return success for now */
-  g_task_return_boolean(task, TRUE);
-  g_object_unref(task);
+  if (relay_urls == NULL || relay_urls[0] == NULL)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                              "No relay URLs provided");
+      g_object_unref(task);
+      return;
+    }
+
+  const gchar *pubkey = gnostr_plugin_context_get_user_pubkey(self->context);
+  if (pubkey == NULL)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                              "User identity not set");
+      g_object_unref(task);
+      return;
+    }
+
+  /*
+   * Build a kind:10051 event (MLS Key Package Relay List):
+   *   {
+   *     "pubkey": "<hex>",
+   *     "kind": 10051,
+   *     "created_at": <now>,
+   *     "tags": [["relay","wss://..."], ["relay","wss://..."]],
+   *     "content": ""
+   *   }
+   */
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  json_builder_set_member_name(builder, "pubkey");
+  json_builder_add_string_value(builder, pubkey);
+
+  json_builder_set_member_name(builder, "kind");
+  json_builder_add_int_value(builder, 10051);
+
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_int_value(builder, g_get_real_time() / G_USEC_PER_SEC);
+
+  json_builder_set_member_name(builder, "tags");
+  json_builder_begin_array(builder);
+  for (gsize i = 0; relay_urls[i] != NULL; i++)
+    {
+      json_builder_begin_array(builder);
+      json_builder_add_string_value(builder, "relay");
+      json_builder_add_string_value(builder, relay_urls[i]);
+      json_builder_end_array(builder);
+    }
+  json_builder_end_array(builder);
+
+  json_builder_set_member_name(builder, "content");
+  json_builder_add_string_value(builder, "");
+
+  json_builder_end_object(builder);
+
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  g_autoptr(JsonNode) root = json_builder_get_root(builder);
+  json_generator_set_root(gen, root);
+  g_autofree gchar *unsigned_json = json_generator_to_data(gen, NULL);
+
+  /* Reuse the CreateKpData + sign → publish chain */
+  CreateKpData *data = g_new0(CreateKpData, 1);
+  data->manager = g_object_ref(self);
+  data->task    = task;
+
+  gnostr_plugin_context_request_sign_event(
+    self->context,
+    unsigned_json,
+    cancellable,
+    on_kp_signed,    /* same sign → publish chain as key packages */
+    data);
 }
 
 gboolean

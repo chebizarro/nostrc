@@ -26,6 +26,7 @@
 #include "ui/gn-group-chat-view.h"
 #include "ui/gn-welcome-list-view.h"
 #include "ui/gn-mls-dm-list-view.h"
+#include <json-glib/json-glib.h>
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
 
@@ -62,6 +63,9 @@ struct _MlsGroupsPlugin
   GnKeyPackageManager *kp_manager;
   GnMlsEventRouter    *event_router;
   GnMlsDmManager      *dm_manager;      /* Phase 6: MLS DMs */
+
+  /* Cache: pubkey_hex → GStrv of relay URLs from kind:10051 events */
+  GHashTable *kp_relay_cache;
   GnMlsMediaManager   *media_manager;   /* Phase 7: Encrypted media */
 
   /* Event subscriptions */
@@ -114,6 +118,7 @@ mls_groups_plugin_dispose(GObject *object)
   g_clear_object(&self->event_router);
   g_clear_object(&self->dm_manager);
   g_clear_object(&self->media_manager);
+  g_clear_pointer(&self->kp_relay_cache, g_hash_table_destroy);
 
   G_OBJECT_CLASS(mls_groups_plugin_parent_class)->dispose(object);
 }
@@ -136,6 +141,8 @@ mls_groups_plugin_init(MlsGroupsPlugin *self)
   self->media_manager           = NULL;
   self->gift_wrap_subscription  = 0;
   self->group_msg_subscription  = 0;
+  self->kp_relay_cache = g_hash_table_new_full(
+    g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_strfreev);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -432,9 +439,48 @@ mls_groups_handle_event(GnostrEventHandler  *handler,
       return FALSE;
 
     case MLS_KIND_KP_RELAY_LIST:
-      g_debug("MLS: Observed key package relay list (kind:10051)");
-      /* TODO Phase 2: Cache relay lists for key package discovery */
-      return FALSE;
+      {
+        MlsGroupsPlugin *self = MLS_GROUPS_PLUGIN(handler);
+        const gchar *author = gnostr_plugin_event_get_pubkey(event);
+        if (author == NULL || self->kp_relay_cache == NULL)
+          return FALSE;
+
+        /* Parse "relay" tags from the tags JSON */
+        g_autofree gchar *tags_json = gnostr_plugin_event_get_tags_json(event);
+        if (tags_json == NULL)
+          return FALSE;
+
+        g_autoptr(JsonParser) p = json_parser_new();
+        if (!json_parser_load_from_data(p, tags_json, -1, NULL))
+          return FALSE;
+
+        JsonArray *tags = json_node_get_array(json_parser_get_root(p));
+        if (tags == NULL)
+          return FALSE;
+
+        g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
+        guint n = json_array_get_length(tags);
+        for (guint i = 0; i < n; i++) {
+          JsonArray *tag = json_array_get_array_element(tags, i);
+          if (tag == NULL || json_array_get_length(tag) < 2) continue;
+          const gchar *name = json_array_get_string_element(tag, 0);
+          if (g_strcmp0(name, "relay") != 0) continue;
+          const gchar *url = json_array_get_string_element(tag, 1);
+          if (url != NULL && url[0] != '\0')
+            g_ptr_array_add(urls, g_strdup(url));
+        }
+
+        if (urls->len > 0) {
+          g_ptr_array_add(urls, NULL);
+          gchar **relay_strv = (gchar **)g_ptr_array_steal(urls, NULL);
+          g_hash_table_replace(self->kp_relay_cache,
+                               g_strdup(author), relay_strv);
+          g_debug("MLS: Cached %u relay(s) for key package discovery from %s",
+                  g_strv_length(relay_strv), author);
+        }
+
+        return FALSE;
+      }
 
     default:
       return FALSE;
