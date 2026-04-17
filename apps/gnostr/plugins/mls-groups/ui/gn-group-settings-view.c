@@ -8,6 +8,7 @@
 #include "gn-member-row.h"
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
+#include <marmot/marmot.h>
 
 struct _GnGroupSettingsView
 {
@@ -274,29 +275,109 @@ on_add_member_clicked(GtkButton *button, gpointer user_data)
   gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), TRUE);
 
   /*
-   * TODO: In a full implementation, we would call an "add member to group"
-   * marmot API that creates an MLS Add proposal + Commit, then sends a
-   * Welcome to the new member. For now, we send an invitation (welcome)
-   * using the existing group state — this is a simplified flow.
-   *
-   * The proper flow requires:
-   * 1. marmot_add_member(group_id, key_package) → welcome + commit
-   * 2. Publish commit as kind:445
-   * 3. Send welcome via NIP-59 gift wrap
-   *
-   * For now we show the UI and log a TODO.
+   * MLS Add+Commit flow:
+   * 1. marmot_add_members(group_id, key_package) → welcome + commit
+   * 2. Publish commit as kind:445 event
+   * 3. Send welcome via NIP-59 gift wrap to the new member
    */
-  g_info("GroupSettings: add member %s requested — "
-         "full MLS Add+Commit flow not yet implemented", pk);
+  const gchar *group_id_hex = marmot_gobject_group_get_mls_group_id(self->group);
+  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
 
-  gtk_label_set_text(self->member_status_label,
-                     "Add member via MLS proposal — coming soon");
+  if (client == NULL || group_id_hex == NULL)
+    {
+      gtk_label_set_text(self->member_status_label, "Service not available");
+      gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), TRUE);
+      gtk_spinner_stop(self->member_spinner);
+      gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), FALSE);
+      gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), TRUE);
+      return;
+    }
+
+  struct Marmot *m = marmot_gobject_client_get_marmot(client);
+  if (m == NULL)
+    {
+      gtk_label_set_text(self->member_status_label, "Marmot not initialized");
+      gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), TRUE);
+      gtk_spinner_stop(self->member_spinner);
+      gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), FALSE);
+      gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), TRUE);
+      return;
+    }
+
+  /* Convert group ID hex → MarmotGroupId */
+  gsize hex_len = strlen(group_id_hex);
+  gsize gid_len = hex_len / 2;
+  g_autofree uint8_t *gid_bytes = g_malloc(gid_len);
+  for (gsize i = 0; i < gid_len; i++)
+    {
+      guint byte_val = 0;
+      sscanf(group_id_hex + (i * 2), "%02x", &byte_val);
+      gid_bytes[i] = (uint8_t)byte_val;
+    }
+  MarmotGroupId mls_gid = marmot_group_id_new(gid_bytes, gid_len);
+
+  /* Call marmot to create Add proposal + Commit + Welcome */
+  const char *kp_array[] = { kp_json, NULL };
+  char **welcome_jsons = NULL;
+  size_t welcome_count = 0;
+  char *commit_json = NULL;
+
+  MarmotError err = marmot_add_members(m, &mls_gid,
+                                        kp_array, 1,
+                                        &welcome_jsons, &welcome_count,
+                                        &commit_json);
+  marmot_group_id_free(&mls_gid);
+
+  if (err != MARMOT_OK)
+    {
+      g_warning("GroupSettings: marmot_add_members failed: %d", err);
+      gtk_label_set_text(self->member_status_label,
+                         "Failed to add member to MLS group");
+      gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), TRUE);
+      gtk_spinner_stop(self->member_spinner);
+      gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), FALSE);
+      gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), TRUE);
+      return;
+    }
+
+  g_info("GroupSettings: marmot_add_members succeeded — %zu welcome(s), commit ready",
+         welcome_count);
+
+  /* Publish the commit event (kind:445) to group relays */
+  if (commit_json != NULL && self->plugin_context != NULL)
+    {
+      g_autoptr(GError) pub_error = NULL;
+      gnostr_plugin_context_publish_event(self->plugin_context, commit_json, &pub_error);
+      if (pub_error != NULL)
+        g_warning("GroupSettings: failed to publish commit: %s", pub_error->message);
+      else
+        g_debug("GroupSettings: commit published");
+      free(commit_json);
+    }
+
+  /* Send welcome(s) via NIP-59 gift wrap to the new member(s) */
+  for (size_t i = 0; i < welcome_count && welcome_jsons != NULL; i++)
+    {
+      if (welcome_jsons[i] != NULL)
+        {
+          gn_mls_event_router_send_welcome_async(
+            self->router, pk, welcome_jsons[i],
+            NULL, NULL, NULL);
+          free(welcome_jsons[i]);
+        }
+    }
+  free(welcome_jsons);
+
+  /* Update UI */
+  gtk_label_set_text(self->member_status_label, "Member added successfully");
   gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), TRUE);
   gtk_spinner_stop(self->member_spinner);
   gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), FALSE);
   gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), TRUE);
-
   gtk_editable_set_text(GTK_EDITABLE(self->add_member_entry), "");
+
+  /* Emit signal so the parent can react */
+  g_signal_emit(self, signals[SIGNAL_MEMBER_ADDED], 0);
 }
 
 static void
@@ -312,13 +393,39 @@ on_leave_clicked(GtkButton *button, gpointer user_data)
 {
   GnGroupSettingsView *self = GN_GROUP_SETTINGS_VIEW(user_data);
 
-  /*
-   * TODO: Call marmot leave_group API when available.
-   * For now, emit signal so the host can navigate back.
-   */
-  g_info("GroupSettings: user requested to leave group %s",
-         marmot_gobject_group_get_mls_group_id(self->group));
+  const gchar *group_id_hex = marmot_gobject_group_get_mls_group_id(self->group);
+  g_info("GroupSettings: user requested to leave group %s", group_id_hex);
 
+  /* Leave the MLS group via libmarmot */
+  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
+  if (client != NULL)
+    {
+      struct Marmot *m = marmot_gobject_client_get_marmot(client);
+      if (m != NULL && group_id_hex != NULL)
+        {
+          gsize hex_len = strlen(group_id_hex);
+          gsize gid_len = hex_len / 2;
+          g_autofree uint8_t *gid_bytes = g_malloc(gid_len);
+
+          for (gsize i = 0; i < gid_len; i++)
+            {
+              guint byte_val = 0;
+              sscanf(group_id_hex + (i * 2), "%02x", &byte_val);
+              gid_bytes[i] = (uint8_t)byte_val;
+            }
+
+          MarmotGroupId mls_gid = marmot_group_id_new(gid_bytes, gid_len);
+          MarmotError err = marmot_leave_group(m, &mls_gid);
+          marmot_group_id_free(&mls_gid);
+
+          if (err != MARMOT_OK)
+            g_warning("GroupSettings: marmot_leave_group failed: %d", err);
+          else
+            g_info("GroupSettings: left group %s", group_id_hex);
+        }
+    }
+
+  /* Navigate back regardless — the group is now inactive locally */
   g_signal_emit(self, signals[SIGNAL_LEFT_GROUP], 0);
 }
 

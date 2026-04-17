@@ -193,8 +193,37 @@ on_message_processed(GObject      *source,
       break;
 
     case MARMOT_GOBJECT_MESSAGE_RESULT_COMMIT:
-      g_debug("MLS EventRouter: commit processed, group state updated");
-      /* TODO: Fetch updated group and emit group-updated */
+      {
+        g_debug("MLS EventRouter: commit processed, group state updated");
+
+        /* Refresh group from storage and notify listeners */
+        if (data->group_id_hex != NULL && data->router->service != NULL)
+          {
+            MarmotGobjectClient *grp_client =
+              gn_marmot_service_get_client(data->router->service);
+            if (grp_client != NULL)
+              {
+                g_autoptr(GError) grp_error = NULL;
+                g_autoptr(MarmotGobjectGroup) updated_group =
+                  marmot_gobject_client_get_group(grp_client,
+                                                   data->group_id_hex,
+                                                   &grp_error);
+                if (updated_group != NULL)
+                  {
+                    g_info("MLS EventRouter: emitting group-updated for %s",
+                           data->group_id_hex);
+                    g_signal_emit_by_name(data->router->service,
+                                          "group-updated", updated_group);
+                  }
+                else
+                  {
+                    g_warning("MLS EventRouter: could not fetch group %s after commit: %s",
+                              data->group_id_hex,
+                              grp_error ? grp_error->message : "unknown");
+                  }
+              }
+          }
+      }
       break;
 
     case MARMOT_GOBJECT_MESSAGE_RESULT_OWN_MESSAGE:
