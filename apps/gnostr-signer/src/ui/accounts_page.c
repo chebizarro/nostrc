@@ -1,4 +1,7 @@
 #include <gtk/gtk.h>
+#include <adwaita.h>
+#include "sheets/sheet-import-key.h"
+#include "sheets/sheet-create-account.h"
 
 static void on_toggle_visibility(GtkButton *btn, gpointer user_data) {
   GtkEntry *entry = GTK_ENTRY(user_data);
@@ -18,18 +21,60 @@ static void on_toggle_visibility(GtkButton *btn, gpointer user_data) {
                                  -1);
 }
 
-static void on_add_identity(GtkButton *btn, gpointer user_data) {
-  (void)btn; GtkWindow *win = GTK_WINDOW(user_data);
-  GtkAlertDialog *dlg = gtk_alert_dialog_new("Add identity not implemented here. Use Settings → Import Key.");
-  gtk_alert_dialog_show(dlg, win);
-  g_object_unref(dlg);
+/* ── Import success callback ─────────────────────────────────────── */
+
+static void
+on_import_key_success(const char *npub, const char *label, gpointer user_data)
+{
+  GtkWindow *win = GTK_WINDOW(user_data);
+  (void)label;
+
+  if (npub && *npub)
+    {
+      g_autofree char *msg = g_strdup_printf("Identity added: %s", npub);
+      GtkAlertDialog *dlg = gtk_alert_dialog_new("%s", msg);
+      gtk_alert_dialog_show(dlg, win);
+      g_object_unref(dlg);
+    }
 }
 
-static void on_generate(GtkButton *btn, gpointer user_data) {
-  (void)btn; GtkWindow *win = GTK_WINDOW(user_data);
-  GtkAlertDialog *dlg = gtk_alert_dialog_new("Key generation not implemented yet");
-  gtk_alert_dialog_show(dlg, win);
-  g_object_unref(dlg);
+/* ── Account creation success callback ───────────────────────────── */
+
+static void
+on_account_created(const gchar *npub, gpointer user_data)
+{
+  GtkWindow *win = GTK_WINDOW(user_data);
+
+  if (npub && *npub)
+    {
+      g_autofree char *msg = g_strdup_printf("New identity created: %s", npub);
+      GtkAlertDialog *dlg = gtk_alert_dialog_new("%s", msg);
+      gtk_alert_dialog_show(dlg, win);
+      g_object_unref(dlg);
+    }
+}
+
+/* ── Button handlers ─────────────────────────────────────────────── */
+
+static void on_add_identity(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GtkWindow *win = GTK_WINDOW(user_data);
+
+  SheetImportKey *dlg = sheet_import_key_new();
+  sheet_import_key_set_on_success(dlg, on_import_key_success, win);
+  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(win));
+}
+
+static gboolean on_generate(GtkLinkButton *btn, gpointer user_data) {
+  (void)btn;
+  GtkWindow *win = GTK_WINDOW(user_data);
+
+  SheetCreateAccount *dlg = sheet_create_account_new();
+  sheet_create_account_set_on_created(dlg, on_account_created, win);
+  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(win));
+
+  /* Return TRUE to prevent the link button from trying to open a URL */
+  return TRUE;
 }
 
 GtkWidget *gnostr_accounts_page_new(GtkWindow *parent) {
