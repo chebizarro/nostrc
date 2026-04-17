@@ -119,6 +119,24 @@ gboolean gn_profile_list_model_is_loading(GnProfileListModel *self);
  */
 guint gn_profile_list_model_get_total_count(GnProfileListModel *self);
 
+/**
+ * gn_profile_list_model_load_more:
+ * @self: the profile list model
+ * @count: number of additional profiles to load
+ *
+ * Load the next batch of profiles from nostrdb using cursor-based pagination.
+ * Appends to the existing model. No-op if all profiles are already loaded.
+ */
+void gn_profile_list_model_load_more(GnProfileListModel *self, guint count);
+
+/**
+ * gn_profile_list_model_get_all_loaded:
+ * @self: the profile list model
+ *
+ * Returns: TRUE if all available profiles from nostrdb have been loaded.
+ */
+gboolean gn_profile_list_model_get_all_loaded(GnProfileListModel *self);
+
 G_END_DECLS
 
 #endif /* GN_PROFILE_LIST_MODEL_H */

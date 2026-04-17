@@ -14,10 +14,9 @@
 #include <string.h>
 #include <stdio.h>
 
-/* Maximum profiles to load - set high to get all cached profiles.
- * nostrc-v6sx: Increased from 500 to 50000 to show all nostrdb-cached profiles. */
-#define PROFILE_LOAD_LIMIT 50000
-#define PROFILE_BATCH_SIZE 50
+/* nostrc-bawd: Sliding window - load profiles in batches on demand */
+#define PROFILE_INITIAL_BATCH 200
+#define PROFILE_PAGE_SIZE 200
 
 /* Profile entry for internal storage */
 typedef struct {
@@ -51,6 +50,10 @@ struct _GnProfileListModel {
     GHashTable *blocked_set;     /* pubkey hex -> GINT_TO_POINTER(1) */
     gboolean is_loading;
     guint total_count;
+
+    /* Pagination state (nostrc-bawd) */
+    gint64 oldest_loaded_at;   /* cursor: created_at of oldest loaded profile */
+    gboolean all_loaded;       /* TRUE when nostrdb has no more profiles */
 };
 
 static void gn_profile_list_model_list_model_iface_init(GListModelInterface *iface);
@@ -337,6 +340,8 @@ gn_profile_list_model_init(GnProfileListModel *self)
     self->filter_text = NULL;
     self->is_loading = FALSE;
     self->total_count = 0;
+    self->oldest_loaded_at = G_MAXINT64;
+    self->all_loaded = FALSE;
 }
 
 GnProfileListModel *
@@ -392,6 +397,8 @@ parse_profile_from_event_json(const char *json_str, int json_len)
 typedef struct {
     GnProfileListModel *model;
     GPtrArray *loaded_profiles;
+    guint requested_limit;   /* how many we asked for */
+    gint64 until_cursor;     /* 0 = no cursor (initial load) */
 } LoadProfilesData;
 
 static void
@@ -411,14 +418,17 @@ static void
 load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data, GCancellable *cancellable)
 {
     (void)source_object;
-    (void)task_data;
     (void)cancellable;
 
-    LoadProfilesData *data = g_new0(LoadProfilesData, 1);
-    /* Don't use a free function - ownership will be transferred to all_profiles */
+    /* Retrieve pagination parameters from task data */
+    LoadProfilesData *params = (LoadProfilesData *)task_data;
+    guint limit = params->requested_limit;
+    gint64 until_cursor = params->until_cursor;
+
+    LoadProfilesData *data = params; /* reuse the struct for results */
     data->loaded_profiles = g_ptr_array_new();
 
-    /* Query nostrdb for all kind:0 events */
+    /* Query nostrdb for kind:0 events */
     void *txn = NULL;
     int rc = storage_ndb_begin_query_retry(&txn, 5, 10, NULL);
     if (rc != 0 || !txn) {
@@ -427,9 +437,16 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
         return;
     }
 
-    /* Query for kind:0 events with limit */
-    char filter_json[128];
-    snprintf(filter_json, sizeof(filter_json), "{\"kinds\":[0],\"limit\":%d}", PROFILE_LOAD_LIMIT);
+    /* Query for kind:0 events with limit and optional cursor */
+    char filter_json[256];
+    if (until_cursor > 0 && until_cursor < G_MAXINT64) {
+        snprintf(filter_json, sizeof(filter_json),
+                 "{\"kinds\":[0],\"limit\":%u,\"until\":%" G_GINT64_FORMAT "}",
+                 limit, until_cursor - 1);
+    } else {
+        snprintf(filter_json, sizeof(filter_json),
+                 "{\"kinds\":[0],\"limit\":%u}", limit);
+    }
 
     char **results = NULL;
     int result_count = 0;
@@ -476,23 +493,31 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
     }
 
     if (data && data->loaded_profiles) {
-        guint old_len = self->all_profiles->len;
-        g_message("profile-list-model: load complete - %u profiles loaded", data->loaded_profiles->len);
+        gboolean is_initial = (data->until_cursor == 0 || data->until_cursor == G_MAXINT64);
+        g_message("profile-list-model: load complete - %u profiles loaded (initial=%d)",
+                  data->loaded_profiles->len, is_initial);
 
-        /* Clear old profiles */
-        g_ptr_array_set_size(self->all_profiles, 0);
+        /* For initial load, clear existing profiles */
+        if (is_initial) {
+            g_ptr_array_set_size(self->all_profiles, 0);
+            self->oldest_loaded_at = G_MAXINT64;
+        }
 
-        /* Hash table to deduplicate by pubkey */
+        /* Build dedup set from existing profiles */
         GHashTable *seen_pubkeys = g_hash_table_new(g_str_hash, g_str_equal);
+        for (guint i = 0; i < self->all_profiles->len; i++) {
+            ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
+            const char *pk = gnostr_profile_get_pubkey(entry->profile);
+            if (pk) g_hash_table_add(seen_pubkeys, (gpointer)pk);
+        }
 
         /* Transfer loaded profiles, deduplicating by pubkey */
+        guint added = 0;
         for (guint i = 0; i < data->loaded_profiles->len; i++) {
             ProfileEntry *entry = g_ptr_array_index(data->loaded_profiles, i);
-
-            /* Update following and muted status */
             const char *pubkey = gnostr_profile_get_pubkey(entry->profile);
 
-            /* Skip duplicate pubkeys - keep the first (most recent) one */
+            /* Skip duplicate pubkeys */
             if (pubkey && g_hash_table_contains(seen_pubkeys, pubkey)) {
                 profile_entry_free(entry);
                 continue;
@@ -500,18 +525,25 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
 
             if (pubkey) {
                 g_hash_table_add(seen_pubkeys, (gpointer)pubkey);
-                if (g_hash_table_contains(self->following_set, pubkey)) {
+                if (g_hash_table_contains(self->following_set, pubkey))
                     entry->is_following = TRUE;
-                }
-                if (g_hash_table_contains(self->muted_set, pubkey)) {
+                if (g_hash_table_contains(self->muted_set, pubkey))
                     entry->is_muted = TRUE;
-                }
             }
 
+            /* Track oldest timestamp for cursor pagination */
+            if (entry->created_at < self->oldest_loaded_at)
+                self->oldest_loaded_at = entry->created_at;
+
             g_ptr_array_add(self->all_profiles, entry);
+            added++;
         }
 
         g_hash_table_destroy(seen_pubkeys);
+
+        /* If we got fewer results than requested, we've reached the end */
+        if (data->loaded_profiles->len < data->requested_limit)
+            self->all_loaded = TRUE;
 
         /* Clear the loaded array - entries are now owned by all_profiles */
         g_ptr_array_set_size(data->loaded_profiles, 0);
@@ -523,7 +555,8 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
 
         g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_TOTAL_COUNT]);
 
-        (void)old_len;
+        g_message("profile-list-model: now have %u total profiles (added %u, all_loaded=%d)",
+                  self->total_count, added, self->all_loaded);
     }
 
     /* Mark loading complete */
@@ -535,6 +568,22 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
     }
 }
 
+static void
+start_load_task(GnProfileListModel *self, guint limit, gint64 until_cursor)
+{
+    self->is_loading = TRUE;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LOADING]);
+
+    LoadProfilesData *params = g_new0(LoadProfilesData, 1);
+    params->requested_limit = limit;
+    params->until_cursor = until_cursor;
+
+    GTask *task = g_task_new(self, NULL, load_profiles_complete, NULL);
+    g_task_set_task_data(task, params, NULL); /* freed in load_profiles_data_free via return */
+    g_task_run_in_thread(task, load_profiles_in_thread);
+    g_object_unref(task);
+}
+
 void
 gn_profile_list_model_load_profiles(GnProfileListModel *self)
 {
@@ -543,14 +592,35 @@ gn_profile_list_model_load_profiles(GnProfileListModel *self)
     if (self->is_loading)
         return;
 
-    self->is_loading = TRUE;
-    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LOADING]);
+    /* Reset pagination state for fresh load */
+    self->oldest_loaded_at = G_MAXINT64;
+    self->all_loaded = FALSE;
 
-    /* Pass self as source_object so GTask holds a reference and we can safely
-     * access it in the callback even if the caller drops their reference */
-    GTask *task = g_task_new(self, NULL, load_profiles_complete, NULL);
-    g_task_run_in_thread(task, load_profiles_in_thread);
-    g_object_unref(task);
+    start_load_task(self, PROFILE_INITIAL_BATCH, 0);
+}
+
+void
+gn_profile_list_model_load_more(GnProfileListModel *self, guint count)
+{
+    g_return_if_fail(GN_IS_PROFILE_LIST_MODEL(self));
+
+    if (self->is_loading || self->all_loaded)
+        return;
+
+    if (count == 0)
+        count = PROFILE_PAGE_SIZE;
+
+    g_message("profile-list-model: load_more requested, count=%u, cursor=%" G_GINT64_FORMAT,
+              count, self->oldest_loaded_at);
+
+    start_load_task(self, count, self->oldest_loaded_at);
+}
+
+gboolean
+gn_profile_list_model_get_all_loaded(GnProfileListModel *self)
+{
+    g_return_val_if_fail(GN_IS_PROFILE_LIST_MODEL(self), TRUE);
+    return self->all_loaded;
 }
 
 void

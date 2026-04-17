@@ -9,6 +9,8 @@
 
 #define SEARCH_DEBOUNCE_MS 300
 #define MAX_NETWORK_SEARCH_RESULTS 50
+#define SCROLL_LOAD_MORE_THRESHOLD 0.8  /* Load more when 80% scrolled */
+#define SCROLL_LOAD_MORE_BATCH 200
 
 #define GNOSTR_TYPE_NETWORK_RESULT_ITEM (gnostr_network_result_item_get_type())
 G_DECLARE_FINAL_TYPE(GnostrNetworkResultItem, gnostr_network_result_item, GNOSTR, NETWORK_RESULT_ITEM, GObject)
@@ -68,6 +70,34 @@ static void update_profile_count(GnostrPageDiscover *self);
 static void switch_to_local_model(GnostrPageDiscover *self);
 static void switch_to_network_model(GnostrPageDiscover *self);
 static gboolean search_debounce_cb(gpointer user_data);
+
+/* nostrc-bawd: Scroll-driven pagination for local profile list */
+static void
+on_scroller_vadjustment_changed(GtkAdjustment *adj, GnostrPageDiscover *self)
+{
+    if (!self->is_local_mode || !self->profile_model)
+        return;
+
+    if (gn_profile_list_model_is_loading(self->profile_model))
+        return;
+
+    if (gn_profile_list_model_get_all_loaded(self->profile_model))
+        return;
+
+    gdouble value = gtk_adjustment_get_value(adj);
+    gdouble upper = gtk_adjustment_get_upper(adj);
+    gdouble page_size = gtk_adjustment_get_page_size(adj);
+
+    if (upper <= page_size)
+        return; /* Content doesn't fill the viewport yet */
+
+    gdouble scroll_fraction = (value + page_size) / upper;
+    if (scroll_fraction >= SCROLL_LOAD_MORE_THRESHOLD) {
+        g_message("discover-people: scroll threshold reached (%.0f%%), loading more profiles",
+                  scroll_fraction * 100.0);
+        gn_profile_list_model_load_more(self->profile_model, SCROLL_LOAD_MORE_BATCH);
+    }
+}
 
 static void
 on_local_row_open_profile(GnostrProfileRow *row, const char *pubkey, GnostrPageDiscover *self)
@@ -268,12 +298,15 @@ update_profile_count(GnostrPageDiscover *self)
     if (self->is_local_mode) {
         guint count = g_list_model_get_n_items(G_LIST_MODEL(self->profile_model));
         guint total = gn_profile_list_model_get_total_count(self->profile_model);
+        gboolean all_loaded = gn_profile_list_model_get_all_loaded(self->profile_model);
 
         g_autofree char *text = NULL;
-        if (count == total) {
+        if (all_loaded && count == total) {
             text = g_strdup_printf("%u profiles", total);
-        } else {
+        } else if (all_loaded) {
             text = g_strdup_printf("%u of %u profiles", count, total);
+        } else {
+            text = g_strdup_printf("%u profiles loaded…", count);
         }
         gtk_label_set_text(self->lbl_profile_count, text);
     } else {
@@ -569,6 +602,11 @@ gnostr_page_discover_people_init(GnostrPageDiscover *self)
     g_signal_connect(self->profile_model, "items-changed",
                      G_CALLBACK(on_model_items_changed), self);
 
+    /* nostrc-bawd: Connect scroll-driven pagination */
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(self->scroller);
+    g_signal_connect(vadj, "value-changed",
+                     G_CALLBACK(on_scroller_vadjustment_changed), self);
+
     gtk_toggle_button_set_active(self->btn_local, TRUE);
     switch_to_local_model(self);
 }
@@ -577,6 +615,13 @@ void
 gnostr_page_discover_people_dispose(GnostrPageDiscover *self)
 {
     g_return_if_fail(GNOSTR_IS_PAGE_DISCOVER(self));
+
+    /* Disconnect scroll handler */
+    if (self->scroller) {
+        GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(self->scroller);
+        if (vadj)
+            g_signal_handlers_disconnect_by_func(vadj, on_scroller_vadjustment_changed, self);
+    }
 
     gnostr_debounce_free(self->search_debounce);
     self->search_debounce = NULL;
