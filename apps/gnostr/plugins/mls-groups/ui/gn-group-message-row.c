@@ -5,6 +5,8 @@
  */
 
 #include "gn-group-message-row.h"
+#include <gnostr-plugin-api.h>
+#include <json-glib/json-glib.h>
 #include <glib/gi18n.h>
 
 struct _GnGroupMessageRow
@@ -97,6 +99,72 @@ format_timestamp(gint64 created_at)
     return g_date_time_format(dt, "%b %d, %H:%M");
 }
 
+/* ── Profile name resolution ─────────────────────────────────────── */
+
+/**
+ * resolve_display_name:
+ * @plugin_context: (nullable): Plugin context for nostrdb queries
+ * @pubkey_hex: 64-char hex pubkey of the sender
+ *
+ * Attempt to resolve a display name from the local nostrdb cache.
+ * Queries for a kind:0 (profile metadata) event authored by the pubkey.
+ *
+ * Returns: (transfer full) (nullable): Display name, or %NULL if not found.
+ */
+static gchar *
+resolve_display_name(GnostrPluginContext *plugin_context,
+                     const gchar        *pubkey_hex)
+{
+  if (plugin_context == NULL || pubkey_hex == NULL)
+    return NULL;
+
+  /* Build a NIP-01 filter for kind:0 from this author */
+  g_autofree gchar *filter = g_strdup_printf(
+    "{\"kinds\":[0],\"authors\":[\"%s\"],\"limit\":1}", pubkey_hex);
+
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) results =
+    gnostr_plugin_context_query_events(plugin_context, filter, &error);
+
+  if (results == NULL || results->len == 0)
+    return NULL;
+
+  const gchar *event_json = g_ptr_array_index(results, 0);
+  if (event_json == NULL)
+    return NULL;
+
+  /* Parse the content field which contains the profile JSON */
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, event_json, -1, NULL))
+    return NULL;
+
+  JsonObject *event_obj = json_node_get_object(json_parser_get_root(parser));
+  const gchar *content = json_object_get_string_member_with_default(
+    event_obj, "content", NULL);
+  if (content == NULL || *content == '\0')
+    return NULL;
+
+  /* Parse the profile content JSON for "display_name" or "name" */
+  g_autoptr(JsonParser) profile_parser = json_parser_new();
+  if (!json_parser_load_from_data(profile_parser, content, -1, NULL))
+    return NULL;
+
+  JsonObject *profile = json_node_get_object(
+    json_parser_get_root(profile_parser));
+
+  const gchar *display_name = json_object_get_string_member_with_default(
+    profile, "display_name", NULL);
+  if (display_name != NULL && *display_name != '\0')
+    return g_strdup(display_name);
+
+  const gchar *name = json_object_get_string_member_with_default(
+    profile, "name", NULL);
+  if (name != NULL && *name != '\0')
+    return g_strdup(name);
+
+  return NULL;
+}
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 GnGroupMessageRow *
@@ -108,7 +176,8 @@ gn_group_message_row_new(void)
 void
 gn_group_message_row_bind(GnGroupMessageRow    *self,
                            MarmotGobjectMessage *message,
-                           const gchar          *user_pubkey_hex)
+                           const gchar          *user_pubkey_hex,
+                           GnostrPluginContext  *plugin_context)
 {
   g_return_if_fail(GN_IS_GROUP_MESSAGE_ROW(self));
   g_return_if_fail(MARMOT_GOBJECT_IS_MESSAGE(message));
@@ -122,20 +191,30 @@ gn_group_message_row_bind(GnGroupMessageRow    *self,
   self->is_own = (user_pubkey_hex != NULL &&
                   g_strcmp0(sender_hex, user_pubkey_hex) == 0);
 
-  /* Sender label: show truncated pubkey (TODO: resolve to display name) */
+  /* Sender label: resolve display name from nostrdb profile cache */
   if (self->is_own)
     {
       gtk_label_set_text(self->sender_label, "You");
     }
-  else if (sender_hex && strlen(sender_hex) >= 16)
-    {
-      g_autofree gchar *short_pk = g_strndup(sender_hex, 8);
-      g_autofree gchar *display = g_strdup_printf("%.8s…", short_pk);
-      gtk_label_set_text(self->sender_label, display);
-    }
   else
     {
-      gtk_label_set_text(self->sender_label, "Unknown");
+      g_autofree gchar *display_name =
+        resolve_display_name(plugin_context, sender_hex);
+
+      if (display_name != NULL)
+        {
+          gtk_label_set_text(self->sender_label, display_name);
+        }
+      else if (sender_hex && strlen(sender_hex) >= 16)
+        {
+          g_autofree gchar *short_pk = g_strndup(sender_hex, 8);
+          g_autofree gchar *display = g_strdup_printf("%.8s…", short_pk);
+          gtk_label_set_text(self->sender_label, display);
+        }
+      else
+        {
+          gtk_label_set_text(self->sender_label, "Unknown");
+        }
     }
 
   /* Content */

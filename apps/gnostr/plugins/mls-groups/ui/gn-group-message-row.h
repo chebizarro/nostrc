@@ -13,6 +13,11 @@
 #include <gtk/gtk.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
 
+/* Forward declaration — full definition in gnostr-plugin-api.h */
+#ifndef GNOSTR_PLUGIN_API_H
+typedef struct _GnostrPluginContext GnostrPluginContext;
+#endif
+
 G_BEGIN_DECLS
 
 #define GN_TYPE_GROUP_MESSAGE_ROW (gn_group_message_row_get_type())
@@ -23,7 +28,8 @@ GnGroupMessageRow *gn_group_message_row_new(void);
 
 void gn_group_message_row_bind(GnGroupMessageRow    *self,
                                 MarmotGobjectMessage *message,
-                                const gchar          *user_pubkey_hex);
+                                const gchar          *user_pubkey_hex,
+                                GnostrPluginContext  *plugin_context);
 
 void gn_group_message_row_unbind(GnGroupMessageRow *self);
 

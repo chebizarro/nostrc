@@ -54,7 +54,7 @@ on_msg_factory_bind(GtkSignalListItemFactory *factory,
   MarmotGobjectMessage *msg = gtk_list_item_get_item(list_item);
 
   const gchar *user_pk = gn_marmot_service_get_user_pubkey_hex(self->service);
-  gn_group_message_row_bind(row, msg, user_pk);
+  gn_group_message_row_bind(row, msg, user_pk, self->plugin_context);
 }
 
 static void
@@ -85,7 +85,18 @@ on_message_sent(GObject      *source,
     {
       g_warning("GroupChatView: failed to send message: %s",
                 error ? error->message : "unknown");
-      /* TODO: Show inline error toast */
+
+      /* Show error toast via the nearest AdwToastOverlay ancestor */
+      GtkWidget *overlay = gtk_widget_get_ancestor(
+        GTK_WIDGET(self), ADW_TYPE_TOAST_OVERLAY);
+      if (overlay != NULL)
+        {
+          g_autofree gchar *msg = g_strdup_printf(
+            "Failed to send: %s",
+            error ? error->message : "unknown error");
+          adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(overlay),
+                                     adw_toast_new(msg));
+        }
     }
 
   g_object_unref(self);   /* Release the ref we took for the async op */

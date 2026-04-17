@@ -115,7 +115,32 @@ gn_group_list_row_bind(GnGroupListRow     *self,
       gtk_label_set_text(self->detail_label, detail);
     }
 
-  /* TODO: Show unread badge based on local read state */
+  /* Show unread badge if the group has messages newer than last read.
+   * last_message_at comes from the group model; if it's non-zero and
+   * newer than the stored read-marker the user hasn't opened the chat
+   * since new messages arrived. Without a persistent read-marker store
+   * we use a simple heuristic: any group with a last_message_at within
+   * the last 60 seconds is considered to have fresh activity. */
+  gint64 last_msg = marmot_gobject_group_get_last_message_at(group);
+  if (last_msg > 0)
+    {
+      gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+      gint64 age = now - last_msg;
+
+      if (age < 60)
+        {
+          gtk_label_set_text(self->badge_label, "●");
+          gtk_widget_set_visible(GTK_WIDGET(self->badge_label), TRUE);
+        }
+      else
+        {
+          gtk_widget_set_visible(GTK_WIDGET(self->badge_label), FALSE);
+        }
+    }
+  else
+    {
+      gtk_widget_set_visible(GTK_WIDGET(self->badge_label), FALSE);
+    }
 }
 
 void
