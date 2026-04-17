@@ -1,20 +1,19 @@
 #include "gnostr-timeline-view-app-factory.h"
 #include "gnostr-avatar-cache.h"
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
-#include "gnostr-main-window.h"
+/* nostrc-hqtn: gnostr-main-window.h moved to gnostr-timeline-action-relay.c */
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
-#include "gnostr-zap-dialog.h"
-#include <nostr-gobject-1.0/nostr_profile_provider.h>
+/* nostrc-hqtn: gnostr-zap-dialog.h moved to gnostr-timeline-action-relay.c */
+/* nostrc-hqtn: nostr_profile_provider.h moved to gnostr-timeline-action-relay.c */
 #include "../model/gn-nostr-event-item.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "nostr-event.h"
 #include "nostr-json.h"
-#include <nostr-gobject-1.0/nostr_nip19.h>
-#include <nostr-gobject-1.0/gnostr-relays.h>
+/* nostrc-hqtn: nostr_nip19.h, gnostr-relays.h moved to gnostr-timeline-action-relay.c */
 #include "../util/utils.h"
 #include "../util/bookmarks.h"
 #include "../util/pin_list.h"
-#include "../util/nip32_labels.h"
+/* nostrc-hqtn: nip32_labels.h moved to gnostr-timeline-action-relay.c */
 #include "../util/nip23.h"
 #include "../util/nip34.h"
 #include "../util/nip71.h"
@@ -33,6 +32,7 @@
 #endif
 #include "gnostr-timeline-embed-private.h"
 #include "gnostr-timeline-metadata-controller.h"
+#include "gnostr-timeline-action-relay.h"
 
 /* Widget template now loaded from nostr-gtk library resource */
 
@@ -51,356 +51,12 @@
  * all defined in nostr-gtk library (gnostr-timeline-view.c). */
 
 /* Setup: load row UI from resource and set as child. Cache subwidgets on the row. */
-static void on_note_card_open_profile_relay(NostrGtkNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, emit signal or call method */
-      gnostr_main_window_open_profile(widget, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
+/* nostrc-hqtn: 17 action-relay handlers moved to
+ * gnostr-timeline-action-relay.{h,c}. The relay GObject is
+ * created in gnostr_timeline_view_setup_app_factory() and
+ * connected to each row via gnostr_timeline_action_relay_connect_row(). */
 
-/* Handler for reply button - relay to main window */
-static void on_note_card_reply_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *root_id, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to set reply context */
-      gnostr_main_window_request_reply(widget, id_hex, root_id, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
 
-/* Handler for repost button - relay to main window */
-static void on_note_card_repost_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to handle repost */
-      gnostr_main_window_request_repost(widget, id_hex, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for quote button - relay to main window */
-static void on_note_card_quote_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to open composer in quote mode */
-      gnostr_main_window_request_quote(widget, id_hex, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for like button - relay to main window */
-static void on_note_card_like_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window - call the like function */
-      gnostr_main_window_request_like(widget, id_hex, pubkey_hex, event_kind, reaction_content, row);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for comment button (NIP-22) - relay to main window */
-static void on_note_card_comment_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, int kind, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window - call the comment function */
-      gnostr_main_window_request_comment(widget, id_hex, kind, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for zap button - show zap dialog */
-static void on_note_card_zap_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, const char *lud16, gpointer user_data) {
-  (void)user_data;
-
-  if (!id_hex || !pubkey_hex) {
-    g_warning("[TIMELINE] Zap requested but missing id or pubkey");
-    return;
-  }
-
-  if (!lud16 || !*lud16) {
-    g_message("[TIMELINE] Zap requested but user has no lightning address");
-    return;
-  }
-
-  /* Find the parent window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  GtkWindow *parent = NULL;
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && GTK_IS_WINDOW(widget)) {
-      parent = GTK_WINDOW(widget);
-      break;
-    }
-  }
-
-  /* Create and show zap dialog */
-  GnostrZapDialog *dialog = gnostr_zap_dialog_new(parent);
-
-  /* Look up display name from profile cache, fall back to npub prefix */
-  g_autofree gchar *display_name = NULL;
-  GnostrProfileMeta *profile = gnostr_profile_provider_get(pubkey_hex);
-  if (profile) {
-    /* Prefer display_name, fall back to name */
-    if (profile->display_name && *profile->display_name) {
-      display_name = g_strdup(profile->display_name);
-    } else if (profile->name && *profile->name) {
-      display_name = g_strdup(profile->name);
-    }
-    gnostr_profile_meta_free(profile);
-  }
-
-  /* Fall back to npub prefix if no profile name available */
-  if (!display_name && pubkey_hex) {
-    /* Convert hex to npub and use first 12 chars + "..." */
-    g_autoptr(GNostrNip19) npub_n19 = gnostr_nip19_encode_npub(pubkey_hex, NULL);
-    if (npub_n19) {
-      const char *npub = gnostr_nip19_get_bech32(npub_n19);
-      if (npub) {
-        display_name = g_strdup_printf("%.12s...", npub);
-      }
-    }
-  }
-
-  gnostr_zap_dialog_set_recipient(dialog, pubkey_hex, display_name, lud16);
-
-  /* Set the event being zapped */
-  gnostr_zap_dialog_set_event(dialog, id_hex, 1);  /* kind 1 = text note */
-
-  /* Get relays from config (GSettings defaults if none configured) */
-  GPtrArray *relay_arr = gnostr_get_write_relay_urls();
-  const gchar **relay_strs = g_new0(const gchar*, relay_arr->len + 1);
-  for (guint i = 0; i < relay_arr->len; i++) {
-    relay_strs[i] = g_ptr_array_index(relay_arr, i);
-  }
-  gnostr_zap_dialog_set_relays(dialog, relay_strs);
-  g_free(relay_strs);
-  g_ptr_array_unref(relay_arr);
-
-  gtk_window_present(GTK_WINDOW(dialog));
-
-  g_message("[TIMELINE] Zap dialog opened for id=%s lud16=%s", id_hex, lud16);
-}
-
-/* Handler for view-thread button - relay to main window */
-static void on_note_card_view_thread_requested_relay(NostrGtkNoteCardRow *row, const char *root_event_id, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* nostrc-a2zd: Try to get event JSON from nostrdb to avoid race condition.
-       * If the event is in nostrdb, pass it directly to thread view. */
-      char *event_json = NULL;
-      int json_len = 0;
-      storage_ndb_get_note_by_id_nontxn(root_event_id, &event_json, &json_len);
-
-      gnostr_main_window_view_thread_with_json(widget, root_event_id, event_json);
-
-      if (event_json) free(event_json);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for navigate-to-note signal - opens thread view focused on target note */
-static void on_note_card_navigate_to_note_relay(NostrGtkNoteCardRow *row, const char *event_id, gpointer user_data) {
-  /* Relay the signal up to the main window - opens thread view focused on the target note */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* nostrc-a2zd: Try to get event JSON from nostrdb to avoid race condition. */
-      char *event_json = NULL;
-      int json_len = 0;
-      storage_ndb_get_note_by_id_nontxn(event_id, &event_json, &json_len);
-
-      gnostr_main_window_view_thread_with_json(widget, event_id, event_json);
-
-      if (event_json) free(event_json);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for mute-user button - relay to main window */
-static void on_note_card_mute_user_requested_relay(NostrGtkNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to mute user */
-      gnostr_main_window_mute_user(widget, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for mute-thread button - relay to main window */
-static void on_note_card_mute_thread_requested_relay(NostrGtkNoteCardRow *row, const char *event_id_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to mute thread */
-      gnostr_main_window_mute_thread(widget, event_id_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* Handler for show-toast signal - relay to main window */
-static void on_note_card_show_toast_relay(NostrGtkNoteCardRow *row, const char *message, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to show toast */
-      gnostr_main_window_show_toast(widget, message);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* nostrc-ch2v: Handler for pin-toggled signal - update NIP-51 pin list */
-static void on_note_card_pin_toggled_cb(NostrGtkNoteCardRow *row, const char *event_id, gboolean is_pinned, gpointer user_data) {
-  (void)user_data;
-  (void)row;
-
-  if (!event_id || strlen(event_id) != 64) {
-    g_warning("[PIN] Invalid event ID for pin toggle");
-    return;
-  }
-
-  GnostrPinList *pin_list = gnostr_pin_list_get_default();
-  if (!pin_list) {
-    g_warning("[PIN] Failed to get pin list instance");
-    return;
-  }
-
-  if (is_pinned) {
-    gnostr_pin_list_add(pin_list, event_id, NULL);
-  } else {
-    gnostr_pin_list_remove(pin_list, event_id);
-  }
-
-  gnostr_pin_list_save_async(pin_list, NULL, NULL);
-
-  g_message("[PIN] Pin %s for event %s", is_pinned ? "added" : "removed", event_id);
-}
-
-/* Handler for bookmark-toggled signal - update NIP-51 bookmark list */
-static void on_note_card_bookmark_toggled_cb(NostrGtkNoteCardRow *row, const char *event_id, gboolean is_bookmarked, gpointer user_data) {
-  (void)user_data;
-  (void)row;
-
-  if (!event_id || strlen(event_id) != 64) {
-    g_warning("[BOOKMARK] Invalid event ID for bookmark toggle");
-    return;
-  }
-
-  GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
-  if (!bookmarks) {
-    g_warning("[BOOKMARK] Failed to get bookmarks instance");
-    return;
-  }
-
-  /* Update the bookmark list */
-  if (is_bookmarked) {
-    gnostr_bookmarks_add(bookmarks, event_id, NULL, FALSE);
-  } else {
-    gnostr_bookmarks_remove(bookmarks, event_id);
-  }
-
-  /* Save the updated bookmark list to relays asynchronously */
-  gnostr_bookmarks_save_async(bookmarks, NULL, NULL);
-
-  g_message("[BOOKMARK] Bookmark %s for event %s", is_bookmarked ? "added" : "removed", event_id);
-}
-
-/* NIP-09: Handler for delete-note-requested signal - relay to main window */
-static void on_note_card_delete_note_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to delete note */
-      gnostr_main_window_request_delete_note(widget, id_hex, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* NIP-56: Handler for report-note-requested signal - relay to main window */
-static void on_note_card_report_note_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to report note */
-      gnostr_main_window_request_report_note(widget, id_hex, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
-
-/* NIP-32: Handler for label-note-requested signal - relay to main window */
-static void on_note_card_label_note_requested_relay(NostrGtkNoteCardRow *row, const char *id_hex, const char *namespace, const char *label, const char *pubkey_hex, gpointer user_data) {
-  /* Relay the signal up to the main window */
-  GtkWidget *widget = GTK_WIDGET(row);
-  while (widget) {
-    widget = gtk_widget_get_parent(widget);
-    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window, call method to create label event */
-      gnostr_main_window_request_label_note(widget, id_hex, namespace, label, pubkey_hex);
-      break;
-    }
-  }
-  (void)user_data;
-}
 
 static NostrGtkNoteCardRow *get_bound_note_card_row_for_item(gpointer user_data, GObject *expected_item);
 
@@ -469,41 +125,22 @@ static void on_note_card_search_hashtag(NostrGtkNoteCardRow *row, const char *ha
 static GtkWidget *create_timeline_note_card_row(NostrGtkTimelineView *self) {
   GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
 
-  /* Connect the open-profile signal */
-  g_signal_connect(row, "open-profile", G_CALLBACK(on_note_card_open_profile_relay), NULL);
-  /* Connect the reply-requested signal */
-  g_signal_connect(row, "reply-requested", G_CALLBACK(on_note_card_reply_requested_relay), NULL);
-  /* Connect the repost-requested signal */
-  g_signal_connect(row, "repost-requested", G_CALLBACK(on_note_card_repost_requested_relay), NULL);
-  /* Connect the quote-requested signal */
-  g_signal_connect(row, "quote-requested", G_CALLBACK(on_note_card_quote_requested_relay), NULL);
-  /* Connect the like-requested signal */
-  g_signal_connect(row, "like-requested", G_CALLBACK(on_note_card_like_requested_relay), NULL);
-  /* Connect the comment-requested signal (NIP-22) */
-  g_signal_connect(row, "comment-requested", G_CALLBACK(on_note_card_comment_requested_relay), NULL);
-  /* Connect the zap-requested signal */
-  g_signal_connect(row, "zap-requested", G_CALLBACK(on_note_card_zap_requested_relay), NULL);
-  /* Connect the view-thread-requested signal */
-  g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_card_view_thread_requested_relay), NULL);
-  /* Connect the navigate-to-note signal (for reply indicator click) */
-  g_signal_connect(row, "navigate-to-note", G_CALLBACK(on_note_card_navigate_to_note_relay), NULL);
-  /* Connect the mute-user-requested signal */
-  g_signal_connect(row, "mute-user-requested", G_CALLBACK(on_note_card_mute_user_requested_relay), NULL);
-  /* Connect the mute-thread-requested signal */
-  g_signal_connect(row, "mute-thread-requested", G_CALLBACK(on_note_card_mute_thread_requested_relay), NULL);
-  /* Connect the show-toast signal */
-  g_signal_connect(row, "show-toast", G_CALLBACK(on_note_card_show_toast_relay), NULL);
-  /* Connect the pin-toggled signal (nostrc-ch2v) */
-  g_signal_connect(row, "pin-toggled", G_CALLBACK(on_note_card_pin_toggled_cb), NULL);
-  /* Connect the bookmark-toggled signal */
-  g_signal_connect(row, "bookmark-toggled", G_CALLBACK(on_note_card_bookmark_toggled_cb), NULL);
-  /* Connect the delete-note-requested signal (NIP-09) */
-  g_signal_connect(row, "delete-note-requested", G_CALLBACK(on_note_card_delete_note_requested_relay), NULL);
-  /* Connect the report-note-requested signal (NIP-56) */
-  g_signal_connect(row, "report-note-requested", G_CALLBACK(on_note_card_report_note_requested_relay), NULL);
-  /* Connect the label-note-requested signal (NIP-32) */
-  g_signal_connect(row, "label-note-requested", G_CALLBACK(on_note_card_label_note_requested_relay), NULL);
-  /* Connect the search-hashtag signal (Phase 3: timeline tabs) */
+  /* nostrc-hqtn: Connect all 17 main-window-bound action signals via the
+   * relay GObject. The relay is attached to the view via qdata in
+   * gnostr_timeline_view_setup_app_factory() and is used as user_data
+   * for all action signals, enabling single-call disconnect in
+   * cleanup_bound_row() via g_signal_handlers_disconnect_by_data(). */
+  GnostrTimelineActionRelay *relay =
+      g_object_get_data(G_OBJECT(self), "gnostr-action-relay");
+  if (relay) {
+    gnostr_timeline_action_relay_connect_row(relay, NOSTR_GTK_NOTE_CARD_ROW(row));
+    /* Store a borrowed (non-owning) pointer on the row so cleanup_bound_row()
+     * can disconnect all relay signals via g_signal_handlers_disconnect_by_data(). */
+    g_object_set_data(G_OBJECT(row), "gnostr-action-relay", relay);
+  }
+
+  /* search-hashtag uses the timeline view as user_data (not the relay)
+   * because it calls nostr_gtk_timeline_view_add_hashtag_tab(). */
   if (self) {
     g_signal_connect(row, "search-hashtag", G_CALLBACK(on_note_card_search_hashtag), self);
   }
@@ -518,39 +155,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
 }
 
 /* Avatar loading now handled by centralized gnostr-avatar-cache module */
-static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *display, const char *handle) {
-  GtkWidget *w_init = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_initials"));
-  GtkWidget *w_img  = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_image"));
-  
-  /* Derive initials fallback */
-  const char *src = (display && *display) ? display : (handle && *handle ? handle : "AN");
-  char initials[3] = {0};
-  int i = 0; 
-  for (const char *p = src; *p && i < 2; p++) { 
-    if (g_ascii_isalnum(*p)) initials[i++] = g_ascii_toupper(*p); 
-  }
-  if (i == 0) { initials[0] = 'A'; initials[1] = 'N'; }
-  if (GTK_IS_LABEL(w_init)) gtk_label_set_text(GTK_LABEL(w_init), initials);
-
-  if (!avatar_url || !*avatar_url || !str_has_prefix_http(avatar_url) || !GTK_IS_PICTURE(w_img)) {
-    if (GTK_IS_WIDGET(w_img)) gtk_widget_set_visible(w_img, FALSE);
-    if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, TRUE);
-    return;
-  }
-
-  /* Try loading from cache first */
-  GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
-  if (cached) {
-    gtk_picture_set_paintable(GTK_PICTURE(w_img), GDK_PAINTABLE(cached));
-    gtk_widget_set_visible(w_img, TRUE);
-    if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
-    g_object_unref(cached);
-    return;
-  }
-  
-  /* Cache miss - download asynchronously */
-  gnostr_avatar_download_async(avatar_url, w_img, w_init);
-}
+/* nostrc-hqtn: Dead try_set_avatar() removed — the factory uses
+ * nostr_gtk_note_card_row_set_author() for avatar rendering. */
 
 static NostrGtkNoteCardRow *
 get_bound_note_card_row_for_item(gpointer user_data, GObject *expected_item)
@@ -681,6 +287,14 @@ cleanup_bound_row(GtkWidget *row)
 {
   if (!row || !GTK_IS_WIDGET(row))
     return;
+
+  /* nostrc-hqtn: Disconnect all relay-connected action signals in one call.
+   * The relay pointer is borrowed (non-owning) from the timeline view qdata;
+   * the relay's lifetime exceeds any individual row. */
+  GnostrTimelineActionRelay *relay =
+      g_object_get_data(G_OBJECT(row), "gnostr-action-relay");
+  if (relay)
+    g_signal_handlers_disconnect_by_data(row, relay);
 
   g_signal_handlers_disconnect_by_func(row, G_CALLBACK(gnostr_timeline_embed_on_row_request_embed), NULL);
 
@@ -1475,6 +1089,14 @@ void gnostr_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
    * to the view via qdata so schedule_metadata_batch() in the bind hot
    * path only pays for a qdata lookup (no allocation / NULL-branch). */
   (void)gnostr_timeline_metadata_controller_ensure(G_OBJECT(self));
+
+  /* nostrc-hqtn: Create the action relay and attach to the view.
+   * The relay is the central user_data for all 17 NoteCardRow action
+   * signals, enabling single-call disconnect in cleanup_bound_row().
+   * Destroy notify unrefs the relay when the view disposes. */
+  GnostrTimelineActionRelay *relay = gnostr_timeline_action_relay_new();
+  g_object_set_data_full(G_OBJECT(self), "gnostr-action-relay",
+                         relay, g_object_unref);
 
   GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
   g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), self);

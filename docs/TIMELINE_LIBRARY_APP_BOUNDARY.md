@@ -1,7 +1,7 @@
 # Timeline Library/App Boundary Proposal
 
-**Date:** 2026-04-01  
-**Status:** Proposed  
+**Date:** 2026-04-01 (last updated 2026-04-16)  
+**Status:** Implemented (Phases 2–5 complete)  
 **Related beads:** `nostrc-elln`, `nostrc-elln.1`, `nostrc-lkoa`, `nostrc-hiei`, `nostrc-hqtn`
 
 ## Summary
@@ -178,38 +178,40 @@ The following APIs should be avoided unless absolutely necessary:
 - decide whether `TimelineItem` remains externally supported or becomes fully
   internal
 
-### Phase 2: remove app dependence on private model/layout
+### Phase 2: remove app dependence on private model/layout — ✅ DONE (nostrc-lkoa)
 
-If legacy support is required:
+- Deleted app-side `TimelineItem` fallback paths (6 dead helpers, legacy
+  bind branch, repost/quote block, child-model passthrough)
+- Standardized app binding on `GnNostrEventItem`
+- Added `g_critical` type guard in `factory_bind_cb`
 
-- add minimal public `TimelineItem` helpers to `nostr-gtk`
-- convert app code from field access to helper calls
+### Phase 3: extract metadata batching from widget-private state — ✅ DONE (nostrc-hiei)
 
-If legacy support is not required:
-
-- delete app-side `TimelineItem` fallback paths
-- standardize app binding on `GnNostrEventItem`
-
-### Phase 3: extract metadata batching from widget-private state
-
-- create GNostr-owned metadata controller
-- move `pending_metadata_items` and `metadata_batch_idle_id` out of
+- Created `GnostrTimelineMetadataController`
+  (`apps/gnostr/src/ui/gnostr-timeline-metadata-controller.{h,c}`)
+- Moved `pending_metadata_items` and `metadata_batch_idle_id` out of
   `NostrGtkTimelineView`
-- attach controller ownership explicitly from app code
+- Controller attached to view via qdata with `ensure()` idiom
 
-### Phase 4: make the app adapter boundary explicit
+### Phase 4: make the app adapter boundary explicit — ✅ DONE (nostrc-hqtn)
 
-- introduce a named GNostr adapter/controller responsible for:
-  - factory setup
-  - row signal wiring
-  - metadata scheduling
-  - teardown
+- Created `GnostrTimelineActionRelay`
+  (`apps/gnostr/src/ui/gnostr-timeline-action-relay.{h,c}`)
+  - 17 main-window-bound NoteCardRow action handlers in a single GObject
+  - Created in `setup_app_factory()`, attached via qdata
+  - Enables single-call disconnect via `g_signal_handlers_disconnect_by_data()`
+  - Uses `gtk_widget_get_ancestor()` to find main window at handler time
+- Factory reduced from ~1500 to ~1050 lines
+- Dead `try_set_avatar()` removed
+- Factory no longer includes `gnostr-main-window.h`, `gnostr-zap-dialog.h`,
+  `nostr_profile_provider.h`, `nostr_nip19.h`, `gnostr-relays.h`, or
+  `nip32_labels.h` — those moved to the relay
 
-### Phase 5: remove private header include
+### Phase 5: remove private header include — ✅ DONE (nostrc-lkoa)
 
-- delete `#include <nostr-gtk-1.0/gnostr-timeline-view-private.h>` from
+- Deleted `#include <nostr-gtk-1.0/gnostr-timeline-view-private.h>` from
   app code
-- ensure app compiles against public headers only
+- App compiles against public headers only
 
 ## Thread-Safety Requirements
 
@@ -265,13 +267,25 @@ Mitigation:
 - verify the app no longer includes `gnostr-timeline-view-private.h`
 - verify the library no longer carries GNostr-only scratch fields
 
-## Open Questions
+## Open Questions (Resolved)
 
-1. Is any external consumer besides GNostr using `TimelineItem` directly?
-2. Can GNostr fully standardize on `GnNostrEventItem` now, or is a compatibility
-   bridge still required?
-3. Does `nostr-gtk` need one additional generic lifecycle hook for visibility,
-   or can the app rely on existing widget/list APIs?
+1. **Is any external consumer besides GNostr using `TimelineItem` directly?**
+   → No. Only the nostr-gtk library uses `TimelineItem` internally.
+2. **Can GNostr fully standardize on `GnNostrEventItem` now?**
+   → Yes. Done in nostrc-lkoa.
+3. **Does `nostr-gtk` need one additional generic lifecycle hook for visibility?**
+   → No. The app uses existing `is_item_visible()` / `is_fast_scrolling()` APIs.
+
+## Implemented Adapter Types
+
+| Type | File | Purpose |
+|------|------|---------|
+| `GnostrTimelineMetadataController` | `apps/gnostr/src/ui/gnostr-timeline-metadata-controller.{h,c}` | Batch metadata loading (reactions, reposts, replies, zaps) |
+| `GnostrTimelineActionRelay` | `apps/gnostr/src/ui/gnostr-timeline-action-relay.{h,c}` | 17 NoteCardRow action → main window relays |
+
+Both are attached to `NostrGtkTimelineView` via qdata in
+`gnostr_timeline_view_setup_app_factory()` and automatically cleaned up
+when the view disposes.
 
 ## Decision
 

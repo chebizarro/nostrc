@@ -159,6 +159,7 @@ file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.
 # Explicitly append app-local timeline factory source so it is always built,
 # even when incremental builds miss new globbed files before reconfigure.
 list(APPEND APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-timeline-view-app-factory.c)
+list(APPEND APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-timeline-action-relay.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
 # NostrGtkComposer is now provided by nostr-gtk library (nostrc-lx35)
