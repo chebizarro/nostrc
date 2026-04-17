@@ -5,6 +5,7 @@
 #include "nip23.h"
 #include <json-glib/json-glib.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostrdb.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -121,16 +122,79 @@ GnostrArticleMeta *gnostr_article_parse_tags(const char *tags_json) {
 }
 
 /* For nostrdb integration - parse from ndb_note structure */
-GnostrArticleMeta *gnostr_article_parse_tags_iter(void *txn, void *ndb_note) {
-  /* This would use nostrdb API to iterate tags.
-   * Since we don't have direct nostrdb headers here,
-   * we provide a stub that can be filled in. */
+GnostrArticleMeta *gnostr_article_parse_tags_iter(void *txn, void *ndb_note_ptr) {
   (void)txn;
-  (void)ndb_note;
 
-  /* Caller should serialize tags to JSON and use gnostr_article_parse_tags instead */
-  g_warning("NIP-23: gnostr_article_parse_tags_iter not implemented - use JSON parser");
-  return NULL;
+  struct ndb_note *note = (struct ndb_note *)ndb_note_ptr;
+  if (note == NULL)
+    return NULL;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (tags == NULL || ndb_tags_count(tags) == 0)
+    return NULL;
+
+  GnostrArticleMeta *meta = gnostr_article_meta_new();
+  GPtrArray *hashtags_arr = g_ptr_array_new();
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    int nelem = ndb_tag_count(tag);
+    if (nelem < 2) continue;
+
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (key.flag != NDB_PACKED_STR || key.str == NULL) continue;
+
+    struct ndb_str val = ndb_tag_str(note, tag, 1);
+    if (val.flag != NDB_PACKED_STR || val.str == NULL) continue;
+
+    const char *tag_name = key.str;
+    const char *tag_value = val.str;
+
+    if (strcmp(tag_name, "d") == 0) {
+      g_free(meta->d_tag);
+      meta->d_tag = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "title") == 0) {
+      g_free(meta->title);
+      meta->title = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "summary") == 0) {
+      g_free(meta->summary);
+      meta->summary = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "image") == 0) {
+      g_free(meta->image);
+      meta->image = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "published_at") == 0) {
+      char *endptr;
+      gint64 ts = g_ascii_strtoll(tag_value, &endptr, 10);
+      if (endptr != tag_value && *endptr == '\0' && ts > 0) {
+        meta->published_at = ts;
+      }
+    } else if (strcmp(tag_name, "t") == 0) {
+      const char *hashtag = tag_value;
+      if (*hashtag == '#') hashtag++;
+      if (*hashtag) {
+        g_ptr_array_add(hashtags_arr, g_strdup(hashtag));
+      }
+    } else if (strcmp(tag_name, "client") == 0) {
+      g_free(meta->client);
+      meta->client = g_strdup(tag_value);
+    }
+  }
+
+  /* Convert hashtags array */
+  meta->hashtags_count = hashtags_arr->len;
+  if (hashtags_arr->len > 0) {
+    meta->hashtags = g_new0(gchar*, hashtags_arr->len + 1);
+    for (guint i = 0; i < hashtags_arr->len; i++) {
+      meta->hashtags[i] = g_ptr_array_index(hashtags_arr, i);
+    }
+    meta->hashtags[hashtags_arr->len] = NULL;
+  }
+  g_ptr_array_free(hashtags_arr, FALSE);
+
+  return meta;
 }
 
 gboolean gnostr_article_is_article(int kind) {
