@@ -122,4 +122,21 @@ if(BUILD_BENCHMARKS)
       )
     endif()
   endif()
+
+  # ── Relay performance baseline ─────────────────────────────────────
+  # Connects to real relays, subscribes, and measures connect + EOSE timing.
+  if(TARGET nostr)
+    add_executable(relay_perf_baseline relay_perf_baseline.c)
+    target_link_libraries(relay_perf_baseline PRIVATE nostr)
+    target_include_directories(relay_perf_baseline PRIVATE
+      ${CMAKE_SOURCE_DIR}/libnostr/include
+      ${CMAKE_SOURCE_DIR}/libgo/include)
+
+    add_test(NAME bench_relay_perf_baseline
+             COMMAND relay_perf_baseline)
+    set_tests_properties(bench_relay_perf_baseline PROPERTIES
+      TIMEOUT 60
+      LABELS "benchmark;relay;network;nightly"
+    )
+  endif()
 endif()
