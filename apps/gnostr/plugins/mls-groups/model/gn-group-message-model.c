@@ -6,6 +6,7 @@
 
 #include "gn-group-message-model.h"
 #include <marmot-gobject-1.0/marmot-gobject.h>
+#include <json-glib/json-glib.h>
 
 #define MESSAGES_PAGE_SIZE 50
 
@@ -77,34 +78,48 @@ on_message_received(GnMarmotService *service,
     return;
 
   /*
-   * TODO: Parse inner_event_json into a MarmotGobjectMessage.
-   * For now, we just reload from storage after a short delay
-   * to let marmot persist the message.
+   * Parse the inner event JSON directly into a MarmotGobjectMessage
+   * and append to the model for immediate display.
    *
-   * In the future, the marmot service should emit the actual
-   * MarmotGobjectMessage object directly.
+   * Inner event shape (built by gn-mls-event-router.c):
+   *   {"pubkey":"<hex>","kind":9,"created_at":<ts>,"content":"<text>","tags":[]}
    */
-
-  /* Reload messages from storage to pick up the new one */
-  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
-  if (client == NULL)
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, inner_event_json, -1, NULL))
     return;
 
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GPtrArray) fresh =
-    marmot_gobject_client_get_messages(client, self->mls_group_id_hex,
-                                        MESSAGES_PAGE_SIZE, 0, &error);
-  if (fresh == NULL)
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root))
     return;
 
-  guint old_count = self->messages->len;
+  JsonObject *obj = json_node_get_object(root);
 
-  g_ptr_array_set_size(self->messages, 0);
-  for (guint i = 0; i < fresh->len; i++)
-    g_ptr_array_add(self->messages,
-                    g_object_ref(g_ptr_array_index(fresh, i)));
+  const gchar *pubkey  = json_object_get_string_member_with_default(obj, "pubkey", NULL);
+  const gchar *content = json_object_get_string_member_with_default(obj, "content", NULL);
+  gint64 kind          = json_object_get_int_member_with_default(obj, "kind", 9);
+  gint64 created_at    = json_object_get_int_member_with_default(obj, "created_at", 0);
+  const gchar *event_id = json_object_get_string_member_with_default(obj, "id", NULL);
 
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, self->messages->len);
+  if (pubkey == NULL)
+    return;
+
+  /* Use event id if present, otherwise generate a placeholder from content hash */
+  g_autofree gchar *placeholder_id = NULL;
+  if (event_id == NULL) {
+    g_autofree gchar *hash_input = g_strdup_printf("%s:%"G_GINT64_FORMAT":%s",
+                                                    pubkey, created_at,
+                                                    content ? content : "");
+    placeholder_id = g_compute_checksum_for_string(G_CHECKSUM_SHA256, hash_input, -1);
+    event_id = placeholder_id;
+  }
+
+  MarmotGobjectMessage *msg = marmot_gobject_message_new_from_data(
+    event_id, pubkey, content, (guint)kind, created_at, self->mls_group_id_hex);
+
+  guint position = self->messages->len;
+  g_ptr_array_add(self->messages, msg); /* takes ownership */
+
+  g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
 }
 
 /* ── GObject lifecycle ───────────────────────────────────────────── */
