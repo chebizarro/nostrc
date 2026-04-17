@@ -26,6 +26,8 @@ typedef enum {
 GQuark bc_http_server_error_quark(void);
 
 BcHttpServer *bc_http_server_new(BcBlobStore *store, BcCacheManager *cache_mgr);
+void          bc_http_server_set_author_hint_relay(BcHttpServer *self,
+                                                    const gchar *relay_url);
 gboolean      bc_http_server_start(BcHttpServer *self, const gchar *address,
                                    guint port, GError **error);
 void          bc_http_server_stop(BcHttpServer *self);

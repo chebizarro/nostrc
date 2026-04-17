@@ -22,6 +22,7 @@
 
 #include "bc-http-server.h"
 #include "bc-upstream-client.h"
+#include "bc-author-hints.h"
 
 #include <libsoup/soup.h>
 #include <json-glib/json-glib.h>
@@ -34,14 +35,15 @@ G_DEFINE_QUARK(bc-http-server-error-quark, bc_http_server_error)
 /* ---- Private structure ---- */
 
 struct _BcHttpServer {
-  GObject         parent_instance;
+  GObject              parent_instance;
 
-  BcBlobStore    *store;      /* not owned */
-  BcCacheManager *cache_mgr;  /* not owned */
-  SoupServer     *soup;       /* owned */
-  gboolean        running;
-  gchar          *listen_addr; /* owned, for building URLs */
-  guint           listen_port;
+  BcBlobStore         *store;          /* not owned */
+  BcCacheManager      *cache_mgr;      /* not owned */
+  SoupServer          *soup;           /* owned */
+  BcAuthorHintCache   *author_hints;   /* owned, nullable */
+  gboolean             running;
+  gchar               *listen_addr;    /* owned, for building URLs */
+  guint                listen_port;
 };
 
 G_DEFINE_TYPE(BcHttpServer, bc_http_server, G_TYPE_OBJECT)
@@ -249,12 +251,36 @@ handle_get_blob(BcHttpServer *self, SoupServerMessage *msg, const gchar *sha256)
 {
   /* Collect xs= server hints from query string (BUD-10 proxy hints) */
   g_auto(GStrv) xs_hints = collect_query_values(msg, "xs");
-  /* TODO: as= author hints would require kind:10063 relay lookup */
+
+  /* Resolve as= author hints via kind:10063 relay lookup */
+  g_auto(GStrv) as_values = collect_query_values(msg, "as");
+  g_auto(GStrv) author_server_hints = NULL;
+  if (as_values != NULL && as_values[0] != NULL && self->author_hints != NULL) {
+    author_server_hints = bc_author_hint_cache_lookup(self->author_hints, as_values[0]);
+  }
+
+  /* Merge xs= and as= hints: author servers go first, then explicit xs hints */
+  g_auto(GStrv) merged_hints = NULL;
+  if (author_server_hints != NULL || xs_hints != NULL) {
+    g_autoptr(GPtrArray) all = g_ptr_array_new();
+    if (author_server_hints != NULL) {
+      for (gsize i = 0; author_server_hints[i] != NULL; i++)
+        g_ptr_array_add(all, author_server_hints[i]);
+    }
+    if (xs_hints != NULL) {
+      for (gsize i = 0; xs_hints[i] != NULL; i++)
+        g_ptr_array_add(all, xs_hints[i]);
+    }
+    g_ptr_array_add(all, NULL);
+    merged_hints = g_strdupv((gchar **)all->pdata);
+  }
 
   GError *error = NULL;
   g_autoptr(BcBlobInfo) info = NULL;
+  const gchar * const *hints = merged_hints ? (const gchar * const *)merged_hints
+                                            : (const gchar * const *)xs_hints;
   g_autoptr(GBytes) data = bc_cache_manager_get_blob_with_hints(
-    self->cache_mgr, sha256, (const gchar * const *)xs_hints, &info, &error);
+    self->cache_mgr, sha256, hints, &info, &error);
 
   if (data == NULL) {
     if (error != NULL &&
@@ -645,6 +671,7 @@ bc_http_server_finalize(GObject *obj)
   BcHttpServer *self = BC_HTTP_SERVER(obj);
   g_clear_object(&self->soup);
   g_clear_pointer(&self->listen_addr, g_free);
+  g_clear_pointer(&self->author_hints, bc_author_hint_cache_free);
   G_OBJECT_CLASS(bc_http_server_parent_class)->finalize(obj);
 }
 
@@ -678,6 +705,21 @@ bc_http_server_new(BcBlobStore    *store,
   self->cache_mgr = cache_mgr;
 
   return self;
+}
+
+void
+bc_http_server_set_author_hint_relay(BcHttpServer *self,
+                                      const gchar  *relay_url)
+{
+  g_return_if_fail(BC_IS_HTTP_SERVER(self));
+
+  g_clear_pointer(&self->author_hints, bc_author_hint_cache_free);
+
+  if (relay_url != NULL && relay_url[0] != '\0') {
+    /* Cache kind:10063 results for 5 minutes */
+    self->author_hints = bc_author_hint_cache_new(relay_url, 300);
+    g_message("author-hints: enabled with relay %s", relay_url);
+  }
 }
 
 gboolean

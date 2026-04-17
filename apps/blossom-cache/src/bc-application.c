@@ -159,6 +159,12 @@ bc_application_activate(GApplication *app)
 
   self->http_server = bc_http_server_new(self->store, self->cache_mgr);
 
+  /* Configure author hint relay for ?as= query parameter support */
+  if (self->settings) {
+    g_autofree gchar *relay_url = g_settings_get_string(self->settings, "nostr-relay-url");
+    bc_http_server_set_author_hint_relay(self->http_server, relay_url);
+  }
+
   GError *srv_err = NULL;
   if (!bc_http_server_start(self->http_server, listen_addr, port, &srv_err)) {
     g_critical("blossom-cache: HTTP server failed to start on %s:%u: %s",

@@ -69,6 +69,17 @@
       </description>
     </key>
 
+    <!-- Nostr relay for author hint lookups -->
+    <key name="nostr-relay-url" type="s">
+      <default>'wss://relay.damus.io'</default>
+      <summary>Nostr relay for author hints</summary>
+      <description>
+        WebSocket URL of a Nostr relay used to look up kind:10063
+        (Blossom server list) events for ?as= author hint queries.
+        Set to empty string to disable author hint lookups.
+      </description>
+    </key>
+
     <!-- Behaviour -->
     <key name="verify-sha256" type="b">
       <default>true</default>

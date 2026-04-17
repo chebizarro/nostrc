@@ -57,6 +57,7 @@ set(BLOSSOM_CACHE_SOURCES
   src/bc-http-server.c
   src/bc-cache-manager.c
   src/bc-upstream-client.c
+  src/bc-author-hints.c
 )
 
 add_executable(${APP_NAME} ${BLOSSOM_CACHE_SOURCES})
@@ -70,6 +71,7 @@ target_compile_definitions(${APP_NAME} PRIVATE
 
 target_include_directories(${APP_NAME} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_link_libraries(${APP_NAME} PRIVATE
