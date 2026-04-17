@@ -53,13 +53,11 @@
                     <property name="vexpand">true</property>
                     <property name="hscrollbar-policy">2</property>
                     <child>
-                      <object class="GtkListBox" id="list_box">
+                      <object class="GtkListView" id="list_view">
                         <property name="hexpand">true</property>
                         <property name="vexpand">true</property>
-                        <property name="selection-mode">0</property>
                         <style>
                           <class name="community-list"/>
-                          <class name="boxed-list"/>
                         </style>
                       </object>
                     </child>

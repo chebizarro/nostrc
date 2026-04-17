@@ -120,10 +120,9 @@ template $GnostrChatRoomView: Widget {
           vexpand: true;
           hscrollbar-policy: never;
 
-          ListBox message_list {
+        ListView message_list {
             hexpand: true;
             vexpand: true;
-            selection-mode: none;
 
             styles [
               "chat-messages",
