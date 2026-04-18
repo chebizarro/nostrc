@@ -168,13 +168,19 @@ static int nh_check_config(const char *conf_path){
 /* Library API (local execution) */
 int nh_open_session(const char *username){
   if (!username || !*username) return -1;
-  /* Ensure warmcache */
+  /* Resolve per-user namespace: check settings.namespace.<user> in DB,
+   * then fall back to HOMED_NAMESPACE env, then "personal". */
+  char ns_buf[128] = "";
+  const char *user_ns = NULL;
   nh_cache c0; if (nh_cache_open_configured(&c0, "/etc/nss_nostr.conf")==0){
+    char nskey[256]; snprintf(nskey, sizeof nskey, "namespace.%s", username);
+    if (nh_cache_get_setting(&c0, nskey, ns_buf, sizeof ns_buf) == 0 && ns_buf[0])
+      user_ns = ns_buf;
     char wc[8]="";
     if (nh_cache_get_setting(&c0, "warmcache", wc, sizeof wc) != 0 || strcmp(wc, "1")!=0){
       nh_cache_close(&c0);
-      /* Attempt to warm cache on-demand */
-      (void)nh_warm_cache(NULL);
+      /* Attempt to warm cache on-demand, using per-user namespace */
+      (void)nh_warm_cache(user_ns);
     } else {
       nh_cache_close(&c0);
     }

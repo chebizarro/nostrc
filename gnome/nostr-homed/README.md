@@ -64,6 +64,36 @@ nostr-homectl check-config              # validates /etc/nss_nostr.conf
 nostr-homectl check-config /tmp/test.conf  # validates a custom path
 ```
 
+Multi-user namespace selection
+
+By default all users share the `personal` namespace. To give different users
+different namespaces (e.g. alice uses `personal`, bob uses `work`):
+
+**Option A: Per-user systemd EnvironmentFile** (recommended)
+
+Create `/etc/nostr-homed/users/<username>.conf`:
+
+```sh
+sudo mkdir -p /etc/nostr-homed/users
+echo 'HOMED_NAMESPACE=work' | sudo tee /etc/nostr-homed/users/bob.conf
+```
+
+The `nostrfs@bob.service` unit reads this file (via `EnvironmentFile=-`) and
+overrides the default `HOMED_NAMESPACE=personal`.
+
+**Option B: Database setting**
+
+```sh
+sqlite3 /var/lib/nostr-homed/cache.db \
+  "INSERT OR REPLACE INTO settings(key,value) VALUES('namespace.bob','work')"
+```
+
+`nostr-homectl open-session bob` reads `settings.namespace.bob` and passes the
+namespace to warm-cache automatically.
+
+Both methods are optional — existing single-namespace deployments continue to
+work unchanged with the unit-level default.
+
 Quickstart
 - See `docs/QUICKSTART.md` for publishing sample events, running fake relay and blob servers, and mounting a demo home.
 

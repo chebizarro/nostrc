@@ -6,10 +6,14 @@ BindsTo=nostr-homectl.service
 
 [Service]
 Type=simple
+# Default namespace — overridden by per-user config if present.
+# Create /etc/nostr-homed/users/<username>.conf with HOMED_NAMESPACE=<ns>
+# to give different users different namespaces.
 Environment=HOMED_NAMESPACE=personal
 Environment=SECRETS_NAMESPACE=personal
 Environment=BLOSSOM_BASE_URL=https://blossom.example.org
 Environment=RELAYS_DEFAULT=wss://relay.damus.io,wss://nostr.wine
+EnvironmentFile=-/etc/nostr-homed/users/%i.conf
 ExecStart=/usr/bin/nostrfs --writeback --namespace=${HOMED_NAMESPACE} /home/%i
 Restart=on-failure
 RestartSec=2s
