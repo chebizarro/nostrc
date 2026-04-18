@@ -54,6 +54,7 @@ nostr_homectl = executable('nostr-homectl', 'src/ctl/nostr-homectl.c', include_d
   dependencies: [glib, gio],
   install: true)
 
+install_data('config/nss_nostr.conf.sample', install_dir: get_option('sysconfdir'))
 install_data('dbus/org.nostr.Homed1.xml', install_dir: join_paths(get_option('datadir'), 'dbus-1', 'interfaces'))
 # User services — see docs/SYSTEMD_TOPOLOGY.md
 # Use pkg-config systemduserunitdir; fall back to lib/systemd/user

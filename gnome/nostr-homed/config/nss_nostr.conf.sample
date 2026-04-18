@@ -1,0 +1,56 @@
+# /etc/nss_nostr.conf — nostr-homed configuration
+#
+# This file is read by libnss_nostr, pam_nostr, nostrfs, and nostr-homectl.
+# All four components use the same config path: /etc/nss_nostr.conf
+#
+# Syntax
+# ------
+# - Lines starting with '#' are comments.
+# - Blank lines are ignored.
+# - Format: key=value  (no spaces around '=').
+#
+# Keys
+# ----
+#
+# db_path (string)
+#   Path to the SQLite cache database.
+#   Default: /var/lib/nostr-homed/cache.db
+#
+#   The parent directory must exist and be writable by the nostr-homed
+#   service user.  The database file is created automatically on first
+#   use.  WAL journal mode is enabled for concurrent readers (NSS) and
+#   a single writer (nostr-homectl).
+#
+#   Security note: the database contains UIDs and public keys, but no
+#   secrets.  Recommended permissions: 0644 (world-readable) so that
+#   NSS lookups in unprivileged processes succeed.
+#
+# uid_base (uint32)
+#   First UID in the dynamic allocation range for Nostr-provisioned users.
+#   Default: 100000
+#
+#   Must be > 1000 to avoid collision with locally-managed system
+#   accounts (typically UID 0-999 on most distros).
+#
+#   Users are assigned UIDs in [uid_base, uid_base + uid_range) via
+#   deterministic hashing: UID = uid_base + SHA256(npub_hex) mod uid_range.
+#
+# uid_range (uint32)
+#   Size of the UID allocation window.
+#   Default: 100000
+#
+#   Must be >= 1000 for production use.  Larger ranges reduce hash
+#   collision probability.  At uid_range = 100000, the birthday-paradox
+#   threshold is ~350 users (0.5% collision chance).
+#
+#   uid_base + uid_range must not exceed 2^32 - 1.  Avoid including
+#   UID 65534 (nobody) in the range.
+#
+# Validation
+# ----------
+# Run `nostr-homectl check-config` to validate the active configuration.
+# Run `nostr-homectl check-config /path/to/file` to validate an alternate file.
+
+db_path=/var/lib/nostr-homed/cache.db
+uid_base=100000
+uid_range=100000

@@ -3,6 +3,8 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <unistd.h>
 #include <gio/gio.h>
 #include "nostr_cache.h"
 #include "relay_fetch.h"
@@ -59,8 +61,108 @@ static int is_mountpoint(const char *path){
 }
 
 static int usage(const char *argv0){
-  fprintf(stderr, "Usage: %s [--daemon]\n       %s <open-session|close-session|warm-cache|get-status> <arg>\n", argv0, argv0);
+  fprintf(stderr, "Usage: %s [--daemon]\n"
+          "       %s check-config [config-path]\n"
+          "       %s <open-session|close-session|warm-cache|get-status> <arg>\n",
+          argv0, argv0, argv0);
   return 2;
+}
+
+/**
+ * check-config: validate /etc/nss_nostr.conf (or a custom path).
+ * Local operation — does not require D-Bus.
+ */
+static int nh_check_config(const char *conf_path){
+  printf("checking %s ...\n", conf_path);
+  FILE *f = fopen(conf_path, "r");
+  if (!f){
+    fprintf(stderr, "ERROR: cannot open %s: %s\n", conf_path, strerror(errno));
+    return 1;
+  }
+  char db_path[512]; strncpy(db_path, "/var/lib/nostr-homed/cache.db", sizeof db_path);
+  uint32_t uid_base = 100000, uid_range = 100000;
+  int errors = 0, warnings = 0, line_no = 0;
+  char line[512];
+  while (fgets(line, sizeof line, f)){
+    line_no++;
+    if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+    char *eq = strchr(line, '=');
+    if (!eq){ fprintf(stderr, "WARN: line %d: no '=' found, skipped\n", line_no); warnings++; continue; }
+    *eq = '\0';
+    char *key = line;
+    char *val = eq + 1;
+    /* strip trailing newline from val */
+    size_t vl = strlen(val);
+    while (vl > 0 && (val[vl-1] == '\n' || val[vl-1] == '\r')) val[--vl] = '\0';
+    if (strcmp(key, "db_path") == 0){
+      strncpy(db_path, val, sizeof db_path - 1); db_path[sizeof db_path - 1] = '\0';
+    } else if (strcmp(key, "uid_base") == 0){
+      uid_base = (uint32_t)strtoul(val, NULL, 10);
+    } else if (strcmp(key, "uid_range") == 0){
+      uid_range = (uint32_t)strtoul(val, NULL, 10);
+    } else {
+      fprintf(stderr, "WARN: line %d: unknown key '%s'\n", line_no, key);
+      warnings++;
+    }
+  }
+  fclose(f);
+  printf("  db_path   = %s\n", db_path);
+  printf("  uid_base  = %u\n", (unsigned)uid_base);
+  printf("  uid_range = %u\n", (unsigned)uid_range);
+  /* Validate db_path parent directory */
+  char parent[512]; strncpy(parent, db_path, sizeof parent - 1); parent[sizeof parent - 1] = '\0';
+  char *slash = strrchr(parent, '/');
+  if (slash && slash != parent){
+    *slash = '\0';
+    struct stat st;
+    if (stat(parent, &st) != 0){
+      fprintf(stderr, "ERROR: db_path parent '%s' does not exist\n", parent);
+      errors++;
+    } else if (!S_ISDIR(st.st_mode)){
+      fprintf(stderr, "ERROR: db_path parent '%s' is not a directory\n", parent);
+      errors++;
+    } else if (access(parent, W_OK) != 0){
+      fprintf(stderr, "WARN: db_path parent '%s' is not writable by current user\n", parent);
+      warnings++;
+    } else {
+      printf("  db_path parent '%s': OK\n", parent);
+    }
+  }
+  /* Validate uid_base */
+  if (uid_base <= 1000){
+    fprintf(stderr, "ERROR: uid_base %u <= 1000 (collides with system accounts)\n", (unsigned)uid_base);
+    errors++;
+  } else {
+    printf("  uid_base > 1000: OK\n");
+  }
+  /* Validate uid_range */
+  if (uid_range < 1000){
+    fprintf(stderr, "ERROR: uid_range %u < 1000 (too few UIDs for production)\n", (unsigned)uid_range);
+    errors++;
+  } else {
+    printf("  uid_range >= 1000: OK\n");
+  }
+  /* Check for overflow */
+  uint64_t max_uid = (uint64_t)uid_base + (uint64_t)uid_range;
+  if (max_uid > 4294967295ULL){
+    fprintf(stderr, "ERROR: uid_base + uid_range exceeds uint32 max\n");
+    errors++;
+  }
+  /* Warn if range includes nobody (65534) */
+  if (uid_base <= 65534 && uid_base + uid_range > 65534){
+    fprintf(stderr, "WARN: UID range [%u, %u) includes 65534 (nobody)\n",
+            (unsigned)uid_base, (unsigned)(uid_base + uid_range));
+    warnings++;
+  }
+  if (errors > 0){
+    fprintf(stderr, "\n%d error(s), %d warning(s)\n", errors, warnings);
+    return 1;
+  }
+  if (warnings > 0)
+    printf("\nconfig OK (%d warning(s))\n", warnings);
+  else
+    printf("\nconfig OK\n");
+  return 0;
 }
 
 /* Library API (local execution) */
@@ -332,6 +434,11 @@ int main(int argc, char **argv){
     return 0;
   }
 
+  /* check-config: local validation, no D-Bus needed */
+  if (argc >= 2 && strcmp(argv[1], "check-config") == 0){
+    const char *conf = (argc >= 3) ? argv[2] : "/etc/nss_nostr.conf";
+    return nh_check_config(conf);
+  }
   if (argc < 3) return usage(argv[0]);
   const char *cmd = argv[1];
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);

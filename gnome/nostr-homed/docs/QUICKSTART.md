@@ -4,6 +4,21 @@ This guide walks you through building and running a demo of nostr-homed.
 
 Prereqs: fuse3, sqlite3, jansson, openssl, secp256k1, glib2, gio2, curl, pkg-config, cmake or meson.
 
+## Configuration
+
+Copy the sample config and adjust as needed:
+
+```sh
+sudo cp config/nss_nostr.conf.sample /etc/nss_nostr.conf
+# Edit db_path, uid_base, uid_range as needed (see README.md for details)
+```
+
+Validate:
+
+```sh
+./build/gnome/nostr-homectl check-config
+```
+
 ## Build (CMake)
 
 ```

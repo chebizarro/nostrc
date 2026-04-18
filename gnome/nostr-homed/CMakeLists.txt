@@ -105,6 +105,9 @@ if (TARGET pam_nostr)
 endif()
 install(TARGETS nostr-homectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# Sample configuration
+install(FILES config/nss_nostr.conf.sample DESTINATION ${CMAKE_INSTALL_SYSCONFDIR})
+
 # DBus and systemd files
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Homed1.xml)
   install(FILES dbus/org.nostr.Homed1.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)

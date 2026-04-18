@@ -40,6 +40,30 @@ Install
 - NSS and PAM modules install into distro libdirs (`libnss_nostr.so.2`, `pam_nostr.so`).
 - Systemd units install into `lib/systemd/system`.
 
+Configuration (`/etc/nss_nostr.conf`)
+
+A sample file is shipped at `config/nss_nostr.conf.sample` and installed to `${sysconfdir}/nss_nostr.conf.sample`. Copy and edit it:
+
+```sh
+sudo cp /etc/nss_nostr.conf.sample /etc/nss_nostr.conf
+sudo $EDITOR /etc/nss_nostr.conf
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `db_path` | string | `/var/lib/nostr-homed/cache.db` | Path to the SQLite cache database. Parent dir must exist and be writable. |
+| `uid_base` | uint32 | `100000` | First UID in the allocation range. Must be > 1000 to avoid system accounts. |
+| `uid_range` | uint32 | `100000` | Size of the UID allocation window. Must be >= 1000 for production. |
+
+UIDs are assigned deterministically: `UID = uid_base + SHA256(npub_hex) % uid_range`.
+
+Validate the active config:
+
+```sh
+nostr-homectl check-config              # validates /etc/nss_nostr.conf
+nostr-homectl check-config /tmp/test.conf  # validates a custom path
+```
+
 Quickstart
 - See `docs/QUICKSTART.md` for publishing sample events, running fake relay and blob servers, and mounting a demo home.
 
