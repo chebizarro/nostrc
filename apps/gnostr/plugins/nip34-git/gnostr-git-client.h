@@ -128,6 +128,18 @@ gboolean gnostr_git_client_unstage_file(GnostrGitClient *self, const char *path)
  */
 char *gnostr_git_client_commit(GnostrGitClient *self, const char *message);
 
+/**
+ * gnostr_git_client_get_commit_diff:
+ * @self: The git client
+ * @commit_id: Full hex commit ID
+ *
+ * Returns the unified diff text for a commit (vs its first parent).
+ *
+ * Returns: (transfer full) (nullable): Diff text, caller frees with g_free()
+ */
+char *gnostr_git_client_get_commit_diff(GnostrGitClient *self,
+                                        const char      *commit_id);
+
 G_END_DECLS
 
 #endif /* GNOSTR_GIT_CLIENT_H */

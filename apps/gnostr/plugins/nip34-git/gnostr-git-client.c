@@ -96,6 +96,8 @@ struct _GnostrGitClient
   /* History tab */
   GtkWidget *history_page;
   GtkWidget *history_list;
+  GtkWidget *diff_view;          /* GtkTextView for commit diffs */
+  GtkWidget *diff_label;         /* Header label above diff view */
 
   /* Branches tab */
   GtkWidget *branches_page;
@@ -404,6 +406,32 @@ create_branch_row(BranchEntry *entry)
   GtkWidget *list_row = gtk_list_box_row_new();
   gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(list_row), row);
   return list_row;
+}
+
+static void
+on_history_row_activated(GtkListBox    *list_box G_GNUC_UNUSED,
+                         GtkListBoxRow *row,
+                         gpointer       user_data)
+{
+  GnostrGitClient *self = GNOSTR_GIT_CLIENT(user_data);
+  int idx = gtk_list_box_row_get_index(row);
+
+  if (idx < 0 || !self->commits || (guint)idx >= self->commits->len)
+    return;
+
+  CommitEntry *entry = g_ptr_array_index(self->commits, (guint)idx);
+  if (!entry || !entry->id_full)
+    return;
+
+  g_autofree char *diff_text = gnostr_git_client_get_commit_diff(self, entry->id_full);
+
+  /* Update diff view */
+  GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->diff_view));
+  gtk_text_buffer_set_text(buf, diff_text ? diff_text : "(no diff available)", -1);
+
+  g_autofree char *hdr = g_strdup_printf("Diff for %s: %s",
+                                          entry->id, entry->message);
+  gtk_label_set_text(GTK_LABEL(self->diff_label), hdr);
 }
 
 static void
@@ -917,9 +945,31 @@ gnostr_git_client_init(GnostrGitClient *self)
   gtk_list_box_set_selection_mode(GTK_LIST_BOX(self->history_list),
                                    GTK_SELECTION_SINGLE);
   gtk_widget_add_css_class(self->history_list, "boxed-list");
+  g_signal_connect(self->history_list, "row-activated",
+                   G_CALLBACK(on_history_row_activated), self);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(history_scroll),
                                  self->history_list);
   gtk_box_append(GTK_BOX(self->history_page), history_scroll);
+
+  /* Diff view below history list (paned) */
+  self->diff_label = gtk_label_new("Select a commit to view diff");
+  gtk_widget_add_css_class(self->diff_label, "dim-label");
+  gtk_widget_set_margin_start(self->diff_label, 12);
+  gtk_widget_set_margin_top(self->diff_label, 8);
+  gtk_widget_set_halign(self->diff_label, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(self->history_page), self->diff_label);
+
+  GtkWidget *diff_scroll = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(diff_scroll), 200);
+  gtk_widget_set_vexpand(diff_scroll, TRUE);
+  self->diff_view = gtk_text_view_new();
+  gtk_text_view_set_editable(GTK_TEXT_VIEW(self->diff_view), FALSE);
+  gtk_text_view_set_monospace(GTK_TEXT_VIEW(self->diff_view), TRUE);
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(self->diff_view), GTK_WRAP_NONE);
+  gtk_text_view_set_left_margin(GTK_TEXT_VIEW(self->diff_view), 8);
+  gtk_text_view_set_top_margin(GTK_TEXT_VIEW(self->diff_view), 4);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(diff_scroll), self->diff_view);
+  gtk_box_append(GTK_BOX(self->history_page), diff_scroll);
 
   gtk_stack_add_titled(GTK_STACK(self->stack), self->history_page,
                         "history", "History");
@@ -1250,4 +1300,124 @@ gnostr_git_client_commit(GnostrGitClient *self, const char *message)
   g_signal_emit(self, signals[SIGNAL_COMMIT_CREATED], 0, id_buf);
 
   return g_strdup(id_buf);
+}
+
+/* ============================================================================
+ * Diff viewer (nostrc-35i)
+ * ============================================================================ */
+
+/* libgit2 diff callback: append each line to the GString payload */
+static int
+diff_line_cb(const git_diff_delta *delta    G_GNUC_UNUSED,
+             const git_diff_hunk  *hunk     G_GNUC_UNUSED,
+             const git_diff_line  *line,
+             void                 *payload)
+{
+  GString *buf = (GString *)payload;
+
+  /* Prefix with origin char (+, -, space, etc.) */
+  if (line->origin == GIT_DIFF_LINE_ADDITION ||
+      line->origin == GIT_DIFF_LINE_DELETION ||
+      line->origin == GIT_DIFF_LINE_CONTEXT)
+    g_string_append_c(buf, line->origin);
+
+  g_string_append_len(buf, line->content, (gssize)line->content_len);
+  return 0;
+}
+
+/* Hunk header callback */
+static int
+diff_hunk_cb(const git_diff_delta *delta G_GNUC_UNUSED,
+             const git_diff_hunk  *hunk,
+             void                 *payload)
+{
+  GString *buf = (GString *)payload;
+  g_string_append(buf, hunk->header);
+  return 0;
+}
+
+/* File header callback */
+static int
+diff_file_cb(const git_diff_delta *delta,
+             float                 progress G_GNUC_UNUSED,
+             void                 *payload)
+{
+  GString *buf = (GString *)payload;
+
+  if (buf->len > 0)
+    g_string_append_c(buf, '\n');
+
+  g_string_append_printf(buf, "diff --git a/%s b/%s\n",
+                          delta->old_file.path,
+                          delta->new_file.path);
+  return 0;
+}
+
+char *
+gnostr_git_client_get_commit_diff(GnostrGitClient *self,
+                                  const char      *commit_id)
+{
+  g_return_val_if_fail(GNOSTR_IS_GIT_CLIENT(self), NULL);
+  g_return_val_if_fail(commit_id != NULL, NULL);
+
+  if (!self->repo)
+    return NULL;
+
+  /* Parse commit OID */
+  git_oid oid;
+  if (git_oid_fromstr(&oid, commit_id) != 0)
+    return NULL;
+
+  /* Look up commit */
+  git_commit *commit = NULL;
+  if (git_commit_lookup(&commit, self->repo, &oid) != 0)
+    return NULL;
+
+  /* Get commit tree */
+  git_tree *commit_tree = NULL;
+  if (git_commit_tree(&commit_tree, commit) != 0)
+    {
+      git_commit_free(commit);
+      return NULL;
+    }
+
+  /* Get parent tree (NULL for root commit → diff against empty tree) */
+  git_tree *parent_tree = NULL;
+  if (git_commit_parentcount(commit) > 0)
+    {
+      git_commit *parent = NULL;
+      if (git_commit_parent(&parent, commit, 0) == 0)
+        {
+          git_commit_tree(&parent_tree, parent);
+          git_commit_free(parent);
+        }
+    }
+
+  /* Compute diff between parent and commit trees */
+  git_diff *diff = NULL;
+  git_diff_options opts = GIT_DIFF_OPTIONS_INIT;
+  opts.context_lines = 3;
+
+  int rc = git_diff_tree_to_tree(&diff, self->repo,
+                                  parent_tree, commit_tree, &opts);
+
+  git_tree_free(commit_tree);
+  if (parent_tree) git_tree_free(parent_tree);
+  git_commit_free(commit);
+
+  if (rc != 0 || !diff)
+    return NULL;
+
+  /* Render diff to string */
+  GString *buf = g_string_new(NULL);
+  git_diff_foreach(diff, diff_file_cb, NULL, diff_hunk_cb, diff_line_cb, buf);
+  git_diff_free(diff);
+
+  if (buf->len == 0)
+    {
+      g_string_free(buf, TRUE);
+      return g_strdup("(empty diff)");
+    }
+
+  return g_string_free(buf, FALSE);
 }

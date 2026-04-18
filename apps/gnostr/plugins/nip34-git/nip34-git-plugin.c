@@ -41,6 +41,11 @@ struct _Nip34GitPlugin
   /* Subscriptions */
   guint64 repo_subscription;    /* Subscription for repository events */
   guint64 patch_subscription;   /* Subscription for patch events */
+  guint64 issue_subscription;   /* Subscription for issue events */
+
+  /* Patch & issue caches */
+  GHashTable *patches;          /* event_id -> PatchInfo */
+  GHashTable *issues;           /* event_id -> IssueInfo */
 
   /* UI state */
   gboolean browser_visible;
@@ -68,6 +73,30 @@ typedef struct {
   gint64 created_at;            /* Creation timestamp */
   gint64 updated_at;            /* Last update timestamp */
 } RepoInfo;
+
+/* Patch proposal (kind 1617) */
+typedef struct {
+  gchar *id;                    /* Event ID */
+  gchar *pubkey;                /* Author pubkey */
+  gchar *repo_ref;              /* 'a' tag: 30617:<pk>:<d-tag> */
+  gchar *subject;               /* Patch title (subject tag) */
+  gchar *content;               /* The diff / cover letter */
+  gchar *commit_id;             /* Referenced commit (commit tag) */
+  gchar *parent_id;             /* Parent patch event ID (e tag, for series) */
+  gboolean is_root;             /* TRUE if 't:root' tag present */
+  gint64 created_at;
+} PatchInfo;
+
+/* Issue (kind 1621) */
+typedef struct {
+  gchar *id;                    /* Event ID */
+  gchar *pubkey;                /* Author pubkey */
+  gchar *repo_ref;              /* 'a' tag: 30617:<pk>:<d-tag> */
+  gchar *subject;               /* Issue title (subject tag) */
+  gchar *content;               /* Issue body */
+  gchar *status;                /* Latest status: open/closed/resolved */
+  gint64 created_at;
+} IssueInfo;
 
 /* Implement GnostrPlugin interface */
 static void gnostr_plugin_iface_init(GnostrPluginInterface *iface);
@@ -102,11 +131,42 @@ repo_info_free(gpointer data)
 }
 
 static void
+patch_info_free(gpointer data)
+{
+  PatchInfo *info = (PatchInfo *)data;
+  if (!info) return;
+  g_free(info->id);
+  g_free(info->pubkey);
+  g_free(info->repo_ref);
+  g_free(info->subject);
+  g_free(info->content);
+  g_free(info->commit_id);
+  g_free(info->parent_id);
+  g_free(info);
+}
+
+static void
+issue_info_free(gpointer data)
+{
+  IssueInfo *info = (IssueInfo *)data;
+  if (!info) return;
+  g_free(info->id);
+  g_free(info->pubkey);
+  g_free(info->repo_ref);
+  g_free(info->subject);
+  g_free(info->content);
+  g_free(info->status);
+  g_free(info);
+}
+
+static void
 nip34_git_plugin_dispose(GObject *object)
 {
   Nip34GitPlugin *self = NIP34_GIT_PLUGIN(object);
 
   g_clear_pointer(&self->repositories, g_hash_table_unref);
+  g_clear_pointer(&self->patches, g_hash_table_unref);
+  g_clear_pointer(&self->issues, g_hash_table_unref);
 
   G_OBJECT_CLASS(nip34_git_plugin_parent_class)->dispose(object);
 }
@@ -123,6 +183,10 @@ nip34_git_plugin_init(Nip34GitPlugin *self)
 {
   self->repositories = g_hash_table_new_full(g_str_hash, g_str_equal,
                                               g_free, repo_info_free);
+  self->patches = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                         g_free, patch_info_free);
+  self->issues = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                        g_free, issue_info_free);
   self->browser_visible = FALSE;
   self->client_visible = FALSE;
   self->repos_pushed_to_browser = FALSE;
@@ -275,6 +339,237 @@ parse_repository_event(const gchar *event_json)
     }
 
   return info;
+}
+
+/* ============================================================================
+ * Patch parsing (kind 1617)
+ * ============================================================================ */
+
+static PatchInfo *
+parse_patch_event(const gchar *event_json)
+{
+  if (!event_json || *event_json == '\0')
+    return NULL;
+
+  g_autoptr(JsonParser) parser = json_parser_new();
+  GError *error = NULL;
+
+  if (!json_parser_load_from_data(parser, event_json, -1, &error))
+    {
+      g_warning("[NIP-34] Failed to parse patch JSON: %s", error->message);
+      g_error_free(error);
+      return NULL;
+    }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root))
+    return NULL;
+
+  JsonObject *event = json_node_get_object(root);
+  PatchInfo *info = g_new0(PatchInfo, 1);
+
+  if (json_object_has_member(event, "id"))
+    info->id = g_strdup(json_object_get_string_member(event, "id"));
+  if (json_object_has_member(event, "pubkey"))
+    info->pubkey = g_strdup(json_object_get_string_member(event, "pubkey"));
+  if (json_object_has_member(event, "content"))
+    info->content = g_strdup(json_object_get_string_member(event, "content"));
+  if (json_object_has_member(event, "created_at"))
+    info->created_at = json_object_get_int_member(event, "created_at");
+
+  /* Parse tags */
+  if (json_object_has_member(event, "tags"))
+    {
+      JsonArray *tags = json_object_get_array_member(event, "tags");
+      guint n_tags = json_array_get_length(tags);
+
+      for (guint i = 0; i < n_tags; i++)
+        {
+          JsonArray *tag = json_array_get_array_element(tags, i);
+          if (!tag || json_array_get_length(tag) < 2)
+            continue;
+
+          const gchar *tag_name  = json_array_get_string_element(tag, 0);
+          const gchar *tag_value = json_array_get_string_element(tag, 1);
+          if (!tag_name || !tag_value)
+            continue;
+
+          if (g_strcmp0(tag_name, "a") == 0)
+            {
+              g_free(info->repo_ref);
+              info->repo_ref = g_strdup(tag_value);
+            }
+          else if (g_strcmp0(tag_name, "subject") == 0)
+            {
+              g_free(info->subject);
+              info->subject = g_strdup(tag_value);
+            }
+          else if (g_strcmp0(tag_name, "commit") == 0)
+            {
+              g_free(info->commit_id);
+              info->commit_id = g_strdup(tag_value);
+            }
+          else if (g_strcmp0(tag_name, "e") == 0)
+            {
+              /* Parent patch in a series */
+              g_free(info->parent_id);
+              info->parent_id = g_strdup(tag_value);
+            }
+          else if (g_strcmp0(tag_name, "t") == 0 &&
+                   g_strcmp0(tag_value, "root") == 0)
+            {
+              info->is_root = TRUE;
+            }
+        }
+    }
+
+  if (!info->id)
+    {
+      patch_info_free(info);
+      return NULL;
+    }
+
+  return info;
+}
+
+/* ============================================================================
+ * Issue parsing (kind 1621)
+ * ============================================================================ */
+
+static IssueInfo *
+parse_issue_event(const gchar *event_json)
+{
+  if (!event_json || *event_json == '\0')
+    return NULL;
+
+  g_autoptr(JsonParser) parser = json_parser_new();
+  GError *error = NULL;
+
+  if (!json_parser_load_from_data(parser, event_json, -1, &error))
+    {
+      g_warning("[NIP-34] Failed to parse issue JSON: %s", error->message);
+      g_error_free(error);
+      return NULL;
+    }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root))
+    return NULL;
+
+  JsonObject *event = json_node_get_object(root);
+  IssueInfo *info = g_new0(IssueInfo, 1);
+
+  if (json_object_has_member(event, "id"))
+    info->id = g_strdup(json_object_get_string_member(event, "id"));
+  if (json_object_has_member(event, "pubkey"))
+    info->pubkey = g_strdup(json_object_get_string_member(event, "pubkey"));
+  if (json_object_has_member(event, "content"))
+    info->content = g_strdup(json_object_get_string_member(event, "content"));
+  if (json_object_has_member(event, "created_at"))
+    info->created_at = json_object_get_int_member(event, "created_at");
+
+  info->status = g_strdup("open");  /* Default status */
+
+  /* Parse tags */
+  if (json_object_has_member(event, "tags"))
+    {
+      JsonArray *tags = json_object_get_array_member(event, "tags");
+      guint n_tags = json_array_get_length(tags);
+
+      for (guint i = 0; i < n_tags; i++)
+        {
+          JsonArray *tag = json_array_get_array_element(tags, i);
+          if (!tag || json_array_get_length(tag) < 2)
+            continue;
+
+          const gchar *tag_name  = json_array_get_string_element(tag, 0);
+          const gchar *tag_value = json_array_get_string_element(tag, 1);
+          if (!tag_name || !tag_value)
+            continue;
+
+          if (g_strcmp0(tag_name, "a") == 0)
+            {
+              g_free(info->repo_ref);
+              info->repo_ref = g_strdup(tag_value);
+            }
+          else if (g_strcmp0(tag_name, "subject") == 0)
+            {
+              g_free(info->subject);
+              info->subject = g_strdup(tag_value);
+            }
+          else if (g_strcmp0(tag_name, "status") == 0)
+            {
+              g_free(info->status);
+              info->status = g_strdup(tag_value);
+            }
+        }
+    }
+
+  if (!info->id)
+    {
+      issue_info_free(info);
+      return NULL;
+    }
+
+  return info;
+}
+
+/**
+ * Apply a status change from a kind 1622 reply event to an existing issue.
+ * Returns TRUE if the issue was found and updated.
+ */
+static gboolean
+apply_issue_status_update(Nip34GitPlugin *self, const gchar *event_json)
+{
+  if (!event_json || *event_json == '\0')
+    return FALSE;
+
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, event_json, -1, NULL))
+    return FALSE;
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root))
+    return FALSE;
+
+  JsonObject *event = json_node_get_object(root);
+
+  const gchar *new_status = NULL;
+  const gchar *issue_id   = NULL;
+
+  if (!json_object_has_member(event, "tags"))
+    return FALSE;
+
+  JsonArray *tags = json_object_get_array_member(event, "tags");
+  guint n_tags = json_array_get_length(tags);
+
+  for (guint i = 0; i < n_tags; i++)
+    {
+      JsonArray *tag = json_array_get_array_element(tags, i);
+      if (!tag || json_array_get_length(tag) < 2)
+        continue;
+
+      const gchar *tn = json_array_get_string_element(tag, 0);
+      const gchar *tv = json_array_get_string_element(tag, 1);
+      if (!tn || !tv) continue;
+
+      if (g_strcmp0(tn, "e") == 0 && !issue_id)
+        issue_id = tv;
+      else if (g_strcmp0(tn, "status") == 0)
+        new_status = tv;
+    }
+
+  if (!issue_id || !new_status)
+    return FALSE;
+
+  IssueInfo *issue = g_hash_table_lookup(self->issues, issue_id);
+  if (!issue)
+    return FALSE;
+
+  g_free(issue->status);
+  issue->status = g_strdup(new_status);
+  g_debug("[NIP-34] Updated issue %s status → %s", issue_id, new_status);
+  return TRUE;
 }
 
 /* ============================================================================
@@ -534,6 +829,66 @@ on_refresh_relay_events_done(GObject      *source,
     } else {
       g_debug("[NIP-34] No repository events found after refresh");
     }
+
+    /* Query patches (kind 1617) */
+    error = NULL;
+    const char *patch_qf = "{\"kinds\":[1617],\"limit\":500}";
+    GPtrArray *patch_events = gnostr_plugin_context_query_events(
+        self->context, patch_qf, &error);
+    if (error) {
+      g_debug("[NIP-34] Patch query failed: %s", error->message);
+      g_error_free(error);
+    } else if (patch_events && patch_events->len > 0) {
+      g_debug("[NIP-34] Found %u patch events after refresh", patch_events->len);
+      for (guint i = 0; i < patch_events->len; i++) {
+        const char *pjson = g_ptr_array_index(patch_events, i);
+        if (pjson) {
+          PatchInfo *pi = parse_patch_event(pjson);
+          if (pi && pi->id)
+            g_hash_table_replace(self->patches, g_strdup(pi->id), pi);
+          else
+            patch_info_free(pi);
+        }
+      }
+      g_ptr_array_unref(patch_events);
+    }
+
+    /* Query issues (kind 1621) and replies (kind 1622) */
+    error = NULL;
+    const char *issue_qf = "{\"kinds\":[1621,1622],\"limit\":500}";
+    GPtrArray *issue_events = gnostr_plugin_context_query_events(
+        self->context, issue_qf, &error);
+    if (error) {
+      g_debug("[NIP-34] Issue query failed: %s", error->message);
+      g_error_free(error);
+    } else if (issue_events && issue_events->len > 0) {
+      g_debug("[NIP-34] Found %u issue events after refresh", issue_events->len);
+      for (guint i = 0; i < issue_events->len; i++) {
+        const char *ijson = g_ptr_array_index(issue_events, i);
+        if (!ijson) continue;
+
+        /* Determine kind from JSON to route correctly */
+        g_autoptr(JsonParser) jp = json_parser_new();
+        if (json_parser_load_from_data(jp, ijson, -1, NULL)) {
+          JsonNode *jr = json_parser_get_root(jp);
+          if (jr && JSON_NODE_HOLDS_OBJECT(jr)) {
+            JsonObject *jo = json_node_get_object(jr);
+            gint64 kind = json_object_has_member(jo, "kind")
+                          ? json_object_get_int_member(jo, "kind") : 0;
+            if (kind == NIP34_KIND_ISSUE) {
+              IssueInfo *ii = parse_issue_event(ijson);
+              if (ii && ii->id)
+                g_hash_table_replace(self->issues, g_strdup(ii->id), ii);
+              else
+                issue_info_free(ii);
+            } else if (kind == NIP34_KIND_ISSUE_REPLY) {
+              apply_issue_status_update(self, ijson);
+            }
+          }
+        }
+      }
+      g_ptr_array_unref(issue_events);
+    }
   }
 
   g_object_unref(self);
@@ -652,6 +1007,24 @@ nip34_git_plugin_activate(GnostrPlugin        *plugin,
   if (self->repo_subscription > 0)
     g_debug("[NIP-34] Subscribed to repository events (id=%lu)",
             (unsigned long)self->repo_subscription);
+
+  /* Subscribe to patch events (kind 1617) */
+  const char *patch_filter = "{\"kinds\":[1617],\"limit\":200}";
+  self->patch_subscription = gnostr_plugin_context_subscribe_events(
+      context, patch_filter, G_CALLBACK(on_repository_event), self, NULL);
+
+  if (self->patch_subscription > 0)
+    g_debug("[NIP-34] Subscribed to patch events (id=%lu)",
+            (unsigned long)self->patch_subscription);
+
+  /* Subscribe to issue events (kind 1621, 1622) */
+  const char *issue_filter = "{\"kinds\":[1621,1622],\"limit\":200}";
+  self->issue_subscription = gnostr_plugin_context_subscribe_events(
+      context, issue_filter, G_CALLBACK(on_repository_event), self, NULL);
+
+  if (self->issue_subscription > 0)
+    g_debug("[NIP-34] Subscribed to issue events (id=%lu)",
+            (unsigned long)self->issue_subscription);
 
   /* Load cached repository list from plugin storage */
   load_cached_repositories(self, context);
@@ -817,9 +1190,16 @@ nip34_git_plugin_deactivate(GnostrPlugin        *plugin,
       gnostr_plugin_context_unsubscribe_events(context, self->patch_subscription);
       self->patch_subscription = 0;
     }
+  if (self->issue_subscription > 0 && context)
+    {
+      gnostr_plugin_context_unsubscribe_events(context, self->issue_subscription);
+      self->issue_subscription = 0;
+    }
 
   /* Clear cached data */
   g_hash_table_remove_all(self->repositories);
+  g_hash_table_remove_all(self->patches);
+  g_hash_table_remove_all(self->issues);
 
 #ifdef HAVE_LIBGIT2
   /* Unregister action handler */
@@ -934,16 +1314,52 @@ nip34_git_plugin_handle_event(GnostrEventHandler  *handler,
       }
 
     case NIP34_KIND_PATCH:
-      g_debug("[NIP-34] Received patch event");
-      return TRUE;
+      {
+        char *json = gnostr_plugin_event_to_json(event);
+        PatchInfo *pinfo = parse_patch_event(json);
+        if (pinfo && pinfo->id)
+          {
+            g_hash_table_replace(self->patches,
+                                 g_strdup(pinfo->id), pinfo);
+            g_debug("[NIP-34] Cached patch: %s (%s)",
+                    pinfo->subject ? pinfo->subject : "(no subject)",
+                    pinfo->id);
+          }
+        else
+          {
+            patch_info_free(pinfo);
+          }
+        g_free(json);
+        return TRUE;
+      }
 
     case NIP34_KIND_ISSUE:
-      g_debug("[NIP-34] Received issue event");
-      return TRUE;
+      {
+        char *json = gnostr_plugin_event_to_json(event);
+        IssueInfo *iinfo = parse_issue_event(json);
+        if (iinfo && iinfo->id)
+          {
+            g_hash_table_replace(self->issues,
+                                 g_strdup(iinfo->id), iinfo);
+            g_debug("[NIP-34] Cached issue: %s (%s)",
+                    iinfo->subject ? iinfo->subject : "(no subject)",
+                    iinfo->id);
+          }
+        else
+          {
+            issue_info_free(iinfo);
+          }
+        g_free(json);
+        return TRUE;
+      }
 
     case NIP34_KIND_ISSUE_REPLY:
-      g_debug("[NIP-34] Received issue reply event");
-      return TRUE;
+      {
+        char *json = gnostr_plugin_event_to_json(event);
+        apply_issue_status_update(self, json);
+        g_free(json);
+        return TRUE;
+      }
 
     default:
       return FALSE;
@@ -991,15 +1407,18 @@ update_repo_list(SettingsPageData *data)
   while ((child = gtk_widget_get_first_child(GTK_WIDGET(data->repo_list))) != NULL)
     gtk_list_box_remove(data->repo_list, child);
 
-  guint n_repos = g_hash_table_size(data->plugin->repositories);
+  guint n_repos   = g_hash_table_size(data->plugin->repositories);
+  guint n_patches = g_hash_table_size(data->plugin->patches);
+  guint n_issues  = g_hash_table_size(data->plugin->issues);
 
-  if (n_repos == 0)
+  if (n_repos == 0 && n_patches == 0 && n_issues == 0)
     {
       gtk_label_set_text(data->status_label, "No repositories found");
       return;
     }
 
-  g_autofree char *status = g_strdup_printf("%u repositories", n_repos);
+  g_autofree char *status = g_strdup_printf(
+      "%u repos · %u patches · %u issues", n_repos, n_patches, n_issues);
   gtk_label_set_text(data->status_label, status);
 
   /* Add repository rows */
