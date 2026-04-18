@@ -13,6 +13,8 @@
 #include "nd-calendar-store.h"
 #include "nd-vcard.h"
 #include "nd-contact-store.h"
+#include "nd-file-entry.h"
+#include "nd-file-store.h"
 
 #include <libsoup/soup.h>
 #include <libxml/xmlwriter.h>
@@ -54,6 +56,9 @@ struct _NdDavServer {
 
   /* Contact store for kind-30085 contacts */
   NdContactStore *contact_store;  /* owned */
+
+  /* File store for NIP-94 files */
+  NdFileStore *file_store;  /* owned */
 };
 
 G_DEFINE_TYPE(NdDavServer, nd_dav_server, G_TYPE_OBJECT)
@@ -64,6 +69,8 @@ static void xml_write_event_response(xmlTextWriterPtr w,
                                      const NdCalendarEvent *event);
 static void xml_write_contact_response(xmlTextWriterPtr w,
                                        const NdContact *contact);
+static void xml_write_file_response(xmlTextWriterPtr w,
+                                    const NdFileEntry *entry);
 
 /* ---- XML helpers ---- */
 
@@ -251,6 +258,14 @@ handle_propfind_root(NdDavServer *self, SoupServerMessage *msg, int depth)
     xml_start_propstat_ok(w);
     xml_write_resourcetype_collection(w);
     xml_write_displayname(w, "Contacts");
+    xml_end_propstat_ok(w);
+    xml_end_response(w);
+
+    /* /files/ collection */
+    xml_start_response(w, "/files/");
+    xml_start_propstat_ok(w);
+    xml_write_resourcetype_collection(w);
+    xml_write_displayname(w, "Files");
     xml_end_propstat_ok(w);
     xml_end_response(w);
   }
@@ -864,6 +879,268 @@ handle_report_contacts(NdDavServer *self, SoupServerMessage *msg)
   xmlBufferFree(buf);
 }
 
+/* ---- WebDAV File handlers ---- */
+
+/**
+ * Extract the file path from a URL like /files/nostr/<path>
+ * Returns NULL if the path doesn't match.
+ */
+static gchar *
+extract_file_path(const gchar *url_path)
+{
+  if (!g_str_has_prefix(url_path, "/files/nostr/"))
+    return NULL;
+
+  const gchar *start = url_path + strlen("/files/nostr/");
+  if (*start == '\0')
+    return NULL;
+
+  return g_strdup(start);
+}
+
+/**
+ * Write a single file as a DAV response element in a multistatus.
+ */
+static void
+xml_write_file_response(xmlTextWriterPtr w, const NdFileEntry *entry)
+{
+  g_autofree gchar *href = g_strdup_printf("/files/nostr/%s", entry->path);
+  xml_start_response(w, href);
+  xml_start_propstat_ok(w);
+
+  /* getetag */
+  g_autofree gchar *etag = nd_file_entry_compute_etag(entry);
+  xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getetag", NULL);
+  xmlTextWriterWriteString(w, BAD_CAST etag);
+  xmlTextWriterEndElement(w);
+
+  /* getcontenttype */
+  xmlTextWriterStartElementNS(w, BAD_CAST "D",
+                               BAD_CAST "getcontenttype", NULL);
+  xmlTextWriterWriteString(w, BAD_CAST entry->mime_type);
+  xmlTextWriterEndElement(w);
+
+  /* getcontentlength */
+  {
+    g_autofree gchar *size_str = g_strdup_printf("%" G_GSIZE_FORMAT,
+                                                 entry->size);
+    xmlTextWriterStartElementNS(w, BAD_CAST "D",
+                                 BAD_CAST "getcontentlength", NULL);
+    xmlTextWriterWriteString(w, BAD_CAST size_str);
+    xmlTextWriterEndElement(w);
+  }
+
+  /* displayname */
+  if (entry->display_name)
+    xml_write_displayname(w, entry->display_name);
+
+  /* getlastmodified (RFC 2822 format) */
+  if (entry->modified_at > 0) {
+    time_t t = (time_t)entry->modified_at;
+    struct tm tm_buf;
+    gmtime_r(&t, &tm_buf);
+    char date_buf[64];
+    strftime(date_buf, sizeof(date_buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_buf);
+    xmlTextWriterStartElementNS(w, BAD_CAST "D",
+                                 BAD_CAST "getlastmodified", NULL);
+    xmlTextWriterWriteString(w, BAD_CAST date_buf);
+    xmlTextWriterEndElement(w);
+  }
+
+  xml_end_propstat_ok(w);
+  xml_end_response(w);
+}
+
+/**
+ * Handle PROPFIND /files/ — file collection listing.
+ */
+static void
+handle_propfind_files(NdDavServer *self, SoupServerMessage *msg, int depth)
+{
+  xmlBufferPtr buf = NULL;
+  xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+
+  /* Files home collection */
+  xml_start_response(w, "/files/");
+  xml_start_propstat_ok(w);
+  xml_write_resourcetype_collection(w);
+  xml_write_displayname(w, "Files");
+  xml_end_propstat_ok(w);
+  xml_end_response(w);
+
+  if (depth >= 1) {
+    /* Default file collection */
+    xml_start_response(w, "/files/nostr/");
+    xml_start_propstat_ok(w);
+
+    /* resourcetype: collection */
+    xmlTextWriterStartElementNS(w, BAD_CAST "D",
+                                 BAD_CAST "resourcetype", NULL);
+    xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "collection", NULL);
+    xmlTextWriterEndElement(w);
+    xmlTextWriterEndElement(w); /* resourcetype */
+
+    xml_write_displayname(w, "Nostr Files");
+
+    /* getctag */
+    g_autofree gchar *ctag = nd_file_store_get_ctag(self->file_store);
+    xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getctag", NULL);
+    xmlTextWriterWriteString(w, BAD_CAST ctag);
+    xmlTextWriterEndElement(w);
+
+    xml_end_propstat_ok(w);
+    xml_end_response(w);
+
+    /* List individual files as resources */
+    g_autoptr(GPtrArray) files = nd_file_store_list_all(self->file_store);
+    for (guint i = 0; i < files->len; i++) {
+      const NdFileEntry *entry = g_ptr_array_index(files, i);
+      xml_write_file_response(w, entry);
+    }
+  }
+
+  xmlTextWriterEndElement(w); /* multistatus */
+  xmlTextWriterEndDocument(w);
+  xmlFreeTextWriter(w);
+
+  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+  gsize xml_len = xmlBufferLength(buf);
+
+  soup_server_message_set_status(msg, 207, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "application/xml; charset=utf-8");
+  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
+                                   SOUP_MEMORY_COPY, xml_str, xml_len);
+
+  xmlBufferFree(buf);
+}
+
+/**
+ * Handle PUT /files/nostr/<path> — create or update file.
+ */
+static void
+handle_put_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_path)
+{
+  SoupMessageBody *body = soup_server_message_get_request_body(msg);
+  g_autoptr(GBytes) body_bytes = NULL;
+  if (body)
+    body_bytes = soup_message_body_flatten(body);
+
+  if (body_bytes == NULL || g_bytes_get_size(body_bytes) == 0) {
+    soup_server_message_set_status(msg, 400, NULL);
+    return;
+  }
+
+  /* Detect MIME type from Content-Type header or guess from path */
+  SoupMessageHeaders *req_hdrs = soup_server_message_get_request_headers(msg);
+  const gchar *content_type = soup_message_headers_get_content_type(
+    req_hdrs, NULL);
+
+  const gchar *mime = NULL;
+  if (content_type != NULL && !g_str_equal(content_type, "application/octet-stream"))
+    mime = content_type;
+
+  /* Check if this is a create or update */
+  gboolean is_new = (nd_file_store_get(self->file_store, file_path) == NULL);
+
+  NdFileEntry *entry = nd_file_entry_new(file_path, body_bytes, mime);
+
+  /* Store the entry (takes ownership) */
+  nd_file_store_put(self->file_store, entry);
+
+  /* Retrieve stored entry to compute ETag */
+  const NdFileEntry *stored = nd_file_store_get(self->file_store, file_path);
+  g_autofree gchar *etag = nd_file_entry_compute_etag(stored);
+
+  soup_server_message_set_status(msg, is_new ? 201 : 204, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "ETag", etag);
+
+  g_autofree gchar *location = g_strdup_printf("/files/nostr/%s", file_path);
+  soup_message_headers_replace(hdrs, "Location", location);
+
+  g_message("nostr-dav: %s file %s (%s, %" G_GSIZE_FORMAT " bytes)",
+            is_new ? "created" : "updated", file_path,
+            stored->mime_type, stored->size);
+}
+
+/**
+ * Handle GET /files/nostr/<path> — retrieve file content.
+ */
+static void
+handle_get_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_path)
+{
+  const NdFileEntry *entry = nd_file_store_get(self->file_store, file_path);
+  if (entry == NULL) {
+    soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
+
+  g_autofree gchar *etag = nd_file_entry_compute_etag(entry);
+
+  gsize data_len = 0;
+  const gchar *data = g_bytes_get_data(entry->content, &data_len);
+
+  soup_server_message_set_status(msg, 200, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type", entry->mime_type);
+  soup_message_headers_replace(hdrs, "ETag", etag);
+
+  g_autofree gchar *len_str = g_strdup_printf("%" G_GSIZE_FORMAT, data_len);
+  soup_message_headers_replace(hdrs, "Content-Length", len_str);
+
+  soup_server_message_set_response(msg, entry->mime_type,
+                                   SOUP_MEMORY_COPY, data, data_len);
+}
+
+/**
+ * Handle DELETE /files/nostr/<path> — remove file.
+ */
+static void
+handle_delete_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_path)
+{
+  if (!nd_file_store_remove(self->file_store, file_path)) {
+    soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
+
+  soup_server_message_set_status(msg, 204, NULL);
+  g_message("nostr-dav: deleted file %s", file_path);
+}
+
+/**
+ * Handle REPORT on /files/nostr/ — return all files in multistatus.
+ * (v1: returns everything, no query filtering)
+ */
+static void
+handle_report_files(NdDavServer *self, SoupServerMessage *msg)
+{
+  xmlBufferPtr buf = NULL;
+  xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+
+  g_autoptr(GPtrArray) files = nd_file_store_list_all(self->file_store);
+  for (guint i = 0; i < files->len; i++) {
+    const NdFileEntry *entry = g_ptr_array_index(files, i);
+    xml_write_file_response(w, entry);
+  }
+
+  xmlTextWriterEndElement(w); /* multistatus */
+  xmlTextWriterEndDocument(w);
+  xmlFreeTextWriter(w);
+
+  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+  gsize xml_len = xmlBufferLength(buf);
+
+  soup_server_message_set_status(msg, 207, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "application/xml; charset=utf-8");
+  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
+                                   SOUP_MEMORY_COPY, xml_str, xml_len);
+  xmlBufferFree(buf);
+}
+
 /* ---- Parse Depth header ---- */
 
 static int
@@ -1004,6 +1281,38 @@ on_request(SoupServer        *soup_server,
       return;
     }
 
+    if (g_str_has_prefix(path, "/files")) {
+      /* PROPFIND on individual file resource */
+      g_autofree gchar *fpath = extract_file_path(path);
+      if (fpath != NULL) {
+        const NdFileEntry *entry =
+          nd_file_store_get(self->file_store, fpath);
+        if (entry == NULL) {
+          soup_server_message_set_status(msg, 404, NULL);
+          return;
+        }
+        xmlBufferPtr buf = NULL;
+        xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+        xml_write_file_response(w, entry);
+        xmlTextWriterEndElement(w);
+        xmlTextWriterEndDocument(w);
+        xmlFreeTextWriter(w);
+        const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+        gsize xml_len = xmlBufferLength(buf);
+        soup_server_message_set_status(msg, 207, NULL);
+        SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
+        soup_message_headers_replace(rh, "Content-Type",
+                                     "application/xml; charset=utf-8");
+        soup_server_message_set_response(msg,
+                                         "application/xml; charset=utf-8",
+                                         SOUP_MEMORY_COPY, xml_str, xml_len);
+        xmlBufferFree(buf);
+        return;
+      }
+      handle_propfind_files(self, msg, depth);
+      return;
+    }
+
     /* Unknown path */
     soup_server_message_set_status(msg, 404, NULL);
     return;
@@ -1015,6 +1324,8 @@ on_request(SoupServer        *soup_server,
       handle_report_calendar(self, msg);
     } else if (g_str_has_prefix(path, "/contacts/nostr")) {
       handle_report_contacts(self, msg);
+    } else if (g_str_has_prefix(path, "/files/nostr")) {
+      handle_report_files(self, msg);
     } else {
       /* Empty multistatus for unknown REPORTs */
       xmlBufferPtr buf = NULL;
@@ -1047,11 +1358,16 @@ on_request(SoupServer        *soup_server,
       handle_put_contact(self, msg, ct_uid);
       return;
     }
+    g_autofree gchar *f_path = extract_file_path(path);
+    if (f_path != NULL) {
+      handle_put_file(self, msg, f_path);
+      return;
+    }
     soup_server_message_set_status(msg, 405, NULL);
     return;
   }
 
-  /* === GET — retrieve calendar event or contact === */
+  /* === GET — retrieve calendar event, contact, or file === */
   if (g_str_equal(method, "GET")) {
     g_autofree gchar *cal_uid = extract_calendar_uid(path);
     if (cal_uid != NULL) {
@@ -1063,11 +1379,16 @@ on_request(SoupServer        *soup_server,
       handle_get_contact(self, msg, ct_uid);
       return;
     }
+    g_autofree gchar *f_path = extract_file_path(path);
+    if (f_path != NULL) {
+      handle_get_file(self, msg, f_path);
+      return;
+    }
     soup_server_message_set_status(msg, 405, NULL);
     return;
   }
 
-  /* === DELETE — remove calendar event or contact === */
+  /* === DELETE — remove calendar event, contact, or file === */
   if (g_str_equal(method, "DELETE")) {
     g_autofree gchar *cal_uid = extract_calendar_uid(path);
     if (cal_uid != NULL) {
@@ -1077,6 +1398,11 @@ on_request(SoupServer        *soup_server,
     g_autofree gchar *ct_uid = extract_contact_uid(path);
     if (ct_uid != NULL) {
       handle_delete_contact(self, msg, ct_uid);
+      return;
+    }
+    g_autofree gchar *f_path = extract_file_path(path);
+    if (f_path != NULL) {
+      handle_delete_file(self, msg, f_path);
       return;
     }
     soup_server_message_set_status(msg, 405, NULL);
@@ -1116,6 +1442,10 @@ nd_dav_server_finalize(GObject *obj)
     nd_contact_store_free(self->contact_store);
     self->contact_store = NULL;
   }
+  if (self->file_store) {
+    nd_file_store_free(self->file_store);
+    self->file_store = NULL;
+  }
   G_OBJECT_CLASS(nd_dav_server_parent_class)->finalize(obj);
 }
 
@@ -1136,6 +1466,7 @@ nd_dav_server_init(NdDavServer *self)
   self->account_id = NULL;
   self->cal_store = nd_calendar_store_new();
   self->contact_store = nd_contact_store_new();
+  self->file_store = nd_file_store_new();
 }
 
 /* ---- Public API ---- */

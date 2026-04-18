@@ -33,6 +33,8 @@ set(ND_SOURCES
   src/nd-calendar-store.c
   src/nd-vcard.c
   src/nd-contact-store.c
+  src/nd-file-entry.c
+  src/nd-file-store.c
 )
 
 add_executable(nostr-dav ${ND_SOURCES})
@@ -75,6 +77,8 @@ if (BUILD_TESTING)
     src/nd-calendar-store.c
     src/nd-vcard.c
     src/nd-contact-store.c
+    src/nd-file-entry.c
+    src/nd-file-store.c
   )
 
   target_include_directories(test-nostr-dav PRIVATE

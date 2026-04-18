@@ -8,7 +8,7 @@ How Nostr primitives map to GNOME desktop services.
 |-----|---------|---------------|--------|--------|
 | NIP-52 (Calendar) | 31922, 31923 | GNOME Calendar via EDS | nostr-dav (CalDAV) | ✅ MVP |
 | Contacts (draft) | 30085 | GNOME Contacts via EDS | nostr-dav (CardDAV) | ✅ MVP |
-| NIP-94 + Blossom | 1063 | Nautilus / GNOME Files | nostr-dav (WebDAV) | 🚧 Planned |
+| NIP-94 + Blossom | 1063 | Nautilus / GNOME Files | nostr-dav (WebDAV) | ✅ MVP |
 | NIP-46 (Remote Sign) | 24133 | gnostr-signer | D-Bus (org.nostr.Signer) | ✅ Shipped |
 | NIP-65 (Relay List) | 10002 | Relay picker UI | signer settings | ✅ Shipped |
 | NIP-01 (Metadata) | 0 | GNOME Online Accounts display name | GOA shim | 🚧 Planned |
@@ -84,6 +84,8 @@ Object path: `/org/nostr/Signer`
 | vCard converter | `gnome/nostr-dav/src/nd-vcard.c` | vCard 4.0 ↔ kind 30085 |
 | Calendar store | `gnome/nostr-dav/src/nd-calendar-store.c` | In-memory event cache |
 | Contact store | `gnome/nostr-dav/src/nd-contact-store.c` | In-memory contact cache |
+| File entry | `gnome/nostr-dav/src/nd-file-entry.c` | NIP-94 metadata + SHA-256 |
+| File store | `gnome/nostr-dav/src/nd-file-store.c` | In-memory file cache |
 | DAV server | `gnome/nostr-dav/src/nd-dav-server.c` | SoupServer request routing |
 | Systemd unit | `gnome/nostr-dav/systemd/nostr-dav.service` | User service definition |
 | Onboarding UI | `apps/gnostr-signer/data/ui/sheets/sheet-online-accounts.blp` | Setup wizard |
@@ -100,6 +102,8 @@ Object path: `/org/nostr/Signer`
 | `/calendars/nostr/<uid>.ics` | CalDAV | GET, PUT, DELETE | Individual event |
 | `/contacts/` | CardDAV | PROPFIND, REPORT | Address book collection |
 | `/contacts/nostr/<uid>.vcf` | CardDAV | GET, PUT, DELETE | Individual contact |
+| `/files/` | WebDAV | PROPFIND | Files home collection |
+| `/files/nostr/<path>` | WebDAV | GET, PUT, DELETE, PROPFIND, REPORT | Individual file |
 
 ## Authentication
 

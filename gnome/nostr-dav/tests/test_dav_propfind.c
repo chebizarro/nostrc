@@ -12,6 +12,8 @@
 #include "nd-calendar-store.h"
 #include "nd-vcard.h"
 #include "nd-contact-store.h"
+#include "nd-file-entry.h"
+#include "nd-file-store.h"
 
 #include <glib.h>
 #include <libsoup/soup.h>
@@ -255,7 +257,8 @@ test_propfind_root_depth1(DavFixture *f, gconstpointer data)
   xmlXPathObjectPtr result = xmlXPathEvalExpression(
     BAD_CAST "//D:response", ctx);
   g_assert_nonnull(result);
-  g_assert_cmpint(result->nodesetval->nodeNr, ==, 3);
+  /* root + calendars + contacts + files = 4 collections */
+  g_assert_cmpint(result->nodesetval->nodeNr, ==, 4);
 
   xmlXPathFreeObject(result);
   xmlXPathFreeContext(ctx);
@@ -1310,6 +1313,340 @@ test_vcard_etag_stable(void)
   nd_contact_free(contact);
 }
 
+/* ---- WebDAV File lifecycle tests ---- */
+
+#define TEST_FILE_CONTENT "Hello, Nostr! This is a test file.\n"
+#define TEST_FILE_CONTENT2 "Updated content for the test file.\n"
+
+static SoupMessage *
+make_put_file(const gchar *url, const gchar *content, const gchar *mime)
+{
+  SoupMessage *msg = soup_message_new("PUT", url);
+  GBytes *body = g_bytes_new_static(content, strlen(content));
+  soup_message_set_request_body_from_bytes(msg, mime, body);
+  g_bytes_unref(body);
+  return msg;
+}
+
+static void
+test_webdav_put_creates(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/files/nostr/notes/hello.txt", f->base_url);
+  g_autoptr(SoupMessage) msg = make_put_file(url, TEST_FILE_CONTENT,
+                                             "text/plain");
+  g_autoptr(GBytes) body = send_msg(f, msg);
+
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 201);
+
+  SoupMessageHeaders *hdrs = soup_message_get_response_headers(msg);
+  const gchar *etag = soup_message_headers_get_one(hdrs, "ETag");
+  g_assert_nonnull(etag);
+  g_assert_true(etag[0] == '"');
+
+  const gchar *location = soup_message_headers_get_one(hdrs, "Location");
+  g_assert_cmpstr(location, ==, "/files/nostr/notes/hello.txt");
+}
+
+static void
+test_webdav_put_updates(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/files/nostr/notes/hello.txt", f->base_url);
+
+  /* First PUT -> 201 */
+  g_autoptr(SoupMessage) msg1 = make_put_file(url, TEST_FILE_CONTENT,
+                                              "text/plain");
+  g_autoptr(GBytes) body1 = send_msg(f, msg1);
+  g_assert_cmpuint(soup_message_get_status(msg1), ==, 201);
+
+  /* Second PUT -> 204 (update) */
+  g_autoptr(SoupMessage) msg2 = make_put_file(url, TEST_FILE_CONTENT2,
+                                              "text/plain");
+  g_autoptr(GBytes) body2 = send_msg(f, msg2);
+  g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+}
+
+static void
+test_webdav_get_file(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT first */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/files/nostr/notes/hello.txt", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_file(put_url, TEST_FILE_CONTENT,
+                                                 "text/plain");
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* GET */
+  g_autofree gchar *get_url = g_strdup_printf(
+    "%s/files/nostr/notes/hello.txt", f->base_url);
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", get_url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+
+  SoupMessageHeaders *hdrs = soup_message_get_response_headers(get_msg);
+  const gchar *ct = soup_message_headers_get_one(hdrs, "Content-Type");
+  g_assert_nonnull(ct);
+  g_assert_true(strstr(ct, "text/plain") != NULL);
+
+  const gchar *etag = soup_message_headers_get_one(hdrs, "ETag");
+  g_assert_nonnull(etag);
+
+  /* Verify content */
+  gsize len = 0;
+  const gchar *data_ptr = g_bytes_get_data(get_body, &len);
+  g_assert_cmpuint(len, ==, strlen(TEST_FILE_CONTENT));
+  g_assert_true(memcmp(data_ptr, TEST_FILE_CONTENT, len) == 0);
+}
+
+static void
+test_webdav_get_not_found(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/files/nostr/nonexistent.txt", f->base_url);
+  g_autoptr(SoupMessage) msg = soup_message_new("GET", url);
+  g_autoptr(GBytes) body = send_msg(f, msg);
+
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 404);
+}
+
+static void
+test_webdav_delete_file(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT first */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/files/nostr/notes/hello.txt", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_file(put_url, TEST_FILE_CONTENT,
+                                                 "text/plain");
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* DELETE */
+  g_autofree gchar *del_url = g_strdup_printf(
+    "%s/files/nostr/notes/hello.txt", f->base_url);
+  g_autoptr(SoupMessage) del_msg = soup_message_new("DELETE", del_url);
+  g_autoptr(GBytes) del_body = send_msg(f, del_msg);
+  g_assert_cmpuint(soup_message_get_status(del_msg), ==, 204);
+
+  /* GET should now 404 */
+  g_autofree gchar *get_url = g_strdup_printf(
+    "%s/files/nostr/notes/hello.txt", f->base_url);
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", get_url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 404);
+}
+
+static void
+test_webdav_report_with_files(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT a file first */
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/files/nostr/doc.md", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_file(url, "# Hello\n",
+                                                 "text/markdown");
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* REPORT */
+  g_autofree gchar *report_url = g_strdup_printf(
+    "%s/files/nostr/", f->base_url);
+  g_autoptr(SoupMessage) report_msg = soup_message_new("REPORT", report_url);
+  g_autoptr(GBytes) report_body = send_msg(f, report_msg);
+  g_assert_cmpuint(soup_message_get_status(report_msg), ==, 207);
+
+  gsize rlen = 0;
+  const gchar *rxml = g_bytes_get_data(report_body, &rlen);
+  g_assert_nonnull(strstr(rxml, "/files/nostr/doc.md"));
+}
+
+static void
+test_webdav_propfind_depth1_with_files(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT a file */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/files/nostr/image.png", f->base_url);
+  const gchar *fake_png = "\x89PNG fake data";
+  g_autoptr(SoupMessage) put_msg = make_put_file(put_url, fake_png,
+                                                 "image/png");
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* PROPFIND depth 1 */
+  g_autofree gchar *pf_url = g_strdup_printf("%s/files/", f->base_url);
+  g_autoptr(SoupMessage) pf_msg = make_propfind(pf_url, 1);
+  g_autoptr(GBytes) pf_body = send_msg(f, pf_msg);
+  g_assert_cmpuint(soup_message_get_status(pf_msg), ==, 207);
+
+  gsize plen = 0;
+  const gchar *pxml = g_bytes_get_data(pf_body, &plen);
+  /* Should contain the collection and the file */
+  g_assert_nonnull(strstr(pxml, "/files/"));
+  g_assert_nonnull(strstr(pxml, "/files/nostr/"));
+  g_assert_nonnull(strstr(pxml, "/files/nostr/image.png"));
+  g_assert_nonnull(strstr(pxml, "image/png"));
+}
+
+static void
+test_webdav_propfind_single_file(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT a file */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/files/nostr/readme.txt", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_file(put_url, "Read me\n",
+                                                 "text/plain");
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* PROPFIND on single file */
+  g_autofree gchar *pf_url = g_strdup_printf(
+    "%s/files/nostr/readme.txt", f->base_url);
+  g_autoptr(SoupMessage) pf_msg = make_propfind(pf_url, 0);
+  g_autoptr(GBytes) pf_body = send_msg(f, pf_msg);
+  g_assert_cmpuint(soup_message_get_status(pf_msg), ==, 207);
+
+  gsize plen = 0;
+  const gchar *pxml = g_bytes_get_data(pf_body, &plen);
+  g_assert_nonnull(strstr(pxml, "/files/nostr/readme.txt"));
+  g_assert_nonnull(strstr(pxml, "text/plain"));
+}
+
+static void
+test_webdav_sha256_etag(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT same content twice to same path - ETags should match */
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/files/nostr/test.txt", f->base_url);
+
+  g_autoptr(SoupMessage) msg1 = make_put_file(url, TEST_FILE_CONTENT,
+                                              "text/plain");
+  g_autoptr(GBytes) body1 = send_msg(f, msg1);
+  g_assert_cmpuint(soup_message_get_status(msg1), ==, 201);
+  SoupMessageHeaders *h1 = soup_message_get_response_headers(msg1);
+  g_autofree gchar *etag1 = g_strdup(
+    soup_message_headers_get_one(h1, "ETag"));
+
+  /* PUT again (update) -> same content -> same ETag */
+  g_autoptr(SoupMessage) msg2 = make_put_file(url, TEST_FILE_CONTENT,
+                                              "text/plain");
+  g_autoptr(GBytes) body2 = send_msg(f, msg2);
+  g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+  SoupMessageHeaders *h2 = soup_message_get_response_headers(msg2);
+  const gchar *etag2 = soup_message_headers_get_one(h2, "ETag");
+  g_assert_cmpstr(etag1, ==, etag2);
+
+  /* PUT different content -> different ETag */
+  g_autoptr(SoupMessage) msg3 = make_put_file(url, TEST_FILE_CONTENT2,
+                                              "text/plain");
+  g_autoptr(GBytes) body3 = send_msg(f, msg3);
+  g_assert_cmpuint(soup_message_get_status(msg3), ==, 204);
+  SoupMessageHeaders *h3 = soup_message_get_response_headers(msg3);
+  const gchar *etag3 = soup_message_headers_get_one(h3, "ETag");
+  g_assert_cmpstr(etag1, !=, etag3);
+}
+
+/* ---- NIP-94 unit tests ---- */
+
+static void
+test_nip94_json_roundtrip(void)
+{
+  const gchar *content = "Test file content for NIP-94";
+  g_autoptr(GBytes) bytes = g_bytes_new_static(content, strlen(content));
+
+  NdFileEntry *entry = nd_file_entry_new("docs/test.txt", bytes, "text/plain");
+  g_assert_nonnull(entry);
+  g_assert_cmpstr(entry->path, ==, "docs/test.txt");
+  g_assert_cmpstr(entry->mime_type, ==, "text/plain");
+  g_assert_cmpuint(entry->size, ==, strlen(content));
+  g_assert_nonnull(entry->sha256);
+  g_assert_cmpuint(strlen(entry->sha256), ==, 64);
+
+  /* Generate NIP-94 JSON */
+  g_autofree gchar *json = nd_file_entry_to_nip94_json(entry);
+  g_assert_nonnull(json);
+  g_assert_nonnull(strstr(json, "1063"));
+  g_assert_nonnull(strstr(json, entry->sha256));
+  g_assert_nonnull(strstr(json, "text/plain"));
+  g_assert_nonnull(strstr(json, "docs/test.txt"));
+
+  /* Parse it back */
+  GError *err = NULL;
+  NdFileEntry *parsed = nd_file_entry_from_nip94_json(json, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(parsed);
+  g_assert_cmpstr(parsed->sha256, ==, entry->sha256);
+  g_assert_cmpstr(parsed->mime_type, ==, "text/plain");
+  g_assert_cmpstr(parsed->path, ==, "docs/test.txt");
+  g_assert_cmpuint(parsed->size, ==, entry->size);
+  g_assert_null(parsed->content); /* content not in JSON */
+
+  nd_file_entry_free(entry);
+  nd_file_entry_free(parsed);
+}
+
+static void
+test_nip94_etag_stable(void)
+{
+  const gchar *content = "Stable ETag test";
+  g_autoptr(GBytes) bytes = g_bytes_new_static(content, strlen(content));
+
+  NdFileEntry *entry = nd_file_entry_new("test.bin", bytes, NULL);
+  g_assert_nonnull(entry);
+
+  g_autofree gchar *etag1 = nd_file_entry_compute_etag(entry);
+  g_autofree gchar *etag2 = nd_file_entry_compute_etag(entry);
+  g_assert_cmpstr(etag1, ==, etag2);
+  g_assert_true(etag1[0] == '"');
+
+  nd_file_entry_free(entry);
+}
+
+static void
+test_nip94_mime_guessing(void)
+{
+  const gchar *content = "x";
+  g_autoptr(GBytes) bytes = g_bytes_new_static(content, 1);
+
+  NdFileEntry *e1 = nd_file_entry_new("photo.jpg", bytes, NULL);
+  g_assert_cmpstr(e1->mime_type, ==, "image/jpeg");
+  nd_file_entry_free(e1);
+
+  NdFileEntry *e2 = nd_file_entry_new("doc.pdf", bytes, NULL);
+  g_assert_cmpstr(e2->mime_type, ==, "application/pdf");
+  nd_file_entry_free(e2);
+
+  NdFileEntry *e3 = nd_file_entry_new("archive.zip", bytes, NULL);
+  g_assert_cmpstr(e3->mime_type, ==, "application/zip");
+  nd_file_entry_free(e3);
+
+  NdFileEntry *e4 = nd_file_entry_new("mystery", bytes, NULL);
+  g_assert_cmpstr(e4->mime_type, ==, "application/octet-stream");
+  nd_file_entry_free(e4);
+
+  /* Explicit mime overrides guessing */
+  NdFileEntry *e5 = nd_file_entry_new("data.bin", bytes, "application/x-custom");
+  g_assert_cmpstr(e5->mime_type, ==, "application/x-custom");
+  nd_file_entry_free(e5);
+}
+
 /* ---- Main ---- */
 
 int
@@ -1394,6 +1731,31 @@ main(int argc, char *argv[])
   g_test_add_func("/vcard/roundtrip", test_vcard_roundtrip);
   g_test_add_func("/vcard/nostr-roundtrip", test_vcard_nostr_roundtrip);
   g_test_add_func("/vcard/etag-stable", test_vcard_etag_stable);
+
+  /* WebDAV file lifecycle */
+  g_test_add("/webdav/put-creates", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_put_creates, dav_fixture_teardown);
+  g_test_add("/webdav/put-updates", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_put_updates, dav_fixture_teardown);
+  g_test_add("/webdav/get-file", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_get_file, dav_fixture_teardown);
+  g_test_add("/webdav/get-not-found", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_get_not_found, dav_fixture_teardown);
+  g_test_add("/webdav/delete-file", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_delete_file, dav_fixture_teardown);
+  g_test_add("/webdav/report-with-files", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_report_with_files, dav_fixture_teardown);
+  g_test_add("/webdav/propfind-depth1-with-files", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_propfind_depth1_with_files, dav_fixture_teardown);
+  g_test_add("/webdav/propfind-single-file", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_propfind_single_file, dav_fixture_teardown);
+  g_test_add("/webdav/sha256-etag", DavFixture, NULL,
+             dav_fixture_setup, test_webdav_sha256_etag, dav_fixture_teardown);
+
+  /* NIP-94 unit tests */
+  g_test_add_func("/nip94/json-roundtrip", test_nip94_json_roundtrip);
+  g_test_add_func("/nip94/etag-stable", test_nip94_etag_stable);
+  g_test_add_func("/nip94/mime-guessing", test_nip94_mime_guessing);
 
   int result = g_test_run();
   xmlCleanupParser();
