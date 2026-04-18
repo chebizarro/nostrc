@@ -1,7 +1,8 @@
 [Unit]
 Description=Nostr DAV Bridge (CalDAV/CardDAV/WebDAV ↔ Nostr)
 Documentation=https://github.com/nicegnostr/nostrc/tree/master/gnome/nostr-dav
-After=graphical-session.target
+After=graphical-session.target gnostr-signer-daemon.service
+Wants=gnostr-signer-daemon.service
 
 [Service]
 Type=simple

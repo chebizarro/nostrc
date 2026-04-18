@@ -1,0 +1,423 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetOnlineAccounts: Adw.Dialog {
+  title: _("Add to Online Accounts");
+  content-width: 460;
+  content-height: -1;
+  follows-content-size: true;
+  can-close: true;
+
+  accessibility {
+    label: "Online accounts setup wizard";
+    description: "Set up Nostr calendar and contacts in GNOME Online Accounts";
+  }
+
+  Adw.NavigationView nav_view {
+    accessibility {
+      label: "Setup steps";
+    }
+
+    /* Step 1: Intro & service start */
+    Adw.NavigationPage page_intro {
+      title: _("Online Accounts");
+      tag: "step-intro";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 1 of 3");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [end]
+          Button btn_step1_next {
+            label: _("_Start");
+            use-underline: true;
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 460;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 24;
+              valign: center;
+              vexpand: true;
+
+              Image {
+                icon-name: "preferences-system-online-accounts-symbolic";
+                pixel-size: 80;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: _("Nostr for Your Desktop");
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label {
+                wrap: true;
+                justify: center;
+                label: _("Connect your Nostr identity to GNOME so your calendar events and contacts sync automatically.");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                Adw.ActionRow row_calendar {
+                  title: _("Calendar");
+                  subtitle: _("NIP-52 events → GNOME Calendar");
+                  icon-name: "x-office-calendar-symbolic";
+                }
+
+                Adw.ActionRow row_contacts {
+                  title: _("Contacts");
+                  subtitle: _("Nostr contacts → GNOME Contacts");
+                  icon-name: "contact-new-symbolic";
+                }
+              }
+
+              Box box_service_status {
+                orientation: horizontal;
+                spacing: 8;
+                halign: center;
+
+                Spinner spinner_service {
+                  spinning: false;
+                  visible: false;
+                }
+
+                Image img_service_status {
+                  icon-name: "emblem-ok-symbolic";
+                  visible: false;
+
+                  styles [
+                    "success",
+                  ]
+                }
+
+                Label lbl_service_status {
+                  label: "";
+                  visible: false;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    /* Step 2: Token + clipboard */
+    Adw.NavigationPage page_token {
+      title: _("Connection Details");
+      tag: "step-token";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 2 of 3");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [start]
+          Button btn_step2_back {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Go back");
+          }
+
+          [end]
+          Button btn_step2_next {
+            label: _("_Open Settings");
+            use-underline: true;
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 460;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 20;
+
+              Image {
+                icon-name: "dialog-password-symbolic";
+                pixel-size: 64;
+                halign: center;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: _("Connection Ready");
+                halign: center;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label {
+                wrap: true;
+                justify: center;
+                label: _("The bridge is running. Add a WebDAV account in GNOME Settings using the details below.");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Server Details");
+
+                Adw.ActionRow row_server_url {
+                  title: _("Server URL");
+                  subtitle: "http://127.0.0.1:7654";
+
+                  [suffix]
+                  Button btn_copy_url {
+                    icon-name: "edit-copy-symbolic";
+                    tooltip-text: _("Copy URL");
+                    valign: center;
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow row_username {
+                  title: _("Username");
+                  subtitle: "nostr";
+
+                  [suffix]
+                  Button btn_copy_username {
+                    icon-name: "edit-copy-symbolic";
+                    tooltip-text: _("Copy username");
+                    valign: center;
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow row_password {
+                  title: _("Password");
+                  subtitle: "••••••••";
+
+                  [suffix]
+                  Button btn_copy_password {
+                    icon-name: "edit-copy-symbolic";
+                    tooltip-text: _("Copy password to clipboard");
+                    valign: center;
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+                }
+              }
+
+              Adw.Banner banner_copied {
+                revealed: false;
+                title: _("Copied to clipboard");
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                halign: center;
+                margin-top: 8;
+
+                Image {
+                  icon-name: "dialog-information-symbolic";
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Label {
+                  wrap: true;
+                  label: _("In GNOME Settings, choose Nextcloud or WebDAV and paste these details.");
+
+                  styles [
+                    "dim-label",
+                    "caption",
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    /* Step 3: Done */
+    Adw.NavigationPage page_done {
+      title: _("Done");
+      tag: "step-done";
+
+      Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+
+          title-widget: Label {
+            label: _("Step 3 of 3");
+
+            styles [
+              "dim-label",
+            ]
+          };
+
+          [end]
+          Button btn_finish {
+            label: _("_Done");
+            use-underline: true;
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+
+          Adw.Clamp {
+            maximum-size: 460;
+            tightening-threshold: 360;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 24;
+            margin-end: 24;
+
+            Box {
+              orientation: vertical;
+              spacing: 24;
+              valign: center;
+              vexpand: true;
+
+              Image {
+                icon-name: "emblem-ok-symbolic";
+                pixel-size: 80;
+
+                styles [
+                  "success",
+                ]
+              }
+
+              Label {
+                label: _("All Set!");
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label {
+                wrap: true;
+                justify: center;
+                label: _("Your Nostr identity is now connected to GNOME Online Accounts. Calendar events and contacts will sync automatically.");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                Adw.ActionRow {
+                  title: _("GNOME Calendar");
+                  subtitle: _("Open to see your Nostr events");
+                  icon-name: "x-office-calendar-symbolic";
+                  activatable: true;
+
+                  [suffix]
+                  Image {
+                    icon-name: "go-next-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("GNOME Contacts");
+                  subtitle: _("Open to see your Nostr contacts");
+                  icon-name: "contact-new-symbolic";
+                  activatable: true;
+
+                  [suffix]
+                  Image {
+                    icon-name: "go-next-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
