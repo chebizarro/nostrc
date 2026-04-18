@@ -1,4 +1,0 @@
-# User-scoped D-Bus activation for GOA overlay
-[D-BUS Service]
-Name=org.gnome.OnlineAccounts
-Exec=%h/.local/libexec/goa-daemon
