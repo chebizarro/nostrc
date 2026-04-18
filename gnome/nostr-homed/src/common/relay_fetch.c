@@ -55,9 +55,11 @@ static void fetch_secrets_cb(NostrIncomingEvent *in){
 
 int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
                                  const char *author_hex,
+                                 const char *namespace_name,
                                  char **out_json){
   if (!out_json || !relays || num_relays==0 || !author_hex) return -1;
   *out_json = NULL;
+  const char *ns = (namespace_name && *namespace_name) ? namespace_name : "personal";
   NostrSimplePool *pool = nostr_simple_pool_new();
   if (!pool) return -1;
   for (size_t i=0;i<num_relays;i++) if (relays[i] && *relays[i]) nostr_simple_pool_ensure_relay(pool, relays[i]);
@@ -67,6 +69,7 @@ int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
   NostrFilter *f = nostr_filter_new();
   nostr_filter_add_kind(f, 30079);
   nostr_filter_add_author(f, author_hex);
+  nostr_filter_tags_append(f, "d", ns, NULL);
   nostr_filter_set_limit(f, 1);
   nostr_simple_pool_query_single(pool, relays, num_relays, *f);
   nostr_filter_free(f);
@@ -110,9 +113,11 @@ int nh_fetch_latest_manifest_json(const char **relays, size_t num_relays,
   nostr_simple_pool_set_event_middleware(pool, fetch_event_cb_global);
 
   /* Build a filter for the latest replaceable manifest (kind 30081), limit=1 */
+  const char *ns = (namespace_name && *namespace_name) ? namespace_name : "personal";
   NostrFilter *f = nostr_filter_new();
   nostr_filter_add_kind(f, 30081);
   nostr_filter_add_author(f, author_hex);
+  nostr_filter_tags_append(f, "d", ns, NULL);
   nostr_filter_set_limit(f, 1);
 
   /* Query once across provided relays */

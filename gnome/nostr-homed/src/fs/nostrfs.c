@@ -368,10 +368,13 @@ static void *manifest_manager(void *arg){
         json_object_set_new(o, "path", json_string(ee->path));
         json_object_set_new(o, "cid", json_string(ee->cid));
         json_object_set_new(o, "size", json_integer((json_int_t)ee->size));
-        json_object_set_new(o, "mode", json_integer((json_int_t)ee->mode));
-        json_object_set_new(o, "uid", json_integer((json_int_t)ee->uid));
-        json_object_set_new(o, "gid", json_integer((json_int_t)ee->gid));
-        json_object_set_new(o, "mtime", json_integer((json_int_t)ee->mtime));
+        /* Nest mode/mtime/uid/gid under "meta" to match reader schema */
+        json_t *meta = json_object();
+        json_object_set_new(meta, "mode", json_integer((json_int_t)ee->mode));
+        json_object_set_new(meta, "mtime", json_integer((json_int_t)ee->mtime));
+        json_object_set_new(meta, "uid", json_integer((json_int_t)ee->uid));
+        json_object_set_new(meta, "gid", json_integer((json_int_t)ee->gid));
+        json_object_set_new(o, "meta", meta);
         json_array_append_new(arr, o);
       }
       json_object_set_new(root, "entries", arr);
@@ -423,7 +426,13 @@ static void *manifest_manager(void *arg){
         json_object_set_new(o, "path", json_string(ee->path));
         json_object_set_new(o, "cid", json_string(ee->cid));
         json_object_set_new(o, "size", json_integer((json_int_t)ee->size));
-        json_object_set_new(o, "mode", json_integer((json_int_t)ee->mode));
+        json_t *meta = json_object();
+        json_object_set_new(meta, "mode", json_integer((json_int_t)ee->mode));
+        json_object_set_new(meta, "mtime", json_integer((json_int_t)ee->mtime));
+        json_object_set_new(meta, "uid", json_integer((json_int_t)ee->uid));
+        json_object_set_new(meta, "gid", json_integer((json_int_t)ee->gid));
+        json_object_set_new(o, "meta", meta);
+        json_array_append_new(arr, o);
       }
       json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
       if (dump){ persist_manifest_ns(ctx, dump); free(dump);} rc = 0;
@@ -441,9 +450,13 @@ static void *manifest_manager(void *arg){
       for (size_t i=0;i<ctx->manifest.entries_len;i++){
         nh_entry *e2 = &ctx->manifest.entries[i]; if (!e2->path || !e2->cid) continue; json_t *o=json_object();
         json_object_set_new(o, "path", json_string(e2->path)); json_object_set_new(o, "cid", json_string(e2->cid));
-        json_object_set_new(o, "size", json_integer((json_int_t)e2->size)); json_object_set_new(o, "mode", json_integer((json_int_t)e2->mode));
-        json_object_set_new(o, "uid", json_integer((json_int_t)e2->uid)); json_object_set_new(o, "gid", json_integer((json_int_t)e2->gid));
-        json_object_set_new(o, "mtime", json_integer((json_int_t)e2->mtime)); json_array_append_new(arr, o);
+        json_object_set_new(o, "size", json_integer((json_int_t)e2->size));
+        json_t *m2 = json_object();
+        json_object_set_new(m2, "mode", json_integer((json_int_t)e2->mode));
+        json_object_set_new(m2, "mtime", json_integer((json_int_t)e2->mtime));
+        json_object_set_new(m2, "uid", json_integer((json_int_t)e2->uid));
+        json_object_set_new(m2, "gid", json_integer((json_int_t)e2->gid));
+        json_object_set_new(o, "meta", m2); json_array_append_new(arr, o);
       }
       json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
       if (dump){ persist_manifest_ns(ctx, dump); free(dump);} rc=0;
@@ -457,9 +470,13 @@ static void *manifest_manager(void *arg){
       for (size_t i=0;i<ctx->manifest.entries_len;i++){
         nh_entry *e2 = &ctx->manifest.entries[i]; if (!e2->path || !e2->cid) continue; json_t *o=json_object();
         json_object_set_new(o, "path", json_string(e2->path)); json_object_set_new(o, "cid", json_string(e2->cid));
-        json_object_set_new(o, "size", json_integer((json_int_t)e2->size)); json_object_set_new(o, "mode", json_integer((json_int_t)e2->mode));
-        json_object_set_new(o, "uid", json_integer((json_int_t)e2->uid)); json_object_set_new(o, "gid", json_integer((json_int_t)e2->gid));
-        json_object_set_new(o, "mtime", json_integer((json_int_t)e2->mtime)); json_array_append_new(arr, o);
+        json_object_set_new(o, "size", json_integer((json_int_t)e2->size));
+        json_t *m2 = json_object();
+        json_object_set_new(m2, "mode", json_integer((json_int_t)e2->mode));
+        json_object_set_new(m2, "mtime", json_integer((json_int_t)e2->mtime));
+        json_object_set_new(m2, "uid", json_integer((json_int_t)e2->uid));
+        json_object_set_new(m2, "gid", json_integer((json_int_t)e2->gid));
+        json_object_set_new(o, "meta", m2); json_array_append_new(arr, o);
       }
       json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
       if (dump){ persist_manifest_ns(ctx, dump); free(dump);} rc=0;
@@ -473,9 +490,13 @@ static void *manifest_manager(void *arg){
       for (size_t i=0;i<ctx->manifest.entries_len;i++){
         nh_entry *e2 = &ctx->manifest.entries[i]; if (!e2->path || !e2->cid) continue; json_t *o=json_object();
         json_object_set_new(o, "path", json_string(e2->path)); json_object_set_new(o, "cid", json_string(e2->cid));
-        json_object_set_new(o, "size", json_integer((json_int_t)e2->size)); json_object_set_new(o, "mode", json_integer((json_int_t)e2->mode));
-        json_object_set_new(o, "uid", json_integer((json_int_t)e2->uid)); json_object_set_new(o, "gid", json_integer((json_int_t)e2->gid));
-        json_object_set_new(o, "mtime", json_integer((json_int_t)e2->mtime)); json_array_append_new(arr, o);
+        json_object_set_new(o, "size", json_integer((json_int_t)e2->size));
+        json_t *m2 = json_object();
+        json_object_set_new(m2, "mode", json_integer((json_int_t)e2->mode));
+        json_object_set_new(m2, "mtime", json_integer((json_int_t)e2->mtime));
+        json_object_set_new(m2, "uid", json_integer((json_int_t)e2->uid));
+        json_object_set_new(m2, "gid", json_integer((json_int_t)e2->gid));
+        json_object_set_new(o, "meta", m2); json_array_append_new(arr, o);
       }
       json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
       if (dump){ nh_cache cset; if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&cset, "manifest.personal", dump); nh_cache_close(&cset);} free(dump);} rc=0;

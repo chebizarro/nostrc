@@ -30,10 +30,12 @@ int nh_fetch_profile_relays(const char **relays, size_t num_relays,
 /**
  * Fetch the latest secrets envelope JSON (kind 30079).
  * @author_hex: 64-char hex pubkey to filter by (REQUIRED).
+ * @namespace_name: namespace "d" tag value (nullable → "personal").
  * Returns a newly allocated JSON string in out_json.
  */
 int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
                                  const char *author_hex,
+                                 const char *namespace_name,
                                  char **out_json);
 
 #ifdef __cplusplus

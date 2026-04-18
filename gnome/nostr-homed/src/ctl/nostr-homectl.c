@@ -203,7 +203,7 @@ int nh_warm_cache(const char *namespace_hint){
   (void)nh_secrets_mount_tmpfs("/run/nostr-homed/secrets");
   /* Fetch and decrypt secrets (best effort). */
   do {
-    char *se_j = NULL; if (nh_fetch_latest_secrets_json(relays, relays_n, author_hex, &se_j) != 0) break;
+    char *se_j = NULL; if (nh_fetch_latest_secrets_json(relays, relays_n, author_hex, ns, &se_j) != 0) break;
     char *pt = NULL; if (nh_secrets_decrypt_via_signer(se_j, &pt) != 0 || !pt){ free(se_j); break; }
     free(se_j);
     FILE *fp = fopen("/run/nostr-homed/secrets/secrets.json", "wb");
