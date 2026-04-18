@@ -39,8 +39,7 @@ typedef struct {
   GoChannel *upload_q; /* channel of upload_req* */
   /* last persisted manifest json for final publish */
   char *last_manifest_json;
-  /* worker pool for Blossom downloads */
-  GoChannel *download_q; /* channel of download_req* */
+  /* download_q removed: CAS read-through is inline in nfs_read */
   /* coalesced publish generation counters */
   uint64_t pub_gen;
   uint64_t pub_sent_gen;
@@ -802,13 +801,8 @@ static int nfs_read(const char *path, char *buf, size_t size, off_t off, struct 
           const char *base = getenv("BLOSSOM_BASE_URL");
           if (!base || !*base) base = "https://blossom.example.org";
           if (nh_blossom_head(base, e->cid) == 0){
-            /* Dispatch download to worker pool and wait */
-            download_req *dr = (download_req*)calloc(1, sizeof(*dr)); if (!dr) return -EIO;
-            dr->base_url = strdup(base); dr->cid = strdup(e->cid); dr->dest_path = strdup(caspath);
-            GoChannel *dreply = go_channel_create(1); dr->reply = dreply; go_channel_send(ctx->download_q, dr);
-            void *vres = NULL; if (go_channel_receive(dreply, &vres) != 0){ go_channel_close(dreply); go_channel_free(dreply); return -EIO; }
-            go_channel_close(dreply); go_channel_free(dreply);
-            int frc = (int)(intptr_t)vres;
+            /* Inline CAS fetch (download_worker removed in nostrc-vp09) */
+            int frc = nh_blossom_fetch(base, e->cid, caspath);
             if (frc == 0){
               /* Verify CAS integrity matches CID */
               char hex[65];
@@ -863,7 +857,7 @@ if (ctx->req_chan){ go_channel_close(ctx->req_chan); go_channel_free(ctx->req_ch
  if (ctx->upload_q){ go_channel_close(ctx->upload_q); go_channel_free(ctx->upload_q); ctx->upload_q=NULL; }
  /* Try to flush a last publish if we have a recent manifest dump */
  if (ctx->last_manifest_json){ publish_best_effort(ctx, ctx->last_manifest_json); free(ctx->last_manifest_json); ctx->last_manifest_json=NULL; }
- if (ctx->download_q){ go_channel_close(ctx->download_q); go_channel_free(ctx->download_q); ctx->download_q=NULL; }
+
 }
 
 int nostrfs_run(const nostrfs_options *opts, int argc, char **argv){
@@ -876,7 +870,7 @@ int nostrfs_run(const nostrfs_options *opts, int argc, char **argv){
 
   /* Build context */
   nostrfs_ctx *ctx = (nostrfs_ctx*)calloc(1, sizeof(*ctx)); if (!ctx) return -1;
-  ctx->opts = *opts; ctx->manifest_loaded = 0; ctx->req_chan = go_channel_create(64); ctx->upload_q = go_channel_create(64); ctx->download_q = go_channel_create(64);
+  ctx->opts = *opts; ctx->manifest_loaded = 0; ctx->req_chan = go_channel_create(64); ctx->upload_q = go_channel_create(64);
   /* Load manifest JSON from cache settings */
   nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
     size_t cap = 8192; char *bufjson = (char*)malloc(cap);
@@ -891,15 +885,11 @@ int nostrfs_run(const nostrfs_options *opts, int argc, char **argv){
   }
   /* Start actor fiber */
   go_fiber_compat(manifest_manager, ctx);
-  /* Start upload workers */
-  extern void *upload_worker(void *arg); /* forward */
+  /* Start upload workers (defined at file scope above) */
   for (int i=0;i<4;i++) go_fiber_compat(upload_worker, ctx);
-  /* Start download workers */
-  extern void *download_worker(void *arg);
-  for (int i=0;i<4;i++) go_fiber_compat(download_worker, ctx);
-  /* Start background publisher */
-  extern void *publish_worker(void *arg);
-  go_fiber_compat(publish_worker, ctx);
+  /* download_worker / publish_worker removed (option b from nostrc-vp09):
+   * CAS read-through is done inline in nfs_read; publish_best_effort runs
+   * on the manifest_manager thread with debounce via last_pub_ms. */
   /* Register destroy for cleanup */
   struct fuse_operations ops = nfs_ops; ops.destroy = nfs_destroy;
   /* Hand off to fuse_main (argv contains only FUSE args here) */
