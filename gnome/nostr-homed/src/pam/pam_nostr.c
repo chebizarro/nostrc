@@ -1,7 +1,6 @@
 #include "pam_nostr.h"
 #include <string.h>
 #include <gio/gio.h>
-#include "nostr_dbus.h"
 #include "nostr_cache.h"
 #include <stdio.h>
 #include <syslog.h>
@@ -17,17 +16,28 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **ar
   (void)flags; (void)argc; (void)argv;
   const char *user = NULL; int rc = get_username(pamh, &user);
   if (rc != PAM_SUCCESS) return rc;
-  const char *busname = nh_signer_bus_name();
-  GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
-  if (!bus){ pam_syslog(pamh, LOG_ERR, "pam_nostr: DBus unavailable: %s", err?err->message:"error"); if (err) g_error_free(err); return PAM_AUTHINFO_UNAVAIL; }
-  /* Call Authenticate(user)->(b ok). Signer should handle prompting per policy. */
-  GVariant *ret = g_dbus_connection_call_sync(bus, busname,
-                    "/org/nostr/Signer", "org.nostr.Signer", "Authenticate",
-                    g_variant_new("(s)", user), G_VARIANT_TYPE_TUPLE, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
-  if (!ret){ pam_syslog(pamh, LOG_ERR, "pam_nostr: Authenticate failed: %s", err?err->message:"error"); if (err) g_error_free(err); g_object_unref(bus); return PAM_AUTH_ERR; }
-  gboolean ok = FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret); g_object_unref(bus);
-  if (!ok){ pam_syslog(pamh, LOG_WARNING, "pam_nostr: authentication denied for %s", user); return PAM_AUTH_ERR; }
-  pam_info(pamh, "pam_nostr: authenticated %s via signer", user);
+
+  /* No D-Bus calls here — the session bus is not available during
+   * pam_sm_authenticate (it starts later via pam_systemd).
+   * We do a lightweight cache check: if the user exists in the
+   * nostr-homed cache, allow authentication to proceed.
+   * Cryptographic identity verification (NIP-46 challenge/response)
+   * is deferred to pam_sm_open_session where the user bus is up.
+   * See docs/SYSTEMD_TOPOLOGY.md for the rationale. */
+  nh_cache c;
+  if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf") != 0) {
+    pam_syslog(pamh, LOG_ERR, "pam_nostr: cache unavailable");
+    return PAM_AUTHINFO_UNAVAIL;
+  }
+  unsigned int uid = 0, gid = 0;
+  char home[256];
+  if (nh_cache_lookup_name(&c, user, &uid, &gid, home, sizeof home) != 0) {
+    nh_cache_close(&c);
+    pam_syslog(pamh, LOG_WARNING, "pam_nostr: user %s not in cache", user);
+    return PAM_USER_UNKNOWN;
+  }
+  nh_cache_close(&c);
+  pam_syslog(pamh, LOG_INFO, "pam_nostr: user %s found in cache (uid=%u), auth deferred to open_session", user, uid);
   return PAM_SUCCESS;
 }
 

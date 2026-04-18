@@ -55,10 +55,9 @@ nostr_homectl = executable('nostr-homectl', 'src/ctl/nostr-homectl.c', include_d
   install: true)
 
 install_data('dbus/org.nostr.Homed1.xml', install_dir: join_paths(get_option('datadir'), 'dbus-1', 'interfaces'))
-install_data('systemd/nostr-homectl.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'system'))
-install_data('systemd/nostrfs@.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'system'))
-# nostr-homed.target: not yet created; install when it exists
-# install_data('systemd/nostr-homed.target', install_dir: join_paths(get_option('libdir'), 'systemd', 'system'))
+# User services — see docs/SYSTEMD_TOPOLOGY.md
+install_data('systemd/user/nostr-homectl.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'user'))
+install_data('systemd/user/nostrfs@.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'user'))
 
 # Tests
 subdir('tests')
