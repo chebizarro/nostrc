@@ -26,12 +26,10 @@
  *      tagged with any one of them match. Single-tag filters map
  *      straight through. nostrc-yg8j.7.
  *
- *   2. **FilterSet.ids** (top-level Nostr `ids` filter for e.g. a
- *      bookmark feed) is **not** mapped. Populating
- *      TimelineQuery.event_ids would instead emit a `#e` tag filter,
- *      changing semantics. Bookmark-style feeds therefore need a
- *      dedicated dispatch path; the converter currently drops this
- *      field with a g_debug().
+ *   2. **FilterSet.ids** is mapped to the query's top-level `ids`
+ *      field which emits the NIP-01 `"ids":[...]` filter. This
+ *      retrieves events by their own ID — exactly what bookmark
+ *      feeds need. (nostrc-ch2v)
  *
  *   3. **excluded_authors** is client-side only and is not representable
  *      in a Nostr subscription filter. The converter drops it with a

@@ -31,6 +31,8 @@ struct _GNostrTimelineQuery {
   gsize n_authors;
   char **event_ids;         /* Array of event ID hex strings for #e tag filter */
   gsize n_event_ids;
+  char **ids;               /* Top-level "ids" filter (exact event ID match) */
+  gsize n_ids;
   char **p_tags;             /* Array of pubkey hex strings for #p tag filter (mentions) */
   gsize n_p_tags;
   gint64 since;             /* Unix timestamp lower bound (0 = no limit) */
@@ -140,6 +142,18 @@ GNostrTimelineQueryBuilder *gnostr_timeline_query_builder_new(void);
 void gnostr_timeline_query_builder_add_kind(GNostrTimelineQueryBuilder *builder, gint kind);
 void gnostr_timeline_query_builder_add_author(GNostrTimelineQueryBuilder *builder, const char *pubkey);
 void gnostr_timeline_query_builder_add_event_id(GNostrTimelineQueryBuilder *builder, const char *event_id);
+
+/**
+ * gnostr_timeline_query_builder_add_id:
+ * @builder: the builder
+ * @event_id: hex-encoded event ID
+ *
+ * Add a top-level "ids" filter entry. Unlike add_event_id() which emits
+ * a "#e" tag filter (matching events that *reference* the ID), this
+ * emits the NIP-01 top-level "ids" field which matches events whose
+ * own ID equals the given value. Used for bookmark-style feeds.
+ */
+void gnostr_timeline_query_builder_add_id(GNostrTimelineQueryBuilder *builder, const char *event_id);
 void gnostr_timeline_query_builder_add_p_tag(GNostrTimelineQueryBuilder *builder, const char *pubkey);
 void gnostr_timeline_query_builder_set_since(GNostrTimelineQueryBuilder *builder, gint64 since);
 void gnostr_timeline_query_builder_set_until(GNostrTimelineQueryBuilder *builder, gint64 until);

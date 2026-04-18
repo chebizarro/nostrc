@@ -11,7 +11,7 @@
  *   - Multi-hashtag → all tags forwarded as a single `#t` array
  *     (NIP-01 OR semantics; nostrc-yg8j.7)
  *   - since / until / limit pass-through
- *   - ids dropped (semantic mismatch with #e tag filter)
+ *   - ids mapped to top-level NIP-01 "ids" (nostrc-ch2v)
  *   - excluded_authors dropped
  *   - Combined full spec
  *
@@ -203,18 +203,12 @@ test_time_and_limit_passthrough(void)
 }
 
 static void
-test_ids_only_still_global(void)
+test_ids_only_maps_to_query_ids(void)
 {
-  /* A filter set whose *only* populated criterion is `ids` still goes
-   * through the builder path (is_empty() returns FALSE because `ids` is
-   * populated), but the converter drops the ids field and no other
-   * criteria are present, so the resulting query is effectively the
-   * global feed: default kinds [1, 6], no authors, no #e tag filter.
-   *
-   * This pins the intended behaviour for bookmark-style filter sets:
-   * they cannot be served by #GNostrTimelineQuery until a dedicated
-   * dispatch path exists. If that changes, this test needs to be
-   * revisited in lockstep. */
+  /* nostrc-ch2v: A filter set whose only criterion is `ids` now maps
+   * to the query's top-level `ids` field which emits NIP-01 "ids":[].
+   * This enables bookmark-style feeds. The `event_ids` (#e) field
+   * must remain empty — it has different semantics. */
   GnostrFilterSet *fs = gnostr_filter_set_new_with_name("Bookmarks-only");
   gnostr_filter_set_set_ids(fs, kIds);
 
@@ -223,24 +217,36 @@ test_ids_only_still_global(void)
   g_assert_true(has_default_kinds(q));
   g_assert_cmpuint(q->n_event_ids, ==, 0);
   g_assert_cmpuint(q->n_authors, ==, 0);
+  /* The top-level ids field must be populated. */
+  g_assert_cmpuint(q->n_ids, ==, 1);
+  g_assert_cmpstr(q->ids[0], ==, kIds[0]);
+
+  /* Verify JSON emission includes "ids":[...] */
+  const char *json = gnostr_timeline_query_to_json(q);
+  g_assert_nonnull(json);
+  g_assert_nonnull(strstr(json, "\"ids\":"));
+  g_assert_null(strstr(json, "\"#e\":"));
 
   gnostr_timeline_query_free(q);
   g_object_unref(fs);
 }
 
 static void
-test_ids_dropped(void)
+test_ids_with_authors(void)
 {
+  /* nostrc-ch2v: Verify ids + authors can coexist — ids goes to the
+   * top-level "ids" field, authors goes to "authors", and the #e tag
+   * filter remains unused. */
   GnostrFilterSet *fs = gnostr_filter_set_new_with_name("Bookmarks");
   gnostr_filter_set_set_ids(fs, kIds);
-  /* Add authors too so is_empty() is FALSE. */
   gnostr_filter_set_set_authors(fs, kAuthors);
 
   GNostrTimelineQuery *q = gnostr_filter_set_to_timeline_query(fs);
   g_assert_nonnull(q);
-  /* event_ids maps to #e tag filter — must stay empty when only `ids`
-   * is populated, otherwise we'd silently change the query semantics. */
   g_assert_cmpuint(q->n_event_ids, ==, 0);
+  g_assert_cmpuint(q->n_ids, ==, 1);
+  g_assert_cmpstr(q->ids[0], ==, kIds[0]);
+  g_assert_cmpuint(q->n_authors, ==, 2);
 
   gnostr_timeline_query_free(q);
   g_object_unref(fs);
@@ -330,8 +336,8 @@ main(int argc, char **argv)
   g_test_add_func("/filter-set-query/hashtag/multi-skip-empty",
                                                               test_multi_hashtag_skips_empty);
   g_test_add_func("/filter-set-query/time-and-limit",      test_time_and_limit_passthrough);
-  g_test_add_func("/filter-set-query/ids-only-fallback",   test_ids_only_still_global);
-  g_test_add_func("/filter-set-query/ids-dropped",         test_ids_dropped);
+  g_test_add_func("/filter-set-query/ids-maps-to-query",   test_ids_only_maps_to_query_ids);
+  g_test_add_func("/filter-set-query/ids-with-authors",     test_ids_with_authors);
   g_test_add_func("/filter-set-query/excluded-dropped",    test_excluded_authors_dropped);
   g_test_add_func("/filter-set-query/full-spec",           test_full_spec_combined);
   g_test_add_func("/filter-set-query/skip-empty-author",   test_empty_author_string_skipped);

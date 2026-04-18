@@ -64,15 +64,17 @@ gnostr_filter_set_to_timeline_query(GnostrFilterSet *self)
   if (until > 0) gnostr_timeline_query_builder_set_until(b, until);
   if (limit > 0) gnostr_timeline_query_builder_set_limit(b, (guint)limit);
 
-  /* ── Skipped fields ────────────────────────────────────────────────
-   * These are intentional semantic gaps; see the header for details. */
+  /* ── Top-level IDs (bookmark feeds) ──────────────────────────────
+   * Map the FilterSet's `ids` to the query's top-level `ids` field,
+   * which emits NIP-01 `"ids":[...]` in the filter JSON. This fetches
+   * events by their own ID — exactly what bookmark-style feeds need.
+   * nostrc-ch2v: NIP-51 bookmarks view. */
   const gchar * const *ids = gnostr_filter_set_get_ids(self);
-  if (ids && ids[0]) {
-    g_debug("filter set '%s': dropping 'ids' — top-level Nostr `ids` is not "
-            "representable in GNostrTimelineQuery (would become `#e` tag "
-            "filter). Bookmark-style feeds need a dedicated path.",
-            gnostr_filter_set_get_name(self) ?
-                gnostr_filter_set_get_name(self) : "(unnamed)");
+  if (ids) {
+    for (const gchar * const *p = ids; *p; p++) {
+      if (**p)
+        gnostr_timeline_query_builder_add_id(b, *p);
+    }
   }
 
   const gchar * const *excluded = gnostr_filter_set_get_excluded_authors(self);
