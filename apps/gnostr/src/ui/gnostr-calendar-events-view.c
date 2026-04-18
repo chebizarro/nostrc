@@ -305,7 +305,7 @@ build_model(GnostrCalendarEventsView *self)
 
   /* Source model */
   self->event_model = gn_nostr_event_model_new_with_query(query);
-  g_object_unref(query);
+  gnostr_timeline_query_free(query);
 
   /* Filter */
   self->custom_filter = gtk_custom_filter_new(calendar_filter_func, self, NULL);
