@@ -70,10 +70,16 @@ if (UNIX AND NOT APPLE)
   set_target_properties(nss_nostr PROPERTIES OUTPUT_NAME "nss_nostr" SOVERSION 2)
   target_link_libraries(nss_nostr PRIVATE nostr_homed_common ${GLIB2_LIBRARIES} SQLite::SQLite3)
 
-  # PAM module (Linux)
-  add_library(pam_nostr SHARED src/pam/pam_nostr.c)
-  set_target_properties(pam_nostr PROPERTIES OUTPUT_NAME "pam_nostr")
-  target_link_libraries(pam_nostr PRIVATE nostr_homed_common ${GLIB2_LIBRARIES})
+  # PAM module (Linux) — requires libpam headers
+  pkg_check_modules(PAM pam)
+  if (PAM_FOUND)
+    add_library(pam_nostr SHARED src/pam/pam_nostr.c)
+    set_target_properties(pam_nostr PROPERTIES OUTPUT_NAME "pam_nostr")
+    target_link_libraries(pam_nostr PRIVATE nostr_homed_common ${GLIB2_LIBRARIES} ${PAM_LIBRARIES})
+    target_include_directories(pam_nostr PRIVATE ${PAM_INCLUDE_DIRS})
+  else()
+    message(STATUS "libpam not found; skipping pam_nostr module")
+  endif()
 endif()
 
 # FUSE filesystem

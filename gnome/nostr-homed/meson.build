@@ -43,7 +43,10 @@ pam = dependency('libpam', required: false)
 if pam.found()
   pam_nostr = shared_library('pam_nostr', 'src/pam/pam_nostr.c', include_directories: inc,
     link_with: nh_common,
+    dependencies: [pam, glib, gio],
     install: true, install_dir: join_paths(get_option('libdir'), 'security'))
+else
+  message('libpam not found; skipping pam_nostr module')
 endif
 
 nostr_homectl = executable('nostr-homectl', 'src/ctl/nostr-homectl.c', include_directories: inc,
@@ -54,7 +57,8 @@ nostr_homectl = executable('nostr-homectl', 'src/ctl/nostr-homectl.c', include_d
 install_data('dbus/org.nostr.Homed1.xml', install_dir: join_paths(get_option('datadir'), 'dbus-1', 'interfaces'))
 install_data('systemd/nostr-homectl.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'system'))
 install_data('systemd/nostrfs@.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'system'))
-install_data('systemd/nostr-homed.target', install_dir: join_paths(get_option('libdir'), 'systemd', 'system'))
+# nostr-homed.target: not yet created; install when it exists
+# install_data('systemd/nostr-homed.target', install_dir: join_paths(get_option('libdir'), 'systemd', 'system'))
 
 # Tests
 subdir('tests')
