@@ -58,19 +58,6 @@ typedef struct upload_res {
   char *cid;          /* allocated CID hex on success */
 } upload_res;
 
-static void *upload_worker(void *arg){
-  nostrfs_ctx *ctx = (nostrfs_ctx*)arg;
-  if (!ctx || !ctx->upload_q) return NULL;
-  for(;;){
-    upload_req *ur = NULL;
-    if (go_channel_receive(ctx->upload_q, (void**)&ur) != 0) break;
-    if (!ur) continue;
-    upload_res *res = (upload_res*)calloc(1, sizeof(*res));
-    if (!res){
-      if (ur->reply) (void)go_channel_send(ur->reply, (void*)(intptr_t)-ENOMEM);
-      free(ur->base_url); free(ur); continue;
-    }
-
 /* Persist manifest JSON under settings.manifest.<namespace> using a simple safe-replace strategy. */
 static void persist_manifest_ns(nostrfs_ctx *ctx, const char *dump){
   if (!ctx || !dump) return;
@@ -89,6 +76,19 @@ static void persist_manifest_ns(nostrfs_ctx *ctx, const char *dump){
   ctx->last_manifest_json = strdup(dump);
   ctx->pub_gen++;
 }
+
+static void *upload_worker(void *arg){
+  nostrfs_ctx *ctx = (nostrfs_ctx*)arg;
+  if (!ctx || !ctx->upload_q) return NULL;
+  for(;;){
+    upload_req *ur = NULL;
+    if (go_channel_receive(ctx->upload_q, (void**)&ur) != 0) break;
+    if (!ur) continue;
+    upload_res *res = (upload_res*)calloc(1, sizeof(*res));
+    if (!res){
+      if (ur->reply) (void)go_channel_send(ur->reply, (void*)(intptr_t)-ENOMEM);
+      free(ur->base_url); free(ur); continue;
+    }
     char *cid = NULL;
     int rc = nh_blossom_upload(ur->base_url ? ur->base_url : "https://blossom.example.org", ur->tmp_path, &cid);
     res->rc = rc; res->cid = cid;
@@ -254,7 +254,10 @@ static void publish_best_effort(nostrfs_ctx *ctx, const char *content_json){
   }
   /* Try to fetch profile relays (30078) using bootstrap relays */
   char **profile_relays = NULL; size_t profile_count = 0;
-  if (base_count > 0){ (void)nh_fetch_profile_relays(base_list, base_count, &profile_relays, &profile_count); }
+  /* Get author pubkey for filtering. Re-use the npub we already fetched above. */
+  char author_hex[65] = {0};
+  { char *np2 = NULL; if (dbus_get_npub(&np2) == 0 && np2) { (void)decode_npub_hex(np2, author_hex); free(np2); } }
+  if (base_count > 0 && author_hex[0]) { (void)nh_fetch_profile_relays(base_list, base_count, author_hex, &profile_relays, &profile_count); }
   const char **pub_urls = NULL; size_t pub_count = 0;
   if (profile_count > 0){ pub_urls = (const char **)profile_relays; pub_count = profile_count; }
   else { pub_urls = base_list; pub_count = base_count; }

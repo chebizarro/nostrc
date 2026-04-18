@@ -54,8 +54,9 @@ static void fetch_secrets_cb(NostrIncomingEvent *in){
 }
 
 int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
+                                 const char *author_hex,
                                  char **out_json){
-  if (!out_json || !relays || num_relays==0) return -1;
+  if (!out_json || !relays || num_relays==0 || !author_hex) return -1;
   *out_json = NULL;
   NostrSimplePool *pool = nostr_simple_pool_new();
   if (!pool) return -1;
@@ -65,6 +66,7 @@ int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
 
   NostrFilter *f = nostr_filter_new();
   nostr_filter_add_kind(f, 30079);
+  nostr_filter_add_author(f, author_hex);
   nostr_filter_set_limit(f, 1);
   nostr_simple_pool_query_single(pool, relays, num_relays, *f);
   nostr_filter_free(f);
@@ -92,10 +94,10 @@ int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
 }
 
 int nh_fetch_latest_manifest_json(const char **relays, size_t num_relays,
+                                  const char *author_hex,
                                   const char *namespace_name,
                                   char **out_json) {
-  (void)namespace_name; /* Reserved for future namespace scoping (tags) */
-  if (!out_json || !relays || num_relays == 0) return -1;
+  if (!out_json || !relays || num_relays == 0 || !author_hex) return -1;
 
   *out_json = NULL;
   NostrSimplePool *pool = nostr_simple_pool_new();
@@ -110,6 +112,7 @@ int nh_fetch_latest_manifest_json(const char **relays, size_t num_relays,
   /* Build a filter for the latest replaceable manifest (kind 30081), limit=1 */
   NostrFilter *f = nostr_filter_new();
   nostr_filter_add_kind(f, 30081);
+  nostr_filter_add_author(f, author_hex);
   nostr_filter_set_limit(f, 1);
 
   /* Query once across provided relays */
@@ -173,8 +176,9 @@ static void fetch_relays_cb(NostrIncomingEvent *in){
 }
 
 int nh_fetch_profile_relays(const char **relays, size_t num_relays,
+                            const char *author_hex,
                             char ***out_relays, size_t *out_count){
-  if (!out_relays || !out_count || !relays || num_relays==0) return -1;
+  if (!out_relays || !out_count || !relays || num_relays==0 || !author_hex) return -1;
   *out_relays = NULL; *out_count = 0;
   NostrSimplePool *pool = nostr_simple_pool_new();
   if (!pool) return -1;
@@ -184,6 +188,7 @@ int nh_fetch_profile_relays(const char **relays, size_t num_relays,
 
   NostrFilter *f = nostr_filter_new();
   nostr_filter_add_kind(f, 30078);
+  nostr_filter_add_author(f, author_hex);
   nostr_filter_set_limit(f, 1);
   nostr_simple_pool_query_single(pool, relays, num_relays, *f);
   nostr_filter_free(f);

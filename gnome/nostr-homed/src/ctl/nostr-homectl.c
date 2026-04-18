@@ -10,10 +10,27 @@
 #include "nostr_secrets.h"
 #include <jansson.h>
 #include <sys/statvfs.h>
+#include "nostr/nip19/nip19.h"
 
 static const char *BUS_NAME = "org.nostr.Homed1";
 static const char *OBJ_PATH = "/org/nostr/Homed1";
 static const char *IFACE = "org.nostr.Homed1";
+
+/**
+ * Convert an npub bech32 string to 64-char hex pubkey.
+ * Returns 0 on success, -1 on failure.
+ */
+static int npub_to_hex(const char *npub, char out_hex[65]){
+  uint8_t pk[32];
+  if (nostr_nip19_decode_npub(npub, pk) != 0) return -1;
+  static const char *hx = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) {
+    out_hex[i*2]   = hx[(pk[i] >> 4) & 0xF];
+    out_hex[i*2+1] = hx[pk[i] & 0xF];
+  }
+  out_hex[64] = '\0';
+  return 0;
+}
 
 static const char *get_namespace_env(const char *envname, const char *defv){
   const char *v = getenv(envname); return (v && *v) ? v : defv;
@@ -124,6 +141,22 @@ int nh_warm_cache(const char *namespace_hint){
    * Falls back to HOMED_NAMESPACE env, then "personal". */
   const char *ns = (namespace_hint && *namespace_hint) ? namespace_hint
                    : get_namespace_env("HOMED_NAMESPACE", "personal");
+  /* Get signer pubkey — required as author filter on all relay fetches.
+   * Without this, any publisher on a shared relay could inject a fake
+   * manifest/secrets envelope. */
+  char *npub = NULL;
+  if (dbus_get_signer_npub(&npub) != 0 || !npub) {
+    fprintf(stderr, "WarmCache: cannot get signer pubkey\n");
+    return -1;
+  }
+  char author_hex[65];
+  if (npub_to_hex(npub, author_hex) != 0) {
+    fprintf(stderr, "WarmCache: invalid npub from signer\n");
+    g_free(npub);
+    return -1;
+  }
+  g_free(npub);
+
   const char *relays_default[] = { "wss://relay.damus.io", "wss://nostr.wine" };
   const char **relays = relays_default; size_t relays_n = 2;
   int relays_owned = 0;
@@ -147,7 +180,7 @@ int nh_warm_cache(const char *namespace_hint){
   }
   /* Try to fetch profile relays from network; if found, persist and prefer them */
   char **net_relays = NULL; size_t net_count = 0;
-  if (nh_fetch_profile_relays(relays, relays_n, &net_relays, &net_count) == 0 && net_count > 0){
+  if (nh_fetch_profile_relays(relays, relays_n, author_hex, &net_relays, &net_count) == 0 && net_count > 0){
     /* Build JSON array */
     json_t *arr = json_array();
     for (size_t i=0;i<net_count;i++) json_array_append_new(arr, json_string(net_relays[i]));
@@ -158,7 +191,7 @@ int nh_warm_cache(const char *namespace_hint){
     if (relays_owned){ for (size_t i=0;i<relays_n;i++) free((void*)relays[i]); free((void*)relays); }
     relays = (const char**)net_relays; relays_n = net_count; relays_owned = 1;
   }
-  char *json = NULL; if (nh_fetch_latest_manifest_json(relays, relays_n, ns, &json) != 0){
+  char *json = NULL; if (nh_fetch_latest_manifest_json(relays, relays_n, author_hex, ns, &json) != 0){
     fprintf(stderr, "WarmCache: fetch failed\n"); return -1;
   }
   nh_manifest m; if (nh_manifest_parse_json(json, &m) != 0){ free(json); fprintf(stderr, "WarmCache: parse failed\n"); return -1; }
@@ -170,7 +203,7 @@ int nh_warm_cache(const char *namespace_hint){
   (void)nh_secrets_mount_tmpfs("/run/nostr-homed/secrets");
   /* Fetch and decrypt secrets (best effort). */
   do {
-    char *se_j = NULL; if (nh_fetch_latest_secrets_json(relays, relays_n, &se_j) != 0) break;
+    char *se_j = NULL; if (nh_fetch_latest_secrets_json(relays, relays_n, author_hex, &se_j) != 0) break;
     char *pt = NULL; if (nh_secrets_decrypt_via_signer(se_j, &pt) != 0 || !pt){ free(se_j); break; }
     free(se_j);
     FILE *fp = fopen("/run/nostr-homed/secrets/secrets.json", "wb");
