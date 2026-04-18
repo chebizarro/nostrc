@@ -14,18 +14,82 @@ static void ensure_init(void){
   if (nh_cache_open_configured(&g_cache, "/etc/nss_nostr.conf") == 0) g_inited = 1;
 }
 
+/**
+ * Copy a string into the caller's buffer, advancing the cursor.
+ * Returns NSS_STATUS_SUCCESS on success, NSS_STATUS_TRYAGAIN (with
+ * *errnop = ERANGE) if the buffer is too small. Per NSS contract,
+ * all strings MUST be copied into the caller-supplied buffer.
+ */
+static enum nss_status
+nss_buf_copy(char **dst, const char *src, char **cur, char *end, int *errnop)
+{
+  if (src == NULL) src = "";
+  size_t len = strlen(src) + 1; /* include NUL */
+  if (*cur + len > end) {
+    if (errnop) *errnop = ERANGE;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  memcpy(*cur, src, len);
+  *dst = *cur;
+  *cur += len;
+  return NSS_STATUS_SUCCESS;
+}
+
 static enum nss_status fill_pwd(struct passwd *pwd, char *buffer, size_t buflen,
-                                const char *name, uid_t uid, gid_t gid, const char *home){
-  (void)buffer; (void)buflen;
+                                const char *name, uid_t uid, gid_t gid,
+                                const char *home, int *errnop){
   if (!pwd) return NSS_STATUS_TRYAGAIN;
   memset(pwd, 0, sizeof(*pwd));
-  pwd->pw_name = (char*)(name ? name : "nostr");
-  pwd->pw_passwd = (char*)"x";
+
+  char *cur = buffer;
+  char *end = buffer + buflen;
+  enum nss_status rc;
+
+  if ((rc = nss_buf_copy(&pwd->pw_name, name ? name : "nostr", &cur, end, errnop)) != NSS_STATUS_SUCCESS)
+    return rc;
+  if ((rc = nss_buf_copy(&pwd->pw_passwd, "x", &cur, end, errnop)) != NSS_STATUS_SUCCESS)
+    return rc;
+  if ((rc = nss_buf_copy(&pwd->pw_gecos, "Nostr User", &cur, end, errnop)) != NSS_STATUS_SUCCESS)
+    return rc;
+  if ((rc = nss_buf_copy(&pwd->pw_dir, home ? home : "/home/nostr", &cur, end, errnop)) != NSS_STATUS_SUCCESS)
+    return rc;
+  if ((rc = nss_buf_copy(&pwd->pw_shell, "/bin/bash", &cur, end, errnop)) != NSS_STATUS_SUCCESS)
+    return rc;
+
   pwd->pw_uid = uid;
   pwd->pw_gid = gid ? gid : uid;
-  pwd->pw_gecos = (char*)"Nostr User";
-  pwd->pw_dir = (char*)(home ? home : "/home/nostr");
-  pwd->pw_shell = (char*)"/bin/bash";
+  return NSS_STATUS_SUCCESS;
+}
+
+static enum nss_status fill_grp(struct group *grp, char *buffer, size_t buflen,
+                                const char *name, gid_t gid, int *errnop){
+  if (!grp) return NSS_STATUS_TRYAGAIN;
+  memset(grp, 0, sizeof(*grp));
+
+  char *cur = buffer;
+  char *end = buffer + buflen;
+  enum nss_status rc;
+
+  if ((rc = nss_buf_copy(&grp->gr_name, name, &cur, end, errnop)) != NSS_STATUS_SUCCESS)
+    return rc;
+  if ((rc = nss_buf_copy(&grp->gr_passwd, "x", &cur, end, errnop)) != NSS_STATUS_SUCCESS)
+    return rc;
+
+  /* gr_mem: NULL-terminated array of member names (empty).
+   * We need space for one char* (the NULL terminator). */
+  size_t ptr_size = sizeof(char *);
+  /* Align cursor to pointer boundary */
+  uintptr_t align = (uintptr_t)cur % ptr_size;
+  if (align != 0) cur += (ptr_size - align);
+  if (cur + ptr_size > end) {
+    if (errnop) *errnop = ERANGE;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  grp->gr_mem = (char **)cur;
+  grp->gr_mem[0] = NULL;
+  /* cur += ptr_size; -- not needed, we're done */
+
+  grp->gr_gid = gid;
   return NSS_STATUS_SUCCESS;
 }
 
@@ -35,9 +99,8 @@ enum nss_status _nss_nostr_getpwnam_r(const char *name, struct passwd *pwd,
   if (!g_inited) { if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
   unsigned int uid=0,gid=0; char home[256];
   if (nh_cache_lookup_name(&g_cache, name, &uid, &gid, home, sizeof home) == 0) {
-    return fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home);
+    return fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home, errnop);
   }
-  /* If not found, deterministically map to a UID (policy), but do not fabricate a record. */
   return NSS_STATUS_NOTFOUND;
 }
 
@@ -47,40 +110,31 @@ enum nss_status _nss_nostr_getpwuid_r(uid_t uid, struct passwd *pwd,
   if (!g_inited) { if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
   char name[128]; unsigned int gid=0; char home[256];
   if (nh_cache_lookup_uid(&g_cache, (unsigned int)uid, name, sizeof name, &gid, home, sizeof home) == 0) {
-    return fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home);
+    return fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home, errnop);
   }
   return NSS_STATUS_NOTFOUND;
 }
 
 enum nss_status _nss_nostr_getgrnam_r(const char *name, struct group *grp,
                                       char *buffer, size_t buflen, int *errnop){
-  (void)buffer; (void)buflen;
   if (!grp || !name) return NSS_STATUS_TRYAGAIN;
-  ensure_init(); if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
-  unsigned int gid=0; if (nh_cache_group_lookup_name(&g_cache, name, &gid) != 0) return NSS_STATUS_NOTFOUND;
-  memset(grp, 0, sizeof(*grp));
-  grp->gr_name = (char*)name;
-  grp->gr_passwd = (char*)"x";
-  grp->gr_gid = (gid_t)gid;
-  /* Minimal membership list: empty (PAM/NSS can fall back to passwd primary gid) */
-  static char *empty_mem[1] = { NULL };
-  grp->gr_mem = empty_mem;
-  return NSS_STATUS_SUCCESS;
+  ensure_init();
+  if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  unsigned int gid=0;
+  if (nh_cache_group_lookup_name(&g_cache, name, &gid) != 0)
+    return NSS_STATUS_NOTFOUND;
+  return fill_grp(grp, buffer, buflen, name, (gid_t)gid, errnop);
 }
 
 enum nss_status _nss_nostr_getgrgid_r(gid_t gid, struct group *grp,
                                       char *buffer, size_t buflen, int *errnop){
-  (void)buffer; (void)buflen;
   if (!grp) return NSS_STATUS_TRYAGAIN;
-  ensure_init(); if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
-  char name[128]=""; if (nh_cache_group_lookup_gid(&g_cache, (unsigned int)gid, name, sizeof name) != 0) return NSS_STATUS_NOTFOUND;
-  memset(grp, 0, sizeof(*grp));
-  grp->gr_name = (char*)strdup(name);
-  grp->gr_passwd = (char*)"x";
-  grp->gr_gid = gid;
-  static char *empty_mem[1] = { NULL };
-  grp->gr_mem = empty_mem;
-  return NSS_STATUS_SUCCESS;
+  ensure_init();
+  if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  char name[128]="";
+  if (nh_cache_group_lookup_gid(&g_cache, (unsigned int)gid, name, sizeof name) != 0)
+    return NSS_STATUS_NOTFOUND;
+  return fill_grp(grp, buffer, buflen, name, gid, errnop);
 }
 
 /* Provide minimal initgroups: ensure primary group is present */

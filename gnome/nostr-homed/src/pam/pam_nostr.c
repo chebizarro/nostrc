@@ -57,29 +57,52 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, const char **ar
   (void)flags; (void)argc; (void)argv;
   const char *user = NULL; int rc = get_username(pamh, &user);
   if (rc != PAM_SUCCESS) return rc;
-  pam_info(pamh, "pam_nostr: opening session for %s", user);
-  /* Export basic env */
-  char home[256]; snprintf(home, sizeof home, "/home/%s", user);
-  char shell[64]; snprintf(shell, sizeof shell, "/bin/bash");
-  char xdg_runtime[256]; snprintf(xdg_runtime, sizeof xdg_runtime, "/run/user/%u", getuid());
-  /* Pre-calculate required buffer sizes to avoid -Wformat-truncation */
-  const char *suffix_data = "/.local/share";
-  const char *suffix_config = "/.config";
-  size_t need_data = strlen(home) + strlen(suffix_data) + 1;
-  size_t need_config = strlen(home) + strlen(suffix_config) + 1;
-  char xdg_data[256];
-  char xdg_config[256];
-  if (need_data > sizeof xdg_data || need_config > sizeof xdg_config) {
-    pam_syslog(pamh, LOG_ERR, "pam_nostr: XDG path too long for buffers");
+
+  /* Look up the user's UID from the cache — we need it for XDG_RUNTIME_DIR.
+   * Do NOT use getuid(): in a PAM module that returns the daemon's UID
+   * (typically 0 for sshd/login/gdm), not the authenticating user's. */
+  nh_cache c;
+  if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf") != 0) {
+    pam_syslog(pamh, LOG_ERR, "pam_nostr: cache unavailable, cannot open session");
     return PAM_SESSION_ERR;
   }
-  snprintf(xdg_data, sizeof xdg_data, "%s%s", home, suffix_data);
-  snprintf(xdg_config, sizeof xdg_config, "%s%s", home, suffix_config);
-  pam_putenv(pamh, (char*) (const char*)({ static char buf[320]; snprintf(buf, sizeof buf, "HOME=%s", home); buf; }));
-  pam_putenv(pamh, (char*) (const char*)({ static char buf[96]; snprintf(buf, sizeof buf, "SHELL=%s", shell); buf; }));
-  pam_putenv(pamh, (char*) (const char*)({ static char buf[320]; snprintf(buf, sizeof buf, "XDG_RUNTIME_DIR=%s", xdg_runtime); buf; }));
-  pam_putenv(pamh, (char*) (const char*)({ static char buf[320]; snprintf(buf, sizeof buf, "XDG_DATA_HOME=%s", xdg_data); buf; }));
-  pam_putenv(pamh, (char*) (const char*)({ static char buf[320]; snprintf(buf, sizeof buf, "XDG_CONFIG_HOME=%s", xdg_config); buf; }));
+  unsigned int uid = 0, gid = 0;
+  char cache_home[256];
+  if (nh_cache_lookup_name(&c, user, &uid, &gid, cache_home, sizeof cache_home) != 0) {
+    nh_cache_close(&c);
+    pam_syslog(pamh, LOG_ERR, "pam_nostr: user %s not in cache, cannot set env", user);
+    return PAM_SESSION_ERR;
+  }
+  nh_cache_close(&c);
+
+  pam_info(pamh, "pam_nostr: opening session for %s (uid=%u)", user, uid);
+
+  /* Build environment strings. pam_putenv copies its input, so local
+   * buffers are fine — no need for static storage. */
+  char home[256];
+  snprintf(home, sizeof home, "/home/%s", user);
+
+  char env_home[320];
+  snprintf(env_home, sizeof env_home, "HOME=%s", home);
+  pam_putenv(pamh, env_home);
+
+  char env_shell[96];
+  snprintf(env_shell, sizeof env_shell, "SHELL=/bin/bash");
+  pam_putenv(pamh, env_shell);
+
+  /* XDG_RUNTIME_DIR uses the looked-up UID, not getuid().
+   * systemd-logind creates /run/user/<uid> on session open. */
+  char env_xdg_runtime[320];
+  snprintf(env_xdg_runtime, sizeof env_xdg_runtime, "XDG_RUNTIME_DIR=/run/user/%u", uid);
+  pam_putenv(pamh, env_xdg_runtime);
+
+  char env_xdg_data[320];
+  snprintf(env_xdg_data, sizeof env_xdg_data, "XDG_DATA_HOME=%s/.local/share", home);
+  pam_putenv(pamh, env_xdg_data);
+
+  char env_xdg_config[320];
+  snprintf(env_xdg_config, sizeof env_xdg_config, "XDG_CONFIG_HOME=%s/.config", home);
+  pam_putenv(pamh, env_xdg_config);
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus){ pam_syslog(pamh, LOG_ERR, "DBus unavailable: %s", err?err->message:"error"); if (err) g_error_free(err); return PAM_SESSION_ERR; }
   GVariant *ret = g_dbus_connection_call_sync(bus,

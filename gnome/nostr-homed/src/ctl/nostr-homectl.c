@@ -119,9 +119,11 @@ int nh_close_session(const char *username){
   printf("nostr-homectl: CloseSession %s\n", username);
   return 0;
 }
-int nh_warm_cache(const char *npub_hex){
-  (void)npub_hex;
-  const char *ns = get_namespace_env("HOMED_NAMESPACE", "personal");
+int nh_warm_cache(const char *namespace_hint){
+  /* If a namespace was passed directly, prefer it over the env var.
+   * Falls back to HOMED_NAMESPACE env, then "personal". */
+  const char *ns = (namespace_hint && *namespace_hint) ? namespace_hint
+                   : get_namespace_env("HOMED_NAMESPACE", "personal");
   const char *relays_default[] = { "wss://relay.damus.io", "wss://nostr.wine" };
   const char **relays = relays_default; size_t relays_n = 2;
   int relays_owned = 0;
@@ -238,8 +240,11 @@ static void on_method_call(GDBusConnection *conn, const char *sender, const char
     return;
   }
   if (strcmp(method_name, "WarmCache")==0){
-    const char *npub=NULL; g_variant_get(params, "(s)", &npub);
-    gboolean ok = nh_warm_cache(npub)==0;
+    const char *ns = NULL; g_variant_get(params, "(s)", &ns);
+    /* Thread the namespace through to nh_warm_cache via env.
+     * The function reads HOMED_NAMESPACE internally. */
+    if (ns && *ns) g_setenv("HOMED_NAMESPACE", ns, TRUE);
+    gboolean ok = nh_warm_cache(ns)==0;
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(b)", ok));
     return;
   }
@@ -267,8 +272,8 @@ static const gchar introspection_xml[] =
   "  <interface name='org.nostr.Homed1'>\n"
   "    <method name='OpenSession'><arg type='s' name='user' direction='in'/><arg type='b' name='ok' direction='out'/></method>\n"
   "    <method name='CloseSession'><arg type='s' name='user' direction='in'/><arg type='b' name='ok' direction='out'/></method>\n"
-  "    <method name='WarmCache'><arg type='s' name='npub' direction='in'/><arg type='b' name='ok' direction='out'/></method>\n"
-  "    <method name='GetStatus'><arg type='s' name='user' direction='in'/><arg type='s' name='status' direction='out'/></method>\n"
+  "    <method name='WarmCache'><arg type='s' name='namespace' direction='in'/><arg type='b' name='ok' direction='out'/></method>\n"
+  "    <method name='GetStatus'><arg type='s' name='user' direction='in'/><arg type='s' name='status_json' direction='out'/></method>\n"
   "    <property name='Version' type='s' access='read'/>\n"
   "  </interface>\n"
   "</node>\n";

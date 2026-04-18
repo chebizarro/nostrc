@@ -1,5 +1,15 @@
 <!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
   "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  D-Bus interface for nostr-homed daemon.
+
+  Bus Name:    org.nostr.Homed1
+  Object Path: /org/nostr/Homed1
+
+  WarmCache populates the local cache with manifest and secrets for a
+  given namespace. GetStatus returns a JSON object with user, status,
+  mount point, and last update time.
+-->
 <node name="/org/nostr/Homed1">
   <interface name="org.nostr.Homed1">
     <method name="OpenSession">
@@ -10,13 +20,24 @@
       <arg name="user" type="s" direction="in"/>
       <arg name="ok" type="b" direction="out"/>
     </method>
+    <!--
+      WarmCache: Fetch manifest + secrets for a namespace from relays.
+      The author filter is derived from the signer's pubkey automatically.
+      @namespace: Namespace name (e.g. "personal", "work"). Maps to the
+                  "d" tag on kind-30081 manifest events.
+    -->
     <method name="WarmCache">
-      <arg name="npub" type="s" direction="in"/>
+      <arg name="namespace" type="s" direction="in"/>
       <arg name="ok" type="b" direction="out"/>
     </method>
+    <!--
+      GetStatus: Returns JSON with fields:
+        { "user": "alice", "status": "active"|"closed",
+          "mount": "/home/alice", "updated_at": 1713398400 }
+    -->
     <method name="GetStatus">
       <arg name="user" type="s" direction="in"/>
-      <arg name="status" type="s" direction="out"/>
+      <arg name="status_json" type="s" direction="out"/>
     </method>
     <property name="Version" type="s" access="read"/>
   </interface>
