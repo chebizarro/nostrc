@@ -9,6 +9,8 @@
 
 #include "nd-dav-server.h"
 #include "nd-token-store.h"
+#include "nd-ical.h"
+#include "nd-calendar-store.h"
 
 #include <libsoup/soup.h>
 #include <libxml/xmlwriter.h>
@@ -44,9 +46,17 @@ struct _NdDavServer {
 
   /* Default account for auth (v1: single account) */
   gchar        *account_id;     /* owned, nullable */
+
+  /* Calendar store for NIP-52 events */
+  NdCalendarStore *cal_store;    /* owned */
 };
 
 G_DEFINE_TYPE(NdDavServer, nd_dav_server, G_TYPE_OBJECT)
+
+/* ---- Forward declarations ---- */
+
+static void xml_write_event_response(xmlTextWriterPtr w,
+                                     const NdCalendarEvent *event);
 
 /* ---- XML helpers ---- */
 
@@ -360,13 +370,21 @@ handle_propfind_calendars(NdDavServer *self, SoupServerMessage *msg, int depth)
     xmlTextWriterEndElement(w);
     xmlTextWriterEndElement(w);
 
-    /* getctag: empty epoch (no events yet) */
+    /* getctag: changes with every store mutation */
+    g_autofree gchar *ctag = nd_calendar_store_get_ctag(self->cal_store);
     xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getctag", NULL);
-    xmlTextWriterWriteString(w, BAD_CAST "0");
+    xmlTextWriterWriteString(w, BAD_CAST ctag);
     xmlTextWriterEndElement(w);
 
     xml_end_propstat_ok(w);
     xml_end_response(w);
+
+    /* List individual events as resources */
+    g_autoptr(GPtrArray) events = nd_calendar_store_list_all(self->cal_store);
+    for (guint i = 0; i < events->len; i++) {
+      const NdCalendarEvent *event = g_ptr_array_index(events, i);
+      xml_write_event_response(w, event);
+    }
   }
 
   xmlTextWriterEndElement(w); /* multistatus */
@@ -448,6 +466,205 @@ handle_propfind_contacts(NdDavServer *self, SoupServerMessage *msg, int depth)
   xmlBufferFree(buf);
 }
 
+/* ---- CalDAV resource handlers ---- */
+
+/**
+ * Extract the event UID from a path like /calendars/nostr/<uid>.ics
+ * Returns NULL if the path doesn't match.
+ */
+static gchar *
+extract_calendar_uid(const gchar *path)
+{
+  if (!g_str_has_prefix(path, "/calendars/nostr/"))
+    return NULL;
+
+  const gchar *start = path + strlen("/calendars/nostr/");
+  if (*start == '\0')
+    return NULL;
+
+  gchar *uid = g_strdup(start);
+  /* Strip .ics extension if present */
+  gsize len = strlen(uid);
+  if (len > 4 && g_str_has_suffix(uid, ".ics"))
+    uid[len - 4] = '\0';
+
+  if (uid[0] == '\0') {
+    g_free(uid);
+    return NULL;
+  }
+
+  return uid;
+}
+
+/**
+ * Write a single event as a DAV response element in a multistatus.
+ */
+static void
+xml_write_event_response(xmlTextWriterPtr w,
+                         const NdCalendarEvent *event)
+{
+  g_autofree gchar *href = g_strdup_printf("/calendars/nostr/%s.ics",
+                                           event->uid);
+  xml_start_response(w, href);
+  xml_start_propstat_ok(w);
+
+  /* getetag */
+  g_autofree gchar *etag = nd_ical_compute_etag(event);
+  xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getetag", NULL);
+  xmlTextWriterWriteString(w, BAD_CAST etag);
+  xmlTextWriterEndElement(w);
+
+  /* getcontenttype */
+  xmlTextWriterStartElementNS(w, BAD_CAST "D",
+                               BAD_CAST "getcontenttype", NULL);
+  xmlTextWriterWriteString(w, BAD_CAST "text/calendar; charset=utf-8");
+  xmlTextWriterEndElement(w);
+
+  /* displayname */
+  if (event->summary)
+    xml_write_displayname(w, event->summary);
+
+  xml_end_propstat_ok(w);
+  xml_end_response(w);
+}
+
+/**
+ * Handle PUT /calendars/nostr/<uid>.ics — create or update event.
+ */
+static void
+handle_put_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  SoupMessageBody *body = soup_server_message_get_request_body(msg);
+  g_autoptr(GBytes) body_bytes = NULL;
+  if (body)
+    body_bytes = soup_message_body_flatten(body);
+
+  if (body_bytes == NULL || g_bytes_get_size(body_bytes) == 0) {
+    soup_server_message_set_status(msg, 400, NULL);
+    return;
+  }
+
+  gsize data_len = 0;
+  const gchar *ics_text = g_bytes_get_data(body_bytes, &data_len);
+  g_autofree gchar *ics_copy = g_strndup(ics_text, data_len);
+
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(ics_copy, &err);
+  if (event == NULL) {
+    if (err && err->code == 2 /* ND_ICAL_ERROR_UNSUPPORTED */) {
+      /* RRULE — 501 Not Implemented */
+      soup_server_message_set_status(msg, 501, NULL);
+      SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+      soup_message_headers_replace(hdrs, "X-Reason", err->message);
+    } else {
+      soup_server_message_set_status(msg, 400, NULL);
+      SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+      soup_message_headers_replace(hdrs, "X-Reason",
+                                   err ? err->message : "Invalid ICS");
+    }
+    g_clear_error(&err);
+    return;
+  }
+
+  /* Override UID from path if different (path takes precedence) */
+  if (!g_str_equal(event->uid, uid)) {
+    g_free(event->uid);
+    event->uid = g_strdup(uid);
+  }
+
+  /* Check if this is a create or update */
+  gboolean is_new = (nd_calendar_store_get(self->cal_store, uid) == NULL);
+
+  /* Store the event (takes ownership) */
+  nd_calendar_store_put(self->cal_store, event);
+
+  /* Retrieve the stored event to compute ETag */
+  const NdCalendarEvent *stored = nd_calendar_store_get(self->cal_store, uid);
+  g_autofree gchar *etag = nd_ical_compute_etag(stored);
+
+  soup_server_message_set_status(msg, is_new ? 201 : 204, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "ETag", etag);
+
+  g_autofree gchar *location = g_strdup_printf("/calendars/nostr/%s.ics", uid);
+  soup_message_headers_replace(hdrs, "Location", location);
+
+  g_message("nostr-dav: %s calendar event %s (%s)",
+            is_new ? "created" : "updated", uid,
+            stored->summary ? stored->summary : "untitled");
+}
+
+/**
+ * Handle GET /calendars/nostr/<uid>.ics — retrieve event as ICS.
+ */
+static void
+handle_get_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  const NdCalendarEvent *event = nd_calendar_store_get(self->cal_store, uid);
+  if (event == NULL) {
+    soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
+
+  g_autofree gchar *ics = nd_ical_generate_vevent(event);
+  g_autofree gchar *etag = nd_ical_compute_etag(event);
+
+  soup_server_message_set_status(msg, 200, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "text/calendar; charset=utf-8");
+  soup_message_headers_replace(hdrs, "ETag", etag);
+  soup_server_message_set_response(msg, "text/calendar; charset=utf-8",
+                                   SOUP_MEMORY_COPY, ics, strlen(ics));
+}
+
+/**
+ * Handle DELETE /calendars/nostr/<uid>.ics — remove event.
+ */
+static void
+handle_delete_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  if (!nd_calendar_store_remove(self->cal_store, uid)) {
+    soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
+
+  soup_server_message_set_status(msg, 204, NULL);
+  g_message("nostr-dav: deleted calendar event %s", uid);
+}
+
+/**
+ * Handle REPORT on /calendars/nostr/ — return all events in multistatus.
+ * (v1: ignores calendar-query filters, returns everything)
+ */
+static void
+handle_report_calendar(NdDavServer *self, SoupServerMessage *msg)
+{
+  xmlBufferPtr buf = NULL;
+  xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+
+  g_autoptr(GPtrArray) events = nd_calendar_store_list_all(self->cal_store);
+  for (guint i = 0; i < events->len; i++) {
+    const NdCalendarEvent *event = g_ptr_array_index(events, i);
+    xml_write_event_response(w, event);
+  }
+
+  xmlTextWriterEndElement(w); /* multistatus */
+  xmlTextWriterEndDocument(w);
+  xmlFreeTextWriter(w);
+
+  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+  gsize xml_len = xmlBufferLength(buf);
+
+  soup_server_message_set_status(msg, 207, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "application/xml; charset=utf-8");
+  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
+                                   SOUP_MEMORY_COPY, xml_str, xml_len);
+  xmlBufferFree(buf);
+}
+
 /* ---- Parse Depth header ---- */
 
 static int
@@ -524,6 +741,34 @@ on_request(SoupServer        *soup_server,
     }
 
     if (g_str_has_prefix(path, "/calendars")) {
+      /* PROPFIND on individual event resource */
+      g_autofree gchar *uid = extract_calendar_uid(path);
+      if (uid != NULL) {
+        const NdCalendarEvent *event =
+          nd_calendar_store_get(self->cal_store, uid);
+        if (event == NULL) {
+          soup_server_message_set_status(msg, 404, NULL);
+          return;
+        }
+        /* Return single-resource multistatus */
+        xmlBufferPtr buf = NULL;
+        xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+        xml_write_event_response(w, event);
+        xmlTextWriterEndElement(w);
+        xmlTextWriterEndDocument(w);
+        xmlFreeTextWriter(w);
+        const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+        gsize xml_len = xmlBufferLength(buf);
+        soup_server_message_set_status(msg, 207, NULL);
+        SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
+        soup_message_headers_replace(rh, "Content-Type",
+                                     "application/xml; charset=utf-8");
+        soup_server_message_set_response(msg,
+                                         "application/xml; charset=utf-8",
+                                         SOUP_MEMORY_COPY, xml_str, xml_len);
+        xmlBufferFree(buf);
+        return;
+      }
       handle_propfind_calendars(self, msg, depth);
       return;
     }
@@ -538,25 +783,61 @@ on_request(SoupServer        *soup_server,
     return;
   }
 
-  /* === REPORT — stub for calendar-query / sync-collection === */
+  /* === REPORT — calendar-query / sync-collection === */
   if (g_str_equal(method, "REPORT")) {
-    /* v1 scaffold: return empty multistatus for any REPORT */
-    xmlBufferPtr buf = NULL;
-    xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-    xmlTextWriterEndElement(w); /* multistatus */
-    xmlTextWriterEndDocument(w);
-    xmlFreeTextWriter(w);
+    if (g_str_has_prefix(path, "/calendars/nostr")) {
+      handle_report_calendar(self, msg);
+    } else {
+      /* Empty multistatus for non-calendar REPORTs */
+      xmlBufferPtr buf = NULL;
+      xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+      xmlTextWriterEndElement(w);
+      xmlTextWriterEndDocument(w);
+      xmlFreeTextWriter(w);
+      const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+      gsize xml_len = xmlBufferLength(buf);
+      soup_server_message_set_status(msg, 207, NULL);
+      SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
+      soup_message_headers_replace(rh, "Content-Type",
+                                   "application/xml; charset=utf-8");
+      soup_server_message_set_response(msg, "application/xml; charset=utf-8",
+                                       SOUP_MEMORY_COPY, xml_str, xml_len);
+      xmlBufferFree(buf);
+    }
+    return;
+  }
 
-    const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-    gsize xml_len = xmlBufferLength(buf);
+  /* === PUT — create/update calendar event === */
+  if (g_str_equal(method, "PUT")) {
+    g_autofree gchar *uid = extract_calendar_uid(path);
+    if (uid != NULL) {
+      handle_put_event(self, msg, uid);
+      return;
+    }
+    soup_server_message_set_status(msg, 405, NULL);
+    return;
+  }
 
-    soup_server_message_set_status(msg, 207, NULL);
-    SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
-    soup_message_headers_replace(hdrs, "Content-Type",
-                                 "application/xml; charset=utf-8");
-    soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                     SOUP_MEMORY_COPY, xml_str, xml_len);
-    xmlBufferFree(buf);
+  /* === GET — retrieve calendar event as ICS === */
+  if (g_str_equal(method, "GET")) {
+    g_autofree gchar *uid = extract_calendar_uid(path);
+    if (uid != NULL) {
+      handle_get_event(self, msg, uid);
+      return;
+    }
+    /* GET on collection not supported */
+    soup_server_message_set_status(msg, 405, NULL);
+    return;
+  }
+
+  /* === DELETE — remove calendar event === */
+  if (g_str_equal(method, "DELETE")) {
+    g_autofree gchar *uid = extract_calendar_uid(path);
+    if (uid != NULL) {
+      handle_delete_event(self, msg, uid);
+      return;
+    }
+    soup_server_message_set_status(msg, 405, NULL);
     return;
   }
 
@@ -585,6 +866,10 @@ nd_dav_server_finalize(GObject *obj)
   g_clear_object(&self->soup);
   g_clear_pointer(&self->listen_addr, g_free);
   g_clear_pointer(&self->account_id, g_free);
+  if (self->cal_store) {
+    nd_calendar_store_free(self->cal_store);
+    self->cal_store = NULL;
+  }
   G_OBJECT_CLASS(nd_dav_server_parent_class)->finalize(obj);
 }
 
@@ -603,6 +888,7 @@ nd_dav_server_init(NdDavServer *self)
   self->listen_addr = NULL;
   self->listen_port = 0;
   self->account_id = NULL;
+  self->cal_store = nd_calendar_store_new();
 }
 
 /* ---- Public API ---- */

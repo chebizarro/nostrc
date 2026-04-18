@@ -17,6 +17,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.56 gobject-2.0 gio-2.0)
 pkg_check_modules(SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
 pkg_check_modules(LIBXML2 REQUIRED IMPORTED_TARGET libxml-2.0)
+pkg_check_modules(JSONLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 
 # Optional deps
 pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
@@ -28,6 +29,8 @@ set(ND_SOURCES
   src/nd-application.c
   src/nd-dav-server.c
   src/nd-token-store.c
+  src/nd-ical.c
+  src/nd-calendar-store.c
 )
 
 add_executable(nostr-dav ${ND_SOURCES})
@@ -40,6 +43,7 @@ target_link_libraries(nostr-dav PRIVATE
   PkgConfig::GLIB
   PkgConfig::SOUP
   PkgConfig::LIBXML2
+  PkgConfig::JSONLIB
 )
 
 if (LIBSECRET_FOUND)
@@ -65,6 +69,8 @@ if (BUILD_TESTING)
     tests/test_dav_propfind.c
     src/nd-dav-server.c
     src/nd-token-store.c
+    src/nd-ical.c
+    src/nd-calendar-store.c
   )
 
   target_include_directories(test-nostr-dav PRIVATE
@@ -75,6 +81,7 @@ if (BUILD_TESTING)
     PkgConfig::GLIB
     PkgConfig::SOUP
     PkgConfig::LIBXML2
+    PkgConfig::JSONLIB
   )
 
   if (LIBSECRET_FOUND)

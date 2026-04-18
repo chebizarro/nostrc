@@ -8,6 +8,8 @@
 
 #include "nd-dav-server.h"
 #include "nd-token-store.h"
+#include "nd-ical.h"
+#include "nd-calendar-store.h"
 
 #include <glib.h>
 #include <libsoup/soup.h>
@@ -419,6 +421,502 @@ test_method_not_allowed(DavFixture *f, gconstpointer data)
   g_assert_cmpuint(soup_message_get_status(msg), ==, 405);
 }
 
+/* ---- CalDAV event lifecycle tests ---- */
+
+/* A minimal ICS VEVENT for testing */
+#define TEST_ICS_DATE_EVENT \
+  "BEGIN:VCALENDAR\r\n" \
+  "VERSION:2.0\r\n" \
+  "PRODID:-//Test//Test//EN\r\n" \
+  "BEGIN:VEVENT\r\n" \
+  "UID:test-event-001\r\n" \
+  "SUMMARY:Nostr Meetup\r\n" \
+  "DESCRIPTION:Monthly community meetup\r\n" \
+  "DTSTART;VALUE=DATE:20260420\r\n" \
+  "DTEND;VALUE=DATE:20260421\r\n" \
+  "LOCATION:Berlin\r\n" \
+  "CATEGORIES:nostr,meetup\r\n" \
+  "END:VEVENT\r\n" \
+  "END:VCALENDAR\r\n"
+
+#define TEST_ICS_TIME_EVENT \
+  "BEGIN:VCALENDAR\r\n" \
+  "VERSION:2.0\r\n" \
+  "PRODID:-//Test//Test//EN\r\n" \
+  "BEGIN:VEVENT\r\n" \
+  "UID:test-event-002\r\n" \
+  "SUMMARY:Dev Call\r\n" \
+  "DESCRIPTION:Weekly dev sync\r\n" \
+  "DTSTART;TZID=America/New_York:20260422T150000\r\n" \
+  "DTEND;TZID=America/New_York:20260422T160000\r\n" \
+  "LOCATION:Jitsi\r\n" \
+  "URL:https://meet.jit.si/nostr-dev\r\n" \
+  "END:VEVENT\r\n" \
+  "END:VCALENDAR\r\n"
+
+static SoupMessage *
+make_put_ics(const gchar *url, const gchar *ics)
+{
+  SoupMessage *msg = soup_message_new("PUT", url);
+  SoupMessageHeaders *hdrs = soup_message_get_request_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "text/calendar; charset=utf-8");
+  GBytes *body = g_bytes_new_static(ics, strlen(ics));
+  soup_message_set_request_body_from_bytes(msg, "text/calendar", body);
+  g_bytes_unref(body);
+  return msg;
+}
+
+static void
+test_put_event_creates(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) msg = make_put_ics(url, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) body = send_msg(f, msg);
+
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 201);
+
+  SoupMessageHeaders *hdrs = soup_message_get_response_headers(msg);
+  const gchar *etag = soup_message_headers_get_one(hdrs, "ETag");
+  g_assert_nonnull(etag);
+  g_assert_true(etag[0] == '"');
+
+  const gchar *location = soup_message_headers_get_one(hdrs, "Location");
+  g_assert_cmpstr(location, ==, "/calendars/nostr/test-event-001.ics");
+}
+
+static void
+test_put_event_updates(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+
+  /* First PUT → 201 */
+  g_autoptr(SoupMessage) msg1 = make_put_ics(url, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) body1 = send_msg(f, msg1);
+  g_assert_cmpuint(soup_message_get_status(msg1), ==, 201);
+
+  /* Second PUT → 204 (update) */
+  g_autoptr(SoupMessage) msg2 = make_put_ics(url, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) body2 = send_msg(f, msg2);
+  g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+}
+
+static void
+test_get_event(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT first */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_ics(put_url, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* GET */
+  g_autofree gchar *get_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", get_url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+
+  SoupMessageHeaders *hdrs = soup_message_get_response_headers(get_msg);
+  const gchar *ct = soup_message_headers_get_one(hdrs, "Content-Type");
+  g_assert_nonnull(ct);
+  g_assert_true(strstr(ct, "text/calendar") != NULL);
+
+  const gchar *etag = soup_message_headers_get_one(hdrs, "ETag");
+  g_assert_nonnull(etag);
+
+  /* Verify ICS content */
+  gsize len = 0;
+  const gchar *ics = g_bytes_get_data(get_body, &len);
+  g_assert_true(len > 0);
+  g_assert_nonnull(strstr(ics, "BEGIN:VCALENDAR"));
+  g_assert_nonnull(strstr(ics, "SUMMARY:Nostr Meetup"));
+  g_assert_nonnull(strstr(ics, "LOCATION:Berlin"));
+  g_assert_nonnull(strstr(ics, "UID:test-event-001"));
+}
+
+static void
+test_get_event_not_found(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/calendars/nostr/nonexistent.ics", f->base_url);
+  g_autoptr(SoupMessage) msg = soup_message_new("GET", url);
+  g_autoptr(GBytes) body = send_msg(f, msg);
+
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 404);
+}
+
+static void
+test_delete_event(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT first */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_ics(put_url, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* DELETE */
+  g_autofree gchar *del_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) del_msg = soup_message_new("DELETE", del_url);
+  g_autoptr(GBytes) del_body = send_msg(f, del_msg);
+  g_assert_cmpuint(soup_message_get_status(del_msg), ==, 204);
+
+  /* GET should now 404 */
+  g_autofree gchar *get_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", get_url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 404);
+}
+
+static void
+test_delete_event_not_found(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/calendars/nostr/nonexistent.ics", f->base_url);
+  g_autoptr(SoupMessage) msg = soup_message_new("DELETE", url);
+  g_autoptr(GBytes) body = send_msg(f, msg);
+
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 404);
+}
+
+static void
+test_report_with_events(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT two events */
+  g_autofree gchar *url1 = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) put1 = make_put_ics(url1, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) body1 = send_msg(f, put1);
+  g_assert_cmpuint(soup_message_get_status(put1), ==, 201);
+
+  g_autofree gchar *url2 = g_strdup_printf(
+    "%s/calendars/nostr/test-event-002.ics", f->base_url);
+  g_autoptr(SoupMessage) put2 = make_put_ics(url2, TEST_ICS_TIME_EVENT);
+  g_autoptr(GBytes) body2 = send_msg(f, put2);
+  g_assert_cmpuint(soup_message_get_status(put2), ==, 201);
+
+  /* REPORT on calendar collection */
+  g_autofree gchar *report_url = g_strdup_printf(
+    "%s/calendars/nostr/", f->base_url);
+  g_autoptr(SoupMessage) report = soup_message_new("REPORT", report_url);
+  g_autoptr(GBytes) report_body = send_msg(f, report);
+
+  g_assert_cmpuint(soup_message_get_status(report), ==, 207);
+
+  gsize len = 0;
+  const gchar *xml = g_bytes_get_data(report_body, &len);
+
+  xmlDocPtr doc = xmlReadMemory(xml, (int)len, "response.xml", NULL,
+                                XML_PARSE_NONET | XML_PARSE_NOERROR);
+  g_assert_nonnull(doc);
+
+  xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
+  xmlXPathRegisterNs(ctx, BAD_CAST "D", BAD_CAST "DAV:");
+
+  /* Should have 2 responses */
+  xmlXPathObjectPtr responses = xmlXPathEvalExpression(
+    BAD_CAST "//D:response", ctx);
+  g_assert_cmpint(responses->nodesetval->nodeNr, ==, 2);
+
+  /* Each should have an ETag */
+  xmlXPathObjectPtr etags = xmlXPathEvalExpression(
+    BAD_CAST "//D:getetag", ctx);
+  g_assert_cmpint(etags->nodesetval->nodeNr, ==, 2);
+
+  xmlXPathFreeObject(etags);
+  xmlXPathFreeObject(responses);
+  xmlXPathFreeContext(ctx);
+  xmlFreeDoc(doc);
+}
+
+static void
+test_propfind_calendar_depth1_with_events(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT an event */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_ics(put_url, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* PROPFIND /calendars/ depth 1 — should list the calendar + events */
+  g_autofree gchar *pf_url = g_strdup_printf("%s/calendars/", f->base_url);
+  g_autoptr(SoupMessage) pf_msg = make_propfind(pf_url, 1);
+  g_autoptr(GBytes) pf_body = send_msg(f, pf_msg);
+
+  g_assert_cmpuint(soup_message_get_status(pf_msg), ==, 207);
+
+  gsize len = 0;
+  const gchar *xml = g_bytes_get_data(pf_body, &len);
+
+  xmlDocPtr doc = xmlReadMemory(xml, (int)len, "response.xml", NULL,
+                                XML_PARSE_NONET | XML_PARSE_NOERROR);
+  g_assert_nonnull(doc);
+
+  xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
+  xmlXPathRegisterNs(ctx, BAD_CAST "D", BAD_CAST "DAV:");
+
+  /* Should have 3 responses: /calendars/ + /calendars/nostr/ + the event */
+  xmlXPathObjectPtr responses = xmlXPathEvalExpression(
+    BAD_CAST "//D:response", ctx);
+  g_assert_cmpint(responses->nodesetval->nodeNr, ==, 3);
+
+  /* ctag should be non-zero (store has been mutated) */
+  xmlXPathObjectPtr ctag = xmlXPathEvalExpression(
+    BAD_CAST "//D:getctag", ctx);
+  g_assert_cmpint(ctag->nodesetval->nodeNr, ==, 1);
+  xmlChar *ctag_val = xmlNodeGetContent(ctag->nodesetval->nodeTab[0]);
+  g_assert_cmpstr((const gchar *)ctag_val, !=, "0");
+  xmlFree(ctag_val);
+
+  xmlXPathFreeObject(ctag);
+  xmlXPathFreeObject(responses);
+  xmlXPathFreeContext(ctx);
+  xmlFreeDoc(doc);
+}
+
+static void
+test_propfind_single_event(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT an event */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_ics(put_url, TEST_ICS_DATE_EVENT);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* PROPFIND on the individual event resource */
+  g_autofree gchar *pf_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-001.ics", f->base_url);
+  g_autoptr(SoupMessage) pf_msg = make_propfind(pf_url, 0);
+  g_autoptr(GBytes) pf_body = send_msg(f, pf_msg);
+
+  g_assert_cmpuint(soup_message_get_status(pf_msg), ==, 207);
+
+  gsize len = 0;
+  const gchar *xml = g_bytes_get_data(pf_body, &len);
+
+  xmlDocPtr doc = xmlReadMemory(xml, (int)len, "response.xml", NULL,
+                                XML_PARSE_NONET | XML_PARSE_NOERROR);
+  g_assert_nonnull(doc);
+
+  xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
+  xmlXPathRegisterNs(ctx, BAD_CAST "D", BAD_CAST "DAV:");
+
+  /* 1 response for the event */
+  xmlXPathObjectPtr responses = xmlXPathEvalExpression(
+    BAD_CAST "//D:response", ctx);
+  g_assert_cmpint(responses->nodesetval->nodeNr, ==, 1);
+
+  /* Has ETag */
+  xmlXPathObjectPtr etag = xmlXPathEvalExpression(
+    BAD_CAST "//D:getetag", ctx);
+  g_assert_cmpint(etag->nodesetval->nodeNr, ==, 1);
+
+  /* Has displayname = "Nostr Meetup" */
+  xmlXPathObjectPtr dn = xmlXPathEvalExpression(
+    BAD_CAST "//D:displayname", ctx);
+  g_assert_cmpint(dn->nodesetval->nodeNr, ==, 1);
+  xmlChar *name = xmlNodeGetContent(dn->nodesetval->nodeTab[0]);
+  g_assert_cmpstr((const gchar *)name, ==, "Nostr Meetup");
+  xmlFree(name);
+
+  xmlXPathFreeObject(dn);
+  xmlXPathFreeObject(etag);
+  xmlXPathFreeObject(responses);
+  xmlXPathFreeContext(ctx);
+  xmlFreeDoc(doc);
+}
+
+static void
+test_put_time_event(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT a time-based event */
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-002.ics", f->base_url);
+  g_autoptr(SoupMessage) msg = make_put_ics(url, TEST_ICS_TIME_EVENT);
+  g_autoptr(GBytes) body = send_msg(f, msg);
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 201);
+
+  /* GET it back and verify TZID roundtrip */
+  g_autofree gchar *get_url = g_strdup_printf(
+    "%s/calendars/nostr/test-event-002.ics", f->base_url);
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", get_url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+
+  gsize len = 0;
+  const gchar *ics = g_bytes_get_data(get_body, &len);
+  g_assert_nonnull(strstr(ics, "SUMMARY:Dev Call"));
+  g_assert_nonnull(strstr(ics, "TZID=America/New_York"));
+  g_assert_nonnull(strstr(ics, "URL:https://meet.jit.si/nostr-dev"));
+}
+
+/* ---- ICS ↔ NIP-52 unit tests ---- */
+
+static void
+test_ical_parse_date_event(void)
+{
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(TEST_ICS_DATE_EVENT, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(event);
+
+  g_assert_cmpstr(event->uid, ==, "test-event-001");
+  g_assert_cmpstr(event->summary, ==, "Nostr Meetup");
+  g_assert_cmpstr(event->description, ==, "Monthly community meetup");
+  g_assert_true(event->is_date_only);
+  g_assert_cmpint(event->kind, ==, ND_NIP52_KIND_DATE);
+  g_assert_cmpstr(event->dtstart_date, ==, "2026-04-20");
+  g_assert_cmpstr(event->dtend_date, ==, "2026-04-21");
+  g_assert_cmpstr(event->location, ==, "Berlin");
+
+  /* Categories */
+  g_assert_nonnull(event->categories);
+  g_assert_cmpstr(event->categories[0], ==, "nostr");
+  g_assert_cmpstr(event->categories[1], ==, "meetup");
+  g_assert_null(event->categories[2]);
+
+  nd_calendar_event_free(event);
+}
+
+static void
+test_ical_parse_time_event(void)
+{
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(TEST_ICS_TIME_EVENT, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(event);
+
+  g_assert_cmpstr(event->uid, ==, "test-event-002");
+  g_assert_cmpstr(event->summary, ==, "Dev Call");
+  g_assert_false(event->is_date_only);
+  g_assert_cmpint(event->kind, ==, ND_NIP52_KIND_TIME);
+  g_assert_cmpstr(event->start_tzid, ==, "America/New_York");
+  g_assert_cmpstr(event->end_tzid, ==, "America/New_York");
+  g_assert_true(event->dtstart_ts > 0);
+  g_assert_true(event->dtend_ts > event->dtstart_ts);
+  g_assert_cmpstr(event->url, ==, "https://meet.jit.si/nostr-dev");
+
+  nd_calendar_event_free(event);
+}
+
+static void
+test_ical_roundtrip_ics(void)
+{
+  /* Parse → generate → re-parse and verify key fields survive */
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(TEST_ICS_DATE_EVENT, &err);
+  g_assert_no_error(err);
+
+  g_autofree gchar *ics = nd_ical_generate_vevent(event);
+  g_assert_nonnull(ics);
+  g_assert_nonnull(strstr(ics, "BEGIN:VCALENDAR"));
+  g_assert_nonnull(strstr(ics, "SUMMARY:Nostr Meetup"));
+
+  /* Re-parse */
+  NdCalendarEvent *event2 = nd_ical_parse_vevent(ics, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(event2);
+  g_assert_cmpstr(event2->uid, ==, event->uid);
+  g_assert_cmpstr(event2->summary, ==, event->summary);
+  g_assert_true(event2->is_date_only);
+  g_assert_cmpstr(event2->dtstart_date, ==, event->dtstart_date);
+
+  nd_calendar_event_free(event);
+  nd_calendar_event_free(event2);
+}
+
+static void
+test_ical_nip52_roundtrip(void)
+{
+  /* Parse ICS → NIP-52 JSON → parse back → verify */
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(TEST_ICS_DATE_EVENT, &err);
+  g_assert_no_error(err);
+
+  g_autofree gchar *json = nd_ical_event_to_nip52_json(event);
+  g_assert_nonnull(json);
+
+  NdCalendarEvent *event2 = nd_ical_event_from_nip52_json(json, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(event2);
+
+  g_assert_cmpstr(event2->uid, ==, "test-event-001");
+  g_assert_cmpstr(event2->summary, ==, "Nostr Meetup");
+  g_assert_cmpstr(event2->description, ==, "Monthly community meetup");
+  g_assert_true(event2->is_date_only);
+  g_assert_cmpint(event2->kind, ==, ND_NIP52_KIND_DATE);
+  g_assert_cmpstr(event2->dtstart_date, ==, "2026-04-20");
+  g_assert_cmpstr(event2->location, ==, "Berlin");
+
+  nd_calendar_event_free(event);
+  nd_calendar_event_free(event2);
+}
+
+static void
+test_ical_etag_stable(void)
+{
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(TEST_ICS_DATE_EVENT, &err);
+  g_assert_no_error(err);
+
+  g_autofree gchar *etag1 = nd_ical_compute_etag(event);
+  g_autofree gchar *etag2 = nd_ical_compute_etag(event);
+  g_assert_cmpstr(etag1, ==, etag2);
+  g_assert_true(etag1[0] == '"');
+
+  nd_calendar_event_free(event);
+}
+
+static void
+test_ical_reject_rrule(void)
+{
+  const gchar *ics_rrule =
+    "BEGIN:VCALENDAR\r\n"
+    "VERSION:2.0\r\n"
+    "BEGIN:VEVENT\r\n"
+    "UID:recurring-001\r\n"
+    "SUMMARY:Weekly Standup\r\n"
+    "DTSTART:20260420T090000Z\r\n"
+    "RRULE:FREQ=WEEKLY\r\n"
+    "END:VEVENT\r\n"
+    "END:VCALENDAR\r\n";
+
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(ics_rrule, &err);
+  g_assert_null(event);
+  g_assert_nonnull(err);
+  g_assert_cmpint(err->code, ==, 2); /* ND_ICAL_ERROR_UNSUPPORTED */
+  g_clear_error(&err);
+}
+
 /* ---- Main ---- */
 
 int
@@ -448,6 +946,36 @@ main(int argc, char *argv[])
              dav_fixture_setup, test_report_empty, dav_fixture_teardown);
   g_test_add("/dav/method-not-allowed", DavFixture, NULL,
              dav_fixture_setup, test_method_not_allowed, dav_fixture_teardown);
+
+  /* CalDAV event lifecycle */
+  g_test_add("/caldav/put-creates", DavFixture, NULL,
+             dav_fixture_setup, test_put_event_creates, dav_fixture_teardown);
+  g_test_add("/caldav/put-updates", DavFixture, NULL,
+             dav_fixture_setup, test_put_event_updates, dav_fixture_teardown);
+  g_test_add("/caldav/get-event", DavFixture, NULL,
+             dav_fixture_setup, test_get_event, dav_fixture_teardown);
+  g_test_add("/caldav/get-not-found", DavFixture, NULL,
+             dav_fixture_setup, test_get_event_not_found, dav_fixture_teardown);
+  g_test_add("/caldav/delete-event", DavFixture, NULL,
+             dav_fixture_setup, test_delete_event, dav_fixture_teardown);
+  g_test_add("/caldav/delete-not-found", DavFixture, NULL,
+             dav_fixture_setup, test_delete_event_not_found, dav_fixture_teardown);
+  g_test_add("/caldav/report-with-events", DavFixture, NULL,
+             dav_fixture_setup, test_report_with_events, dav_fixture_teardown);
+  g_test_add("/caldav/propfind-depth1-with-events", DavFixture, NULL,
+             dav_fixture_setup, test_propfind_calendar_depth1_with_events, dav_fixture_teardown);
+  g_test_add("/caldav/propfind-single-event", DavFixture, NULL,
+             dav_fixture_setup, test_propfind_single_event, dav_fixture_teardown);
+  g_test_add("/caldav/put-time-event", DavFixture, NULL,
+             dav_fixture_setup, test_put_time_event, dav_fixture_teardown);
+
+  /* ICS ↔ NIP-52 unit tests */
+  g_test_add_func("/ical/parse-date-event", test_ical_parse_date_event);
+  g_test_add_func("/ical/parse-time-event", test_ical_parse_time_event);
+  g_test_add_func("/ical/roundtrip-ics", test_ical_roundtrip_ics);
+  g_test_add_func("/ical/nip52-roundtrip", test_ical_nip52_roundtrip);
+  g_test_add_func("/ical/etag-stable", test_ical_etag_stable);
+  g_test_add_func("/ical/reject-rrule", test_ical_reject_rrule);
 
   int result = g_test_run();
   xmlCleanupParser();
