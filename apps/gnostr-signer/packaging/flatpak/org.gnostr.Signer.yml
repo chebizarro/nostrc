@@ -146,7 +146,6 @@ modules:
           -DCMAKE_INSTALL_PREFIX=/app \
           -DBUILD_APPS=ON \
           -DBUILD_TESTING_FRAMEWORK=OFF \
-          -DGNOSTR_ENABLE_GOA=OFF \
           -DGNOSTR_ENABLE_SEAHORSE_HELPERS=OFF \
           -DLIBNOSTR_WITH_NOSTRDB=OFF
       - cmake --build build --target gnostr-signer gnostr-signer-daemon -j

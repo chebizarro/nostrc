@@ -317,6 +317,12 @@ gnostr_channel_list_view_upsert_channel(GnostrChannelListView *self,
             g_list_store_remove(self->store, pos);
             g_list_store_insert(self->store, pos, item);
             /* Index stays the same for this position */
+        } else {
+            /* Stale index entry — rebuild and fall through to append */
+            rebuild_index(self);
+            g_autoptr(GnostrChannelItem) new_item = gnostr_channel_item_new(channel);
+            g_list_store_append(self->store, new_item);
+            rebuild_index(self);
         }
     } else {
         /* Append new item */

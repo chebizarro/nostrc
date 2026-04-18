@@ -11,6 +11,18 @@
 
 set -euo pipefail
 
+# Prefer native GTK backend on macOS. Some terminal environments export
+# DISPLAY=:0, which can make GTK pick X11 and prevent expected native UI
+# startup. Keep user overrides if they explicitly set GDK_BACKEND.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    if [[ -z "${GDK_BACKEND:-}" ]]; then
+        export GDK_BACKEND="macos"
+    fi
+    if [[ "${GDK_BACKEND}" == "macos" && -n "${DISPLAY:-}" ]]; then
+        unset DISPLAY
+    fi
+fi
+
 # Find the directory where this script lives
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

@@ -398,51 +398,19 @@ if (ENABLE_NOSTRDB_DEMO)
   endif()
 endif()
 
-# --- GNOME integration (GOA provider, Seahorse helpers, optional PKCS#11) ---
+# --- GNOME integration (Seahorse helpers, optional PKCS#11) ---
 # Provide toggles so non-GNOME environments/builders aren't broken by missing deps.
-option(GNOSTR_ENABLE_GOA "Build GNOME Online Accounts provider" OFF)
+# Note: the former GNOSTR_ENABLE_GOA option and its `gnome/goa/` subtree were
+# removed (see bead nostrc-hock). The out-of-tree GoaProvider subclass could
+# never be loaded by goa-daemon, whose providers are statically registered via
+# ensure_builtins_loaded() in src/goabackend/goaprovider.c. GNOME desktop
+# integration will instead use the stock WebDAV provider (GNOME 3.46+) with a
+# localhost DAV bridge -- see the parent epic for details.
 option(GNOSTR_ENABLE_SEAHORSE_HELPERS "Build Seahorse/Secret Service helpers" OFF)
 option(GNOSTR_WITH_PKCS11 "Build p11-kit module" OFF)
 
-if (GNOSTR_ENABLE_GOA OR GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
+if (GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
   find_package(PkgConfig REQUIRED)
-endif()
-
-if (GNOSTR_ENABLE_GOA)
-  pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
-  pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
-  pkg_check_modules(GOA REQUIRED IMPORTED_TARGET goa-1.0)
-  pkg_check_modules(GOA_BACKEND REQUIRED IMPORTED_TARGET goa-backend-1.0)
-  pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
-
-  # Probe whether the installed goa-backend headers actually expose a complete
-  # GoaProviderClass definition (some distros keep it private, making subclassing impossible).
-  include(CheckCSourceCompiles)
-  set(CMAKE_REQUIRED_INCLUDES
-    ${GOA_INCLUDE_DIRS}
-    ${GOA_BACKEND_INCLUDE_DIRS}
-  )
-  set(CMAKE_REQUIRED_DEFINITIONS
-    -DGOA_API_IS_SUBJECT_TO_CHANGE=1
-    -DGOA_BACKEND_API_IS_SUBJECT_TO_CHANGE=1
-  )
-  check_c_source_compiles("#include <goa/goa.h>\n#include <goabackend/goabackend.h>\nint main(void){ return (int)sizeof(GoaProviderClass); }" GOA_PROVIDERCLASS_AVAILABLE)
-  unset(CMAKE_REQUIRED_INCLUDES)
-  unset(CMAKE_REQUIRED_DEFINITIONS)
-
-  if (GOA_PROVIDERCLASS_AVAILABLE)
-    add_subdirectory(gnome/goa)
-  else()
-    message(WARNING "GNOSTR_ENABLE_GOA requested, but goa-backend headers do not expose a complete GoaProviderClass on this system. Disabling GOA provider build.")
-    set(GNOSTR_ENABLE_GOA OFF CACHE BOOL "Build GNOME Online Accounts provider" FORCE)
-  endif()
-  # Install DBus service activation + desktop/appdata if present
-  install(FILES gnome/dbus/com.nostr.Signer.service
-          DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
-  install(FILES apps/gnostr-signer/data/org.nostr.Signer.desktop
-          DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-  install(FILES apps/gnostr-signer/data/org.nostr.Signer.appdata.xml
-          DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 endif()
 
 if (GNOSTR_ENABLE_SEAHORSE_HELPERS)

@@ -31,7 +31,6 @@ Nostrc is a monorepo implementing the Nostr protocol in C, from low-level crypto
 
 | Component | Directory | Purpose |
 |-----------|-----------|---------|
-| GNOME Online Accounts provider | `gnome/goa/` | Nostr identity via GOA |
 | Seahorse helpers | `gnome/seahorse/` | Secret Service / GNOME Keyring integration |
 | PKCS#11 module | `pkcs11/` | Hardware token support |
 | nostr-homed | `gnome/nostr-homed/` | GNOME roaming home via Nostr |
