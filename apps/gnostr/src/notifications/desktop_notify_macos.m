@@ -256,17 +256,27 @@ gnostr_desktop_notify_init(GnostrDesktopNotify *self)
     /* Try to load settings */
     load_settings(self);
 
-    /* Create delegate and register with notification center */
+    /* Create delegate and register with notification center.
+     * UNUserNotificationCenter throws NSInternalInconsistencyException when
+     * the binary is not inside a proper .app bundle (e.g. running from a
+     * build directory during development). Catch and degrade gracefully. */
     @autoreleasepool {
-        GnostrNotificationDelegate *delegate = [[GnostrNotificationDelegate alloc] init];
-        delegate.owner = self;
-        self->delegate = (__bridge_retained void *)delegate;
+        @try {
+            GnostrNotificationDelegate *delegate = [[GnostrNotificationDelegate alloc] init];
+            delegate.owner = self;
+            self->delegate = (__bridge_retained void *)delegate;
 
-        UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
-        center.delegate = delegate;
+            UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+            center.delegate = delegate;
 
-        /* Register notification categories */
-        register_notification_categories();
+            /* Register notification categories */
+            register_notification_categories();
+        } @catch (NSException *exception) {
+            g_warning("desktop-notify-macos: Cannot initialize notification center "
+                      "(not running inside .app bundle?): %s",
+                      [[exception reason] UTF8String]);
+            self->delegate = NULL;
+        }
     }
 }
 
@@ -454,7 +464,7 @@ gnostr_desktop_notify_request_permission(GnostrDesktopNotify *self)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
 
-    if (self->permission_requested) {
+    if (self->permission_requested || !self->delegate) {
         return;
     }
 
@@ -498,6 +508,8 @@ gboolean
 gnostr_desktop_notify_has_permission(GnostrDesktopNotify *self)
 {
     g_return_val_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self), FALSE);
+
+    if (!self->delegate) return FALSE;
 
     /* Check current authorization status */
     @autoreleasepool {
@@ -639,8 +651,8 @@ send_notification_internal(GnostrDesktopNotify *self,
         return;
     }
 
-    if (!self->has_permission) {
-        g_debug("No notification permission");
+    if (!self->has_permission || !self->delegate) {
+        g_debug("No notification permission (or no notification center)");
         return;
     }
 
@@ -960,7 +972,7 @@ gnostr_desktop_notify_withdraw(GnostrDesktopNotify *self, const char *event_id)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
 
-    if (!event_id) return;
+    if (!event_id || !self->delegate) return;
 
     @autoreleasepool {
         /* Build identifiers for all types */
@@ -981,6 +993,8 @@ gnostr_desktop_notify_withdraw_type(GnostrDesktopNotify *self,
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
     g_return_if_fail(type < GNOSTR_NOTIFICATION_TYPE_COUNT);
+
+    if (!self->delegate) return;
 
     @autoreleasepool {
         UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
@@ -1004,6 +1018,8 @@ void
 gnostr_desktop_notify_withdraw_all(GnostrDesktopNotify *self)
 {
     g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
+
+    if (!self->delegate) return;
 
     @autoreleasepool {
         UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
