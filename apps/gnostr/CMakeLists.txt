@@ -157,7 +157,7 @@ add_custom_command(
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
-file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c)
+file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c src/search-provider/*.c)
 # Explicitly append app-local timeline factory source so it is always built,
 # even when incremental builds miss new globbed files before reconfigure.
 list(APPEND APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-timeline-view-app-factory.c)
@@ -1448,6 +1448,10 @@ install(FILES data/schemas/org.gnostr.gnostr.gschema.xml
 if(GLIB_COMPILE_SCHEMAS)
   install(CODE "execute_process(COMMAND ${GLIB_COMPILE_SCHEMAS} \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)")
 endif()
+
+# ---- GNOME Shell search provider (nostrc-sl86) ----
+install(FILES data/org.gnostr.gnostr.search-provider.ini
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/gnome-shell/search-providers)
 
 # ---- Desktop entry ----
 install(FILES data/org.gnostr.gnostr.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)

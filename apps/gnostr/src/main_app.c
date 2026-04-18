@@ -20,12 +20,16 @@
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/gnostr-identity.h>
 #include <go.h>          /* go(), go_fiber_compat() */
+#include "search-provider/gnostr-shell-search-provider.h"
 /* nostrc-deferred-free: Fiber scheduler removed — go_fiber_compat() is reverted
  * to OS threads (see libgo/src/go.c), so the fiber scheduler was creating idle
  * worker threads for nothing. Removing eliminates unnecessary thread contention. */
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
+
+/* nostrc-sl86: GNOME Shell SearchProvider2 registration */
+static guint g_search_provider_id = 0;
 
 /* nostrc-lx25: Relay change handler for sync service */
 static gulong s_relay_change_for_sync = 0;
@@ -122,6 +126,21 @@ static void on_activate(GApplication *app, gpointer user_data) {
   ctx->win = GTK_WINDOW(win);
   g_idle_add_full(G_PRIORITY_LOW, deferred_plugin_init_cb, ctx, NULL);
 
+  /* nostrc-sl86: Register GNOME Shell SearchProvider2 on the session bus.
+   * Must happen after GApplication owns the bus name (i.e. inside activate). */
+  if (g_search_provider_id == 0) {
+    GDBusConnection *conn = g_application_get_dbus_connection(G_APPLICATION(app));
+    if (conn) {
+      GError *sp_err = NULL;
+      g_search_provider_id =
+        gnostr_shell_search_provider_register(conn, &sp_err);
+      if (sp_err) {
+        g_warning("search-provider: failed to register: %s", sp_err->message);
+        g_clear_error(&sp_err);
+      }
+    }
+  }
+
   /* Create system tray icon now that GTK is fully initialized.
    * Must be done here (not before g_application_run) to avoid
    * macOS Core Graphics assertion failures. */
@@ -177,6 +196,14 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 
   /* Clean up tray icon */
   g_clear_object(&g_tray_icon);
+
+  /* nostrc-sl86: Unregister GNOME Shell search provider */
+  if (g_search_provider_id > 0) {
+    GDBusConnection *conn = g_application_get_dbus_connection(app);
+    if (conn)
+      gnostr_shell_search_provider_unregister(conn, g_search_provider_id);
+    g_search_provider_id = 0;
+  }
 
   /*
    * nostrc-b1vg: Fix TLS cleanup crash by ensuring proper shutdown order.
