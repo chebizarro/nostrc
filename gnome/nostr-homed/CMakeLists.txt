@@ -110,11 +110,24 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Homed1.xml)
   install(FILES dbus/org.nostr.Homed1.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
 endif()
 # User services — see docs/SYSTEMD_TOPOLOGY.md
+# Use pkg-config to find the correct systemd user unit directory;
+# fall back to lib/systemd/user (NOT under multiarch libdir).
+execute_process(
+  COMMAND ${PKG_CONFIG_EXECUTABLE} --variable=systemduserunitdir systemd
+  OUTPUT_VARIABLE SYSTEMD_USER_UNIT_DIR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  RESULT_VARIABLE _sd_rc
+)
+if (NOT _sd_rc EQUAL 0 OR SYSTEMD_USER_UNIT_DIR STREQUAL "")
+  set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
+  message(STATUS "systemd pkg-config not found; using fallback: ${SYSTEMD_USER_UNIT_DIR}")
+endif()
+message(STATUS "systemd user unit dir: ${SYSTEMD_USER_UNIT_DIR}")
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/systemd/user/nostr-homectl.service)
-  install(FILES systemd/user/nostr-homectl.service DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/user)
+  install(FILES systemd/user/nostr-homectl.service DESTINATION ${SYSTEMD_USER_UNIT_DIR})
 endif()
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/systemd/user/nostrfs@.service)
-  install(FILES systemd/user/nostrfs@.service DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/user)
+  install(FILES systemd/user/nostrfs@.service DESTINATION ${SYSTEMD_USER_UNIT_DIR})
 endif()
 
 # Tests

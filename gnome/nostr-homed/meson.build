@@ -56,8 +56,16 @@ nostr_homectl = executable('nostr-homectl', 'src/ctl/nostr-homectl.c', include_d
 
 install_data('dbus/org.nostr.Homed1.xml', install_dir: join_paths(get_option('datadir'), 'dbus-1', 'interfaces'))
 # User services — see docs/SYSTEMD_TOPOLOGY.md
-install_data('systemd/user/nostr-homectl.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'user'))
-install_data('systemd/user/nostrfs@.service', install_dir: join_paths(get_option('libdir'), 'systemd', 'user'))
+# Use pkg-config systemduserunitdir; fall back to lib/systemd/user
+systemd_dep = dependency('systemd', required: false)
+if systemd_dep.found()
+  systemd_user_unit_dir = systemd_dep.get_variable(pkgconfig: 'systemduserunitdir')
+else
+  systemd_user_unit_dir = join_paths(get_option('prefix'), 'lib', 'systemd', 'user')
+  message('systemd not found via pkg-config; using fallback: ' + systemd_user_unit_dir)
+endif
+install_data('systemd/user/nostr-homectl.service', install_dir: systemd_user_unit_dir)
+install_data('systemd/user/nostrfs@.service', install_dir: systemd_user_unit_dir)
 
 # Tests
 subdir('tests')
