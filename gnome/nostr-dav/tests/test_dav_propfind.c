@@ -10,6 +10,8 @@
 #include "nd-token-store.h"
 #include "nd-ical.h"
 #include "nd-calendar-store.h"
+#include "nd-vcard.h"
+#include "nd-contact-store.h"
 
 #include <glib.h>
 #include <libsoup/soup.h>
@@ -917,6 +919,397 @@ test_ical_reject_rrule(void)
   g_clear_error(&err);
 }
 
+/* ---- CardDAV contact lifecycle tests ---- */
+
+#define TEST_VCARD_SIMPLE \
+  "BEGIN:VCARD\r\n" \
+  "VERSION:4.0\r\n" \
+  "UID:contact-001\r\n" \
+  "FN:Alice Nakamoto\r\n" \
+  "N:Nakamoto;Alice;;;\r\n" \
+  "EMAIL;TYPE=work:alice@example.com\r\n" \
+  "TEL;TYPE=cell:+1-555-0123\r\n" \
+  "ORG:Nostr Foundation\r\n" \
+  "END:VCARD\r\n"
+
+#define TEST_VCARD_FULL \
+  "BEGIN:VCARD\r\n" \
+  "VERSION:4.0\r\n" \
+  "UID:contact-002\r\n" \
+  "FN:Bob Satoshi\r\n" \
+  "N:Satoshi;Bob;;;\r\n" \
+  "EMAIL;TYPE=home:bob@example.org\r\n" \
+  "TEL;TYPE=work:+44-20-7946-0958\r\n" \
+  "ORG:Lightning Labs\r\n" \
+  "TITLE:Lead Developer\r\n" \
+  "ADR;TYPE=work:;;456 Block Ave;London;;EC1A 1BB;UK\r\n" \
+  "URL:https://bob.example.org\r\n" \
+  "NOTE:Co-author of LN spec\r\n" \
+  "END:VCARD\r\n"
+
+static SoupMessage *
+make_put_vcard(const gchar *url, const gchar *vcard)
+{
+  SoupMessage *msg = soup_message_new("PUT", url);
+  SoupMessageHeaders *hdrs = soup_message_get_request_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "text/vcard; charset=utf-8");
+  GBytes *body = g_bytes_new_static(vcard, strlen(vcard));
+  soup_message_set_request_body_from_bytes(msg, "text/vcard", body);
+  g_bytes_unref(body);
+  return msg;
+}
+
+static void
+test_carddav_put_creates(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) msg = make_put_vcard(url, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) body = send_msg(f, msg);
+
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 201);
+
+  SoupMessageHeaders *hdrs = soup_message_get_response_headers(msg);
+  const gchar *etag = soup_message_headers_get_one(hdrs, "ETag");
+  g_assert_nonnull(etag);
+  g_assert_true(etag[0] == '"');
+
+  const gchar *location = soup_message_headers_get_one(hdrs, "Location");
+  g_assert_cmpstr(location, ==, "/contacts/nostr/contact-001.vcf");
+}
+
+static void
+test_carddav_put_updates(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+
+  g_autoptr(SoupMessage) msg1 = make_put_vcard(url, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) body1 = send_msg(f, msg1);
+  g_assert_cmpuint(soup_message_get_status(msg1), ==, 201);
+
+  g_autoptr(SoupMessage) msg2 = make_put_vcard(url, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) body2 = send_msg(f, msg2);
+  g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+}
+
+static void
+test_carddav_get_contact(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_vcard(put_url, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* GET */
+  g_autofree gchar *get_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", get_url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+
+  SoupMessageHeaders *hdrs = soup_message_get_response_headers(get_msg);
+  const gchar *ct = soup_message_headers_get_one(hdrs, "Content-Type");
+  g_assert_nonnull(ct);
+  g_assert_true(strstr(ct, "text/vcard") != NULL);
+
+  gsize len = 0;
+  const gchar *vcard = g_bytes_get_data(get_body, &len);
+  g_assert_true(len > 0);
+  g_assert_nonnull(strstr(vcard, "BEGIN:VCARD"));
+  g_assert_nonnull(strstr(vcard, "FN:Alice Nakamoto"));
+  g_assert_nonnull(strstr(vcard, "UID:contact-001"));
+}
+
+static void
+test_carddav_get_not_found(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  g_autofree gchar *url = g_strdup_printf(
+    "%s/contacts/nostr/nonexistent.vcf", f->base_url);
+  g_autoptr(SoupMessage) msg = soup_message_new("GET", url);
+  g_autoptr(GBytes) body = send_msg(f, msg);
+
+  g_assert_cmpuint(soup_message_get_status(msg), ==, 404);
+}
+
+static void
+test_carddav_delete_contact(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_vcard(put_url, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* DELETE */
+  g_autofree gchar *del_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) del_msg = soup_message_new("DELETE", del_url);
+  g_autoptr(GBytes) del_body = send_msg(f, del_msg);
+  g_assert_cmpuint(soup_message_get_status(del_msg), ==, 204);
+
+  /* GET should 404 */
+  g_autofree gchar *get_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", get_url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 404);
+}
+
+static void
+test_carddav_report_with_contacts(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT two contacts */
+  g_autofree gchar *url1 = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) put1 = make_put_vcard(url1, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) body1 = send_msg(f, put1);
+  g_assert_cmpuint(soup_message_get_status(put1), ==, 201);
+
+  g_autofree gchar *url2 = g_strdup_printf(
+    "%s/contacts/nostr/contact-002.vcf", f->base_url);
+  g_autoptr(SoupMessage) put2 = make_put_vcard(url2, TEST_VCARD_FULL);
+  g_autoptr(GBytes) body2 = send_msg(f, put2);
+  g_assert_cmpuint(soup_message_get_status(put2), ==, 201);
+
+  /* REPORT */
+  g_autofree gchar *report_url = g_strdup_printf(
+    "%s/contacts/nostr/", f->base_url);
+  g_autoptr(SoupMessage) report = soup_message_new("REPORT", report_url);
+  g_autoptr(GBytes) report_body = send_msg(f, report);
+
+  g_assert_cmpuint(soup_message_get_status(report), ==, 207);
+
+  gsize len = 0;
+  const gchar *xml = g_bytes_get_data(report_body, &len);
+
+  xmlDocPtr doc = xmlReadMemory(xml, (int)len, "response.xml", NULL,
+                                XML_PARSE_NONET | XML_PARSE_NOERROR);
+  g_assert_nonnull(doc);
+
+  xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
+  xmlXPathRegisterNs(ctx, BAD_CAST "D", BAD_CAST "DAV:");
+
+  xmlXPathObjectPtr responses = xmlXPathEvalExpression(
+    BAD_CAST "//D:response", ctx);
+  g_assert_cmpint(responses->nodesetval->nodeNr, ==, 2);
+
+  xmlXPathFreeObject(responses);
+  xmlXPathFreeContext(ctx);
+  xmlFreeDoc(doc);
+}
+
+static void
+test_carddav_propfind_depth1_with_contacts(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT a contact */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_vcard(put_url, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* PROPFIND /contacts/ depth 1 */
+  g_autofree gchar *pf_url = g_strdup_printf("%s/contacts/", f->base_url);
+  g_autoptr(SoupMessage) pf_msg = make_propfind(pf_url, 1);
+  g_autoptr(GBytes) pf_body = send_msg(f, pf_msg);
+
+  g_assert_cmpuint(soup_message_get_status(pf_msg), ==, 207);
+
+  gsize len = 0;
+  const gchar *xml = g_bytes_get_data(pf_body, &len);
+
+  xmlDocPtr doc = xmlReadMemory(xml, (int)len, "response.xml", NULL,
+                                XML_PARSE_NONET | XML_PARSE_NOERROR);
+  g_assert_nonnull(doc);
+
+  xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
+  xmlXPathRegisterNs(ctx, BAD_CAST "D", BAD_CAST "DAV:");
+
+  /* 3 responses: /contacts/ + /contacts/nostr/ + the contact */
+  xmlXPathObjectPtr responses = xmlXPathEvalExpression(
+    BAD_CAST "//D:response", ctx);
+  g_assert_cmpint(responses->nodesetval->nodeNr, ==, 3);
+
+  /* ctag should be non-zero */
+  xmlXPathObjectPtr ctag = xmlXPathEvalExpression(
+    BAD_CAST "//D:getctag", ctx);
+  g_assert_cmpint(ctag->nodesetval->nodeNr, ==, 1);
+  xmlChar *ctag_val = xmlNodeGetContent(ctag->nodesetval->nodeTab[0]);
+  g_assert_cmpstr((const gchar *)ctag_val, !=, "0");
+  xmlFree(ctag_val);
+
+  xmlXPathFreeObject(ctag);
+  xmlXPathFreeObject(responses);
+  xmlXPathFreeContext(ctx);
+  xmlFreeDoc(doc);
+}
+
+static void
+test_carddav_propfind_single_contact(DavFixture *f, gconstpointer data)
+{
+  (void)data;
+
+  /* PUT a contact */
+  g_autofree gchar *put_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) put_msg = make_put_vcard(put_url, TEST_VCARD_SIMPLE);
+  g_autoptr(GBytes) put_body = send_msg(f, put_msg);
+  g_assert_cmpuint(soup_message_get_status(put_msg), ==, 201);
+
+  /* PROPFIND on individual contact */
+  g_autofree gchar *pf_url = g_strdup_printf(
+    "%s/contacts/nostr/contact-001.vcf", f->base_url);
+  g_autoptr(SoupMessage) pf_msg = make_propfind(pf_url, 0);
+  g_autoptr(GBytes) pf_body = send_msg(f, pf_msg);
+
+  g_assert_cmpuint(soup_message_get_status(pf_msg), ==, 207);
+
+  gsize len = 0;
+  const gchar *xml = g_bytes_get_data(pf_body, &len);
+
+  xmlDocPtr doc = xmlReadMemory(xml, (int)len, "response.xml", NULL,
+                                XML_PARSE_NONET | XML_PARSE_NOERROR);
+  g_assert_nonnull(doc);
+
+  xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
+  xmlXPathRegisterNs(ctx, BAD_CAST "D", BAD_CAST "DAV:");
+
+  xmlXPathObjectPtr responses = xmlXPathEvalExpression(
+    BAD_CAST "//D:response", ctx);
+  g_assert_cmpint(responses->nodesetval->nodeNr, ==, 1);
+
+  xmlXPathObjectPtr dn = xmlXPathEvalExpression(
+    BAD_CAST "//D:displayname", ctx);
+  g_assert_cmpint(dn->nodesetval->nodeNr, ==, 1);
+  xmlChar *name = xmlNodeGetContent(dn->nodesetval->nodeTab[0]);
+  g_assert_cmpstr((const gchar *)name, ==, "Alice Nakamoto");
+  xmlFree(name);
+
+  xmlXPathFreeObject(dn);
+  xmlXPathFreeObject(responses);
+  xmlXPathFreeContext(ctx);
+  xmlFreeDoc(doc);
+}
+
+/* ---- vCard unit tests ---- */
+
+static void
+test_vcard_parse_simple(void)
+{
+  GError *err = NULL;
+  NdContact *contact = nd_vcard_parse(TEST_VCARD_SIMPLE, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(contact);
+
+  g_assert_cmpstr(contact->uid, ==, "contact-001");
+  g_assert_cmpstr(contact->fn, ==, "Alice Nakamoto");
+  g_assert_cmpstr(contact->n, ==, "Nakamoto;Alice;;;");
+  g_assert_cmpstr(contact->email, ==, "alice@example.com");
+  g_assert_cmpstr(contact->email_type, ==, "work");
+  g_assert_cmpstr(contact->tel, ==, "+1-555-0123");
+  g_assert_cmpstr(contact->tel_type, ==, "cell");
+  g_assert_cmpstr(contact->org, ==, "Nostr Foundation");
+
+  nd_contact_free(contact);
+}
+
+static void
+test_vcard_parse_full(void)
+{
+  GError *err = NULL;
+  NdContact *contact = nd_vcard_parse(TEST_VCARD_FULL, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(contact);
+
+  g_assert_cmpstr(contact->uid, ==, "contact-002");
+  g_assert_cmpstr(contact->fn, ==, "Bob Satoshi");
+  g_assert_cmpstr(contact->title, ==, "Lead Developer");
+  g_assert_cmpstr(contact->url, ==, "https://bob.example.org");
+  g_assert_cmpstr(contact->note, ==, "Co-author of LN spec");
+  g_assert_nonnull(contact->adr);
+  g_assert_cmpstr(contact->adr_type, ==, "work");
+
+  nd_contact_free(contact);
+}
+
+static void
+test_vcard_roundtrip(void)
+{
+  GError *err = NULL;
+  NdContact *contact = nd_vcard_parse(TEST_VCARD_SIMPLE, &err);
+  g_assert_no_error(err);
+
+  g_autofree gchar *vcard = nd_vcard_generate(contact);
+  g_assert_nonnull(vcard);
+  g_assert_nonnull(strstr(vcard, "BEGIN:VCARD"));
+  g_assert_nonnull(strstr(vcard, "FN:Alice Nakamoto"));
+
+  /* Re-parse */
+  NdContact *contact2 = nd_vcard_parse(vcard, &err);
+  g_assert_no_error(err);
+  g_assert_cmpstr(contact2->uid, ==, contact->uid);
+  g_assert_cmpstr(contact2->fn, ==, contact->fn);
+  g_assert_cmpstr(contact2->email, ==, contact->email);
+
+  nd_contact_free(contact);
+  nd_contact_free(contact2);
+}
+
+static void
+test_vcard_nostr_roundtrip(void)
+{
+  GError *err = NULL;
+  NdContact *contact = nd_vcard_parse(TEST_VCARD_SIMPLE, &err);
+  g_assert_no_error(err);
+
+  g_autofree gchar *json = nd_vcard_to_nostr_json(contact);
+  g_assert_nonnull(json);
+
+  NdContact *contact2 = nd_vcard_from_nostr_json(json, &err);
+  g_assert_no_error(err);
+  g_assert_nonnull(contact2);
+
+  g_assert_cmpstr(contact2->uid, ==, "contact-001");
+  g_assert_cmpstr(contact2->fn, ==, "Alice Nakamoto");
+
+  nd_contact_free(contact);
+  nd_contact_free(contact2);
+}
+
+static void
+test_vcard_etag_stable(void)
+{
+  GError *err = NULL;
+  NdContact *contact = nd_vcard_parse(TEST_VCARD_SIMPLE, &err);
+  g_assert_no_error(err);
+
+  g_autofree gchar *etag1 = nd_vcard_compute_etag(contact);
+  g_autofree gchar *etag2 = nd_vcard_compute_etag(contact);
+  g_assert_cmpstr(etag1, ==, etag2);
+  g_assert_true(etag1[0] == '"');
+
+  nd_contact_free(contact);
+}
+
 /* ---- Main ---- */
 
 int
@@ -976,6 +1369,31 @@ main(int argc, char *argv[])
   g_test_add_func("/ical/nip52-roundtrip", test_ical_nip52_roundtrip);
   g_test_add_func("/ical/etag-stable", test_ical_etag_stable);
   g_test_add_func("/ical/reject-rrule", test_ical_reject_rrule);
+
+  /* CardDAV contact lifecycle */
+  g_test_add("/carddav/put-creates", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_put_creates, dav_fixture_teardown);
+  g_test_add("/carddav/put-updates", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_put_updates, dav_fixture_teardown);
+  g_test_add("/carddav/get-contact", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_get_contact, dav_fixture_teardown);
+  g_test_add("/carddav/get-not-found", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_get_not_found, dav_fixture_teardown);
+  g_test_add("/carddav/delete-contact", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_delete_contact, dav_fixture_teardown);
+  g_test_add("/carddav/report-with-contacts", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_report_with_contacts, dav_fixture_teardown);
+  g_test_add("/carddav/propfind-depth1-with-contacts", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_propfind_depth1_with_contacts, dav_fixture_teardown);
+  g_test_add("/carddav/propfind-single-contact", DavFixture, NULL,
+             dav_fixture_setup, test_carddav_propfind_single_contact, dav_fixture_teardown);
+
+  /* vCard unit tests */
+  g_test_add_func("/vcard/parse-simple", test_vcard_parse_simple);
+  g_test_add_func("/vcard/parse-full", test_vcard_parse_full);
+  g_test_add_func("/vcard/roundtrip", test_vcard_roundtrip);
+  g_test_add_func("/vcard/nostr-roundtrip", test_vcard_nostr_roundtrip);
+  g_test_add_func("/vcard/etag-stable", test_vcard_etag_stable);
 
   int result = g_test_run();
   xmlCleanupParser();

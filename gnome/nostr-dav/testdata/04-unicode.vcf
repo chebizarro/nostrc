@@ -1,0 +1,9 @@
+BEGIN:VCARD
+VERSION:4.0
+UID:contact-unicode-004
+FN:Müller Straße
+N:Straße;Müller;;;
+ORG:Ünïcödé Corp
+ADR:;;42 Ölstraße;München;;80331;DE
+NOTE:Spëcîal çhàráctérs test
+END:VCARD

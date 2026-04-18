@@ -1,0 +1,8 @@
+BEGIN:VCARD
+VERSION:4.0
+UID:contact-nostr-003
+FN:Bob Lightning
+N:Lightning;Bob;;;
+EMAIL:bob@nostr.example
+NOTE:npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3xc5a6
+END:VCARD

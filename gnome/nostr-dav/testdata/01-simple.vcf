@@ -1,0 +1,6 @@
+BEGIN:VCARD
+VERSION:4.0
+UID:test-simple-001
+FN:Alice Nakamoto
+EMAIL:alice@example.com
+END:VCARD

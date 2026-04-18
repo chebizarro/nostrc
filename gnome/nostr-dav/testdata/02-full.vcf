@@ -1,0 +1,13 @@
+BEGIN:VCARD
+VERSION:4.0
+UID:550e8400-e29b-41d4-a716-446655440000
+FN:Alice Nakamoto
+N:Nakamoto;Alice;;;
+EMAIL;TYPE=work:alice@example.com
+TEL;TYPE=cell:+1-555-0123
+ORG:Nostr Foundation
+TITLE:Protocol Engineer
+ADR;TYPE=work:;;123 Lightning Lane;Bitcoin City;BC;10001;US
+URL:https://alice.example.com
+NOTE:Met at Nostr conference 2026
+END:VCARD

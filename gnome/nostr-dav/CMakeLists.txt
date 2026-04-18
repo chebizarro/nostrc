@@ -31,6 +31,8 @@ set(ND_SOURCES
   src/nd-token-store.c
   src/nd-ical.c
   src/nd-calendar-store.c
+  src/nd-vcard.c
+  src/nd-contact-store.c
 )
 
 add_executable(nostr-dav ${ND_SOURCES})
@@ -71,6 +73,8 @@ if (BUILD_TESTING)
     src/nd-token-store.c
     src/nd-ical.c
     src/nd-calendar-store.c
+    src/nd-vcard.c
+    src/nd-contact-store.c
   )
 
   target_include_directories(test-nostr-dav PRIVATE

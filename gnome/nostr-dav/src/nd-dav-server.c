@@ -11,6 +11,8 @@
 #include "nd-token-store.h"
 #include "nd-ical.h"
 #include "nd-calendar-store.h"
+#include "nd-vcard.h"
+#include "nd-contact-store.h"
 
 #include <libsoup/soup.h>
 #include <libxml/xmlwriter.h>
@@ -49,6 +51,9 @@ struct _NdDavServer {
 
   /* Calendar store for NIP-52 events */
   NdCalendarStore *cal_store;    /* owned */
+
+  /* Contact store for kind-30085 contacts */
+  NdContactStore *contact_store;  /* owned */
 };
 
 G_DEFINE_TYPE(NdDavServer, nd_dav_server, G_TYPE_OBJECT)
@@ -57,6 +62,8 @@ G_DEFINE_TYPE(NdDavServer, nd_dav_server, G_TYPE_OBJECT)
 
 static void xml_write_event_response(xmlTextWriterPtr w,
                                      const NdCalendarEvent *event);
+static void xml_write_contact_response(xmlTextWriterPtr w,
+                                       const NdContact *contact);
 
 /* ---- XML helpers ---- */
 
@@ -405,13 +412,11 @@ handle_propfind_calendars(NdDavServer *self, SoupServerMessage *msg, int depth)
 }
 
 /**
- * PROPFIND /contacts/ — addressbook home (v1: empty).
+ * PROPFIND /contacts/ — addressbook home with contact listing.
  */
 static void
 handle_propfind_contacts(NdDavServer *self, SoupServerMessage *msg, int depth)
 {
-  (void)self;
-
   xmlBufferPtr buf = NULL;
   xmlTextWriterPtr w = xml_begin_multistatus(&buf);
 
@@ -424,7 +429,7 @@ handle_propfind_contacts(NdDavServer *self, SoupServerMessage *msg, int depth)
   xml_end_response(w);
 
   if (depth >= 1) {
-    /* Default addressbook: empty */
+    /* Default addressbook */
     xml_start_response(w, "/contacts/nostr/");
     xml_start_propstat_ok(w);
 
@@ -441,12 +446,20 @@ handle_propfind_contacts(NdDavServer *self, SoupServerMessage *msg, int depth)
     xml_write_displayname(w, "Nostr Contacts");
 
     /* getctag */
+    g_autofree gchar *ctag = nd_contact_store_get_ctag(self->contact_store);
     xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getctag", NULL);
-    xmlTextWriterWriteString(w, BAD_CAST "0");
+    xmlTextWriterWriteString(w, BAD_CAST ctag);
     xmlTextWriterEndElement(w);
 
     xml_end_propstat_ok(w);
     xml_end_response(w);
+
+    /* List individual contacts */
+    g_autoptr(GPtrArray) contacts = nd_contact_store_list_all(self->contact_store);
+    for (guint i = 0; i < contacts->len; i++) {
+      const NdContact *contact = g_ptr_array_index(contacts, i);
+      xml_write_contact_response(w, contact);
+    }
   }
 
   xmlTextWriterEndElement(w); /* multistatus */
@@ -665,6 +678,192 @@ handle_report_calendar(NdDavServer *self, SoupServerMessage *msg)
   xmlBufferFree(buf);
 }
 
+/* ---- CardDAV resource handlers ---- */
+
+/**
+ * Extract the contact UID from a path like /contacts/nostr/<uid>.vcf
+ * Returns NULL if the path doesn't match.
+ */
+static gchar *
+extract_contact_uid(const gchar *path)
+{
+  if (!g_str_has_prefix(path, "/contacts/nostr/"))
+    return NULL;
+
+  const gchar *start = path + strlen("/contacts/nostr/");
+  if (*start == '\0')
+    return NULL;
+
+  gchar *uid = g_strdup(start);
+  gsize len = strlen(uid);
+  if (len > 4 && g_str_has_suffix(uid, ".vcf"))
+    uid[len - 4] = '\0';
+
+  if (uid[0] == '\0') {
+    g_free(uid);
+    return NULL;
+  }
+
+  return uid;
+}
+
+/**
+ * Write a single contact as a DAV response element in a multistatus.
+ */
+static void
+xml_write_contact_response(xmlTextWriterPtr w, const NdContact *contact)
+{
+  g_autofree gchar *href = g_strdup_printf("/contacts/nostr/%s.vcf",
+                                           contact->uid);
+  xml_start_response(w, href);
+  xml_start_propstat_ok(w);
+
+  /* getetag */
+  g_autofree gchar *etag = nd_vcard_compute_etag(contact);
+  xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getetag", NULL);
+  xmlTextWriterWriteString(w, BAD_CAST etag);
+  xmlTextWriterEndElement(w);
+
+  /* getcontenttype */
+  xmlTextWriterStartElementNS(w, BAD_CAST "D",
+                               BAD_CAST "getcontenttype", NULL);
+  xmlTextWriterWriteString(w, BAD_CAST "text/vcard; charset=utf-8");
+  xmlTextWriterEndElement(w);
+
+  /* displayname */
+  if (contact->fn)
+    xml_write_displayname(w, contact->fn);
+
+  xml_end_propstat_ok(w);
+  xml_end_response(w);
+}
+
+/**
+ * Handle PUT /contacts/nostr/<uid>.vcf — create or update contact.
+ */
+static void
+handle_put_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  SoupMessageBody *body = soup_server_message_get_request_body(msg);
+  g_autoptr(GBytes) body_bytes = NULL;
+  if (body)
+    body_bytes = soup_message_body_flatten(body);
+
+  if (body_bytes == NULL || g_bytes_get_size(body_bytes) == 0) {
+    soup_server_message_set_status(msg, 400, NULL);
+    return;
+  }
+
+  gsize data_len = 0;
+  const gchar *vcard_text = g_bytes_get_data(body_bytes, &data_len);
+  g_autofree gchar *vcard_copy = g_strndup(vcard_text, data_len);
+
+  GError *err = NULL;
+  NdContact *contact = nd_vcard_parse(vcard_copy, &err);
+  if (contact == NULL) {
+    soup_server_message_set_status(msg, 400, NULL);
+    SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+    soup_message_headers_replace(hdrs, "X-Reason",
+                                 err ? err->message : "Invalid vCard");
+    g_clear_error(&err);
+    return;
+  }
+
+  /* Override UID from path if different */
+  if (!g_str_equal(contact->uid, uid)) {
+    g_free(contact->uid);
+    contact->uid = g_strdup(uid);
+  }
+
+  gboolean is_new = (nd_contact_store_get(self->contact_store, uid) == NULL);
+
+  nd_contact_store_put(self->contact_store, contact);
+
+  const NdContact *stored = nd_contact_store_get(self->contact_store, uid);
+  g_autofree gchar *etag = nd_vcard_compute_etag(stored);
+
+  soup_server_message_set_status(msg, is_new ? 201 : 204, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "ETag", etag);
+
+  g_autofree gchar *location = g_strdup_printf("/contacts/nostr/%s.vcf", uid);
+  soup_message_headers_replace(hdrs, "Location", location);
+
+  g_message("nostr-dav: %s contact %s (%s)",
+            is_new ? "created" : "updated", uid,
+            stored->fn ? stored->fn : "unnamed");
+}
+
+/**
+ * Handle GET /contacts/nostr/<uid>.vcf — retrieve contact as vCard.
+ */
+static void
+handle_get_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  const NdContact *contact = nd_contact_store_get(self->contact_store, uid);
+  if (contact == NULL) {
+    soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
+
+  g_autofree gchar *vcard = nd_vcard_generate(contact);
+  g_autofree gchar *etag = nd_vcard_compute_etag(contact);
+
+  soup_server_message_set_status(msg, 200, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "text/vcard; charset=utf-8");
+  soup_message_headers_replace(hdrs, "ETag", etag);
+  soup_server_message_set_response(msg, "text/vcard; charset=utf-8",
+                                   SOUP_MEMORY_COPY, vcard, strlen(vcard));
+}
+
+/**
+ * Handle DELETE /contacts/nostr/<uid>.vcf — remove contact.
+ */
+static void
+handle_delete_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  if (!nd_contact_store_remove(self->contact_store, uid)) {
+    soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
+
+  soup_server_message_set_status(msg, 204, NULL);
+  g_message("nostr-dav: deleted contact %s", uid);
+}
+
+/**
+ * Handle REPORT on /contacts/nostr/ — return all contacts in multistatus.
+ */
+static void
+handle_report_contacts(NdDavServer *self, SoupServerMessage *msg)
+{
+  xmlBufferPtr buf = NULL;
+  xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+
+  g_autoptr(GPtrArray) contacts = nd_contact_store_list_all(self->contact_store);
+  for (guint i = 0; i < contacts->len; i++) {
+    const NdContact *contact = g_ptr_array_index(contacts, i);
+    xml_write_contact_response(w, contact);
+  }
+
+  xmlTextWriterEndElement(w); /* multistatus */
+  xmlTextWriterEndDocument(w);
+  xmlFreeTextWriter(w);
+
+  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+  gsize xml_len = xmlBufferLength(buf);
+
+  soup_server_message_set_status(msg, 207, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "application/xml; charset=utf-8");
+  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
+                                   SOUP_MEMORY_COPY, xml_str, xml_len);
+  xmlBufferFree(buf);
+}
+
 /* ---- Parse Depth header ---- */
 
 static int
@@ -774,6 +973,33 @@ on_request(SoupServer        *soup_server,
     }
 
     if (g_str_has_prefix(path, "/contacts")) {
+      /* PROPFIND on individual contact resource */
+      g_autofree gchar *cuid = extract_contact_uid(path);
+      if (cuid != NULL) {
+        const NdContact *contact =
+          nd_contact_store_get(self->contact_store, cuid);
+        if (contact == NULL) {
+          soup_server_message_set_status(msg, 404, NULL);
+          return;
+        }
+        xmlBufferPtr buf = NULL;
+        xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+        xml_write_contact_response(w, contact);
+        xmlTextWriterEndElement(w);
+        xmlTextWriterEndDocument(w);
+        xmlFreeTextWriter(w);
+        const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+        gsize xml_len = xmlBufferLength(buf);
+        soup_server_message_set_status(msg, 207, NULL);
+        SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
+        soup_message_headers_replace(rh, "Content-Type",
+                                     "application/xml; charset=utf-8");
+        soup_server_message_set_response(msg,
+                                         "application/xml; charset=utf-8",
+                                         SOUP_MEMORY_COPY, xml_str, xml_len);
+        xmlBufferFree(buf);
+        return;
+      }
       handle_propfind_contacts(self, msg, depth);
       return;
     }
@@ -783,12 +1009,14 @@ on_request(SoupServer        *soup_server,
     return;
   }
 
-  /* === REPORT — calendar-query / sync-collection === */
+  /* === REPORT — calendar-query / addressbook-query / sync-collection === */
   if (g_str_equal(method, "REPORT")) {
     if (g_str_has_prefix(path, "/calendars/nostr")) {
       handle_report_calendar(self, msg);
+    } else if (g_str_has_prefix(path, "/contacts/nostr")) {
+      handle_report_contacts(self, msg);
     } else {
-      /* Empty multistatus for non-calendar REPORTs */
+      /* Empty multistatus for unknown REPORTs */
       xmlBufferPtr buf = NULL;
       xmlTextWriterPtr w = xml_begin_multistatus(&buf);
       xmlTextWriterEndElement(w);
@@ -807,34 +1035,48 @@ on_request(SoupServer        *soup_server,
     return;
   }
 
-  /* === PUT — create/update calendar event === */
+  /* === PUT — create/update calendar event or contact === */
   if (g_str_equal(method, "PUT")) {
-    g_autofree gchar *uid = extract_calendar_uid(path);
-    if (uid != NULL) {
-      handle_put_event(self, msg, uid);
+    g_autofree gchar *cal_uid = extract_calendar_uid(path);
+    if (cal_uid != NULL) {
+      handle_put_event(self, msg, cal_uid);
+      return;
+    }
+    g_autofree gchar *ct_uid = extract_contact_uid(path);
+    if (ct_uid != NULL) {
+      handle_put_contact(self, msg, ct_uid);
       return;
     }
     soup_server_message_set_status(msg, 405, NULL);
     return;
   }
 
-  /* === GET — retrieve calendar event as ICS === */
+  /* === GET — retrieve calendar event or contact === */
   if (g_str_equal(method, "GET")) {
-    g_autofree gchar *uid = extract_calendar_uid(path);
-    if (uid != NULL) {
-      handle_get_event(self, msg, uid);
+    g_autofree gchar *cal_uid = extract_calendar_uid(path);
+    if (cal_uid != NULL) {
+      handle_get_event(self, msg, cal_uid);
       return;
     }
-    /* GET on collection not supported */
+    g_autofree gchar *ct_uid = extract_contact_uid(path);
+    if (ct_uid != NULL) {
+      handle_get_contact(self, msg, ct_uid);
+      return;
+    }
     soup_server_message_set_status(msg, 405, NULL);
     return;
   }
 
-  /* === DELETE — remove calendar event === */
+  /* === DELETE — remove calendar event or contact === */
   if (g_str_equal(method, "DELETE")) {
-    g_autofree gchar *uid = extract_calendar_uid(path);
-    if (uid != NULL) {
-      handle_delete_event(self, msg, uid);
+    g_autofree gchar *cal_uid = extract_calendar_uid(path);
+    if (cal_uid != NULL) {
+      handle_delete_event(self, msg, cal_uid);
+      return;
+    }
+    g_autofree gchar *ct_uid = extract_contact_uid(path);
+    if (ct_uid != NULL) {
+      handle_delete_contact(self, msg, ct_uid);
       return;
     }
     soup_server_message_set_status(msg, 405, NULL);
@@ -870,6 +1112,10 @@ nd_dav_server_finalize(GObject *obj)
     nd_calendar_store_free(self->cal_store);
     self->cal_store = NULL;
   }
+  if (self->contact_store) {
+    nd_contact_store_free(self->contact_store);
+    self->contact_store = NULL;
+  }
   G_OBJECT_CLASS(nd_dav_server_parent_class)->finalize(obj);
 }
 
@@ -889,6 +1135,7 @@ nd_dav_server_init(NdDavServer *self)
   self->listen_port = 0;
   self->account_id = NULL;
   self->cal_store = nd_calendar_store_new();
+  self->contact_store = nd_contact_store_new();
 }
 
 /* ---- Public API ---- */
