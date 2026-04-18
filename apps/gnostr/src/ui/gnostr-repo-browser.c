@@ -35,6 +35,53 @@ repo_data_free(RepoData *data)
   g_free(data);
 }
 
+/* nostrc-35i: Patch proposal data (kind 1617) */
+typedef struct {
+  gchar *id;
+  gchar *pubkey;
+  gchar *repo_ref;
+  gchar *subject;
+  gchar *content;
+  gboolean is_root;
+  gint64 created_at;
+} PatchData;
+
+static void
+patch_data_free(PatchData *data)
+{
+  if (!data) return;
+  g_free(data->id);
+  g_free(data->pubkey);
+  g_free(data->repo_ref);
+  g_free(data->subject);
+  g_free(data->content);
+  g_free(data);
+}
+
+/* nostrc-35i: Issue data (kind 1621) */
+typedef struct {
+  gchar *id;
+  gchar *pubkey;
+  gchar *repo_ref;
+  gchar *subject;
+  gchar *content;
+  gchar *status;
+  gint64 created_at;
+} IssueBrowserData;
+
+static void
+issue_browser_data_free(IssueBrowserData *data)
+{
+  if (!data) return;
+  g_free(data->id);
+  g_free(data->pubkey);
+  g_free(data->repo_ref);
+  g_free(data->subject);
+  g_free(data->content);
+  g_free(data->status);
+  g_free(data);
+}
+
 struct _GnostrRepoBrowser
 {
   GtkWidget parent_instance;
@@ -53,8 +100,17 @@ struct _GnostrRepoBrowser
   GtkWidget *scrolled_window;
   GtkListBox *repo_list;
 
+  /* nostrc-35i: Patches & Issues tabs */
+  GtkWidget *tab_stack;
+  GtkWidget *patch_scrolled;
+  GtkListBox *patch_list;
+  GtkWidget *issue_scrolled;
+  GtkListBox *issue_list;
+
   /* Data */
   GHashTable *repositories;  /* id -> RepoData */
+  GHashTable *patches;       /* id -> PatchData */
+  GHashTable *issues_ht;     /* id -> IssueBrowserData */
   gchar *filter_text;
   gchar *selected_id;
 
@@ -77,6 +133,8 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void rebuild_list(GnostrRepoBrowser *self);
+static void rebuild_patch_list(GnostrRepoBrowser *self);
+static void rebuild_issue_list(GnostrRepoBrowser *self);
 static gboolean repo_matches_filter(GnostrRepoBrowser *self, RepoData *data);
 
 static void
@@ -86,6 +144,8 @@ on_search_changed(GtkSearchEntry *entry, gpointer user_data)
   g_free(self->filter_text);
   self->filter_text = g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry)));
   rebuild_list(self);
+  rebuild_patch_list(self);
+  rebuild_issue_list(self);
 }
 
 static void
@@ -325,10 +385,205 @@ rebuild_list(GnostrRepoBrowser *self)
   /* Update stack visibility */
   if (self->is_loading)
     gtk_stack_set_visible_child(GTK_STACK(self->stack), self->loading_view);
-  else if (visible_count == 0)
+  else if (visible_count == 0 &&
+           g_hash_table_size(self->patches) == 0 &&
+           g_hash_table_size(self->issues_ht) == 0)
     gtk_stack_set_visible_child(GTK_STACK(self->stack), self->empty_view);
   else
     gtk_stack_set_visible_child(GTK_STACK(self->stack), self->list_view);
+}
+
+/* nostrc-35i: Rebuild patch list */
+static void
+rebuild_patch_list(GnostrRepoBrowser *self)
+{
+  /* Clear existing rows */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->patch_list))) != NULL)
+    gtk_list_box_remove(self->patch_list, child);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->patches);
+  while (g_hash_table_iter_next(&iter, &key, &value))
+    {
+      PatchData *pd = (PatchData *)value;
+
+      /* Filter */
+      if (self->filter_text && *self->filter_text)
+        {
+          g_autofree gchar *fl = g_utf8_strdown(self->filter_text, -1);
+          gboolean match = FALSE;
+          if (pd->subject) {
+            g_autofree gchar *sl = g_utf8_strdown(pd->subject, -1);
+            if (g_strstr_len(sl, -1, fl)) match = TRUE;
+          }
+          if (!match && pd->content) {
+            g_autofree gchar *cl = g_utf8_strdown(pd->content, -1);
+            if (g_strstr_len(cl, -1, fl)) match = TRUE;
+          }
+          if (!match) continue;
+        }
+
+      GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+      gtk_widget_set_margin_start(row_box, 12);
+      gtk_widget_set_margin_end(row_box, 12);
+      gtk_widget_set_margin_top(row_box, 8);
+      gtk_widget_set_margin_bottom(row_box, 8);
+
+      /* Title line with root badge */
+      GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+      const char *title = pd->subject && *pd->subject ? pd->subject : "(untitled patch)";
+      GtkWidget *title_lbl = gtk_label_new(title);
+      gtk_widget_add_css_class(title_lbl, "heading");
+      gtk_widget_set_halign(title_lbl, GTK_ALIGN_START);
+      gtk_widget_set_hexpand(title_lbl, TRUE);
+      gtk_label_set_ellipsize(GTK_LABEL(title_lbl), PANGO_ELLIPSIZE_END);
+      gtk_box_append(GTK_BOX(title_box), title_lbl);
+
+      if (pd->is_root) {
+        GtkWidget *badge = gtk_label_new("root");
+        gtk_widget_add_css_class(badge, "accent");
+        gtk_widget_add_css_class(badge, "caption");
+        gtk_box_append(GTK_BOX(title_box), badge);
+      }
+      gtk_box_append(GTK_BOX(row_box), title_box);
+
+      /* Timestamp + repo ref */
+      GString *meta = g_string_new(NULL);
+      if (pd->created_at > 0) {
+        g_autoptr(GDateTime) dt = g_date_time_new_from_unix_local(pd->created_at);
+        g_autofree gchar *ts = g_date_time_format(dt, "%Y-%m-%d %H:%M");
+        g_string_append(meta, ts);
+      }
+      if (pd->repo_ref && *pd->repo_ref) {
+        if (meta->len > 0) g_string_append(meta, " · ");
+        /* Show just the d-tag portion: 30617:<pk>:<d-tag> → last component */
+        const char *last_colon = strrchr(pd->repo_ref, ':');
+        g_string_append(meta, last_colon ? last_colon + 1 : pd->repo_ref);
+      }
+      GtkWidget *meta_lbl = gtk_label_new(meta->str);
+      gtk_widget_add_css_class(meta_lbl, "dim-label");
+      gtk_widget_set_halign(meta_lbl, GTK_ALIGN_START);
+      gtk_box_append(GTK_BOX(row_box), meta_lbl);
+      g_string_free(meta, TRUE);
+
+      /* Content preview (first 120 chars, skip diff headers) */
+      if (pd->content && *pd->content) {
+        const char *preview = pd->content;
+        /* Skip leading diff header lines for preview */
+        if (g_str_has_prefix(preview, "From ") || g_str_has_prefix(preview, "diff --"))
+          preview = "";
+        if (*preview) {
+          g_autofree gchar *snip = g_strndup(preview, 120);
+          GtkWidget *preview_lbl = gtk_label_new(snip);
+          gtk_widget_add_css_class(preview_lbl, "dim-label");
+          gtk_label_set_ellipsize(GTK_LABEL(preview_lbl), PANGO_ELLIPSIZE_END);
+          gtk_widget_set_halign(preview_lbl, GTK_ALIGN_START);
+          gtk_box_append(GTK_BOX(row_box), preview_lbl);
+        }
+      }
+
+      GtkWidget *list_row = gtk_list_box_row_new();
+      gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(list_row), row_box);
+      gtk_list_box_append(self->patch_list, list_row);
+    }
+}
+
+/* nostrc-35i: Rebuild issue list */
+static void
+rebuild_issue_list(GnostrRepoBrowser *self)
+{
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->issue_list))) != NULL)
+    gtk_list_box_remove(self->issue_list, child);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->issues_ht);
+  while (g_hash_table_iter_next(&iter, &key, &value))
+    {
+      IssueBrowserData *id = (IssueBrowserData *)value;
+
+      /* Filter */
+      if (self->filter_text && *self->filter_text)
+        {
+          g_autofree gchar *fl = g_utf8_strdown(self->filter_text, -1);
+          gboolean match = FALSE;
+          if (id->subject) {
+            g_autofree gchar *sl = g_utf8_strdown(id->subject, -1);
+            if (g_strstr_len(sl, -1, fl)) match = TRUE;
+          }
+          if (!match && id->content) {
+            g_autofree gchar *cl = g_utf8_strdown(id->content, -1);
+            if (g_strstr_len(cl, -1, fl)) match = TRUE;
+          }
+          if (!match) continue;
+        }
+
+      GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+      gtk_widget_set_margin_start(row_box, 12);
+      gtk_widget_set_margin_end(row_box, 12);
+      gtk_widget_set_margin_top(row_box, 8);
+      gtk_widget_set_margin_bottom(row_box, 8);
+
+      /* Title line with status badge */
+      GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+      const char *title = id->subject && *id->subject ? id->subject : "(untitled issue)";
+      GtkWidget *title_lbl = gtk_label_new(title);
+      gtk_widget_add_css_class(title_lbl, "heading");
+      gtk_widget_set_halign(title_lbl, GTK_ALIGN_START);
+      gtk_widget_set_hexpand(title_lbl, TRUE);
+      gtk_label_set_ellipsize(GTK_LABEL(title_lbl), PANGO_ELLIPSIZE_END);
+      gtk_box_append(GTK_BOX(title_box), title_lbl);
+
+      if (id->status && *id->status) {
+        GtkWidget *badge = gtk_label_new(id->status);
+        if (g_strcmp0(id->status, "open") == 0)
+          gtk_widget_add_css_class(badge, "success");
+        else if (g_strcmp0(id->status, "closed") == 0)
+          gtk_widget_add_css_class(badge, "error");
+        else if (g_strcmp0(id->status, "resolved") == 0)
+          gtk_widget_add_css_class(badge, "accent");
+        gtk_widget_add_css_class(badge, "caption");
+        gtk_box_append(GTK_BOX(title_box), badge);
+      }
+      gtk_box_append(GTK_BOX(row_box), title_box);
+
+      /* Timestamp + repo ref */
+      GString *meta = g_string_new(NULL);
+      if (id->created_at > 0) {
+        g_autoptr(GDateTime) dt = g_date_time_new_from_unix_local(id->created_at);
+        g_autofree gchar *ts = g_date_time_format(dt, "%Y-%m-%d %H:%M");
+        g_string_append(meta, ts);
+      }
+      if (id->repo_ref && *id->repo_ref) {
+        if (meta->len > 0) g_string_append(meta, " · ");
+        const char *last_colon = strrchr(id->repo_ref, ':');
+        g_string_append(meta, last_colon ? last_colon + 1 : id->repo_ref);
+      }
+      GtkWidget *meta_lbl = gtk_label_new(meta->str);
+      gtk_widget_add_css_class(meta_lbl, "dim-label");
+      gtk_widget_set_halign(meta_lbl, GTK_ALIGN_START);
+      gtk_box_append(GTK_BOX(row_box), meta_lbl);
+      g_string_free(meta, TRUE);
+
+      /* Content preview */
+      if (id->content && *id->content) {
+        g_autofree gchar *snip = g_strndup(id->content, 150);
+        GtkWidget *preview_lbl = gtk_label_new(snip);
+        gtk_widget_add_css_class(preview_lbl, "dim-label");
+        gtk_label_set_ellipsize(GTK_LABEL(preview_lbl), PANGO_ELLIPSIZE_END);
+        gtk_label_set_wrap(GTK_LABEL(preview_lbl), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(preview_lbl), 80);
+        gtk_widget_set_halign(preview_lbl, GTK_ALIGN_START);
+        gtk_box_append(GTK_BOX(row_box), preview_lbl);
+      }
+
+      GtkWidget *list_row = gtk_list_box_row_new();
+      gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(list_row), row_box);
+      gtk_list_box_append(self->issue_list, list_row);
+    }
 }
 
 static void
@@ -357,6 +612,8 @@ gnostr_repo_browser_dispose(GObject *object)
   }
 
   g_clear_pointer(&self->repositories, g_hash_table_unref);
+  g_clear_pointer(&self->patches, g_hash_table_unref);
+  g_clear_pointer(&self->issues_ht, g_hash_table_unref);
   g_clear_pointer(&self->filter_text, g_free);
   g_clear_pointer(&self->selected_id, g_free);
 
@@ -419,6 +676,10 @@ gnostr_repo_browser_init(GnostrRepoBrowser *self)
 {
   self->repositories = g_hash_table_new_full(g_str_hash, g_str_equal,
                                               g_free, (GDestroyNotify)repo_data_free);
+  self->patches = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                         g_free, (GDestroyNotify)patch_data_free);
+  self->issues_ht = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                           g_free, (GDestroyNotify)issue_browser_data_free);
   self->is_loading = FALSE;
 
   /* Main container */
@@ -472,8 +733,24 @@ gnostr_repo_browser_init(GnostrRepoBrowser *self)
     "No git repositories found. Repositories are published via kind 30617 events.");
   gtk_stack_add_named(GTK_STACK(self->stack), self->empty_view, "empty");
 
-  /* List view */
+  /* List view — nostrc-35i: tabbed Repos / Patches / Issues */
   self->list_view = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+  /* Tab switcher */
+  self->tab_stack = gtk_stack_new();
+  gtk_stack_set_transition_type(GTK_STACK(self->tab_stack),
+                                 GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
+  gtk_widget_set_vexpand(self->tab_stack, TRUE);
+
+  GtkWidget *tab_switcher = gtk_stack_switcher_new();
+  gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(tab_switcher),
+                                GTK_STACK(self->tab_stack));
+  gtk_widget_set_halign(tab_switcher, GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_bottom(tab_switcher, 8);
+  gtk_box_append(GTK_BOX(self->list_view), tab_switcher);
+  gtk_box_append(GTK_BOX(self->list_view), self->tab_stack);
+
+  /* --- Repos tab --- */
   self->scrolled_window = gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(self->scrolled_window),
                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -484,9 +761,53 @@ gnostr_repo_browser_init(GnostrRepoBrowser *self)
   gtk_widget_add_css_class(GTK_WIDGET(self->repo_list), "boxed-list");
   g_signal_connect(self->repo_list, "row-activated", G_CALLBACK(on_row_activated), self);
 
+  GtkWidget *repo_placeholder = gtk_label_new("No repositories found.\nClick refresh to search relays.");
+  gtk_widget_add_css_class(repo_placeholder, "dim-label");
+  gtk_list_box_set_placeholder(self->repo_list, repo_placeholder);
+
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(self->scrolled_window),
                                  GTK_WIDGET(self->repo_list));
-  gtk_box_append(GTK_BOX(self->list_view), self->scrolled_window);
+  gtk_stack_add_titled(GTK_STACK(self->tab_stack), self->scrolled_window,
+                        "repos", "Repositories");
+
+  /* --- Patches tab --- */
+  self->patch_scrolled = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(self->patch_scrolled),
+                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_vexpand(self->patch_scrolled, TRUE);
+
+  self->patch_list = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_list_box_set_selection_mode(self->patch_list, GTK_SELECTION_SINGLE);
+  gtk_widget_add_css_class(GTK_WIDGET(self->patch_list), "boxed-list");
+
+  GtkWidget *patch_placeholder = gtk_label_new("No patches found.\nPatches are published via kind 1617 events.");
+  gtk_widget_add_css_class(patch_placeholder, "dim-label");
+  gtk_list_box_set_placeholder(self->patch_list, patch_placeholder);
+
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(self->patch_scrolled),
+                                 GTK_WIDGET(self->patch_list));
+  gtk_stack_add_titled(GTK_STACK(self->tab_stack), self->patch_scrolled,
+                        "patches", "Patches");
+
+  /* --- Issues tab --- */
+  self->issue_scrolled = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(self->issue_scrolled),
+                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_vexpand(self->issue_scrolled, TRUE);
+
+  self->issue_list = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_list_box_set_selection_mode(self->issue_list, GTK_SELECTION_SINGLE);
+  gtk_widget_add_css_class(GTK_WIDGET(self->issue_list), "boxed-list");
+
+  GtkWidget *issue_placeholder = gtk_label_new("No issues found.\nIssues are published via kind 1621 events.");
+  gtk_widget_add_css_class(issue_placeholder, "dim-label");
+  gtk_list_box_set_placeholder(self->issue_list, issue_placeholder);
+
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(self->issue_scrolled),
+                                 GTK_WIDGET(self->issue_list));
+  gtk_stack_add_titled(GTK_STACK(self->tab_stack), self->issue_scrolled,
+                        "issues", "Issues");
+
   gtk_stack_add_named(GTK_STACK(self->stack), self->list_view, "list");
 
   /* Start with empty view */
@@ -562,4 +883,65 @@ gnostr_repo_browser_get_count(GnostrRepoBrowser *self)
 {
   g_return_val_if_fail(GNOSTR_IS_REPO_BROWSER(self), 0);
   return g_hash_table_size(self->repositories);
+}
+
+/* nostrc-35i: Patch & Issue public API */
+
+void
+gnostr_repo_browser_add_patch(GnostrRepoBrowser *self,
+                               const char        *id,
+                               const char        *pubkey,
+                               const char        *repo_ref,
+                               const char        *subject,
+                               const char        *content,
+                               gboolean           is_root,
+                               gint64             created_at)
+{
+  g_return_if_fail(GNOSTR_IS_REPO_BROWSER(self));
+  g_return_if_fail(id != NULL);
+
+  PatchData *data = g_new0(PatchData, 1);
+  data->id         = g_strdup(id);
+  data->pubkey     = g_strdup(pubkey);
+  data->repo_ref   = g_strdup(repo_ref);
+  data->subject    = g_strdup(subject);
+  data->content    = g_strdup(content);
+  data->is_root    = is_root;
+  data->created_at = created_at;
+
+  g_hash_table_replace(self->patches, g_strdup(id), data);
+  rebuild_patch_list(self);
+
+  /* Ensure list view is visible */
+  if (!self->is_loading)
+    gtk_stack_set_visible_child(GTK_STACK(self->stack), self->list_view);
+}
+
+void
+gnostr_repo_browser_add_issue(GnostrRepoBrowser *self,
+                               const char        *id,
+                               const char        *pubkey,
+                               const char        *repo_ref,
+                               const char        *subject,
+                               const char        *content,
+                               const char        *status,
+                               gint64             created_at)
+{
+  g_return_if_fail(GNOSTR_IS_REPO_BROWSER(self));
+  g_return_if_fail(id != NULL);
+
+  IssueBrowserData *data = g_new0(IssueBrowserData, 1);
+  data->id         = g_strdup(id);
+  data->pubkey     = g_strdup(pubkey);
+  data->repo_ref   = g_strdup(repo_ref);
+  data->subject    = g_strdup(subject);
+  data->content    = g_strdup(content);
+  data->status     = g_strdup(status ? status : "open");
+  data->created_at = created_at;
+
+  g_hash_table_replace(self->issues_ht, g_strdup(id), data);
+  rebuild_issue_list(self);
+
+  if (!self->is_loading)
+    gtk_stack_set_visible_child(GTK_STACK(self->stack), self->list_view);
 }

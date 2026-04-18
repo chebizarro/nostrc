@@ -105,6 +105,50 @@ const char *gnostr_repo_browser_get_selected_id(GnostrRepoBrowser *self);
  */
 guint gnostr_repo_browser_get_count(GnostrRepoBrowser *self);
 
+/**
+ * gnostr_repo_browser_add_patch:
+ * @self: The repository browser
+ * @id: Event ID
+ * @pubkey: Author pubkey (nullable)
+ * @repo_ref: Repository 'a' tag reference (nullable)
+ * @subject: Patch title (nullable)
+ * @content: Patch diff/cover letter (nullable)
+ * @is_root: TRUE if root of a patch series
+ * @created_at: Timestamp
+ *
+ * Adds a patch (kind 1617) to the Patches tab.
+ */
+void gnostr_repo_browser_add_patch(GnostrRepoBrowser *self,
+                                    const char        *id,
+                                    const char        *pubkey,
+                                    const char        *repo_ref,
+                                    const char        *subject,
+                                    const char        *content,
+                                    gboolean           is_root,
+                                    gint64             created_at);
+
+/**
+ * gnostr_repo_browser_add_issue:
+ * @self: The repository browser
+ * @id: Event ID
+ * @pubkey: Author pubkey (nullable)
+ * @repo_ref: Repository 'a' tag reference (nullable)
+ * @subject: Issue title (nullable)
+ * @content: Issue body (nullable)
+ * @status: Status string (open/closed/resolved, nullable → defaults to "open")
+ * @created_at: Timestamp
+ *
+ * Adds an issue (kind 1621) to the Issues tab.
+ */
+void gnostr_repo_browser_add_issue(GnostrRepoBrowser *self,
+                                    const char        *id,
+                                    const char        *pubkey,
+                                    const char        *repo_ref,
+                                    const char        *subject,
+                                    const char        *content,
+                                    const char        *status,
+                                    gint64             created_at);
+
 G_END_DECLS
 
 #endif /* GNOSTR_REPO_BROWSER_H */

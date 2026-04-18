@@ -492,6 +492,60 @@ gnostr_plugin_context_clear_repositories(GnostrPluginContext *context)
   gnostr_repo_browser_clear(GNOSTR_REPO_BROWSER(browser));
 }
 
+/* nostrc-35i: Patch & Issue push-to-browser API */
+
+void
+gnostr_plugin_context_add_patch(GnostrPluginContext *context,
+                                const char          *id,
+                                const char          *pubkey,
+                                const char          *repo_ref,
+                                const char          *subject,
+                                const char          *content,
+                                gboolean             is_root,
+                                gint64               created_at)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(id != NULL);
+
+  if (!context->main_window || !GNOSTR_IS_MAIN_WINDOW(context->main_window))
+    return;
+
+  GtkWidget *browser = gnostr_main_window_get_repo_browser(
+      GNOSTR_MAIN_WINDOW(context->main_window));
+  if (!browser || !GNOSTR_IS_REPO_BROWSER(browser))
+    return;
+
+  gnostr_repo_browser_add_patch(GNOSTR_REPO_BROWSER(browser),
+                                 id, pubkey, repo_ref, subject,
+                                 content, is_root, created_at);
+}
+
+void
+gnostr_plugin_context_add_issue(GnostrPluginContext *context,
+                                const char          *id,
+                                const char          *pubkey,
+                                const char          *repo_ref,
+                                const char          *subject,
+                                const char          *content,
+                                const char          *status,
+                                gint64               created_at)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(id != NULL);
+
+  if (!context->main_window || !GNOSTR_IS_MAIN_WINDOW(context->main_window))
+    return;
+
+  GtkWidget *browser = gnostr_main_window_get_repo_browser(
+      GNOSTR_MAIN_WINDOW(context->main_window));
+  if (!browser || !GNOSTR_IS_REPO_BROWSER(browser))
+    return;
+
+  gnostr_repo_browser_add_issue(GNOSTR_REPO_BROWSER(browser),
+                                 id, pubkey, repo_ref, subject,
+                                 content, status, created_at);
+}
+
 /* --- Network Access --- */
 
 GObject *

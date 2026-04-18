@@ -683,6 +683,52 @@ void gnostr_plugin_context_add_repository(GnostrPluginContext *context,
  */
 void gnostr_plugin_context_clear_repositories(GnostrPluginContext *context);
 
+/**
+ * gnostr_plugin_context_add_patch:
+ * @context: A #GnostrPluginContext
+ * @id: Event ID
+ * @pubkey: Author pubkey (nullable)
+ * @repo_ref: Repository 'a' tag reference (nullable)
+ * @subject: Patch title (nullable)
+ * @content: Patch diff/cover letter (nullable)
+ * @is_root: TRUE if root of a patch series
+ * @created_at: Timestamp
+ *
+ * Add a patch (kind 1617) to the repository browser's Patches tab.
+ * nostrc-35i
+ */
+void gnostr_plugin_context_add_patch(GnostrPluginContext *context,
+                                     const char          *id,
+                                     const char          *pubkey,
+                                     const char          *repo_ref,
+                                     const char          *subject,
+                                     const char          *content,
+                                     gboolean             is_root,
+                                     gint64               created_at);
+
+/**
+ * gnostr_plugin_context_add_issue:
+ * @context: A #GnostrPluginContext
+ * @id: Event ID
+ * @pubkey: Author pubkey (nullable)
+ * @repo_ref: Repository 'a' tag reference (nullable)
+ * @subject: Issue title (nullable)
+ * @content: Issue body (nullable)
+ * @status: Status string (nullable, defaults to "open")
+ * @created_at: Timestamp
+ *
+ * Add an issue (kind 1621) to the repository browser's Issues tab.
+ * nostrc-35i
+ */
+void gnostr_plugin_context_add_issue(GnostrPluginContext *context,
+                                     const char          *id,
+                                     const char          *pubkey,
+                                     const char          *repo_ref,
+                                     const char          *subject,
+                                     const char          *content,
+                                     const char          *status,
+                                     gint64               created_at);
+
 /* --- Network Access --- */
 
 /**

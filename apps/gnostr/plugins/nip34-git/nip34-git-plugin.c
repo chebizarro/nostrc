@@ -844,10 +844,16 @@ on_refresh_relay_events_done(GObject      *source,
         const char *pjson = g_ptr_array_index(patch_events, i);
         if (pjson) {
           PatchInfo *pi = parse_patch_event(pjson);
-          if (pi && pi->id)
+          if (pi && pi->id) {
             g_hash_table_replace(self->patches, g_strdup(pi->id), pi);
-          else
+            gnostr_plugin_context_add_patch(self->context,
+                                             pi->id, pi->pubkey,
+                                             pi->repo_ref, pi->subject,
+                                             pi->content, pi->is_root,
+                                             pi->created_at);
+          } else {
             patch_info_free(pi);
+          }
         }
       }
       g_ptr_array_unref(patch_events);
@@ -877,10 +883,16 @@ on_refresh_relay_events_done(GObject      *source,
                           ? json_object_get_int_member(jo, "kind") : 0;
             if (kind == NIP34_KIND_ISSUE) {
               IssueInfo *ii = parse_issue_event(ijson);
-              if (ii && ii->id)
+              if (ii && ii->id) {
                 g_hash_table_replace(self->issues, g_strdup(ii->id), ii);
-              else
+                gnostr_plugin_context_add_issue(self->context,
+                                                 ii->id, ii->pubkey,
+                                                 ii->repo_ref, ii->subject,
+                                                 ii->content, ii->status,
+                                                 ii->created_at);
+              } else {
                 issue_info_free(ii);
+              }
             } else if (kind == NIP34_KIND_ISSUE_REPLY) {
               apply_issue_status_update(self, ijson);
             }
@@ -1324,6 +1336,13 @@ nip34_git_plugin_handle_event(GnostrEventHandler  *handler,
             g_debug("[NIP-34] Cached patch: %s (%s)",
                     pinfo->subject ? pinfo->subject : "(no subject)",
                     pinfo->id);
+            /* Push to browser UI */
+            if (self->context)
+              gnostr_plugin_context_add_patch(self->context,
+                                               pinfo->id, pinfo->pubkey,
+                                               pinfo->repo_ref, pinfo->subject,
+                                               pinfo->content, pinfo->is_root,
+                                               pinfo->created_at);
           }
         else
           {
@@ -1344,6 +1363,13 @@ nip34_git_plugin_handle_event(GnostrEventHandler  *handler,
             g_debug("[NIP-34] Cached issue: %s (%s)",
                     iinfo->subject ? iinfo->subject : "(no subject)",
                     iinfo->id);
+            /* Push to browser UI */
+            if (self->context)
+              gnostr_plugin_context_add_issue(self->context,
+                                               iinfo->id, iinfo->pubkey,
+                                               iinfo->repo_ref, iinfo->subject,
+                                               iinfo->content, iinfo->status,
+                                               iinfo->created_at);
           }
         else
           {

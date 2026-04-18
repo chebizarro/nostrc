@@ -1003,6 +1003,83 @@ gnostr_git_client_new(void)
   return g_object_new(GNOSTR_TYPE_GIT_CLIENT, NULL);
 }
 
+/* nostrc-35i: Async clone using GTask to avoid blocking the UI */
+
+typedef struct {
+  gchar *url;
+  gchar *path;
+} CloneTaskData;
+
+static void
+clone_task_data_free(CloneTaskData *data)
+{
+  g_free(data->url);
+  g_free(data->path);
+  g_free(data);
+}
+
+static void
+clone_thread_func(GTask        *task,
+                  gpointer      source_object,
+                  gpointer      task_data,
+                  GCancellable *cancellable)
+{
+  (void)source_object;
+  (void)cancellable;
+  CloneTaskData *cd = (CloneTaskData *)task_data;
+
+  git_repository *repo = NULL;
+  git_clone_options opts = GIT_CLONE_OPTIONS_INIT;
+
+  int error = git_clone(&repo, cd->url, cd->path, &opts);
+
+  if (error != 0)
+    {
+      const git_error *e = git_error_last();
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                               "Clone failed: %s",
+                               e ? e->message : "unknown error");
+      return;
+    }
+
+  g_task_return_pointer(task, repo, (GDestroyNotify)git_repository_free);
+}
+
+static void
+on_clone_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  GnostrGitClient *self = GNOSTR_GIT_CLIENT(source);
+  (void)user_data;
+
+  self->is_cloning = FALSE;
+
+  GError *error = NULL;
+  git_repository *repo = g_task_propagate_pointer(G_TASK(result), &error);
+
+  if (error)
+    {
+      g_signal_emit(self, signals[SIGNAL_ERROR], 0, error->message);
+      g_error_free(error);
+      return;
+    }
+
+  /* Store repo */
+  if (self->repo)
+    git_repository_free(self->repo);
+
+  self->repo = repo;
+
+  /* Recover path from task data */
+  CloneTaskData *cd = g_task_get_task_data(G_TASK(result));
+  g_free(self->repo_path);
+  self->repo_path = g_strdup(cd->path);
+
+  update_ui_state(self);
+  gnostr_git_client_refresh(self);
+
+  g_signal_emit(self, signals[SIGNAL_REPO_OPENED], 0, self->repo_path);
+}
+
 void
 gnostr_git_client_clone(GnostrGitClient *self,
                          const char      *url,
@@ -1019,37 +1096,15 @@ gnostr_git_client_clone(GnostrGitClient *self,
     }
 
   self->is_cloning = TRUE;
-  self->clone_cancellable = g_cancellable_new();
 
-  git_repository *repo = NULL;
-  git_clone_options opts = GIT_CLONE_OPTIONS_INIT;
+  CloneTaskData *cd = g_new0(CloneTaskData, 1);
+  cd->url  = g_strdup(url);
+  cd->path = g_strdup(path);
 
-  int error = git_clone(&repo, url, path, &opts);
-
-  self->is_cloning = FALSE;
-  g_clear_object(&self->clone_cancellable);
-
-  if (error != 0)
-    {
-      const git_error *e = git_error_last();
-      g_autofree char *msg = g_strdup_printf("Clone failed: %s",
-                                              e ? e->message : "unknown error");
-      g_signal_emit(self, signals[SIGNAL_ERROR], 0, msg);
-      return;
-    }
-
-  /* Store repo */
-  if (self->repo)
-    git_repository_free(self->repo);
-
-  self->repo = repo;
-  g_free(self->repo_path);
-  self->repo_path = g_strdup(path);
-
-  update_ui_state(self);
-  gnostr_git_client_refresh(self);
-
-  g_signal_emit(self, signals[SIGNAL_REPO_OPENED], 0, path);
+  GTask *task = g_task_new(self, self->clone_cancellable, on_clone_done, NULL);
+  g_task_set_task_data(task, cd, (GDestroyNotify)clone_task_data_free);
+  g_task_run_in_thread(task, clone_thread_func);
+  g_object_unref(task);
 }
 
 gboolean
