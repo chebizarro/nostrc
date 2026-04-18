@@ -301,7 +301,7 @@ build_model(GnostrCalendarEventsView *self)
   gnostr_timeline_query_builder_add_kind(builder, NIP52_KIND_TIME_BASED_EVENT);
   gnostr_timeline_query_builder_set_limit(builder, CALENDAR_QUERY_LIMIT);
   GNostrTimelineQuery *query = gnostr_timeline_query_builder_build(builder);
-  gnostr_timeline_query_builder_free(builder);
+  /* build() consumes and frees the builder — do NOT call builder_free() */
 
   /* Source model */
   self->event_model = gn_nostr_event_model_new_with_query(query);
