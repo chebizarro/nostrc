@@ -342,8 +342,10 @@ install(FILES data/org.nostr.Signer.service DESTINATION ${CMAKE_INSTALL_DATAROOT
 # Systemd user unit (daemon)
 install(FILES daemon/packaging/systemd/user/gnostr-signer-daemon.service
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/systemd/user)
-# Desktop file
-install(FILES packaging/appimage/gnostr-signer.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+# Desktop file (canonical; AppImage uses packaging/appimage/gnostr-signer.desktop separately)
+install(FILES data/org.gnostr.Signer.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+# AppStream metainfo
+install(FILES data/org.gnostr.Signer.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/metainfo)
 
 # Icons (hicolor theme). Place files under data/icons/hicolor/<size>/apps/
 # Expected names: org.gnostr.Signer.png for raster, org.gnostr.Signer.svg for scalable
