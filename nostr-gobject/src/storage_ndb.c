@@ -2025,6 +2025,38 @@ char *storage_ndb_note_get_qtag(storage_ndb_note *note)
   return NULL;
 }
 
+/* NIP-31: Get the first "alt" tag value from a note.
+ * Returns g_strdup'd human-readable string, or NULL. Caller must g_free(). */
+char *storage_ndb_note_get_alt_tag(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return NULL;
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    if (ndb_tag_count(tag) < 2) continue;
+
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (!key.str || strcmp(key.str, "alt") != 0) continue;
+
+    struct ndb_str val = ndb_tag_str(note, tag, 1);
+    /* Alt text is always a plain string, never a packed ID */
+    if (val.flag != NDB_PACKED_ID && val.str && *val.str != '\0') {
+      size_t slen = strnlen(val.str, 512);
+      if (slen < 512) {
+        return g_strndup(val.str, slen);
+      }
+    }
+  }
+
+  return NULL;
+}
+
 /* ============== Hashtag Extraction API ============== */
 
 /* Extract hashtags ("t" tags) from note.

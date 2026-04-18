@@ -418,6 +418,11 @@ char *storage_ndb_note_get_last_etag(storage_ndb_note *note);
 	* Caller must g_free(). */
 char *storage_ndb_note_get_qtag(storage_ndb_note *note);
 
+/* NIP-31: Get the first "alt" tag from a note via direct tag iteration.
+	* Returns g_strdup'd human-readable alt text, or NULL if no alt tag found.
+	* Caller must g_free(). */
+char *storage_ndb_note_get_alt_tag(storage_ndb_note *note);
+
 /* ============== Content Blocks API ============== */
 
 /* Opaque blocks handle - actually struct ndb_blocks* from nostrdb */

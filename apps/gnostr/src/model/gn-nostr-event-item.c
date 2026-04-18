@@ -65,7 +65,8 @@ struct _GnNostrEventItem {
   /* NIP-40: Expiration timestamp (cached) */
   gint64 expiration;
   gboolean expiration_loaded;
-
+  char *cached_alt_text;
+  gboolean alt_text_loaded;
   /* nostrc-dqwq.1: Cached content render result (Pango markup + media URLs).
    * Populated lazily on first access; content is immutable so cache never invalidates. */
   GnContentRenderResult *cached_render;
@@ -168,6 +169,12 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
     self->expiration = storage_ndb_note_get_expiration(note);
     self->expiration_loaded = TRUE;
 
+    /* NIP-31: Cache alt tag for machine-generated content fallback */
+    if (!self->alt_text_loaded) {
+      self->cached_alt_text = storage_ndb_note_get_alt_tag(note);
+      self->alt_text_loaded = TRUE;
+    }
+
     /* nostrc-thr1: Extract NIP-10 thread info during lazy load */
     if (!self->thread_root_id && !self->parent_id) {
       char *root_id = NULL;
@@ -258,6 +265,12 @@ void gn_nostr_event_item_populate_from_note(GnNostrEventItem *self, struct ndb_n
   self->expiration = storage_ndb_note_get_expiration((storage_ndb_note *)note);
   self->expiration_loaded = TRUE;
 
+  /* NIP-31: Cache alt tag for machine-generated content fallback */
+  if (!self->alt_text_loaded) {
+    self->cached_alt_text = storage_ndb_note_get_alt_tag((storage_ndb_note *)note);
+    self->alt_text_loaded = TRUE;
+  }
+
   /* nostrc-thr1: Extract NIP-10 thread info so ALL items get threading data
    * regardless of which model creates them. Previously only GnNostrEventModel
    * stored thread info in a separate hash table; GnTimelineModel never did,
@@ -288,6 +301,7 @@ static void gn_nostr_event_item_finalize(GObject *object) {
   g_strfreev(self->cached_relay_urls);
   gnostr_content_render_result_free(self->cached_render);
   g_free(self->cached_quoted_event_id);
+  g_free(self->cached_alt_text);
   g_free(self->thread_root_id);
   g_free(self->parent_id);
 
@@ -573,6 +587,15 @@ gint gn_nostr_event_item_get_kind(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
   ensure_note_loaded(self);
   return self->kind;
+}
+
+/* NIP-31: Get cached alt text for machine-generated content fallback.
+ * Returns NULL if no alt tag. Triggers lazy load if needed. */
+const gchar *gn_nostr_event_item_get_alt_text(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  if (!self->alt_text_loaded)
+    ensure_note_loaded(self);
+  return self->cached_alt_text;
 }
 
 GNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self) {

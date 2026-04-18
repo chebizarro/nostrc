@@ -3466,6 +3466,16 @@ profile-row.muted .profile-row-avatar {
 	border: 1px solid #5c524a;
 }
 
+/* ===== Machine-generated content substitution (nostrc-z02i, NIP-31) ===== */
+
+.alt-text {
+	font-style: italic;
+}
+
+.placeholder-text {
+	opacity: 0.55;
+}
+
 /* ===== YouTube Embed (nostrc-1du) ===== */
 
 .youtube-play-overlay {

@@ -33,6 +33,11 @@ const char *const *gn_nostr_event_item_get_hashtags(GnNostrEventItem *self);
 const char *const *gn_nostr_event_item_get_relay_urls(GnNostrEventItem *self);
 
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self);
+
+/* NIP-31: Get the human-readable alt text from the event's "alt" tag.
+	* Returns NULL if no alt tag present. Owned by the item; do NOT free. */
+const gchar *gn_nostr_event_item_get_alt_text(GnNostrEventItem *self);
+
 GNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_thread_root_id(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_parent_id(GnNostrEventItem *self);

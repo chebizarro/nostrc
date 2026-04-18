@@ -3198,6 +3198,10 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
   if (self->disposed) return;
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
+  /* nostrc-z02i: Clear substitution CSS classes from previous bind */
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+
   /* Store plain text content for clipboard operations */
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(content);
@@ -3321,6 +3325,10 @@ void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
   if (self->disposed) return;
   if (self->binding_id == 0) return;
 
+  /* nostrc-z02i: Clear substitution CSS classes from previous bind */
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+
   g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(safe_text);
@@ -3425,9 +3433,43 @@ void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *
   if (self->disposed) return;
   if (self->binding_id == 0) return;  /* nostrc-534d */
 
+  /* nostrc-z02i: Clear substitution CSS classes from previous bind */
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+
   g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(safe_text);
+  gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
+  gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
+}
+
+/* nostrc-z02i: NIP-31 content substitution for machine-generated events.
+ * Shows alt text or placeholder instead of raw JSON content. */
+void nostr_gtk_note_card_row_set_content_substituted(NostrGtkNoteCardRow *self,
+                                                     const gchar *display_text,
+                                                     NostrGtkContentSubstType type,
+                                                     const gchar *raw_content) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+
+  g_autofree gchar *safe_text = gnostr_sanitize_utf8(display_text ? display_text : "");
+
+  /* Store raw content for clipboard operations ("Copy Note Text").
+   * The display label shows the human-readable substitution text instead. */
+  g_clear_pointer(&self->content_text, g_free);
+  self->content_text = g_strdup(raw_content ? raw_content : "");
+
+  /* Clear any previous CSS classes and apply substitution styling */
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+
+  gtk_widget_add_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  if (type == NOSTR_GTK_CONTENT_SUBST_PLACEHOLDER) {
+    gtk_widget_add_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+  }
+
   gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
   gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
 }
@@ -3556,6 +3598,10 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
   if (self->disposed) return;
   if (self->binding_id == 0) return;
 
+  /* nostrc-z02i: Clear substitution CSS classes from previous bind */
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+
   g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(safe_text);
@@ -3647,6 +3693,10 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
   /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying label */
   if (self->disposed) return;
+
+  /* nostrc-z02i: Clear substitution CSS classes from previous bind */
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
 
   /* Store plain text content for clipboard operations */
   g_clear_pointer(&self->content_text, g_free);
@@ -6422,6 +6472,12 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
   if (self->data)
     note_card_data_unref(self->data);
   self->data = note_card_data_new();
+
+  /* nostrc-z02i: Clear content substitution CSS classes from previous bind */
+  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
+    gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+    gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+  }
 
   /* Create fresh cancellable since the old one was cancelled during unbind.
    * GCancellable cannot be reused after cancellation. */

@@ -59,6 +59,33 @@ void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 cre
 void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *content);
 
 /**
+ * NostrGtkContentSubstType:
+ * @NOSTR_GTK_CONTENT_SUBST_ALT_TEXT: NIP-31 alt text (italic, full opacity)
+ * @NOSTR_GTK_CONTENT_SUBST_PLACEHOLDER: No alt text available (italic + dim)
+ *
+ * Type of content substitution being applied to a note card row.
+ */
+typedef enum {
+  NOSTR_GTK_CONTENT_SUBST_ALT_TEXT,
+  NOSTR_GTK_CONTENT_SUBST_PLACEHOLDER
+} NostrGtkContentSubstType;
+
+/**
+ * nostr_gtk_note_card_row_set_content_substituted:
+ * @self: note card row
+ * @text: human-readable substitution text to display
+ * @type: type of substitution (alt text vs placeholder)
+ *
+ * Replaces the rendered content with a substituted display string.
+ * Used when the event's raw content is not human-readable (e.g., JSON
+ * app data). The original content remains accessible via the context menu.
+ */
+void nostr_gtk_note_card_row_set_content_substituted(NostrGtkNoteCardRow *self,
+                                                     const gchar *display_text,
+                                                     NostrGtkContentSubstType type,
+                                                     const gchar *raw_content);
+
+/**
  * nostr_gtk_note_card_row_set_author_name_only:
  * @self: note card row
  * @display_name: (nullable): author display name

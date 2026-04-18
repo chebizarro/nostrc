@@ -11,6 +11,32 @@
 #include "../../../../nostr-gtk/src/note-card-binding-ctx.h"  /* Internal: NoteCardBindingContext API */
 #include "../model/gn-nostr-event-item.h"
 #include <nostr-gobject-1.0/gn-nostr-profile.h>
+#include <glib/gi18n.h>
+#include <string.h>
+
+/* nostrc-z02i: Detect machine-generated content (JSON app data) in kind-1 events.
+ * Returns TRUE if content looks like structured JSON rather than human prose.
+ * Kind 6 reposts are exempted since their JSON content is by-spec (NIP-18). */
+static gboolean
+content_is_machine_generated(const gchar *content, gint kind)
+{
+  if (!content || *content == '\0') return FALSE;
+
+  /* Kind 6 reposts carry the original event as JSON — by-spec, not a problem */
+  if (kind == 6) return FALSE;
+
+  /* JSON object: starts with '{' and contains a '"key":' pattern */
+  if (content[0] == '{') {
+    return (strstr(content, "\":") != NULL);
+  }
+
+  /* JSON array of objects: '[{"...' */
+  if (content[0] == '[' && content[1] == '{' && content[2] == '"') {
+    return TRUE;
+  }
+
+  return FALSE;
+}
 
 struct _NoteCardFactory {
   GObject parent_instance;
@@ -543,13 +569,37 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     /* Tier 1: Timestamp */
     nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, NULL);
 
-    /* Tier 1: Content markup (from cached render — no media/OG/embed) */
-    const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
-    if (cached) {
-      nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, cached);
+    /* Tier 1: Content markup — with NIP-31 alt text fallback (nostrc-z02i).
+     * Check for machine-generated content BEFORE the render cache to avoid
+     * displaying cached raw JSON markup for recycled widget slots. */
+    gint kind = gn_nostr_event_item_get_kind(event_item);
+    const gchar *alt_text = gn_nostr_event_item_get_alt_text(event_item);
+
+    if (alt_text && *alt_text) {
+      /* NIP-31: explicit human-readable substitute — always wins */
+      nostr_gtk_note_card_row_set_content_substituted(
+          NOSTR_GTK_NOTE_CARD_ROW(row), alt_text,
+          NOSTR_GTK_CONTENT_SUBST_ALT_TEXT, content);
+      /* Store raw content for clipboard / "View JSON" */
+      nostr_gtk_note_card_row_set_event_kind(NOSTR_GTK_NOTE_CARD_ROW(row), kind);
+
+    } else if (content_is_machine_generated(content, kind)) {
+      /* Heuristic: JSON content with no alt tag — show generic placeholder */
+      nostr_gtk_note_card_row_set_content_substituted(
+          NOSTR_GTK_NOTE_CARD_ROW(row),
+          _("This note contains application data"),
+          NOSTR_GTK_CONTENT_SUBST_PLACEHOLDER, content);
+      nostr_gtk_note_card_row_set_event_kind(NOSTR_GTK_NOTE_CARD_ROW(row), kind);
+
     } else {
-      /* No cache: fall back to full render (first bind) */
-      nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+      /* Normal path — render cache or full render */
+      const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
+      if (cached) {
+        nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, cached);
+      } else {
+        /* No cache: fall back to full render (first bind) */
+        nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+      }
     }
 
     /* Tier 1: IDs (needed for click handling + Tier 2 validation) */
@@ -586,7 +636,21 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
                                      display_name ? display_name : display_fallback,
                                      handle, avatar_url);
     nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, NULL);
-    nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+
+    /* nostrc-z02i: Apply JSON content detection for generic objects too */
+    gint kind_val = 0;
+    if (g_object_class_find_property(klass, "kind"))
+      g_object_get(obj, "kind", &kind_val, NULL);
+
+    if (content_is_machine_generated(content, kind_val)) {
+      nostr_gtk_note_card_row_set_content_substituted(
+          NOSTR_GTK_NOTE_CARD_ROW(row),
+          _("This note contains application data"),
+          NOSTR_GTK_CONTENT_SUBST_PLACEHOLDER, content);
+    } else {
+      nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+    }
+
     nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row), id_hex, NULL, pubkey);
 
     g_free(id_hex);
