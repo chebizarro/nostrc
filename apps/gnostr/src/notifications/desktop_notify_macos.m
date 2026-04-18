@@ -257,11 +257,13 @@ gnostr_desktop_notify_init(GnostrDesktopNotify *self)
     load_settings(self);
 
     /* Create delegate and register with notification center.
-     * UNUserNotificationCenter throws NSInternalInconsistencyException when
-     * the binary is not inside a proper .app bundle (e.g. running from a
-     * build directory during development). Catch and degrade gracefully. */
+     * UNUserNotificationCenter requires a valid .app bundle — it throws
+     * NSInternalInconsistencyException ("bundleProxyForCurrentProcess is nil")
+     * when the binary runs outside one (e.g. from a build directory).
+     * Guard by checking the bundle identifier before touching the API. */
     @autoreleasepool {
-        @try {
+        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+        if (bundleId != nil) {
             GnostrNotificationDelegate *delegate = [[GnostrNotificationDelegate alloc] init];
             delegate.owner = self;
             self->delegate = (__bridge_retained void *)delegate;
@@ -271,10 +273,9 @@ gnostr_desktop_notify_init(GnostrDesktopNotify *self)
 
             /* Register notification categories */
             register_notification_categories();
-        } @catch (NSException *exception) {
-            g_warning("desktop-notify-macos: Cannot initialize notification center "
-                      "(not running inside .app bundle?): %s",
-                      [[exception reason] UTF8String]);
+        } else {
+            g_debug("desktop-notify-macos: No bundle identifier — "
+                    "notifications disabled (running outside .app bundle)");
             self->delegate = NULL;
         }
     }
