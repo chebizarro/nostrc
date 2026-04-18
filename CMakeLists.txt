@@ -408,6 +408,7 @@ endif()
 # localhost DAV bridge -- see the parent epic for details.
 option(GNOSTR_ENABLE_SEAHORSE_HELPERS "Build Seahorse/Secret Service helpers" OFF)
 option(GNOSTR_WITH_PKCS11 "Build p11-kit module" OFF)
+option(ENABLE_NOSTR_DAV "Build localhost CalDAV/CardDAV/WebDAV bridge daemon" OFF)
 
 if (GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
   find_package(PkgConfig REQUIRED)
@@ -423,6 +424,10 @@ if (GNOSTR_WITH_PKCS11)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(P11KIT REQUIRED IMPORTED_TARGET p11-kit-1)
   add_subdirectory(pkcs11)
+endif()
+
+if (ENABLE_NOSTR_DAV)
+  add_subdirectory(gnome/nostr-dav)
 endif()
 
 ## GLib demo: only if libnostr built with GLib support

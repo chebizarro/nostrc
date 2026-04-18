@@ -1,0 +1,25 @@
+[Unit]
+Description=Nostr DAV Bridge (CalDAV/CardDAV/WebDAV ↔ Nostr)
+Documentation=https://github.com/nicegnostr/nostrc/tree/master/gnome/nostr-dav
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nostr-dav
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/nostr-dav
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=default.target
