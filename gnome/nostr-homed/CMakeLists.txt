@@ -163,6 +163,10 @@ if (FUSE3_FOUND)
            COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_writeback.sh)
   set_tests_properties(nostrfs_writeback_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
   set_tests_properties(nostrfs_writeback_integration PROPERTIES TIMEOUT 180)
+  add_test(NAME e2e_real_signer
+           COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_e2e_real_signer_test.sh)
+  set_tests_properties(e2e_real_signer PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(e2e_real_signer PROPERTIES TIMEOUT 120)
 endif()
 
 # Mock signer and secrets decrypt integration test

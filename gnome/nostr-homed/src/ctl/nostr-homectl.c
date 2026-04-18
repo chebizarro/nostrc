@@ -41,7 +41,7 @@ static int dbus_get_signer_npub(char **out_npub){
   const char *busname = "org.nostr.Signer";
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus){ if (err) g_error_free(err); return -1; }
-  GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/Signer", "org.nostr.Signer", "GetPublicKey",
+  GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/signer", "org.nostr.Signer", "GetPublicKey",
                    NULL, G_VARIANT_TYPE_TUPLE, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
   int rc=-1; if (ret){ const char *npub=NULL; g_variant_get(ret, "(s)", &npub); if (npub){ *out_npub = g_strdup(npub); rc=0; } g_variant_unref(ret);} if (err) g_error_free(err);
   g_object_unref(bus); return rc;

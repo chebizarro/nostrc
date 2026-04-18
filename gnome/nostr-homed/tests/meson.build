@@ -40,3 +40,8 @@ test_groups = executable('test_groups',
   include_directories: inc,
   dependencies: [sqlite3, openssl])
 test('test_groups', test_groups, timeout: 30)
+
+# End-to-end integration test (requires FUSE, dbus-run-session, python3+websockets)
+e2e_script = files('integration/run_e2e_real_signer_test.sh')
+test('e2e_real_signer', find_program('bash'), args: [e2e_script],
+     timeout: 120, is_parallel: false)

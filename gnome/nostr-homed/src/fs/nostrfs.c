@@ -206,7 +206,7 @@ static int dbus_get_npub(char **out_npub){
   if (out_npub) *out_npub = NULL; const char *busname = nh_signer_bus_name();
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus) { if (err) g_error_free(err); warn_throttle("dbus", "failed to connect to session bus for signer"); return -1; }
-  GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/Signer", "org.nostr.Signer", "GetPublicKey",
+  GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/signer", "org.nostr.Signer", "GetPublicKey",
                    NULL, G_VARIANT_TYPE_TUPLE, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
   int rc=-1; if (ret){ const char *npub=NULL; g_variant_get(ret, "(s)", &npub); if (npub){ *out_npub = strdup(npub); rc=0; } g_variant_unref(ret);} if (err){ warn_throttle("dbus", "GetPublicKey failed"); g_error_free(err);} 
   g_object_unref(bus); return rc;
@@ -218,7 +218,7 @@ static int dbus_sign_event_set_sig(NostrEvent *ev){
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus){ if (err) g_error_free(err); free(json); return -1; }
   /* current_user/app_id left empty for now */
-  GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/Signer", "org.nostr.Signer", "SignEvent",
+  GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/signer", "org.nostr.Signer", "SignEvent",
                    g_variant_new("(sss)", json, "", "nostrfs"), G_VARIANT_TYPE_TUPLE, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
   free(json);
   int rc=-1; if (ret){ const char *sig=NULL; g_variant_get(ret, "(s)", &sig); if (sig){ nostr_event_set_sig(ev, sig); rc=0; } g_variant_unref(ret);} if (err){ warn_throttle("sign", "SignEvent failed"); g_error_free(err);} 
