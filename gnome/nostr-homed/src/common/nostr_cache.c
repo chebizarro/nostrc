@@ -157,14 +157,25 @@ int nh_cache_group_lookup_gid(nh_cache *c, unsigned int gid, char *name_out, siz
 
 int nh_cache_ensure_primary_group(nh_cache *c, const char *username, unsigned int gid){
   if (!c || !c->db || !username) return -1;
-  /* group name convention: same as username */
-  const char *sql = "INSERT INTO groups(gid,name) VALUES(?,?) ON CONFLICT(gid) DO UPDATE SET name=excluded.name";
+  /* Don't clobber an existing group that happens to share a gid.
+   * INSERT OR IGNORE: if gid already exists, leave the existing name. */
+  const char *sql = "INSERT OR IGNORE INTO groups(gid,name) VALUES(?,?)";
   sqlite3_stmt *st = NULL; if (sqlite3_prepare_v2(c->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
   sqlite3_bind_int(st, 1, (int)gid);
   sqlite3_bind_text(st, 2, username, -1, SQLITE_STATIC);
   int rc = sqlite3_step(st);
   sqlite3_finalize(st);
-  return (rc == SQLITE_DONE) ? 0 : -1;
+  if (rc != SQLITE_DONE) return -1;
+  /* Verify the existing name matches if the row already existed */
+  char existing[128] = "";
+  if (nh_cache_group_lookup_gid(c, gid, existing, sizeof existing) == 0){
+    if (strcmp(existing, username) != 0){
+      fprintf(stderr, "nostr-homed: gid %u already assigned to group '%s', "
+              "cannot reassign to '%s'\n", gid, existing, username);
+      return -1;
+    }
+  }
+  return 0;
 }
 
 int nh_cache_set_setting(nh_cache *c, const char *key, const char *value){

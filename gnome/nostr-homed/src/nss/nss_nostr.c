@@ -6,12 +6,16 @@
 #include <stdio.h>
 #include <errno.h>
 
-static nh_cache g_cache;
-static int g_inited = 0;
-
-static void ensure_init(void){
-  if (g_inited) return;
-  if (nh_cache_open_configured(&g_cache, "/etc/nss_nostr.conf") == 0) g_inited = 1;
+/*
+ * Open/close the cache on every call for fork and thread safety.
+ * NSS modules are loaded into every name-lookup-capable process.
+ * A persistent SQLite handle is not fork-safe (post-fork child
+ * inherits the handle and can corrupt the WAL). The per-call open
+ * has a slight perf hit on cold cache, but is acceptable for auth
+ * stacks and avoids subtle corruption.
+ */
+static int open_cache(nh_cache *c){
+  return nh_cache_open_configured(c, "/etc/nss_nostr.conf");
 }
 
 /**
@@ -95,46 +99,52 @@ static enum nss_status fill_grp(struct group *grp, char *buffer, size_t buflen,
 
 enum nss_status _nss_nostr_getpwnam_r(const char *name, struct passwd *pwd,
                                       char *buffer, size_t buflen, int *errnop){
-  ensure_init();
-  if (!g_inited) { if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  nh_cache c;
+  if (open_cache(&c) != 0) { if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
   unsigned int uid=0,gid=0; char home[256];
-  if (nh_cache_lookup_name(&g_cache, name, &uid, &gid, home, sizeof home) == 0) {
-    return fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home, errnop);
-  }
-  return NSS_STATUS_NOTFOUND;
+  enum nss_status ret = NSS_STATUS_NOTFOUND;
+  if (nh_cache_lookup_name(&c, name, &uid, &gid, home, sizeof home) == 0)
+    ret = fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home, errnop);
+  nh_cache_close(&c);
+  return ret;
 }
 
 enum nss_status _nss_nostr_getpwuid_r(uid_t uid, struct passwd *pwd,
                                       char *buffer, size_t buflen, int *errnop){
-  ensure_init();
-  if (!g_inited) { if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  nh_cache c;
+  if (open_cache(&c) != 0) { if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
   char name[128]; unsigned int gid=0; char home[256];
-  if (nh_cache_lookup_uid(&g_cache, (unsigned int)uid, name, sizeof name, &gid, home, sizeof home) == 0) {
-    return fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home, errnop);
-  }
-  return NSS_STATUS_NOTFOUND;
+  enum nss_status ret = NSS_STATUS_NOTFOUND;
+  if (nh_cache_lookup_uid(&c, (unsigned int)uid, name, sizeof name, &gid, home, sizeof home) == 0)
+    ret = fill_pwd(pwd, buffer, buflen, name, (uid_t)uid, (gid_t)gid, home, errnop);
+  nh_cache_close(&c);
+  return ret;
 }
 
 enum nss_status _nss_nostr_getgrnam_r(const char *name, struct group *grp,
                                       char *buffer, size_t buflen, int *errnop){
   if (!grp || !name) return NSS_STATUS_TRYAGAIN;
-  ensure_init();
-  if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
-  unsigned int gid=0;
-  if (nh_cache_group_lookup_name(&g_cache, name, &gid) != 0)
-    return NSS_STATUS_NOTFOUND;
-  return fill_grp(grp, buffer, buflen, name, (gid_t)gid, errnop);
+  nh_cache c;
+  if (open_cache(&c) != 0){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  unsigned int g=0;
+  enum nss_status ret = NSS_STATUS_NOTFOUND;
+  if (nh_cache_group_lookup_name(&c, name, &g) == 0)
+    ret = fill_grp(grp, buffer, buflen, name, (gid_t)g, errnop);
+  nh_cache_close(&c);
+  return ret;
 }
 
 enum nss_status _nss_nostr_getgrgid_r(gid_t gid, struct group *grp,
                                       char *buffer, size_t buflen, int *errnop){
   if (!grp) return NSS_STATUS_TRYAGAIN;
-  ensure_init();
-  if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  nh_cache c;
+  if (open_cache(&c) != 0){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
   char name[128]="";
-  if (nh_cache_group_lookup_gid(&g_cache, (unsigned int)gid, name, sizeof name) != 0)
-    return NSS_STATUS_NOTFOUND;
-  return fill_grp(grp, buffer, buflen, name, gid, errnop);
+  enum nss_status ret = NSS_STATUS_NOTFOUND;
+  if (nh_cache_group_lookup_gid(&c, (unsigned int)gid, name, sizeof name) == 0)
+    ret = fill_grp(grp, buffer, buflen, name, gid, errnop);
+  nh_cache_close(&c);
+  return ret;
 }
 
 /* Provide minimal initgroups: ensure primary group is present */
