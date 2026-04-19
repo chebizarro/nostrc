@@ -85,6 +85,11 @@ if(ENABLE_NIP27)
     add_subdirectory(nips/nip27)
 endif()
 
+option(ENABLE_NIP23 "Enable nip23 (Long-form Content)" ON)
+if(ENABLE_NIP23)
+    add_subdirectory(nips/nip23)
+endif()
+
 option(ENABLE_NIP22 "Enable nip22 (Comments)" ON)
 if(ENABLE_NIP22)
     add_subdirectory(nips/nip22)
