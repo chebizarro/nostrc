@@ -65,6 +65,11 @@ if(ENABLE_NIP19)
     add_subdirectory(nips/nip19)
 endif()
 
+option(ENABLE_NIP22 "Enable nip22 (Comments)" ON)
+if(ENABLE_NIP22)
+    add_subdirectory(nips/nip22)
+endif()
+
 option(ENABLE_NIP25 "Enable nip25 (Reactions)" ON)
 if(ENABLE_NIP25)
     add_subdirectory(nips/nip25)
