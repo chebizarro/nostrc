@@ -68,7 +68,7 @@ jobs:
             mingw-w64-x86_64-libsecret
             mingw-w64-x86_64-libwebsockets
             mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-secp256k1
+            mingw-w64-x86_64-libsecp256k1
             mingw-w64-x86_64-curl
             mingw-w64-x86_64-libsoup3
             mingw-w64-x86_64-nsis

@@ -75,14 +75,14 @@ jobs:
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
                 -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
                 -DNIP04_STRICT_AEAD_ONLY=ON \
-                -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF
+                -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF
               ;;
             tsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_VERBOSE_MAKEFILE=ON \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
                 -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
-                -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF
+                -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF
               ;;
           esac
 

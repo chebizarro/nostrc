@@ -5,6 +5,7 @@ project(nostr_homed C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Werror)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Dependencies
 find_package(PkgConfig REQUIRED)
@@ -28,6 +29,7 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libjson/include
   ${CMAKE_SOURCE_DIR}/libgo/include
+  ${CMAKE_SOURCE_DIR}/nips/nip19/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${JANSSON_INCLUDE_DIRS}
   ${GLIB2_INCLUDE_DIRS}
@@ -85,6 +87,7 @@ endif()
 # FUSE filesystem
 if (FUSE3_FOUND)
   add_executable(nostrfs src/fs/nostrfs.c)
+  target_compile_definitions(nostrfs PRIVATE FUSE_USE_VERSION=30)
   target_link_libraries(nostrfs PRIVATE nostr_homed_common ${FUSE3_LIBRARIES})
   install(TARGETS nostrfs RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 else()
