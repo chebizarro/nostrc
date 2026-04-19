@@ -128,6 +128,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DCMAKE_INSTALL_PREFIX=build/install \
             -DBUILD_TESTING=OFF \
+            -DBUILD_TESTING_FRAMEWORK=OFF \
             -DBUILD_SIGNER_TESTS=OFF \
             -DBUILD_NATIVE_HOST=ON \
             -DBUILD_WINDOWS_INSTALLER=ON \
