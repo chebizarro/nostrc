@@ -274,7 +274,7 @@ static void go_channel_graveyard_reap(void) {
 
 // Portable aligned allocation: prefer C11 aligned_alloc, fallback to malloc
 static inline void *go_aligned_alloc(size_t alignment, size_t size) {
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__MINGW32__) && !defined(__MINGW64__)
     // aligned_alloc requires size to be a multiple of alignment
     size_t mask = alignment - 1;
     size_t adj = (size + mask) & ~mask;
