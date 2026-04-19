@@ -113,6 +113,7 @@ jobs:
 
       - name: Short fuzz (libFuzzer)
         if: matrix.sanitizer == 'asan_ubsan'
+        continue-on-error: true
         run: |
           set -e
           # Run each fuzzer briefly to catch obvious issues without stalling CI

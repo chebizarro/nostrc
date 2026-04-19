@@ -40,5 +40,10 @@ endif()
 
 if (GTK4_FOUND AND GLIB_FOUND)
   add_subdirectory(gnostr-signer)
-  add_subdirectory(gnostr)
+  # Full GNostr desktop app requires libpeas-2 and additional deps;
+  # make it optional so signer-only builds (e.g. Windows installer) work.
+  option(BUILD_GNOSTR_APP "Build the GNostr desktop application" ON)
+  if (BUILD_GNOSTR_APP)
+    add_subdirectory(gnostr)
+  endif()
 endif()
