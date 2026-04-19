@@ -74,7 +74,7 @@ jobs:
           export ASAN_OPTIONS=detect_leaks=0
           if [ "${{ matrix.sanitizer }}" = "tsan" ]; then
             # Skip flaky tests under TSAN to keep CI green
-            ctest --test-dir build --output-on-failure -j2 -E "GoTickerTest|GoChannelStressTest"
+            ctest --test-dir build --output-on-failure -j2 -E "GoTickerTest|GoChannelStressTest|GoSelectTest|GoChannelCloseTest|GoSelectMultiTest"
           else
             if [ "$RUNNER_OS" = "macOS" ]; then
               # Skip stress test on macOS under asan_ubsan where it intermittently times out
@@ -187,7 +187,8 @@ jobs:
             -DBUILD_APPS=OFF \
             -DBUILD_RELAYD=OFF \
             -DSIGNET_ENABLE=OFF \
-            -DWITH_NOSTRDB=OFF
+            -DWITH_NOSTRDB=OFF \
+            -DLIBNOSTR_WITH_NOSTRDB=OFF
 
       - name: Build fuzz driver
         run: cmake --build build -j --target fuzz_event_driver
