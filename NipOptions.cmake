@@ -206,6 +206,11 @@ if(ENABLE_NIP70)
     add_subdirectory(nips/nip70)
 endif()
 
+option(ENABLE_NIP75 "Enable nip75 (Zap Goals)" ON)
+if(ENABLE_NIP75)
+    add_subdirectory(nips/nip75)
+endif()
+
 option(ENABLE_NIP73 "Enable nip73 (External Content IDs)" ON)
 if(ENABLE_NIP73)
     add_subdirectory(nips/nip73)
