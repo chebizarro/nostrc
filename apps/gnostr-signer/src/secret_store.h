@@ -23,6 +23,13 @@
 #include <glib.h>
 #include <gio/gio.h>  /* For GTask, GAsyncResult, GCancellable */
 #include <sys/types.h>
+#if defined(_WIN32) || defined(__MINGW32__)
+/* MinGW does not provide uid_t; define as unsigned int for API compat */
+#ifndef _UID_T_DEFINED
+typedef unsigned int uid_t;
+#define _UID_T_DEFINED
+#endif
+#endif
 
 G_BEGIN_DECLS
 

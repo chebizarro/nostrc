@@ -6,8 +6,10 @@
 #endif
 #include <gio/gio.h>
 #include <nostr/nip55l/signer_ops.h>
+#if !defined(_WIN32) && !defined(__MINGW32__)
 #include <unistd.h>
 #include <pwd.h>
+#endif
 
 /* Hardware keystore widget */
 #include "hardware_keystore_widget.h"
@@ -351,10 +353,17 @@ void update_linked_user_ui(SettingsUI *ui){
 void on_link_current_user_clicked(GtkButton *btn, gpointer user_data){
   (void)btn; SettingsUI *ui = user_data; if (!ui) return;
   g_autofree gchar *active = get_active_identity(ui); if (!active || !*active) return;
+#if defined(_WIN32) || defined(__MINGW32__)
+  /* On Windows, user linking is not supported (no getuid/getpwuid) */
+  uid_t uid = 0;
+  const char *uname = g_get_user_name();
+  int rc = nostr_nip55l_set_owner(active, uid, uname);
+#else
   uid_t uid = getuid();
   struct passwd *pw = getpwuid(uid);
   const char *uname = (pw && pw->pw_name) ? pw->pw_name : NULL;
   int rc = nostr_nip55l_set_owner(active, uid, uname);
+#endif
   if (rc != 0){
     GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
     GtkAlertDialog *dlg = gtk_alert_dialog_new("Failed to link user (rc=%d)", rc);

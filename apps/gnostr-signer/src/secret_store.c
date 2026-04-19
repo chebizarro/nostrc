@@ -223,7 +223,11 @@ SecretStoreResult secret_store_add(const gchar *key,
 #ifdef GNOSTR_HAVE_LIBSECRET
   GError *err = NULL;
   gchar uid_buf[32];
+#if defined(_WIN32) || defined(__MINGW32__)
+  g_snprintf(uid_buf, sizeof(uid_buf), "0");  /* No getuid() on Windows */
+#else
   g_snprintf(uid_buf, sizeof(uid_buf), "%u", (unsigned)getuid());
+#endif
 
   /* Generate fingerprint from npub for quick lookup */
   gchar *fingerprint = npub_to_fingerprint(npub);

@@ -29,6 +29,13 @@ int nostr_nip55l_clear_key(const char *identity);
 /* Optional Unix owner metadata (no enforcement). Selector is key_id or npub. */
 /* Returns 0 on success, NOT_FOUND if libsecret unavailable or item missing. */
 #include <sys/types.h>
+#if defined(_WIN32) || defined(__MINGW32__)
+/* MinGW does not provide uid_t; define as unsigned int for API compat */
+#ifndef _UID_T_DEFINED
+typedef unsigned int uid_t;
+#define _UID_T_DEFINED
+#endif
+#endif
 int nostr_nip55l_set_owner(const char *selector, uid_t uid, const char *username);
 int nostr_nip55l_clear_owner(const char *selector);
 /* Outputs: has_owner=1 if present; if present, uid_out and username_out (caller frees username_out). */
