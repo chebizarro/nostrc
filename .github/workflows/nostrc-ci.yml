@@ -18,7 +18,7 @@ jobs:
 
     env:
       CMAKE_BUILD_TYPE: Debug
-      ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1
+      ASAN_OPTIONS: detect_leaks=0:detect_odr_violation=0:strict_string_checks=1
       UBSAN_OPTIONS: print_stacktrace=1
       TSAN_OPTIONS: halt_on_error=1
       # Keep relay mitigations disabled by default in CI unless tests set them

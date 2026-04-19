@@ -349,7 +349,10 @@ if (BUILD_MARMOT_GOBJECT AND BUILD_LIBMARMOT)
 endif()
 
 # GObject wrapper layer (nostr-gobject-1.0) — must come after NIP targets
-add_subdirectory(nostr-gobject)
+option(BUILD_NOSTR_GOBJECT "Build nostr-gobject GObject wrapper" ON)
+if (BUILD_NOSTR_GOBJECT)
+  add_subdirectory(nostr-gobject)
+endif()
 
 # GTK4/libadwaita widget library (nostr-gtk-1.0) — depends on nostr-gobject
 option(BUILD_NOSTR_GTK "Build nostr-gtk widget library (requires GTK4 + libadwaita)" ON)
@@ -358,7 +361,9 @@ if (BUILD_NOSTR_GTK)
 endif()
 
 # Add test targets from `tests/`.
-add_subdirectory(tests)
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
 
 # GNostr apps (GTK4/GLib/libsecret) — make building apps optional for CI jobs that only need libraries
 option(BUILD_APPS "Build application binaries under apps/" ON)

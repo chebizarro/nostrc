@@ -57,6 +57,7 @@ set(NH_COMMON
 add_library(nostr_homed_common STATIC ${NH_COMMON})
 target_link_libraries(nostr_homed_common PUBLIC
   libnostr nostr_json libgo
+  nip19
   ${JANSSON_LIBRARIES}
   ${GLIB2_LIBRARIES}
   OpenSSL::Crypto
