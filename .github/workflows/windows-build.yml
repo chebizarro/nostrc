@@ -136,6 +136,7 @@ jobs:
             -DBUILD_GNOSTR_APP=OFF \
             -DBUILD_RELAYD=OFF \
             -DSIGNET_ENABLE=OFF \
+            -DENABLE_NIP55L=OFF \
             -DWITH_NOSTRDB=OFF \
             -DLIBNOSTR_WITH_NOSTRDB=OFF \
             -DGNOSTR_SIGNER_VERSION=${{ steps.version.outputs.version }}

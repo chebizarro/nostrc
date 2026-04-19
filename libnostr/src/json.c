@@ -12,8 +12,8 @@
 NostrJsonInterface *json_interface = NULL;
 static int g_json_force_fallback = -1; /* -1 = uninitialized, 0/1 set */
 
-void nostr_set_json_interface(NostrJsonInterface *interface) {
-    json_interface = interface;
+void nostr_set_json_interface(NostrJsonInterface *iface) {
+    json_interface = iface;
 }
 
 void nostr_json_init(void) {

@@ -22,7 +22,7 @@ typedef struct _NostrJsonInterface {
 } NostrJsonInterface;
 
 extern NostrJsonInterface *json_interface;
-void nostr_set_json_interface(NostrJsonInterface *interface);
+void nostr_set_json_interface(NostrJsonInterface *iface);
 void nostr_json_init(void);
 void nostr_json_cleanup(void);
 /* When enabled, compact inline parsers are bypassed and all (de)serialization

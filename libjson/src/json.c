@@ -817,7 +817,7 @@ __attribute__((constructor)) static void _init_interface_funcs(void) {
 // Auto-register this JSON implementation as the default for libnostr when linked
 __attribute__((constructor)) static void _register_default_interface(void) {
     // Provided by libnostr/src/json.c
-    extern void nostr_set_json_interface(NostrJsonInterface *interface);
+    extern void nostr_set_json_interface(NostrJsonInterface *iface);
     nostr_set_json_interface(jansson_impl);
 }
 
