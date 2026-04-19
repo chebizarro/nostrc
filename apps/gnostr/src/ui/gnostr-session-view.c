@@ -76,7 +76,6 @@ struct _GnostrSessionView {
   GtkListBoxRow *row_messages;
   GtkListBoxRow *row_discover;
   GtkListBoxRow *row_search;
-  GtkListBoxRow *row_classifieds;
   GtkListBoxRow *row_repos;
 
   /* Content */
@@ -144,7 +143,6 @@ struct _GnostrSessionView {
   GtkWidget *dm_conversation;
   GtkWidget *discover_page;
   GtkWidget *search_results_view;
-  GtkWidget *classifieds_view;
   GtkWidget *repo_browser;
   GtkWidget *calendar_events_view;
 
@@ -179,7 +177,6 @@ static const char *page_name_for_row(GnostrSessionView *self, GtkListBoxRow *row
   if (row == self->row_messages) return "messages";
   if (row == self->row_discover) return "discover";
   if (row == self->row_search) return "search";
-  if (row == self->row_classifieds) return "classifieds";
   if (row == self->row_repos) return "repos";
   if (row == self->row_calendar) return "calendar";
 
@@ -205,7 +202,6 @@ static GtkListBoxRow *row_for_page_name(GnostrSessionView *self, const char *pag
   if (g_strcmp0(page_name, "messages") == 0) return self->row_messages;
   if (g_strcmp0(page_name, "discover") == 0) return self->row_discover;
   if (g_strcmp0(page_name, "search") == 0) return self->row_search;
-  if (g_strcmp0(page_name, "classifieds") == 0) return self->row_classifieds;
   if (g_strcmp0(page_name, "repos") == 0) return self->row_repos;
   if (g_strcmp0(page_name, "calendar") == 0) return self->row_calendar;
 
@@ -224,7 +220,6 @@ static const char *title_for_page_name(GnostrSessionView *self, const char *page
   if (g_strcmp0(page_name, "messages") == 0) return _("Messages");
   if (g_strcmp0(page_name, "discover") == 0) return _("Discover");
   if (g_strcmp0(page_name, "search") == 0) return _("Search");
-  if (g_strcmp0(page_name, "classifieds") == 0) return _("Marketplace");
   if (g_strcmp0(page_name, "repos") == 0) return _("Git Repos");
   if (g_strcmp0(page_name, "calendar") == 0) return _("Events");
 
@@ -1041,7 +1036,6 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
   g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
   g_type_ensure(GNOSTR_TYPE_PAGE_DISCOVER);
-  g_type_ensure(GNOSTR_TYPE_CLASSIFIEDS_VIEW);
   g_type_ensure(GNOSTR_TYPE_REPO_BROWSER);
   g_type_ensure(GNOSTR_TYPE_CALENDAR_EVENTS_VIEW);
   g_type_ensure(NOSTR_GTK_TYPE_PROFILE_PANE);
@@ -1065,7 +1059,6 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_messages);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_discover);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_search);
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_classifieds);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_repos);
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, content_page);
@@ -1111,7 +1104,6 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, dm_conversation);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, discover_page);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, search_results_view);
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, classifieds_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, repo_browser);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, calendar_events_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, row_calendar);
@@ -1492,7 +1484,13 @@ GtkWidget *gnostr_session_view_get_search_results_view(GnostrSessionView *self) 
 
 GtkWidget *gnostr_session_view_get_classifieds_view(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
-  return self->classifieds_view;
+  /* Marketplace is now fully managed by the nip99-marketplace plugin.
+   * Return the plugin's panel if registered, otherwise NULL. */
+  if (self->plugin_panels) {
+    GtkWidget *panel = g_hash_table_lookup(self->plugin_panels, "nip99-marketplace");
+    if (panel) return panel;
+  }
+  return NULL;
 }
 
 GtkWidget *gnostr_session_view_get_repo_browser(GnostrSessionView *self) {
@@ -1767,20 +1765,33 @@ static void ensure_plugin_separator(GnostrSessionView *self) {
   if (self->plugin_separator) return;
   if (!self->sidebar_list) return;
 
-  /* Create and add the separator */
+  /* Build a section header: thin separator + "More" label */
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  gtk_widget_set_margin_top(box, 12);
+  gtk_widget_set_margin_bottom(box, 4);
+
+  /* Thin hairline separator */
   self->plugin_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-  gtk_widget_set_margin_top(self->plugin_separator, 8);
-  gtk_widget_set_margin_bottom(self->plugin_separator, 8);
-  gtk_widget_set_margin_start(self->plugin_separator, 12);
-  gtk_widget_set_margin_end(self->plugin_separator, 12);
+  gtk_widget_set_margin_start(self->plugin_separator, 16);
+  gtk_widget_set_margin_end(self->plugin_separator, 16);
+  gtk_box_append(GTK_BOX(box), self->plugin_separator);
+
+  /* Section label */
+  GtkWidget *label = gtk_label_new(_("More"));
+  gtk_widget_add_css_class(label, "dim-label");
+  gtk_widget_add_css_class(label, "caption");
+  gtk_label_set_xalign(GTK_LABEL(label), 0);
+  gtk_widget_set_margin_start(label, 16);
+  gtk_widget_set_margin_top(label, 4);
+  gtk_box_append(GTK_BOX(box), label);
 
   /* Wrap in a non-activatable row for consistent ListBox behavior */
   GtkWidget *sep_row = gtk_list_box_row_new();
   gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(sep_row), FALSE);
   gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(sep_row), FALSE);
-  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(sep_row), self->plugin_separator);
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(sep_row), box);
 
-  /* Add after the last fixed row (row_repos) */
+  /* Add after the last fixed row */
   gtk_list_box_append(self->sidebar_list, sep_row);
 }
 

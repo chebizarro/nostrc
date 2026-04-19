@@ -207,34 +207,6 @@ template $GnostrSessionView: Adw.Bin {
                                 };
                             }
 
-                            ListBoxRow row_classifieds {
-                                accessibility {
-                                    label: _("Marketplace");
-                                }
-
-                                child: Box {
-                                    orientation: horizontal;
-                                    spacing: 12;
-                                    margin-start: 12;
-                                    margin-end: 12;
-                                    margin-top: 10;
-                                    margin-bottom: 10;
-
-                                    Image {
-                                        icon-name: "basket-symbolic";
-
-                                        styles [
-                                            "dim-label",
-                                        ]
-                                    }
-
-                                    Label {
-                                        label: _("Marketplace");
-                                        xalign: 0;
-                                    }
-                                };
-                            }
-
                             ListBoxRow row_repos {
                                 accessibility {
                                     label: _("Git Repos");
@@ -571,17 +543,6 @@ template $GnostrSessionView: Adw.Bin {
                                         icon-name: "edit-find-symbolic";
 
                                         child: $GnostrSearchResultsView search_results_view {
-                                            hexpand: true;
-                                            vexpand: true;
-                                        };
-                                    }
-
-                                    Adw.ViewStackPage {
-                                        name: "classifieds";
-                                        title: _("Marketplace");
-                                        icon-name: "emblem-shopping-cart-symbolic";
-
-                                        child: $GnostrClassifiedsView classifieds_view {
                                             hexpand: true;
                                             vexpand: true;
                                         };
