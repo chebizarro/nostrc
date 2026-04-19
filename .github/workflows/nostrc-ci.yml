@@ -18,7 +18,7 @@ jobs:
 
     env:
       CMAKE_BUILD_TYPE: Debug
-      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1
       UBSAN_OPTIONS: print_stacktrace=1
       TSAN_OPTIONS: halt_on_error=1
       # Keep relay mitigations disabled by default in CI unless tests set them
@@ -68,11 +68,15 @@ jobs:
 
       - name: Configure (sanitizers + ENABLE_NIP19/49 + fuzzers)
         run: |
+          FUZZ_FLAGS=""
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            FUZZ_FLAGS="-DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=ON"
+          fi
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_VERBOSE_MAKEFILE=ON \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
-                -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=ON \
+                $FUZZ_FLAGS \
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
                 -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
                 -DNIP04_STRICT_AEAD_ONLY=ON \

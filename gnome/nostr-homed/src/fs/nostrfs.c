@@ -792,7 +792,7 @@ static int nfs_read(const char *path, char *buf, size_t size, off_t off, struct 
           snprintf(caspath, sizeof caspath, "%s/%u/%s", ctx->opts.cache_dir ? ctx->opts.cache_dir : "/var/cache/nostrfs", (unsigned)uid, e->cid);
           int fd = open(caspath, O_RDONLY);
           if (fd >= 0){
-            off_t end = off + (off_t)size; ssize_t rd = 0;
+            ssize_t rd = 0;
             if (lseek(fd, off, SEEK_SET) == (off_t)-1){ close(fd); return -EIO; }
             rd = read(fd, buf, size);
             close(fd);

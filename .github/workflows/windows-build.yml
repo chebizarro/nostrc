@@ -87,24 +87,24 @@ jobs:
       - name: Build nsync from source (if not packaged)
         run: |
           if ! pkg-config --exists nsync 2>/dev/null; then
-            git clone --depth 1 https://github.com/google/nsync.git /tmp/nsync
-            cmake -S /tmp/nsync -B /tmp/nsync/build -G Ninja \
+            git clone --depth 1 https://github.com/google/nsync.git $HOME/nsync-src
+            cmake -S $HOME/nsync-src -B $HOME/nsync-build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
-            cmake --build /tmp/nsync/build -j
-            cmake --install /tmp/nsync/build
+            cmake --build $HOME/nsync-build -j
+            cmake --install $HOME/nsync-build
           fi
 
       - name: Build secp256k1 from source (if not packaged)
         run: |
           if ! pkg-config --exists libsecp256k1 2>/dev/null; then
-            git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git /tmp/secp256k1
-            cmake -S /tmp/secp256k1 -B /tmp/secp256k1/build -G Ninja \
+            git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git $HOME/secp256k1-src
+            cmake -S $HOME/secp256k1-src -B $HOME/secp256k1-build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DSECP256K1_BUILD_TESTS=OFF \
               -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF \
               -DSECP256K1_BUILD_BENCHMARK=OFF
-            cmake --build /tmp/secp256k1/build -j
-            cmake --install /tmp/secp256k1/build
+            cmake --build $HOME/secp256k1-build -j
+            cmake --install $HOME/secp256k1-build
           fi
 
       - name: Configure CMake

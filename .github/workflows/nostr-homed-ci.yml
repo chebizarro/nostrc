@@ -38,7 +38,7 @@ jobs:
             image: fedora:40
             update: dnf -y update
             install: >-
-              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config
+              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++
               jansson-devel glib2-devel gobject-introspection-devel
               sqlite-devel libcurl-devel
               fuse3-devel
@@ -87,7 +87,8 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
-            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF \
+            -DENABLE_NIP55L=OFF
 
       - name: Build
         run: cmake --build build -j
@@ -126,7 +127,8 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
-            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF \
+            -DENABLE_NIP55L=OFF
           cmake --build build -j
 
       - name: Pull systemd image
