@@ -110,6 +110,11 @@ if(ENABLE_NIP25)
     add_subdirectory(nips/nip25)
 endif()
 
+option(ENABLE_NIP30 "Enable nip30 (Custom Emoji)" ON)
+if(ENABLE_NIP30)
+    add_subdirectory(nips/nip30)
+endif()
+
 option(ENABLE_NIP29 "Enable nip29" OFF)
 if(ENABLE_NIP29)
     add_subdirectory(nips/nip29)
