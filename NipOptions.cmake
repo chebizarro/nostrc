@@ -110,6 +110,11 @@ if(ENABLE_NIP34)
     add_subdirectory(nips/nip34)
 endif()
 
+option(ENABLE_NIP39 "Enable nip39 (External Identities)" ON)
+if(ENABLE_NIP39)
+    add_subdirectory(nips/nip39)
+endif()
+
 option(ENABLE_NIP40 "Enable nip40 (Expiration)" ON)
 if(ENABLE_NIP40)
     add_subdirectory(nips/nip40)
