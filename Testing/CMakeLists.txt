@@ -3,7 +3,7 @@
 # Build the nostr_testing library - provides test harness utilities,
 # event factories, deterministic keypairs, assertion macros, and mock relay server.
 
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.22)
 project(nostr_testing C)
 
 # Find required packages

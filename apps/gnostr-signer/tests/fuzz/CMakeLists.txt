@@ -15,7 +15,7 @@
 # For AFL++:
 #   cmake -DBUILD_FUZZ_TARGETS=ON -DFUZZ_ENGINE=AFL ..
 
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.22)
 
 # Fuzz targets are optional and off by default
 option(BUILD_FUZZ_TARGETS "Build fuzz testing targets" OFF)

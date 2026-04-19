@@ -488,7 +488,7 @@ static const struct lws_protocols protocols[] = {
     LWS_PROTOCOL_LIST_TERM
 };
 
-static const uint32_t retry_table[] = {1000, 2000, 3000}; // Retry intervals in ms
+/* retry_table used by g_retry_table below */
 
 /* nostrc-ping: WebSocket keepalive policy.
  *

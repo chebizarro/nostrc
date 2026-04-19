@@ -981,7 +981,6 @@ static void *async_cleanup_worker(void *arg) {
         nostr_metric_counter_add("sub_cleanup_success", 1);
     }
     
-cleanup_done:
     atomic_store(&handle->completed, true);
     go_channel_close(handle->done);
     

@@ -43,7 +43,7 @@ jobs:
               sqlite-devel libcurl-devel
               fuse3-devel
               openssl-devel libsecp256k1-devel
-              libwebsockets-devel nsync-devel libsodium-devel libsoup3-devel
+              libwebsockets-devel libsodium-devel libsoup3-devel
           - distro: archlinux
             image: archlinux:latest
             update: pacman -Syu --noconfirm
@@ -51,7 +51,7 @@ jobs:
               pacman -S --noconfirm base-devel cmake ninja pkgconf
               jansson glib2 gobject-introspection sqlite curl
               fuse3
-              openssl libsecp256k1 libwebsockets nsync libsodium libsoup3
+              openssl libsecp256k1 libwebsockets libsodium libsoup3
 
     container:
       image: ${{ matrix.image }}
@@ -73,11 +73,21 @@ jobs:
           ${{ matrix.update }}
           ${{ matrix.install }}
 
+      - name: Build nsync from source (if not packaged)
+        run: |
+          if ! pkg-config --exists nsync 2>/dev/null && ! ldconfig -p 2>/dev/null | grep -q libnsync; then
+            git clone --depth 1 https://github.com/google/nsync.git /tmp/nsync
+            cmake -S /tmp/nsync -B /tmp/nsync/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
+            cmake --build /tmp/nsync/build -j
+            cmake --install /tmp/nsync/build
+            ldconfig 2>/dev/null || true
+          fi
+
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
-            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF
+            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
 
       - name: Build
         run: cmake --build build -j
@@ -116,7 +126,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
-            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF
+            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
           cmake --build build -j
 
       - name: Pull systemd image

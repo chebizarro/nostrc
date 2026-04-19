@@ -1,7 +1,7 @@
 # gnostr-signer unit tests
 # Uses GLib testing framework for consistency with GTK application
 
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.22)
 project(gnostr-signer-tests C)
 
 enable_testing()

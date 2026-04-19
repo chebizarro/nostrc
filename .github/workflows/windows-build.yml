@@ -63,9 +63,14 @@ jobs:
             mingw-w64-x86_64-libadwaita
             mingw-w64-x86_64-glib2
             mingw-w64-x86_64-json-glib
+            mingw-w64-x86_64-jansson
             mingw-w64-x86_64-libsodium
             mingw-w64-x86_64-libsecret
-            mingw-w64-x86_64-nsync
+            mingw-w64-x86_64-libwebsockets
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-secp256k1
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-libsoup3
             mingw-w64-x86_64-nsis
 
       - name: Get version
@@ -80,6 +85,16 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Building version: ${VERSION}"
 
+      - name: Build nsync from source (if not packaged)
+        run: |
+          if ! pkg-config --exists nsync 2>/dev/null; then
+            git clone --depth 1 https://github.com/google/nsync.git /tmp/nsync
+            cmake -S /tmp/nsync -B /tmp/nsync/build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
+            cmake --build /tmp/nsync/build -j
+            cmake --install /tmp/nsync/build
+          fi
+
       - name: Configure CMake
         run: |
           cmake -B build -G Ninja \
@@ -89,6 +104,12 @@ jobs:
             -DBUILD_SIGNER_TESTS=OFF \
             -DBUILD_NATIVE_HOST=ON \
             -DBUILD_WINDOWS_INSTALLER=ON \
+            -DBUILD_LIBMARMOT=OFF \
+            -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_RELAYD=OFF \
+            -DSIGNET_ENABLE=OFF \
+            -DWITH_NOSTRDB=OFF \
+            -DLIBNOSTR_WITH_NOSTRDB=OFF \
             -DGNOSTR_SIGNER_VERSION=${{ steps.version.outputs.version }}
 
       - name: Build
