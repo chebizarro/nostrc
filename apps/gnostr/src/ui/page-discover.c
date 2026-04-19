@@ -241,7 +241,7 @@ populate_trending_flow_box(GnostrPageDiscover *self, GPtrArray *hashtags)
     g_autofree gchar *label_text = g_strdup_printf("#%s", ht->tag);
     GtkWidget *button = gtk_button_new_with_label(label_text);
 
-    gtk_widget_add_css_class(button, "pill");
+    gtk_widget_add_css_class(button, "trending-hashtag");
     gtk_widget_add_css_class(button, "flat");
 
     /* Store tag string on the button for click handler */

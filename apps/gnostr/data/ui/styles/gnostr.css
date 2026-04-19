@@ -888,6 +888,35 @@ gnostr-video-player {
 	color: @accent_bg_color;
 }
 
+/* Toggle pill — unselected gets a subtle border to read as interactive.
+	* Targets only toggle buttons; regular buttons with .pill are unaffected. */
+togglebutton.pill:not(:checked) {
+	border: 1px solid alpha(@theme_fg_color, 0.15);
+	background: transparent;
+}
+
+togglebutton.pill:not(:checked):hover {
+	border-color: alpha(@theme_fg_color, 0.25);
+	background: alpha(@theme_fg_color, 0.04);
+}
+
+/* Trending hashtag chips — distinct from interactive toggle pills */
+.trending-hashtag {
+	border-radius: 9999px;
+	padding: 4px 12px;
+	font-size: 12px;
+	font-weight: 500;
+	background: alpha(#10b981, 0.10);
+	color: alpha(@theme_fg_color, 0.85);
+	border: 1px solid alpha(#10b981, 0.20);
+	transition: all 150ms ease;
+}
+
+.trending-hashtag:hover {
+	background: alpha(#10b981, 0.18);
+	border-color: alpha(#10b981, 0.35);
+}
+
 /* Status indicators */
 .success {
 	color: #2e7d32;
