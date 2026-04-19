@@ -60,6 +60,11 @@ if(ENABLE_NIP13)
     add_subdirectory(nips/nip13)
 endif()
 
+option(ENABLE_NIP14 "Enable nip14 (Subject Tag)" ON)
+if(ENABLE_NIP14)
+    add_subdirectory(nips/nip14)
+endif()
+
 option(ENABLE_NIP19 "Enable nip19" ON)
 if(ENABLE_NIP19)
     add_subdirectory(nips/nip19)
