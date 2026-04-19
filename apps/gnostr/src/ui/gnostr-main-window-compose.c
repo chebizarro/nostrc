@@ -13,6 +13,42 @@
 #include <glib/gi18n.h>
 #include <string.h>
 
+/* ---- Escape-to-close shortcut for compose dialogs ---- */
+
+static gboolean
+on_compose_escape_pressed(GtkWidget *widget,
+                          GVariant  *args,
+                          gpointer   user_data)
+{
+  (void)widget;
+  (void)args;
+  AdwDialog *dialog = ADW_DIALOG(user_data);
+  adw_dialog_close(dialog);
+  return TRUE;
+}
+
+static void
+compose_dialog_add_escape_shortcut(AdwDialog *dialog)
+{
+  GtkEventController *ctrl =
+      gtk_shortcut_controller_new();
+  gtk_shortcut_controller_set_scope(
+      GTK_SHORTCUT_CONTROLLER(ctrl), GTK_SHORTCUT_SCOPE_MANAGED);
+  gtk_event_controller_set_propagation_phase(
+      ctrl, GTK_PHASE_CAPTURE);
+
+  GtkShortcutTrigger *trigger =
+      gtk_keyval_trigger_new(GDK_KEY_Escape, 0);
+  GtkShortcutAction *action =
+      gtk_callback_action_new(on_compose_escape_pressed, dialog, NULL);
+  GtkShortcut *shortcut =
+      gtk_shortcut_new(trigger, action);
+
+  gtk_shortcut_controller_add_shortcut(
+      GTK_SHORTCUT_CONTROLLER(ctrl), shortcut);
+  gtk_widget_add_controller(GTK_WIDGET(dialog), ctrl);
+}
+
 /* ---- Composer signal handlers (nostr-gtk decoupled signals) ---- */
 
 static void on_composer_toast_requested(NostrGtkComposer *composer,
@@ -363,6 +399,7 @@ void gnostr_main_window_open_compose_dialog_internal(GnostrMainWindow *self,
 
   adw_toolbar_view_set_content(toolbar, composer);
   adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
+  compose_dialog_add_escape_shortcut(dialog);
   adw_dialog_present(dialog, GTK_WIDGET(self));
 
   gnostr_main_window_compose_context_free_internal(context);
@@ -510,5 +547,6 @@ void gnostr_main_window_compose_article(GtkWidget *window) {
                    G_CALLBACK(on_article_compose_publish), self);
   adw_toolbar_view_set_content(toolbar, composer);
   adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
+  compose_dialog_add_escape_shortcut(dialog);
   adw_dialog_present(dialog, GTK_WIDGET(self));
 }
