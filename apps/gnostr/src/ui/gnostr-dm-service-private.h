@@ -44,7 +44,10 @@ struct _GnostrDmService {
     GNostrSubscription *sub;
     GCancellable *cancellable;
     gulong events_handler;
+    gulong eose_handler;
+    guint  loading_timeout_id;   /* g_timeout source for loading safety net */
     gboolean running;
+    gboolean eose_received;      /* TRUE after EOSE clears loading */
 
     /* Pending decryptions: gift_wrap_id -> DecryptContext* */
     GHashTable *pending_decrypts;

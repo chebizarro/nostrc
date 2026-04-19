@@ -30,6 +30,9 @@
 
 /* DmConversation and struct _GnostrDmService are in gnostr-dm-service-private.h */
 
+/* Max seconds to wait for EOSE before clearing the loading spinner */
+#define DM_EOSE_TIMEOUT_SECONDS 15
+
 static void dm_conversation_free(DmConversation *conv) {
     if (!conv) return;
     g_clear_pointer(&conv->peer_pubkey, g_free);
@@ -53,6 +56,9 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void on_pool_gift_wrap_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
+static void on_pool_eose(GNostrSubscription *sub, gpointer user_data);
+static gboolean on_loading_timeout(gpointer user_data);
+static void dm_service_clear_loading(GnostrDmService *self);
 static void decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap);
 typedef struct _DecryptContext DecryptContext;
 static void decrypt_ctx_free(DecryptContext *ctx);
@@ -121,7 +127,10 @@ gnostr_dm_service_init(GnostrDmService *self)
     self->pool = NULL;
     self->cancellable = NULL;
     self->events_handler = 0;
+    self->eose_handler = 0;
+    self->loading_timeout_id = 0;
     self->running = FALSE;
+    self->eose_received = FALSE;
 }
 
 GnostrDmService *
@@ -241,9 +250,13 @@ gnostr_dm_service_start(GnostrDmService *self,
     self->events_handler = g_signal_connect(
         sub, "event",
         G_CALLBACK(on_pool_gift_wrap_event), self);
+    self->eose_handler = g_signal_connect(
+        sub, "eose",
+        G_CALLBACK(on_pool_eose), self);
 
     g_message("[DM_SERVICE] Gift wrap subscription started successfully");
     self->running = TRUE;
+    self->eose_received = FALSE;
 
     /* Show loading state on inbox */
     GnostrDmInboxView *inbox = g_weak_ref_get(&self->inbox_ref);
@@ -251,6 +264,16 @@ gnostr_dm_service_start(GnostrDmService *self,
         gnostr_dm_inbox_view_set_loading(inbox, TRUE);
         g_object_unref(inbox);
     }
+
+    /* Safety-net timeout: clear loading if EOSE never arrives */
+    if (self->loading_timeout_id > 0)
+        g_source_remove(self->loading_timeout_id);
+    self->loading_timeout_id = g_timeout_add_seconds_full(
+        G_PRIORITY_DEFAULT,
+        DM_EOSE_TIMEOUT_SECONDS,
+        on_loading_timeout,
+        g_object_ref(self),
+        g_object_unref);
 }
 
 void
@@ -267,10 +290,20 @@ gnostr_dm_service_stop(GnostrDmService *self)
         g_clear_object(&self->cancellable);
     }
 
+    /* Cancel loading timeout */
+    if (self->loading_timeout_id > 0) {
+        g_source_remove(self->loading_timeout_id);
+        self->loading_timeout_id = 0;
+    }
+
     if (self->sub) {
         if (self->events_handler > 0) {
             g_signal_handler_disconnect(self->sub, self->events_handler);
             self->events_handler = 0;
+        }
+        if (self->eose_handler > 0) {
+            g_signal_handler_disconnect(self->sub, self->eose_handler);
+            self->eose_handler = 0;
         }
         gnostr_subscription_close(self->sub);
         g_clear_object(&self->sub);
@@ -793,6 +826,60 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
     free(id);
 }
 
+/* Clear the loading spinner on the inbox and cancel the safety timeout. */
+static void
+dm_service_clear_loading(GnostrDmService *self)
+{
+    if (self->loading_timeout_id > 0) {
+        g_source_remove(self->loading_timeout_id);
+        self->loading_timeout_id = 0;
+    }
+
+    GnostrDmInboxView *inbox = g_weak_ref_get(&self->inbox_ref);
+    if (inbox) {
+        gnostr_dm_inbox_view_set_loading(inbox, FALSE);
+        g_object_unref(inbox);
+    }
+}
+
+/* EOSE callback: relay has delivered all stored events.
+ * Clear loading state so user sees the conversation list or the empty state. */
+static void
+on_pool_eose(GNostrSubscription *sub, gpointer user_data)
+{
+    (void)sub;
+    GnostrDmService *self = GNOSTR_DM_SERVICE(user_data);
+    if (!GNOSTR_IS_DM_SERVICE(self)) return;
+
+    if (self->eose_received) return;  /* already handled */
+    self->eose_received = TRUE;
+
+    g_message("[DM_SERVICE] EOSE received — clearing loading state (%u conversations)",
+              g_hash_table_size(self->conversations));
+
+    dm_service_clear_loading(self);
+}
+
+/* Safety-net timeout: if EOSE never arrives after 15 seconds, stop the spinner. */
+static gboolean
+on_loading_timeout(gpointer user_data)
+{
+    GnostrDmService *self = GNOSTR_DM_SERVICE(user_data);
+    if (!GNOSTR_IS_DM_SERVICE(self))
+        return G_SOURCE_REMOVE;
+
+    self->loading_timeout_id = 0;  /* source is being removed */
+
+    if (self->eose_received) return G_SOURCE_REMOVE;  /* already cleared */
+
+    g_warning("[DM_SERVICE] Loading timeout — clearing spinner (EOSE not received)");
+
+    self->eose_received = TRUE;
+    dm_service_clear_loading(self);
+
+    return G_SOURCE_REMOVE;
+}
+
 /* Subscription event callback for gift wraps */
 static void
 on_pool_gift_wrap_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data)
@@ -880,8 +967,15 @@ gnostr_dm_service_start_with_dm_relays(GnostrDmService *self)
     GPtrArray *dm_relays = gnostr_get_dm_relays();
 
     if (dm_relays->len == 0) {
-        g_warning("[DM_SERVICE] No DM relays available");
+        g_warning("[DM_SERVICE] No DM relays available — showing empty state");
         g_ptr_array_unref(dm_relays);
+
+        /* Clear loading on inbox so user sees empty state instead of spinner */
+        GnostrDmInboxView *inbox = g_weak_ref_get(&self->inbox_ref);
+        if (inbox) {
+            gnostr_dm_inbox_view_set_loading(inbox, FALSE);
+            g_object_unref(inbox);
+        }
         return;
     }
 
