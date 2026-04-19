@@ -176,9 +176,9 @@ static void test_parse_relay_meta_full(void) {
   g_assert_cmpint(meta->latency_write_ms, ==, 18);
 
   /* Content fields */
-  g_assert_cmpstr(meta->name, ==, "Damus Relay");
+  g_assert_cmpstr(meta->name, ==, "Primal Relay");
   g_assert_cmpstr(meta->description, ==, "A fast, reliable relay");
-  g_assert_cmpstr(meta->contact, ==, "admin@damus.io");
+  g_assert_cmpstr(meta->contact, ==, "support@primal.net");
   g_assert_cmpstr(meta->software, ==, "strfry");
   g_assert_cmpstr(meta->version, ==, "1.0.0");
 
@@ -326,7 +326,7 @@ static void test_cache_basic(void) {
   GnostrNip66RelayMeta *cached = gnostr_nip66_cache_get_relay("wss://relay.primal.net");
   g_assert_nonnull(cached);
   g_assert_cmpstr(cached->relay_url, ==, "wss://relay.primal.net");
-  g_assert_cmpstr(cached->name, ==, "Damus Relay");
+  g_assert_cmpstr(cached->name, ==, "Primal Relay");
 
   /* Non-existent relay */
   g_assert_null(gnostr_nip66_cache_get_relay("wss://nonexistent.relay"));
