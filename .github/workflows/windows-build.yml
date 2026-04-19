@@ -68,7 +68,6 @@ jobs:
             mingw-w64-x86_64-libsecret
             mingw-w64-x86_64-libwebsockets
             mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-libsecp256k1
             mingw-w64-x86_64-curl
             mingw-w64-x86_64-libsoup3
             mingw-w64-x86_64-nsis
@@ -93,6 +92,19 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
             cmake --build /tmp/nsync/build -j
             cmake --install /tmp/nsync/build
+          fi
+
+      - name: Build secp256k1 from source (if not packaged)
+        run: |
+          if ! pkg-config --exists libsecp256k1 2>/dev/null; then
+            git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git /tmp/secp256k1
+            cmake -S /tmp/secp256k1 -B /tmp/secp256k1/build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSECP256K1_BUILD_TESTS=OFF \
+              -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF \
+              -DSECP256K1_BUILD_BENCHMARK=OFF
+            cmake --build /tmp/secp256k1/build -j
+            cmake --install /tmp/secp256k1/build
           fi
 
       - name: Configure CMake

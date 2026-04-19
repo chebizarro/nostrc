@@ -203,7 +203,8 @@ static int decode_npub_hex(const char *npub, char out_hex[65]){
 }
 
 static int dbus_get_npub(char **out_npub){
-  if (out_npub) *out_npub = NULL; const char *busname = nh_signer_bus_name();
+  if (out_npub) *out_npub = NULL;
+  const char *busname = nh_signer_bus_name();
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus) { if (err) g_error_free(err); warn_throttle("dbus", "failed to connect to session bus for signer"); return -1; }
   GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/signer", "org.nostr.Signer", "GetPublicKey",
