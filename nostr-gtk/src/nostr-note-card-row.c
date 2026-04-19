@@ -5026,7 +5026,7 @@ void nostr_gtk_note_card_row_set_relay_info(NostrGtkNoteCardRow *self,
   }
 
   /* Extract short display name from first relay URL.
-   * "wss://relay.damus.io" -> "relay.damus.io"
+   * "wss://nos.lol" -> "nos.lol"
    * "wss://nos.lol" -> "nos.lol" */
   const char *url = relay_urls[0];
   const char *host = url;

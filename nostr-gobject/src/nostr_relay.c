@@ -537,7 +537,7 @@ gnostr_relay_class_init(GNostrRelayClass *klass)
     /**
      * GNostrRelay:url:
      *
-     * The relay URL (e.g., "wss://relay.damus.io"). Construct-only.
+     * The relay URL (e.g., "wss://nos.lol"). Construct-only.
      */
     obj_properties[PROP_URL] =
         g_param_spec_string("url",

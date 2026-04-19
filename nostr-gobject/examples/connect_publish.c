@@ -39,7 +39,7 @@ main(int argc, char *argv[])
     (void)argv;
 
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-    GNostrRelay *relay = gnostr_relay_new("wss://relay.damus.io");
+    GNostrRelay *relay = gnostr_relay_new("wss://nos.lol");
 
     gnostr_relay_connect_async(relay, NULL, on_connect, loop);
 

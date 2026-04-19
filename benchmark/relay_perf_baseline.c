@@ -8,7 +8,7 @@
  * - Latency percentiles (avg, p50, p95, p99)
  *
  * Usage: relay_perf_baseline [relay_url ...]
- * Default relays: wss://relay.damus.io wss://relay.primal.net wss://nos.lol
+ * Default relays: wss://nos.lol wss://relay.primal.net wss://relay.sharegap.net
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -256,7 +256,7 @@ main(int argc, char *argv[])
 
     /* Use CLI args as relay URLs, or defaults */
     const char *default_relays[] = {
-        "wss://relay.damus.io",
+        "wss://nos.lol",
         "wss://relay.primal.net",
         "wss://nos.lol",
     };

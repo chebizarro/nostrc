@@ -243,7 +243,7 @@ static void publish_best_effort(nostrfs_ctx *ctx, const char *content_json){
   char *npub=NULL; if (dbus_get_npub(&npub)==0 && npub){ char pkh[65]; if (decode_npub_hex(npub, pkh)==0) nostr_event_set_pubkey(ev, pkh); free(npub);} else { /* no pubkey; skip */ nostr_event_free(ev); return; }
   if (dbus_sign_event_set_sig(ev) != 0){ nostr_event_free(ev); return; }
   /* Build a base bootstrap relay list from RELAYS_DEFAULT or fallback */
-  const char *env = getenv("RELAYS_DEFAULT"); const char *fallback = "wss://relay.damus.io,wss://nostr.wine";
+  const char *env = getenv("RELAYS_DEFAULT"); const char *fallback = "wss://nos.lol,wss://nostr.wine";
   const char *base_list[16]; size_t base_count = 0;
   char buf[1024]; if (env && *env){ strncpy(buf, env, sizeof buf - 1); buf[sizeof buf - 1] = '\0'; }
   else { strncpy(buf, fallback, sizeof buf - 1); buf[sizeof buf - 1] = '\0'; }

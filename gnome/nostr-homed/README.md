@@ -10,7 +10,7 @@ Components:
 - systemd units — sandboxed services for the control daemon and per-user FUSE mount.
 
 Defaults:
-- RELAYS_DEFAULT: ["wss://relay.damus.io","wss://nostr.wine"]
+- RELAYS_DEFAULT: ["wss://nos.lol","wss://nostr.wine"]
 - BLOSSOM_BASE_URL: "https://blossom.example.org"
 - HOMED_NAMESPACE: "personal"
 - SECRETS_NAMESPACE: "personal"

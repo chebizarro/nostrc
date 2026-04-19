@@ -9,7 +9,7 @@ Type=simple
 Environment=HOMED_NAMESPACE=personal
 Environment=SECRETS_NAMESPACE=personal
 Environment=BLOSSOM_BASE_URL=https://blossom.example.org
-Environment=RELAYS_DEFAULT=wss://relay.damus.io,wss://nostr.wine
+Environment=RELAYS_DEFAULT=wss://nos.lol,wss://nostr.wine
 ExecStart=/usr/bin/nostrfs --writeback --namespace=${HOMED_NAMESPACE} /home/%i
 Restart=on-failure
 RestartSec=2s

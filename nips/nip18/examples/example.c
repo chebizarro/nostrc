@@ -44,7 +44,7 @@ int main(void) {
     NostrEvent *repost = nostr_nip18_create_repost_from_id(
         event_id,
         author_pk,
-        "wss://relay.damus.io",
+        "wss://nos.lol",
         NULL  /* No embedded JSON */
     );
 
@@ -86,7 +86,7 @@ int main(void) {
     nostr_event_set_kind(quote, 1);
     nostr_event_set_content(quote, "This is such a great post! Everyone should see this.");
 
-    if (nostr_nip18_add_q_tag(quote, event_id, "wss://relay.damus.io", author_pk) == 0) {
+    if (nostr_nip18_add_q_tag(quote, event_id, "wss://nos.lol", author_pk) == 0) {
         printf("   Kind: %d\n", nostr_event_get_kind(quote));
         printf("   Has quote: %s\n", nostr_nip18_has_quote(quote) ? "yes" : "no");
         printf("   Content: %s\n", nostr_event_get_content(quote));

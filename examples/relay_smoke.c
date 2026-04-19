@@ -31,7 +31,7 @@ static void print_usage(const char *prog) {
 }
 
 int main(int argc, char **argv) {
-    const char *url = "wss://relay.damus.io";
+    const char *url = "wss://nos.lol";
     long timeout_ms = 20000;
     int limit = 10;
     long since_abs = -1;     // absolute epoch seconds

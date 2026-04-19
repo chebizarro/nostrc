@@ -95,7 +95,7 @@ static void
 test_nprofile_encode_decode(void)
 {
   GError *error = NULL;
-  const gchar *relays[] = { "wss://relay.damus.io", "wss://nos.lol", NULL };
+  const gchar *relays[] = { "wss://nos.lol", "wss://relay.primal.net", NULL };
 
   g_autoptr(GNostrNip19) encoded = gnostr_nip19_encode_nprofile(
     TEST_PUBKEY_HEX, relays, &error);
@@ -110,7 +110,7 @@ test_nprofile_encode_decode(void)
 
   const gchar *const *enc_relays = gnostr_nip19_get_relays(encoded);
   g_assert_nonnull(enc_relays);
-  g_assert_cmpstr(enc_relays[0], ==, "wss://relay.damus.io");
+  g_assert_cmpstr(enc_relays[0], ==, "wss://nos.lol");
   g_assert_cmpstr(enc_relays[1], ==, "wss://nos.lol");
   g_assert_null(enc_relays[2]);
 
@@ -123,7 +123,7 @@ test_nprofile_encode_decode(void)
 
   const gchar *const *dec_relays = gnostr_nip19_get_relays(decoded);
   g_assert_nonnull(dec_relays);
-  g_assert_cmpstr(dec_relays[0], ==, "wss://relay.damus.io");
+  g_assert_cmpstr(dec_relays[0], ==, "wss://nos.lol");
   g_assert_cmpstr(dec_relays[1], ==, "wss://nos.lol");
 }
 
@@ -150,7 +150,7 @@ static void
 test_nevent_encode_decode(void)
 {
   GError *error = NULL;
-  const gchar *relays[] = { "wss://relay.damus.io", NULL };
+  const gchar *relays[] = { "wss://nos.lol", NULL };
 
   g_autoptr(GNostrNip19) encoded = gnostr_nip19_encode_nevent(
     TEST_EVENT_ID_HEX, relays, TEST_PUBKEY_HEX, 1, &error);
@@ -176,7 +176,7 @@ test_nevent_encode_decode(void)
 
   const gchar *const *dec_relays = gnostr_nip19_get_relays(decoded);
   g_assert_nonnull(dec_relays);
-  g_assert_cmpstr(dec_relays[0], ==, "wss://relay.damus.io");
+  g_assert_cmpstr(dec_relays[0], ==, "wss://nos.lol");
 }
 
 /* ── naddr round-trip ────────────────────────────────────────────── */
@@ -221,7 +221,7 @@ static void
 test_nrelay_encode_decode(void)
 {
   GError *error = NULL;
-  const gchar *relays[] = { "wss://relay.damus.io", "wss://nos.lol", NULL };
+  const gchar *relays[] = { "wss://nos.lol", "wss://relay.primal.net", NULL };
 
   g_autoptr(GNostrNip19) encoded = gnostr_nip19_encode_nrelay(relays, &error);
   g_assert_no_error(error);
@@ -234,7 +234,7 @@ test_nrelay_encode_decode(void)
 
   const gchar *const *enc_relays = gnostr_nip19_get_relays(encoded);
   g_assert_nonnull(enc_relays);
-  g_assert_cmpstr(enc_relays[0], ==, "wss://relay.damus.io");
+  g_assert_cmpstr(enc_relays[0], ==, "wss://nos.lol");
   g_assert_cmpstr(enc_relays[1], ==, "wss://nos.lol");
 
   /* Decode */
@@ -245,7 +245,7 @@ test_nrelay_encode_decode(void)
 
   const gchar *const *dec_relays = gnostr_nip19_get_relays(decoded);
   g_assert_nonnull(dec_relays);
-  g_assert_cmpstr(dec_relays[0], ==, "wss://relay.damus.io");
+  g_assert_cmpstr(dec_relays[0], ==, "wss://nos.lol");
   g_assert_cmpstr(dec_relays[1], ==, "wss://nos.lol");
 }
 
@@ -334,7 +334,7 @@ static void
 test_gobject_properties(void)
 {
   GError *error = NULL;
-  const gchar *relays[] = { "wss://relay.damus.io", NULL };
+  const gchar *relays[] = { "wss://nos.lol", NULL };
 
   g_autoptr(GNostrNip19) obj = gnostr_nip19_encode_nprofile(
     TEST_PUBKEY_HEX, relays, &error);
@@ -359,7 +359,7 @@ test_gobject_properties(void)
   g_assert_true(g_str_has_prefix(bech32, "nprofile1"));
   g_assert_cmpstr(pubkey, ==, TEST_PUBKEY_HEX);
   g_assert_nonnull(relay_strv);
-  g_assert_cmpstr(relay_strv[0], ==, "wss://relay.damus.io");
+  g_assert_cmpstr(relay_strv[0], ==, "wss://nos.lol");
 }
 
 /* ── Inapplicable fields return NULL/-1 ──────────────────────────── */

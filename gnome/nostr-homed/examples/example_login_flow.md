@@ -38,7 +38,7 @@ uid_range=100000
 ```
 export HOMED_NAMESPACE=personal
 export HOMED_USERNAME=demo
-export RELAYS_DEFAULT="wss://relay.damus.io,wss://nostr.wine"
+export RELAYS_DEFAULT="wss://nos.lol,wss://nostr.wine"
 export BLOSSOM_BASE_URL="https://blossom.example.org"
 ./build/gnome/nostr-homectl warm-cache
 ```

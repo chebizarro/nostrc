@@ -103,7 +103,7 @@
 
     <!-- Network Settings -->
     <key name="relays" type="as">
-      <default>['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://relay.primal.net']</default>
+      <default>['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.sharegap.net', 'wss://relay.nostr.band']</default>
       <summary>Relay URLs</summary>
       <description>
         List of Nostr relay URLs (ws:// or wss://) for bunker and signing operations.
@@ -124,7 +124,7 @@
     </key>
 
     <key name="bootstrap-relays" type="as">
-      <default>['wss://relay.damus.io', 'wss://relay.nostr.band', 'wss://nos.lol']</default>
+      <default>['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.sharegap.net']</default>
       <summary>Bootstrap relays</summary>
       <description>Initial relays to connect to before fetching user's relay list.</description>
     </key>

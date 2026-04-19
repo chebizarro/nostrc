@@ -74,7 +74,7 @@ enum {
 
 /**
  * gnostr_relay_new:
- * @url: the relay URL (e.g., "wss://relay.damus.io")
+ * @url: the relay URL (e.g., "wss://nos.lol")
  *
  * Creates a new GNostrRelay with the given URL.
  * The URL is a construct-only property.

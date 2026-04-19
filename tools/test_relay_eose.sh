@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-RELAY_URL="${1:-wss://relay.damus.io}"
+RELAY_URL="${1:-wss://nos.lol}"
 TEST_TYPE="${2:-kind0}"
 TIMEOUT=10
 
@@ -114,7 +114,7 @@ echo "==================="
 echo ""
 
 echo "💡 Tip: Test multiple relays to compare compliance:"
-echo "   $0 wss://relay.damus.io kind0"
+echo "   $0 wss://nos.lol kind0"
 echo "   $0 wss://relay.primal.net kind0"
 echo "   $0 wss://nos.lol kind0"
 echo "   $0 wss://relay.sharegap.net kind0"

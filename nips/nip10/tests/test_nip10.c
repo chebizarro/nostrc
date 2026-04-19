@@ -516,7 +516,7 @@ static void test_five_element_tag_from_json(void) {
         "\"tags\":["
             "[\"alt\",\"A short note: Is this released as Open Hardware?\"],"
             "[\"e\",\"7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238\",\"wss://relay.primal.net/\",\"root\",\"fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b\"],"
-            "[\"p\",\"fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b\",\"wss://relay.damus.io/\"]"
+            "[\"p\",\"fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b\",\"wss://nos.lol/\"]"
         "],"
         "\"sig\":\"0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\""
         "}";

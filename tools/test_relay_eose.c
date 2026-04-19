@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Usage: %s <relay_url> [test_type]\n", argv[0]);
         fprintf(stderr, "  test_type: kind0 (default), kind1, empty\n");
         fprintf(stderr, "\nExample:\n");
-        fprintf(stderr, "  %s wss://relay.damus.io kind0\n", argv[0]);
+        fprintf(stderr, "  %s wss://nos.lol kind0\n", argv[0]);
         return 1;
     }
     
@@ -193,7 +193,7 @@ int main(int argc, char *argv[]) {
     }
     
     printf("💡 Tip: Test multiple relays to compare compliance:\n");
-    printf("   %s wss://relay.damus.io kind0\n", argv[0]);
+    printf("   %s wss://nos.lol kind0\n", argv[0]);
     printf("   %s wss://relay.primal.net kind0\n", argv[0]);
     printf("   %s wss://nos.lol kind0\n", argv[0]);
     printf("   %s wss://relay.sharegap.net kind0\n", argv[0]);

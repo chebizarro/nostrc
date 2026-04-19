@@ -215,7 +215,7 @@ Returns the list of configured relay URLs.
 ```
 
 **Returns**:
-- `relays_json` (string): JSON array of relay URLs (e.g., `["wss://relay.damus.io"]`)
+- `relays_json` (string): JSON array of relay URLs (e.g., `["wss://nos.lol"]`)
 
 ---
 

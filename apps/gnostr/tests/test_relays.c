@@ -14,7 +14,7 @@ static gchar *make_temp_config_path(void) {
 }
 
 static void test_valid_url(void) {
-  g_assert_true(gnostr_is_valid_relay_url("wss://relay.damus.io"));
+  g_assert_true(gnostr_is_valid_relay_url("wss://nos.lol"));
   g_assert_true(gnostr_is_valid_relay_url("ws://localhost:8080"));
   g_assert_false(gnostr_is_valid_relay_url(NULL));
   g_assert_false(gnostr_is_valid_relay_url(""));
@@ -27,16 +27,16 @@ static void test_save_load_roundtrip(void) {
   g_setenv("GNOSTR_CONFIG_PATH", cfg, TRUE);
   /* Save */
   GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
-  g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
   g_ptr_array_add(arr, g_strdup("wss://nos.lol"));
+  g_ptr_array_add(arr, g_strdup("wss://relay.primal.net"));
   gnostr_save_relays_from(arr);
   g_ptr_array_free(arr, TRUE);
   /* Load */
   GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
   gnostr_load_relays_into(out);
   g_assert_cmpuint(out->len, ==, 2);
-  g_assert_cmpstr((const char*)out->pdata[0], ==, "wss://relay.damus.io");
-  g_assert_cmpstr((const char*)out->pdata[1], ==, "wss://nos.lol");
+  g_assert_cmpstr((const char*)out->pdata[0], ==, "wss://nos.lol");
+  g_assert_cmpstr((const char*)out->pdata[1], ==, "wss://relay.primal.net");
   g_ptr_array_free(out, TRUE);
   /* Cleanup */
   g_unlink(cfg);

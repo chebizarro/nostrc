@@ -43,7 +43,7 @@ Environment defaults:
 - `HOMED_NAMESPACE=personal`
 - `SECRETS_NAMESPACE=personal`
 - `BLOSSOM_BASE_URL=https://blossom.example.org`
-- `RELAYS_DEFAULT=wss://relay.damus.io,wss://nostr.wine`
+- `RELAYS_DEFAULT=wss://nos.lol,wss://nostr.wine`
 
 Exec and sandboxing:
 - `ExecStart=/usr/bin/nostrfs --writeback --namespace=${HOMED_NAMESPACE} /home/%i`

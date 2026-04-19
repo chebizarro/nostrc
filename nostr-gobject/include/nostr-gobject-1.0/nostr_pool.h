@@ -54,7 +54,7 @@ GNostrPool *gnostr_pool_new(void);
 /**
  * gnostr_pool_add_relay:
  * @self: a #GNostrPool
- * @url: the relay URL to add (e.g., "wss://relay.damus.io")
+ * @url: the relay URL to add (e.g., "wss://nos.lol")
  *
  * Adds a relay to the pool by URL. If the relay is already in the pool,
  * this is a no-op. Creates a new GNostrRelay internally.

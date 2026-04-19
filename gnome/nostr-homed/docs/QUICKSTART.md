@@ -66,7 +66,7 @@ You can set a username for the namespace by either:
 2) Warm the cache (provisions UID/GID + manifest/relays + secrets tmpfs)
 
 ```sh
-export RELAYS_DEFAULT="wss://relay.damus.io,wss://nostr.wine"
+export RELAYS_DEFAULT="wss://nos.lol,wss://nostr.wine"
 export BLOSSOM_BASE_URL="https://blossom.example.org"
 ./build/gnome/nostr-homectl warm-cache
 ```

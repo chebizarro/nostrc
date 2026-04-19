@@ -97,7 +97,7 @@ static void build_defaults(const char ***out_urls, size_t *out_count) {
   }
   if (arr->len == 0) {
     /* Default relays for CLI tool (standalone, no GSettings dependency) */
-    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.primal.net"));
     g_ptr_array_add(arr, g_strdup("wss://nos.lol"));
     g_ptr_array_add(arr, g_strdup("wss://relay.nostr.band"));
   }

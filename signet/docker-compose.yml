@@ -23,7 +23,7 @@ services:
     environment:
       - SIGNET_DB_KEY=${SIGNET_DB_KEY}
       - SIGNET_BUNKER_NSEC=${SIGNET_BUNKER_NSEC}
-      - SIGNET_RELAYS=${SIGNET_RELAYS:-wss://relay.damus.io}
+      - SIGNET_RELAYS=${SIGNET_RELAYS:-wss://nos.lol}
       - SIGNET_LOG_LEVEL=${SIGNET_LOG_LEVEL:-info}
       - SIGNET_PROVISIONER_PUBKEYS=${SIGNET_PROVISIONER_PUBKEYS:-}
 

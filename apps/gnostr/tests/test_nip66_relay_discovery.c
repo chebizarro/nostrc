@@ -24,7 +24,7 @@ static const gchar *SAMPLE_RELAY_META_FULL = "{"
   "\"created_at\":1704067200,"
   "\"kind\":30166,"
   "\"tags\":["
-    "[\"d\",\"wss://relay.damus.io\"],"
+    "[\"d\",\"wss://relay.primal.net\"],"
     "[\"n\",\"clearnet\"],"
     "[\"N\",\"1\"],"
     "[\"N\",\"4\"],"
@@ -39,7 +39,7 @@ static const gchar *SAMPLE_RELAY_META_FULL = "{"
     "[\"t\",\"fast\"],"
     "[\"t\",\"reliable\"]"
   "],"
-  "\"content\":\"{\\\"name\\\":\\\"Damus Relay\\\",\\\"description\\\":\\\"A fast, reliable relay\\\",\\\"pubkey\\\":\\\"abc\\\",\\\"contact\\\":\\\"admin@damus.io\\\",\\\"software\\\":\\\"strfry\\\",\\\"version\\\":\\\"1.0.0\\\"}\","
+  "\"content\":\"{\\\"name\\\":\\\"Primal Relay\\\",\\\"description\\\":\\\"A fast, reliable relay\\\",\\\"pubkey\\\":\\\"abc\\\",\\\"contact\\\":\\\"support@primal.net\\\",\\\"software\\\":\\\"strfry\\\",\\\"version\\\":\\\"1.0.0\\\"}\","
   "\"sig\":\"fakesig\""
 "}";
 
@@ -147,8 +147,8 @@ static void test_parse_relay_meta_full(void) {
   GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(SAMPLE_RELAY_META_FULL);
 
   g_assert_nonnull(meta);
-  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.damus.io");
-  g_assert_cmpstr(meta->d_tag, ==, "wss://relay.damus.io");
+  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.primal.net");
+  g_assert_cmpstr(meta->d_tag, ==, "wss://relay.primal.net");
   g_assert_cmpstr(meta->event_id_hex, ==, "abc123");
   g_assert_cmpstr(meta->pubkey_hex, ==, "472a3c602c881f871ff5034e53c8353a4a52a64dd1b7d8b7d4d8d76e0be8a244");
 
@@ -323,9 +323,9 @@ static void test_cache_basic(void) {
   gnostr_nip66_cache_add_relay(meta);
 
   /* Retrieve it */
-  GnostrNip66RelayMeta *cached = gnostr_nip66_cache_get_relay("wss://relay.damus.io");
+  GnostrNip66RelayMeta *cached = gnostr_nip66_cache_get_relay("wss://relay.primal.net");
   g_assert_nonnull(cached);
-  g_assert_cmpstr(cached->relay_url, ==, "wss://relay.damus.io");
+  g_assert_cmpstr(cached->relay_url, ==, "wss://relay.primal.net");
   g_assert_cmpstr(cached->name, ==, "Damus Relay");
 
   /* Non-existent relay */
@@ -362,7 +362,7 @@ static void test_cache_multiple_relays(void) {
   g_ptr_array_unref(all);
 
   /* Verify individual retrieval */
-  g_assert_nonnull(gnostr_nip66_cache_get_relay("wss://relay.damus.io"));
+  g_assert_nonnull(gnostr_nip66_cache_get_relay("wss://relay.primal.net"));
   g_assert_nonnull(gnostr_nip66_cache_get_relay("wss://nos.lol"));
   g_assert_nonnull(gnostr_nip66_cache_get_relay("wss://offline.relay"));
   g_assert_nonnull(gnostr_nip66_cache_get_relay("wss://paid.relay"));
@@ -424,7 +424,7 @@ static void test_filter_online_only(void) {
   g_assert_nonnull(results);
 
   /* Should include online and unknown status, exclude explicit offline */
-  /* Expected: relay.damus.io (online), nos.lol (unknown), paid.relay (online) = 3 */
+  /* Expected: relay.primal.net (online), nos.lol (unknown), paid.relay (online) = 3 */
   g_assert_cmpuint(results->len, ==, 3);
 
   g_ptr_array_unref(results);
@@ -447,7 +447,7 @@ static void test_filter_free_only(void) {
   g_assert_cmpuint(results->len, ==, 1);
 
   GnostrNip66RelayMeta *meta = g_ptr_array_index(results, 0);
-  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.damus.io");
+  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.primal.net");
 
   g_ptr_array_unref(results);
   gnostr_nip66_cache_clear();
@@ -491,11 +491,11 @@ static void test_filter_by_nip(void) {
 
   GPtrArray *results = gnostr_nip66_filter_relays(&filter);
   g_assert_nonnull(results);
-  g_assert_cmpuint(results->len, ==, 2);  /* relay.damus.io and paid.relay both support NIP-42 */
+  g_assert_cmpuint(results->len, ==, 2);  /* relay.primal.net and paid.relay both support NIP-42 */
 
   g_ptr_array_unref(results);
 
-  /* Filter by NIP-11 (only relay.damus.io) */
+  /* Filter by NIP-11 (only relay.primal.net) */
   gint nip11[] = {11};
   filter.required_nips = nip11;
 
@@ -524,7 +524,7 @@ static void test_filter_by_region(void) {
   g_assert_cmpuint(results->len, ==, 1);
 
   GnostrNip66RelayMeta *meta = g_ptr_array_index(results, 0);
-  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.damus.io");
+  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.primal.net");
 
   g_ptr_array_unref(results);
   gnostr_nip66_cache_clear();
@@ -547,7 +547,7 @@ static void test_filter_combined(void) {
   g_assert_cmpuint(results->len, ==, 1);
 
   GnostrNip66RelayMeta *meta = g_ptr_array_index(results, 0);
-  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.damus.io");
+  g_assert_cmpstr(meta->relay_url, ==, "wss://relay.primal.net");
 
   g_ptr_array_unref(results);
   gnostr_nip66_cache_clear();

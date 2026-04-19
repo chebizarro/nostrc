@@ -8,7 +8,7 @@ fi
 
 USER="$1"
 : "${HOMED_NAMESPACE:=personal}"
-: "${RELAYS_DEFAULT:=wss://relay.damus.io,wss://nostr.wine}"
+: "${RELAYS_DEFAULT:=wss://nos.lol,wss://nostr.wine}"
 : "${BLOSSOM_BASE_URL:=https://blossom.example.org}"
 
 # Warm cache (provisions uid/gid, relays, manifest, secrets tmpfs)

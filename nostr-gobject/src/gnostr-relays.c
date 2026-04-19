@@ -360,7 +360,7 @@ GPtrArray *gnostr_get_profile_fetch_relay_urls(GPtrArray *nip65_relays) {
   static const char *profile_relays[] = {
     "wss://purplepag.es",
     "wss://relay.nostr.band",
-    "wss://relay.damus.io",
+    "wss://nos.lol",
     NULL
   };
   for (int i = 0; profile_relays[i]; i++) {

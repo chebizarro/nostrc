@@ -21,7 +21,7 @@ Kinds:
 ```json
 {
   "relays": [
-    "wss://relay.damus.io",
+    "wss://nos.lol",
     "wss://nostr.wine"
   ]
 }

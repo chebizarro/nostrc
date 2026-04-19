@@ -1147,7 +1147,7 @@ test_relay_validate_url_valid(void)
 {
     g_assert_true(mock_relay_validate_url("wss://relay.example.com"));
     g_assert_true(mock_relay_validate_url("ws://relay.example.com"));
-    g_assert_true(mock_relay_validate_url("wss://relay.damus.io"));
+    g_assert_true(mock_relay_validate_url("wss://nos.lol"));
     g_assert_true(mock_relay_validate_url("wss://relay.nostr.band/"));
 }
 
@@ -1167,10 +1167,10 @@ test_relay_store_multiple_relays(CoreFixture *fixture, gconstpointer data)
     (void)data;
 
     const gchar *relays[] = {
-        "wss://relay.damus.io",
-        "wss://relay.nostr.band",
         "wss://nos.lol",
-        "wss://relay.snort.social"
+        "wss://relay.primal.net",
+        "wss://relay.sharegap.net",
+        "wss://relay.nostr.band"
     };
 
     for (size_t i = 0; i < G_N_ELEMENTS(relays); i++) {

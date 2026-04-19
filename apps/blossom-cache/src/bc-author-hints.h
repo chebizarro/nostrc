@@ -19,7 +19,7 @@ typedef struct _BcAuthorHintCache BcAuthorHintCache;
 
 /**
  * bc_author_hint_cache_new:
- * @relay_url: (nullable): Nostr relay WebSocket URL (e.g. "wss://relay.damus.io").
+ * @relay_url: (nullable): Nostr relay WebSocket URL (e.g. "wss://nos.lol").
  *   If NULL or empty, lookups are disabled and always return NULL.
  * @ttl_seconds: how long to cache results (0 = no caching)
  *

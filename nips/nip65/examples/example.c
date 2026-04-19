@@ -50,8 +50,8 @@ int main(void) {
     NostrRelayList *my_relays = nostr_nip65_list_new();
 
     /* Add relays with different permissions */
-    nostr_nip65_add_relay(my_relays, "wss://relay.damus.io", NOSTR_RELAY_PERM_READWRITE);
     nostr_nip65_add_relay(my_relays, "wss://nos.lol", NOSTR_RELAY_PERM_READWRITE);
+    nostr_nip65_add_relay(my_relays, "wss://relay.primal.net", NOSTR_RELAY_PERM_READWRITE);
     nostr_nip65_add_relay(my_relays, "wss://relay.snort.social", NOSTR_RELAY_PERM_READ);
     nostr_nip65_add_relay(my_relays, "wss://nostr.wine", NOSTR_RELAY_PERM_READ);
     nostr_nip65_add_relay(my_relays, "wss://purplepag.es", NOSTR_RELAY_PERM_WRITE);

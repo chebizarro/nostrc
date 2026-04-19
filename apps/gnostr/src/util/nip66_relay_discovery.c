@@ -35,11 +35,11 @@ static gboolean g_nip66_initialized = FALSE;
 
 /* Well-known NIP-66 relay monitor pubkeys.
  * These are pubkeys of services that publish kind 30166 relay metadata events.
- * nostrc-ns2k: Verified active with `nak req -k 30166 -a <pk> wss://relay.damus.io` */
+ * nostrc-ns2k: Verified active with `nak req -k 30166 -a <pk> wss://nos.lol` */
 static const gchar *s_known_monitors[] = {
   /* nostr.watch Amsterdam monitor - most prolific NIP-66 data source */
   "9bbbb845e5b6c831c29789900769843ab43bb5047abe697870cb50b6fc9bf923",
-  /* Active monitor (publishes to relay.damus.io, verified 2026-02-08) */
+  /* Active monitor (publishes to nos.lol, verified 2026-02-08) */
   "0b01aa38c2cc9abfbe4a10d54b182793479fb80da14a91d13be38ea555b22bfd",
   /* Active monitor (publishes to relay.nostr.watch, verified 2026-02-08) */
   "9ba1d7892cd057f5aca5d629a5a601f64bc3e0f1fc6ed9c939845e25d5e1e254",
@@ -52,7 +52,7 @@ static const gchar *s_known_monitors[] = {
  * nostrc-ns2k: Verified with `nak req -k 30166 --limit 5 <url>` on 2026-02-08.
  * relay.nostr.band was returning 502; purplepag.es had 0 kind 30166 events. */
 static const gchar *s_known_monitor_relays[] = {
-  "wss://relay.damus.io",       /* Confirmed: has kind 30166 from multiple monitors */
+  "wss://relay.primal.net",     /* Confirmed: has kind 30166 from multiple monitors */
   "wss://relay.nostr.watch",    /* Dedicated NIP-66 relay, confirmed working */
   "wss://nos.lol",              /* Large general relay, has some kind 30166 */
   NULL

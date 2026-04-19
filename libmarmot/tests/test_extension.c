@@ -36,7 +36,7 @@ static void test_extension_minimal_roundtrip(void)
     /* Two relays */
     ext->relay_count = 2;
     ext->relays = calloc(2, sizeof(char *));
-    ext->relays[0] = strdup("wss://relay.damus.io");
+    ext->relays[0] = strdup("wss://nos.lol");
     ext->relays[1] = strdup("wss://nos.lol");
 
     /* No image */
@@ -62,7 +62,7 @@ static void test_extension_minimal_roundtrip(void)
     assert(ext2->admin_count == 1);
     assert(memcmp(ext2->admins[0], ext->admins[0], 32) == 0);
     assert(ext2->relay_count == 2);
-    assert(strcmp(ext2->relays[0], "wss://relay.damus.io") == 0);
+    assert(strcmp(ext2->relays[0], "wss://nos.lol") == 0);
     assert(strcmp(ext2->relays[1], "wss://nos.lol") == 0);
     assert(ext2->image_hash == NULL);
 

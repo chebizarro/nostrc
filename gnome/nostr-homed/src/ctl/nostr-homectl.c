@@ -265,7 +265,7 @@ int nh_warm_cache(const char *namespace_hint){
   }
   g_free(npub);
 
-  const char *relays_default[] = { "wss://relay.damus.io", "wss://nostr.wine" };
+  const char *relays_default[] = { "wss://nos.lol", "wss://nostr.wine" };
   const char **relays = relays_default; size_t relays_n = 2;
   int relays_owned = 0;
   /* Check settings for profile-provided relays */

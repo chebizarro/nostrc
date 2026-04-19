@@ -366,13 +366,11 @@ gboolean relay_store_parse_event(RelayStore *rs, const gchar *event_json) {
 GPtrArray *relay_store_get_defaults(void) {
   GPtrArray *arr = g_ptr_array_new_with_free_func((GDestroyNotify)relay_entry_free);
 
-  /* Default bootstrap relays */
+  /* Default bootstrap relays — keep minimal and reliable */
   const gchar *defaults[] = {
-    "wss://relay.damus.io",
-    "wss://relay.nostr.band",
     "wss://nos.lol",
-    "wss://relay.snort.social",
-    "wss://nostr.wine",
+    "wss://relay.primal.net",
+    "wss://relay.sharegap.net",
     NULL
   };
 

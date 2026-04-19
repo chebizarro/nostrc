@@ -2,7 +2,7 @@
 <schemalist>
   <schema id="org.gnostr.gnostr" path="/org/gnostr/gnostr/">
     <key name="relays" type="as">
-      <default>['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://relay.primal.net', 'wss://purplepag.es']</default>
+      <default>['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.sharegap.net', 'wss://relay.nostr.band', 'wss://purplepag.es']</default>
       <summary>Relay URLs</summary>
       <description>
         List of Nostr relay URLs (ws:// or wss://). Values should be normalized
@@ -29,7 +29,7 @@
       <description>Last used height for the Relay Manager dialog.</description>
     </key>
     <key name="dm-relays" type="as">
-      <default>['wss://relay.damus.io', 'wss://nos.lol', 'wss://auth.nostr1.com']</default>
+      <default>['wss://nos.lol', 'wss://relay.primal.net', 'wss://auth.nostr1.com']</default>
       <summary>DM Relay URLs (NIP-17)</summary>
       <description>
         List of Nostr relay URLs specifically for direct messages (NIP-17).
