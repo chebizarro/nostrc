@@ -75,6 +75,16 @@ if(ENABLE_NIP21)
     add_subdirectory(nips/nip21)
 endif()
 
+# NIP-27 depends on NIP-21 (and transitively NIP-19) for URI parsing
+if(ENABLE_NIP27)
+    set(ENABLE_NIP21 ON CACHE BOOL "Enable nip21" FORCE)
+endif()
+
+option(ENABLE_NIP27 "Enable nip27 (Text Note References)" ON)
+if(ENABLE_NIP27)
+    add_subdirectory(nips/nip27)
+endif()
+
 option(ENABLE_NIP22 "Enable nip22 (Comments)" ON)
 if(ENABLE_NIP22)
     add_subdirectory(nips/nip22)
