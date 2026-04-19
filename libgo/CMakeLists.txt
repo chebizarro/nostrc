@@ -394,6 +394,11 @@ apply_sanitizers(chan_bench)
 # Fiber runtime (separate library): go_fiber  #
 ###############################################
 
+# The fiber runtime requires ucontext (portable) or platform-specific assembly
+# backends.  Windows/MinGW has neither ucontext nor an assembly backend yet,
+# and nothing in the Windows build links go_fiber, so skip it entirely.
+if(NOT WIN32)
+
 option(GOF_PORTABLE_CONTEXT "Use portable setjmp/longjmp for fiber context" OFF)
 option(GOF_ENABLE_TRACING "Enable lightweight tracing in go_fiber" OFF)
 
@@ -555,3 +560,5 @@ apply_sanitizers(gof_bench_yield)
 apply_sanitizers(gof_bench_pingpong)
 apply_sanitizers(gof_bench_sleep)
 apply_sanitizers(gof_bench_poll_partition)
+
+endif() # NOT WIN32 — skip go_fiber on Windows
