@@ -54,6 +54,7 @@ struct _NostrGtkComposer {
   GtkWidget *drafts_list;             /* listbox of saved drafts */
   GtkWidget *drafts_empty_label;      /* "No drafts saved" label */
   GtkWidget *btn_save_draft;          /* save draft button */
+  GtkWidget *placeholder_label;       /* "What's on your mind?" overlay */
   char *current_draft_d_tag;          /* d-tag of currently loaded draft (for updates) */
 };
 
@@ -393,7 +394,8 @@ static void nostr_gtk_composer_class_init(NostrGtkComposerClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, drafts_popover);
   gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, drafts_list);
   gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, drafts_empty_label);
-  gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_save_draft);
+    gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_save_draft);
+    gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, placeholder_label);
   gtk_widget_class_bind_template_callback(widget_class, on_post_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_cancel_reply_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_attach_clicked);
@@ -481,6 +483,15 @@ static void nostr_gtk_composer_class_init(NostrGtkComposerClass *klass) {
                    G_TYPE_NONE, 0);
 }
 
+static void
+on_buffer_changed_update_placeholder(GtkTextBuffer *buffer, gpointer user_data)
+{
+  NostrGtkComposer *self = NOSTR_GTK_COMPOSER(user_data);
+  if (!self->placeholder_label) return;
+  gboolean has_text = (gtk_text_buffer_get_char_count(buffer) > 0);
+  gtk_widget_set_visible(self->placeholder_label, !has_text);
+}
+
 static void nostr_gtk_composer_init(NostrGtkComposer *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->text_view),
@@ -497,6 +508,13 @@ static void nostr_gtk_composer_init(NostrGtkComposer *self) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_sensitive),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Mark as Sensitive", -1);
   }
+  /* Connect buffer-changed to show/hide placeholder */
+  if (self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
+    g_signal_connect(buffer, "changed",
+                     G_CALLBACK(on_buffer_changed_update_placeholder), self);
+  }
+
   self->is_sensitive = FALSE;
   self->upload_in_progress = FALSE;
   self->upload_cancellable = NULL;

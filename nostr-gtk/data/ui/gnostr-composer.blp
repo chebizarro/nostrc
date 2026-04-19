@@ -69,22 +69,41 @@ template $NostrGtkComposer: Widget {
       }
     }
 
-    ScrolledWindow {
+    Overlay {
       vexpand: true;
       hexpand: true;
-      min-content-height: 100;
 
-      TextView text_view {
-        wrap-mode: word_char;
-        left-margin: 6;
-        right-margin: 6;
-        top-margin: 6;
-        bottom-margin: 6;
+      ScrolledWindow {
+        vexpand: true;
+        hexpand: true;
+        min-content-height: 100;
 
-        accessibility {
-          label: _("Note content");
-          description: _("Write your note here");
+        TextView text_view {
+          wrap-mode: word_char;
+          left-margin: 6;
+          right-margin: 6;
+          top-margin: 6;
+          bottom-margin: 6;
+
+          accessibility {
+            label: _("Note content");
+            description: _("Write your note here");
+          }
         }
+      }
+
+      [overlay]
+      Label placeholder_label {
+        label: _("What's on your mind?");
+        xalign: 0;
+        yalign: 0;
+        margin-start: 6;
+        margin-top: 6;
+        can-target: false;
+
+        styles [
+          "dim-label",
+        ]
       }
     }
 
