@@ -186,6 +186,11 @@ if(ENABLE_NIP70)
     add_subdirectory(nips/nip70)
 endif()
 
+option(ENABLE_NIP73 "Enable nip73 (External Content IDs)" ON)
+if(ENABLE_NIP73)
+    add_subdirectory(nips/nip73)
+endif()
+
 option(ENABLE_NIP5F "Enable nip5f" ON)
 if(ENABLE_NIP5F)
     add_subdirectory(nips/nip5f)
