@@ -452,6 +452,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="tooltip-text" translatable="yes">Account</property>
                             <style>
                               <class name="flat"/>
+                              <class name="circular"/>
                             </style>
                           </object>
                         </child>
@@ -461,6 +462,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="tooltip-text" translatable="yes">Compose</property>
                             <style>
                               <class name="suggested-action"/>
+                              <class name="circular"/>
                             </style>
                           </object>
                         </child>
