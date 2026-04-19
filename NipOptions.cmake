@@ -221,6 +221,11 @@ if(ENABLE_NIP60)
     add_subdirectory(nips/nip60)
 endif()
 
+option(ENABLE_NIP61 "Enable nip61 (Nutzaps)" ON)
+if(ENABLE_NIP61)
+    add_subdirectory(nips/nip61)
+endif()
+
 option(ENABLE_NIP70 "Enable nip70 (Protected Events)" ON)
 if(ENABLE_NIP70)
     add_subdirectory(nips/nip70)
