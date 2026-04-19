@@ -1745,8 +1745,9 @@ static GtkWidget *create_plugin_sidebar_row(const char *label, const char *icon_
   gtk_widget_set_margin_top(box, 10);
   gtk_widget_set_margin_bottom(box, 10);
 
-  /* Icon */
+  /* Icon — match fixed 16px size used by static sidebar icons */
   GtkWidget *icon = gtk_image_new_from_icon_name(icon_name ? icon_name : "application-x-addon-symbolic");
+  gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
   gtk_widget_add_css_class(icon, "dim-label");
   gtk_box_append(GTK_BOX(box), icon);
 

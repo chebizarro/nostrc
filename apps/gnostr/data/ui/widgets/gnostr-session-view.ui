@@ -85,6 +85,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkImage">
                                         <property name="icon-name">view-list-symbolic</property>
+                                        <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -116,6 +117,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkImage">
                                         <property name="icon-name">preferences-system-notifications-symbolic</property>
+                                        <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -147,6 +149,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkImage">
                                         <property name="icon-name">mail-unread-symbolic</property>
+                                        <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -178,6 +181,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkImage">
                                         <property name="icon-name">system-search-symbolic</property>
+                                        <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -209,6 +213,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkImage">
                                         <property name="icon-name">edit-find-symbolic</property>
+                                        <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -240,6 +245,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkImage">
                                         <property name="icon-name">folder-remote-symbolic</property>
+                                        <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -271,6 +277,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkImage">
                                         <property name="icon-name">x-office-calendar-symbolic</property>
+                                        <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
