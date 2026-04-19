@@ -37,8 +37,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="child">
                   <object class="AdwToolbarView">
                     <child type="top">
-                      <object class="AdwHeaderBar" id="sidebar_header_bar">
-                        <child type="start">
+                        <object class="AdwHeaderBar" id="sidebar_header_bar">
+                          <property name="show-title">false</property>
+                          <child type="start">
                           <object class="GtkButton" id="btn_settings">
                             <property name="icon-name">emblem-system-symbolic</property>
                             <property name="tooltip-text" translatable="yes">Settings</property>
@@ -278,6 +279,37 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkLabel">
                                         <property name="label" translatable="yes">Git Repos</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow" id="row_calendar">
+                                <accessibility>
+                                  <property name="label" translatable="yes">Events</property>
+                                </accessibility>
+                                <property name="child">
+                                  <object class="GtkBox">
+                                    <property name="orientation">0</property>
+                                    <property name="spacing">12</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">10</property>
+                                    <property name="margin-bottom">10</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">x-office-calendar-symbolic</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Events</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -614,6 +646,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="icon-name">folder-remote-symbolic</property>
                                         <property name="child">
                                           <object class="GnostrRepoBrowser" id="repo_browser">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">calendar</property>
+                                        <property name="title" translatable="yes">Events</property>
+                                        <property name="icon-name">x-office-calendar-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrCalendarEventsView" id="calendar_events_view">
                                             <property name="hexpand">true</property>
                                             <property name="vexpand">true</property>
                                           </object>
