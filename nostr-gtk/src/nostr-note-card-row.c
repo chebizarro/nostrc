@@ -2651,7 +2651,19 @@ void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *d
   /* nostrc-534d: Don't modify unbound row (defensive check) */
   if (self->binding_id == 0) return;
   if (GTK_IS_LABEL(self->lbl_display)) gtk_label_set_text(GTK_LABEL(self->lbl_display), (display_name && *display_name) ? display_name : (handle ? handle : _("Anonymous")));
-  if (GTK_IS_LABEL(self->lbl_handle))  gtk_label_set_text(GTK_LABEL(self->lbl_handle), (handle && *handle) ? handle : "@anon");
+  /* nostrc-j639: Hide handle when it duplicates the display name — many
+   * Nostr profiles set "name" == "display_name" which caused the same
+   * text to appear on two lines in the note header. */
+  if (GTK_IS_LABEL(self->lbl_handle)) {
+    gboolean duplicate = (handle && *handle && display_name && *display_name &&
+                          g_strcmp0(handle, display_name) == 0);
+    if (duplicate) {
+      gtk_widget_set_visible(self->lbl_handle, FALSE);
+    } else {
+      gtk_label_set_text(GTK_LABEL(self->lbl_handle), (handle && *handle) ? handle : "@anon");
+      gtk_widget_set_visible(self->lbl_handle, TRUE);
+    }
+  }
   g_clear_pointer(&self->avatar_url, g_free);
   self->avatar_url = g_strdup(avatar_url);
   set_avatar_initials(self, display_name, handle);
@@ -2706,9 +2718,18 @@ void nostr_gtk_note_card_row_set_author_name_only(NostrGtkNoteCardRow *self,
     gtk_label_set_text(GTK_LABEL(self->lbl_display),
                        (display_name && *display_name) ? display_name
                        : (handle ? handle : _("Anonymous")));
-  if (GTK_IS_LABEL(self->lbl_handle))
-    gtk_label_set_text(GTK_LABEL(self->lbl_handle),
-                       (handle && *handle) ? handle : "@anon");
+  /* nostrc-j639: Hide handle when it duplicates the display name */
+  if (GTK_IS_LABEL(self->lbl_handle)) {
+    gboolean duplicate = (handle && *handle && display_name && *display_name &&
+                          g_strcmp0(handle, display_name) == 0);
+    if (duplicate) {
+      gtk_widget_set_visible(self->lbl_handle, FALSE);
+    } else {
+      gtk_label_set_text(GTK_LABEL(self->lbl_handle),
+                         (handle && *handle) ? handle : "@anon");
+      gtk_widget_set_visible(self->lbl_handle, TRUE);
+    }
+  }
 
   /* Show initials as placeholder until avatar loads in Tier 2 */
   set_avatar_initials(self, display_name, handle);
