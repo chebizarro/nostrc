@@ -25,6 +25,9 @@
 /* Maximum events to query from NDB */
 #define CALENDAR_QUERY_LIMIT 200
 
+/* Max seconds to show the loading spinner before falling back to empty state */
+#define CALENDAR_LOADING_TIMEOUT_SECONDS 10
+
 enum {
   SIGNAL_OPEN_PROFILE,
   SIGNAL_OPEN_EVENT,
@@ -62,6 +65,7 @@ struct _GnostrCalendarEventsView {
   GnostrCalendarEventsFilter active_filter;
   gboolean logged_in;
   gulong items_changed_id;
+  guint loading_timeout_id;
 };
 
 G_DEFINE_FINAL_TYPE(GnostrCalendarEventsView, gnostr_calendar_events_view, GTK_TYPE_WIDGET)
@@ -171,6 +175,30 @@ update_count_and_state(GnostrCalendarEventsView *self)
 /* --- items-changed on the source model → refresh view --- */
 
 static void
+calendar_clear_loading(GnostrCalendarEventsView *self)
+{
+  if (self->loading_timeout_id > 0) {
+    g_source_remove(self->loading_timeout_id);
+    self->loading_timeout_id = 0;
+  }
+  gtk_spinner_set_spinning(self->loading_spinner, FALSE);
+  update_count_and_state(self);
+}
+
+static gboolean
+on_loading_timeout(gpointer user_data)
+{
+  GnostrCalendarEventsView *self = GNOSTR_CALENDAR_EVENTS_VIEW(user_data);
+  self->loading_timeout_id = 0;
+
+  g_debug("[CALENDAR] Loading timeout — clearing spinner");
+  gtk_spinner_set_spinning(self->loading_spinner, FALSE);
+  update_count_and_state(self);
+
+  return G_SOURCE_REMOVE;
+}
+
+static void
 on_items_changed(GListModel *model G_GNUC_UNUSED,
                  guint position G_GNUC_UNUSED,
                  guint removed G_GNUC_UNUSED,
@@ -181,7 +209,7 @@ on_items_changed(GListModel *model G_GNUC_UNUSED,
 
   /* Hide loading once we have data */
   if (g_list_model_get_n_items(G_LIST_MODEL(self->event_model)) > 0) {
-    gtk_spinner_set_spinning(self->loading_spinner, FALSE);
+    calendar_clear_loading(self);
   }
 
   update_count_and_state(self);
@@ -336,9 +364,13 @@ build_model(GnostrCalendarEventsView *self)
   self->items_changed_id = g_signal_connect(self->event_model, "items-changed",
                                              G_CALLBACK(on_items_changed), self);
 
-  /* Start in loading state */
+  /* Start in loading state with safety timeout */
   gtk_spinner_set_spinning(self->loading_spinner, TRUE);
   gtk_stack_set_visible_child_name(self->content_stack, "loading");
+  if (self->loading_timeout_id > 0)
+    g_source_remove(self->loading_timeout_id);
+  self->loading_timeout_id = g_timeout_add_seconds(
+      CALENDAR_LOADING_TIMEOUT_SECONDS, on_loading_timeout, self);
 }
 
 /* --- GObject lifecycle --- */
@@ -347,6 +379,11 @@ static void
 gnostr_calendar_events_view_dispose(GObject *obj)
 {
   GnostrCalendarEventsView *self = GNOSTR_CALENDAR_EVENTS_VIEW(obj);
+
+  if (self->loading_timeout_id > 0) {
+    g_source_remove(self->loading_timeout_id);
+    self->loading_timeout_id = 0;
+  }
 
   if (self->event_model && self->items_changed_id) {
     g_signal_handler_disconnect(self->event_model, self->items_changed_id);
