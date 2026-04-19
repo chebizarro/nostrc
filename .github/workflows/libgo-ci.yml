@@ -40,8 +40,6 @@ jobs:
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
-          brew update
-          brew upgrade
           brew install libsoup@3 nsync || true
           # Ensure Homebrew pkg-config paths are visible (not always by default in Actions shells)
           echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
@@ -145,17 +143,6 @@ jobs:
             libgo/build/CTestTestfile.cmake
           if-no-files-found: ignore
 
-      - name: Archive logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ runner.os }}-${{ matrix.sanitizer }}-logs
-          path: |
-            libgo/build/Testing/Temporary/*
-            libgo/build/Testing/*/LastTest.log
-            libgo/build/CTestTestfile.cmake
-          if-no-files-found: ignore
-
   fuzz-driver:
     name: ${{ matrix.os }} • fuzz-driver
     runs-on: ${{ matrix.os }}
@@ -182,8 +169,6 @@ jobs:
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
-          brew update
-          brew upgrade
           brew install jansson libwebsockets libsoup@3 nsync secp256k1 || true
 
       - name: Override ASAN options (macOS)
@@ -191,7 +176,18 @@ jobs:
         run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
 
       - name: Configure fuzz driver
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=OFF
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DENABLE_FUZZING=ON \
+            -DENABLE_FUZZING_RUNTIME=OFF \
+            -DBUILD_LIBMARMOT=OFF \
+            -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_NOSTR_GTK=OFF \
+            -DBUILD_APPS=OFF \
+            -DBUILD_RELAYD=OFF \
+            -DSIGNET_ENABLE=OFF \
+            -DWITH_NOSTRDB=OFF
 
       - name: Build fuzz driver
         run: cmake --build build -j --target fuzz_event_driver

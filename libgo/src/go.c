@@ -63,21 +63,6 @@ int go_fiber(void (*fn)(void *arg), void *arg, size_t stack_bytes) {
  * to fibers without changing their signatures. Falls back to go() (OS thread)
  * if the fiber runtime is not linked. */
 
-typedef struct {
-    void *(*fn)(void *);
-    void  *arg;
-} GoFiberCompatWrapper;
-
-static void go_fiber_compat_trampoline(void *ctx) {
-    GoFiberCompatWrapper *w = (GoFiberCompatWrapper *)ctx;
-    void *(*fn)(void *) = w->fn;
-    void *arg = w->arg;
-    free(w);
-    atomic_fetch_add(&g_active_goroutines, 1);
-    fn(arg);  /* return value discarded — same as detached pthread */
-    atomic_fetch_sub(&g_active_goroutines, 1);
-}
-
 int go_fiber_compat(void *(*start_routine)(void *), void *arg) {
     /* nostrc-b0h-revert: Always use OS threads instead of fibers.
      * The fiber runtime has issues where spawned fibers don't execute,
