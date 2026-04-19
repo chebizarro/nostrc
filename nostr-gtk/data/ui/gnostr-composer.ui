@@ -128,7 +128,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="spacing">6</property>
             <child>
               <object class="GtkButton" id="btn_attach">
-                <property name="icon-name">mail-attachment-symbolic</property>
+                <property name="icon-name">insert-image-symbolic</property>
                 <property name="tooltip-text">Attach image or file</property>
                 <property name="has-frame">false</property>
                 <signal name="clicked" handler="on_attach_clicked"/>
