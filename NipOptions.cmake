@@ -156,6 +156,11 @@ if(ENABLE_NIP57)
     add_subdirectory(nips/nip57)
 endif()
 
+option(ENABLE_NIP70 "Enable nip70 (Protected Events)" ON)
+if(ENABLE_NIP70)
+    add_subdirectory(nips/nip70)
+endif()
+
 option(ENABLE_NIP5F "Enable nip5f" ON)
 if(ENABLE_NIP5F)
     add_subdirectory(nips/nip5f)
