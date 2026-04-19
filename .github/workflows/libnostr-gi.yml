@@ -49,8 +49,15 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
 
-      - name: Configure (with GLib + nostrdb, no apps)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON -DWITH_NOSTRDB=ON -DNOSTR_ENABLE_GI=ON -DBUILD_APPS=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF -DBUILD_RELAYD=OFF -DBUILD_TESTING=OFF -DBUILD_TESTING_FRAMEWORK=OFF
+      - name: Configure (with GLib, no nostrdb/apps)
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+          -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON
+          -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+          -DNOSTR_ENABLE_GI=ON
+          -DBUILD_APPS=OFF -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF
+          -DSIGNET_ENABLE=OFF -DBUILD_RELAYD=OFF
+          -DBUILD_TESTING=OFF -DBUILD_TESTING_FRAMEWORK=OFF
 
       - name: Build (no system install)
         run: |

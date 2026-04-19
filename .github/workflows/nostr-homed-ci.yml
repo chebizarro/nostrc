@@ -151,13 +151,23 @@ jobs:
 
       - name: Run systemd OpenSession integration (privileged)
         run: |
-          docker run --rm --privileged \
+          # Start container in background so systemd boots as PID 1
+          docker run -d --rm --privileged \
+            --name homed-systemd-test \
             --device /dev/fuse \
             --security-opt apparmor:unconfined \
             -v $(pwd):/workspace \
             -w /workspace \
-            jrei/systemd-ubuntu:24.04 \
-            bash -lc "apt-get update && apt-get install -y fuse3 sqlite3 && bash gnome/nostr-homed/tests/integration/run_systemd_opensession_test.sh"
+            jrei/systemd-ubuntu:24.04
+          # Wait for systemd to finish booting
+          for i in $(seq 1 30); do
+            if docker exec homed-systemd-test systemctl is-system-running --wait 2>/dev/null; then break; fi
+            sleep 1
+          done
+          # Run the integration test inside the running systemd container
+          docker exec homed-systemd-test bash -lc \
+            "apt-get update && apt-get install -y fuse3 sqlite3 && bash gnome/nostr-homed/tests/integration/run_systemd_opensession_test.sh"
+          docker stop homed-systemd-test 2>/dev/null || true
 
       - name: (Best-effort) WarmCache smoke on host
         run: |

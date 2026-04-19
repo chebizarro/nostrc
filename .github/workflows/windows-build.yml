@@ -114,6 +114,7 @@ jobs:
             git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git $HOME/secp256k1-src
             cmake -S $HOME/secp256k1-src -B $HOME/secp256k1-build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/mingw64 \
               -DSECP256K1_BUILD_TESTS=OFF \
               -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF \
               -DSECP256K1_BUILD_BENCHMARK=OFF
