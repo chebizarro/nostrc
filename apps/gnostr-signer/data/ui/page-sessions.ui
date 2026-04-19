@@ -11,7 +11,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="icon-name">network-server-symbolic</property>
     <accessibility>
       <property name="label">Active sessions page</property>
-      <property name="description">Manage active NIP-46 client sessions for remote signing applications</property>
+      <property name="description">Manage active client sessions for remote signing applications</property>
     </accessibility>
     <child>
       <object class="AdwPreferencesGroup">

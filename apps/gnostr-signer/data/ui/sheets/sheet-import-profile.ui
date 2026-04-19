@@ -69,14 +69,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="GtkCheckButton" id="radio_nip49">
                         <property name="active">true</property>
                         <accessibility>
-                          <property name="label">NIP-49 Encrypted Backup</property>
+                          <property name="label">Encrypted Backup</property>
                           <property name="description">Import from an encrypted ncryptsec backup string</property>
                         </accessibility>
                       </object>
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label" translatable="yes">NIP-49 Encrypted Backup</property>
+                        <property name="label" translatable="yes">Encrypted Backup</property>
                         <property name="xalign">0</property>
                         <property name="hexpand">true</property>
                       </object>

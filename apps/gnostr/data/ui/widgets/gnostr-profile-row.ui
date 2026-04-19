@@ -79,7 +79,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkImage" id="nip05_badge">
                     <property name="icon-name">emblem-ok-symbolic</property>
                     <property name="visible">false</property>
-                    <property name="tooltip-text">Verified NIP-05</property>
+                    <property name="tooltip-text">Verified Nostr Address</property>
                     <style>
                       <class name="nip05-badge"/>
                     </style>

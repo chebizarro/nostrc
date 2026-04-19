@@ -219,7 +219,7 @@ template $OnboardingAssistant: Adw.Window {
                 wrap: true;
                 xalign: 0;
                 max-width-chars: 45;
-                label: _("<b>NIP-46 Remote Signing</b> - Use your keys across devices without ever sharing them directly.");
+                label: _("<b>Remote Signing</b> - Use your keys across devices without ever sharing them directly.");
                 use-markup: true;
               }
             }
@@ -552,7 +552,7 @@ template $OnboardingAssistant: Adw.Window {
 
           accessibility {
             label: "Import key page";
-            description: "Import your existing Nostr key using nsec, NIP-49 encrypted backup, or mnemonic phrase";
+            description: "Import your existing Nostr key using nsec, encrypted backup, or mnemonic phrase";
           }
 
           Image {
@@ -587,10 +587,10 @@ template $OnboardingAssistant: Adw.Window {
 
               CheckButton radio_import_nsec {
                 active: true;
-                label: _("nsec / NIP-49");
+                label: _("nsec / Encrypted");
 
                 accessibility {
-                  label: "Import nsec or NIP-49 encrypted backup";
+                  label: "Import nsec or encrypted backup";
                   description: "Import using an nsec1 private key or ncryptsec1 encrypted backup";
                 }
               }
@@ -689,12 +689,12 @@ template $OnboardingAssistant: Adw.Window {
 
               accessibility {
                 label: "Decryption passphrase container";
-                description: "Enter the passphrase used to decrypt your NIP-49 encrypted backup";
+                description: "Enter the passphrase used to decrypt your encrypted backup";
               }
             }
 
             Label {
-              label: _("For NIP-49 (ncryptsec) encrypted backups, enter the decryption passphrase above.");
+              label: _("For ncryptsec encrypted backups, enter the decryption passphrase above.");
               wrap: true;
               max-width-chars: 45;
               xalign: 0;
@@ -962,7 +962,7 @@ template $OnboardingAssistant: Adw.Window {
 
             Label {
               xalign: 0;
-              label: _("- Complete your key setup in the main window - Connect Nostr applications via NIP-46 - Configure permission policies for apps - Export a backup of your key");
+              label: _("- Complete your key setup in the main window - Connect Nostr applications via remote signing - Configure permission policies for apps - Export a backup of your key");
             }
           }
 

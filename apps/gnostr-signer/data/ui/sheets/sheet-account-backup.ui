@@ -95,10 +95,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwPreferencesGroup">
-            <property name="title" translatable="yes">Create encrypted key (NIP-49)</property>
+            <property name="title" translatable="yes">Create encrypted key backup</property>
             <accessibility>
               <property name="label">Create encrypted backup</property>
-              <property name="description">Create an encrypted backup of your key using NIP-49 format</property>
+              <property name="description">Create an encrypted backup of your key (ncryptsec format)</property>
             </accessibility>
             <child>
               <object class="GtkBox">

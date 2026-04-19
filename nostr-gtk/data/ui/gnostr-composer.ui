@@ -71,7 +71,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkEntry" id="subject_entry">
                 <property name="hexpand">true</property>
-                <property name="placeholder-text">Optional subject line (NIP-14)</property>
+                <property name="placeholder-text">Subject (optional)</property>
                 <property name="max-length">80</property>
               </object>
             </child>
@@ -140,7 +140,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkToggleButton" id="btn_sensitive">
                 <property name="icon-name">dialog-warning-symbolic</property>
-                <property name="tooltip-text">Mark as sensitive content (NIP-36)</property>
+                <property name="tooltip-text">Mark as sensitive content</property>
                 <property name="has-frame">false</property>
                 <signal name="toggled" handler="on_sensitive_toggled"/>
                 <style>
@@ -151,7 +151,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkButton" id="btn_save_draft">
                 <property name="icon-name">document-save-symbolic</property>
-                <property name="tooltip-text">Save as draft (NIP-37)</property>
+                <property name="tooltip-text">Save as draft</property>
                 <property name="has-frame">false</property>
                 <signal name="clicked" handler="on_save_draft_clicked"/>
                 <style>
@@ -162,7 +162,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkMenuButton" id="btn_drafts">
                 <property name="icon-name">document-open-recent-symbolic</property>
-                <property name="tooltip-text">Load draft (NIP-37)</property>
+                <property name="tooltip-text">Load draft</property>
                 <property name="has-frame">false</property>
                 <property name="popover">
                   <object class="GtkPopover" id="drafts_popover">

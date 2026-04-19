@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <object class="GtkWindow" id="relay_discovery_window">
-    <property name="title">Discover Relays (NIP-66)</property>
+    <property name="title">Discover Relays</property>
     <property name="default-width">700</property>
     <property name="default-height">550</property>
     <child>
@@ -34,7 +34,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="xalign">0</property>
                 <property name="wrap">true</property>
                 <property name="use-markup">true</property>
-                <property name="label">&lt;small&gt;Browse relays discovered via NIP-66 relay monitors. Filter by region, supported NIPs, and status to find relays that match your needs.&lt;/small&gt;</property>
+                <property name="label">&lt;small&gt;Browse relays from relay monitors. Filter by region, capabilities, and status to find relays that match your needs.&lt;/small&gt;</property>
                 <style>
                   <class name="dim-label"/>
                 </style>
@@ -154,7 +154,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel" id="loading_label">
-                        <property name="label">Discovering relays from NIP-66 monitors...</property>
+                        <property name="label">Discovering relays from monitors...</property>
                         <style>
                           <class name="dim-label"/>
                         </style>

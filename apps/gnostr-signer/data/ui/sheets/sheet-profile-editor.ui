@@ -176,14 +176,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="title" translatable="yes">Verification &amp; Payments</property>
                         <accessibility>
                           <property name="label">Verification and payments</property>
-                          <property name="description">NIP-05 verification and Lightning payment address</property>
+                          <property name="description">Nostr address verification and Lightning payment address</property>
                         </accessibility>
                         <child>
                           <object class="AdwEntryRow" id="entry_nip05">
-                            <property name="title" translatable="yes">NIP-05 Identifier</property>
+                            <property name="title" translatable="yes">Nostr Address</property>
                             <property name="input-hints">2</property>
                             <accessibility>
-                              <property name="description">Your NIP-05 verification identifier, like name@domain.com</property>
+                              <property name="description">Your Nostr address, like name@domain.com</property>
                             </accessibility>
                           </object>
                         </child>
@@ -252,7 +252,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="xalign">0</property>
                                         <property name="ellipsize">3</property>
                                         <accessibility>
-                                          <property name="label">Preview NIP-05 identifier</property>
+                                          <property name="label">Preview Nostr address</property>
                                         </accessibility>
                                         <style>
                                           <class name="dim-label"/>

@@ -40,7 +40,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_communities">
-                    <property name="tooltip-text">Browse moderated communities (NIP-72)</property>
+                    <property name="tooltip-text">Browse moderated communities</property>
                     <child>
                       <object class="GtkBox">
                         <property name="orientation">0</property>
@@ -83,7 +83,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="GtkToggleButton" id="btn_mode_live">
                     <property name="label">Live</property>
-                    <property name="tooltip-text">Browse live streams (NIP-53)</property>
+                    <property name="tooltip-text">Browse live streams</property>
                     <style>
                       <class name="pill"/>
                     </style>
@@ -92,7 +92,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="GtkToggleButton" id="btn_mode_articles">
                     <property name="label">Articles</property>
-                    <property name="tooltip-text">Browse Wiki (NIP-54) and Long-form (NIP-23) content</property>
+                    <property name="tooltip-text">Browse Wiki and Long-form content</property>
                     <style>
                       <class name="pill"/>
                     </style>

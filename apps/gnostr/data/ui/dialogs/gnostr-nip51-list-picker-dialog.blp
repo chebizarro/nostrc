@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $GnostrNip51ListPickerDialog: Adw.Dialog {
-  title: _("Import NIP-51 List");
+  title: _("Import People List");
   content-width: 460;
   content-height: 520;
 
@@ -18,7 +18,7 @@ template $GnostrNip51ListPickerDialog: Adw.Dialog {
       }
 
       title-widget: Label {
-        label: _("Import NIP-51 List");
+        label: _("Import People List");
 
         styles [
           "title",
@@ -44,7 +44,7 @@ template $GnostrNip51ListPickerDialog: Adw.Dialog {
           }
 
           Label {
-            label: _("Loading your NIP-51 lists…");
+            label: _("Loading your lists…");
 
             styles [
               "dim-label",
@@ -57,7 +57,7 @@ template $GnostrNip51ListPickerDialog: Adw.Dialog {
         name: "empty";
         child: Adw.StatusPage status_empty {
           icon-name: "view-list-symbolic";
-          title: _("No NIP-51 Lists Found");
+          title: _("No Lists Found");
           description: _("You don't appear to have any kind-30000 people lists cached locally. Try again after syncing from your relays.");
         };
       }

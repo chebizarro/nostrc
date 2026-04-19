@@ -45,7 +45,7 @@ Window relay_manager_window {
         xalign: 0.0;
         use-markup: true;
         wrap: true;
-        label: "<small>Click a relay to view NIP-11 info. Use the dropdown to set <b>NIP-65</b> permissions (read/write). <b>Enter</b> to add, <b>Delete</b> to remove.</small>";
+        label: "<small>Click a relay to view its info. Use the dropdown to set permissions (read/write). <b>Enter</b> to add, <b>Delete</b> to remove.</small>";
       }
 
       ScrolledWindow {
@@ -68,7 +68,7 @@ Window relay_manager_window {
         }
 
         Button btn_discover {
-          tooltip-text: "Discover relays via NIP-66 relay monitors";
+          tooltip-text: "Discover relays from relay monitors";
 
           Box {
             orientation: horizontal;
@@ -403,7 +403,7 @@ Window relay_manager_window {
                 Label {
                   xalign: 0.0;
                   use-markup: true;
-                  label: "<b>NIP-65 Permission</b>";
+                  label: "<b>Permission</b>";
 
                   css-classes: [
                     "dim-label",

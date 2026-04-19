@@ -55,7 +55,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="xalign">0</property>
                 <property name="use-markup">true</property>
                 <property name="wrap">true</property>
-                <property name="label">&lt;small&gt;Click a relay to view NIP-11 info. Use the dropdown to set &lt;b&gt;NIP-65&lt;/b&gt; permissions (read/write). &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove.&lt;/small&gt;</property>
+                <property name="label">&lt;small&gt;Click a relay to view its info. Use the dropdown to set permissions (read/write). &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove.&lt;/small&gt;</property>
               </object>
             </child>
             <child>
@@ -82,7 +82,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_discover">
-                    <property name="tooltip-text">Discover relays via NIP-66 relay monitors</property>
+                    <property name="tooltip-text">Discover relays from relay monitors</property>
                     <child>
                       <object class="GtkBox">
                         <property name="orientation">0</property>
@@ -425,7 +425,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   <object class="GtkLabel">
                                     <property name="xalign">0</property>
                                     <property name="use-markup">true</property>
-                                    <property name="label">&lt;b&gt;NIP-65 Permission&lt;/b&gt;</property>
+                                    <property name="label">&lt;b&gt;Permission&lt;/b&gt;</property>
                                     <property name="css-classes">dim-label</property>
                                   </object>
                                 </child>

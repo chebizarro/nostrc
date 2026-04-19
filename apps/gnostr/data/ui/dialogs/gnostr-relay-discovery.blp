@@ -1,7 +1,7 @@
 using Gtk 4.0;
 
 Window relay_discovery_window {
-    title: "Discover Relays (NIP-66)";
+    title: "Discover Relays";
     default-width: 700;
     default-height: 550;
 
@@ -28,7 +28,7 @@ Window relay_discovery_window {
                 xalign: 0.0;
                 wrap: true;
                 use-markup: true;
-                label: "<small>Browse relays discovered via NIP-66 relay monitors. Filter by region, supported NIPs, and status to find relays that match your needs.</small>";
+                label: "<small>Browse relays from relay monitors. Filter by region, capabilities, and status to find relays that match your needs.</small>";
 
                 styles [
                     "dim-label",
@@ -137,7 +137,7 @@ Window relay_discovery_window {
                     }
 
                     Label loading_label {
-                        label: "Discovering relays from NIP-66 monitors...";
+                        label: "Discovering relays from monitors...";
 
                         styles [
                             "dim-label",

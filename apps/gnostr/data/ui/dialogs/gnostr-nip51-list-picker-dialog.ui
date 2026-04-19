@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrNip51ListPickerDialog" parent="AdwDialog">
-    <property name="title" translatable="yes">Import NIP-51 List</property>
+    <property name="title" translatable="yes">Import People List</property>
     <property name="content-width">460</property>
     <property name="content-height">520</property>
     <child>
@@ -23,7 +23,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <property name="title-widget">
               <object class="GtkLabel">
-                <property name="label" translatable="yes">Import NIP-51 List</property>
+                <property name="label" translatable="yes">Import People List</property>
                 <style>
                   <class name="title"/>
                 </style>
@@ -52,7 +52,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label" translatable="yes">Loading your NIP-51 lists…</property>
+                        <property name="label" translatable="yes">Loading your lists…</property>
                         <style>
                           <class name="dim-label"/>
                         </style>
@@ -68,7 +68,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="child">
                   <object class="AdwStatusPage" id="status_empty">
                     <property name="icon-name">view-list-symbolic</property>
-                    <property name="title" translatable="yes">No NIP-51 Lists Found</property>
+                    <property name="title" translatable="yes">No Lists Found</property>
                     <property name="description" translatable="yes">You don't appear to have any kind-30000 people lists cached locally. Try again after syncing from your relays.</property>
                   </object>
                 </property>

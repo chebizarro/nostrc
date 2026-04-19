@@ -99,7 +99,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <child>
                                   <object class="AdwActionRow" id="row_calendar">
                                     <property name="title" translatable="yes">Calendar</property>
-                                    <property name="subtitle" translatable="yes">NIP-52 events → GNOME Calendar</property>
+                                    <property name="subtitle" translatable="yes">Calendar events → GNOME Calendar</property>
                                     <property name="icon-name">x-office-calendar-symbolic</property>
                                   </object>
                                 </child>

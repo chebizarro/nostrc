@@ -53,7 +53,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="GtkToggleButton" id="btn_wiki">
                     <property name="label">Wiki</property>
-                    <property name="tooltip-text">NIP-54 Wiki Articles</property>
+                    <property name="tooltip-text">Wiki Articles</property>
                     <style>
                       <class name="pill"/>
                     </style>
@@ -62,7 +62,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="GtkToggleButton" id="btn_blog">
                     <property name="label">Blog</property>
-                    <property name="tooltip-text">NIP-23 Long-form Content</property>
+                    <property name="tooltip-text">Long-form Content</property>
                     <style>
                       <class name="pill"/>
                     </style>

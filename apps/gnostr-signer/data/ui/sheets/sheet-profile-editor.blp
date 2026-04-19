@@ -176,15 +176,15 @@ template $SheetProfileEditor: Adw.Dialog {
 
             accessibility {
               label: "Verification and payments";
-              description: "NIP-05 verification and Lightning payment address";
+              description: "Nostr address verification and Lightning payment address";
             }
 
             Adw.EntryRow entry_nip05 {
-              title: _("NIP-05 Identifier");
+              title: _("Nostr Address");
               input-hints: no_spellcheck;
 
               accessibility {
-                description: "Your NIP-05 verification identifier, like name@domain.com";
+                description: "Your Nostr address, like name@domain.com";
               }
             }
 
@@ -254,7 +254,7 @@ template $SheetProfileEditor: Adw.Dialog {
                     ellipsize: end;
 
                     accessibility {
-                      label: "Preview NIP-05 identifier";
+                      label: "Preview Nostr address";
                     }
 
                     styles [

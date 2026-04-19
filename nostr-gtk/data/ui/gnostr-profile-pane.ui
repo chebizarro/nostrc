@@ -282,7 +282,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkButton" id="btn_set_status">
                 <property name="hexpand">true</property>
-                <property name="tooltip-text" translatable="yes">Set your status (NIP-38)</property>
+                <property name="tooltip-text" translatable="yes">Set your status</property>
                 <signal name="clicked" handler="on_set_status_clicked"/>
                 <child>
                   <object class="GtkBox">

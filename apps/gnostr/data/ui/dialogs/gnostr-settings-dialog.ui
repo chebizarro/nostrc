@@ -891,7 +891,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="spacing">8</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">DM Relays (NIP-17)</property>
+                                    <property name="label">DM Relays</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="heading"/>
@@ -997,7 +997,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="spacing">8</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Relay List (NIP-65)</property>
+                                    <property name="label">Relay List</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="heading"/>
@@ -1065,7 +1065,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <child>
                                   <object class="GtkButton" id="btn_publish_relays">
                                     <property name="label">Publish Relay List</property>
-                                    <property name="tooltip-text">Publish your relay configuration (NIP-65)</property>
+                                    <property name="tooltip-text">Publish your relay configuration</property>
                                     <style>
                                       <class name="suggested-action"/>
                                     </style>
@@ -1080,7 +1080,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="margin-top">16</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Index Relays (NIP-50 Search)</property>
+                                    <property name="label">Search Relays</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="heading"/>
@@ -1089,7 +1089,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Relays that support NIP-50 search queries. Used for the Discover tab to search profiles by name, npub, or keywords.</property>
+                                    <property name="label">Relays that support search queries. Used for the Discover tab to search profiles by name, npub, or keywords.</property>
                                     <property name="xalign">0</property>
                                     <property name="wrap">true</property>
                                     <style>
@@ -1936,7 +1936,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="spacing">8</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Settings Sync (NIP-51)</property>
+                                        <property name="label">Settings Sync</property>
                                         <property name="xalign">0</property>
                                         <style>
                                           <class name="heading"/>
@@ -2064,7 +2064,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="spacing">8</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Background Sync (NIP-77)</property>
+                                        <property name="label">Background Sync</property>
                                         <property name="xalign">0</property>
                                         <style>
                                           <class name="heading"/>
@@ -2168,7 +2168,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                                 </child>
                                                 <child>
                                                   <object class="GtkLabel">
-                                                    <property name="label">Relay List (NIP-65 kind 10002)</property>
+                                                    <property name="label">Relay List</property>
                                                     <property name="hexpand">true</property>
                                                     <property name="xalign">0</property>
                                                   </object>
@@ -2228,7 +2228,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                                 </child>
                                                 <child>
                                                   <object class="GtkLabel">
-                                                    <property name="label">Mute List (NIP-51 kind 10000)</property>
+                                                    <property name="label">Mute List</property>
                                                     <property name="hexpand">true</property>
                                                     <property name="xalign">0</property>
                                                   </object>
@@ -2579,7 +2579,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="margin-bottom">24</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label">Nostr Wallet Connect (NIP-47)</property>
+                                <property name="label">Nostr Wallet Connect</property>
                                 <property name="xalign">0</property>
                                 <style>
                                   <class name="heading"/>

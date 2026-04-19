@@ -99,7 +99,7 @@ template $GnostrLogin: Adw.Bin {
                             }
 
                             Label {
-                                label: "Sign in using a local signer app (NIP-55L) or pair with a remote signer (NIP-46) for secure key management.";
+                                label: "Sign in using a local signer app or pair with a remote signer for secure key management.";
                                 wrap: true;
                                 max-width-chars: 45;
                                 justify: center;
@@ -145,7 +145,7 @@ template $GnostrLogin: Adw.Bin {
                                         valign: center;
 
                                         Label {
-                                            label: "Local Signer (NIP-55L)";
+                                            label: "Local Signer";
                                             xalign: 0;
 
                                             styles [
@@ -178,7 +178,7 @@ template $GnostrLogin: Adw.Bin {
                                     Button btn_local_signer {
                                         label: "Sign with Local Signer";
                                         sensitive: false;
-                                        tooltip-text: "Sign in using local signer (NIP-55L)";
+                                        tooltip-text: "Sign in using local signer";
                                         clicked => $on_local_signer_clicked();
 
                                         styles [
@@ -224,7 +224,7 @@ template $GnostrLogin: Adw.Bin {
                                         valign: center;
 
                                         Label {
-                                            label: "Remote Signer (NIP-46)";
+                                            label: "Remote Signer";
                                             xalign: 0;
 
                                             styles [
@@ -247,7 +247,7 @@ template $GnostrLogin: Adw.Bin {
                                 Button btn_remote_signer {
                                     label: "Connect Remote Signer";
                                     halign: end;
-                                    tooltip-text: "Connect to remote signer (NIP-46)";
+                                    tooltip-text: "Connect to remote signer";
                                     clicked => $on_remote_signer_clicked();
                                 }
                             }

@@ -231,7 +231,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="wrap">true</property>
                                 <property name="xalign">0</property>
                                 <property name="max-width-chars">45</property>
-                                <property name="label" translatable="yes">&lt;b&gt;NIP-46 Remote Signing&lt;/b&gt; - Use your keys across devices without ever sharing them directly.</property>
+                                <property name="label" translatable="yes">&lt;b&gt;Remote Signing&lt;/b&gt; - Use your keys across devices without ever sharing them directly.</property>
                                 <property name="use-markup">true</property>
                               </object>
                             </child>
@@ -570,7 +570,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="margin-end">24</property>
                     <accessibility>
                       <property name="label">Import key page</property>
-                      <property name="description">Import your existing Nostr key using nsec, NIP-49 encrypted backup, or mnemonic phrase</property>
+                      <property name="description">Import your existing Nostr key using nsec, encrypted backup, or mnemonic phrase</property>
                     </accessibility>
                     <child>
                       <object class="GtkImage">
@@ -605,9 +605,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkCheckButton" id="radio_import_nsec">
                                 <property name="active">true</property>
-                                <property name="label" translatable="yes">nsec / NIP-49</property>
+                                <property name="label" translatable="yes">nsec / Encrypted</property>
                                 <accessibility>
-                                  <property name="label">Import nsec or NIP-49 encrypted backup</property>
+                                  <property name="label">Import nsec or encrypted backup</property>
                                   <property name="description">Import using an nsec1 private key or ncryptsec1 encrypted backup</property>
                                 </accessibility>
                               </object>
@@ -711,13 +711,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="margin-top">8</property>
                             <accessibility>
                               <property name="label">Decryption passphrase container</property>
-                              <property name="description">Enter the passphrase used to decrypt your NIP-49 encrypted backup</property>
+                              <property name="description">Enter the passphrase used to decrypt your encrypted backup</property>
                             </accessibility>
                           </object>
                         </child>
                         <child>
                           <object class="GtkLabel">
-                            <property name="label" translatable="yes">For NIP-49 (ncryptsec) encrypted backups, enter the decryption passphrase above.</property>
+                            <property name="label" translatable="yes">For ncryptsec encrypted backups, enter the decryption passphrase above.</property>
                             <property name="wrap">true</property>
                             <property name="max-width-chars">45</property>
                             <property name="xalign">0</property>
@@ -992,7 +992,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="GtkLabel">
                             <property name="xalign">0</property>
-                            <property name="label" translatable="yes">- Complete your key setup in the main window - Connect Nostr applications via NIP-46 - Configure permission policies for apps - Export a backup of your key</property>
+                            <property name="label" translatable="yes">- Complete your key setup in the main window - Connect Nostr applications via remote signing - Configure permission policies for apps - Export a backup of your key</property>
                           </object>
                         </child>
                       </object>

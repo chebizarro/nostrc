@@ -106,7 +106,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="halign">3</property>
                         <child>
                           <object class="GtkLabel">
-                            <property name="label" translatable="yes">Apps (NIP-89) are published by developers to advertise their Nostr applications. Users can recommend handlers for specific event types.</property>
+                            <property name="label" translatable="yes">Apps are published by developers to advertise their Nostr applications. Users can recommend handlers for specific event types.</property>
                             <property name="wrap">true</property>
                             <property name="max-width-chars">50</property>
                             <property name="justify">2</property>

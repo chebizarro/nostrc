@@ -64,7 +64,7 @@ template $NostrGtkComposer: Widget {
 
       Entry subject_entry {
         hexpand: true;
-        placeholder-text: "Optional subject line (NIP-14)";
+        placeholder-text: "Subject (optional)";
         max-length: 80;
       }
     }
@@ -129,7 +129,7 @@ template $NostrGtkComposer: Widget {
 
       ToggleButton btn_sensitive {
         icon-name: "dialog-warning-symbolic";
-        tooltip-text: "Mark as sensitive content (NIP-36)";
+        tooltip-text: "Mark as sensitive content";
         has-frame: false;
         toggled => $on_sensitive_toggled();
 
@@ -140,7 +140,7 @@ template $NostrGtkComposer: Widget {
 
       Button btn_save_draft {
         icon-name: "document-save-symbolic";
-        tooltip-text: "Save as draft (NIP-37)";
+        tooltip-text: "Save as draft";
         has-frame: false;
         clicked => $on_save_draft_clicked();
 
@@ -151,7 +151,7 @@ template $NostrGtkComposer: Widget {
 
       MenuButton btn_drafts {
         icon-name: "document-open-recent-symbolic";
-        tooltip-text: "Load draft (NIP-37)";
+        tooltip-text: "Load draft";
         has-frame: false;
 
         popover: Popover drafts_popover {

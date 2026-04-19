@@ -240,7 +240,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="model">
                           <object class="GtkStringList">
                             <items>
-                              <item translatable="yes">NIP-49</item>
+                              <item translatable="yes">Encrypted Backup</item>
                             </items>
                           </object>
                         </property>

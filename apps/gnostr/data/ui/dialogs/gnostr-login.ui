@@ -106,7 +106,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label">Sign in using a local signer app (NIP-55L) or pair with a remote signer (NIP-46) for secure key management.</property>
+                                <property name="label">Sign in using a local signer app or pair with a remote signer for secure key management.</property>
                                 <property name="wrap">true</property>
                                 <property name="max-width-chars">45</property>
                                 <property name="justify">2</property>
@@ -152,7 +152,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="valign">3</property>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label">Local Signer (NIP-55L)</property>
+                                            <property name="label">Local Signer</property>
                                             <property name="xalign">0</property>
                                             <style>
                                               <class name="heading"/>
@@ -188,7 +188,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                       <object class="GtkButton" id="btn_local_signer">
                                         <property name="label">Sign with Local Signer</property>
                                         <property name="sensitive">false</property>
-                                        <property name="tooltip-text">Sign in using local signer (NIP-55L)</property>
+                                        <property name="tooltip-text">Sign in using local signer</property>
                                         <signal name="clicked" handler="on_local_signer_clicked"/>
                                         <style>
                                           <class name="suggested-action"/>
@@ -236,7 +236,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="valign">3</property>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label">Remote Signer (NIP-46)</property>
+                                            <property name="label">Remote Signer</property>
                                             <property name="xalign">0</property>
                                             <style>
                                               <class name="heading"/>
@@ -261,7 +261,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   <object class="GtkButton" id="btn_remote_signer">
                                     <property name="label">Connect Remote Signer</property>
                                     <property name="halign">2</property>
-                                    <property name="tooltip-text">Connect to remote signer (NIP-46)</property>
+                                    <property name="tooltip-text">Connect to remote signer</property>
                                     <signal name="clicked" handler="on_remote_signer_clicked"/>
                                   </object>
                                 </child>

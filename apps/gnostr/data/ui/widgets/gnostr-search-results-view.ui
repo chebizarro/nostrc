@@ -57,7 +57,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="GtkToggleButton" id="btn_relay">
                     <property name="label">Search Relays</property>
-                    <property name="tooltip-text">Search notes on remote relays (NIP-50). Results are fetched from relays and saved locally.</property>
+                    <property name="tooltip-text">Search notes on remote relays. Results are fetched from relays and saved locally.</property>
                     <style>
                       <class name="pill"/>
                     </style>

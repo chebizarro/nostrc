@@ -58,7 +58,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="visible">false</property>
                         <child>
                           <object class="AdwActionRow" id="import_row">
-                            <property name="title" translatable="yes">Import from NIP-51 list…</property>
+                            <property name="title" translatable="yes">Import from people list…</property>
                             <property name="subtitle" translatable="yes">Pre-fill this form from one of your kind 30000 lists.</property>
                             <property name="activatable">true</property>
                             <child type="suffix">

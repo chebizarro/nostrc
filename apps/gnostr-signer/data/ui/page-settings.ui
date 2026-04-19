@@ -273,7 +273,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Edit Profile</property>
-            <property name="subtitle" translatable="yes">Name, bio, avatar, NIP-05, lightning address</property>
+            <property name="subtitle" translatable="yes">Name, bio, avatar, Nostr address, lightning address</property>
             <accessibility>
               <property name="description">Edit your Nostr profile metadata including display name, bio, and identifiers</property>
             </accessibility>
