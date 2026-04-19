@@ -288,3 +288,9 @@ if(ENABLE_NIP98)
     add_subdirectory(nips/nip98)
 endif()
 
+# Blossom (NIP-B0): Blob Storage Protocol
+option(ENABLE_NIPB0 "Enable nipb0 (Blossom Client Protocol)" ON)
+if(ENABLE_NIPB0)
+    add_subdirectory(nips/nipb0)
+endif()
+
