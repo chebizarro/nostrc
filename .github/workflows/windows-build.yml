@@ -139,6 +139,7 @@ jobs:
             -DSIGNET_ENABLE=OFF \
             -DENABLE_NIP55L=OFF \
             -DENABLE_NIP5F=OFF \
+            -DENABLE_NIP57=OFF \
             -DWITH_NOSTRDB=OFF \
             -DLIBNOSTR_WITH_NOSTRDB=OFF \
             -DGNOSTR_SIGNER_VERSION=${{ steps.version.outputs.version }}

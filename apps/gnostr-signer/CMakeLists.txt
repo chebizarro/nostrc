@@ -288,6 +288,8 @@ endif()
 # we'd reference symbols not linked into the app.
 
 # Daemon providing DBus (55L) and UDS (5F) fallback (skeleton now)
+# Skip on Windows — daemon requires NIP55L (DBus), NIP5F (Unix sockets), sys/un.h
+if(NOT WIN32)
 option(ENABLE_TCP_IPC "Enable TCP IPC backend in gnostr-signer-daemon" OFF)
 
 add_executable(gnostr-signer-daemon daemon/main_daemon.c daemon/uds_sockd.c daemon/ipc.c)
@@ -309,6 +311,7 @@ endif()
 if (ENABLE_TCP_IPC)
   target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_ENABLE_TCP_IPC=1)
 endif()
+endif() # NOT WIN32 — skip daemon
 
 # Compile GSettings schema for development/testing
 set(SIGNER_SCHEMA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data)

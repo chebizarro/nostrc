@@ -18,6 +18,8 @@
 #include <sys/mman.h>
 #include <mach/mach.h>
 #include <mach/vm_statistics.h>
+#elif defined(_WIN32) || defined(__MINGW32__)
+#include <windows.h>
 #else
 #include <sys/mman.h>
 #endif

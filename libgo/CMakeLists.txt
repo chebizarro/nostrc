@@ -349,7 +349,8 @@ endif()
 
 # Optionally, you can specify installation rules
 
-# Examples
+# Examples (skip on Windows — chan_bench uses setenv and other POSIX-only APIs)
+if(NOT WIN32)
 add_executable(go_select_demo examples/go_select_demo.c)
 target_link_libraries(go_select_demo PRIVATE libgo ${NSYNC_LIB} pthread)
 if(UNIX)
@@ -386,6 +387,7 @@ apply_sanitizers(hash_map_demo)
 apply_sanitizers(arrays_demo)
 apply_sanitizers(long_adder_demo)
 apply_sanitizers(chan_bench)
+endif() # NOT WIN32 — skip examples
 # Intentionally do not apply warnings-as-errors to examples to keep demos buildable across toolchains
 # install(TARGETS nostr DESTINATION lib)
 # install(DIRECTORY include/ DESTINATION include)
