@@ -25,6 +25,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkOverlay" id="avatar_box">
             <property name="width-request">48</property>
             <property name="height-request">48</property>
+            <property name="halign">3</property>
+            <property name="valign">3</property>
+            <property name="hexpand">false</property>
+            <property name="vexpand">false</property>
             <style>
               <class name="avatar"/>
               <class name="profile-row-avatar"/>
@@ -35,6 +39,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="content-fit">2</property>
                 <property name="width-request">48</property>
                 <property name="height-request">48</property>
+                <property name="hexpand">false</property>
+                <property name="vexpand">false</property>
                 <style>
                   <class name="profile-row-avatar-image"/>
                 </style>

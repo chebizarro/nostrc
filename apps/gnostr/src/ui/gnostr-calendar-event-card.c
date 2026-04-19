@@ -443,11 +443,11 @@ static void build_ui(GnostrCalendarEventCard *self) {
   GtkWidget *avatar_overlay = gtk_overlay_new();
   self->organizer_initials = gtk_label_new("AN");
   gtk_widget_add_css_class(self->organizer_initials, "avatar-initials");
-  gtk_widget_set_size_request(self->organizer_initials, 28, 28);
+  gtk_widget_set_size_request(self->organizer_initials, 32, 32);
   gtk_overlay_set_child(GTK_OVERLAY(avatar_overlay), self->organizer_initials);
 
   self->organizer_avatar = gtk_picture_new();
-  gtk_widget_set_size_request(self->organizer_avatar, 28, 28);
+  gtk_widget_set_size_request(self->organizer_avatar, 32, 32);
   gtk_widget_set_visible(self->organizer_avatar, FALSE);
   gtk_overlay_add_overlay(GTK_OVERLAY(avatar_overlay), self->organizer_avatar);
 

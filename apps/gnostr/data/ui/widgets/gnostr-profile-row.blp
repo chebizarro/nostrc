@@ -20,6 +20,10 @@ template $GnostrProfileRow: Widget {
     Overlay avatar_box {
       width-request: 48;
       height-request: 48;
+      halign: center;
+      valign: center;
+      hexpand: false;
+      vexpand: false;
 
       styles [
         "avatar",
@@ -31,6 +35,8 @@ template $GnostrProfileRow: Widget {
         content-fit: cover;
         width-request: 48;
         height-request: 48;
+        hexpand: false;
+        vexpand: false;
 
         styles [
           "profile-row-avatar-image",

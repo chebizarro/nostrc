@@ -337,6 +337,11 @@ label a:visited {
 .avatar {
 	border-radius: 9999px;
 	background: alpha(@theme_bg_color, 0.4);
+	overflow: hidden;
+}
+
+.avatar picture {
+	border-radius: 9999px;
 }
 
 .avatar-circle {
@@ -1776,8 +1781,8 @@ button.zapped image {
 .profile-row-avatar {
 	min-width: 48px;
 	min-height: 48px;
-	/* Note: max-width/max-height/overflow not supported in GTK4 CSS */
 	border-radius: 50%;
+	overflow: hidden;
 	background: linear-gradient(
 		135deg,
 		alpha(@accent_bg_color, 0.2) 0%,

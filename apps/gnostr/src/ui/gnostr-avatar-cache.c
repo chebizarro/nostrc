@@ -38,8 +38,8 @@ static GnostrAvatarMetrics s_avatar_metrics = {0};
 /* --- Concurrent Request Limiter --- */
 /* nostrc-img1: Reduced from 12 to 6 — avatar fetches were consuming half the
  * SoupSession's 24-connection pool, starving timeline media image loads. */
-#define AVATAR_MAX_CONCURRENT_FETCHES 4   /* Max simultaneous HTTP requests after startup */
-#define AVATAR_STARTUP_MAX_CONCURRENT_FETCHES 2 /* Lower concurrency while first paint/live EOSE settle */
+#define AVATAR_MAX_CONCURRENT_FETCHES 6   /* Max simultaneous HTTP requests after startup */
+#define AVATAR_STARTUP_MAX_CONCURRENT_FETCHES 3 /* Lower concurrency while first paint/live EOSE settle */
 
 typedef struct _PendingFetch {
   char *url;
@@ -453,6 +453,27 @@ static void process_pending_fetch_queue(void) {
     PendingFetch *pf = g_queue_pop_head(s_pending_queue);
     if (!pf) break;
 
+    /* Skip URLs that were cached while waiting in the queue */
+    if (pf->url && avatar_texture_cache &&
+        g_hash_table_lookup(avatar_texture_cache, pf->url)) {
+      /* Already cached — apply directly to widgets if alive */
+      GdkTexture *cached = g_hash_table_lookup(avatar_texture_cache, pf->url);
+      GtkWidget *image = g_weak_ref_get(&pf->image_ref);
+      GtkWidget *initials = g_weak_ref_get(&pf->initials_ref);
+      if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image)) {
+        gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(cached));
+        gtk_widget_set_visible(image, TRUE);
+      }
+      if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials)) {
+        gtk_widget_set_visible(initials, FALSE);
+      }
+      if (image) g_object_unref(image);
+      if (initials) g_object_unref(initials);
+      avatar_lru_touch(pf->url);
+      pending_fetch_free(pf);
+      continue;
+    }
+
     /* Check if widgets are still alive before starting fetch */
     GtkWidget *image = g_weak_ref_get(&pf->image_ref);
     GtkWidget *initials = g_weak_ref_get(&pf->initials_ref);
@@ -524,7 +545,8 @@ void gnostr_avatar_prefetch(const char *url) {
       pf->url = g_strdup(url);
       g_weak_ref_init(&pf->image_ref, NULL);
       g_weak_ref_init(&pf->initials_ref, NULL);
-      g_queue_push_tail(s_pending_queue, pf);
+      /* LIFO order: most recently requested (visible) avatars fetched first */
+      g_queue_push_head(s_pending_queue, pf);
       g_debug("avatar prefetch: queued url=%s (active=%u, pending=%u)",
               url, s_active_fetches, g_queue_get_length(s_pending_queue));
       g_mutex_unlock(&s_fetch_mutex);
@@ -632,7 +654,8 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
         pf->url = g_strdup(url);
         g_weak_ref_init(&pf->image_ref, image);
         g_weak_ref_init(&pf->initials_ref, initials);
-        g_queue_push_tail(s_pending_queue, pf);
+        /* LIFO order: most recently requested (visible) avatars fetched first */
+        g_queue_push_head(s_pending_queue, pf);
         g_debug("avatar fetch: queued url=%s (active=%u, pending=%u)",
                 url, s_active_fetches, g_queue_get_length(s_pending_queue));
         g_mutex_unlock(&s_fetch_mutex);

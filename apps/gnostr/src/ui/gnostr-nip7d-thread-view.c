@@ -626,12 +626,12 @@ create_reply_row(GnostrNip7dThreadView *self, GnostrThreadReply *reply)
     g_signal_connect(avatar_btn, "clicked", G_CALLBACK(on_author_clicked), self);
 
     GtkWidget *avatar_overlay = gtk_overlay_new();
-    gtk_widget_set_size_request(avatar_overlay, 28, 28);
+    gtk_widget_set_size_request(avatar_overlay, 32, 32);
     gtk_button_set_child(GTK_BUTTON(avatar_btn), avatar_overlay);
 
     GtkWidget *avatar_image = gtk_picture_new();
     gtk_picture_set_content_fit(GTK_PICTURE(avatar_image), GTK_CONTENT_FIT_COVER);
-    gtk_widget_set_size_request(avatar_image, 28, 28);
+    gtk_widget_set_size_request(avatar_image, 32, 32);
     gtk_widget_add_css_class(avatar_image, "avatar");
     gtk_widget_set_visible(avatar_image, FALSE);
     gtk_overlay_set_child(GTK_OVERLAY(avatar_overlay), avatar_image);
