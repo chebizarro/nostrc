@@ -1876,9 +1876,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="GtkStackPage">
                     <property name="name">account</property>
-                    <property name="title">Account</property>
-                    <property name="icon-name">avatar-default-symbolic</property>
-                    <property name="child">
+                    <property name="title">Sync & Backup</property>
+<property name="icon-name">emblem-synchronizing-symbolic</property>
+                      <property name="child">
                       <object class="GtkBox" id="account_page">
                         <property name="orientation">1</property>
                         <property name="spacing">0</property>
@@ -1909,7 +1909,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label">Sign in to sync settings and manage your account</property>
+                                <property name="label">Sign in to sync and back up your settings</property>
                                 <style>
                                   <class name="dim-label"/>
                                 </style>
