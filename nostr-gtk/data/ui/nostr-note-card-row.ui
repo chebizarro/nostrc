@@ -44,7 +44,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="GtkLabel" id="reply_indicator_label">
-                <property name="label">In reply to @user</property>
+                <property name="label">↩ In reply to a note</property>
                 <property name="xalign">0</property>
                 <property name="ellipsize">3</property>
                 <style>

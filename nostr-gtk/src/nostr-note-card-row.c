@@ -3935,11 +3935,20 @@ void nostr_gtk_note_card_row_set_thread_info(NostrGtkNoteCardRow *self,
   if (is_reply && GTK_IS_LABEL(self->reply_indicator_label)) {
     g_autofree char *indicator_text = NULL;
     if (parent_author_name && *parent_author_name) {
-      indicator_text = g_strdup_printf("In reply to %s", parent_author_name);
+      indicator_text = g_strdup_printf("↩ In reply to %s", parent_author_name);
     } else {
-      indicator_text = g_strdup("In reply to...");
+      indicator_text = g_strdup("↩ In reply to a note");
     }
     gtk_label_set_text(GTK_LABEL(self->reply_indicator_label), indicator_text);
+
+    /* Add tooltip with parent event ID for discoverability */
+    if (parent_id && *parent_id) {
+      g_autofree char *tooltip = g_strdup_printf("Click to view parent note\n%s", parent_id);
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->reply_indicator_box), tooltip);
+    } else {
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->reply_indicator_box),
+                                  "Click to view parent note");
+    }
   }
 
   /* Show/hide view thread button - visible if this is a reply or has a root */
