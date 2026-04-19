@@ -1339,6 +1339,35 @@ void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_nam
   }
 }
 
+/* nostrc-mdzt: Helper to update title bar and sidebar selection when
+ * opening/closing overlay panels.  Opening a panel sets a temporary
+ * title and deselects the sidebar; closing restores both from the
+ * current view-stack page. */
+static void
+panel_update_chrome(GnostrSessionView *self, const char *panel_title)
+{
+  if (panel_title) {
+    /* Opening a panel — set temporary title and deselect sidebar */
+    if (self->content_page)
+      adw_navigation_page_set_title(self->content_page, panel_title);
+    if (self->sidebar_list)
+      gtk_list_box_select_row(self->sidebar_list, NULL);
+  } else {
+    /* Closing — restore title and sidebar selection from current page */
+    const char *page_name =
+        self->stack ? adw_view_stack_get_visible_child_name(self->stack) : NULL;
+    if (page_name) {
+      const char *title = title_for_page_name(self, page_name);
+      if (title && self->content_page)
+        adw_navigation_page_set_title(self->content_page, title);
+      if (self->sidebar_list) {
+        GtkListBoxRow *row = row_for_page_name(self, page_name);
+        if (row) gtk_list_box_select_row(self->sidebar_list, row);
+      }
+    }
+  }
+}
+
 void gnostr_session_view_show_profile_panel(GnostrSessionView *self) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
   if (!self->panel_split) {
@@ -1356,6 +1385,7 @@ void gnostr_session_view_show_profile_panel(GnostrSessionView *self) {
 
   self->showing_profile = TRUE;
   adw_overlay_split_view_set_show_sidebar(self->panel_split, TRUE);
+  panel_update_chrome(self, _("Profile"));
 
   g_debug("session_view: show_profile_panel DONE sidebar_shown=TRUE");
 }
@@ -1370,6 +1400,7 @@ void gnostr_session_view_show_thread_panel(GnostrSessionView *self) {
 
   self->showing_profile = FALSE;
   adw_overlay_split_view_set_show_sidebar(self->panel_split, TRUE);
+  panel_update_chrome(self, _("Thread"));
 }
 
 void gnostr_session_view_show_article_panel(GnostrSessionView *self) {
@@ -1382,6 +1413,7 @@ void gnostr_session_view_show_article_panel(GnostrSessionView *self) {
 
   self->showing_profile = FALSE;
   adw_overlay_split_view_set_show_sidebar(self->panel_split, TRUE);
+  panel_update_chrome(self, _("Article"));
 }
 
 void gnostr_session_view_hide_side_panel(GnostrSessionView *self) {
@@ -1389,6 +1421,7 @@ void gnostr_session_view_hide_side_panel(GnostrSessionView *self) {
   if (!self->panel_split) return;
 
   adw_overlay_split_view_set_show_sidebar(self->panel_split, FALSE);
+  panel_update_chrome(self, NULL);
 }
 
 gboolean gnostr_session_view_is_side_panel_visible(GnostrSessionView *self) {
