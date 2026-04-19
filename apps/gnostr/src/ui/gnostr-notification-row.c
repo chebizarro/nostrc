@@ -6,6 +6,7 @@
 
 #include "gnostr-notification-row.h"
 #include "gnostr-avatar-cache.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <time.h>
 
 struct _GnostrNotificationRow {
@@ -345,13 +346,26 @@ gnostr_notification_row_set_notification(GnostrNotificationRow *self,
     self->created_at = notif->created_at;
     self->is_read = notif->is_read;
 
-    /* Set actor name */
+    /* Set actor name — prefer display_name, fall back to npub bech32 */
     const char *name = notif->actor_name;
     if (!name || !*name) {
-        /* Fallback to truncated pubkey */
-        if (notif->actor_pubkey && strlen(notif->actor_pubkey) >= 8) {
-            g_autofree char *truncated = g_strdup_printf("%.8s...", notif->actor_pubkey);
-            gtk_label_set_text(self->lbl_actor, truncated);
+        if (notif->actor_pubkey && strlen(notif->actor_pubkey) == 64) {
+            g_autoptr(GNostrNip19) npub = gnostr_nip19_encode_npub(notif->actor_pubkey, NULL);
+            if (npub) {
+                const gchar *npub_str = gnostr_nip19_get_bech32(npub);
+                /* Show truncated npub: "npub1abc…wxyz" */
+                size_t len = npub_str ? strlen(npub_str) : 0;
+                if (len > 16) {
+                    g_autofree char *short_npub =
+                        g_strdup_printf("%.8s…%.4s", npub_str, npub_str + len - 4);
+                    gtk_label_set_text(self->lbl_actor, short_npub);
+                } else {
+                    gtk_label_set_text(self->lbl_actor, npub_str ? npub_str : "Unknown");
+                }
+            } else {
+                g_autofree char *truncated = g_strdup_printf("%.8s…", notif->actor_pubkey);
+                gtk_label_set_text(self->lbl_actor, truncated);
+            }
         } else {
             gtk_label_set_text(self->lbl_actor, "Unknown");
         }

@@ -26,6 +26,7 @@ struct _GnostrNotificationsView {
     /* Data */
     char *user_pubkey;
     GHashTable *notifications;  /* notification_id -> GnostrNotificationRow */
+    GHashTable *dedup;          /* "type:actor_pubkey" -> notification_id (owned str) */
     guint unread_count;
     gint64 last_checked;
 };
@@ -60,6 +61,7 @@ gnostr_notifications_view_finalize(GObject *object)
 
     g_clear_pointer(&self->user_pubkey, g_free);
     g_clear_pointer(&self->notifications, g_hash_table_destroy);
+    g_clear_pointer(&self->dedup, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_notifications_view_parent_class)->finalize(object);
 }
@@ -213,6 +215,7 @@ gnostr_notifications_view_init(GnostrNotificationsView *self)
 
     self->user_pubkey = NULL;
     self->notifications = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    self->dedup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     self->unread_count = 0;
     self->last_checked = 0;
 
@@ -240,11 +243,27 @@ gnostr_notifications_view_add_notification(GnostrNotificationsView *self,
     g_return_if_fail(notif != NULL);
     g_return_if_fail(notif->id != NULL);
 
-    /* Check if notification already exists */
+    /* Check if notification already exists (same event ID) */
     if (g_hash_table_contains(self->notifications, notif->id)) {
         /* Update existing notification */
         gnostr_notifications_view_update_notification(self, notif);
         return;
+    }
+
+    /* Deduplicate: for follow/reaction/repost from the same actor, keep only
+     * the latest event.  This prevents the timeline from being flooded by
+     * bots or relays that re-emit identical kind-3 contact lists. */
+    if (notif->actor_pubkey && *notif->actor_pubkey) {
+        g_autofree gchar *dedup_key =
+            g_strdup_printf("%d:%s", (int)notif->type, notif->actor_pubkey);
+        const gchar *prev_id = g_hash_table_lookup(self->dedup, dedup_key);
+        if (prev_id) {
+            /* A notification from this actor+type already shown — remove old */
+            gnostr_notifications_view_remove_notification(self, prev_id);
+        }
+        g_hash_table_insert(self->dedup,
+                            g_strdup(dedup_key),
+                            g_strdup(notif->id));
     }
 
     /* Create new row */
@@ -368,6 +387,7 @@ gnostr_notifications_view_clear(GnostrNotificationsView *self)
     }
 
     g_hash_table_remove_all(self->notifications);
+    g_hash_table_remove_all(self->dedup);
     self->unread_count = 0;
     gtk_stack_set_visible_child_name(self->content_stack, "empty");
     gtk_widget_set_visible(GTK_WIDGET(self->btn_mark_all_read), FALSE);
