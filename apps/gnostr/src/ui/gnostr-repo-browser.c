@@ -239,23 +239,19 @@ create_repo_row(GnostrRepoBrowser *self, RepoData *data)
   nostr_gtk_note_card_row_set_ids(card, data->id, NULL, data->maintainer_pubkey);
   nostr_gtk_note_card_row_set_timestamp(card, data->updated_at, NULL);
 
-  /* Build content: repo name (bold) + description + clone URL */
-  GString *content = g_string_new(NULL);
-
-  /* Repo name as title */
-  const char *repo_name = data->name ? data->name : data->id;
-  g_string_append_printf(content, "📦 %s\n", repo_name);
-
-  /* Description */
-  if (data->description && *data->description)
-    g_string_append_printf(content, "\n%s", data->description);
-
-  /* Clone URL */
-  if (data->clone_url)
-    g_string_append_printf(content, "\n\n🔗 %s", data->clone_url);
-
-  nostr_gtk_note_card_row_set_content(card, content->str);
-  g_string_free(content, TRUE);
+  /* Use git-repo mode for proper rendering and to hide note action bar */
+  const char *clone_urls[] = { data->clone_url, NULL };
+  const char *web_urls[] = { data->web_url, NULL };
+  nostr_gtk_note_card_row_set_git_repo_mode(
+      card,
+      data->name ? data->name : data->id,
+      data->description,
+      data->clone_url ? clone_urls : NULL,
+      data->web_url ? web_urls : NULL,
+      NULL,  /* topics — not available in RepoData */
+      data->maintainer_pubkey ? 1 : 0,
+      NULL   /* license — not available in RepoData */
+  );
 
   /* Free profile after we're done with it */
   if (profile)

@@ -5897,11 +5897,9 @@ void nostr_gtk_note_card_row_set_git_repo_mode(NostrGtkNoteCardRow *self,
     gtk_widget_set_visible(GTK_WIDGET(self->hashtags_box), TRUE);
   }
 
-  /* Hide standard note actions that don't apply to repos */
-  if (GTK_IS_WIDGET(self->btn_reply))
-    gtk_widget_set_visible(self->btn_reply, FALSE);
-  if (GTK_IS_WIDGET(self->btn_repost))
-    gtk_widget_set_visible(self->btn_repost, FALSE);
+  /* Hide entire action bar — note actions don't apply to repos */
+  if (GTK_IS_WIDGET(self->actions_box))
+    gtk_widget_set_visible(self->actions_box, FALSE);
 
   g_debug("NIP-34: Set git repo mode - name='%s' clone_count=%d",
           name ? name : "(null)", clone_urls ? (int)g_strv_length((gchar**)clone_urls) : 0);
@@ -5950,6 +5948,10 @@ void nostr_gtk_note_card_row_set_git_patch_mode(NostrGtkNoteCardRow *self,
     gtk_widget_add_css_class(self->content_label, "git-patch-content");
   }
   g_string_free(content, TRUE);
+
+  /* Hide entire action bar — note actions don't apply to patches */
+  if (GTK_IS_WIDGET(self->actions_box))
+    gtk_widget_set_visible(self->actions_box, FALSE);
 
   g_debug("NIP-34: Set git patch mode - title='%s'", title ? title : "(null)");
 }
@@ -6014,6 +6016,10 @@ void nostr_gtk_note_card_row_set_git_issue_mode(NostrGtkNoteCardRow *self,
     }
     gtk_widget_set_visible(GTK_WIDGET(self->labels_box), TRUE);
   }
+
+  /* Hide entire action bar — note actions don't apply to issues */
+  if (GTK_IS_WIDGET(self->actions_box))
+    gtk_widget_set_visible(self->actions_box, FALSE);
 
   g_debug("NIP-34: Set git issue mode - title='%s' open=%d", title ? title : "(null)", is_open);
 }
