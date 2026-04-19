@@ -65,6 +65,16 @@ if(ENABLE_NIP19)
     add_subdirectory(nips/nip19)
 endif()
 
+# NIP-21 depends on NIP-19 for bech32 encoding/decoding
+if(ENABLE_NIP21)
+    set(ENABLE_NIP19 ON CACHE BOOL "Enable nip19" FORCE)
+endif()
+
+option(ENABLE_NIP21 "Enable nip21 (nostr: URI Scheme)" ON)
+if(ENABLE_NIP21)
+    add_subdirectory(nips/nip21)
+endif()
+
 option(ENABLE_NIP22 "Enable nip22 (Comments)" ON)
 if(ENABLE_NIP22)
     add_subdirectory(nips/nip22)
