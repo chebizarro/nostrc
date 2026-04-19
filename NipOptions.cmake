@@ -105,6 +105,11 @@ if(ENABLE_NIP28)
     add_subdirectory(nips/nip28)
 endif()
 
+option(ENABLE_NIP24 "Enable nip24 (Extra Metadata)" ON)
+if(ENABLE_NIP24)
+    add_subdirectory(nips/nip24)
+endif()
+
 option(ENABLE_NIP25 "Enable nip25 (Reactions)" ON)
 if(ENABLE_NIP25)
     add_subdirectory(nips/nip25)
