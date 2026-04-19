@@ -186,6 +186,11 @@ if(ENABLE_NIP57)
     add_subdirectory(nips/nip57)
 endif()
 
+option(ENABLE_NIP58 "Enable nip58 (Badges)" ON)
+if(ENABLE_NIP58)
+    add_subdirectory(nips/nip58)
+endif()
+
 option(ENABLE_NIP70 "Enable nip70 (Protected Events)" ON)
 if(ENABLE_NIP70)
     add_subdirectory(nips/nip70)
