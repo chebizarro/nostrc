@@ -216,6 +216,11 @@ if(ENABLE_NIP5F)
     add_subdirectory(nips/nip5f)
 endif()
 
+option(ENABLE_NIP99 "Enable nip99 (Classified Listings)" ON)
+if(ENABLE_NIP99)
+    add_subdirectory(nips/nip99)
+endif()
+
 option(ENABLE_NIP92 "Enable nip92 (Image Metadata)" ON)
 if(ENABLE_NIP92)
     add_subdirectory(nips/nip92)
