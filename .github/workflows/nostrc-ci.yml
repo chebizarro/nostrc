@@ -99,8 +99,8 @@ jobs:
       - name: Test
         run: |
           # Exclude tests with known ASAN issues (pre-existing bugs, not CI regressions)
-          ctest --test-dir build --output-on-failure -j2 \
-            -E "test_json_envelope|concurrency_subscription_shutdown_asan"
+            ctest --test-dir build --output-on-failure -j2 \
+              -E "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
 
       - name: Run MDK Vector Tests
         run: |

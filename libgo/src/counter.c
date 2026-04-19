@@ -1,11 +1,24 @@
 #include "counter.h"
 #include "go_auto.h"
+
+#if defined(_WIN32) || defined(__MINGW32__)
+#include <windows.h>
+static int go_get_nprocs(void) {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return (int)si.dwNumberOfProcessors;
+}
+#else
 #include <unistd.h> // For sysconf
+static int go_get_nprocs(void) {
+    return (int)sysconf(_SC_NPROCESSORS_ONLN);
+}
+#endif
 
 GO_DEFINE_AUTOPTR_CLEANUP_FUNC(LongAdder, long_adder_destroy)
 
 LongAdder *long_adder_create(void) {
-    int num_threads = sysconf(_SC_NPROCESSORS_ONLN); // Get the number of available processors
+    int num_threads = go_get_nprocs(); // Get the number of available processors
     if (num_threads < 1) {
         num_threads = 1; // Fallback to at least 1 counter
     }
