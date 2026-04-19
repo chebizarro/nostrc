@@ -171,6 +171,11 @@ if(ENABLE_NIP5F)
     add_subdirectory(nips/nip5f)
 endif()
 
+option(ENABLE_NIP92 "Enable nip92 (Image Metadata)" ON)
+if(ENABLE_NIP92)
+    add_subdirectory(nips/nip92)
+endif()
+
 option(ENABLE_NIP94 "Enable nip94" OFF)
 if(ENABLE_NIP94)
     add_subdirectory(nips/nip94)
