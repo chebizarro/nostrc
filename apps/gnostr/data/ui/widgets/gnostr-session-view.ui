@@ -37,9 +37,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="child">
                   <object class="AdwToolbarView">
                     <child type="top">
-                        <object class="AdwHeaderBar" id="sidebar_header_bar">
-                          <property name="show-title">false</property>
-                          <child type="start">
+                      <object class="AdwHeaderBar" id="sidebar_header_bar">
+                        <property name="show-title">false</property>
+                        <child type="start">
                           <object class="GtkButton" id="btn_settings">
                             <property name="icon-name">emblem-system-symbolic</property>
                             <property name="tooltip-text" translatable="yes">Settings</property>
