@@ -292,6 +292,12 @@ if(ENABLE_NIP51)
     add_subdirectory(nips/nip51)
 endif()
 
+# Event Schema Validation
+option(ENABLE_SCHEMA "Enable schema (Event Schema Validation)" ON)
+if(ENABLE_SCHEMA)
+    add_subdirectory(nips/schema)
+endif()
+
 # NIP-98 HTTP Auth (used by NIP-96 file storage and Blossom)
 option(ENABLE_NIP98 "Enable nip98 (HTTP Auth)" ON)
 if(ENABLE_NIP98)
