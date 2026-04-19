@@ -45,7 +45,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkButton" id="btn_remove">
                     <property name="label">_Remove</property>
                     <property name="use-underline">true</property>
-                    <property name="tooltip-text">Remove selected (Delete)</property>
+                    <property name="tooltip-text">Remove the selected relay</property>
                   </object>
                 </child>
               </object>
@@ -55,7 +55,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="xalign">0</property>
                 <property name="use-markup">true</property>
                 <property name="wrap">true</property>
-                <property name="label">&lt;small&gt;Click a relay to view its info. Use the dropdown to set permissions (read/write). &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove.&lt;/small&gt;</property>
+                <property name="label">&lt;small&gt;Click a relay to view its info. Use the dropdown to set permissions. Click the trash icon or press &lt;b&gt;Delete&lt;/b&gt; to remove.&lt;/small&gt;</property>
               </object>
             </child>
             <child>

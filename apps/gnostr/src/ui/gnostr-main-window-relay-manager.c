@@ -521,6 +521,43 @@ static void relay_manager_on_entry_activate(GtkEntry *entry, gpointer user_data)
   relay_manager_on_add_clicked(NULL, user_data);
 }
 
+/* Per-row delete button handler */
+static void on_relay_row_delete_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayManagerCtx *ctx = (RelayManagerCtx *)user_data;
+  if (!ctx || !ctx->relay_model) return;
+
+  const gchar *url = g_object_get_data(G_OBJECT(btn), "relay_url");
+  if (!url) return;
+
+  /* Find and remove the relay by URL */
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
+  for (guint i = 0; i < n; i++) {
+    GtkStringObject *obj = GTK_STRING_OBJECT(g_list_model_get_item(G_LIST_MODEL(ctx->relay_model), i));
+    if (obj) {
+      const gchar *item_url = gtk_string_object_get_string(obj);
+      gboolean match = (item_url && g_strcmp0(item_url, url) == 0);
+      g_object_unref(obj);
+      if (match) {
+        /* Remove from type hash table too */
+        if (ctx->relay_types) {
+          g_hash_table_remove(ctx->relay_types, url);
+        }
+        gtk_string_list_remove(ctx->relay_model, i);
+        ctx->modified = TRUE;
+        relay_manager_update_status(ctx);
+
+        /* Clear info pane if we removed the selected relay */
+        if (ctx->selected_url && g_strcmp0(ctx->selected_url, url) == 0) {
+          GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
+          if (stack) gtk_stack_set_visible_child_name(stack, "empty");
+        }
+        break;
+      }
+    }
+  }
+}
+
 static void relay_manager_on_remove_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
@@ -1354,6 +1391,7 @@ typedef struct {
   GtkWidget *warning_icon;
   GtkWidget *type_dropdown;
   GtkWidget *type_icon;
+  GtkWidget *delete_button;    /* Per-row delete button */
 } RelayRowWidgets;
 
 static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -1423,6 +1461,14 @@ static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, Gt
   gtk_widget_add_css_class(warning_icon, "warning");
   gtk_box_append(GTK_BOX(row), warning_icon);
 
+  /* Per-row delete button */
+  GtkWidget *delete_button = gtk_button_new_from_icon_name("user-trash-symbolic");
+  gtk_widget_add_css_class(delete_button, "flat");
+  gtk_widget_add_css_class(delete_button, "circular");
+  gtk_widget_set_valign(delete_button, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text(delete_button, "Remove this relay");
+  gtk_box_append(GTK_BOX(row), delete_button);
+
   /* Store widget references for binding */
   RelayRowWidgets *widgets = g_new0(RelayRowWidgets, 1);
   widgets->name_label = name_label;
@@ -1433,6 +1479,7 @@ static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, Gt
   widgets->warning_icon = warning_icon;
   widgets->type_dropdown = type_dropdown;
   widgets->type_icon = type_icon;
+  widgets->delete_button = delete_button;
   g_object_set_data_full(G_OBJECT(row), "widgets", widgets, g_free);
 
   gtk_list_item_set_child(list_item, row);
@@ -1624,6 +1671,13 @@ static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, Gtk
 
     /* Connect change signal */
     g_signal_connect(widgets->type_dropdown, "notify::selected", G_CALLBACK(on_relay_type_changed), ctx);
+  }
+
+  /* Wire per-row delete button */
+  if (widgets->delete_button) {
+    g_signal_handlers_disconnect_by_func(widgets->delete_button, G_CALLBACK(on_relay_row_delete_clicked), ctx);
+    g_object_set_data_full(G_OBJECT(widgets->delete_button), "relay_url", g_strdup(url), g_free);
+    g_signal_connect(widgets->delete_button, "clicked", G_CALLBACK(on_relay_row_delete_clicked), ctx);
   }
 
   /* Try to get cached relay info */
