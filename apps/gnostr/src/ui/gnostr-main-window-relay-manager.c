@@ -38,6 +38,8 @@ struct _RelayManagerCtx {
   gboolean destroyed;   /* Set to TRUE when window is destroyed */
   gint ref_count;       /* Reference count for safe async cleanup */
   GnostrMainWindow *main_window; /* Reference to main window for pool access */
+  GtkListView *list_view; /* For live relay-state refresh */
+  gulong pool_state_handler_id; /* relay-state-changed signal handler */
 };
 
 static void relay_manager_ctx_ref(RelayManagerCtx *ctx) {
@@ -580,14 +582,57 @@ static void relay_manager_on_cancel_clicked(GtkButton *btn, gpointer user_data) 
   gtk_window_close(ctx->window);
 }
 
+/* Idle callback to refresh relay connection indicators on main thread */
+static gboolean
+relay_manager_refresh_connection_icons_idle(gpointer user_data)
+{
+  RelayManagerCtx *ctx = (RelayManagerCtx *)user_data;
+  if (ctx->destroyed || !ctx->relay_model) {
+    relay_manager_ctx_unref(ctx);
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Force the list to re-bind all items so connection icons pick up new state */
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
+  if (n > 0) {
+    g_list_model_items_changed(G_LIST_MODEL(ctx->relay_model), 0, n, n);
+  }
+
+  relay_manager_ctx_unref(ctx);
+  return G_SOURCE_REMOVE;
+}
+
+/* Called from worker thread when any relay in the pool changes state */
+static void
+on_pool_relay_state_changed_for_manager(GNostrPool       *pool,
+                                        GNostrRelay      *relay,
+                                        GNostrRelayState  new_state,
+                                        gpointer          user_data)
+{
+  (void)pool; (void)relay; (void)new_state;
+  RelayManagerCtx *ctx = (RelayManagerCtx *)user_data;
+  if (ctx->destroyed) return;
+
+  /* Schedule UI update on main thread */
+  relay_manager_ctx_ref(ctx);
+  g_idle_add(relay_manager_refresh_connection_icons_idle, ctx);
+}
+
 static void relay_manager_on_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
   if (!ctx) return;
 
+  /* Disconnect pool state-changed signal */
+  if (ctx->pool_state_handler_id && ctx->main_window && ctx->main_window->pool) {
+    g_signal_handler_disconnect(ctx->main_window->pool, ctx->pool_state_handler_id);
+    ctx->pool_state_handler_id = 0;
+  }
+
   /* Mark as destroyed so pending callbacks know not to access widgets */
   ctx->destroyed = TRUE;
   ctx->window = NULL;
+  ctx->list_view = NULL;
 
   if (ctx->builder) {
     g_object_unref(ctx->builder);
@@ -1513,19 +1558,44 @@ static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, Gtk
   const gchar *url = gtk_string_object_get_string(obj);
   if (!url) return;
 
-  /* Update connection status indicator */
+  /* Update connection status indicator with per-relay state */
   if (widgets->connection_icon && ctx && ctx->main_window && ctx->main_window->pool) {
-    gboolean connected = (gnostr_pool_get_relay(ctx->main_window->pool, url) != NULL);
-    if (connected) {
-      gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-wired-symbolic");
-      gtk_widget_remove_css_class(widgets->connection_icon, "dim-label");
-      gtk_widget_remove_css_class(widgets->connection_icon, "error");
-      gtk_widget_add_css_class(widgets->connection_icon, "success");
-      gtk_widget_set_tooltip_text(widgets->connection_icon, "Connected");
+    GNostrRelay *relay = gnostr_pool_get_relay(ctx->main_window->pool, url);
+
+    /* Clear all state CSS classes first */
+    gtk_widget_remove_css_class(widgets->connection_icon, "dim-label");
+    gtk_widget_remove_css_class(widgets->connection_icon, "success");
+    gtk_widget_remove_css_class(widgets->connection_icon, "error");
+    gtk_widget_remove_css_class(widgets->connection_icon, "warning");
+
+    if (relay) {
+      GNostrRelayState state = gnostr_relay_get_state(relay);
+      switch (state) {
+        case GNOSTR_RELAY_STATE_CONNECTED:
+          gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-wired-symbolic");
+          gtk_widget_add_css_class(widgets->connection_icon, "success");
+          gtk_widget_set_tooltip_text(widgets->connection_icon, "Connected");
+          break;
+        case GNOSTR_RELAY_STATE_CONNECTING:
+          gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-wired-symbolic");
+          gtk_widget_add_css_class(widgets->connection_icon, "warning");
+          gtk_widget_set_tooltip_text(widgets->connection_icon, "Connecting\u2026");
+          break;
+        case GNOSTR_RELAY_STATE_ERROR:
+          gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-error-symbolic");
+          gtk_widget_add_css_class(widgets->connection_icon, "error");
+          gtk_widget_set_tooltip_text(widgets->connection_icon, "Connection failed");
+          break;
+        case GNOSTR_RELAY_STATE_DISCONNECTED:
+        default:
+          gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-offline-symbolic");
+          gtk_widget_add_css_class(widgets->connection_icon, "dim-label");
+          gtk_widget_set_tooltip_text(widgets->connection_icon, "Disconnected");
+          break;
+      }
     } else {
+      /* Relay not in pool — not active this session */
       gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-offline-symbolic");
-      gtk_widget_remove_css_class(widgets->connection_icon, "success");
-      gtk_widget_remove_css_class(widgets->connection_icon, "error");
       gtk_widget_add_css_class(widgets->connection_icon, "dim-label");
       gtk_widget_set_tooltip_text(widgets->connection_icon, "Not connected");
     }
@@ -1683,6 +1753,7 @@ void gnostr_main_window_on_relays_clicked_internal(GtkButton *btn, gpointer user
 
   /* Setup list view with factory */
   GtkListView *list_view = GTK_LIST_VIEW(gtk_builder_get_object(builder, "relay_list"));
+  ctx->list_view = list_view;
   if (list_view) {
     GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
     g_signal_connect(factory, "setup", G_CALLBACK(relay_manager_setup_factory_cb), ctx);
@@ -1690,6 +1761,13 @@ void gnostr_main_window_on_relays_clicked_internal(GtkButton *btn, gpointer user
     gtk_list_view_set_factory(list_view, factory);
     gtk_list_view_set_model(list_view, GTK_SELECTION_MODEL(ctx->selection));
     g_object_unref(factory);
+  }
+
+  /* Connect pool relay-state-changed for live connection indicator updates */
+  if (self->pool) {
+    ctx->pool_state_handler_id = g_signal_connect(
+        self->pool, "relay-state-changed",
+        G_CALLBACK(on_pool_relay_state_changed_for_manager), ctx);
   }
 
   /* Connect selection change signal */
