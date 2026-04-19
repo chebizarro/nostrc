@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.22)
 project(nostr_json_library C)
 
 # JSON interop layer for nostrc. Wraps jansson APIs and links with libnostr and nsync.

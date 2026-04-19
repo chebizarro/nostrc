@@ -55,8 +55,6 @@ jobs:
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
-          brew update
-          brew upgrade
           brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc || true
           # Ensure Homebrew pkg-config paths are visible for scanner and linkage
           echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/flatcc/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
@@ -76,13 +74,15 @@ jobs:
                 -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=ON \
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
                 -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
-                -DNIP04_STRICT_AEAD_ONLY=ON
+                -DNIP04_STRICT_AEAD_ONLY=ON \
+                -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF
               ;;
             tsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_VERBOSE_MAKEFILE=ON \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
-                -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON
+                -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
+                -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF
               ;;
           esac
 

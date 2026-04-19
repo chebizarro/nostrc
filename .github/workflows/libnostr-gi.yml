@@ -43,8 +43,6 @@ jobs:
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
-          brew update
-          brew upgrade
           brew install ninja pkg-config glib gobject-introspection jansson secp256k1 libwebsockets libsodium openssl@3 curl libsoup@3 nsync || true
 
       - name: Override ASAN options (macOS)
@@ -52,7 +50,7 @@ jobs:
         run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
 
       - name: Configure (with GLib + nostrdb, no apps)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON -DWITH_NOSTRDB=ON -DBUILD_APPS=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON -DWITH_NOSTRDB=ON -DBUILD_APPS=OFF -DBUILD_NOSTR_GTK=OFF
 
       - name: Build (no system install)
         run: |

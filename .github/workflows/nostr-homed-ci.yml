@@ -23,7 +23,7 @@ jobs:
               libsqlite3-dev libcurl4-openssl-dev
               libfuse3-dev fuse3
               libssl-dev libsecp256k1-dev
-              libwebsockets-dev
+              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev
           - distro: debian-bookworm
             image: debian:bookworm
             update: apt-get update
@@ -33,7 +33,7 @@ jobs:
               libsqlite3-dev libcurl4-openssl-dev
               libfuse3-dev fuse3
               libssl-dev libsecp256k1-dev
-              libwebsockets-dev
+              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev
           - distro: fedora-40
             image: fedora:40
             update: dnf -y update
@@ -43,7 +43,7 @@ jobs:
               sqlite-devel libcurl-devel
               fuse3-devel
               openssl-devel libsecp256k1-devel
-              libwebsockets-devel
+              libwebsockets-devel nsync-devel libsodium-devel libsoup3-devel
           - distro: archlinux
             image: archlinux:latest
             update: pacman -Syu --noconfirm
@@ -51,7 +51,7 @@ jobs:
               pacman -S --noconfirm base-devel cmake ninja pkgconf
               jansson glib2 gobject-introspection sqlite curl
               fuse3
-              openssl libsecp256k1 libwebsockets
+              openssl libsecp256k1 libwebsockets nsync libsodium libsoup3
 
     container:
       image: ${{ matrix.image }}
@@ -75,7 +75,9 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF
 
       - name: Build
         run: cmake --build build -j
@@ -108,11 +110,13 @@ jobs:
             libsqlite3-dev libcurl4-openssl-dev \
             libfuse3-dev fuse3 \
             libssl-dev libsecp256k1-dev \
-            libwebsockets-dev sqlite3
+            libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev sqlite3
 
       - name: Build on host
         run: |
-          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_APPS=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF
           cmake --build build -j
 
       - name: Pull systemd image
