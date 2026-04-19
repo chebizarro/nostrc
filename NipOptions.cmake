@@ -85,6 +85,11 @@ if(ENABLE_NIP34)
     add_subdirectory(nips/nip34)
 endif()
 
+option(ENABLE_NIP40 "Enable nip40 (Expiration)" ON)
+if(ENABLE_NIP40)
+    add_subdirectory(nips/nip40)
+endif()
+
 option(ENABLE_NIP42 "Enable nip42" OFF)
 if(ENABLE_NIP42)
     add_subdirectory(nips/nip42)

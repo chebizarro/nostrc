@@ -1,4 +1,5 @@
 #include "nostr-event.h"
+#include "nostr-kinds.h"
 #include "nostr-auto-internal.h"
 #include "json.h"
 #include "nostr-tag.h"
@@ -573,19 +574,19 @@ cleanup:
 }
 
 bool nostr_event_is_regular(NostrEvent *event) {
-    return event->kind < 1000 && event->kind != 0 && event->kind != 3;
+    return nostr_kind_is_regular(event->kind);
 }
 
 bool nostr_event_is_replaceable(NostrEvent *event) {
-    return event->kind == 0 || event->kind == 3 || (10000 <= event->kind && event->kind < 20000);
+    return nostr_kind_is_replaceable(event->kind);
 }
 
 bool nostr_event_is_ephemeral(NostrEvent *event) {
-    return 20000 <= event->kind && event->kind < 30000;
+    return nostr_kind_is_ephemeral(event->kind);
 }
 
 bool event_is_addressable(NostrEvent *event) {
-    return 30000 <= event->kind && event->kind < 40000;
+    return nostr_kind_is_addressable(event->kind);
 }
 
 /* Accessors (public API via nostr-event.h) */
