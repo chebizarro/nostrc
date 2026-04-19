@@ -90,6 +90,11 @@ if(ENABLE_NIP22)
     add_subdirectory(nips/nip22)
 endif()
 
+option(ENABLE_NIP28 "Enable nip28 (Public Chat)" ON)
+if(ENABLE_NIP28)
+    add_subdirectory(nips/nip28)
+endif()
+
 option(ENABLE_NIP25 "Enable nip25 (Reactions)" ON)
 if(ENABLE_NIP25)
     add_subdirectory(nips/nip25)
