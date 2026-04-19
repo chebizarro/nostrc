@@ -336,15 +336,20 @@ else()
 endif()
 
 # Data install (schemas, dbus, desktop)
-install(TARGETS ${APP_SIGNER_BIN} gnostr-signer-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS ${APP_SIGNER_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(NOT WIN32)
+  install(TARGETS gnostr-signer-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 # GSettings schema
 install(FILES data/org.gnostr.Signer.gschema.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/glib-2.0/schemas)
 # DBus service (session)
 install(FILES data/org.nostr.Signer.service DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
-# Systemd user unit (daemon)
-install(FILES daemon/packaging/systemd/user/gnostr-signer-daemon.service
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/systemd/user)
+# Systemd user unit (daemon) — Unix only
+if(NOT WIN32)
+  install(FILES daemon/packaging/systemd/user/gnostr-signer-daemon.service
+          DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/systemd/user)
+endif()
 # Desktop file (canonical; AppImage uses packaging/appimage/gnostr-signer.desktop separately)
 install(FILES data/org.gnostr.Signer.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 # AppStream metainfo
@@ -402,17 +407,19 @@ if(WIN32)
     GNOSTR_PLATFORM_WINDOWS=1
     _WIN32_WINNT=0x0A00  # Windows 10+
   )
-  target_compile_definitions(gnostr-signer-daemon PRIVATE
-    GNOSTR_PLATFORM_WINDOWS=1
-    _WIN32_WINNT=0x0A00
-  )
+  # gnostr-signer-daemon is not built on Windows (POSIX-only)
+  # target_compile_definitions(gnostr-signer-daemon PRIVATE
+  #   GNOSTR_PLATFORM_WINDOWS=1
+  #   _WIN32_WINNT=0x0A00
+  # )
 
   # Link Windows credential storage (DPAPI)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE crypt32 advapi32)
   message(STATUS "gnostr-signer: Windows DPAPI linked for credential storage")
 
   # Enable Named Pipes IPC on Windows (instead of D-Bus)
-  target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_USE_NAMED_PIPES=1)
+  # gnostr-signer-daemon is not built on Windows (POSIX-only)
+  # target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_USE_NAMED_PIPES=1)
 
   if(BUILD_WINDOWS_INSTALLER)
     # Application version for installer
@@ -438,7 +445,7 @@ if(WIN32)
           "${WINDOWS_PACKAGING_DIR}/bundle-deps.ps1"
           -BuildDir "${CMAKE_BINARY_DIR}"
           -OutputDir "${CMAKE_BINARY_DIR}/deps"
-        DEPENDS ${APP_SIGNER_BIN} gnostr-signer-daemon
+        DEPENDS ${APP_SIGNER_BIN}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Bundling GTK4 and dependencies for Windows installer"
         VERBATIM
