@@ -94,19 +94,18 @@ jobs:
             # Install C library and headers (skip nsync_cpp which may fail on MinGW)
             cp $HOME/nsync-build/libnsync.a /mingw64/lib/ 2>/dev/null || true
             cp $HOME/nsync-src/public/nsync*.h /mingw64/include/ 2>/dev/null || true
-            # Create minimal pkg-config file
-            cat > /mingw64/lib/pkgconfig/nsync.pc << 'PCEOF'
-            prefix=/mingw64
-            libdir=${prefix}/lib
-            includedir=${prefix}/include
-            Name: nsync
-            Description: nsync C library
-            Version: 1.29.2
-            Libs: -L${libdir} -lnsync
-            Cflags: -I${includedir}
-            PCEOF
-            # Fix indentation in .pc file
-            sed -i 's/^            //' /mingw64/lib/pkgconfig/nsync.pc
+            # Create minimal pkg-config file (use printf to avoid heredoc indentation issues)
+            printf '%s\n' \
+              'prefix=/mingw64' \
+              'libdir=${prefix}/lib' \
+              'includedir=${prefix}/include' \
+              '' \
+              'Name: nsync' \
+              'Description: nsync C library' \
+              'Version: 1.29.2' \
+              'Libs: -L${libdir} -lnsync' \
+              'Cflags: -I${includedir}' \
+              > /mingw64/lib/pkgconfig/nsync.pc
           fi
 
       - name: Build secp256k1 from source (if not packaged)

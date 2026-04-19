@@ -361,6 +361,11 @@ if (BUILD_NOSTR_GTK)
 endif()
 
 # Add test targets from `tests/`.
+# NOTE: enable_testing() (above) registers CTest but does NOT define the
+# BUILD_TESTING cache variable — only include(CTest) does.  We declare the
+# option explicitly so that workflows that don't pass -DBUILD_TESTING=OFF
+# still get the test targets.
+option(BUILD_TESTING "Build the testing tree" ON)
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
