@@ -8,8 +8,13 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
+
+#if defined(_WIN32) || defined(__MINGW32__)
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 
 /* Best-effort explicit_bzero fallback */
 static void explicit_bzero_portable(void *p, size_t n) {
@@ -38,7 +43,11 @@ void secure_wipe(void *p, size_t n) {
 
 static int try_mlock(void *p, size_t n) {
   if (!p || n == 0) return 0;
+#if defined(_WIN32) || defined(__MINGW32__)
+  if (VirtualLock(p, n)) return 1;
+#else
   if (mlock(p, n) == 0) return 1;
+#endif
   return 0; /* best-effort */
 }
 
@@ -46,14 +55,27 @@ nostr_secure_buf secure_alloc(size_t len) {
   nostr_secure_buf sb = {0};
   if (len == 0) return sb;
 
+  void *ptr = NULL;
+
+#if defined(_WIN32) || defined(__MINGW32__)
+  /* Use VirtualAlloc for page-aligned, lockable memory */
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  size_t al = si.dwPageSize ? si.dwPageSize : 4096;
+  size_t alloc_len = (len + al - 1) & ~(al - 1);
+  ptr = VirtualAlloc(NULL, alloc_len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  if (!ptr) {
+    sb.ptr = NULL; sb.len = 0; sb.locked = false; return sb;
+  }
+#else
   /* Align to page size for better mlock behavior */
   long pg = sysconf(_SC_PAGESIZE);
   size_t al = (size_t)(pg > 0 ? pg : 4096);
-  void *ptr = NULL;
   int r = posix_memalign(&ptr, al, len);
   if (r != 0 || !ptr) {
     sb.ptr = NULL; sb.len = 0; sb.locked = false; return sb;
   }
+#endif
 
   /* Zero-init */
   memset(ptr, 0, len);
@@ -68,8 +90,13 @@ void secure_free(nostr_secure_buf *sb) {
   if (!sb) return;
   if (sb->ptr && sb->len) secure_wipe(sb->ptr, sb->len);
   if (sb->ptr) {
+#if defined(_WIN32) || defined(__MINGW32__)
+    if (sb->locked) VirtualUnlock(sb->ptr, sb->len);
+    VirtualFree(sb->ptr, 0, MEM_RELEASE);
+#else
     if (sb->locked) munlock(sb->ptr, sb->len);
     free(sb->ptr);
+#endif
   }
   sb->ptr = NULL; sb->len = 0; sb->locked = false;
 }
