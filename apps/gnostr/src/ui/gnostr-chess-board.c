@@ -12,6 +12,7 @@
 #include "../util/chess_engine.h"
 #include "../util/nip64_chess.h"
 #include <math.h>
+#include <pango/pangocairo.h>
 
 /* Default sizes */
 #define DEFAULT_BOARD_SIZE 320
@@ -711,24 +712,33 @@ static void draw_board(GtkDrawingArea *area, cairo_t *cr,
         cairo_fill(cr);
       }
 
-      /* Draw piece */
+      /* Draw piece using Pango for proper font fallback across platforms.
+       * Cairo's toy font API (cairo_select_font_face) doesn't support
+       * fallback chains — if the named font isn't installed, the chess
+       * Unicode glyphs (U+2654–U+265F) render as blank rectangles. */
       const GnostrChessSquare *sq = gnostr_chess_get_piece_at(self->game, file, rank);
       if (sq && sq->piece != GNOSTR_CHESS_PIECE_NONE) {
         const gchar *piece_str = gnostr_chess_piece_unicode(sq->piece, sq->color);
 
-        cairo_select_font_face(cr, "DejaVu Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-        cairo_set_font_size(cr, square_size * 0.75);
+        PangoLayout *layout = pango_cairo_create_layout(cr);
+        gint font_pt = (gint)(square_size * 0.75 * 72.0 / 96.0);  /* px → approx pt */
+        g_autofree gchar *font_desc_str = g_strdup_printf("Sans %d", font_pt);
+        PangoFontDescription *desc = pango_font_description_from_string(font_desc_str);
+        pango_layout_set_font_description(layout, desc);
+        pango_layout_set_text(layout, piece_str, -1);
 
-        cairo_text_extents_t extents;
-        cairo_text_extents(cr, piece_str, &extents);
+        PangoRectangle ink_rect, logical_rect;
+        pango_layout_get_pixel_extents(layout, &ink_rect, &logical_rect);
 
-        double text_x = x + (square_size - extents.width) / 2 - extents.x_bearing;
-        double text_y = y + (square_size - extents.height) / 2 - extents.y_bearing;
+        double text_x = x + (square_size - ink_rect.width) / 2.0 - ink_rect.x;
+        double text_y = y + (square_size - ink_rect.height) / 2.0 - ink_rect.y;
 
         /* Shadow */
+        cairo_save(cr);
         cairo_set_source_rgba(cr, 0, 0, 0, 0.3);
         cairo_move_to(cr, text_x + 1, text_y + 1);
-        cairo_show_text(cr, piece_str);
+        pango_cairo_show_layout(cr, layout);
+        cairo_restore(cr);
 
         /* Piece */
         if (sq->color == GNOSTR_CHESS_COLOR_WHITE) {
@@ -737,7 +747,10 @@ static void draw_board(GtkDrawingArea *area, cairo_t *cr,
           cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
         }
         cairo_move_to(cr, text_x, text_y);
-        cairo_show_text(cr, piece_str);
+        pango_cairo_show_layout(cr, layout);
+
+        pango_font_description_free(desc);
+        g_object_unref(layout);
       }
 
       /* Legal move indicators */
@@ -758,24 +771,39 @@ static void draw_board(GtkDrawingArea *area, cairo_t *cr,
 
   /* Draw coordinates if enabled */
   if (self->show_coordinates) {
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr, 10);
+    PangoLayout *coord_layout = pango_cairo_create_layout(cr);
+    PangoFontDescription *coord_desc = pango_font_description_from_string("Sans 8");
+    pango_layout_set_font_description(coord_layout, coord_desc);
+
     cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
 
     for (gint i = 0; i < 8; i++) {
-      /* File labels (a-h) */
+      PangoRectangle coord_ink, coord_log;
+
+      /* File labels (a-h) at bottom */
       gint display_file = self->board_flipped ? (7 - i) : i;
       char file_char[2] = { (char)('a' + display_file), '\0' };
-      cairo_move_to(cr, offset_x + i * square_size + square_size / 2 - 3, offset_y + board_height + 12);
-      cairo_show_text(cr, file_char);
+      pango_layout_set_text(coord_layout, file_char, -1);
+      pango_layout_get_pixel_extents(coord_layout, &coord_ink, &coord_log);
+      cairo_move_to(cr,
+                    offset_x + i * square_size + (square_size - coord_log.width) / 2,
+                    offset_y + board_height + 2);
+      pango_cairo_show_layout(cr, coord_layout);
 
-      /* Rank labels (1-8) */
+      /* Rank labels (1-8) on left side */
       gint display_rank = self->board_flipped ? (i + 1) : (8 - i);
       char rank_char[2];
       g_snprintf(rank_char, sizeof(rank_char), "%d", display_rank);
-      cairo_move_to(cr, offset_x - 12, offset_y + i * square_size + square_size / 2 + 4);
-      cairo_show_text(cr, rank_char);
+      pango_layout_set_text(coord_layout, rank_char, -1);
+      pango_layout_get_pixel_extents(coord_layout, &coord_ink, &coord_log);
+      cairo_move_to(cr,
+                    offset_x - coord_log.width - 4,
+                    offset_y + i * square_size + (square_size - coord_log.height) / 2);
+      pango_cairo_show_layout(cr, coord_layout);
     }
+
+    pango_font_description_free(coord_desc);
+    g_object_unref(coord_layout);
   }
 }
 
