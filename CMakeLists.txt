@@ -3,6 +3,16 @@ project(nostrc C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # =============================================================================
+# Windows/MinGW: Allow multiple definitions to resolve DLL import conflicts
+# =============================================================================
+# On Windows, libnostr_json.dll re-exports symbols from libnostr.a.  Targets
+# that transitively link both get duplicate definitions.  This is harmless
+# (identical code) but the MinGW linker errors by default.
+if(WIN32)
+  add_link_options("-Wl,--allow-multiple-definition")
+endif()
+
+# =============================================================================
 # macOS: Configure OpenSSL paths for package manager installations
 # =============================================================================
 # On macOS, OpenSSL is typically installed via Homebrew or MacPorts and is not
