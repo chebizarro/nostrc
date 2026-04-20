@@ -16,7 +16,12 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip05 ${SOURCES})
-target_link_libraries(nip05 PUBLIC nostr CURL::libcurl)
+# MinGW has POSIX regex in a separate library (-lregex)
+if(WIN32 AND MINGW)
+  target_link_libraries(nip05 PUBLIC nostr CURL::libcurl regex)
+else()
+  target_link_libraries(nip05 PUBLIC nostr CURL::libcurl)
+endif()
 
 # Example
 add_executable(nip05_example examples/example.c)
