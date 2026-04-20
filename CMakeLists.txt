@@ -331,6 +331,12 @@ if (SIGNET_ENABLE AND EXISTS ${CMAKE_SOURCE_DIR}/signet/CMakeLists.txt)
   add_subdirectory(signet)
 endif()
 
+# libhanami: Blossom filesystem extension & tools for libgit2 (requires libnostr + nip34 + libgit2)
+option(BUILD_LIBHANAMI "Build libhanami (Blossom + libgit2 integration)" ON)
+if (BUILD_LIBHANAMI AND EXISTS ${CMAKE_SOURCE_DIR}/libhanami/CMakeLists.txt)
+  add_subdirectory(libhanami)
+endif()
+
 # Mock relay testing framework (optional, for unit tests)
 option(BUILD_TESTING_FRAMEWORK "Build the mock relay testing framework" ON)
 if(BUILD_TESTING_FRAMEWORK AND EXISTS ${CMAKE_SOURCE_DIR}/testing/CMakeLists.txt)
