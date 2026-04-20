@@ -105,13 +105,13 @@ endif()
 
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bunker_sign_event_real.c)
   add_executable(test_nip46_bunker_sign_event_real tests/test_bunker_sign_event_real.c)
-  target_link_libraries(test_nip46_bunker_sign_event_real PRIVATE nostr_nip46_core nostr_json)
+  target_link_libraries(test_nip46_bunker_sign_event_real PRIVATE nostr_nip46_core)
   add_test(NAME test_nip46_bunker_sign_event_real COMMAND test_nip46_bunker_sign_event_real)
 endif()
 
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bunker_sign_event_acl_deny.c)
   add_executable(test_nip46_bunker_sign_event_acl_deny tests/test_bunker_sign_event_acl_deny.c)
-  target_link_libraries(test_nip46_bunker_sign_event_acl_deny PRIVATE nostr_nip46_core nostr_json)
+  target_link_libraries(test_nip46_bunker_sign_event_acl_deny PRIVATE nostr_nip46_core)
   add_test(NAME test_nip46_bunker_sign_event_acl_deny COMMAND test_nip46_bunker_sign_event_acl_deny)
 endif()
 
@@ -161,18 +161,18 @@ endif()
 # Mocked E2E tests for sign-in flows
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip46_e2e_mock.c)
   add_executable(test_nip46_e2e_mock tests/test_nip46_e2e_mock.c)
-  target_link_libraries(test_nip46_e2e_mock PRIVATE nostr_nip46_core nostr_json)
+  target_link_libraries(test_nip46_e2e_mock PRIVATE nostr_nip46_core)
   add_test(NAME test_nip46_e2e_mock COMMAND test_nip46_e2e_mock)
 endif()
 
 # Examples
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nostr-nip46-client.c)
   add_executable(nostr-nip46-client examples/nostr-nip46-client.c)
-  target_link_libraries(nostr-nip46-client PRIVATE nostr_nip46_core nostr_json)
+  target_link_libraries(nostr-nip46-client PRIVATE nostr_nip46_core)
 endif()
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nostr-nip46-bunker.c)
   add_executable(nostr-nip46-bunker examples/nostr-nip46-bunker.c)
-  target_link_libraries(nostr-nip46-bunker PRIVATE nostr_nip46_core nostr_json)
+  target_link_libraries(nostr-nip46-bunker PRIVATE nostr_nip46_core)
 endif()
 
 # Install headers
