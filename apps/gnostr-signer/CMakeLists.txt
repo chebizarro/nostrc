@@ -413,9 +413,9 @@ if(WIN32)
   #   _WIN32_WINNT=0x0A00
   # )
 
-  # Link Windows credential storage (DPAPI)
-  target_link_libraries(${APP_SIGNER_BIN} PRIVATE crypt32 advapi32)
-  message(STATUS "gnostr-signer: Windows DPAPI linked for credential storage")
+  # Link Windows credential storage (DPAPI) and CNG for TPM HSM provider
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE crypt32 advapi32 ncrypt)
+  message(STATUS "gnostr-signer: Windows DPAPI + CNG linked for credential/TPM storage")
 
   # Enable Named Pipes IPC on Windows (instead of D-Bus)
   # gnostr-signer-daemon is not built on Windows (POSIX-only)
