@@ -331,11 +331,8 @@ if (SIGNET_ENABLE AND EXISTS ${CMAKE_SOURCE_DIR}/signet/CMakeLists.txt)
   add_subdirectory(signet)
 endif()
 
-# libhanami: Blossom filesystem extension & tools for libgit2 (requires libnostr + nip34 + libgit2)
+# libhanami option (subdirectory added after NipOptions so nip34 target is available)
 option(BUILD_LIBHANAMI "Build libhanami (Blossom + libgit2 integration)" ON)
-if (BUILD_LIBHANAMI AND EXISTS ${CMAKE_SOURCE_DIR}/libhanami/CMakeLists.txt)
-  add_subdirectory(libhanami)
-endif()
 
 # Mock relay testing framework (optional, for unit tests)
 option(BUILD_TESTING_FRAMEWORK "Build the mock relay testing framework" ON)
@@ -345,7 +342,18 @@ endif()
 
 # NIPs are added via NipOptions.cmake per-NIP toggles; avoid adding nips/ twice.
 # Include NIP options/subdirs after global sanitizer flags so all NIP targets inherit them.
+# Force-enable NIP-34 when building libhanami (it's a required dependency)
+if(BUILD_LIBHANAMI)
+  set(ENABLE_NIP34 ON CACHE BOOL "Enable nip34 (required by libhanami)" FORCE)
+endif()
+
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
+
+# libhanami: Blossom filesystem extension & tools for libgit2 (requires nip34)
+# Must come after NipOptions so the nip34 target exists.
+if(BUILD_LIBHANAMI AND EXISTS ${CMAKE_SOURCE_DIR}/libhanami/CMakeLists.txt)
+  add_subdirectory(libhanami)
+endif()
 
 # Shared test infrastructure (testkit) — must come before libraries that use it
 if(BUILD_TESTING)

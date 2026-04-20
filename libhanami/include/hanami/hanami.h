@@ -93,21 +93,7 @@ hanami_error_t hanami_transport_register(void);
  * ODB backend
  * ========================================================================= */
 
-/**
- * hanami_odb_backend_new:
- * @out: (out): the created ODB backend
- * @endpoint: Blossom server URL
- * @signer: (nullable): signer for authenticated uploads
- * @config: (nullable): configuration (uses defaults if NULL)
- *
- * Create a git_odb_backend that stores/retrieves objects via Blossom.
- *
- * Returns: HANAMI_OK on success
- */
-hanami_error_t hanami_odb_backend_new(git_odb_backend **out,
-                                      const char *endpoint,
-                                      const hanami_signer_t *signer,
-                                      const hanami_config_t *config);
+/* hanami_odb_backend_new — see hanami/hanami-odb-backend.h for the full API */
 
 /* =========================================================================
  * RefDB backend

@@ -125,26 +125,7 @@ hanami_error_t hanami_transport_register(void)
     return HANAMI_OK;
 }
 
-/* =========================================================================
- * ODB backend (stub)
- * ========================================================================= */
-
-hanami_error_t hanami_odb_backend_new(git_odb_backend **out,
-                                      const char *endpoint,
-                                      const hanami_signer_t *signer,
-                                      const hanami_config_t *config)
-{
-    (void)endpoint;
-    (void)signer;
-    (void)config;
-
-    if (!out)
-        return HANAMI_ERR_INVALID_ARG;
-
-    *out = NULL;
-    /* TODO: Implement in hanami-odb-backend.c */
-    return HANAMI_OK;
-}
+/* ODB backend — implemented in hanami-odb-backend.c */
 
 /* =========================================================================
  * RefDB backend (stub)

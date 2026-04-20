@@ -53,7 +53,7 @@ set(HANAMI_SOURCES
   src/hanami-index.c
   src/hanami-bud02-auth.c
   src/hanami-blossom-client.c
-  # src/hanami-odb-backend.c
+  src/hanami-odb-backend.c
   # src/hanami-refdb-backend.c
   # src/hanami-nostr.c
   # src/hanami-transport.c
@@ -86,14 +86,18 @@ target_link_libraries(hanami
     OpenSSL::Crypto
 )
 
-# Optional NIP module linkage (available when ENABLE_NIP* is ON)
-foreach(_nip_target nip34 nip98)
-  if(TARGET ${_nip_target})
-    target_link_libraries(hanami PRIVATE ${_nip_target})
-    string(TOUPPER ${_nip_target} _nip_upper)
-    target_compile_definitions(hanami PRIVATE HANAMI_HAVE_${_nip_upper}=1)
-  endif()
-endforeach()
+# NIP-34 (required — Git collaboration protocol)
+if(NOT TARGET nip34)
+  message(FATAL_ERROR "libhanami requires nip34. Set ENABLE_NIP34=ON or BUILD_LIBHANAMI=OFF.")
+endif()
+target_link_libraries(hanami PRIVATE nip34)
+target_compile_definitions(hanami PRIVATE HANAMI_HAVE_NIP34=1)
+
+# NIP-98 (optional — HTTP auth, useful but not required)
+if(TARGET nip98)
+  target_link_libraries(hanami PRIVATE nip98)
+  target_compile_definitions(hanami PRIVATE HANAMI_HAVE_NIP98=1)
+endif()
 
 # Optional LMDB backend
 if(HANAMI_HAVE_LMDB)
@@ -188,5 +192,18 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-blossom-client)
+  endif()
+
+  add_executable(test-hanami-odb-backend tests/test_hanami_odb_backend.c)
+  target_compile_features(test-hanami-odb-backend PRIVATE c_std_11)
+  target_link_libraries(test-hanami-odb-backend PRIVATE hanami PkgConfig::LIBGIT2 PkgConfig::SQLITE3)
+  add_test(NAME test-hanami-odb-backend COMMAND test-hanami-odb-backend)
+  set_tests_properties(test-hanami-odb-backend PROPERTIES
+    TIMEOUT 30
+    LABELS "libhanami;odb;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-odb-backend)
   endif()
 endif()

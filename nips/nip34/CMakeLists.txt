@@ -1,21 +1,31 @@
+project(nip34 C)
 
-project(nip34)
+# NIP-34: Git Stuff — Nostr events for Git collaboration
 
-# Include the header files
-include_directories(include ${CMAKE_SOURCE_DIR}/libnostr/include)
+file(GLOB NIP34_SOURCES "src/*.c")
 
-# Add the source files
-file(GLOB SOURCES "src/*.c")
+add_library(nip34 ${NIP34_SOURCES})
+target_compile_features(nip34 PRIVATE c_std_11)
 
-# Create the library
-add_library(nip34 ${SOURCES})
-target_link_libraries(nip34 nostr)
+target_include_directories(nip34
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
 
-# Add tests if available
-file(GLOB TEST_SOURCES "tests/*.c")
-if(TEST_SOURCES)
-    add_executable(test_nip34 ${TEST_SOURCES})
-    target_link_libraries(test_nip34 nip34 nostr)
-    add_test(NAME test_nip34 COMMAND test_nip34)
+target_link_libraries(nip34 PUBLIC nostr)
+
+# Tests
+if(BUILD_TESTING)
+  file(GLOB NIP34_TEST_SOURCES "tests/*.c")
+  if(NIP34_TEST_SOURCES)
+    add_executable(test-nip34 ${NIP34_TEST_SOURCES})
+    target_compile_features(test-nip34 PRIVATE c_std_11)
+    target_link_libraries(test-nip34 PRIVATE nip34 nostr)
+    add_test(NAME test-nip34 COMMAND test-nip34)
+    set_tests_properties(test-nip34 PROPERTIES
+      TIMEOUT 30
+      LABELS "nip34;unit"
+    )
+  endif()
 endif()
-
