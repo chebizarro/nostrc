@@ -58,6 +58,7 @@ set(HANAMI_SOURCES
   src/hanami-nostr.c
   src/hanami-transport.c
   src/hanami-config.c
+  src/hanami-grasp.c
 )
 
 # --- Library target ---
@@ -270,5 +271,18 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-integration)
+  endif()
+
+  add_executable(test-hanami-grasp tests/test_hanami_grasp.c)
+  target_compile_features(test-hanami-grasp PRIVATE c_std_11)
+  target_link_libraries(test-hanami-grasp PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)
+  add_test(NAME test-hanami-grasp COMMAND test-hanami-grasp)
+  set_tests_properties(test-hanami-grasp PROPERTIES
+    TIMEOUT 30
+    LABELS "libhanami;grasp;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-grasp)
   endif()
 endif()
