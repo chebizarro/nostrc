@@ -258,4 +258,17 @@ if(BUILD_TESTING)
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-config)
   endif()
+
+  add_executable(test-hanami-integration tests/test_hanami_integration.c)
+  target_compile_features(test-hanami-integration PRIVATE c_std_11)
+  target_link_libraries(test-hanami-integration PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2 PkgConfig::SQLITE3)
+  add_test(NAME test-hanami-integration COMMAND test-hanami-integration)
+  set_tests_properties(test-hanami-integration PROPERTIES
+    TIMEOUT 60
+    LABELS "libhanami;integration"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-integration)
+  endif()
 endif()

@@ -101,16 +101,22 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
 
     *out = NULL;
 
-    if (ensure_directory(path) != 0 && errno != EEXIST) {
-        /* Try anyway — maybe the directory already exists */
-    }
+    /* Determine actual DB path — handle :memory: specially */
+    int is_memory = (strcmp(path, ":memory:") == 0);
+    char *db_path = NULL;
 
-    /* Build DB file path */
-    size_t path_len = strlen(path);
-    char *db_path = malloc(path_len + 20);
-    if (!db_path)
-        return HANAMI_ERR_NOMEM;
-    snprintf(db_path, path_len + 20, "%s/hanami_index.db", path);
+    if (is_memory) {
+        db_path = strdup(":memory:");
+    } else {
+        if (ensure_directory(path) != 0 && errno != EEXIST) {
+            /* Try anyway — maybe the directory already exists */
+        }
+        size_t path_len = strlen(path);
+        db_path = malloc(path_len + 20);
+        if (!db_path)
+            return HANAMI_ERR_NOMEM;
+        snprintf(db_path, path_len + 20, "%s/hanami_index.db", path);
+    }
 
     hanami_index_t *idx = calloc(1, sizeof(*idx));
     if (!idx) {
