@@ -56,7 +56,7 @@ set(HANAMI_SOURCES
   src/hanami-odb-backend.c
   src/hanami-refdb-backend.c
   src/hanami-nostr.c
-  # src/hanami-transport.c
+  src/hanami-transport.c
   # src/hanami-config.c
 )
 
@@ -231,5 +231,18 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-refdb-backend)
+  endif()
+
+  add_executable(test-hanami-transport tests/test_hanami_transport.c)
+  target_compile_features(test-hanami-transport PRIVATE c_std_11)
+  target_link_libraries(test-hanami-transport PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)
+  add_test(NAME test-hanami-transport COMMAND test-hanami-transport)
+  set_tests_properties(test-hanami-transport PROPERTIES
+    TIMEOUT 30
+    LABELS "libhanami;transport;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-transport)
   endif()
 endif()

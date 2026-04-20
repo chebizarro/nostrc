@@ -115,15 +115,7 @@ void hanami_blob_descriptor_free(hanami_blob_descriptor_t *desc)
     free(desc);
 }
 
-/* =========================================================================
- * Transport registration (stub)
- * ========================================================================= */
-
-hanami_error_t hanami_transport_register(void)
-{
-    /* TODO: git_transport_register("blossom", hanami_transport_new, NULL) */
-    return HANAMI_OK;
-}
+/* Transport — implemented in hanami-transport.c */
 
 /* ODB backend — implemented in hanami-odb-backend.c */
 

@@ -79,15 +79,7 @@ hanami_error_t hanami_config_load(hanami_config_t *config);
  * Transport registration
  * ========================================================================= */
 
-/**
- * hanami_transport_register:
- *
- * Register the blossom:// URL scheme with libgit2's transport system.
- * After calling this, git_clone("blossom://...", ...) works transparently.
- *
- * Returns: HANAMI_OK on success
- */
-hanami_error_t hanami_transport_register(void);
+/* hanami_transport_register — see hanami/hanami-transport.h for the full API */
 
 /* =========================================================================
  * ODB backend
