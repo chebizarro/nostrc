@@ -91,10 +91,13 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
     if (!out || !path)
         return HANAMI_ERR_INVALID_ARG;
 
-    /* For now only sqlite is supported */
+    /* Only sqlite backend is supported (LMDB is gated by HANAMI_HAVE_LMDB) */
     if (backend && strcmp(backend, "sqlite") != 0 && strcmp(backend, "") != 0) {
 #if HANAMI_HAVE_LMDB
-        /* TODO: LMDB backend */
+        if (strcmp(backend, "lmdb") == 0) {
+            /* LMDB backend is a compile-time option not yet wired */
+            return HANAMI_ERR_INVALID_ARG;
+        }
 #endif
         return HANAMI_ERR_INVALID_ARG;
     }

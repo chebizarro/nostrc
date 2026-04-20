@@ -19,6 +19,82 @@
 #include <ctype.h>
 
 /* =========================================================================
+ * Bech32 npub decoding
+ * ========================================================================= */
+
+static const char BECH32_CHARSET[] = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+static int bech32_char_to_val(char c)
+{
+    const char *p = strchr(BECH32_CHARSET, c);
+    return p ? (int)(p - BECH32_CHARSET) : -1;
+}
+
+/**
+ * Decode an npub bech32 string to a 32-byte pubkey.
+ * Returns allocated 64-char hex string or NULL on error.
+ */
+static char *npub_to_hex(const char *npub)
+{
+    if (!npub || strncmp(npub, "npub1", 5) != 0)
+        return NULL;
+
+    size_t len = strlen(npub);
+    if (len < 59) /* npub1 + 53 chars minimum for 32 bytes */
+        return NULL;
+
+    /* Decode bech32 data portion (after '1' separator) */
+    const char *data_part = npub + 5; /* skip "npub1" */
+    size_t data_len = len - 5;
+
+    /* Decode 5-bit values */
+    uint8_t values[64];
+    if (data_len > 64)
+        return NULL;
+
+    for (size_t i = 0; i < data_len; i++) {
+        int v = bech32_char_to_val(data_part[i]);
+        if (v < 0) return NULL;
+        values[i] = (uint8_t)v;
+    }
+
+    /* Skip 6-byte checksum at end */
+    if (data_len < 6)
+        return NULL;
+    size_t payload_5bit_len = data_len - 6;
+
+    /* Convert from 5-bit to 8-bit */
+    uint8_t pubkey[32];
+    size_t out_idx = 0;
+    uint32_t acc = 0;
+    int bits = 0;
+
+    for (size_t i = 0; i < payload_5bit_len && out_idx < 32; i++) {
+        acc = (acc << 5) | values[i];
+        bits += 5;
+        if (bits >= 8) {
+            bits -= 8;
+            pubkey[out_idx++] = (uint8_t)((acc >> bits) & 0xFF);
+        }
+    }
+
+    if (out_idx != 32)
+        return NULL;
+
+    /* Convert to hex */
+    static const char hex[] = "0123456789abcdef";
+    char *result = malloc(65);
+    if (!result) return NULL;
+
+    for (int i = 0; i < 32; i++) {
+        result[i * 2]     = hex[(pubkey[i] >> 4) & 0xf];
+        result[i * 2 + 1] = hex[pubkey[i] & 0xf];
+    }
+    result[64] = '\0';
+    return result;
+}
+
+/* =========================================================================
  * Internal helpers
  * ========================================================================= */
 
@@ -255,7 +331,7 @@ hanami_error_t hanami_grasp_parse_clone_url(const char *clone_url,
 
     info->host = strndup(after_scheme, host_len);
     info->npub = npub;
-    info->pubkey = NULL; /* TODO: bech32 decode npub → hex pubkey */
+    info->pubkey = npub_to_hex(npub); /* bech32 decode npub → hex pubkey */
     info->repo_name = strndup(repo_start, repo_name_len);
     info->clone_url = strdup(clone_url);
     info->uses_tls = tls;

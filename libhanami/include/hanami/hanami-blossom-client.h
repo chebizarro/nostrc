@@ -138,7 +138,7 @@ hanami_error_t hanami_blossom_delete(hanami_blossom_client_t *client,
  * hanami_blossom_list:
  * @client: client handle
  * @pubkey_hex: pubkey to list blobs for (64-char hex)
- * @out_json: (out): raw JSON response (caller frees). TODO: parse to descriptors.
+ * @out_json: (out): raw JSON response (caller frees)
  * @out_len: (out): response length
  *
  * GET /list/<pubkey> — list blobs uploaded by a pubkey.

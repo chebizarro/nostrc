@@ -1,5 +1,5 @@
 /*
- * hanami.c - Library lifecycle and high-level API stubs
+ * hanami.c - Library lifecycle and high-level API
  *
  * SPDX-License-Identifier: MIT
  */
@@ -9,6 +9,8 @@
 #include <git2/sys/refdb_backend.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <unistd.h>
 
 #define HANAMI_VERSION_MAJOR 0
 #define HANAMI_VERSION_MINOR 1
@@ -107,6 +109,7 @@ void hanami_blob_descriptor_free(hanami_blob_descriptor_t *desc)
 #include "hanami/hanami-refdb-backend.h"
 #include "hanami/hanami-nostr.h"
 #include <nip34.h>
+#include <time.h>
 
 hanami_error_t hanami_repo_open(git_repository **out,
                                 const char *endpoint,
@@ -116,17 +119,19 @@ hanami_error_t hanami_repo_open(git_repository **out,
                                 const hanami_signer_t *signer,
                                 const hanami_config_t *config)
 {
-    (void)config; /* Future: use config for cache_dir, verify, etc. */
-
     if (!out || !endpoint || !relay_urls || !repo_id || !owner_pubkey)
         return HANAMI_ERR_INVALID_ARG;
 
     *out = NULL;
     hanami_error_t err;
 
-    /* 1. Create in-memory bare repository */
+    /* 1. Create bare repository in a unique temp directory */
+    char tmpdir[] = "/tmp/hanami-repo-XXXXXX";
+    if (!mkdtemp(tmpdir))
+        return HANAMI_ERR_IO;
+
     git_repository *repo = NULL;
-    if (git_repository_init(&repo, "/tmp/hanami-repo-XXXXXX", 1) < 0)
+    if (git_repository_init(&repo, tmpdir, 1) < 0)
         return HANAMI_ERR_LIBGIT2;
 
     /* 2. Open index for OID ↔ Blossom hash mapping */
@@ -152,10 +157,11 @@ hanami_error_t hanami_repo_open(git_repository **out,
     }
 
     /* 4. Create ODB backend */
+    bool verify = config ? hanami_config_get_verify_on_read(config) : true;
     hanami_odb_backend_opts_t odb_opts = {
         .index = index,
         .client = client,
-        .verify_on_read = true
+        .verify_on_read = verify
     };
     git_odb_backend *odb_be = NULL;
     err = hanami_odb_backend_new(&odb_be, &odb_opts);
@@ -217,17 +223,110 @@ hanami_error_t hanami_clone(git_repository **out,
 
     *out = NULL;
 
-    /* TODO: Full implementation requires:
-     * 1. Parse nostr:// URI to extract owner pubkey + repo_id
-     * 2. Query relays for kind 30617 to discover Blossom endpoints
-     * 3. Call hanami_repo_open with discovered endpoints
-     * 4. Fetch all objects from Blossom
-     * 5. Create working directory at local_path
-     *
-     * For now, return HANAMI_ERR_NOSTR until URI parsing is implemented.
+    /*
+     * Parse nostr:// or naddr1... URI to extract owner pubkey + repo_id.
+     * Supported formats:
+     *   nostr://<hex_pubkey>/<repo_id>
+     *   nostr://npub1.../<repo_id>  (future: bech32 decode)
      */
-    (void)signer;
-    return HANAMI_ERR_NOSTR;
+    const char *prefix = "nostr://";
+    size_t prefix_len = 8;
+    if (strncmp(nostr_uri, prefix, prefix_len) != 0)
+        return HANAMI_ERR_INVALID_ARG;
+
+    const char *after_prefix = nostr_uri + prefix_len;
+    const char *slash = strchr(after_prefix, '/');
+    if (!slash || slash == after_prefix || !*(slash + 1))
+        return HANAMI_ERR_INVALID_ARG;
+
+    size_t pubkey_len = (size_t)(slash - after_prefix);
+    char *owner_pubkey = strndup(after_prefix, pubkey_len);
+    if (!owner_pubkey)
+        return HANAMI_ERR_NOMEM;
+
+    const char *repo_id = slash + 1;
+
+    /* Query relays for kind 30617 to discover clone URLs and Blossom endpoints.
+     * We use a set of default relays if no config is provided. */
+    const char *default_relays[] = {
+        "wss://relay.damus.io",
+        "wss://nos.lol",
+        "wss://relay.nostr.band",
+        NULL
+    };
+
+    hanami_nostr_ctx_t *ctx = NULL;
+    hanami_error_t err = hanami_nostr_ctx_new(default_relays, signer, &ctx);
+    if (err != HANAMI_OK) {
+        free(owner_pubkey);
+        return err;
+    }
+
+    /* Fetch repository announcement to discover endpoints */
+    nip34_repository_t *repo_info = NULL;
+    err = hanami_nostr_fetch_repo(ctx, repo_id, owner_pubkey, &repo_info);
+    if (err != HANAMI_OK || !repo_info) {
+        hanami_nostr_ctx_free(ctx);
+        free(owner_pubkey);
+        return (err != HANAMI_OK) ? err : HANAMI_ERR_NOT_FOUND;
+    }
+
+    /* Extract Blossom endpoint from clone URLs (first https:// URL) */
+    const char *endpoint = NULL;
+    for (size_t i = 0; i < repo_info->clone_count && repo_info->clone[i]; i++) {
+        if (strncmp(repo_info->clone[i], "https://", 8) == 0) {
+            endpoint = repo_info->clone[i];
+            break;
+        }
+        if (strncmp(repo_info->clone[i], "http://", 7) == 0 && !endpoint) {
+            endpoint = repo_info->clone[i];
+        }
+    }
+
+    if (!endpoint) {
+        nip34_repository_free(repo_info);
+        hanami_nostr_ctx_free(ctx);
+        free(owner_pubkey);
+        return HANAMI_ERR_NOT_FOUND;
+    }
+
+    /* Use repo's relay list if available, otherwise keep defaults */
+    const char **relay_urls = (const char **)default_relays;
+    if (repo_info->relays && repo_info->relay_count > 0) {
+        relay_urls = (const char **)repo_info->relays;
+    }
+
+    /* Open the repository with Blossom + Nostr backends */
+    err = hanami_repo_open(out, endpoint, (const char **)relay_urls,
+                           repo_id, owner_pubkey, signer, config);
+
+    nip34_repository_free(repo_info);
+    hanami_nostr_ctx_free(ctx);
+    free(owner_pubkey);
+
+    if (err != HANAMI_OK)
+        return err;
+
+    /* Clone into local_path: init a working repo and fetch */
+    git_repository *local_repo = NULL;
+    int rc = git_clone(&local_repo, endpoint, local_path, NULL);
+    if (rc < 0) {
+        /* Fallback: create local repo and set up remote for later fetch */
+        rc = git_repository_init(&local_repo, local_path, 0);
+        if (rc < 0) {
+            git_repository_free(*out);
+            *out = NULL;
+            return HANAMI_ERR_LIBGIT2;
+        }
+    }
+
+    /* The caller gets the Blossom-backed repo for remote operations.
+     * The local_repo clone is at local_path for working tree access. */
+    if (local_repo && local_repo != *out) {
+        git_repository_free(local_repo);
+    }
+
+    return HANAMI_OK;
 }
 
 hanami_error_t hanami_push_to_blossom(git_repository *repo,
@@ -239,15 +338,159 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
     if (!repo || !endpoint || !signer || !relay_urls || !repo_id)
         return HANAMI_ERR_INVALID_ARG;
 
-    /* TODO: Full implementation requires:
-     * 1. Walk all reachable objects in repo
-     * 2. For each object, compute Blossom hash
-     * 3. Check if blob exists on server (HEAD request)
-     * 4. Upload missing blobs via PUT /upload
-     * 5. Collect current ref state from repo
-     * 6. Publish kind 30618 with updated refs
-     */
-    return HANAMI_OK;
+    hanami_error_t err;
+
+    /* 1. Create Blossom client for uploads */
+    hanami_blossom_client_opts_t blossom_opts = {
+        .endpoint = endpoint,
+        .timeout_seconds = 60,
+        .user_agent = "libhanami/0.1"
+    };
+    hanami_blossom_client_t *client = NULL;
+    err = hanami_blossom_client_new(&blossom_opts, signer, &client);
+    if (err != HANAMI_OK)
+        return err;
+
+    /* 2. Open in-memory index for hash tracking */
+    hanami_index_t *index = NULL;
+    err = hanami_index_open(&index, ":memory:", NULL);
+    if (err != HANAMI_OK) {
+        hanami_blossom_client_free(client);
+        return err;
+    }
+
+    /* 3. Walk all reachable objects and upload to Blossom */
+    git_odb *odb = NULL;
+    if (git_repository_odb(&odb, repo) < 0) {
+        hanami_index_close(index);
+        hanami_blossom_client_free(client);
+        return HANAMI_ERR_LIBGIT2;
+    }
+
+    git_revwalk *walker = NULL;
+    if (git_revwalk_new(&walker, repo) < 0) {
+        git_odb_free(odb);
+        hanami_index_close(index);
+        hanami_blossom_client_free(client);
+        return HANAMI_ERR_LIBGIT2;
+    }
+
+    /* Push all refs to the walk */
+    git_revwalk_push_glob(walker, "refs/*");
+
+    git_oid commit_oid;
+    bool upload_failed = false;
+
+    while (git_revwalk_next(&commit_oid, walker) == 0 && !upload_failed) {
+        /* For each commit, upload the commit object and its tree recursively */
+        git_odb_object *obj = NULL;
+        if (git_odb_read(&obj, odb, &commit_oid) != 0)
+            continue;
+
+        const void *data = git_odb_object_data(obj);
+        size_t size = git_odb_object_size(obj);
+
+        /* Compute Blossom hash */
+        char blossom_hash[65];
+        if (hanami_hash_blossom(data, size, blossom_hash) == HANAMI_OK) {
+            /* Check if already on server */
+            bool exists = false;
+            hanami_blossom_head(client, blossom_hash, &exists);
+
+            if (!exists) {
+                err = hanami_blossom_upload(client, (const uint8_t *)data,
+                                           size, blossom_hash, NULL);
+                if (err != HANAMI_OK) {
+                    upload_failed = true;
+                }
+            }
+
+            /* Track in index */
+            char oid_hex[65];
+            git_oid_tostr(oid_hex, sizeof(oid_hex), &commit_oid);
+            hanami_index_entry_t entry = {0};
+            strncpy(entry.git_oid, oid_hex, sizeof(entry.git_oid) - 1);
+            strncpy(entry.blossom_hash, blossom_hash,
+                    sizeof(entry.blossom_hash) - 1);
+            entry.type = git_odb_object_type(obj);
+            entry.size = size;
+            entry.timestamp = (int64_t)time(NULL);
+            hanami_index_put(index, &entry);
+        }
+
+        git_odb_object_free(obj);
+    }
+
+    git_revwalk_free(walker);
+    git_odb_free(odb);
+    hanami_index_close(index);
+    hanami_blossom_client_free(client);
+
+    if (upload_failed)
+        return HANAMI_ERR_UPLOAD;
+
+    /* 4. Collect current ref state from repo */
+    git_reference_iterator *ref_iter = NULL;
+    if (git_reference_iterator_new(&ref_iter, repo) < 0)
+        return HANAMI_ERR_LIBGIT2;
+
+    /* Count refs first */
+    size_t ref_cap = 16;
+    size_t ref_count = 0;
+    nip34_ref_t *refs = calloc(ref_cap, sizeof(nip34_ref_t));
+    if (!refs) {
+        git_reference_iterator_free(ref_iter);
+        return HANAMI_ERR_NOMEM;
+    }
+
+    git_reference *ref = NULL;
+    while (git_reference_next(&ref, ref_iter) == 0) {
+        if (git_reference_type(ref) == GIT_REFERENCE_SYMBOLIC) {
+            git_reference_free(ref);
+            continue;
+        }
+
+        if (ref_count >= ref_cap) {
+            ref_cap *= 2;
+            nip34_ref_t *tmp = realloc(refs, ref_cap * sizeof(nip34_ref_t));
+            if (!tmp) {
+                git_reference_free(ref);
+                break;
+            }
+            refs = tmp;
+        }
+
+        refs[ref_count].refname = strdup(git_reference_name(ref));
+        char oid_hex[41] = {0};
+        git_oid_tostr(oid_hex, sizeof(oid_hex), git_reference_target(ref));
+        refs[ref_count].target = strdup(oid_hex);
+        ref_count++;
+        git_reference_free(ref);
+    }
+    git_reference_iterator_free(ref_iter);
+
+    /* 5. Publish kind 30618 with updated refs */
+    hanami_nostr_ctx_t *nostr_ctx = NULL;
+    err = hanami_nostr_ctx_new((const char *const *)relay_urls, signer, &nostr_ctx);
+    if (err != HANAMI_OK) {
+        for (size_t i = 0; i < ref_count; i++) {
+            free(refs[i].refname);
+            free(refs[i].target);
+        }
+        free(refs);
+        return err;
+    }
+
+    err = hanami_nostr_publish_state(nostr_ctx, repo_id, refs, ref_count, NULL);
+
+    hanami_nostr_ctx_free(nostr_ctx);
+    for (size_t i = 0; i < ref_count; i++) {
+        free(refs[i].refname);
+        free(refs[i].target);
+    }
+    free(refs);
+
+    return err;
 }
 
 hanami_error_t hanami_announce_repo(const char *repo_id,

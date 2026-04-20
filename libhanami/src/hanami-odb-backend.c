@@ -177,8 +177,8 @@ static int blossom_odb_exists(git_odb_backend *_backend, const git_oid *oid)
 static int blossom_odb_exists_prefix(git_oid *out, git_odb_backend *_backend,
                                      const git_oid *short_oid, size_t len)
 {
-    /* For now, we don't support prefix matching on Blossom.
-     * The local backends in the stack should handle this. */
+    /* Prefix matching is not supported on Blossom (content-addressed by full hash).
+     * Other backends in the ODB stack (e.g. local pack/loose) handle prefix lookups. */
     (void)out;
     (void)_backend;
     (void)short_oid;

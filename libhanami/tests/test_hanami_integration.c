@@ -382,6 +382,12 @@ static void test_clone_null_args(void)
     assert(hanami_clone(NULL, "uri", "/tmp/x", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
     assert(hanami_clone(&repo, NULL, "/tmp/x", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
     assert(hanami_clone(&repo, "uri", NULL, NULL, NULL) == HANAMI_ERR_INVALID_ARG);
+    /* Invalid URI scheme (not nostr://) */
+    assert(hanami_clone(&repo, "https://example.com/repo", "/tmp/x", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
+    /* Missing repo_id component */
+    assert(hanami_clone(&repo, "nostr://pubkeyhex", "/tmp/x", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
+    /* Empty pubkey */
+    assert(hanami_clone(&repo, "nostr:///repo-id", "/tmp/x", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
 }
 
 static void test_push_null_args(void)

@@ -8,8 +8,11 @@
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-relay.h"
+#include "nostr-subscription.h"
 #include "nostr-tag.h"
 #include "nostr-kinds.h"
+#include "channel.h"
+#include "context.h"
 #include <nip34.h>
 
 #include <stdlib.h>
@@ -323,10 +326,12 @@ NostrFilter *hanami_nostr_build_patches_filter(const char *repo_addr)
  * Querying (using relay subscribe + collect first match)
  * ========================================================================= */
 
+/* Query timeout for single-event queries (seconds) */
+#define QUERY_TIMEOUT_SECONDS 10
+
 /* Internal: query relays with a filter and collect the most recent event.
- * The relay subscription approach is simplified for now — we rely on the
- * relay returning events for a limit=1 query. For relays that don't support
- * this synchronously, a timeout-based approach would be needed. */
+ * Uses the subscription events channel with a timeout context to receive
+ * the first matching event. */
 static NostrEvent *query_single_event(hanami_nostr_ctx_t *ctx,
                                       NostrFilter *filter)
 {
@@ -343,25 +348,58 @@ static NostrEvent *query_single_event(hanami_nostr_ctx_t *ctx,
     }
     nostr_filters_add(filters, filter);
 
+    /* Create a timeout context for the query */
+    GoContext *timeout_ctx = go_context_background();
+    if (timeout_ctx) {
+        go_context_init(timeout_ctx, QUERY_TIMEOUT_SECONDS);
+    }
+
     /* Try each relay until we get a result */
     NostrEvent *result = NULL;
     for (size_t i = 0; i < ctx->relay_count && !result; i++) {
         if (!ctx->relays[i]) continue;
 
-        Error *relay_err = NULL;
-        bool ok = nostr_relay_subscribe(ctx->relays[i], NULL, filters, &relay_err);
-        if (!ok) continue;
+        /* Prepare and fire subscription */
+        struct NostrSubscription *sub = nostr_relay_prepare_subscription(
+            ctx->relays[i], timeout_ctx, filters);
+        if (!sub) continue;
 
-        /* Get the subscription's events channel */
-        if (ctx->relays[i]->subscriptions) {
-            /* For now, we just attempt the subscribe/query.
-             * Full async event collection requires the GoChannel API.
-             * This serves as the integration point — actual relay I/O
-             * will work once the relay is connected. */
+        Error *sub_err = NULL;
+        bool ok = nostr_subscription_fire(sub, &sub_err);
+        if (!ok) {
+            nostr_subscription_free(sub);
+            continue;
         }
+
+        /* Wait for EOSE or an event, whichever comes first */
+        GoChannel *events_ch = nostr_subscription_get_events_channel(sub);
+        if (events_ch) {
+            void *data = NULL;
+            int rc = go_channel_receive_with_context(events_ch, &data, timeout_ctx);
+            if (rc == 0 && data) {
+                /* We received an event — clone it since sub cleanup will free originals */
+                NostrEvent *received = (NostrEvent *)data;
+                char *json = nostr_event_serialize_compact(received);
+                if (json) {
+                    result = nostr_event_new();
+                    if (result) {
+                        if (nostr_event_deserialize_compact(result, json, NULL) != 1) {
+                            nostr_event_free(result);
+                            result = NULL;
+                        }
+                    }
+                    free(json);
+                }
+            }
+        }
+
+        nostr_subscription_unsubscribe(sub);
+        nostr_subscription_free(sub);
     }
 
     nostr_filters_free(filters);
+    if (timeout_ctx)
+        go_context_unref(timeout_ctx);
     return result;
 }
 

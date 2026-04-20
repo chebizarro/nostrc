@@ -117,6 +117,9 @@ static void test_parse_valid_url(void)
     assert(info->relay_url != NULL);
     /* relay URL should be wss://<host>/ */
     assert(strncmp(info->relay_url, "wss://", 6) == 0);
+    /* pubkey should be decoded from npub */
+    assert(info->pubkey != NULL);
+    assert(strlen(info->pubkey) == 64);
     hanami_grasp_info_free(info);
 }
 
@@ -342,7 +345,29 @@ static void test_fetch_valid_url_no_repo(void)
 }
 
 /* =========================================================================
- * 7. Info free safety
+ * 7. Npub bech32 decode verification
+ * ========================================================================= */
+
+static void test_npub_decode_known_vector(void)
+{
+    /* Use a well-known npub → verify the decoded pubkey is 64 hex chars.
+     * We can verify the npub encodes correctly by checking parse + pubkey field. */
+    /* npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqspc55m
+     * encodes 32 zero bytes (all-zero pubkey) */
+    const char *url = "https://test.com/" TEST_NPUB "/repo.git";
+    hanami_grasp_info_t *info = NULL;
+    assert(hanami_grasp_parse_clone_url(url, &info) == HANAMI_OK);
+    assert(info->pubkey != NULL);
+    assert(strlen(info->pubkey) == 64);
+    /* All-zero npub should decode to all-zero hex pubkey */
+    for (int i = 0; i < 64; i++) {
+        assert(info->pubkey[i] == '0');
+    }
+    hanami_grasp_info_free(info);
+}
+
+/* =========================================================================
+ * 8. Info free safety
  * ========================================================================= */
 
 static void test_info_free_null(void)
@@ -401,7 +426,10 @@ int main(void)
     RUN_TEST(test_fetch_invalid_url);
     RUN_TEST(test_fetch_valid_url_no_repo);
 
-    /* 7. Safety */
+    /* 7. Bech32 decode */
+    RUN_TEST(test_npub_decode_known_vector);
+
+    /* 8. Safety */
     RUN_TEST(test_info_free_null);
 
     printf("\n%d passed, %d failed\n", tests_run - tests_failed, tests_failed);
