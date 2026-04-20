@@ -205,7 +205,13 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # When building libgo as a shared library, we must link nsync directly;
 # otherwise undefined symbols (nsync_*) will fail the link step.
 # Expose nsync to consumers as PUBLIC so downstreams inherit it via CMake.
-target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread)
+# nsync contains C++ objects (pthread_key_win32.cc on Windows); when linking
+# via a C compiler the C++ runtime must be added explicitly.
+if(WIN32)
+  target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread stdc++)
+else()
+  target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread)
+endif()
 set_property(TARGET libgo PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(libgo PUBLIC ${NSYNC_INCLUDE_DIR})
 
