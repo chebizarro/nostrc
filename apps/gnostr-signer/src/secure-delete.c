@@ -23,6 +23,17 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* Windows POSIX compatibility shims */
+#if defined(_WIN32) || defined(__MINGW32__)
+#include <io.h>
+#define fsync(fd) _commit(fd)
+#define ftruncate(fd, size) _chsize_s(fd, size)
+#define lstat(path, buf) stat(path, buf)
+#ifndef S_ISLNK
+#define S_ISLNK(m) 0  /* No symlink detection on Windows */
+#endif
+#endif
+
 /* For directory traversal */
 #include <dirent.h>
 
