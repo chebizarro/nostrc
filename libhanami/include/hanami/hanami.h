@@ -95,27 +95,7 @@ hanami_error_t hanami_transport_register(void);
 
 /* hanami_odb_backend_new — see hanami/hanami-odb-backend.h for the full API */
 
-/* =========================================================================
- * RefDB backend
- * ========================================================================= */
-
-/**
- * hanami_refdb_backend_new:
- * @out: (out): the created RefDB backend
- * @relay_urls: NULL-terminated array of Nostr relay URLs
- * @repo_id: repository identifier (NIP-34 d-tag)
- * @owner_pubkey: repository owner's hex public key
- * @signer: (nullable): signer for publishing state updates
- *
- * Create a git_refdb_backend that stores refs via NIP-34 events.
- *
- * Returns: HANAMI_OK on success
- */
-hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
-                                        const char **relay_urls,
-                                        const char *repo_id,
-                                        const char *owner_pubkey,
-                                        const hanami_signer_t *signer);
+/* hanami_refdb_backend_new — see hanami/hanami-refdb-backend.h for the full API */
 
 /* =========================================================================
  * High-level operations

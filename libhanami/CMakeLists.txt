@@ -54,7 +54,7 @@ set(HANAMI_SOURCES
   src/hanami-bud02-auth.c
   src/hanami-blossom-client.c
   src/hanami-odb-backend.c
-  # src/hanami-refdb-backend.c
+  src/hanami-refdb-backend.c
   src/hanami-nostr.c
   # src/hanami-transport.c
   # src/hanami-config.c
@@ -218,5 +218,18 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-nostr)
+  endif()
+
+  add_executable(test-hanami-refdb-backend tests/test_hanami_refdb_backend.c)
+  target_compile_features(test-hanami-refdb-backend PRIVATE c_std_11)
+  target_link_libraries(test-hanami-refdb-backend PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)
+  add_test(NAME test-hanami-refdb-backend COMMAND test-hanami-refdb-backend)
+  set_tests_properties(test-hanami-refdb-backend PROPERTIES
+    TIMEOUT 30
+    LABELS "libhanami;refdb;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-refdb-backend)
   endif()
 endif()

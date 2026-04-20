@@ -127,28 +127,7 @@ hanami_error_t hanami_transport_register(void)
 
 /* ODB backend — implemented in hanami-odb-backend.c */
 
-/* =========================================================================
- * RefDB backend (stub)
- * ========================================================================= */
-
-hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
-                                        const char **relay_urls,
-                                        const char *repo_id,
-                                        const char *owner_pubkey,
-                                        const hanami_signer_t *signer)
-{
-    (void)relay_urls;
-    (void)repo_id;
-    (void)owner_pubkey;
-    (void)signer;
-
-    if (!out)
-        return HANAMI_ERR_INVALID_ARG;
-
-    *out = NULL;
-    /* TODO: Implement in hanami-refdb-backend.c */
-    return HANAMI_OK;
-}
+/* RefDB backend — implemented in hanami-refdb-backend.c */
 
 /* =========================================================================
  * High-level operations (stubs)
