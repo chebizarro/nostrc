@@ -60,10 +60,13 @@ SetCompressorDictSize 64
 
 ; Modern UI configuration
 !define MUI_ABORTWARNING
-!define MUI_ICON "..\..\data\icons\gnostr-signer.ico"
-!define MUI_UNICON "..\..\data\icons\gnostr-signer.ico"
-!define MUI_WELCOMEFINISHPAGE_BITMAP "installer-welcome.bmp"
-!define MUI_UNWELCOMEFINISHPAGE_BITMAP "installer-welcome.bmp"
+; Application icon - uses NSIS default; add gnostr-signer.ico to
+; data/icons/ to customize the installer icon.
+; !define MUI_ICON "..\..\data\icons\gnostr-signer.ico"
+; !define MUI_UNICON "..\..\data\icons\gnostr-signer.ico"
+; Installer bitmaps - uses NSIS defaults; add installer-welcome.bmp to customize.
+; !define MUI_WELCOMEFINISHPAGE_BITMAP "installer-welcome.bmp"
+; !define MUI_UNWELCOMEFINISHPAGE_BITMAP "installer-welcome.bmp"
 
 ; Branding text
 BrandingText "${PRODUCT_NAME} ${VERSION}"
@@ -99,7 +102,7 @@ Section "Core Application" SEC_CORE
 
   ; Main executables
   File "${BUILD_DIR}\apps\gnostr-signer\${EXECUTABLE}"
-  File "${BUILD_DIR}\apps\gnostr-signer\${DAEMON_EXECUTABLE}"
+  File /nonfatal "${BUILD_DIR}\apps\gnostr-signer\${DAEMON_EXECUTABLE}"
 
   ; GSettings schema
   SetOutPath "$INSTDIR\share\glib-2.0\schemas"
