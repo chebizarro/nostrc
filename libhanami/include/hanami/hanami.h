@@ -52,28 +52,7 @@ void hanami_shutdown(void);
  */
 const char *hanami_version(int *major, int *minor, int *patch);
 
-/* =========================================================================
- * Configuration
- * ========================================================================= */
-
-/**
- * hanami_config_default:
- * @config: (out): filled with default values
- *
- * Initialize a config struct with sensible defaults.
- */
-void hanami_config_default(hanami_config_t *config);
-
-/**
- * hanami_config_load:
- * @config: (out): filled from .gitconfig and environment
- *
- * Load configuration from git config ([hanami] section) and
- * environment variables (HANAMI_ENDPOINT, HANAMI_RELAYS, etc.).
- *
- * Returns: HANAMI_OK on success
- */
-hanami_error_t hanami_config_load(hanami_config_t *config);
+/* hanami_config — see hanami/hanami-config.h for the full API */
 
 /* =========================================================================
  * Transport registration

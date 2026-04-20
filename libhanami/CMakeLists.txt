@@ -57,7 +57,7 @@ set(HANAMI_SOURCES
   src/hanami-refdb-backend.c
   src/hanami-nostr.c
   src/hanami-transport.c
-  # src/hanami-config.c
+  src/hanami-config.c
 )
 
 # --- Library target ---
@@ -244,5 +244,18 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-transport)
+  endif()
+
+  add_executable(test-hanami-config tests/test_hanami_config.c)
+  target_compile_features(test-hanami-config PRIVATE c_std_11)
+  target_link_libraries(test-hanami-config PRIVATE hanami PkgConfig::LIBGIT2)
+  add_test(NAME test-hanami-config COMMAND test-hanami-config)
+  set_tests_properties(test-hanami-config PROPERTIES
+    TIMEOUT 30
+    LABELS "libhanami;config;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-config)
   endif()
 endif()

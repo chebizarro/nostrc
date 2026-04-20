@@ -65,24 +65,8 @@ typedef struct {
     int64_t timestamp;      /**< Last access time (Unix epoch seconds) */
 } hanami_index_entry_t;
 
-/* =========================================================================
- * Configuration
- * ========================================================================= */
-
-/**
- * hanami_config_t:
- *
- * Runtime configuration for libhanami.
- */
-typedef struct {
-    const char *endpoint;           /**< Default Blossom server URL */
-    const char **relay_urls;        /**< NULL-terminated array of Nostr relay URLs */
-    const char *cache_dir;          /**< Local cache directory (default: ~/.cache/hanami) */
-    const char *index_backend;      /**< "sqlite" (default) or "lmdb" */
-    size_t upload_threshold;        /**< Min object size for Blossom upload (0 = all) */
-    int prefetch_concurrency;       /**< Parallel download limit (default: 4) */
-    bool verify_on_read;            /**< Recompute hashes on read (default: true) */
-} hanami_config_t;
+/* Configuration — see hanami/hanami-config.h for the full API */
+typedef struct hanami_config hanami_config_t;
 
 /* =========================================================================
  * Ref state (for NIP-34 kind 30618)

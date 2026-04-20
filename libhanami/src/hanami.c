@@ -70,37 +70,7 @@ const char *hanami_version(int *major, int *minor, int *patch)
     return HANAMI_VERSION_STRING;
 }
 
-/* =========================================================================
- * Configuration
- * ========================================================================= */
-
-void hanami_config_default(hanami_config_t *config)
-{
-    if (!config)
-        return;
-
-    memset(config, 0, sizeof(*config));
-    config->endpoint = NULL;
-    config->relay_urls = NULL;
-    config->cache_dir = NULL;
-    config->index_backend = "sqlite";
-    config->upload_threshold = 0;
-    config->prefetch_concurrency = 4;
-    config->verify_on_read = true;
-}
-
-hanami_error_t hanami_config_load(hanami_config_t *config)
-{
-    if (!config)
-        return HANAMI_ERR_INVALID_ARG;
-
-    hanami_config_default(config);
-
-    /* TODO: Read from .gitconfig [hanami] section */
-    /* TODO: Override from environment variables */
-
-    return HANAMI_OK;
-}
+/* Configuration — implemented in hanami-config.c */
 
 /* =========================================================================
  * Blob descriptor

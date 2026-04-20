@@ -5,6 +5,9 @@
  */
 
 #include "hanami/hanami.h"
+#include "hanami/hanami-config.h"
+#include "hanami/hanami-odb-backend.h"
+#include "hanami/hanami-refdb-backend.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -64,33 +67,43 @@ static void test_strerror(void)
 
 static void test_config_default(void)
 {
-    hanami_config_t config;
-    hanami_config_default(&config);
+    hanami_config_t *config = NULL;
+    hanami_error_t err = hanami_config_new(&config);
+    assert(err == HANAMI_OK);
+    assert(config != NULL);
 
-    assert(config.endpoint == NULL);
-    assert(config.relay_urls == NULL);
-    assert(config.cache_dir == NULL);
-    assert(strcmp(config.index_backend, "sqlite") == 0);
-    assert(config.upload_threshold == 0);
-    assert(config.prefetch_concurrency == 4);
-    assert(config.verify_on_read == true);
+    assert(hanami_config_get_endpoint(config) == NULL);
+    assert(hanami_config_get_relay_count(config) == 0);
+    assert(strcmp(hanami_config_get_cache_dir(config), "~/.cache/hanami") == 0);
+    assert(strcmp(hanami_config_get_index_backend(config), "sqlite") == 0);
+    assert(hanami_config_get_upload_threshold(config) == 0);
+    assert(hanami_config_get_prefetch_concurrency(config) == 4);
+    assert(hanami_config_get_verify_on_read(config) == true);
+
+    hanami_config_free(config);
 }
 
 static void test_config_load(void)
 {
-    hanami_config_t config;
-    hanami_error_t err = hanami_config_load(&config);
+    hanami_config_t *config = NULL;
+    hanami_error_t err = hanami_config_new(&config);
     assert(err == HANAMI_OK);
-    /* Defaults should be set */
-    assert(config.prefetch_concurrency == 4);
+    err = hanami_config_load_env(config);
+    assert(err == HANAMI_OK);
+    /* Defaults should still be set (no env vars) */
+    assert(hanami_config_get_prefetch_concurrency(config) == 4);
+    hanami_config_free(config);
 }
 
 static void test_config_null(void)
 {
     /* Should not crash */
-    hanami_config_default(NULL);
+    hanami_config_free(NULL);
 
-    hanami_error_t err = hanami_config_load(NULL);
+    hanami_error_t err = hanami_config_new(NULL);
+    assert(err == HANAMI_ERR_INVALID_ARG);
+
+    err = hanami_config_load_env(NULL);
     assert(err == HANAMI_ERR_INVALID_ARG);
 }
 
@@ -102,13 +115,13 @@ static void test_blob_descriptor_free_null(void)
 
 static void test_odb_backend_null_out(void)
 {
-    hanami_error_t err = hanami_odb_backend_new(NULL, "https://example.com", NULL, NULL);
+    hanami_error_t err = hanami_odb_backend_new(NULL, NULL);
     assert(err == HANAMI_ERR_INVALID_ARG);
 }
 
 static void test_refdb_backend_null_out(void)
 {
-    hanami_error_t err = hanami_refdb_backend_new(NULL, NULL, "repo", "pubkey", NULL);
+    hanami_error_t err = hanami_refdb_backend_new(NULL, NULL);
     assert(err == HANAMI_ERR_INVALID_ARG);
 }
 
