@@ -262,10 +262,11 @@ if(ENABLE_NIP94)
 endif()
 
 # DBus signer (nip55l)
-option(ENABLE_NIP55L "Enable nip55l" ON)
-if(ENABLE_NIP55L)
-    add_subdirectory(nips/nip55l)
-endif()
+# Always add nip55l — the core library is needed by gnostr-signer on all
+# platforms; only the GLib/DBus layer is conditionally built inside the
+# subdirectory based on GIO availability.
+option(ENABLE_NIP55L "Enable nip55l GLib/DBus layer" ON)
+add_subdirectory(nips/nip55l)
 
 
 # NIP-77 Negentropy (optional module)

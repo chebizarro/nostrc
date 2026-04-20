@@ -42,14 +42,15 @@ if (APPLE)
   endif()
 endif()
 
-# Optionally build GLib DBus service if GIO is available
+# Optionally build GLib DBus service if GIO is available and NIP55L is enabled
+# (the GLib/DBus layer requires Unix D-Bus which isn't available on Windows)
 include(CheckIncludeFile)
 find_package(PkgConfig QUIET)
-if (PkgConfig_FOUND)
+if (PkgConfig_FOUND AND ENABLE_NIP55L)
   pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0>=2.50 gobject-2.0>=2.50)
 endif()
 
-if (GIO_FOUND)
+if (GIO_FOUND AND ENABLE_NIP55L)
   # Generate DBus glue from XML using gdbus-codegen
   find_program(GDBUS_CODEGEN gdbus-codegen)
   if (NOT GDBUS_CODEGEN)
