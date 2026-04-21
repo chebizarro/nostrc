@@ -1003,40 +1003,16 @@ gboolean accounts_store_generate_key_with_type(AccountsStore *as,
     return TRUE;
   }
 
-  /* For other key types, use the key provider interface */
-  GnKeyProvider *provider = gn_key_provider_get_for_type(key_type);
-  if (!provider) {
-    g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_SUPPORTED,
-                "No provider available for key type '%s'",
-                gn_key_type_to_string(key_type));
-    return FALSE;
-  }
-
-  /* Generate private key via provider */
-  gsize sk_size = gn_key_provider_get_private_key_size(provider);
-  guint8 *sk = g_malloc(sk_size);
-  gsize sk_len = 0;
-  GError *gen_error = NULL;
-
-  if (!gn_key_provider_generate_private_key(provider, sk, &sk_len, &gen_error)) {
-    g_propagate_error(error, gen_error);
-    g_prefix_error(error, "Key generation failed: ");
-    gn_secure_clear_buffer(sk);
-    g_free(sk);
-    return FALSE;
-  }
-
-  /* For now, only secp256k1 is fully supported for storage.
-   * Other key types would need additional NIP definitions for encoding.
-   * This is a placeholder for future expansion. */
+  /* Other key types are not yet supported for account storage.
+   * secp256k1 keys are stored as nsec1 (NIP-19); other key types would
+   * need additional NIP definitions for encoding and storage format.
+   * Return early before generating any key material to avoid wasting
+   * crypto operations and creating sensitive data that's immediately
+   * discarded. */
   g_set_error(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_NOT_SUPPORTED,
-              "Key type '%s' is not yet supported for storage",
+              "Key type '%s' is not yet supported for account storage. "
+              "Only secp256k1 keys can be generated and stored.",
               gn_key_type_to_string(key_type));
-
-  /* Securely clear the key */
-  gn_secure_clear_buffer(sk);
-  g_free(sk);
-
   return FALSE;
 }
 
