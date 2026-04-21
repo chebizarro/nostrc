@@ -5,10 +5,10 @@
 #include "../include/libgo/fiber.h"
 #include "../sched/sched.h"
 
-/* Internal counters (optional) */
-extern uint64_t gof_ctx_switches;
-extern uint64_t gof_parks;
-extern uint64_t gof_unparks;
+/* Internal counters (atomic, incremented by scheduler) */
+extern _Atomic uint64_t gof_ctx_switches;
+extern _Atomic uint64_t gof_parks;
+extern _Atomic uint64_t gof_unparks;
 
 /* Fiber introspection registry (nostrc-l1no)
  * Called by scheduler on fiber create/destroy to maintain fiber list. */

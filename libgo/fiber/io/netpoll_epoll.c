@@ -10,6 +10,6 @@ void gof_netpoll_set_ready_callback(gof_netpoll_ready_cb cb){ ready_cb = cb; }
 
 int gof_netpoll_init(void){ if(epfd!=-1) return 0; epfd = epoll_create1(EPOLL_CLOEXEC); return epfd==-1?-1:0; }
 int gof_netpoll_arm(int fd, int events, uint64_t deadline_ns){ (void)deadline_ns; if(epfd==-1) if(gof_netpoll_init()!=0) return -1; struct epoll_event ev={0}; if(events & GOF_POLL_READ) ev.events|=EPOLLIN; if(events & GOF_POLL_WRITE) ev.events|=EPOLLOUT; ev.events |= EPOLLET | EPOLLONESHOT; ev.data.fd=fd; if(epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev)!=0){ if(errno==ENOENT) return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev); } return 0; }
-int gof_netpoll_wait(int timeout_ms){ if(epfd==-1) return -1; struct epoll_event ev; int n = epoll_wait(epfd, &ev, 1, timeout_ms); if(n > 0 && ready_cb){ int events = 0; if(ev.events & EPOLLIN) events |= GOF_POLL_READ; if(ev.events & EPOLLOUT) events |= GOF_POLL_WRITE; if(events){ ready_cb(ev.data.fd, events); } } return n; }
+int gof_netpoll_wait(int timeout_ms){ if(epfd==-1) return -1; struct epoll_event evs[64]; int n = epoll_wait(epfd, evs, 64, timeout_ms); for(int i = 0; i < n && ready_cb; ++i){ int events = 0; if(evs[i].events & EPOLLIN) events |= GOF_POLL_READ; if(evs[i].events & EPOLLOUT) events |= GOF_POLL_WRITE; if(events) ready_cb(evs[i].data.fd, events); } return n; }
 void gof_netpoll_close(int fd){ if(epfd!=-1) epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL); }
 #endif

@@ -62,7 +62,7 @@ typedef struct gof_fdwait {     /* fd entry with separate read/write queues */
 /* Simple hash map fd -> queues */
 #define FDWAIT_BUCKETS 128
 static gof_fdwait *fd_buckets[FDWAIT_BUCKETS];
-static int ready_cb_installed = 0;
+static _Atomic int ready_cb_installed = 0;
 static pthread_mutex_t io_mu = PTHREAD_MUTEX_INITIALIZER;
 
 static unsigned fd_hash(int fd){ return ((unsigned)fd) & (FDWAIT_BUCKETS-1); }
@@ -168,9 +168,9 @@ static void on_ready(int fd, int events) {
 }
 
 static void ensure_ready_callback(void) {
-  if (!ready_cb_installed) {
+  if (!atomic_load_explicit(&ready_cb_installed, memory_order_acquire)) {
     gof_netpoll_set_ready_callback(on_ready);
-    ready_cb_installed = 1;
+    atomic_store_explicit(&ready_cb_installed, 1, memory_order_release);
   }
 }
 

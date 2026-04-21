@@ -43,9 +43,15 @@ int gof_stack_alloc(gof_stack *out, size_t size) {
   void *mem = mmap(NULL, total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (mem == MAP_FAILED) return -1;
   // Low guard
-  (void)mprotect(mem, (size_t)pagesz, PROT_NONE);
+  if (mprotect(mem, (size_t)pagesz, PROT_NONE) != 0) {
+    munmap(mem, total);
+    return -1;
+  }
   // High guard at end of usable region
-  (void)mprotect((uint8_t*)mem + (size_t)pagesz + size, (size_t)pagesz, PROT_NONE);
+  if (mprotect((uint8_t*)mem + (size_t)pagesz + size, (size_t)pagesz, PROT_NONE) != 0) {
+    munmap(mem, total);
+    return -1;
+  }
   out->guard = mem;
   out->base = (uint8_t*)mem + (size_t)pagesz;
   out->size = size;

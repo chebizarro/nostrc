@@ -89,14 +89,14 @@ size_t gof_list(gof_info *out, size_t max) {
 }
 
 void gof_dump_stacks(int fd) {
-  char buf[512];
-  int len;
-  ssize_t rc;
+  /* Build output in a heap buffer under lock, then write after unlocking
+   * to avoid blocking on write() (e.g., full pipe) while holding registry_mu. */
+  size_t bufcap = 4096;
+  size_t buflen = 0;
+  char *outbuf = (char*)malloc(bufcap);
+  if (!outbuf) return;
 
   pthread_mutex_lock(&registry_mu);
-
-  len = snprintf(buf, sizeof(buf), "=== Fiber Stack Dump ===\n");
-  if (len > 0) { rc = write(fd, buf, (size_t)len); (void)rc; }
 
   size_t count = 0;
   for (fiber_node *node = fiber_registry; node; node = node->next) {
@@ -110,18 +110,35 @@ void gof_dump_stacks(int fd) {
       case GOF_FINISHED: state_str = "finished"; break;
     }
 
-    len = snprintf(buf, sizeof(buf),
+    char line[512];
+    int len = snprintf(line, sizeof(line),
                    "fiber %llu [%s]: name=%s stack=%zu bytes\n",
                    (unsigned long long)f->id,
                    state_str,
                    f->name ? f->name : "(unnamed)",
                    f->stack.size);
-    if (len > 0) { rc = write(fd, buf, (size_t)len); (void)rc; }
+    if (len > 0) {
+      while (buflen + (size_t)len + 1 > bufcap) {
+        bufcap *= 2;
+        char *p = (char*)realloc(outbuf, bufcap);
+        if (!p) { free(outbuf); pthread_mutex_unlock(&registry_mu); return; }
+        outbuf = p;
+      }
+      memcpy(outbuf + buflen, line, (size_t)len);
+      buflen += (size_t)len;
+    }
     count++;
   }
 
-  len = snprintf(buf, sizeof(buf), "=== Total: %zu fibers ===\n", count);
-  if (len > 0) { rc = write(fd, buf, (size_t)len); (void)rc; }
-
   pthread_mutex_unlock(&registry_mu);
+
+  /* Write outside the lock */
+  ssize_t rc;
+  char hdr[64];
+  int hlen = snprintf(hdr, sizeof(hdr), "=== Fiber Stack Dump ===\n");
+  if (hlen > 0) { rc = write(fd, hdr, (size_t)hlen); (void)rc; }
+  if (buflen > 0) { rc = write(fd, outbuf, buflen); (void)rc; }
+  hlen = snprintf(hdr, sizeof(hdr), "=== Total: %zu fibers ===\n", count);
+  if (hlen > 0) { rc = write(fd, hdr, (size_t)hlen); (void)rc; }
+  free(outbuf);
 }

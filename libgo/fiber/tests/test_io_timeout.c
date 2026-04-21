@@ -43,14 +43,21 @@ static int run(void) {
   return saved == ETIMEDOUT ? 0 : 2;
 }
 
+static int g_result = -1;
+
+static void run_fiber(void *arg) {
+  (void)arg;
+  g_result = run();
+}
+
 int main(void) {
   gof_init(0);
-  /* use a fiber just to exercise scheduler path */
-  int rc = run();
-  if (rc == 0) {
+  gof_spawn(run_fiber, NULL, 0);
+  gof_run();
+  if (g_result == 0) {
     printf("gof_test_io_timeout: OK\n");
     return 0;
   }
-  printf("gof_test_io_timeout: FAIL rc=%d errno=%d\n", rc, errno);
+  printf("gof_test_io_timeout: FAIL rc=%d errno=%d\n", g_result, errno);
   return 1;
 }

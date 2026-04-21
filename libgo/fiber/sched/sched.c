@@ -27,10 +27,17 @@ int gof_io_have_waiters(void);
 /* Private scheduler state (supports multiple scheduler threads + 1 poller thread) */
 typedef struct gof_node { struct gof_node *next; gof_fiber *f; } gof_node;
 typedef struct gof_sleep {
-  struct gof_sleep *next;
   uint64_t deadline_ns;
   gof_fiber *f;
 } gof_sleep;
+
+/* Binary min-heap for sleepers — O(log N) insert/pop, separate mutex from S.mu */
+static struct {
+  gof_sleep *entries;
+  size_t     len;
+  size_t     cap;
+  pthread_mutex_t mu;
+} sleepheap;
 typedef struct gof_worker {
   pthread_t   tid;
   gof_context sched_ctx;  /* scheduler context for this OS thread */
@@ -38,14 +45,14 @@ typedef struct gof_worker {
   gof_node   *rq_head;     /* per-worker run queue */
   gof_node   *rq_tail;
   pthread_mutex_t rq_mu;   /* protects run queue for stealing */
+  atomic_int  rq_len;      /* atomic queue length for lock-free idle checks */
   int        running;      /* set to 1 while executing a fiber; protected by rq_mu */
   int        index;        /* worker index in S.workers */
   int        last_victim;  /* rotating start for victim selection */
 } gof_worker;
 static struct {
   size_t      default_stack;
-  /* sleepers list is global and must be accessed under mu */
-  gof_sleep  *sleep_head; /* sorted by deadline */
+  /* sleepheap is accessed under its own sleepheap.mu, not S.mu */
   atomic_uint_fast64_t next_id;
   int         initialized;
   int         nworkers;
@@ -222,6 +229,7 @@ static void rq_push_to(gof_worker *W, gof_fiber *f) {
   pthread_mutex_lock(&W->rq_mu);
   if (!W->rq_tail) { W->rq_head = W->rq_tail = n; }
   else { W->rq_tail->next = n; W->rq_tail = n; }
+  atomic_fetch_add_explicit(&W->rq_len, 1, memory_order_relaxed);
   pthread_mutex_unlock(&W->rq_mu);
 }
 static void rq_push(gof_fiber *f) {
@@ -232,7 +240,9 @@ static __attribute__((unused)) gof_fiber* rq_pop(void) {
   gof_worker *W = cur_worker();
   pthread_mutex_lock(&W->rq_mu);
   gof_node *n = W->rq_head; if (!n) { pthread_mutex_unlock(&W->rq_mu); return NULL; }
-  W->rq_head = n->next; if (!W->rq_head) W->rq_tail = NULL; pthread_mutex_unlock(&W->rq_mu);
+  W->rq_head = n->next; if (!W->rq_head) W->rq_tail = NULL;
+  atomic_fetch_sub_explicit(&W->rq_len, 1, memory_order_relaxed);
+  pthread_mutex_unlock(&W->rq_mu);
   gof_fiber *f = n->f; free(n); return f;
 }
 
@@ -243,6 +253,7 @@ static gof_fiber* rq_pop_mark_running(gof_worker *W) {
   gof_node *n = W->rq_head;
   if (!n) { pthread_mutex_unlock(&W->rq_mu); return NULL; }
   W->rq_head = n->next; if (!W->rq_head) W->rq_tail = NULL;
+  atomic_fetch_sub_explicit(&W->rq_len, 1, memory_order_relaxed);
   W->running = 1;
   pthread_mutex_unlock(&W->rq_mu);
   gof_fiber *f = n->f; free(n); return f;
@@ -276,6 +287,7 @@ static int rq_steal_one(gof_worker *from, gof_worker *to) {
     if (from->rq_tail == stolen_node) {
       from->rq_tail = head;
     }
+    atomic_fetch_sub_explicit(&from->rq_len, 1, memory_order_relaxed);
   }
   pthread_mutex_unlock(&from->rq_mu);
   if (stolen_node) {
@@ -308,52 +320,85 @@ static uint64_t gof_now_ns(void) {
   return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-static void sleepers_add(gof_fiber *f, uint64_t deadline_ns) {
-  gof_sleep *s = (gof_sleep*)malloc(sizeof(*s));
-  if (!s) { fprintf(stderr, "[gof] FATAL: malloc failed in sleepers_add\n"); abort(); }
-  s->f = f; s->deadline_ns = deadline_ns; s->next = NULL;
-  pthread_mutex_lock(&S.mu);
-  if (!S.sleep_head || deadline_ns < S.sleep_head->deadline_ns) {
-    s->next = S.sleep_head; S.sleep_head = s; pthread_mutex_unlock(&S.mu); return;
+/* ── Min-heap helpers (operate under sleepheap.mu) ─────────────────── */
+static void heap_swap(size_t a, size_t b) {
+  gof_sleep tmp = sleepheap.entries[a];
+  sleepheap.entries[a] = sleepheap.entries[b];
+  sleepheap.entries[b] = tmp;
+}
+static void heap_sift_up(size_t i) {
+  while (i > 0) {
+    size_t p = (i - 1) / 2;
+    if (sleepheap.entries[p].deadline_ns <= sleepheap.entries[i].deadline_ns) break;
+    heap_swap(p, i);
+    i = p;
   }
-  gof_sleep *cur = S.sleep_head;
-  while (cur->next && cur->next->deadline_ns <= deadline_ns) cur = cur->next;
-  s->next = cur->next; cur->next = s;
-  pthread_mutex_unlock(&S.mu);
+}
+static void heap_sift_down(size_t i) {
+  for (;;) {
+    size_t min = i, l = 2*i+1, r = 2*i+2;
+    if (l < sleepheap.len && sleepheap.entries[l].deadline_ns < sleepheap.entries[min].deadline_ns) min = l;
+    if (r < sleepheap.len && sleepheap.entries[r].deadline_ns < sleepheap.entries[min].deadline_ns) min = r;
+    if (min == i) break;
+    heap_swap(i, min);
+    i = min;
+  }
+}
+static void heap_ensure_cap(void) {
+  if (sleepheap.len < sleepheap.cap) return;
+  size_t newcap = sleepheap.cap ? sleepheap.cap * 2 : 64;
+  gof_sleep *p = (gof_sleep*)realloc(sleepheap.entries, newcap * sizeof(gof_sleep));
+  if (!p) { fprintf(stderr, "[gof] FATAL: realloc failed in heap_ensure_cap\n"); abort(); }
+  sleepheap.entries = p;
+  sleepheap.cap = newcap;
+}
+
+static void sleepers_add(gof_fiber *f, uint64_t deadline_ns) {
+  pthread_mutex_lock(&sleepheap.mu);
+  heap_ensure_cap();
+  size_t idx = sleepheap.len++;
+  sleepheap.entries[idx].deadline_ns = deadline_ns;
+  sleepheap.entries[idx].f = f;
+  heap_sift_up(idx);
+  pthread_mutex_unlock(&sleepheap.mu);
 }
 
 static void sleepers_wake_ready(uint64_t now_ns) {
-  pthread_mutex_lock(&S.mu);
-  while (S.sleep_head && S.sleep_head->deadline_ns <= now_ns) {
-    gof_sleep *s = S.sleep_head; S.sleep_head = s->next;
-    pthread_mutex_unlock(&S.mu);
-    gof_fiber *f = s->f; free(s);
+  pthread_mutex_lock(&sleepheap.mu);
+  while (sleepheap.len > 0 && sleepheap.entries[0].deadline_ns <= now_ns) {
+    gof_fiber *f = sleepheap.entries[0].f;
+    /* Pop min: move last element to root, sift down */
+    sleepheap.entries[0] = sleepheap.entries[--sleepheap.len];
+    if (sleepheap.len > 0) heap_sift_down(0);
     if (f) {
       /* Atomically claim the wakeup — only one path (timer or IO) wins */
       gof_state expected = GOF_BLOCKED;
       if (atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
                                                   memory_order_acq_rel, memory_order_acquire)) {
         LOGF("[gof] wake fiber %llu\n", (unsigned long long)f->id);
+        atomic_fetch_add_explicit(&gof_unparks, 1, memory_order_relaxed);
+        /* Must release heap lock before touching run queue (lock ordering) */
+        pthread_mutex_unlock(&sleepheap.mu);
         rq_push(f);
+        pthread_mutex_lock(&sleepheap.mu);
       }
     }
-    pthread_mutex_lock(&S.mu);
   }
-  pthread_mutex_unlock(&S.mu);
+  pthread_mutex_unlock(&sleepheap.mu);
 }
 
-/* Cancel any pending sleeper entry for the given fiber. This prevents a later
- * timer wakeup from touching a fiber that has since been made runnable or finished. */
+/* Cancel any pending sleeper entry for the given fiber. Nulls out the fiber
+ * pointer; the wake path skips NULL entries. O(N) scan but under sleepheap.mu,
+ * not S.mu, and cancelled entries are cleaned up lazily on wake. */
 static void sleepers_cancel(gof_fiber *f) {
   if (!f) return;
-  pthread_mutex_lock(&S.mu);
-  for (gof_sleep *cur = S.sleep_head; cur; cur = cur->next) {
-    if (cur->f == f) {
-      /* Null out the pointer; the wake path will ignore and free the node. */
-      cur->f = NULL;
+  pthread_mutex_lock(&sleepheap.mu);
+  for (size_t i = 0; i < sleepheap.len; ++i) {
+    if (sleepheap.entries[i].f == f) {
+      sleepheap.entries[i].f = NULL;
     }
   }
-  pthread_mutex_unlock(&S.mu);
+  pthread_mutex_unlock(&sleepheap.mu);
 }
 
 void gof_sched_init(size_t default_stack_bytes) {
@@ -363,6 +408,8 @@ void gof_sched_init(size_t default_stack_bytes) {
   S.next_id = 1;
   S.initialized = 1;
   LOGF("[gof] sched_init default_stack=%zu\n", S.default_stack);
+  /* Initialize sleepheap mutex */
+  pthread_mutex_init(&sleepheap.mu, NULL);
   /* Initialize netpoll backend early */
   (void)gof_netpoll_init();
   /* Init synchronization primitives */
@@ -558,14 +605,16 @@ static void* worker_main(void *arg) {
       int exit_sched = 0;
       for (;;) {
         int have_inject = (S.inj_head != NULL);
-        int have_sleepers = (S.sleep_head != NULL);
+        /* Check sleepheap under its own lock (quick peek at len) */
+        pthread_mutex_lock(&sleepheap.mu);
+        int have_sleepers = (sleepheap.len > 0);
+        uint64_t next_deadline = have_sleepers ? sleepheap.entries[0].deadline_ns : 0;
+        pthread_mutex_unlock(&sleepheap.mu);
         int have_live = (atomic_load(&S.live_fibers) > 0);
-        /* Check if any worker currently has runnable items queued */
+        /* Check if any worker currently has runnable items queued (lock-free) */
         int have_runnables = 0;
         for (int i = 0; i < S.nworkers && !have_runnables; ++i) {
-          pthread_mutex_lock(&S.workers[i].rq_mu);
-          have_runnables = (S.workers[i].rq_head != NULL);
-          pthread_mutex_unlock(&S.workers[i].rq_mu);
+          have_runnables = (atomic_load_explicit(&S.workers[i].rq_len, memory_order_relaxed) > 0);
         }
         if (have_inject || have_runnables) {
           break; /* will drain after unlocking */
@@ -580,12 +629,12 @@ static void* worker_main(void *arg) {
           continue;
         }
         uint64_t now = gof_now_ns();
-        if (S.sleep_head->deadline_ns <= now) {
+        if (next_deadline <= now) {
           /* sleeper due; break to outer to handle wake */
           break;
         }
         /* Timed wait until next deadline or until signaled */
-        uint64_t ns = S.sleep_head->deadline_ns - now;
+        uint64_t ns = next_deadline - now;
         struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
         uint64_t cur_ns = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
         uint64_t abs_ns = cur_ns + ns;
@@ -603,6 +652,7 @@ static void* worker_main(void *arg) {
     /* Update fiber affinity to this worker for locality */
     if (f) f->w_affinity = W->index;
     LOGF("[gof] switch to fiber id=%llu\n", (unsigned long long)f->id);
+    atomic_fetch_add_explicit(&gof_ctx_switches, 1, memory_order_relaxed);
     /* Switch to fiber */
     gof_ctx_swap(&W->sched_ctx, &f->ctx);
     /* Returned from fiber (yield/finish/block) */
@@ -749,6 +799,7 @@ void gof_sched_park_until(uint64_t deadline_ns) {
   gof_fiber *self = W ? W->current : NULL;
   if (!self) return;
   atomic_store_explicit(&self->state, GOF_BLOCKED, memory_order_release);
+  atomic_fetch_add_explicit(&gof_parks, 1, memory_order_relaxed);
   sleepers_add(self, deadline_ns);
   LOGF("[gof] fiber %llu park until %llu\n", (unsigned long long)self->id, (unsigned long long)deadline_ns);
   gof_ctx_swap(&self->ctx, &W->sched_ctx);

@@ -2,9 +2,9 @@
 #include <stdio.h>
 #include <inttypes.h>
 
-uint64_t gof_ctx_switches = 0;
-uint64_t gof_parks = 0;
-uint64_t gof_unparks = 0;
+_Atomic uint64_t gof_ctx_switches = 0;
+_Atomic uint64_t gof_parks = 0;
+_Atomic uint64_t gof_unparks = 0;
 
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak)) void gof_trace_on_switch(uint64_t old_id, uint64_t new_id) {
