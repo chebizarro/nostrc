@@ -11,6 +11,7 @@ typedef struct waiter {
   void         **slot;   /* for receiver: where to store; for sender: points to value to send */
   void          *value;  /* for sender: cached value; for receiver unused */
   int            is_sender;
+  int           *done;   /* points to caller's stack-local flag; set to 1 on successful handoff */
 } waiter;
 
 typedef struct gof_chan {
@@ -35,6 +36,7 @@ static int handoff_to_waiter(gof_chan *c, void *v) {
   if (!r) return 0;
   /* deliver directly */
   if (r->slot) *r->slot = v; else { /* ignore if no slot */ }
+  if (r->done) *r->done = 1; /* signal successful handoff before waking */
   gof_sched_make_runnable(r->f);
   free(r);
   (void)c; return 1;
@@ -45,6 +47,7 @@ static int handoff_from_waiter(gof_chan *c, void **out) {
   if (!s) return 0;
   void *v = s->value;
   if (out) *out = v;
+  if (s->done) *s->done = 1; /* signal successful handoff before waking */
   gof_sched_make_runnable(s->f);
   free(s);
   (void)c; return 1;
@@ -121,15 +124,19 @@ int gof_chan_send(gof_chan_t* cc, void* value) {
     /* If buffer has space, use it */
     if (c->cap > 0 && !is_full(c)) { buf_put(c, value); pthread_mutex_unlock(&c->mu); return 0; }
     /* enqueue self as sender */
+    int done = 0;
     waiter *w = (waiter*)calloc(1, sizeof(*w));
     w->f = gof_sched_current();
     w->is_sender = 1;
     w->value = value;
+    w->done = &done;
     qpush(&c->sendq, w);
     pthread_mutex_unlock(&c->mu);
     gof_sched_block_current();
-    /* Unblocked by a receiver; send completed */
-    return 0;
+    /* Check if woken by a successful handoff or by channel close.
+     * handoff_from_waiter sets done=1 before waking us; close does not. */
+    if (done) return 0;
+    return -1;
   }
 }
 
@@ -149,14 +156,18 @@ int gof_chan_recv(gof_chan_t* cc, void** out_value) {
     if (handoff_from_waiter(c, out_value)) { pthread_mutex_unlock(&c->mu); return 0; }
     if (c->closed) { pthread_mutex_unlock(&c->mu); return -1; }
     /* enqueue self as receiver */
+    int done = 0;
     waiter *w = (waiter*)calloc(1, sizeof(*w));
     w->f = gof_sched_current();
     w->is_sender = 0;
     w->slot = out_value;
+    w->done = &done;
     qpush(&c->recvq, w);
     pthread_mutex_unlock(&c->mu);
     gof_sched_block_current();
-    /* Sender delivered directly and unblocked us; consider it success */
-    return 0;
+    /* Check if woken by a successful handoff or by channel close.
+     * handoff_to_waiter sets done=1 before waking us; close does not. */
+    if (done) return 0;
+    return -1;
   }
 }

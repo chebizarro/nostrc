@@ -23,11 +23,15 @@ int gof_ctx_init_bootstrap(gof_context *ctx, void *stack_base, size_t stack_size
   // No special init needed for q8-q15.
   return 0;
 #elif defined(__x86_64__) || defined(_M_X64)
-  // SysV x86_64: ensure 16-byte alignment. Place the trampoline address as the return address.
-  // To satisfy the SysV rule (RSP % 16 == 8 on function entry), set SP so that
-  // after the RET pops 8 bytes, RSP becomes (aligned_top - 8).
+  // SysV x86_64: ensure 16-byte alignment. Place the trampoline address as
+  // the return address. The ABI requires (RSP + 8) % 16 == 0 at function
+  // entry, i.e. RSP % 16 == 8. The swap routine does `ret` which pops 8
+  // bytes, so if we store the trampoline addr at [top-8] and set
+  // ctx->sp = top-8, the sequence is:
+  //   swap restores RSP = top-8, `ret` pops 8 → RSP = top (0 mod 16)
+  //   trampoline: `call *%rax` pushes 8 → RSP = top-8 (8 mod 16) ✓
   top &= ~(uintptr_t)0xF; // align down to 16
-  uintptr_t ret_slot = top - 16; // place saved RIP at [top-16]
+  uintptr_t ret_slot = top - 8; // place saved RIP at [top-8]
   *(uint64_t*)ret_slot = (uint64_t)(uintptr_t)gof_bootstrap_trampoline;
   ctx->sp = (void*)ret_slot;
   ctx->entry = entry;
