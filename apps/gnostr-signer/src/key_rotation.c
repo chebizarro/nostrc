@@ -14,6 +14,8 @@
 #include "accounts_store.h"
 #include "relay_store.h"
 #include "secure-memory.h"
+#include <nostr-event.h>
+#include <nostr-relay.h>
 #include <json-glib/json-glib.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-gobject-1.0/nostr_keys.h>
@@ -479,22 +481,75 @@ static gboolean rotation_step(gpointer user_data) {
     }
 
     case KEY_ROTATION_STATE_PUBLISHING: {
-      /* Publish migration event to relays
-       * For now, we just log it - actual relay publishing
-       * would need async WebSocket connections
-       */
-      g_message("Key rotation complete. Migration event:\n%s",
-                kr->migration_event);
+      /* Publish migration event to write relays. */
+      if (!kr->migration_event) {
+        emit_complete(kr, KEY_ROTATION_ERR_PUBLISH_FAILED,
+                      "No migration event to publish");
+        return G_SOURCE_REMOVE;
+      }
 
-      /* In a full implementation, we would:
-       * 1. Get write relays from relay_store
-       * 2. Connect to each relay
-       * 3. Send the migration event
-       * 4. Wait for confirmations
-       *
-       * For now, we mark as complete and the user can manually publish
-       */
-      emit_complete(kr, KEY_ROTATION_OK, NULL);
+      /* Deserialize the migration event JSON into a NostrEvent. */
+      NostrEvent *ev = nostr_event_new();
+      if (!ev || nostr_event_deserialize(ev, kr->migration_event) != 0) {
+        if (ev) nostr_event_free(ev);
+        emit_complete(kr, KEY_ROTATION_ERR_PUBLISH_FAILED,
+                      "Failed to parse migration event");
+        return G_SOURCE_REMOVE;
+      }
+
+      /* Get write relays for the old identity. */
+      RelayStore *rs = relay_store_new_for_identity(kr->old_npub);
+      if (!rs) rs = relay_store_new();
+      relay_store_load(rs);
+      GPtrArray *write_relays = relay_store_get_write_relays(rs);
+
+      guint success_count = 0;
+      if (write_relays && write_relays->len > 0) {
+        for (guint i = 0; i < write_relays->len; i++) {
+          const gchar *url = g_ptr_array_index(write_relays, i);
+
+          Error *err = NULL;
+          NostrRelay *relay = nostr_relay_new(NULL, url, &err);
+          if (!relay) {
+            g_warning("key_rotation: failed to create relay %s: %s",
+                      url, err ? err->message : "unknown");
+            if (err) free(err);
+            continue;
+          }
+
+          nostr_relay_set_auto_reconnect(relay, false);
+
+          Error *conn_err = NULL;
+          if (!nostr_relay_connect(relay, &conn_err)) {
+            g_warning("key_rotation: failed to connect to %s: %s",
+                      url, conn_err ? conn_err->message : "unknown");
+            if (conn_err) free(conn_err);
+            nostr_relay_free(relay);
+            continue;
+          }
+
+          nostr_relay_publish(relay, ev);
+          success_count++;
+          g_message("key_rotation: published migration event to %s", url);
+
+          nostr_relay_disconnect(relay);
+          nostr_relay_free(relay);
+        }
+      }
+
+      if (write_relays) g_ptr_array_unref(write_relays);
+      relay_store_free(rs);
+      nostr_event_free(ev);
+
+      if (success_count > 0) {
+        g_message("key_rotation: migration event published to %u relay(s)",
+                  success_count);
+        emit_complete(kr, KEY_ROTATION_OK, NULL);
+      } else {
+        g_warning("key_rotation: failed to publish to any relay");
+        emit_complete(kr, KEY_ROTATION_ERR_PUBLISH_FAILED,
+                      "Failed to publish migration event to any relay");
+      }
       return G_SOURCE_REMOVE;
     }
 
