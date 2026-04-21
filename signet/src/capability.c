@@ -112,10 +112,16 @@ int signet_policy_registry_assign(SignetPolicyRegistry *pr,
   return 0;
 }
 
-/* Get agent's policy (must hold mu). Returns NULL if not assigned. */
+/* Get agent's policy (must hold mu). Returns NULL if not assigned.
+ * Falls back to wildcard assignment "*" if the specific agent_id is not found,
+ * allowing a default policy for unprovisioned agents. */
 static const SignetAgentPolicy *signet_policy_lookup_locked(SignetPolicyRegistry *pr,
                                                              const char *agent_id) {
   const char *name = (const char *)g_hash_table_lookup(pr->assignments, agent_id);
+  if (!name) {
+    /* Fallback: check for wildcard default assignment. */
+    name = (const char *)g_hash_table_lookup(pr->assignments, "*");
+  }
   if (!name) return NULL;
   return (const SignetAgentPolicy *)g_hash_table_lookup(pr->policies, name);
 }

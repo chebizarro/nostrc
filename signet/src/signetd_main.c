@@ -28,6 +28,7 @@
 #include "signet/nostr_auth.h"
 #include "signet/revocation.h"
 #include "signet/store.h"
+#include "signet/capability.h"
 #include "signet/dbus_unix.h"
 #include "signet/dbus_tcp.h"
 #include "signet/nip5l_transport.h"
@@ -316,6 +317,34 @@ int main(int argc, char **argv) {
   };
   SignetPolicyEngine *policy = signet_policy_engine_new(store, audit, &pe_cfg);
 
+  /* 5b) Capability-based policy registry for transport-level access control.
+   * Transports (D-Bus, NIP-5L, SSH) use this to enforce per-agent capabilities
+   * and rate limits. A default policy is registered with core capabilities
+   * and assigned via wildcard ("*") so all agents get baseline enforcement.
+   * Provisioned agents can later be assigned more specific policies. */
+  SignetPolicyRegistry *cap_registry = signet_policy_registry_new();
+  {
+    /* Default policy: allow signing and encryption with rate limiting. */
+    char *default_caps[] = {
+      (char *)SIGNET_CAP_NOSTR_SIGN,
+      (char *)SIGNET_CAP_NOSTR_ENCRYPT,
+      (char *)SIGNET_CAP_SSH_SIGN,
+      (char *)SIGNET_CAP_SSH_LIST_KEYS,
+    };
+    SignetAgentPolicy default_pol = {
+      .name = (char *)"default",
+      .capabilities = default_caps,
+      .n_capabilities = G_N_ELEMENTS(default_caps),
+      .allowed_event_kinds = NULL,   /* all kinds allowed */
+      .n_allowed_kinds = 0,
+      .disallowed_credential_types = NULL,
+      .n_disallowed_types = 0,
+      .rate_limit_per_hour = 1000,
+    };
+    signet_policy_registry_add(cap_registry, &default_pol);
+    signet_policy_registry_assign(cap_registry, "*", "default");
+  }
+
   /* 6) Relay pool */
   SignetDaemonCtx dctx;
   memset(&dctx, 0, sizeof(dctx));
@@ -406,7 +435,7 @@ int main(int argc, char **argv) {
   if (cfg.dbus_unix_enabled) {
     SignetDbusServerConfig du_cfg = {
       .keys = keys,
-      .policy = NULL,  /* TODO: wire SignetPolicyRegistry when capability engine is live */
+      .policy = cap_registry,
       .store = base_store,
       .audit = audit,
       .uid_resolver = NULL,
@@ -432,7 +461,7 @@ int main(int argc, char **argv) {
     SignetDbusTcpServerConfig dt_cfg = {
       .listen_address = tcp_addr,
       .keys = keys,
-      .policy = NULL,
+      .policy = cap_registry,
       .store = base_store,
       .challenges = challenges,
       .audit = audit,
@@ -456,7 +485,7 @@ int main(int argc, char **argv) {
     SignetNip5lServerConfig n5_cfg = {
       .socket_path = nip5l_path,
       .keys = keys,
-      .policy = NULL,
+      .policy = cap_registry,
       .store = base_store,
       .challenges = challenges,
       .audit = audit,
@@ -480,7 +509,7 @@ int main(int argc, char **argv) {
     SignetSshAgentConfig sa_cfg = {
       .socket_path = ssh_path,
       .keys = keys,
-      .policy = NULL,
+      .policy = cap_registry,
       .audit = audit,
       .uid_resolver = NULL,
       .uid_resolver_data = NULL,
@@ -653,6 +682,7 @@ cleanup:
   if (relays) signet_relay_pool_free(relays);
 
   signet_policy_engine_free(policy);
+  signet_policy_registry_free(cap_registry);
   signet_policy_store_free(store);
 
   signet_key_store_free(keys);
