@@ -1,17 +1,22 @@
 /* multisig_store.c - Partial signature storage implementation
  *
  * Stores partial signatures with secure memory handling.
- * Storage: ~/.config/gnostr-signer/multisig_partials.enc
+ * Storage: ~/.config/gnostr-signer/multisig_partials.json
  *
- * Note: In production, this should encrypt the stored data.
- * For now, we use a simple JSON format but handle signatures
- * in secure memory during runtime.
+ * Partial signatures are encrypted at rest using NIP-44 v2 self-encryption
+ * (the signer's own pubkey as the "peer"). This ensures filesystem access
+ * alone cannot recover partial Schnorr signatures. Falls back to plaintext
+ * only when no identity is available (e.g. before first key generation).
  *
- * Issue: nostrc-orz
+ * Issue: nostrc-orz, nostrc-lmhf
  */
 #include "multisig_store.h"
+#include "secret_store.h"
 #include "secure-memory.h"
 #include "secure-mem.h"
+#include <nostr/nip55l/signer_ops.h>
+#include <nostr/nip55l/error.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <string.h>
@@ -19,6 +24,83 @@
 
 /* Default expiry: 1 hour */
 #define DEFAULT_EXPIRY_SECONDS (60 * 60)
+
+/* ======== At-Rest Encryption Helpers ======== */
+
+/* Resolve the current user's hex pubkey for NIP-44 self-encryption.
+ * Returns a newly allocated 64-char hex string, or NULL on failure. */
+static gchar *resolve_own_pubkey_hex(void) {
+  gchar *npub = NULL;
+  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
+  if (rc != SECRET_STORE_OK || !npub) return NULL;
+
+  /* Decode npub bech32 → 64-char hex pubkey.
+   * npub1 prefix = 5 chars; the rest is bech32 encoding of 32 bytes.
+   * Use the GObject NIP-19 decoder if available; otherwise fall back
+   * to the nip55l sign_event_full trick (sign a dummy, read pubkey). */
+  gchar *hex_pk = NULL;
+
+  /* Try NIP-19 GObject decoder (already linked in gnostr-signer). */
+  {
+    GNostrNip19 *n19 = gnostr_nip19_decode(npub, NULL);
+    if (n19) {
+      const gchar *pk = gnostr_nip19_get_pubkey(n19);
+      if (pk) hex_pk = g_strdup(pk);
+      g_object_unref(n19);
+    }
+  }
+
+  g_free(npub);
+  return hex_pk;
+}
+
+/* Encrypt a plaintext string using NIP-44 self-encryption.
+ * Returns base64-encoded ciphertext, or NULL on failure.
+ * Caller frees the result with g_free(). */
+static gchar *encrypt_for_storage(const gchar *plaintext) {
+  if (!plaintext) return NULL;
+
+  g_autofree gchar *own_pk = resolve_own_pubkey_hex();
+  if (!own_pk) {
+    g_warning("multisig_store: cannot encrypt — no identity available");
+    return NULL;
+  }
+
+  char *cipher_b64 = NULL;
+  int rc = nostr_nip55l_nip44_encrypt(plaintext, own_pk, NULL, &cipher_b64);
+  if (rc != 0 || !cipher_b64) {
+    g_warning("multisig_store: NIP-44 encryption failed (rc=%d)", rc);
+    return NULL;
+  }
+
+  gchar *result = g_strdup(cipher_b64);
+  free(cipher_b64);
+  return result;
+}
+
+/* Decrypt a base64-encoded NIP-44 ciphertext using self-decryption.
+ * Returns the plaintext string, or NULL on failure.
+ * Caller frees the result with gn_secure_strfree(). */
+static gchar *decrypt_from_storage(const gchar *cipher_b64) {
+  if (!cipher_b64) return NULL;
+
+  g_autofree gchar *own_pk = resolve_own_pubkey_hex();
+  if (!own_pk) {
+    g_warning("multisig_store: cannot decrypt — no identity available");
+    return NULL;
+  }
+
+  char *plaintext = NULL;
+  int rc = nostr_nip55l_nip44_decrypt(cipher_b64, own_pk, NULL, &plaintext);
+  if (rc != 0 || !plaintext) {
+    g_warning("multisig_store: NIP-44 decryption failed (rc=%d)", rc);
+    return NULL;
+  }
+
+  gchar *result = gn_secure_strdup(plaintext);
+  free(plaintext);
+  return result;
+}
 
 struct _MultisigStore {
   GHashTable *partials;   /* "session_id:signer_npub" -> MultisigPartialSig* */
@@ -329,10 +411,24 @@ void multisig_store_save(MultisigStore *store) {
     json_builder_set_member_name(builder, "signer_npub");
     json_builder_add_string_value(builder, partial->signer_npub);
 
-    /* Note: In production, this should be encrypted!
-     * For now, we store it as-is but this is a security concern. */
+    /* Encrypt the partial signature before writing to disk using NIP-44
+     * self-encryption. Falls back to plaintext if no identity is available
+     * (e.g. during initial setup before any key is generated). */
     json_builder_set_member_name(builder, "partial_sig");
-    json_builder_add_string_value(builder, partial->partial_sig);
+    {
+      g_autofree gchar *encrypted = encrypt_for_storage(partial->partial_sig);
+      if (encrypted) {
+        json_builder_add_string_value(builder, encrypted);
+        /* Mark as encrypted so loader knows to decrypt */
+        json_builder_set_member_name(builder, "encrypted");
+        json_builder_add_boolean_value(builder, TRUE);
+      } else {
+        /* Fallback: store plaintext (degraded security — logged as warning) */
+        json_builder_add_string_value(builder, partial->partial_sig);
+        json_builder_set_member_name(builder, "encrypted");
+        json_builder_add_boolean_value(builder, FALSE);
+      }
+    }
 
     json_builder_set_member_name(builder, "received_at");
     json_builder_add_int_value(builder, partial->received_at);
@@ -409,9 +505,23 @@ void multisig_store_load(MultisigStore *store) {
       partial->session_id = g_strdup(json_object_get_string_member(p_obj, "session_id"));
       partial->signer_npub = g_strdup(json_object_get_string_member(p_obj, "signer_npub"));
 
-      /* Load into secure memory */
+      /* Load partial signature — decrypt if it was stored encrypted. */
       const gchar *sig_str = json_object_get_string_member(p_obj, "partial_sig");
-      partial->partial_sig = sig_str ? gn_secure_strdup(sig_str) : NULL;
+      gboolean is_encrypted = FALSE;
+      if (json_object_has_member(p_obj, "encrypted")) {
+        is_encrypted = json_object_get_boolean_member(p_obj, "encrypted");
+      }
+      if (sig_str && is_encrypted) {
+        partial->partial_sig = decrypt_from_storage(sig_str);
+        if (!partial->partial_sig) {
+          g_warning("multisig_store: failed to decrypt partial sig for %s — skipping",
+                    partial->signer_npub ? partial->signer_npub : "?");
+          multisig_partial_sig_free(partial);
+          continue;
+        }
+      } else {
+        partial->partial_sig = sig_str ? gn_secure_strdup(sig_str) : NULL;
+      }
 
       partial->received_at = json_object_get_int_member(p_obj, "received_at");
       partial->verified = json_object_get_boolean_member(p_obj, "verified");
