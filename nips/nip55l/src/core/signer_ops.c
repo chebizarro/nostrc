@@ -322,12 +322,17 @@ int nostr_nip55l_get_public_key(char **out_npub){
   *out_npub = npub; return 0;
 }
 
-int nostr_nip55l_sign_event(const char *event_json,
-                            const char *current_user,
-                            const char *app_id,
-                            char **out_signature){
+int nostr_nip55l_sign_event_full(const char *event_json,
+                                 const char *current_user,
+                                 const char *app_id,
+                                 char **out_event_id,
+                                 char **out_pubkey_hex,
+                                 char **out_signature){
   (void)app_id;
-  if(!out_signature || !event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_signature=NULL;
+  if(!event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  if(out_event_id) *out_event_id = NULL;
+  if(out_pubkey_hex) *out_pubkey_hex = NULL;
+  if(out_signature) *out_signature = NULL;
   int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
   NostrEvent *ev = nostr_event_new(); if(!ev){ secure_free(&sb); return NOSTR_SIGNER_ERROR_BACKEND; }
   if (nostr_event_deserialize(ev, event_json)!=0) { nostr_event_free(ev); secure_free(&sb); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
@@ -335,9 +340,39 @@ int nostr_nip55l_sign_event(const char *event_json,
   if (nostr_event_sign_secure(ev, &sb)!=0) { nostr_event_free(ev); secure_free(&sb); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
   secure_free(&sb);
   if (!ev->sig) { nostr_event_free(ev); return NOSTR_SIGNER_ERROR_BACKEND; }
-  *out_signature = strdup(ev->sig);
+  if(out_event_id && ev->id) *out_event_id = strdup(ev->id);
+  if(out_pubkey_hex && ev->pubkey) *out_pubkey_hex = strdup(ev->pubkey);
+  if(out_signature) *out_signature = strdup(ev->sig);
   nostr_event_free(ev);
-  return *out_signature?0:NOSTR_SIGNER_ERROR_BACKEND;
+  if(out_signature && !*out_signature) return NOSTR_SIGNER_ERROR_BACKEND;
+  return 0;
+}
+
+int nostr_nip55l_sign_event(const char *event_json,
+                            const char *current_user,
+                            const char *app_id,
+                            char **out_signature){
+  return nostr_nip55l_sign_event_full(event_json, current_user, app_id,
+                                       NULL, NULL, out_signature);
+}
+
+int nostr_nip55l_sign_event_json(const char *event_json,
+                                 const char *current_user,
+                                 const char *app_id,
+                                 char **out_signed_event_json){
+  (void)app_id;
+  if(!event_json || !out_signed_event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_signed_event_json = NULL;
+  int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
+  NostrEvent *ev = nostr_event_new(); if(!ev){ secure_free(&sb); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (nostr_event_deserialize(ev, event_json)!=0) { nostr_event_free(ev); secure_free(&sb); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
+  if (ev->created_at == 0) { ev->created_at = (int64_t)time(NULL); }
+  if (nostr_event_sign_secure(ev, &sb)!=0) { nostr_event_free(ev); secure_free(&sb); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
+  secure_free(&sb);
+  if (!ev->sig || !ev->id) { nostr_event_free(ev); return NOSTR_SIGNER_ERROR_BACKEND; }
+  *out_signed_event_json = nostr_event_serialize(ev);
+  nostr_event_free(ev);
+  return *out_signed_event_json ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 }
 
 int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,

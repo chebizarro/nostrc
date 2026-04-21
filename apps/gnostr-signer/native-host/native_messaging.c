@@ -597,20 +597,29 @@ static NativeMessagingResponse *handle_sign_event(NativeMessagingContext *ctx,
                                            "User denied signing request");
   }
 
-  /* Sign the event */
+  /* Sign the event and get id + pubkey + signature from the same operation.
+   * nostr_nip55l_sign_event_full guarantees that all three values are derived
+   * from the same internal event state (including auto-filled created_at). */
+  gchar *event_id = NULL;
+  gchar *pubkey_hex = NULL;
   gchar *signature = NULL;
-  int rc = nostr_nip55l_sign_event(req->params.sign_event.event_json,
-                                   ctx->identity, NULL, &signature);
+  int rc = nostr_nip55l_sign_event_full(req->params.sign_event.event_json,
+                                        ctx->identity, NULL,
+                                        &event_id, &pubkey_hex, &signature);
 
   if (rc != 0 || !signature) {
+    free(event_id);
+    free(pubkey_hex);
+    free(signature);
     return native_messaging_response_error(req->id, NM_ERR_SIGN_FAILED,
                                            "Signing failed");
   }
 
-  /* Build signed event JSON
-   * Parse original event, add id, pubkey, sig */
+  /* Build signed event JSON: parse original event, add id, pubkey, sig */
   g_autoptr(JsonParser) parser = json_parser_new();
   if (!json_parser_load_from_data(parser, req->params.sign_event.event_json, -1, NULL)) {
+    free(event_id);
+    free(pubkey_hex);
     free(signature);
     return native_messaging_response_error(req->id, NM_ERR_INVALID_REQUEST,
                                            "Invalid event JSON");
@@ -619,31 +628,18 @@ static NativeMessagingResponse *handle_sign_event(NativeMessagingContext *ctx,
   JsonNode *root = json_parser_get_root(parser);
   JsonObject *event_obj = json_node_dup_object(root);
 
-  /* Get public key */
-  gchar *npub = NULL;
-  nostr_nip55l_get_public_key(&npub);
-  gchar *pubkey_hex = NULL;
-  if (npub && g_str_has_prefix(npub, "npub1")) {
-    guint8 pk[32];
-    if (nostr_nip19_decode_npub(npub, pk) == 0) {
-      pubkey_hex = g_malloc(65);
-      for (int i = 0; i < 32; i++) {
-        g_snprintf(pubkey_hex + i*2, 3, "%02x", pk[i]);
-      }
-    }
+  if (event_id) {
+    json_object_set_string_member(event_obj, "id", event_id);
+    free(event_id);
   }
-  if (npub) free(npub);
 
   if (pubkey_hex) {
     json_object_set_string_member(event_obj, "pubkey", pubkey_hex);
-    g_free(pubkey_hex);
+    free(pubkey_hex);
   }
 
-  /* Add signature */
   json_object_set_string_member(event_obj, "sig", signature);
   free(signature);
-
-  /* Generate event ID (would need proper hashing - for now leave existing if present) */
 
   /* Serialize */
   JsonNode *result_node = json_node_new(JSON_NODE_OBJECT);

@@ -124,6 +124,16 @@ SecretStoreResult secret_store_sign_event(const gchar *event_json,
                                           const gchar *selector,
                                           gchar **out_signature);
 
+/* Sign an event and return the complete signed event JSON.
+ * The returned JSON includes all fields (id, pubkey, created_at, kind, tags, content, sig).
+ * @event_json: Event JSON to sign
+ * @selector: npub, key_id, or NULL for active/default
+ * @out_signed_event_json: Output complete signed event JSON (caller frees)
+ */
+SecretStoreResult secret_store_sign_event_json(const gchar *event_json,
+                                               const gchar *selector,
+                                               gchar **out_signed_event_json);
+
 /* Generate a new keypair and store it.
  * @label: Optional display label
  * @link_to_user: Associate with current Unix user

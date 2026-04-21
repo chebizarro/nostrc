@@ -578,6 +578,26 @@ SecretStoreResult secret_store_sign_event(const gchar *event_json,
   return SECRET_STORE_ERR_BACKEND;
 }
 
+SecretStoreResult secret_store_sign_event_json(const gchar *event_json,
+                                               const gchar *selector,
+                                               gchar **out_signed_event_json) {
+  if (!event_json || !out_signed_event_json) return SECRET_STORE_ERR_INVALID_KEY;
+  *out_signed_event_json = NULL;
+
+  char *json = NULL;
+  int rc = nostr_nip55l_sign_event_json(event_json, selector, NULL, &json);
+
+  if (rc == 0 && json) {
+    *out_signed_event_json = g_strdup(json);
+    free(json);
+    return SECRET_STORE_OK;
+  }
+
+  if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) return SECRET_STORE_ERR_NOT_FOUND;
+  if (rc == NOSTR_SIGNER_ERROR_INVALID_KEY) return SECRET_STORE_ERR_INVALID_KEY;
+  return SECRET_STORE_ERR_BACKEND;
+}
+
 SecretStoreResult secret_store_generate(const gchar *label,
                                         gboolean link_to_user,
                                         gchar **out_npub) {

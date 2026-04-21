@@ -10,6 +10,23 @@ int nostr_nip55l_sign_event(const char *event_json,
                             const char *current_user,
                             const char *app_id,
                             char **out_signature);
+/* Sign an event and return the event ID and pubkey alongside the signature.
+ * All three outputs use the same internal state, guaranteeing consistency
+ * (e.g. when created_at is auto-filled from 0 to now).
+ * Any output pointer may be NULL if not needed. Caller frees non-NULL results. */
+int nostr_nip55l_sign_event_full(const char *event_json,
+                                 const char *current_user,
+                                 const char *app_id,
+                                 char **out_event_id,
+                                 char **out_pubkey_hex,
+                                 char **out_signature);
+/* Sign an event and return the complete signed event JSON.
+ * The returned JSON includes id, pubkey, created_at, kind, tags, content, sig.
+ * Caller frees the result with free(). */
+int nostr_nip55l_sign_event_json(const char *event_json,
+                                 const char *current_user,
+                                 const char *app_id,
+                                 char **out_signed_event_json);
 int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64);
 int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,

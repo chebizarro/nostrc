@@ -260,12 +260,15 @@ on_bunker_sign_request(GNostrNip46Bunker *bunker G_GNUC_UNUSED,
     }
   }
 
-  /* Sign the event using our identity
-   * Note: signature is returned in secure memory to prevent leakage */
-  gchar *signature = NULL;
-  SecretStoreResult rc = secret_store_sign_event(event_json, bs->identity_npub, &signature);
+  /* Sign the event and get the complete signed event JSON.
+   * secret_store_sign_event_json returns the full event including
+   * id, pubkey, created_at, kind, tags, content, and sig —
+   * which is what the NIP-46 protocol requires for sign_event responses. */
+  gchar *signed_event_json = NULL;
+  SecretStoreResult rc = secret_store_sign_event_json(event_json, bs->identity_npub,
+                                                      &signed_event_json);
 
-  if (rc != SECRET_STORE_OK || !signature) {
+  if (rc != SECRET_STORE_OK || !signed_event_json) {
     g_warning("bunker: sign failed: %d", rc);
 
     /* Log error to history (nostrc-ebr) */
@@ -284,9 +287,9 @@ on_bunker_sign_request(GNostrNip46Bunker *bunker G_GNUC_UNUSED,
     return NULL;
   }
 
-  /* Extract event ID from the event JSON if available */
+  /* Extract event ID from the signed event JSON for history logging */
   gchar *event_id = NULL;
-  const gchar *id_start = strstr(event_json, "\"id\"");
+  const gchar *id_start = strstr(signed_event_json, "\"id\"");
   if (id_start) {
     id_start = strchr(id_start, ':');
     if (id_start) {
@@ -315,17 +318,9 @@ on_bunker_sign_request(GNostrNip46Bunker *bunker G_GNUC_UNUSED,
   g_free(event_id);
   g_free(content_preview);
 
-  /* Build signed event JSON - for now just return signature
-   * The nip46 library expects the full signed event
-   *
-   * Note: The caller (nip46 library) is responsible for freeing this.
-   * We make a regular copy since the library may not use secure memory. */
-  gchar *result = g_strdup(signature);
-
-  /* Securely clear and free our secure copy */
-  gn_secure_strfree(signature);
-
-  return result;
+  /* Return the complete signed event JSON as required by NIP-46.
+   * The caller (nip46 library) is responsible for freeing this. */
+  return signed_event_json;
 }
 
 BunkerService *bunker_service_new(void) {
