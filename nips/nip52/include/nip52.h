@@ -35,5 +35,6 @@ typedef struct {
 
 CalendarEvent *parse_calendar_event(const char *event_json);
 char *calendar_event_to_json(CalendarEvent *event);
+void free_calendar_event(CalendarEvent *event);
 
 #endif // NIP52_H
