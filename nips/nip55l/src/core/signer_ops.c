@@ -19,6 +19,10 @@
 
 #include <secure_buf.h>
 
+#include <secp256k1.h>
+#include <secp256k1_schnorrsig.h>
+#include <openssl/rand.h>
+
 #ifdef NIP55L_HAVE_LIBSECRET
 #include <libsecret/secret.h>
 #include <sys/types.h>
@@ -373,6 +377,53 @@ int nostr_nip55l_sign_event_json(const char *event_json,
   *out_signed_event_json = nostr_event_serialize(ev);
   nostr_event_free(ev);
   return *out_signed_event_json ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+}
+
+int nostr_nip55l_sign_hash(const char *hash_hex,
+                          const char *current_user,
+                          char **out_signature){
+  if(!hash_hex || !out_signature) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_signature = NULL;
+  if (!is_hex_64(hash_hex)) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+
+  int rc; nostr_secure_buf sb = {0};
+  rc = resolve_seckey_secure(current_user, &sb);
+  if(rc!=0) return rc;
+
+  /* Decode hash from hex */
+  uint8_t hash[32];
+  if (!nostr_hex2bin(hash, hash_hex, 32)) {
+    secure_free(&sb);
+    return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  }
+
+  /* Set up secp256k1 context and keypair */
+  secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+  if (!ctx) { secure_free(&sb); return NOSTR_SIGNER_ERROR_BACKEND; }
+
+  unsigned char seckey[32];
+  memcpy(seckey, sb.ptr, 32);
+  secure_free(&sb);
+
+  int ret = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+  if (!secp256k1_ec_seckey_verify(ctx, seckey)) goto sign_hash_cleanup;
+
+  secp256k1_keypair keypair;
+  if (secp256k1_keypair_create(ctx, &keypair, seckey) != 1) goto sign_hash_cleanup;
+
+  unsigned char auxiliary_rand[32];
+  if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) goto sign_hash_cleanup;
+
+  unsigned char sig_bin[64];
+  if (secp256k1_schnorrsig_sign32(ctx, sig_bin, hash, &keypair, auxiliary_rand) != 1) goto sign_hash_cleanup;
+
+  *out_signature = bin_to_hex(sig_bin, 64);
+  ret = *out_signature ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+
+sign_hash_cleanup:
+  { volatile unsigned char *p = seckey; for(size_t i=0;i<32;i++) p[i]=0; }
+  secp256k1_context_destroy(ctx);
+  return ret;
 }
 
 int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,

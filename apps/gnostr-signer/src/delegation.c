@@ -182,33 +182,13 @@ static GnDelegationResult sign_delegation(const gchar *delegator_npub,
     return GN_DELEGATION_ERR_SIGN_FAILED;
   }
 
-  /* Convert hash to hex for signing via secret_store
-   * secret_store_sign_event expects JSON, so we'll construct a minimal
-   * event-like structure for signing. Since NIP-26 signature is just
-   * schnorr(hash), we use the event signing with a pre-computed id. */
-
-  /* For proper NIP-26 signing, we need direct access to schnorr signing.
-   * We'll construct a fake event JSON where the "id" field contains our hash. */
+  /* Schnorr-sign the delegation hash directly via secret_store_sign_hash.
+   * This bypasses event serialization and signs the raw 32-byte hash,
+   * which is correct per NIP-26: sig = schnorr(sha256(sha256(pubkey||conditions))). */
   gchar *hash_hex = bytes_to_hex(hash2, 32);
-
-  /* Sign using secret store - this will sign the hash directly */
   gchar *signature = NULL;
 
-  /* Build a minimal event JSON for signing
-   * The secret_store_sign_event function extracts the serialized event
-   * and signs sha256(serialized). For delegation, we need to sign our hash directly.
-   *
-   * Workaround: We create an event where the serialization hashes to our target.
-   * Better approach: Add a direct signing function to secret_store.
-   *
-   * For now, we'll use the raw signing approach if available. */
-
-  /* Construct event JSON - the signature will be computed over the event id */
-  g_autofree gchar *event_json = g_strdup_printf(
-    "{\"id\":\"%s\",\"pubkey\":\"\",\"created_at\":0,\"kind\":0,\"tags\":[],\"content\":\"\"}",
-    hash_hex);
-
-  SecretStoreResult rc = secret_store_sign_event(event_json, delegator_npub, &signature);
+  SecretStoreResult rc = secret_store_sign_hash(hash_hex, delegator_npub, &signature);
   g_free(hash_hex);
 
   if (rc != SECRET_STORE_OK || !signature) {

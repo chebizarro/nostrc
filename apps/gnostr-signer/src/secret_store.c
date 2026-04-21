@@ -598,6 +598,26 @@ SecretStoreResult secret_store_sign_event_json(const gchar *event_json,
   return SECRET_STORE_ERR_BACKEND;
 }
 
+SecretStoreResult secret_store_sign_hash(const gchar *hash_hex,
+                                         const gchar *selector,
+                                         gchar **out_signature) {
+  if (!hash_hex || !out_signature) return SECRET_STORE_ERR_INVALID_KEY;
+  *out_signature = NULL;
+
+  char *sig = NULL;
+  int rc = nostr_nip55l_sign_hash(hash_hex, selector, &sig);
+
+  if (rc == 0 && sig) {
+    *out_signature = g_strdup(sig);
+    free(sig);
+    return SECRET_STORE_OK;
+  }
+
+  if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) return SECRET_STORE_ERR_NOT_FOUND;
+  if (rc == NOSTR_SIGNER_ERROR_INVALID_KEY) return SECRET_STORE_ERR_INVALID_KEY;
+  return SECRET_STORE_ERR_BACKEND;
+}
+
 SecretStoreResult secret_store_generate(const gchar *label,
                                         gboolean link_to_user,
                                         gchar **out_npub) {

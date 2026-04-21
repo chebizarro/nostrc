@@ -27,6 +27,17 @@ int nostr_nip55l_sign_event_json(const char *event_json,
                                  const char *current_user,
                                  const char *app_id,
                                  char **out_signed_event_json);
+/* Directly Schnorr-sign a raw 32-byte hash (given as 64-char hex).
+ * Used for NIP-26 delegation signatures and other cases where the caller
+ * has already computed the message hash and needs a raw Schnorr signature
+ * without the event serialization/hashing that sign_event performs.
+ * @hash_hex: 64-character hex string representing the 32-byte hash to sign
+ * @current_user: identity selector (npub, key_id, nsec, hex, or NULL)
+ * @out_signature: receives newly allocated 128-char hex Schnorr signature
+ * Caller frees *out_signature with free(). */
+int nostr_nip55l_sign_hash(const char *hash_hex,
+                           const char *current_user,
+                           char **out_signature);
 int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64);
 int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,

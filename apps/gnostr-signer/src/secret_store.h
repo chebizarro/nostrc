@@ -134,6 +134,17 @@ SecretStoreResult secret_store_sign_event_json(const gchar *event_json,
                                                const gchar *selector,
                                                gchar **out_signed_event_json);
 
+/* Directly Schnorr-sign a raw 32-byte hash (given as 64-char hex).
+ * Used for NIP-26 delegation signatures where the caller has already
+ * computed the delegation hash and needs a raw Schnorr signature.
+ * @hash_hex: 64-character hex string of the 32-byte hash to sign
+ * @selector: npub, key_id, or NULL for active/default
+ * @out_signature: Output 128-char hex Schnorr signature (caller frees)
+ */
+SecretStoreResult secret_store_sign_hash(const gchar *hash_hex,
+                                         const gchar *selector,
+                                         gchar **out_signature);
+
 /* Generate a new keypair and store it.
  * @label: Optional display label
  * @link_to_user: Associate with current Unix user
