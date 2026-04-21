@@ -817,22 +817,142 @@ ndb_find_welcome_by_event_id(void *ctx, const uint8_t event_id[32], MarmotWelcom
     return MARMOT_OK;
 }
 
+/* Welcome processing record stored in dbi_kv with label "wproc".
+ * Key: wrapper_event_id[32]
+ * Value: [state:1][processed_at:8 big-endian][welcome_id_present:1][welcome_id:32 if present][reason_len:2 big-endian][reason:var]
+ */
+
 static MarmotError
 ndb_pending_welcomes(void *ctx, const MarmotPagination *pg,
                       MarmotWelcome ***out, size_t *out_count)
 {
-    (void)ctx; (void)pg;
+    NdbCtx *nc = ctx;
     *out = NULL;
     *out_count = 0;
-    return MARMOT_OK; /* TODO: track welcome state in LMDB */
+
+    size_t limit = (pg && pg->limit > 0) ? pg->limit : 100;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, MDB_RDONLY, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    /* Iterate all welcomes and filter out those already processed. */
+    MDB_cursor *cur;
+    if (mdb_cursor_open(txn, nc->dbi_welcomes, &cur) != 0) {
+        mdb_txn_abort(txn);
+        return MARMOT_ERR_STORAGE;
+    }
+
+    /* First pass: count pending welcomes */
+    size_t count = 0;
+    MDB_val k, v;
+    int rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0 && count < limit) {
+        if (k.mv_size == 32) {
+            /* Check if this welcome's wrapper_event_id has been processed.
+             * We look up the welcome by id from dbi_welcomes — the welcome
+             * struct includes wrapper_event_id. But we only store event_json,
+             * so we check the processed table (dbi_kv with label "wproc"). */
+            uint8_t kbuf[64];
+            size_t kl = make_kv_key("wproc", k.mv_data, 32, kbuf, sizeof(kbuf));
+            if (kl > 0) {
+                MDB_val pk = { .mv_size = kl, .mv_data = kbuf };
+                MDB_val pv;
+                if (mdb_get(txn, nc->dbi_kv, &pk, &pv) != 0) {
+                    /* Not processed — this is a pending welcome */
+                    count++;
+                }
+            }
+        }
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+    mdb_cursor_close(cur);
+
+    if (count == 0) {
+        mdb_txn_abort(txn);
+        return MARMOT_OK;
+    }
+
+    /* Second pass: collect pending welcomes */
+    *out = calloc(count, sizeof(MarmotWelcome *));
+    if (!*out) { mdb_txn_abort(txn); return MARMOT_ERR_MEMORY; }
+
+    if (mdb_cursor_open(txn, nc->dbi_welcomes, &cur) != 0) {
+        mdb_txn_abort(txn);
+        free(*out);
+        *out = NULL;
+        return MARMOT_ERR_STORAGE;
+    }
+
+    size_t idx = 0;
+    rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0 && idx < count) {
+        if (k.mv_size == 32) {
+            uint8_t kbuf[64];
+            size_t kl = make_kv_key("wproc", k.mv_data, 32, kbuf, sizeof(kbuf));
+            if (kl > 0) {
+                MDB_val pk = { .mv_size = kl, .mv_data = kbuf };
+                MDB_val pv;
+                if (mdb_get(txn, nc->dbi_kv, &pk, &pv) != 0) {
+                    /* Pending welcome — reconstruct */
+                    MarmotWelcome *w = marmot_welcome_new();
+                    if (w) {
+                        memcpy(w->id, k.mv_data, 32);
+                        w->event_json = strndup(v.mv_data, v.mv_size);
+                        w->state = MARMOT_WELCOME_STATE_PENDING;
+                        (*out)[idx++] = w;
+                    }
+                }
+            }
+        }
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+    mdb_cursor_close(cur);
+    mdb_txn_abort(txn);
+
+    *out_count = idx;
+    return MARMOT_OK;
 }
 
 static MarmotError
 ndb_find_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
                             bool *found, int *state, char **reason)
 {
-    (void)ctx; (void)wrapper_id;
+    NdbCtx *nc = ctx;
     *found = false; *state = 0; *reason = NULL;
+
+    uint8_t kbuf[64];
+    size_t kl = make_kv_key("wproc", wrapper_id, 32, kbuf, sizeof(kbuf));
+    if (kl == 0) return MARMOT_ERR_INVALID_ARG;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, MDB_RDONLY, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    MDB_val k = { .mv_size = kl, .mv_data = kbuf };
+    MDB_val v;
+    int rc = mdb_get(txn, nc->dbi_kv, &k, &v);
+    if (rc == 0 && v.mv_size >= 1) {
+        *found = true;
+        const uint8_t *p = v.mv_data;
+        *state = (int)p[0];
+
+        /* Extract reason if present: [state:1][processed_at:8][has_wid:1][wid:0or32][reason_len:2][reason:var] */
+        size_t off = 1;  /* past state byte */
+        if (v.mv_size > off + 8) off += 8; /* skip processed_at */
+        if (v.mv_size > off) {
+            uint8_t has_wid = p[off++];
+            if (has_wid && v.mv_size > off + 32) off += 32; /* skip welcome_id */
+            if (v.mv_size > off + 2) {
+                uint16_t rlen = ((uint16_t)p[off] << 8) | p[off + 1];
+                off += 2;
+                if (rlen > 0 && v.mv_size >= off + rlen) {
+                    *reason = strndup((const char *)p + off, rlen);
+                }
+            }
+        }
+    }
+    mdb_txn_abort(txn);
     return MARMOT_OK;
 }
 
@@ -841,8 +961,42 @@ ndb_save_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
                             const uint8_t *welcome_id, int64_t processed_at,
                             int state, const char *reason)
 {
-    (void)ctx; (void)wrapper_id; (void)welcome_id;
-    (void)processed_at; (void)state; (void)reason;
+    NdbCtx *nc = ctx;
+
+    uint8_t kbuf[64];
+    size_t kl = make_kv_key("wproc", wrapper_id, 32, kbuf, sizeof(kbuf));
+    if (kl == 0) return MARMOT_ERR_INVALID_ARG;
+
+    /* Build value: [state:1][processed_at:8 big-endian][has_wid:1][wid:32?][reason_len:2][reason] */
+    size_t rlen = reason ? strlen(reason) : 0;
+    if (rlen > 0xFFFF) rlen = 0xFFFF;
+    size_t vlen = 1 + 8 + 1 + (welcome_id ? 32 : 0) + 2 + rlen;
+    uint8_t *vbuf = malloc(vlen);
+    if (!vbuf) return MARMOT_ERR_MEMORY;
+
+    size_t off = 0;
+    vbuf[off++] = (uint8_t)state;
+    /* processed_at big-endian */
+    for (int i = 7; i >= 0; i--) vbuf[off++] = (uint8_t)(processed_at >> (i * 8));
+    vbuf[off++] = welcome_id ? 1 : 0;
+    if (welcome_id) { memcpy(vbuf + off, welcome_id, 32); off += 32; }
+    vbuf[off++] = (uint8_t)((rlen >> 8) & 0xFF);
+    vbuf[off++] = (uint8_t)(rlen & 0xFF);
+    if (rlen > 0) { memcpy(vbuf + off, reason, rlen); off += rlen; }
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0) {
+        free(vbuf);
+        return MARMOT_ERR_STORAGE;
+    }
+
+    MDB_val k = { .mv_size = kl, .mv_data = kbuf };
+    MDB_val v = { .mv_size = off, .mv_data = vbuf };
+    int rc = mdb_put(txn, nc->dbi_kv, &k, &v, 0);
+    free(vbuf);
+
+    if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
+    mdb_txn_commit(txn);
     return MARMOT_OK;
 }
 
@@ -1041,9 +1195,41 @@ ndb_release_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
 static MarmotError
 ndb_prune_expired(void *ctx, uint64_t min_ts, size_t *out)
 {
-    (void)ctx; (void)min_ts;
+    NdbCtx *nc = ctx;
     *out = 0;
-    return MARMOT_OK; /* TODO: iterate snapshots and prune by timestamp */
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    MDB_cursor *cur;
+    if (mdb_cursor_open(txn, nc->dbi_snapshots, &cur) != 0) {
+        mdb_txn_abort(txn);
+        return MARMOT_ERR_STORAGE;
+    }
+
+    /* Iterate all snapshot entries. Each value is an int64_t timestamp.
+     * Delete entries where the stored timestamp < min_ts. */
+    MDB_val k, v;
+    int rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0) {
+        if (v.mv_size >= (size_t)sizeof(int64_t)) {
+            int64_t snap_ts;
+            memcpy(&snap_ts, v.mv_data, sizeof(int64_t));
+            if ((uint64_t)snap_ts < min_ts) {
+                mdb_cursor_del(cur, 0);
+                (*out)++;
+                rc = mdb_cursor_get(cur, &k, &v, MDB_GET_CURRENT);
+                if (rc != 0) rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+                continue;
+            }
+        }
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+
+    mdb_cursor_close(cur);
+    mdb_txn_commit(txn);
+    return MARMOT_OK;
 }
 
 /* ── MLS key store (via LMDB) ──────────────────────────────────────────── */
