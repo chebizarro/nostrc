@@ -14,6 +14,19 @@ fuse3 = dependency('fuse3', required: true)
 
 inc = include_directories('include', '../..//libnostr/include', '../..//libjson/include', '../..//libgo/include')
 
+# ── libgo (pre-built by CMake) ─────────────────────────────────────────
+# relay_fetch.c uses GoChannel + go_select_timeout for async event waiting.
+_cmake_build = meson.project_source_root() / '../../build'
+libgo_static = cc.find_library('libgo',
+  dirs: [_cmake_build / 'libgo'],
+  static: true,
+  required: false)
+go_fiber_static = cc.find_library('go_fiber',
+  dirs: [_cmake_build / 'libgo'],
+  static: true,
+  required: false)
+nsync_dep = cc.find_library('nsync', required: true)
+
 nh_common_src = files(
   'src/common/nostr_manifest.c',
   'src/common/nostr_cache.c',
@@ -25,9 +38,17 @@ nh_common_src = files(
   'src/common/util.c',
 )
 
+nh_common_deps = [jann, glib, gobject, gio, openssl, sqlite3, curl, fuse3, secp, nsync_dep]
+if libgo_static.found()
+  nh_common_deps += libgo_static
+endif
+if go_fiber_static.found()
+  nh_common_deps += go_fiber_static
+endif
+
 nh_common = static_library('nostr_homed_common', nh_common_src,
   include_directories: inc,
-  dependencies: [jann, glib, gobject, gio, openssl, sqlite3, curl, fuse3, secp]
+  dependencies: nh_common_deps
 )
 
 nostrfs = executable('nostrfs', 'src/fs/nostrfs.c', include_directories: inc,
