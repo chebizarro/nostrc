@@ -334,48 +334,131 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
     memcpy(group_out->own_encryption_key, kp_priv->encryption_key_private, MLS_KEM_SK_LEN);
 
     /* Initialize ratchet tree.
-     * In a full implementation, the tree would be provided either via
-     * ratchet_tree extension or out-of-band. For now, we initialize
-     * a minimal 2-leaf tree (creator + joiner). */
+     * Per RFC 9420 §12.4.3.1, the ratchet tree is provided either:
+     *  (a) out-of-band via the ratchet_tree/tree_len parameters, or
+     *  (b) as a ratchet_tree extension in GroupInfo (future: parse from
+     *      gi.extensions_data).
+     * When provided, we deserialize the full tree and find our own leaf
+     * by matching our KeyPackage's encryption key. */
+    bool tree_from_external = false;
+
     if (ratchet_tree && tree_len > 0) {
-        /* TODO: Deserialize provided ratchet tree */
-        /* For now, fall through to minimal init */
-    }
+        /* Deserialize the provided ratchet tree.
+         * Format matches mls_group_serialize: n_leaves(u32) then for each
+         * node index 0..node_width-1: type(u8: 0=blank,1=leaf,2=parent)
+         * followed by the TLS-serialized node content when non-blank. */
+        MlsTlsReader tree_reader;
+        mls_tls_reader_init(&tree_reader, ratchet_tree, tree_len);
 
-    /* Create minimal tree: we know we're being added, so we exist in the tree.
-     * The tree should have been constructed by the adder. For a 2-member group,
-     * we have 2 leaves. */
-    if (mls_tree_new(&group_out->tree, 2) != 0) {
-        mls_group_info_clear(&gi);
-        sodium_memzero(joiner_secret, sizeof(joiner_secret));
-        mls_group_free(group_out);
-        return MARMOT_ERR_INTERNAL;
-    }
+        uint32_t n_leaves;
+        if (mls_tls_read_u32(&tree_reader, &n_leaves) != 0 ||
+            n_leaves == 0 || n_leaves > 100000) {
+            mls_group_info_clear(&gi);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            mls_group_free(group_out);
+            return MARMOT_ERR_WELCOME_INVALID;
+        }
 
-    /* Find our leaf index by matching our KeyPackage's encryption key in the tree.
-     * For now, with a 2-leaf tree, we assume we're at index 1 (the joiner).
-     * In a full implementation, we would search the tree for our encryption key. */
-    group_out->own_leaf_index = 1;
-    bool found_self = false;
-    
-    for (uint32_t leaf_idx = 0; leaf_idx < group_out->tree.n_leaves; leaf_idx++) {
-        uint32_t node_idx = mls_tree_leaf_to_node(leaf_idx);
-        /* For now, just populate our known position */
-        if (leaf_idx == 1) {
-            group_out->tree.nodes[node_idx].type = MLS_NODE_LEAF;
-            if (mls_leaf_node_clone(&group_out->tree.nodes[node_idx].leaf,
-                                     &kp->leaf_node) != 0) {
+        if (mls_tree_new(&group_out->tree, n_leaves) != 0) {
+            mls_group_info_clear(&gi);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            mls_group_free(group_out);
+            return MARMOT_ERR_MEMORY;
+        }
+
+        uint32_t n_nodes = mls_tree_node_width(n_leaves);
+        for (uint32_t i = 0; i < n_nodes; i++) {
+            uint8_t node_type;
+            if (mls_tls_read_u8(&tree_reader, &node_type) != 0) {
                 mls_group_info_clear(&gi);
                 sodium_memzero(joiner_secret, sizeof(joiner_secret));
                 mls_group_free(group_out);
-                return MARMOT_ERR_INTERNAL;
+                return MARMOT_ERR_WELCOME_INVALID;
             }
+
+            if (node_type == 0) {
+                group_out->tree.nodes[i].type = MLS_NODE_BLANK;
+            } else if (node_type == 1) {
+                group_out->tree.nodes[i].type = MLS_NODE_LEAF;
+                memset(&group_out->tree.nodes[i].leaf, 0, sizeof(MlsLeafNode));
+                if (mls_leaf_node_deserialize(&tree_reader,
+                        &group_out->tree.nodes[i].leaf) != 0) {
+                    mls_group_info_clear(&gi);
+                    sodium_memzero(joiner_secret, sizeof(joiner_secret));
+                    mls_group_free(group_out);
+                    return MARMOT_ERR_WELCOME_INVALID;
+                }
+            } else if (node_type == 2) {
+                group_out->tree.nodes[i].type = MLS_NODE_PARENT;
+                memset(&group_out->tree.nodes[i].parent, 0, sizeof(MlsParentNode));
+                if (mls_parent_node_deserialize(&tree_reader,
+                        &group_out->tree.nodes[i].parent) != 0) {
+                    mls_group_info_clear(&gi);
+                    sodium_memzero(joiner_secret, sizeof(joiner_secret));
+                    mls_group_free(group_out);
+                    return MARMOT_ERR_WELCOME_INVALID;
+                }
+            } else {
+                mls_group_info_clear(&gi);
+                sodium_memzero(joiner_secret, sizeof(joiner_secret));
+                mls_group_free(group_out);
+                return MARMOT_ERR_WELCOME_INVALID;
+            }
+        }
+
+        tree_from_external = true;
+    }
+
+    if (!tree_from_external) {
+        /* No ratchet tree provided — create a minimal 2-leaf tree.
+         * This works correctly for 2-member groups (creator + joiner). */
+        if (mls_tree_new(&group_out->tree, 2) != 0) {
+            mls_group_info_clear(&gi);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            mls_group_free(group_out);
+            return MARMOT_ERR_INTERNAL;
+        }
+    }
+
+    /* Find our leaf index by matching our KeyPackage's HPKE encryption key
+     * against leaf nodes in the tree (RFC 9420 §12.4.3.1).
+     * The committer places the joiner's LeafNode into the tree, so the
+     * encryption key will match our KeyPackage's leaf_node.encryption_key. */
+    bool found_self = false;
+
+    for (uint32_t leaf_idx = 0; leaf_idx < group_out->tree.n_leaves; leaf_idx++) {
+        uint32_t node_idx = mls_tree_leaf_to_node(leaf_idx);
+        MlsNode *node = &group_out->tree.nodes[node_idx];
+
+        if (node->type == MLS_NODE_LEAF &&
+            memcmp(node->leaf.encryption_key,
+                   kp->leaf_node.encryption_key,
+                   MLS_KEM_PK_LEN) == 0) {
+            group_out->own_leaf_index = leaf_idx;
             found_self = true;
             break;
         }
     }
-    
+
+    if (!found_self && !tree_from_external) {
+        /* Minimal 2-leaf fallback: assume we're at index 1 (the joiner)
+         * and populate our leaf from the KeyPackage. */
+        uint32_t node_idx = mls_tree_leaf_to_node(1);
+        group_out->tree.nodes[node_idx].type = MLS_NODE_LEAF;
+        if (mls_leaf_node_clone(&group_out->tree.nodes[node_idx].leaf,
+                                 &kp->leaf_node) != 0) {
+            mls_group_info_clear(&gi);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            mls_group_free(group_out);
+            return MARMOT_ERR_INTERNAL;
+        }
+        group_out->own_leaf_index = 1;
+        found_self = true;
+    }
+
     if (!found_self) {
+        /* External ratchet tree provided but our encryption key wasn't
+         * found in any leaf — cannot determine our position. */
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
         mls_group_free(group_out);
