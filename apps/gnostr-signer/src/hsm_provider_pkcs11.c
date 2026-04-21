@@ -24,6 +24,13 @@
 #include <keys.h>       /* nostr_key_generate_private() - no GObject equivalent */
 #include <nostr-event.h>
 
+/* BIP-340 Schnorr signing for Nostr (software fallback when HSM lacks secp256k1) */
+#ifdef HAVE_SECP256K1
+#include <secp256k1.h>
+#include <secp256k1_schnorrsig.h>
+#endif
+#include <openssl/rand.h>
+
 #ifdef GNOSTR_HAVE_PKCS11
 /* OID for secp256k1 curve (1.3.132.0.10) */
 static const CK_BYTE SECP256K1_OID[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x0A};
@@ -891,160 +898,93 @@ pkcs11_sign_hash(GnHsmProvider *provider,
     return FALSE;
   }
 
-  /* Check if software signing is enabled and needed */
-  gboolean use_software_signing = self->software_signing_enabled;
+  /* Nostr requires BIP-340 Schnorr signatures.  PKCS#11 has no standard
+   * mechanism for Schnorr, so we cannot use hardware CKM_ECDSA — ECDSA
+   * signatures are fundamentally different from Schnorr and treating one
+   * as the other produces invalid Nostr events.
+   *
+   * Strategy:
+   *  1. If software signing is enabled and the key is extractable, extract
+   *     the raw private key and produce a correct BIP-340 Schnorr signature
+   *     using libsecp256k1.
+   *  2. Otherwise, return a clear error.
+   */
 
-  if (use_software_signing) {
-    /* Try to extract the private key for software signing (if extractable) */
-    /* Note: Most HSM keys are NOT extractable, which is the point.
-     * For tokens without secp256k1 support, we need to store the key
-     * in a way that allows extraction, or use a wrapped key approach.
-     * For now, we'll try PKCS#11 ECDSA and fall back to error if not supported. */
-
-    /* First, try hardware signing with ECDSA mechanism */
-    CK_MECHANISM mechanism = {CKM_ECDSA, NULL, 0};
-
-    CK_RV rv = mod->functions->C_SignInit(session, &mechanism, priv_key);
-    if (rv == CKR_OK) {
-      /* Hardware supports ECDSA - use it */
-      CK_BYTE raw_sig[72]; /* DER encoded ECDSA signature max size */
-      CK_ULONG raw_sig_len = sizeof(raw_sig);
-
-      rv = mod->functions->C_Sign(session, (CK_BYTE_PTR)hash, hash_len,
-                                  raw_sig, &raw_sig_len);
-
-      if (rv == CKR_OK) {
-        /* PKCS#11 ECDSA returns raw (r,s) concatenated for secp256k1 (64 bytes)
-         * or DER encoded for some implementations */
-        if (raw_sig_len == 64) {
-          /* Raw r||s format - exactly what we need for Schnorr-style */
-          memcpy(signature, raw_sig, 64);
-          *signature_len = 64;
-        } else if (raw_sig_len > 64) {
-          /* Likely DER encoded - need to decode */
-          /* DER: 0x30 <len> 0x02 <r_len> <r> 0x02 <s_len> <s> */
-          if (raw_sig[0] == 0x30) {
-            gsize offset = 2; /* Skip 0x30 and length */
-            if (raw_sig[1] & 0x80) offset++; /* Long form length */
-
-            /* Extract r */
-            if (raw_sig[offset] == 0x02) {
-              offset++;
-              gsize r_len = raw_sig[offset++];
-              const guint8 *r_ptr = &raw_sig[offset];
-              if (r_len > 32 && r_ptr[0] == 0x00) {
-                r_ptr++;
-                r_len--;
-              }
-              gsize r_pad = (r_len < 32) ? 32 - r_len : 0;
-              memset(signature, 0, r_pad);
-              memcpy(signature + r_pad, r_ptr, (r_len > 32) ? 32 : r_len);
-              offset += raw_sig[offset - 1 - (r_ptr - &raw_sig[offset])];
-
-              /* Extract s */
-              offset = 2 + (raw_sig[1] & 0x80 ? 1 : 0) + 2 + raw_sig[3 + (raw_sig[1] & 0x80 ? 1 : 0)];
-              if (raw_sig[offset] == 0x02) {
-                offset++;
-                gsize s_len = raw_sig[offset++];
-                const guint8 *s_ptr = &raw_sig[offset];
-                if (s_len > 32 && s_ptr[0] == 0x00) {
-                  s_ptr++;
-                  s_len--;
-                }
-                gsize s_pad = (s_len < 32) ? 32 - s_len : 0;
-                memset(signature + 32, 0, s_pad);
-                memcpy(signature + 32 + s_pad, s_ptr, (s_len > 32) ? 32 : s_len);
-              }
-            }
-            *signature_len = 64;
-          } else {
-            /* Unknown format */
-            if (own_session)
-              mod->functions->C_CloseSession(session);
-            g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
-                        "Unknown signature format from HSM");
-            g_mutex_unlock(&self->lock);
-            return FALSE;
-          }
-        } else {
-          if (own_session)
-            mod->functions->C_CloseSession(session);
-          g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
-                      "Unexpected signature length: %lu", (unsigned long)raw_sig_len);
-          g_mutex_unlock(&self->lock);
-          return FALSE;
-        }
-
-        if (own_session)
-          mod->functions->C_CloseSession(session);
-        g_mutex_unlock(&self->lock);
-        return TRUE;
-      }
-    }
-
-    /* Hardware signing failed - check if key is extractable for software fallback */
+#ifdef HAVE_SECP256K1
+  if (self->software_signing_enabled) {
     CK_BBOOL extractable = CK_FALSE;
     CK_ATTRIBUTE ext_attr = {CKA_EXTRACTABLE, &extractable, sizeof(extractable)};
     mod->functions->C_GetAttributeValue(session, priv_key, &ext_attr, 1);
 
     if (extractable == CK_TRUE) {
-      /* Extract private key for software signing */
       CK_BYTE priv_value[32];
       CK_ATTRIBUTE val_attr = {CKA_VALUE, priv_value, sizeof(priv_value)};
 
-      rv = mod->functions->C_GetAttributeValue(session, priv_key, &val_attr, 1);
+      CK_RV rv = mod->functions->C_GetAttributeValue(session, priv_key, &val_attr, 1);
       if (rv == CKR_OK && val_attr.ulValueLen == 32) {
-        /* Use libnostr for Schnorr signing */
-        gchar *sk_hex = bytes_to_hex(priv_value, 32);
-        gchar *hash_hex = bytes_to_hex(hash, 32);
-
-        /* Create a temporary event to use nostr_event_sign */
-        NostrEvent *temp_event = nostr_event_new();
-        if (temp_event) {
-          /* Get public key */
-          g_autoptr(GNostrKeys) gkeys = gnostr_keys_new_from_hex(sk_hex, NULL);
-          if (gkeys) {
-            const gchar *pk_hex = gnostr_keys_get_pubkey(gkeys);
-            nostr_event_set_pubkey(temp_event, pk_hex);
-            nostr_event_set_kind(temp_event, 1);
-            nostr_event_set_created_at(temp_event, time(NULL));
-            nostr_event_set_content(temp_event, "");
-            temp_event->id = g_strdup(hash_hex);
-
-            int sign_result = nostr_event_sign(temp_event, sk_hex);
-            if (sign_result == 0) {
-              const char *sig_hex = nostr_event_get_sig(temp_event);
-              if (sig_hex && hex_to_bytes(sig_hex, signature, 64)) {
-                *signature_len = 64;
-                nostr_event_free(temp_event);
-                memset(priv_value, 0, sizeof(priv_value));
-                memset(sk_hex, 0, strlen(sk_hex));
-                g_free(sk_hex);
-                g_free(hash_hex);
-                if (own_session)
-                  mod->functions->C_CloseSession(session);
-                g_mutex_unlock(&self->lock);
-                return TRUE;
+        /* BIP-340 Schnorr sign using libsecp256k1 */
+        gboolean ok = FALSE;
+        secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+        if (ctx) {
+          if (secp256k1_ec_seckey_verify(ctx, priv_value)) {
+            secp256k1_keypair keypair;
+            if (secp256k1_keypair_create(ctx, &keypair, priv_value) == 1) {
+              unsigned char auxiliary_rand[32];
+              if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) == 1) {
+                unsigned char sig_bin[64];
+                if (secp256k1_schnorrsig_sign32(ctx, sig_bin, hash,
+                                                &keypair, auxiliary_rand) == 1) {
+                  memcpy(signature, sig_bin, 64);
+                  *signature_len = 64;
+                  ok = TRUE;
+                }
               }
             }
           }
-          nostr_event_free(temp_event);
+          secp256k1_context_destroy(ctx);
         }
 
-        memset(priv_value, 0, sizeof(priv_value));
-        memset(sk_hex, 0, strlen(sk_hex));
-        g_free(sk_hex);
-        g_free(hash_hex);
+        /* Securely clear extracted key material */
+        { volatile unsigned char *p = priv_value; for (size_t i = 0; i < 32; i++) p[i] = 0; }
+
+        if (ok) {
+          if (own_session)
+            mod->functions->C_CloseSession(session);
+          g_mutex_unlock(&self->lock);
+          return TRUE;
+        }
+
+        /* Schnorr signing failed despite having the key */
+        if (own_session)
+          mod->functions->C_CloseSession(session);
+        g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                    "BIP-340 Schnorr signing failed (libsecp256k1 error)");
+        g_mutex_unlock(&self->lock);
+        return FALSE;
       }
     }
-  }
 
-  /* No supported signing method worked */
+    /* Key is not extractable — cannot perform software Schnorr signing */
+    if (own_session)
+      mod->functions->C_CloseSession(session);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                "Key is not extractable; software Schnorr signing requires "
+                "an extractable key (PKCS#11 has no native Schnorr mechanism)");
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+#endif /* HAVE_SECP256K1 */
+
+  /* No supported signing method available */
   if (own_session)
     mod->functions->C_CloseSession(session);
 
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
-              "Token does not support secp256k1 signing and software fallback failed");
+              "Nostr requires BIP-340 Schnorr signatures; PKCS#11 has no native "
+              "Schnorr mechanism and software signing is %s",
+              self->software_signing_enabled
+                ? "enabled but libsecp256k1 was not compiled in"
+                : "disabled");
   g_mutex_unlock(&self->lock);
   return FALSE;
 #endif
@@ -1305,17 +1245,25 @@ pkcs11_generate_key(GnHsmProvider *provider,
     g_free(sk_hex);
     generated_in_software = TRUE;
 
-    /* Build EC point (uncompressed: 0x04 || x || y) */
-    /* For simplicity, store as 0x04 || x || x (we only have x, but some tokens need 65 bytes) */
-    /* Better approach: compute y from x for secp256k1, but for now store as extractable key */
+    /* Build EC point (DER OCTET STRING wrapping uncompressed point).
+     * We only have the x-only public key from Nostr (BIP-340), so the y
+     * coordinate is zeroed.  This is acceptable because:
+     *  - The private key is used via software extraction, not hardware ECDSA.
+     *  - The public key object is metadata for key management, not verification. */
     CK_BYTE ec_point[67];
     ec_point[0] = 0x04; /* OCTET STRING tag */
     ec_point[1] = 65;   /* Length */
     ec_point[2] = 0x04; /* Uncompressed point marker */
     memcpy(&ec_point[3], public_key, 32); /* x coordinate */
-    memset(&ec_point[35], 0, 32); /* y placeholder - not used for x-only keys */
+    memset(&ec_point[35], 0, 32); /* y placeholder (x-only key) */
 
-    /* Create private key object (extractable for software signing) */
+    /* Create private key object.
+     * When software_signing_enabled, the key must be extractable so that
+     * pkcs11_sign_hash() can perform BIP-340 Schnorr signing in software.
+     * When disabled, mark the key as sensitive / non-extractable for better
+     * HSM security — though signing will fail without native Schnorr support. */
+    CK_BBOOL need_extract = self->software_signing_enabled ? CK_TRUE : CK_FALSE;
+    CK_BBOOL is_sensitive = self->software_signing_enabled ? CK_FALSE : CK_TRUE;
     CK_OBJECT_CLASS priv_class = CKO_PRIVATE_KEY;
     CK_KEY_TYPE key_type_ec = CKK_EC;
     CK_ATTRIBUTE priv_template[] = {
@@ -1323,8 +1271,8 @@ pkcs11_generate_key(GnHsmProvider *provider,
       {CKA_KEY_TYPE, &key_type_ec, sizeof(key_type_ec)},
       {CKA_TOKEN, &ck_true, sizeof(ck_true)},
       {CKA_PRIVATE, &ck_true, sizeof(ck_true)},
-      {CKA_SENSITIVE, &ck_false, sizeof(ck_false)}, /* Allow extraction for software signing */
-      {CKA_EXTRACTABLE, &ck_true, sizeof(ck_true)},
+      {CKA_SENSITIVE, &is_sensitive, sizeof(is_sensitive)},
+      {CKA_EXTRACTABLE, &need_extract, sizeof(need_extract)},
       {CKA_SIGN, &ck_true, sizeof(ck_true)},
       {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)},
       {CKA_VALUE, private_key, 32},
@@ -1490,27 +1438,32 @@ pkcs11_import_key(GnHsmProvider *provider,
   gsize key_id_len = 0;
   guchar *key_id_bytes = g_base64_decode(key_id_str, &key_id_len);
 
-  /* Build EC point (uncompressed: 0x04 || x || y) */
+  /* Build EC point (DER OCTET STRING wrapping uncompressed point).
+   * Y coordinate zeroed — x-only key, used for key management metadata only. */
   CK_BYTE ec_point[67];
   ec_point[0] = 0x04; /* OCTET STRING tag */
   ec_point[1] = 65;   /* Length */
   ec_point[2] = 0x04; /* Uncompressed point marker */
   memcpy(&ec_point[3], public_key, 32); /* x coordinate */
-  memset(&ec_point[35], 0, 32); /* y placeholder */
+  memset(&ec_point[35], 0, 32); /* y placeholder (x-only key) */
 
-  /* Create private key object */
+  /* Create private key object.
+   * Extractability is conditional on software_signing_enabled — when enabled,
+   * the key can be extracted for BIP-340 Schnorr signing in software.
+   * When disabled, mark as sensitive / non-extractable for HSM security. */
   CK_OBJECT_CLASS priv_class = CKO_PRIVATE_KEY;
   CK_KEY_TYPE key_type_ec = CKK_EC;
   CK_BBOOL ck_true = CK_TRUE;
-  CK_BBOOL ck_false = CK_FALSE;
+  CK_BBOOL need_extract = self->software_signing_enabled ? CK_TRUE : CK_FALSE;
+  CK_BBOOL is_sensitive = self->software_signing_enabled ? CK_FALSE : CK_TRUE;
 
   CK_ATTRIBUTE priv_template[] = {
     {CKA_CLASS, &priv_class, sizeof(priv_class)},
     {CKA_KEY_TYPE, &key_type_ec, sizeof(key_type_ec)},
     {CKA_TOKEN, &ck_true, sizeof(ck_true)},
     {CKA_PRIVATE, &ck_true, sizeof(ck_true)},
-    {CKA_SENSITIVE, &ck_false, sizeof(ck_false)}, /* Allow extraction for software signing */
-    {CKA_EXTRACTABLE, &ck_true, sizeof(ck_true)},
+    {CKA_SENSITIVE, &is_sensitive, sizeof(is_sensitive)},
+    {CKA_EXTRACTABLE, &need_extract, sizeof(need_extract)},
     {CKA_SIGN, &ck_true, sizeof(ck_true)},
     {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)},
     {CKA_VALUE, (CK_VOID_PTR)private_key, 32},
