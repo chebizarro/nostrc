@@ -81,6 +81,111 @@ trezor_pid_to_type(unsigned short vid, unsigned short pid)
 
 #ifdef GNOSTR_HAVE_HIDAPI
 
+/* ============================================================================
+ * Protobuf Wire Format Helpers
+ *
+ * Minimal protobuf decoder for Trezor response messages. Handles varint
+ * encoding for tags and lengths, with bounds checking throughout.
+ *
+ * Protobuf wire types:
+ *   0 = varint, 1 = 64-bit fixed, 2 = length-delimited, 5 = 32-bit fixed
+ *
+ * Field numbers for Trezor messages (from trezor-common/protob/):
+ *   Features:        vendor=1, major=2, minor=3, patch=4, device_id=6,
+ *                    pin_protection=7, passphrase_protection=8, label=10,
+ *                    initialized=12
+ *   PublicKey:       node=1, xpub=2
+ *   HDNodeType:      depth=1, fingerprint=2, child_num=3, chain_code=4,
+ *                    private_key=5, public_key=6
+ *   MessageSignature: address=1, signature=2
+ * ============================================================================ */
+
+/**
+ * Read a protobuf varint from buf[*pos]. Advances *pos past the varint.
+ * Returns FALSE if the buffer is exhausted or the varint exceeds 64 bits.
+ */
+static gboolean
+pb_read_varint(const guint8 *buf, gsize buf_len, gsize *pos, guint64 *out)
+{
+  guint64 val = 0;
+  guint shift = 0;
+
+  while (*pos < buf_len) {
+    guint8 b = buf[(*pos)++];
+    val |= (guint64)(b & 0x7F) << shift;
+    if ((b & 0x80) == 0) {
+      if (out) *out = val;
+      return TRUE;
+    }
+    shift += 7;
+    if (shift >= 64) return FALSE; /* overflow */
+  }
+  return FALSE; /* truncated */
+}
+
+/**
+ * Read a protobuf field tag and decode field number + wire type.
+ */
+static gboolean
+pb_read_tag(const guint8 *buf, gsize buf_len, gsize *pos,
+            guint32 *field_num, guint8 *wire_type)
+{
+  guint64 tag;
+  if (!pb_read_varint(buf, buf_len, pos, &tag))
+    return FALSE;
+  if (field_num) *field_num = (guint32)(tag >> 3);
+  if (wire_type) *wire_type = (guint8)(tag & 0x07);
+  return TRUE;
+}
+
+/**
+ * Skip a protobuf field value based on its wire type. Advances *pos.
+ */
+static gboolean
+pb_skip_field(const guint8 *buf, gsize buf_len, gsize *pos, guint8 wire_type)
+{
+  switch (wire_type) {
+    case 0: { /* varint */
+      guint64 dummy;
+      return pb_read_varint(buf, buf_len, pos, &dummy);
+    }
+    case 1: /* 64-bit fixed */
+      if (*pos + 8 > buf_len) return FALSE;
+      *pos += 8;
+      return TRUE;
+    case 2: { /* length-delimited */
+      guint64 len;
+      if (!pb_read_varint(buf, buf_len, pos, &len)) return FALSE;
+      if (*pos + len > buf_len) return FALSE;
+      *pos += (gsize)len;
+      return TRUE;
+    }
+    case 5: /* 32-bit fixed */
+      if (*pos + 4 > buf_len) return FALSE;
+      *pos += 4;
+      return TRUE;
+    default:
+      return FALSE; /* unknown wire type */
+  }
+}
+
+/**
+ * Read a length-delimited field value. Returns pointer into buf and length.
+ * Does NOT advance *pos past the data (caller decides how to process).
+ */
+static gboolean
+pb_read_bytes(const guint8 *buf, gsize buf_len, gsize *pos,
+              const guint8 **out_data, gsize *out_len)
+{
+  guint64 len;
+  if (!pb_read_varint(buf, buf_len, pos, &len)) return FALSE;
+  if (*pos + len > buf_len) return FALSE;
+  if (out_data) *out_data = buf + *pos;
+  if (out_len) *out_len = (gsize)len;
+  *pos += (gsize)len;
+  return TRUE;
+}
+
 /* Build Trezor wire protocol message */
 static gsize
 trezor_build_message(guint8 *buffer, guint16 msg_type, const guint8 *data, gsize data_len)
@@ -403,7 +508,50 @@ trezor_open_device(GnHwWalletProvider *provider, const gchar *device_id, GError 
     if (recv_type == TREZOR_MSG_FEATURES) {
       dev->initialized = TRUE;
       dev->state = GN_HW_WALLET_STATE_READY;
-      /* Parse features (simplified - real implementation would parse protobuf) */
+
+      /* Parse Features protobuf to extract device metadata */
+      guint32 major_ver = 0, minor_ver = 0, patch_ver = 0;
+      gsize fpos = 0;
+      while (fpos < recv_len) {
+        guint32 fnum;
+        guint8 fwire;
+        if (!pb_read_tag(recv_data, recv_len, &fpos, &fnum, &fwire))
+          break;
+
+        if (fwire == 0) { /* varint fields */
+          guint64 val;
+          if (!pb_read_varint(recv_data, recv_len, &fpos, &val))
+            break;
+          switch (fnum) {
+            case 2: major_ver = (guint32)val; break;
+            case 3: minor_ver = (guint32)val; break;
+            case 4: patch_ver = (guint32)val; break;
+            case 7: dev->pin_protection = (val != 0); break;
+            case 8: dev->passphrase_protection = (val != 0); break;
+            case 12: dev->initialized = (val != 0); break;
+            default: break;
+          }
+        } else if (fwire == 2) { /* length-delimited fields */
+          const guint8 *data;
+          gsize data_len;
+          if (!pb_read_bytes(recv_data, recv_len, &fpos, &data, &data_len))
+            break;
+          switch (fnum) {
+            case 10: /* label */
+              g_free(dev->label);
+              dev->label = g_strndup((const gchar *)data, data_len);
+              break;
+            default: break;
+          }
+        } else {
+          if (!pb_skip_field(recv_data, recv_len, &fpos, fwire))
+            break;
+        }
+      }
+
+      g_free(dev->device_version);
+      dev->device_version = g_strdup_printf("%u.%u.%u",
+                                             major_ver, minor_ver, patch_ver);
     }
   }
 
@@ -516,50 +664,49 @@ trezor_get_public_key(GnHwWalletProvider *provider, const gchar *device_id,
     return FALSE;
   }
 
-  /* Parse PublicKey response (simplified protobuf parsing) */
-  /* Look for field 1 (node) -> subfield 2 (public_key) */
+  /* Parse PublicKey response: field 1 (HDNodeType node) → field 6 (public_key) */
   gsize i = 0;
   while (i < recv_len) {
-    guint8 tag = recv_data[i++];
-    guint8 field_num = tag >> 3;
-    guint8 wire_type = tag & 0x07;
+    guint32 field_num;
+    guint8 wire_type;
+    if (!pb_read_tag(recv_data, recv_len, &i, &field_num, &wire_type))
+      break;
 
-    if (wire_type == 2) { /* Length-delimited */
-      guint8 len = recv_data[i++];
-      if (field_num == 1 && len >= 33) {
-        /* This is the node, look for public_key inside */
-        /* Simplified: assume public_key is at a known offset */
-        /* In reality, would need proper protobuf parsing */
-        gsize node_end = i + len;
-        while (i < node_end) {
-          guint8 inner_tag = recv_data[i++];
-          guint8 inner_field = inner_tag >> 3;
-          guint8 inner_wire = inner_tag & 0x07;
+    if (wire_type == 2 && field_num == 1) {
+        /* Field 1 = HDNodeType (submessage). Read its bytes, then parse inside. */
+        const guint8 *node_data;
+        gsize node_len;
+      if (!pb_read_bytes(recv_data, recv_len, &i, &node_data, &node_len))
+        break;
 
-          if (inner_wire == 2) {
-            guint8 inner_len = recv_data[i++];
-            if (inner_field == 2 && inner_len == 33) {
-              /* Found public_key - extract x-only (skip prefix byte) */
-              memcpy(pubkey_out, recv_data + i + 1, 32);
-              *pubkey_len = 32;
-              return TRUE;
-            }
-            i += inner_len;
-          } else if (inner_wire == 0) {
-            /* Varint - skip */
-            while (i < node_end && (recv_data[i] & 0x80))
-              i++;
-            i++;
+      /* Walk inside the HDNodeType submessage for field 6 (public_key) */
+      gsize ni = 0;
+      while (ni < node_len) {
+        guint32 nfield;
+        guint8 nwire;
+        if (!pb_read_tag(node_data, node_len, &ni, &nfield, &nwire))
+          break;
+
+        if (nwire == 2 && nfield == 6) {
+          /* Field 6 = public_key (bytes, 33-byte compressed secp256k1) */
+          const guint8 *pk_data;
+          gsize pk_len;
+          if (!pb_read_bytes(node_data, node_len, &ni, &pk_data, &pk_len))
+            break;
+          if (pk_len == 33) {
+            /* Extract x-only public key (skip the 02/03 prefix byte) */
+            memcpy(pubkey_out, pk_data + 1, 32);
+            *pubkey_len = 32;
+            return TRUE;
           }
+        } else {
+          if (!pb_skip_field(node_data, node_len, &ni, nwire))
+            break;
         }
-      } else {
-        i += len;
       }
-    } else if (wire_type == 0) {
-      /* Varint - skip */
-      while (i < recv_len && (recv_data[i] & 0x80))
-        i++;
-      i++;
+    } else {
+      if (!pb_skip_field(recv_data, recv_len, &i, wire_type))
+        break;
     }
   }
 
@@ -658,28 +805,28 @@ trezor_sign_hash(GnHwWalletProvider *provider, const gchar *device_id,
     return FALSE;
   }
 
-  /* Parse MessageSignature response */
-  /* Look for field 2 (signature) */
+  /* Parse MessageSignature response: field 2 (signature, bytes) */
   gsize i = 0;
   while (i < recv_len) {
-    guint8 tag = recv_data[i++];
-    guint8 field_num = tag >> 3;
-    guint8 wire_type = tag & 0x07;
+    guint32 field_num;
+    guint8 wire_type;
+    if (!pb_read_tag(recv_data, recv_len, &i, &field_num, &wire_type))
+      break;
 
-    if (wire_type == 2) { /* Length-delimited */
-      guint8 len = recv_data[i++];
-      if (field_num == 2 && len >= 64) {
-        /* Found signature */
-        memcpy(signature_out, recv_data + i, 64);
+    if (wire_type == 2 && field_num == 2) {
+      /* Field 2 = signature (64 bytes for Schnorr) */
+      const guint8 *sig_data;
+      gsize sig_len;
+      if (!pb_read_bytes(recv_data, recv_len, &i, &sig_data, &sig_len))
+        break;
+      if (sig_len >= 64) {
+        memcpy(signature_out, sig_data, 64);
         *signature_len = 64;
         return TRUE;
       }
-      i += len;
-    } else if (wire_type == 0) {
-      /* Varint - skip */
-      while (i < recv_len && (recv_data[i] & 0x80))
-        i++;
-      i++;
+    } else {
+      if (!pb_skip_field(recv_data, recv_len, &i, wire_type))
+        break;
     }
   }
 
