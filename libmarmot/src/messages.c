@@ -19,9 +19,9 @@
  *   3. Extract inner event JSON from decrypted plaintext
  *   4. Validate sender identity
  *
- * Note: Full MLS PrivateMessage framing (mls_group_encrypt/decrypt) is
- * deferred until MLS group state persistence is implemented. Currently
- * the NIP-44 layer with exporter_secret provides the encryption.
+ * MLS PrivateMessage framing (mls_group_encrypt/decrypt) wraps the
+ * plaintext before NIP-44 encryption when MLS group state is available.
+ * Falls back to direct NIP-44 encryption when MLS state is not loaded.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -175,6 +175,46 @@ nip44_decrypt_with_secret(const uint8_t exporter_secret[32],
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Internal: Load / save MLS group state from storage
+ *
+ * Mirrors the helpers in groups.c but kept local to avoid exposing them.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static int
+msg_load_mls_group(Marmot *m, const MarmotGroupId *gid, MlsGroup *out)
+{
+    if (!m->storage || !m->storage->mls_load) return -1;
+
+    uint8_t *state_data = NULL;
+    size_t state_len = 0;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, "mls_group",
+                                            gid->data, gid->len,
+                                            &state_data, &state_len);
+    if (err != MARMOT_OK || !state_data) return -1;
+
+    int rc = mls_group_deserialize(state_data, state_len, out);
+    free(state_data);
+    return rc;
+}
+
+static int
+msg_save_mls_group(Marmot *m, const MlsGroup *mls)
+{
+    if (!m->storage || !m->storage->mls_store) return -1;
+
+    uint8_t *state_data = NULL;
+    size_t state_len = 0;
+    if (mls_group_serialize(mls, &state_data, &state_len) != 0)
+        return -1;
+
+    MarmotError err = m->storage->mls_store(m->storage->ctx, "mls_group",
+                                             mls->group_id, mls->group_id_len,
+                                             state_data, state_len);
+    free(state_data);
+    return (err == MARMOT_OK) ? 0 : -1;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Internal: free stack-allocated NostrEvent fields
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -309,30 +349,59 @@ marmot_create_message(Marmot *m,
         return MARMOT_ERR_GROUP_EXPORTER_SECRET;
     }
 
-    /* ── 3. Encrypt inner event with NIP-44 ───────────────────────────── */
-    /*
+    /* ── 3. Encrypt inner event ─────────────────────────────────────────
+     *
      * Per MIP-03, the inner event JSON is:
-     *   - Serialized as MLS application data (PrivateMessage)
-     *   - Then NIP-44-encrypted with the exporter_secret-derived convkey
+     *   1. Wrapped as MLS PrivateMessage via mls_group_encrypt()
+     *   2. Then NIP-44-encrypted with the exporter_secret-derived convkey
      *
-     * Full MLS framing (mls_group_encrypt) requires a live MlsGroup in
-     * memory, which requires MLS group state serialization/deserialization
-     * (Phase 4 work). For Phase 3, we encrypt the inner event JSON
-     * directly with NIP-44, which is the outer encryption layer.
-     *
-     * TODO: Add MLS PrivateMessage framing when group persistence lands.
+     * When MLS group state is not available in storage, we fall back to
+     * encrypting the inner event JSON directly with NIP-44 (Phase 3
+     * compatibility mode).
      */
     const uint8_t *plaintext = (const uint8_t *)inner_event_json;
     size_t plaintext_len = strlen(inner_event_json);
 
+    /* Try MLS PrivateMessage framing first */
+    MlsGroup mls_group;
+    memset(&mls_group, 0, sizeof(mls_group));
+    bool mls_loaded = (msg_load_mls_group(m, mls_group_id, &mls_group) == 0);
+
+    const uint8_t *nip44_plaintext = plaintext;
+    size_t nip44_plaintext_len = plaintext_len;
+    uint8_t *mls_ciphertext = NULL;
+    size_t mls_ciphertext_len = 0;
+
+    if (mls_loaded) {
+        if (mls_group_encrypt(&mls_group, plaintext, plaintext_len,
+                              &mls_ciphertext, &mls_ciphertext_len) != 0) {
+            mls_group_free(&mls_group);
+            sodium_memzero(exporter_secret, sizeof(exporter_secret));
+            marmot_group_free(group);
+            return MARMOT_ERR_MLS_CREATE_MESSAGE;
+        }
+        nip44_plaintext = mls_ciphertext;
+        nip44_plaintext_len = mls_ciphertext_len;
+    }
+
     char *nip44_ciphertext = NULL;
-    if (nip44_encrypt_with_secret(exporter_secret, plaintext, plaintext_len,
+    if (nip44_encrypt_with_secret(exporter_secret, nip44_plaintext,
+                                   nip44_plaintext_len,
                                    &nip44_ciphertext) != 0) {
+        free(mls_ciphertext);
+        if (mls_loaded) mls_group_free(&mls_group);
         sodium_memzero(exporter_secret, sizeof(exporter_secret));
         marmot_group_free(group);
         return MARMOT_ERR_NIP44;
     }
+    free(mls_ciphertext);
     sodium_memzero(exporter_secret, sizeof(exporter_secret));
+
+    /* Persist updated MLS state (generation counter advances on encrypt) */
+    if (mls_loaded) {
+        msg_save_mls_group(m, &mls_group);
+        mls_group_free(&mls_group);
+    }
 
     /* ── 4. Build kind:445 event ──────────────────────────────────────── */
     /*
@@ -508,33 +577,109 @@ marmot_process_message(Marmot *m,
         return MARMOT_ERR_NIP44;
     }
 
-    /* ── 6. Extract inner event JSON ──────────────────────────────────── */
+    /* ── 6. Unwrap MLS PrivateMessage if MLS group state available ────── */
     /*
-     * The decrypted content is the inner event JSON (unsigned Nostr event).
-     * When full MLS framing is enabled, this would first go through
-     * mls_group_decrypt() to unwrap the PrivateMessage.
+     * The NIP-44 decrypted content is either:
+     *   a) An MLS PrivateMessage (when full framing is active)
+     *   b) Raw inner event JSON (Phase 3 compatibility mode)
+     *
+     * Try MLS decryption first; if MLS state is unavailable or
+     * deserialization fails (indicating raw JSON), use as-is.
      */
-    char *inner_json = malloc(decrypted_len + 1);
-    if (!inner_json) {
-        free(decrypted);
-        marmot_group_free(group);
-        parsed_group_event_clear(&parsed);
-        return MARMOT_ERR_MEMORY;
+    MlsGroup mls_group;
+    memset(&mls_group, 0, sizeof(mls_group));
+    bool mls_loaded = (msg_load_mls_group(m, &group->mls_group_id,
+                                           &mls_group) == 0);
+
+    uint8_t *inner_plaintext = NULL;
+    size_t inner_plaintext_len = 0;
+    bool used_mls = false;
+
+    /* Only attempt MLS decrypt when the stored MLS epoch matches the epoch
+     * whose exporter_secret successfully decrypted the NIP-44 layer. If
+     * they differ (epoch lookback was used), the MLS state for the message's
+     * epoch is no longer in storage and MLS decrypt would fail. */
+    if (mls_loaded && mls_group.epoch == used_epoch) {
+        uint32_t sender_leaf = 0;
+        int mls_rc = mls_group_decrypt(&mls_group, decrypted, decrypted_len,
+                                        &inner_plaintext, &inner_plaintext_len,
+                                        &sender_leaf);
+        if (mls_rc == 0) {
+            used_mls = true;
+        } else if (mls_rc == MARMOT_ERR_OWN_MESSAGE) {
+            /* MLS identified this as our own message echoed back from the
+             * relay. The plaintext was already stored locally at send time
+             * (in marmot_create_message), so the application can use that. */
+            free(decrypted);
+            mls_group_free(&mls_group);
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            result->type = MARMOT_RESULT_OWN_MESSAGE;
+            return MARMOT_OK;
+        }
+        /* Other MLS errors: fall through to use raw decrypted data.
+         * This handles messages sent before MLS framing was enabled. */
     }
-    memcpy(inner_json, decrypted, decrypted_len);
-    inner_json[decrypted_len] = '\0';
-    free(decrypted);
+
+    char *inner_json = NULL;
+    if (used_mls) {
+        inner_json = malloc(inner_plaintext_len + 1);
+        if (!inner_json) {
+            free(inner_plaintext);
+            free(decrypted);
+            mls_group_free(&mls_group);
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return MARMOT_ERR_MEMORY;
+        }
+        memcpy(inner_json, inner_plaintext, inner_plaintext_len);
+        inner_json[inner_plaintext_len] = '\0';
+        free(inner_plaintext);
+        free(decrypted);
+    } else {
+        /* Sanity check: if the NIP-44 decrypted data doesn't look like JSON,
+         * it's likely MLS PrivateMessage ciphertext from an epoch whose MLS
+         * state is no longer available (e.g., epoch lookback across an epoch
+         * advance). We can't recover the plaintext in this case. */
+        if (decrypted_len == 0 ||
+            (decrypted[0] != '{' && decrypted[0] != '[')) {
+            free(decrypted);
+            if (mls_loaded) mls_group_free(&mls_group);
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return MARMOT_ERR_CRYPTO;
+        }
+
+        inner_json = malloc(decrypted_len + 1);
+        if (!inner_json) {
+            free(decrypted);
+            if (mls_loaded) mls_group_free(&mls_group);
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return MARMOT_ERR_MEMORY;
+        }
+        memcpy(inner_json, decrypted, decrypted_len);
+        inner_json[decrypted_len] = '\0';
+        free(decrypted);
+    }
+
+    /* Persist updated MLS state (generation counter advances on decrypt) */
+    if (used_mls) {
+        msg_save_mls_group(m, &mls_group);
+    }
+    if (mls_loaded) {
+        mls_group_free(&mls_group);
+    }
 
     /* ── 7. Populate result ───────────────────────────────────────────── */
     /*
-     * In the full implementation, the MLS content_type distinguishes:
+     * MLS content_type distinguishes:
      *   1 = application message
      *   2 = proposal
      *   3 = commit
      *
-     * For Phase 3 without MLS framing, we treat everything as
-     * application messages. Commits/proposals will use separate events
-     * (the evolution event from marmot_create_group / marmot_add_members).
+     * Application messages are the common case here. Commits/proposals
+     * use separate evolution events (marmot_create_group / marmot_add_members).
      */
     result->type = MARMOT_RESULT_APPLICATION_MESSAGE;
     result->app_msg.inner_event_json = inner_json;
