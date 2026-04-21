@@ -90,21 +90,33 @@ static gof_fiber* waiter_pop(gof_waiter **head, gof_waiter **tail){
   gof_waiter *w = *head; if (!w) return NULL; *head = w->next; if (!*head) *tail = NULL; gof_fiber *f = w->f; free(w); return f;
 }
 
+/* Remove fiber's existing waiter entry using its tracked wait_fd (O(1) bucket lookup). */
+static void io_waiter_remove_fiber_locked(gof_fiber *f) {
+  if (!f || f->wait_fd < 0) return;
+  gof_fdwait *e = fdwait_get(f->wait_fd, 0);
+  if (!e) { f->wait_fd = -1; f->wait_events = 0; return; }
+  if (f->wait_events & GOF_POLL_READ) {
+    gof_waiter *prev = NULL, *cur = e->rd_head;
+    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->rd_head = cur->next; if (cur == e->rd_tail) e->rd_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
+  }
+  if (f->wait_events & GOF_POLL_WRITE) {
+    gof_waiter *prev = NULL, *cur = e->wr_head;
+    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->wr_head = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
+  }
+  f->wait_fd = -1;
+  f->wait_events = 0;
+}
+
 static void io_waiter_add(int fd, int events, gof_fiber *f) {
   pthread_mutex_lock(&io_mu);
-  /* Remove any existing waiter node for this fiber across all queues to avoid duplicates */
-  for (unsigned i = 0; i < FDWAIT_BUCKETS; ++i) {
-    for (gof_fdwait *e = fd_buckets[i]; e; e = e->next) {
-      gof_waiter **pp = &e->rd_head; gof_waiter *prev = NULL; gof_waiter *cur = e->rd_head;
-      while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else *pp = cur->next; if (cur == e->rd_tail) e->rd_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
-      pp = &e->wr_head; prev = NULL; cur = e->wr_head;
-      while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else *pp = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
-    }
-  }
+  /* Remove any existing waiter for this fiber using its tracked fd (O(1) lookup) */
+  io_waiter_remove_fiber_locked(f);
   gof_fdwait *e = fdwait_get(fd, 1); if (e) {
     if (events & GOF_POLL_READ) waiter_push(&e->rd_head, &e->rd_tail, f);
     if (events & GOF_POLL_WRITE) waiter_push(&e->wr_head, &e->wr_tail, f);
   }
+  /* Track what this fiber is waiting on for fast removal */
+  if (f) { f->wait_fd = fd; f->wait_events = events; }
   pthread_mutex_unlock(&io_mu);
 }
 
@@ -125,16 +137,7 @@ static gof_fiber* io_waiter_take_one(int fd, int events) {
 
 static void io_waiter_remove_by_fiber(gof_fiber *f) {
   pthread_mutex_lock(&io_mu);
-  for (unsigned i = 0; i < FDWAIT_BUCKETS; ++i) {
-    for (gof_fdwait *e = fd_buckets[i]; e; e = e->next) {
-      /* remove once from read */
-      gof_waiter **pp = &e->rd_head; gof_waiter *prev = NULL; gof_waiter *cur = e->rd_head;
-      while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else *pp = cur->next; if (cur == e->rd_tail) e->rd_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
-      /* remove once from write */
-      pp = &e->wr_head; prev = NULL; cur = e->wr_head;
-      while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else *pp = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
-    }
-  }
+  io_waiter_remove_fiber_locked(f);
   pthread_mutex_unlock(&io_mu);
 }
 

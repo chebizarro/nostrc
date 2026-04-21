@@ -10,7 +10,7 @@ static int g_ok = 0;
 static void reader(void *arg) {
   int fd = *(int*)arg;
   char buf[64];
-  ssize_t r = gof_read(fd, buf, sizeof(buf));
+  ssize_t r = gof_read(fd, buf, sizeof(buf) - 1);
   assert(r > 0);
   buf[r] = '\0';
   g_ok = (strcmp(buf, "hello, fiber") == 0);

@@ -2,6 +2,7 @@
 #define LIBGO_FIBER_SCHED_SCHED_H
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include "../context/context.h"
 #include "../stack/stack.h"
 #include "../include/libgo/fiber.h" /* for gof_sched_stats */
@@ -11,12 +12,14 @@ typedef enum { GOF_RUNNABLE=0, GOF_BLOCKED=1, GOF_FINISHED=2 } gof_state;
 typedef struct gof_fiber {
   uint64_t    id;
   const char *name;
-  gof_state   state;
+  _Atomic gof_state state;
   gof_context ctx;
   gof_stack   stack;
   void      (*entry)(void*);
   void       *arg;
   int         w_affinity; /* preferred worker index for affinity (-1 if none) */
+  int         wait_fd;    /* fd this fiber is currently waiting on (-1 if none) */
+  int         wait_events;/* GOF_POLL_READ/WRITE bitmask for current wait */
 } gof_fiber;
 
 void gof_sched_init(size_t default_stack_bytes);
@@ -58,6 +61,9 @@ int  gof_sched_get_npollers_value(void);
 /* Internal: affinity toggle */
 void gof_sched_set_affinity_enabled(int enable);
 int  gof_sched_get_affinity_enabled(void);
+
+/* Query whether the scheduler has been initialized */
+int gof_sched_is_initialized(void);
 
 /* Background mode: externally callable worker loop for pthread_create */
 void *gof_worker_main_external(void *arg);

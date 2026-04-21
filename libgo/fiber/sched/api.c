@@ -7,7 +7,14 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
-static int gof_once_inited = 0;
+static pthread_once_t gof_once_ctrl = PTHREAD_ONCE_INIT;
+static size_t gof_init_stack_bytes = 0;
+
+static void gof_do_init(void) {
+  gof_sched_init(gof_init_stack_bytes);
+  /* Register our spawn function with libgo so go_fiber_compat works */
+  go_register_fiber_spawn(gof_spawn);
+}
 
 /* ── Background scheduler state ──────────────────────────────────────── */
 static pthread_t *bg_worker_threads = NULL;
@@ -31,12 +38,8 @@ extern void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size
 gof_fiber_t* gof_spawn(gof_fn fn, void *arg, size_t stack_bytes);
 
 void gof_init(size_t default_stack_bytes) {
-  if (!gof_once_inited) {
-    gof_sched_init(default_stack_bytes);
-    /* Register our spawn function with libgo so go_fiber_compat works */
-    go_register_fiber_spawn(gof_spawn);
-    gof_once_inited = 1;
-  }
+  gof_init_stack_bytes = default_stack_bytes;
+  pthread_once(&gof_once_ctrl, gof_do_init);
 }
 
 gof_fiber_t* gof_spawn(gof_fn fn, void *arg, size_t stack_bytes) {
@@ -140,7 +143,7 @@ int gof_get_affinity_enabled(void) {
 
 int gof_set_npollers(int n) {
   if (n < 1) return -1;
-  if (gof_once_inited) {
+  if (gof_sched_is_initialized()) {
     /* must be set before scheduler initialization */
     return -1;
   }

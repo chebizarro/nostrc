@@ -11,7 +11,7 @@
 //   void (*entry)(void*);               // +8
 //   void *arg;                          // +16
 //   uint64_t x19_x28_fp_lr[12];         // +24 (x19 at +24)
-//   uint8_t q8_q15[8*16];               // +24 + 96 = +120, size 128
+//   uint8_t q8_q15[8*16];               // +24 + 96 + 8(pad) = +128, size 128
 // }
 
 .set GOF_OFF_SP, 0
@@ -87,17 +87,16 @@ _gof_ctx_swap:
   ldr q14, [x1, #GOF_OFF_QBASE + 16*6]
   ldr q15, [x1, #GOF_OFF_QBASE + 16*7]
 
-  // Branch to to->lr
-  ret
+  // Branch to restored lr. Use br instead of ret to avoid PAC authentication
+  // failure when loading an unsigned function pointer (e.g., bootstrap trampoline).
+  br x30
 
 // Bootstrap trampoline: expects x19 = ctx
 // Loads entry and arg from ctx, calls entry(arg), then spins
 _gof_bootstrap_trampoline:
   // x19 holds ctx
-  mov x0, x19               // preserve ctx in x0 if needed
   ldr x2, [x19, #GOF_OFF_ENTRY] // x2 = entry
-  ldr x1, [x19, #GOF_OFF_ARG]   // x1 = arg
-  mov x0, x1                    // arg in x0 per AAPCS64
+  ldr x0, [x19, #GOF_OFF_ARG]   // x0 = arg per AAPCS64
   blr x2                        // call entry(arg)
 1:
   b 1b                          // do not return

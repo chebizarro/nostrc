@@ -2,6 +2,7 @@
 #include "../sched/sched.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <stdatomic.h>
 #include <pthread.h>
 
@@ -126,6 +127,7 @@ int gof_chan_send(gof_chan_t* cc, void* value) {
     /* enqueue self as sender */
     int done = 0;
     waiter *w = (waiter*)calloc(1, sizeof(*w));
+    if (!w) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_chan_send\n"); abort(); }
     w->f = gof_sched_current();
     w->is_sender = 1;
     w->value = value;
@@ -158,6 +160,7 @@ int gof_chan_recv(gof_chan_t* cc, void** out_value) {
     /* enqueue self as receiver */
     int done = 0;
     waiter *w = (waiter*)calloc(1, sizeof(*w));
+    if (!w) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_chan_recv\n"); abort(); }
     w->f = gof_sched_current();
     w->is_sender = 0;
     w->slot = out_value;

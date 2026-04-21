@@ -46,7 +46,7 @@ static struct {
   size_t      default_stack;
   /* sleepers list is global and must be accessed under mu */
   gof_sleep  *sleep_head; /* sorted by deadline */
-  uint64_t    next_id;
+  atomic_uint_fast64_t next_id;
   int         initialized;
   int         nworkers;
   gof_worker *workers;
@@ -217,6 +217,7 @@ void gof_sched_get_stats(gof_sched_stats *out) {
 
 static void rq_push_to(gof_worker *W, gof_fiber *f) {
   gof_node *n = (gof_node*)malloc(sizeof(*n));
+  if (!n) { fprintf(stderr, "[gof] FATAL: malloc failed in rq_push_to\n"); abort(); }
   n->next = NULL; n->f = f;
   pthread_mutex_lock(&W->rq_mu);
   if (!W->rq_tail) { W->rq_head = W->rq_tail = n; }
@@ -290,7 +291,7 @@ static void fiber_entry_tramp(void *arg) {
   gof_fiber *self = (gof_fiber*)arg;
   LOGF("[gof] fiber %llu enter entry=%p arg=%p\n", (unsigned long long)self->id, (void*)self->entry, self->arg);
   self->entry(self->arg);
-  self->state = GOF_FINISHED;
+  atomic_store_explicit(&self->state, GOF_FINISHED, memory_order_release);
   /* Switch back to scheduler */
   LOGF("[gof] fiber %llu finished, switching to scheduler\n", (unsigned long long)self->id);
   gof_worker *W = cur_worker();
@@ -309,6 +310,7 @@ static uint64_t gof_now_ns(void) {
 
 static void sleepers_add(gof_fiber *f, uint64_t deadline_ns) {
   gof_sleep *s = (gof_sleep*)malloc(sizeof(*s));
+  if (!s) { fprintf(stderr, "[gof] FATAL: malloc failed in sleepers_add\n"); abort(); }
   s->f = f; s->deadline_ns = deadline_ns; s->next = NULL;
   pthread_mutex_lock(&S.mu);
   if (!S.sleep_head || deadline_ns < S.sleep_head->deadline_ns) {
@@ -326,10 +328,14 @@ static void sleepers_wake_ready(uint64_t now_ns) {
     gof_sleep *s = S.sleep_head; S.sleep_head = s->next;
     pthread_mutex_unlock(&S.mu);
     gof_fiber *f = s->f; free(s);
-    if (f && f->state == GOF_BLOCKED) {
-      f->state = GOF_RUNNABLE;
-      LOGF("[gof] wake fiber %llu\n", (unsigned long long)f->id);
-      rq_push(f);
+    if (f) {
+      /* Atomically claim the wakeup — only one path (timer or IO) wins */
+      gof_state expected = GOF_BLOCKED;
+      if (atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
+                                                  memory_order_acq_rel, memory_order_acquire)) {
+        LOGF("[gof] wake fiber %llu\n", (unsigned long long)f->id);
+        rq_push(f);
+      }
     }
     pthread_mutex_lock(&S.mu);
   }
@@ -425,6 +431,10 @@ void gof_sched_init(size_t default_stack_bytes) {
   }
 }
 
+int gof_sched_is_initialized(void) {
+  return S.initialized;
+}
+
 void gof_sched_set_npollers_preinit(int n) {
   if (S.initialized) return; /* no-op after init */
   if (n < 1) n = 1;
@@ -439,11 +449,13 @@ int gof_sched_get_npollers_value(void) {
 gof_fiber* gof_fiber_create(void (*fn)(void*), void *arg, size_t stack_bytes) {
   gof_fiber *f = (gof_fiber*)calloc(1, sizeof(*f));
   if (!f) return NULL;
-  f->id = S.next_id++;
+  f->id = atomic_fetch_add_explicit(&S.next_id, 1, memory_order_relaxed);
   f->state = GOF_RUNNABLE;
   f->entry = fn;
   f->arg = arg;
   f->w_affinity = -1;
+  f->wait_fd = -1;
+  f->wait_events = 0;
   size_t sz = stack_bytes ? stack_bytes : S.default_stack;
   if (gof_stack_alloc(&f->stack, sz) != 0) { free(f); return NULL; }
   void *base = f->stack.base;
@@ -473,8 +485,10 @@ void gof_sched_enqueue(gof_fiber *f) {
     pthread_mutex_unlock(&S.mu);
     return;
   }
+  gof_node *n = (gof_node*)malloc(sizeof(*n));
+  if (!n) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_sched_enqueue\\n"); abort(); }
+  n->next = NULL; n->f = f;
   pthread_mutex_lock(&S.mu);
-  gof_node *n = (gof_node*)malloc(sizeof(*n)); n->next = NULL; n->f = f;
   if (!S.inj_tail) { S.inj_head = S.inj_tail = n; }
   else { S.inj_tail->next = n; S.inj_tail = n; }
   pthread_cond_signal(&S.cv);
@@ -595,10 +609,11 @@ static void* worker_main(void *arg) {
     pthread_mutex_lock(&W->rq_mu);
     W->running = 0;
     pthread_mutex_unlock(&W->rq_mu);
-    if (f->state == GOF_RUNNABLE) {
+    gof_state fstate = atomic_load_explicit(&f->state, memory_order_acquire);
+    if (fstate == GOF_RUNNABLE) {
       LOGF("[gof] fiber %llu yielded; requeue\n", (unsigned long long)f->id);
       rq_push(f);
-    } else if (f->state == GOF_FINISHED) {
+    } else if (fstate == GOF_FINISHED) {
       LOGF("[gof] fiber %llu cleanup\n", (unsigned long long)f->id);
       gof_introspect_unregister(f);
       gof_stack_free(&f->stack);
@@ -626,6 +641,10 @@ void gof_sched_run(void) {
   /* Run worker 0 on this thread */
   (void)pthread_setspecific(S.worker_key, &S.workers[0]);
   (void)worker_main(&S.workers[0]);
+  /* Join remaining workers to prevent use-after-free on scheduler state */
+  for (int i = 1; i < S.nworkers; ++i) {
+    pthread_join(S.workers[i].tid, NULL);
+  }
 }
 
 void gof_sched_yield(void) {
@@ -633,7 +652,7 @@ void gof_sched_yield(void) {
   gof_fiber *self = W ? W->current : NULL;
   if (!self) return; /* not in fiber */
   /* Mark runnable and switch to scheduler; scheduler will requeue once */
-  self->state = GOF_RUNNABLE;
+  atomic_store_explicit(&self->state, GOF_RUNNABLE, memory_order_release);
   LOGF("[gof] fiber %llu yield\n", (unsigned long long)self->id);
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
 }
@@ -647,14 +666,20 @@ void gof_sched_block_current(void) {
   gof_worker *W = cur_worker();
   gof_fiber *self = W ? W->current : NULL;
   if (!self) return;
-  self->state = GOF_BLOCKED;
+  atomic_store_explicit(&self->state, GOF_BLOCKED, memory_order_release);
   /* Switch to scheduler without enqueuing */
   LOGF("[gof] fiber %llu block\n", (unsigned long long)self->id);
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
 }
 
 void gof_sched_make_runnable(gof_fiber *f) {
-  /* If called from a scheduler worker, push to its local queue to preserve ordering. */
+  if (!f) return;
+  /* Atomically claim the wakeup — prevents double-enqueue from timer+IO race */
+  gof_state expected = GOF_BLOCKED;
+  if (!atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
+                                               memory_order_acq_rel, memory_order_acquire)) {
+    return; /* someone else already woke this fiber */
+  }
   gof_worker *W = cur_worker();
   sleepers_cancel(f);
   if (W) { rq_push_to(W, f); return; }
@@ -668,8 +693,10 @@ void gof_sched_make_runnable(gof_fiber *f) {
     return;
   }
   /* Otherwise, route through global inject queue and signal */
+  gof_node *n = (gof_node*)malloc(sizeof(*n));
+  if (!n) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_sched_make_runnable\n"); abort(); }
+  n->next = NULL; n->f = f;
   pthread_mutex_lock(&S.mu);
-  gof_node *n = (gof_node*)malloc(sizeof(*n)); n->next = NULL; n->f = f;
   if (!S.inj_tail) { S.inj_head = S.inj_tail = n; }
   else { S.inj_tail->next = n; S.inj_tail = n; }
   pthread_cond_signal(&S.cv);
@@ -679,6 +706,12 @@ void gof_sched_make_runnable(gof_fiber *f) {
 /* Partition-aware runnable enqueue: try to keep ready fiber within same poller partition. */
 void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
   if (!f) return;
+  /* Atomically claim the wakeup — prevents double-enqueue from timer+IO race */
+  gof_state expected = GOF_BLOCKED;
+  if (!atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
+                                               memory_order_acq_rel, memory_order_acquire)) {
+    return; /* someone else already woke this fiber */
+  }
   /* If called accidentally from a worker, use fast path */
   gof_worker *W = cur_worker();
   sleepers_cancel(f);
@@ -715,7 +748,7 @@ void gof_sched_park_until(uint64_t deadline_ns) {
   gof_worker *W = cur_worker();
   gof_fiber *self = W ? W->current : NULL;
   if (!self) return;
-  self->state = GOF_BLOCKED;
+  atomic_store_explicit(&self->state, GOF_BLOCKED, memory_order_release);
   sleepers_add(self, deadline_ns);
   LOGF("[gof] fiber %llu park until %llu\n", (unsigned long long)self->id, (unsigned long long)deadline_ns);
   gof_ctx_swap(&self->ctx, &W->sched_ctx);

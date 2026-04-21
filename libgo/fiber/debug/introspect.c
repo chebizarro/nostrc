@@ -79,7 +79,7 @@ size_t gof_list(gof_info *out, size_t max) {
     out[written].name = f->name;
     out[written].stack_size = f->stack.size;
     out[written].stack_used = 0;  /* Stack usage tracking not yet implemented */
-    out[written].state = f->state;
+    out[written].state = atomic_load_explicit(&f->state, memory_order_relaxed);
     out[written].last_run_ns = 0;  /* Per-fiber timing not yet tracked */
     written++;
   }
@@ -104,7 +104,7 @@ void gof_dump_stacks(int fd) {
     if (!f) continue;
 
     const char *state_str = "unknown";
-    switch (f->state) {
+    switch (atomic_load_explicit(&f->state, memory_order_relaxed)) {
       case GOF_RUNNABLE: state_str = "runnable"; break;
       case GOF_BLOCKED:  state_str = "blocked";  break;
       case GOF_FINISHED: state_str = "finished"; break;
