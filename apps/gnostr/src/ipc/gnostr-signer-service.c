@@ -626,10 +626,9 @@ gnostr_sign_event_finish(GAsyncResult *res,
 
 /* ---- nostrc-1wfi: NIP-46 Session Persistence ---- */
 
-#define SETTINGS_SCHEMA_CLIENT "org.gnostr.Client"
+#include "nip46-relay-defaults.h"
 
-/* Default NIP-46 relay used as fallback when no relays are saved in settings */
-#define NIP46_DEFAULT_RELAY "wss://relay.nsec.app"
+#define SETTINGS_SCHEMA_CLIENT "org.gnostr.Client"
 
 gboolean
 gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
@@ -713,10 +712,12 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
   if (n_relays > 0 && relay_urls) {
     nostr_nip46_session_set_relays(session, relay_urls, n_relays);
   } else {
-    /* Fallback to default relay if none saved */
-    const char *default_relay = NIP46_DEFAULT_RELAY;
-    nostr_nip46_session_set_relays(session, &default_relay, 1);
-    g_warning("[SIGNER_SERVICE] No relays in settings, using default: %s", default_relay);
+    /* Fallback to default relay list if none saved */
+    gsize n_defaults = 0;
+    const char *const *defaults = nip46_get_fallback_relays(&n_defaults);
+    nostr_nip46_session_set_relays(session, defaults, n_defaults);
+    g_warning("[SIGNER_SERVICE] No relays in settings, using %zu default(s): %s",
+              n_defaults, defaults[0]);
   }
 
   g_free(relay_urls);

@@ -30,11 +30,9 @@
 #include <qrencode.h>
 #endif
 
-#define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-login.ui"
+#include "../ipc/nip46-relay-defaults.h"
 
-/* Default NIP-46 relay used when generating nostrconnect:// URIs for QR codes.
- * This is the relay the client will listen on for signer responses. */
-#define NIP46_DEFAULT_RELAY "wss://relay.nsec.app"
+#define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-login.ui"
 
 /* Settings schema and key names */
 #define SETTINGS_SCHEMA_CLIENT "org.gnostr.Client"
@@ -977,7 +975,7 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
   /* Build nostrconnect:// URI with relay and metadata
    * Format: nostrconnect://<client-pubkey>?relay=...&secret=...&name=...
    */
-  const char *relay = NIP46_DEFAULT_RELAY;
+  const char *relay = nip46_get_default_relay();
 
   /* Create the nostrconnect URI with the computed client pubkey */
   g_free(self->nostrconnect_uri);
@@ -1010,8 +1008,7 @@ static void on_remote_signer_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Start listening for NIP-46 responses in background (for QR flow)
    * but don't show intrusive "Waiting" status - let the QR speak for itself */
-  const char *relay = NIP46_DEFAULT_RELAY;
-  start_nip46_listener(self, relay);
+  start_nip46_listener(self, nip46_get_default_relay());
 
   /* Keep status hidden - user sees the QR and the URI entry field
    * Status only appears when they click Connect or an error occurs */
@@ -1064,8 +1061,7 @@ static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data) {
   /* Re-generate nostrconnect URI and restart listener */
   generate_nostrconnect_uri(self);
 
-  const char *relay = NIP46_DEFAULT_RELAY;
-  start_nip46_listener(self, relay);
+  start_nip46_listener(self, nip46_get_default_relay());
 
   /* Set waiting status */
   set_bunker_status(self, BUNKER_STATUS_WAITING,
@@ -1603,7 +1599,7 @@ static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json,
     }
   }
   if (!ctx->relay_url) {
-    ctx->relay_url = g_strdup(NIP46_DEFAULT_RELAY);
+    ctx->relay_url = g_strdup(nip46_get_default_relay());
   }
 
   nostr_event_free(event);
