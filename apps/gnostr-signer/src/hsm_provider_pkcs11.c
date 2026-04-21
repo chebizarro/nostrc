@@ -241,6 +241,30 @@ find_key_object(CK_FUNCTION_LIST *funcs, CK_SESSION_HANDLE session,
   return (count > 0) ? obj : CK_INVALID_HANDLE;
 }
 
+/* Determine key type from CKA_EC_PARAMS OID.
+ * Returns GN_HSM_KEY_TYPE_SECP256K1, GN_HSM_KEY_TYPE_ED25519, or
+ * GN_HSM_KEY_TYPE_UNKNOWN for unrecognized curves. */
+static GnHsmKeyType
+determine_ec_key_type(const guint8 *ec_params, gsize ec_params_len)
+{
+  if (ec_params_len == sizeof(SECP256K1_OID) &&
+      memcmp(ec_params, SECP256K1_OID, sizeof(SECP256K1_OID)) == 0)
+    return GN_HSM_KEY_TYPE_SECP256K1;
+
+  /* Ed25519 OID: 1.3.101.112 → DER {0x06, 0x03, 0x2B, 0x65, 0x70} */
+  static const guint8 ED25519_OID[] = {0x06, 0x03, 0x2B, 0x65, 0x70};
+  if (ec_params_len == sizeof(ED25519_OID) &&
+      memcmp(ec_params, ED25519_OID, sizeof(ED25519_OID)) == 0)
+    return GN_HSM_KEY_TYPE_ED25519;
+
+  /* secp256r1 / prime256v1 (P-256) — recognized but not a Nostr key type */
+  if (ec_params_len == sizeof(SECP256R1_OID) &&
+      memcmp(ec_params, SECP256R1_OID, sizeof(SECP256R1_OID)) == 0)
+    return GN_HSM_KEY_TYPE_UNKNOWN; /* recognized curve but not Nostr-usable */
+
+  return GN_HSM_KEY_TYPE_UNKNOWN;
+}
+
 /* Extract x-only public key (32 bytes) from EC point attribute */
 static gboolean
 extract_xonly_pubkey(const guint8 *ec_point, gsize ec_point_len, guint8 *xonly_out)
@@ -618,30 +642,36 @@ pkcs11_list_keys(GnHsmProvider *provider, guint64 slot_id, GError **error)
         CK_BYTE id[256];
         CK_BYTE label[256];
         CK_KEY_TYPE key_type;
+        CK_BYTE ec_params[32];
         CK_ATTRIBUTE attrs[] = {
           {CKA_ID, id, sizeof(id)},
           {CKA_LABEL, label, sizeof(label)},
-          {CKA_KEY_TYPE, &key_type, sizeof(key_type)}
+          {CKA_KEY_TYPE, &key_type, sizeof(key_type)},
+          {CKA_EC_PARAMS, ec_params, sizeof(ec_params)}
         };
 
-        rv = mod->functions->C_GetAttributeValue(session, objects[i], attrs, 3);
+        rv = mod->functions->C_GetAttributeValue(session, objects[i], attrs, 4);
         if (rv != CKR_OK)
           continue;
 
-        /* Only interested in EC keys for now */
+        /* Only interested in EC keys */
         if (key_type != CKK_EC)
           continue;
+
+        /* Determine the actual curve from CKA_EC_PARAMS OID */
+        GnHsmKeyType detected_type = GN_HSM_KEY_TYPE_UNKNOWN;
+        if (attrs[3].ulValueLen != CK_UNAVAILABLE_INFORMATION &&
+            attrs[3].ulValueLen > 0) {
+          detected_type = determine_ec_key_type(ec_params, attrs[3].ulValueLen);
+        }
 
         GnHsmKeyInfo *info = g_new0(GnHsmKeyInfo, 1);
         info->key_id = g_base64_encode(id, attrs[0].ulValueLen);
         info->label = g_strndup((gchar *)label, attrs[1].ulValueLen);
-        info->key_type = GN_HSM_KEY_TYPE_SECP256K1; /* Assume for now */
+        info->key_type = detected_type;
         info->slot_id = slot_id;
-        info->can_sign = TRUE;
+        info->can_sign = (detected_type == GN_HSM_KEY_TYPE_SECP256K1);
         info->is_extractable = FALSE;
-
-        /* Try to get public key */
-        /* This is simplified - real implementation would extract EC point */
         info->npub = NULL;
         info->pubkey_hex = NULL;
 
@@ -650,6 +680,50 @@ pkcs11_list_keys(GnHsmProvider *provider, guint64 slot_id, GError **error)
     }
 
     mod->functions->C_FindObjectsFinal(session);
+
+    /* Second pass: extract public keys for secp256k1 entries.
+     * This is done after the private key find loop completes, because
+     * PKCS#11 only allows one active find operation per session. */
+    for (guint k = 0; k < keys->len; k++) {
+      GnHsmKeyInfo *info = g_ptr_array_index(keys, k);
+      if (info->key_type != GN_HSM_KEY_TYPE_SECP256K1 || info->pubkey_hex)
+        continue;
+
+      gsize id_len = 0;
+      guchar *id_bytes = g_base64_decode(info->key_id, &id_len);
+      if (!id_bytes)
+        continue;
+
+      CK_OBJECT_CLASS pub_class = CKO_PUBLIC_KEY;
+      CK_ATTRIBUTE find_pub[] = {
+        {CKA_CLASS, &pub_class, sizeof(pub_class)},
+        {CKA_ID, id_bytes, id_len}
+      };
+
+      if (mod->functions->C_FindObjectsInit(session, find_pub, 2) == CKR_OK) {
+        CK_OBJECT_HANDLE pub_obj = CK_INVALID_HANDLE;
+        CK_ULONG pub_count = 0;
+        mod->functions->C_FindObjects(session, &pub_obj, 1, &pub_count);
+        mod->functions->C_FindObjectsFinal(session);
+
+        if (pub_count > 0) {
+          CK_BYTE ec_point[256];
+          CK_ATTRIBUTE ec_attr = {CKA_EC_POINT, ec_point, sizeof(ec_point)};
+          if (mod->functions->C_GetAttributeValue(session, pub_obj, &ec_attr, 1) == CKR_OK) {
+            guint8 xonly_pk[32];
+            if (extract_xonly_pubkey(ec_point, ec_attr.ulValueLen, xonly_pk)) {
+              info->pubkey_hex = bytes_to_hex(xonly_pk, 32);
+              g_autoptr(GNostrNip19) nip19 = gnostr_nip19_encode_npub(info->pubkey_hex, NULL);
+              if (nip19)
+                info->npub = g_strdup(gnostr_nip19_get_bech32(nip19));
+            }
+          }
+        }
+      }
+
+      g_free(id_bytes);
+    }
+
     mod->functions->C_CloseSession(session);
     break; /* Found the right module */
   }
@@ -723,17 +797,19 @@ pkcs11_get_public_key(GnHsmProvider *provider,
     pub_obj = priv_obj;
   }
 
-  /* Get key attributes */
+  /* Get key attributes (including EC curve parameters for type detection) */
   CK_BYTE label[256] = {0};
   CK_BYTE ec_point[256] = {0};
   CK_KEY_TYPE key_type = 0;
+  CK_BYTE ec_params[32] = {0};
   CK_ATTRIBUTE attrs[] = {
     {CKA_LABEL, label, sizeof(label)},
     {CKA_EC_POINT, ec_point, sizeof(ec_point)},
-    {CKA_KEY_TYPE, &key_type, sizeof(key_type)}
+    {CKA_KEY_TYPE, &key_type, sizeof(key_type)},
+    {CKA_EC_PARAMS, ec_params, sizeof(ec_params)}
   };
 
-  rv = mod->functions->C_GetAttributeValue(session, pub_obj, attrs, 3);
+  rv = mod->functions->C_GetAttributeValue(session, pub_obj, attrs, 4);
 
   /* If we couldn't get EC_POINT from private key, try finding the public key */
   if (rv != CKR_OK || attrs[1].ulValueLen == CK_UNAVAILABLE_INFORMATION) {
@@ -782,13 +858,20 @@ pkcs11_get_public_key(GnHsmProvider *provider,
     return NULL;
   }
 
+  /* Determine actual curve type from CKA_EC_PARAMS */
+  GnHsmKeyType detected_type = GN_HSM_KEY_TYPE_SECP256K1; /* default for Nostr */
+  if (attrs[3].ulValueLen != CK_UNAVAILABLE_INFORMATION &&
+      attrs[3].ulValueLen > 0) {
+    detected_type = determine_ec_key_type(ec_params, attrs[3].ulValueLen);
+  }
+
   /* Create key info */
   GnHsmKeyInfo *info = g_new0(GnHsmKeyInfo, 1);
   info->key_id = g_strdup(key_id);
   info->label = g_strndup((gchar *)label, attrs[0].ulValueLen);
-  info->key_type = GN_HSM_KEY_TYPE_SECP256K1;
+  info->key_type = detected_type;
   info->slot_id = slot_id;
-  info->can_sign = TRUE;
+  info->can_sign = (detected_type == GN_HSM_KEY_TYPE_SECP256K1);
   info->is_extractable = FALSE;
 
   /* Convert public key to hex */
