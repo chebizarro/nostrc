@@ -81,6 +81,7 @@ target_include_directories(signet_core
     ${CMAKE_SOURCE_DIR}/nips/nip19/include
     ${CMAKE_SOURCE_DIR}/nips/nip44/include
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
+    ${CMAKE_SOURCE_DIR}/nips/nip11/include
 )
 
 # Link in-tree targets. NIP targets are added later in the root CMake via
@@ -92,6 +93,7 @@ target_link_libraries(signet_core PUBLIC
   $<$<TARGET_EXISTS:nip04>:nip04>
   $<$<TARGET_EXISTS:nip44>:nip44>
   $<$<TARGET_EXISTS:nostr_nip46_core>:nostr_nip46_core>
+  $<$<TARGET_EXISTS:nip11>:nip11>
 )
 
 # External deps
@@ -124,6 +126,7 @@ endif()
 
 add_executable(signetd ${CMAKE_CURRENT_SOURCE_DIR}/src/signetd_main.c)
 target_link_libraries(signetd PRIVATE signet_core)
+target_include_directories(signetd PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip11/include)
 
 add_executable(signetctl ${CMAKE_CURRENT_SOURCE_DIR}/src/signetctl_main.c)
 target_link_libraries(signetctl PRIVATE signet_core)

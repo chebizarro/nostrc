@@ -33,6 +33,7 @@
 #include "signet/dbus_tcp.h"
 #include "signet/nip5l_transport.h"
 #include "signet/ssh_agent.h"
+#include <nip11.h>
 
 /* Management event kind range */
 #define SIGNET_MGMT_KIND_MIN 28000
@@ -187,6 +188,72 @@ static void signet_audit_daemon_event(SignetAuditLogger *audit,
 
   (void)signet_audit_log_json(audit, type, json);
   g_free(json);
+}
+
+/* NPA-08: Fetch NIP-11 relay information documents at startup.
+ * Converts ws(s):// URLs to http(s):// and fetches the NIP-11 JSON
+ * document for each configured relay. Logs capabilities and warns
+ * about auth requirements or restrictive limits. */
+static void signet_discover_relays(const char *const *relay_urls, size_t n_relays,
+                                   bool have_auth_key) {
+  for (size_t i = 0; i < n_relays; i++) {
+    const char *url = relay_urls[i];
+    if (!url) continue;
+
+    /* Convert ws(s):// to http(s):// for the NIP-11 HTTP fetch. */
+    char http_url[512];
+    if (g_str_has_prefix(url, "wss://")) {
+      snprintf(http_url, sizeof(http_url), "https://%s", url + 6);
+    } else if (g_str_has_prefix(url, "ws://")) {
+      snprintf(http_url, sizeof(http_url), "http://%s", url + 5);
+    } else {
+      snprintf(http_url, sizeof(http_url), "%s", url);
+    }
+
+    RelayInformationDocument *info = nostr_nip11_fetch_info(http_url);
+    if (!info) {
+      g_message("[signetd] NIP-11: %s — no information document available", url);
+      continue;
+    }
+
+    /* Log relay identity and capabilities. */
+    GString *nips_str = g_string_new(NULL);
+    for (int n = 0; n < info->supported_nips_count; n++) {
+      if (n > 0) g_string_append(nips_str, ",");
+      g_string_append_printf(nips_str, "%d", info->supported_nips[n]);
+    }
+    g_message("[signetd] NIP-11: %s — name=\"%s\" software=%s/%s NIPs=[%s]",
+              url,
+              info->name ? info->name : "",
+              info->software ? info->software : "?",
+              info->version ? info->version : "?",
+              nips_str->str);
+    g_string_free(nips_str, TRUE);
+
+    /* Warn about relay limitations. */
+    if (info->limitation) {
+      if (info->limitation->auth_required) {
+        if (!have_auth_key) {
+          g_warning("[signetd] NIP-11: %s requires AUTH but no auth key configured", url);
+        } else {
+          g_message("[signetd] NIP-11: %s requires AUTH (key configured)", url);
+        }
+      }
+      if (info->limitation->payment_required) {
+        g_warning("[signetd] NIP-11: %s requires payment", url);
+      }
+      if (info->limitation->max_message_length > 0) {
+        g_message("[signetd] NIP-11: %s max_message_length=%d",
+                  url, info->limitation->max_message_length);
+      }
+      if (info->limitation->max_event_tags > 0 && info->limitation->max_event_tags < 10) {
+        g_warning("[signetd] NIP-11: %s max_event_tags=%d (may be restrictive)",
+                  url, info->limitation->max_event_tags);
+      }
+    }
+
+    nostr_nip11_free_info(info);
+  }
 }
 
 /* NPA-07: Health timer context and callback at file scope (ISO C11). */
@@ -650,6 +717,13 @@ int main(int argc, char **argv) {
         health = NULL;
       }
     }
+  }
+
+  /* NPA-08: Discover relay capabilities via NIP-11 before connecting.
+   * Non-fatal — relays that don't serve NIP-11 are simply logged. */
+  {
+    bool have_auth = (cfg.remote_signer_secret_key_hex[0] != '\0');
+    signet_discover_relays((const char *const *)cfg.relays, cfg.n_relays, have_auth);
   }
 
   /* Start relay pool after everything is ready. */
