@@ -316,6 +316,20 @@ static void handle_client(SignetSshAgent *sa, int client_fd) {
   close(client_fd);
 }
 
+/* ---- per-client thread data ---- */
+
+typedef struct {
+  SignetSshAgent *sa;
+  int client_fd;
+} SshClientThreadData;
+
+static gpointer ssh_agent_client_thread(gpointer data) {
+  SshClientThreadData *td = (SshClientThreadData *)data;
+  handle_client(td->sa, td->client_fd);
+  g_free(td);
+  return NULL;
+}
+
 /* ----------------------------- accept thread ------------------------------ */
 
 static gpointer ssh_agent_accept_loop(gpointer data) {
@@ -327,8 +341,17 @@ static gpointer ssh_agent_accept_loop(gpointer data) {
       if (errno == EINTR) continue;
       break;
     }
-    /* Handle each client in a new thread. */
-    handle_client(sa, client_fd);
+    /* Handle each client in its own thread for concurrency. */
+    SshClientThreadData *td = g_new(SshClientThreadData, 1);
+    td->sa = sa;
+    td->client_fd = client_fd;
+    GThread *t = g_thread_new("signet-ssh-client", ssh_agent_client_thread, td);
+    if (t) {
+      g_thread_unref(t); /* detach — client thread manages its own lifetime */
+    } else {
+      close(client_fd);
+      g_free(td);
+    }
   }
 
   return NULL;

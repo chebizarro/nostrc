@@ -6,7 +6,7 @@
  * stable, auditable reason codes. It is called from both NIP-46 request
  * handling and management operations.
  *
- * Phase 1: API + stub implementation.
+ * Evaluates per-identity policy rules against incoming requests.
  */
 
 #ifndef SIGNET_POLICY_ENGINE_H

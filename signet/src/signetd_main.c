@@ -85,13 +85,30 @@ typedef struct {
   SignetKeyStore *keys;
 } SignetDaemonCtx;
 
-/* All provisioned agents are considered fleet members. */
+/* Fleet membership: a pubkey is in-fleet if it belongs to a provisioned agent.
+ * Full NIP-51 fleet list sync is a future enhancement, but checking the agents
+ * table is a real authorization gate — unprovisioned pubkeys are rejected. */
 static bool signet_fleet_is_in_fleet(const char *pubkey_hex, void *user_data) {
-  (void)pubkey_hex;
-  (void)user_data;
-  /* An agent that passed bootstrap or was provisioned is implicitly in-fleet.
-   * Full NIP-51 fleet list sync is a future enhancement. */
-  return true;
+  SignetDaemonCtx *ctx = (SignetDaemonCtx *)user_data;
+  if (!ctx || !ctx->keys || !pubkey_hex) return false;
+
+  /* Check if any agent has this pubkey registered. */
+  char **ids = NULL;
+  size_t count = 0;
+  if (signet_key_store_list_agents(ctx->keys, &ids, &count) != 0)
+    return false;
+
+  bool found = false;
+  for (size_t i = 0; i < count && !found; i++) {
+    char pk[65];
+    if (signet_key_store_get_agent_pubkey(ctx->keys, ids[i], pk, sizeof(pk))) {
+      if (strcmp(pk, pubkey_hex) == 0)
+        found = true;
+    }
+  }
+  for (size_t i = 0; i < count; i++) g_free(ids[i]);
+  g_free(ids);
+  return found;
 }
 
 /* Check the deny list. */
@@ -278,6 +295,16 @@ int main(int argc, char **argv) {
   if (signet_config_load(config_path, &cfg) != 0) {
     fprintf(stderr, "signetd: failed to load config\n");
     return 1;
+  }
+
+  /* Validate required configuration before proceeding. */
+  {
+    char err_buf[256];
+    if (signet_config_validate(&cfg, err_buf, sizeof(err_buf)) != 0) {
+      fprintf(stderr, "signetd: configuration error: %s\n", err_buf);
+      signet_config_clear(&cfg);
+      return 1;
+    }
   }
 
   /* 1) Audit logger */
@@ -623,6 +650,16 @@ int main(int argc, char **argv) {
       snap.relay_count = snap.relay_connected ? (uint32_t)cfg.n_relays : 0;
       snap.policy_store_loaded = (store != NULL);      /* non-blocking hint */
       snap.key_store_available = (keys != NULL);       /* non-blocking hint */
+
+      /* Read atomic counters from subsystem handlers. */
+      snap.sign_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.sign_total);
+      snap.auth_total_ok = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_ok);
+      snap.auth_total_denied = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_denied);
+      snap.auth_total_error = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_error);
+      snap.bootstrap_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.bootstrap_total);
+      snap.revoke_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.revoke_total);
+      snap.active_sessions = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_sessions);
+      snap.active_leases = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_leases);
 
       int64_t now = signet_now_unix();
       snap.uptime_sec = (now >= started_at) ? (uint64_t)(now - started_at) : 0;

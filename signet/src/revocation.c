@@ -7,6 +7,7 @@
  */
 
 #include "signet/revocation.h"
+#include "signet/health_server.h"  /* g_signet_metrics */
 #include "signet/store.h"
 #include "signet/store_leases.h"
 #include "signet/store_audit.h"
@@ -162,6 +163,9 @@ static int signet_revoke_internal(SignetStore *store,
                                    bool emergency) {
   if (!store || !agent_id) return -1;
   int rc = 0;
+
+  /* Increment revocation counter. */
+  g_atomic_int_inc(&g_signet_metrics.revoke_total);
 
   /* 1. Add to deny list. */
   if (deny && pubkey_hex) {

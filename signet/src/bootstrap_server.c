@@ -10,6 +10,7 @@
  */
 
 #include "signet/bootstrap_server.h"
+#include "signet/health_server.h"  /* g_signet_metrics */
 #include "signet/key_store.h"
 #include "signet/store.h"
 #include "signet/store_tokens.h"
@@ -159,6 +160,9 @@ handle_bootstrap(SignetBootstrapServer *bs, struct MHD_Connection *conn,
     return send_json(conn, MHD_HTTP_BAD_REQUEST,
                      json_error("missing token, agent_id, or bootstrap_pubkey"));
   }
+
+  /* Increment bootstrap attempt counter. */
+  g_atomic_int_inc(&g_signet_metrics.bootstrap_total);
 
   /* Hash the raw token for store lookup. */
   char token_hash[crypto_hash_sha256_BYTES * 2 + 1];

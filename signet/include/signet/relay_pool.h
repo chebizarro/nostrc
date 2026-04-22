@@ -98,6 +98,10 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
 /* True if at least one relay is currently connected. */
 bool signet_relay_pool_is_connected(SignetRelayPool *rp);
 
+/* Get the relay URL array (borrowed pointers). Returns NULL if pool is NULL.
+ * Writes the count to *out_count. URLs are valid for the pool's lifetime. */
+const char *const *signet_relay_pool_get_urls(SignetRelayPool *rp, size_t *out_count);
+
 #ifdef __cplusplus
 }
 #endif

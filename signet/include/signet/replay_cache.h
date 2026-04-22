@@ -5,7 +5,7 @@
  * This module tracks seen request identifiers (e.g., Nostr event IDs, nonces)
  * to prevent replay attacks. It also enforces created_at skew limits.
  *
- * Phase 1: minimal in-memory implementation.
+ * In-memory rolling window with configurable TTL and clock skew tolerance.
  */
 
 #ifndef SIGNET_REPLAY_CACHE_H

@@ -15,6 +15,7 @@
  */
 
 #include "signet/nip46_server.h"
+#include "signet/health_server.h"  /* g_signet_metrics */
 
 #include "signet/relay_pool.h"
 #include "signet/policy_engine.h"
@@ -627,7 +628,17 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       }
 
     } else if (strcmp(method, "get_relays") == 0) {
-      result = g_strdup("[]");
+      /* Build a JSON object mapping relay URLs to empty read/write hints. */
+      size_t n_urls = 0;
+      const char *const *urls = signet_relay_pool_get_urls(s->relays, &n_urls);
+      GString *rb = g_string_new("{");
+      for (size_t ri = 0; ri < n_urls; ri++) {
+        if (ri > 0) g_string_append_c(rb, ',');
+        g_string_append_printf(rb, "\"%s\":{\"read\":true,\"write\":true}",
+                               urls[ri] ? urls[ri] : "");
+      }
+      g_string_append_c(rb, '}');
+      result = g_string_free(rb, FALSE);
       status = "ok";
       code = "ok";
 
@@ -636,6 +647,17 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       status = "error";
       code = "unsupported_method";
     }
+  }
+
+  /* Increment metrics counters based on outcome. */
+  if (allow) {
+    g_atomic_int_inc(&g_signet_metrics.auth_ok);
+    if (method && strcmp(method, "sign_event") == 0 && result)
+      g_atomic_int_inc(&g_signet_metrics.sign_total);
+  } else if (rr != SIGNET_REPLAY_OK) {
+    g_atomic_int_inc(&g_signet_metrics.auth_error);
+  } else {
+    g_atomic_int_inc(&g_signet_metrics.auth_denied);
   }
 
   /* 7) Audit (never include plaintext/keys) */

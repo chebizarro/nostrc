@@ -8,7 +8,7 @@
  * No management operations are exposed via HTTP. The daemon uses this endpoint
  * solely for monitoring probes.
  *
- * Phase 1: API + stub implementation.
+ * Serves GET /health, GET /ready, and GET /metrics.
  */
 
 #ifndef SIGNET_HEALTH_SERVER_H
@@ -20,6 +20,26 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <glib.h>
+
+/* ---- Process-global atomic counters ---- */
+
+/* Shared counter block incremented by subsystem handlers (NIP-46, bootstrap,
+ * D-Bus, NIP-5L, revocation).  The main loop reads these into the health
+ * snapshot on each tick.  All fields use GLib atomic operations. */
+typedef struct {
+  volatile gint sign_total;
+  volatile gint auth_ok;
+  volatile gint auth_denied;
+  volatile gint auth_error;
+  volatile gint bootstrap_total;
+  volatile gint revoke_total;
+  volatile gint active_sessions;
+  volatile gint active_leases;
+} SignetMetricsCounters;
+
+/* Process-global counters.  Defined in health_server.c. */
+extern SignetMetricsCounters g_signet_metrics;
 
 typedef struct SignetHealthServer SignetHealthServer;
 

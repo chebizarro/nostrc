@@ -18,6 +18,9 @@
 #include <json-glib/json-glib.h>
 #include <microhttpd.h>
 
+/* Process-global atomic counters — incremented by subsystem handlers. */
+SignetMetricsCounters g_signet_metrics;
+
 struct SignetHealthServer {
   char *listen;
   struct MHD_Daemon *mhd;

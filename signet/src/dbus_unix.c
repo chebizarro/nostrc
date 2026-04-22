@@ -409,8 +409,18 @@ static void signet_dbus_handle_credentials(GDBusConnection *connection,
     GVariantBuilder builder;
     g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
 
-    /* TODO: Implement listing from secrets table filtered by agent policy.
-     * For now return empty list. */
+    if (ds->store) {
+      char **ids = NULL;
+      char **labels = NULL;
+      size_t count = 0;
+      if (signet_store_list_secrets(ds->store, agent_id, &ids, &labels, &count) == 0) {
+        for (size_t i = 0; i < count; i++) {
+          if (ids[i])
+            g_variant_builder_add(&builder, "s", ids[i]);
+        }
+        signet_store_free_secret_list(ids, labels, count);
+      }
+    }
 
     g_dbus_method_invocation_return_value(invocation,
         g_variant_new("(as)", &builder));

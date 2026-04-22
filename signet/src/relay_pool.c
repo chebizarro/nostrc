@@ -704,6 +704,15 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
   return 0;
 }
 
+const char *const *signet_relay_pool_get_urls(SignetRelayPool *rp, size_t *out_count) {
+  if (!rp || !out_count) {
+    if (out_count) *out_count = 0;
+    return NULL;
+  }
+  *out_count = rp->n_urls;
+  return (const char *const *)rp->urls;
+}
+
 bool signet_relay_pool_is_connected(SignetRelayPool *rp) {
   if (!rp || !rp->pool) return false;
 

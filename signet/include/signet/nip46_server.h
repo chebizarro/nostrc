@@ -9,7 +9,8 @@
  * - loading custody keys (hot cache) and producing signatures
  * - emitting encrypted NIP-46 responses to relays
  *
- * Phase 1: API + stub implementation.
+ * Full implementation: replay protection, NIP-44 v2 encryption,
+ * policy gating, event signing, and NIP-46 message handling.
  */
 
 #ifndef SIGNET_NIP46_SERVER_H

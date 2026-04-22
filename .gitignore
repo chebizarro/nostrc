@@ -112,6 +112,9 @@ gschemas.compiled
 apps/gnostr/gnostr
 apps/gnostr/gnostr-test-*
 
+# Environment files with secrets
+.env
+
 # Gas Town (added by gt)
 .runtime/
 .claude/
