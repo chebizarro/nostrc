@@ -66,18 +66,17 @@ struct SignetRelayPool {
   gboolean started;
 };
 
-/* Single-pool-per-process assumption: signetd and signetctl each create one
- * relay pool. libnostr's middleware API does not carry user_data, so keep the
- * active pool in a process-global atomic pointer. */
-static SignetRelayPool *g_active_pool = NULL;
+/* NPA-09: g_active_pool global eliminated.
+ * libnostr now supports event_middleware_ex with user_data, so we pass
+ * the SignetRelayPool pointer directly through the callback context. */
 
 /* Forward declaration — defined after public API section */
 static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp);
 
 /* ----------------------- event middleware bridge -------------------------- */
 
-static void signet_pool_event_middleware(NostrIncomingEvent *incoming) {
-  SignetRelayPool *rp = g_atomic_pointer_get((void **)&g_active_pool);
+static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *user_data) {
+  SignetRelayPool *rp = (SignetRelayPool *)user_data;
   if (!rp || !incoming || !incoming->event || !rp->on_event) return;
 
   /* NPA-01: Verify Schnorr signature before dispatching.
@@ -400,8 +399,10 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
     return NULL;
   }
 
-  /* Wire live incoming-event dispatch through libnostr SimplePool. */
-  nostr_simple_pool_set_event_middleware(rp->pool, signet_pool_event_middleware);
+  /* Wire live incoming-event dispatch through libnostr SimplePool.
+   * NPA-09: Use _ex variant to pass relay pool as user_data instead of
+   * relying on a process-global pointer. */
+  nostr_simple_pool_set_event_middleware_ex(rp->pool, signet_pool_event_middleware, rp);
   nostr_simple_pool_set_auto_unsub_on_eose(rp->pool, false);
 
   /* Store URLs and add relays to the pool */
@@ -480,7 +481,6 @@ int signet_relay_pool_start(SignetRelayPool *rp) {
     return 0;
   }
 
-  g_atomic_pointer_set((void **)&g_active_pool, rp);
   nostr_simple_pool_start(rp->pool);
   rp->started = TRUE;
 
@@ -498,9 +498,6 @@ void signet_relay_pool_stop(SignetRelayPool *rp) {
   }
 
   nostr_simple_pool_stop(rp->pool);
-  if (g_atomic_pointer_get((void **)&g_active_pool) == rp) {
-    g_atomic_pointer_set((void **)&g_active_pool, NULL);
-  }
   rp->started = FALSE;
 
   g_mutex_unlock(&rp->mu);

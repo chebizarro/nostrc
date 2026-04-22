@@ -251,6 +251,8 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     pthread_mutex_init(&pool->pool_mutex, NULL);
     pool->auth_handler = NULL;
     pool->event_middleware = NULL;
+    pool->event_middleware_ex = NULL;
+    pool->event_middleware_data = NULL;
     pool->batch_middleware = NULL;
     pool->signature_checker = NULL;
     pool->running = false;
@@ -305,10 +307,23 @@ NostrSimplePool *nostr_simple_pool_new(void) {
 
 /* Convenience configuration API implementations */
 void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
-                                            void (*cb)(NostrIncomingEvent *)) {
+                                             void (*cb)(NostrIncomingEvent *)) {
     if (!pool) return;
     pthread_mutex_lock(&pool->pool_mutex);
     pool->event_middleware = cb;
+    pool->event_middleware_ex = NULL;
+    pool->event_middleware_data = NULL;
+    pthread_mutex_unlock(&pool->pool_mutex);
+}
+
+void nostr_simple_pool_set_event_middleware_ex(NostrSimplePool *pool,
+                                               void (*cb)(NostrIncomingEvent *, void *),
+                                               void *user_data) {
+    if (!pool) return;
+    pthread_mutex_lock(&pool->pool_mutex);
+    pool->event_middleware = NULL;  /* clear legacy callback */
+    pool->event_middleware_ex = cb;
+    pool->event_middleware_data = user_data;
     pthread_mutex_unlock(&pool->pool_mutex);
 }
 
@@ -674,7 +689,7 @@ static void pool_drain_all(NostrSimplePool *pool,
                 free(eid);
                 if (seen) {
                     nostr_event_free(ev);
-                } else if (pool->event_middleware || pool->batch_middleware) {
+                } else if (pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware) {
                     if (!batch_add(batch, batch_len, batch_cap, ev,
                                    nostr_subscription_get_relay(sub)))
                         nostr_event_free(ev);
@@ -825,7 +840,7 @@ void *simple_pool_thread_func(void *arg) {
                     free(eid);
                     if (seen) {
                         nostr_event_free(ev);
-                    } else if (pool->event_middleware || pool->batch_middleware) {
+                    } else if (pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware) {
                         if (!batch_add(&batch, &batch_len, &batch_cap, ev,
                                        nostr_subscription_get_relay(local_subs[i])))
                             nostr_event_free(ev);
@@ -845,6 +860,10 @@ void *simple_pool_thread_func(void *arg) {
         if (batch_len > 0) {
             if (pool->batch_middleware) {
                 pool->batch_middleware(batch, batch_len);
+            } else if (pool->event_middleware_ex) {
+                for (size_t i = 0; i < batch_len; i++) {
+                    pool->event_middleware_ex(&batch[i], pool->event_middleware_data);
+                }
             } else if (pool->event_middleware) {
                 for (size_t i = 0; i < batch_len; i++) {
                     pool->event_middleware(&batch[i]);
@@ -1037,8 +1056,10 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
                     int seen = pool_seen(pool, eid);
                     free(eid);
                     if (!seen) {
-                        if (pool->event_middleware) {
-                            NostrIncomingEvent incoming = { .event = ev, .relay = relay };
+                        NostrIncomingEvent incoming = { .event = ev, .relay = relay };
+                        if (pool->event_middleware_ex) {
+                            pool->event_middleware_ex(&incoming, pool->event_middleware_data);
+                        } else if (pool->event_middleware) {
                             pool->event_middleware(&incoming);
                         } else {
                             nostr_event_free(ev);

@@ -40,6 +40,9 @@ typedef struct _NostrSimplePool {
     pthread_mutex_t pool_mutex;
     void (*auth_handler)(NostrEvent *);
     void (*event_middleware)(NostrIncomingEvent *);
+    /* Extended middleware with user_data — preferred over event_middleware when set. */
+    void (*event_middleware_ex)(NostrIncomingEvent *, void *);
+    void *event_middleware_data;
     /* Optional batch middleware: if set, pool may invoke this with a batch for efficiency. */
     void (*batch_middleware)(NostrIncomingEvent *items, size_t count);
     bool (*signature_checker)(NostrEvent);
@@ -164,7 +167,10 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
  * Convenience configuration API
  */
 void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
-                                            void (*cb)(NostrIncomingEvent *));
+                                             void (*cb)(NostrIncomingEvent *));
+void nostr_simple_pool_set_event_middleware_ex(NostrSimplePool *pool,
+                                               void (*cb)(NostrIncomingEvent *, void *),
+                                               void *user_data);
 void nostr_simple_pool_set_batch_middleware(NostrSimplePool *pool,
                                             void (*cb)(NostrIncomingEvent *items, size_t count));
 void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable);
