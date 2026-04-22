@@ -54,23 +54,13 @@ void gof_run(void) {
   gof_sched_run();
 }
 
-/* timers provided via timer_bridge */
-void __gof_sleep_ns(uint64_t ns);
+/* __gof_sleep_ns is declared in timer_bridge.h;
+   IO shims + introspection are declared in fiber.h (already included). */
+#include "../timers/timer_bridge.h"
 
 void gof_sleep_ms(uint64_t ms) {
   __gof_sleep_ns(ms * 1000000ull);
 }
-
-/* IO shims declared in io.c */
-ssize_t gof_read(int fd, void *buf, size_t n);
-ssize_t gof_write(int fd, const void *buf, size_t n);
-int     gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
-int     gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
-
-/* Debug/introspection hooks provided in debug/ */
-void gof_set_name(const char *name);
-size_t gof_list(gof_info *out, size_t max);
-void gof_dump_stacks(int fd);
 
 void gof_get_stats(gof_sched_stats *out) {
   if (!out) return;

@@ -14,9 +14,6 @@
 /* Forward declaration for poller thread entry */
 static void* poller_main(void* arg);
 
-/* Provided by io.c */
-int gof_io_have_waiters(void);
-
 /* Debug logging */
 #if defined(GOF_DEBUG)
 #define LOGF(...) fprintf(stderr, __VA_ARGS__)

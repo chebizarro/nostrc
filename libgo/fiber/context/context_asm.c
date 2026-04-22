@@ -3,8 +3,6 @@
 #include "context.h"
 
 #if !GOF_PORTABLE_CONTEXT
-/* External assembly routines */
-extern void gof_bootstrap_trampoline(void);
 
 int gof_ctx_init_bootstrap(gof_context *ctx, void *stack_base, size_t stack_size, void (*entry)(void*), void *arg) {
   uintptr_t top = (uintptr_t)stack_base + stack_size;

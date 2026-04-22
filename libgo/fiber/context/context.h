@@ -55,6 +55,9 @@ typedef struct gof_context {
 #  endif
 #endif
 
+/* Assembly trampoline that bootstraps a new fiber (defined in context_<arch>.S). */
+void gof_bootstrap_trampoline(void);
+
 /* Initialize a new fiber context to start at `entry(arg)` on the provided stack. */
 int gof_ctx_init_bootstrap(gof_context *ctx, void *stack_base, size_t stack_size, void (*entry)(void*), void *arg);
 /* Swap from one context to another. Must preserve callee-saved state. */
