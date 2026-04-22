@@ -15,6 +15,7 @@
 #include <inttypes.h>
 
 #include <glib.h>
+#include <sqlite3.h>
 #include <nostr-event.h>
 #include <nostr/nip17/nip17.h>
 #include <json.h>
@@ -192,11 +193,29 @@ bool signet_bootstrap_needs_reissue(SignetStore *store,
   }
 
   /* Agent doesn't exist yet — check if there's an active (non-expired,
-   * non-consumed) token for this agent. If the token has expired, reissue. */
-  /* Note: The detailed token expiry check would require querying the
-   * bootstrap_tokens table. For now, if agent doesn't exist, caller should
-   * check token status and reissue if expired. */
-  return true;
+   * non-consumed) token for this agent. If a valid token exists, no reissue
+   * is needed. If all tokens are expired or consumed, reissue. */
+  sqlite3 *db = signet_store_get_db(store);
+  if (!db) return true; /* can't check — assume reissue needed */
+
+  const char *sql =
+      "SELECT COUNT(*) FROM bootstrap_tokens "
+      "WHERE agent_id = ? AND used_at IS NULL AND expires_at >= ?;";
+  sqlite3_stmt *stmt = NULL;
+  rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) return true; /* query failed — assume reissue needed */
+
+  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 2, now);
+
+  int active_tokens = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    active_tokens = sqlite3_column_int(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+
+  /* If there are active, unexpired tokens, no reissue needed. */
+  return (active_tokens == 0);
 }
 
 /* ----------------------------- cleanup ------------------------------------- */

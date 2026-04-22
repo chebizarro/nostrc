@@ -54,7 +54,7 @@ static void signetctl_usage(FILE *out) {
     "  list-sessions            List active sessions (local store)\n"
     "  list-leases              List active credential leases (local store)\n"
     "  verify-audit             Verify hash-chained audit log integrity\n"
-    "  rotate-credential <id>   Rotate a credential (archives old version)\n"
+    "  rotate-credential <id>   Rotate a credential (--file or --stdin)\n"
     "\n"
     "Options:\n"
     "  -c <path>    Configuration file path\n"
@@ -424,19 +424,76 @@ int main(int argc, char **argv) {
       }
     } else if (strcmp(cmd, "rotate-credential") == 0) {
       if (argi >= argc) {
-        fprintf(stderr, "signetctl: rotate-credential requires <id>\n");
+        fprintf(stderr, "signetctl: rotate-credential requires <id> [--file <path> | --stdin]\n");
         signet_store_close(store);
         signet_config_clear(&lcfg);
         return 2;
       }
-      const char *cred_id = argv[argi];
-      /* Generate new payload (placeholder — real rotation needs new credential). */
-      uint8_t new_payload[32];
-      randombytes_buf(new_payload, sizeof(new_payload));
+      const char *cred_id = argv[argi++];
+
+      /* Read new credential payload from --file or --stdin. */
+      uint8_t *new_payload = NULL;
+      size_t new_payload_len = 0;
+      const char *input_file = NULL;
+      bool from_stdin = false;
+
+      for (int ai = argi; ai < argc; ai++) {
+        if (strcmp(argv[ai], "--file") == 0 && (ai + 1) < argc) {
+          input_file = argv[++ai];
+        } else if (strcmp(argv[ai], "--stdin") == 0) {
+          from_stdin = true;
+        }
+      }
+
+      if (!input_file && !from_stdin) {
+        fprintf(stderr, "signetctl: rotate-credential requires --file <path> or --stdin\n"
+                "  Example: signetctl rotate-credential my-cred --file /path/to/secret\n"
+                "  Example: echo -n 'newsecret' | signetctl rotate-credential my-cred --stdin\n");
+        signet_store_close(store);
+        signet_config_clear(&lcfg);
+        return 2;
+      }
+
+      if (input_file) {
+        /* Read credential from file. */
+        gchar *contents = NULL;
+        gsize length = 0;
+        GError *ferr = NULL;
+        if (!g_file_get_contents(input_file, &contents, &length, &ferr)) {
+          fprintf(stderr, "signetctl: failed to read '%s': %s\n",
+                  input_file, ferr ? ferr->message : "unknown error");
+          if (ferr) g_error_free(ferr);
+          signet_store_close(store);
+          signet_config_clear(&lcfg);
+          return 1;
+        }
+        new_payload = (uint8_t *)contents;
+        new_payload_len = length;
+      } else {
+        /* Read credential from stdin. */
+        GString *buf = g_string_sized_new(4096);
+        char chunk[4096];
+        size_t nread;
+        while ((nread = fread(chunk, 1, sizeof(chunk), stdin)) > 0) {
+          g_string_append_len(buf, chunk, (gssize)nread);
+        }
+        if (buf->len == 0) {
+          fprintf(stderr, "signetctl: no data received on stdin\n");
+          g_string_free(buf, TRUE);
+          signet_store_close(store);
+          signet_config_clear(&lcfg);
+          return 1;
+        }
+        new_payload_len = buf->len;
+        new_payload = (uint8_t *)g_string_free(buf, FALSE);
+      }
+
       int64_t now = (int64_t)time(NULL);
       int rrc = signet_store_rotate_secret(store, cred_id, new_payload,
-                                             sizeof(new_payload), now);
-      sodium_memzero(new_payload, sizeof(new_payload));
+                                             new_payload_len, now);
+      sodium_memzero(new_payload, new_payload_len);
+      g_free(new_payload);
+
       if (rrc == 0) {
         printf("Credential '%s' rotated successfully (old version archived).\n", cred_id);
       } else {

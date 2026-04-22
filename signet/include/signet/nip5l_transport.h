@@ -28,6 +28,7 @@ struct SignetStore;
 struct SignetChallengeStore;
 struct SignetAuditLogger;
 struct SignetFleetRegistry;
+struct SignetRelayPool;
 
 typedef struct {
   const char *socket_path;  /* e.g. "/run/signet/nip5l.sock" */
@@ -37,6 +38,7 @@ typedef struct {
   struct SignetChallengeStore *challenges;
   struct SignetAuditLogger *audit;
   const struct SignetFleetRegistry *fleet;
+  struct SignetRelayPool *relays;  /* for get_relays method */
 } SignetNip5lServerConfig;
 
 /* Create NIP-5L server. Returns NULL on OOM. */

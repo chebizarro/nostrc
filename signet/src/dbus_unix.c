@@ -23,10 +23,11 @@
 #include <glib.h>
 #include <sodium.h>
 
-/* libnostr event signing + NIP-04 */
+/* libnostr event signing + NIP-04 + NIP-44 */
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr/nip04.h>
+#include <nostr/nip44/nip44.h>
 #include <json.h>
 
 #define SIGNET_DBUS_BUS_NAME "net.signet.Signer"
@@ -152,14 +153,24 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
     return;
   }
 
+  int64_t op_start = signet_now_unix();
+
   if (strcmp(method_name, "GetPublicKey") == 0) {
     char pubkey_hex[65];
     if (!signet_key_store_get_agent_pubkey(ds->keys, agent_id, pubkey_hex, sizeof(pubkey_hex))) {
+      signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_KEY_ACCESS,
+          &(SignetAuditCommonFields){ .identity = agent_id, .method = "GetPublicKey",
+            .decision = "error", .reason_code = "key_not_found" },
+          "{\"transport\":\"dbus_unix\"}");
       g_free(agent_id);
       g_dbus_method_invocation_return_dbus_error(
           invocation, "net.signet.Error.NotFound", "Agent key not found");
       return;
     }
+    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_KEY_ACCESS,
+        &(SignetAuditCommonFields){ .identity = agent_id, .method = "GetPublicKey",
+          .decision = "allow", .reason_code = "ok" },
+        "{\"transport\":\"dbus_unix\"}");
     g_dbus_method_invocation_return_value(invocation,
         g_variant_new("(s)", pubkey_hex));
 
@@ -213,6 +224,10 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
       return;
     }
 
+    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
+        &(SignetAuditCommonFields){ .identity = agent_id, .method = "SignEvent",
+          .decision = "allow", .reason_code = "ok" },
+        "{\"transport\":\"dbus_unix\"}");
     g_dbus_method_invocation_return_value(invocation,
         g_variant_new("(s)", signed_json));
     free(signed_json);
@@ -221,11 +236,14 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
     const char *plaintext = NULL, *peer_pubkey = NULL, *algo = NULL;
     g_variant_get(parameters, "(&s&s&s)", &plaintext, &peer_pubkey, &algo);
 
-    if (algo && strcmp(algo, "nip04") != 0 && algo[0] != '\0') {
+    /* Determine algorithm: default to nip04 for backward compat. */
+    bool use_nip44 = (algo && strcmp(algo, "nip44") == 0);
+    bool use_nip04 = (!algo || algo[0] == '\0' || strcmp(algo, "nip04") == 0);
+    if (!use_nip04 && !use_nip44) {
       g_free(agent_id);
       g_dbus_method_invocation_return_dbus_error(
           invocation, "net.signet.Error.BadRequest",
-          "Unsupported algorithm; use 'nip04' or empty");
+          "Unsupported algorithm; use 'nip04', 'nip44', or empty");
       return;
     }
 
@@ -238,38 +256,71 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
       return;
     }
 
-    char sk_hex[65];
-    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-    sk_hex[64] = '\0';
+    char *result_ct = NULL;
+    int rc;
 
-    char *ciphertext = NULL;
-    char *err_msg = NULL;
-    int rc = nostr_nip04_encrypt(plaintext, peer_pubkey, sk_hex, &ciphertext, &err_msg);
-    sodium_memzero(sk_hex, sizeof(sk_hex));
+    if (use_nip44) {
+      /* NIP-44 v2: peer_pubkey is hex-encoded x-only 32-byte key. */
+      uint8_t peer_pk[32];
+      bool pk_ok = (peer_pubkey && strlen(peer_pubkey) == 64);
+      if (pk_ok) {
+        for (int i = 0; i < 32; i++) {
+          unsigned int byte;
+          if (sscanf(peer_pubkey + i * 2, "%2x", &byte) != 1) { pk_ok = false; break; }
+          peer_pk[i] = (uint8_t)byte;
+        }
+      }
+      if (!pk_ok) {
+        signet_loaded_key_clear(&lk);
+        g_free(agent_id);
+        g_dbus_method_invocation_return_dbus_error(
+            invocation, "net.signet.Error.BadRequest", "Invalid peer pubkey hex");
+        return;
+      }
+      rc = nostr_nip44_encrypt_v2(lk.secret_key, peer_pk,
+                                  (const uint8_t *)plaintext, strlen(plaintext),
+                                  &result_ct);
+    } else {
+      /* NIP-04 */
+      char sk_hex[65];
+      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+      sk_hex[64] = '\0';
+      char *err_msg = NULL;
+      rc = nostr_nip04_encrypt(plaintext, peer_pubkey, sk_hex, &result_ct, &err_msg);
+      sodium_memzero(sk_hex, sizeof(sk_hex));
+      free(err_msg);
+    }
     signet_loaded_key_clear(&lk);
 
     if (rc != 0) {
       g_free(agent_id);
       g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.Internal",
-          err_msg ? err_msg : "Encryption failed");
-      free(err_msg);
+          invocation, "net.signet.Error.Internal", "Encryption failed");
       return;
     }
 
+    char audit_detail[128];
+    snprintf(audit_detail, sizeof(audit_detail),
+             "{\"transport\":\"dbus_unix\",\"algo\":\"%s\"}", use_nip44 ? "nip44" : "nip04");
+    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
+        &(SignetAuditCommonFields){ .identity = agent_id, .method = "Encrypt",
+          .decision = "allow", .reason_code = "ok" }, audit_detail);
     g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(s)", ciphertext));
-    free(ciphertext);
+        g_variant_new("(s)", result_ct));
+    free(result_ct);
 
   } else if (strcmp(method_name, "Decrypt") == 0) {
     const char *ciphertext = NULL, *peer_pubkey = NULL, *algo = NULL;
     g_variant_get(parameters, "(&s&s&s)", &ciphertext, &peer_pubkey, &algo);
 
-    if (algo && strcmp(algo, "nip04") != 0 && algo[0] != '\0') {
+    /* Determine algorithm: default to nip04 for backward compat. */
+    bool use_nip44 = (algo && strcmp(algo, "nip44") == 0);
+    bool use_nip04 = (!algo || algo[0] == '\0' || strcmp(algo, "nip04") == 0);
+    if (!use_nip04 && !use_nip44) {
       g_free(agent_id);
       g_dbus_method_invocation_return_dbus_error(
           invocation, "net.signet.Error.BadRequest",
-          "Unsupported algorithm; use 'nip04' or empty");
+          "Unsupported algorithm; use 'nip04', 'nip44', or empty");
       return;
     }
 
@@ -282,28 +333,64 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
       return;
     }
 
-    char sk_hex[65];
-    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-    sk_hex[64] = '\0';
+    char *result_pt = NULL;
+    int rc;
 
-    char *plaintext_out = NULL;
-    char *err_msg = NULL;
-    int rc = nostr_nip04_decrypt(ciphertext, peer_pubkey, sk_hex, &plaintext_out, &err_msg);
-    sodium_memzero(sk_hex, sizeof(sk_hex));
+    if (use_nip44) {
+      /* NIP-44 v2: peer_pubkey is hex-encoded x-only 32-byte key. */
+      uint8_t peer_pk[32];
+      bool pk_ok = (peer_pubkey && strlen(peer_pubkey) == 64);
+      if (pk_ok) {
+        for (int i = 0; i < 32; i++) {
+          unsigned int byte;
+          if (sscanf(peer_pubkey + i * 2, "%2x", &byte) != 1) { pk_ok = false; break; }
+          peer_pk[i] = (uint8_t)byte;
+        }
+      }
+      if (!pk_ok) {
+        signet_loaded_key_clear(&lk);
+        g_free(agent_id);
+        g_dbus_method_invocation_return_dbus_error(
+            invocation, "net.signet.Error.BadRequest", "Invalid peer pubkey hex");
+        return;
+      }
+      uint8_t *raw_pt = NULL;
+      size_t raw_pt_len = 0;
+      rc = nostr_nip44_decrypt_v2(lk.secret_key, peer_pk, ciphertext, &raw_pt, &raw_pt_len);
+      if (rc == 0 && raw_pt) {
+        result_pt = (char *)g_malloc(raw_pt_len + 1);
+        memcpy(result_pt, raw_pt, raw_pt_len);
+        result_pt[raw_pt_len] = '\0';
+        free(raw_pt);
+      }
+    } else {
+      /* NIP-04 */
+      char sk_hex[65];
+      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
+      sk_hex[64] = '\0';
+      char *err_msg = NULL;
+      rc = nostr_nip04_decrypt(ciphertext, peer_pubkey, sk_hex, &result_pt, &err_msg);
+      sodium_memzero(sk_hex, sizeof(sk_hex));
+      free(err_msg);
+    }
     signet_loaded_key_clear(&lk);
 
-    if (rc != 0) {
+    if (rc != 0 || !result_pt) {
       g_free(agent_id);
       g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.Internal",
-          err_msg ? err_msg : "Decryption failed");
-      free(err_msg);
+          invocation, "net.signet.Error.Internal", "Decryption failed");
       return;
     }
 
+    char audit_detail[128];
+    snprintf(audit_detail, sizeof(audit_detail),
+             "{\"transport\":\"dbus_unix\",\"algo\":\"%s\"}", use_nip44 ? "nip44" : "nip04");
+    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
+        &(SignetAuditCommonFields){ .identity = agent_id, .method = "Decrypt",
+          .decision = "allow", .reason_code = "ok" }, audit_detail);
     g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(s)", plaintext_out));
-    free(plaintext_out);
+        g_variant_new("(s)", result_pt));
+    free(result_pt);
 
   } else {
     g_dbus_method_invocation_return_dbus_error(

@@ -517,6 +517,7 @@ int main(int argc, char **argv) {
       .challenges = challenges,
       .audit = audit,
       .fleet = &fleet_reg,
+      .relays = relays,
     };
     nip5l = signet_nip5l_server_new(&n5_cfg);
     if (nip5l && signet_nip5l_server_start(nip5l) != 0) {

@@ -37,6 +37,7 @@ if (PKG_CONFIG_FOUND)
   pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
   pkg_check_modules(SODIUM QUIET IMPORTED_TARGET libsodium)
   pkg_check_modules(MHD QUIET IMPORTED_TARGET libmicrohttpd)
+  pkg_check_modules(CURL QUIET IMPORTED_TARGET libcurl)
 endif()
 
 set(SIGNET_CORE_SOURCES
@@ -106,6 +107,11 @@ endif()
 
 if (TARGET PkgConfig::MHD)
   target_link_libraries(signet_core PRIVATE PkgConfig::MHD)
+endif()
+
+if (TARGET PkgConfig::CURL)
+  target_compile_definitions(signet_core PRIVATE SIGNET_HAVE_CURL=1)
+  target_link_libraries(signet_core PRIVATE PkgConfig::CURL)
 endif()
 
 if (TARGET PkgConfig::GLIB)
