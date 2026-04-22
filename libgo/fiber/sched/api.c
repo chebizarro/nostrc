@@ -7,6 +7,15 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+/* Forward declaration — implemented in sched.c */
+extern void *gof_worker_main_external(void *arg);
+
+/* Registration function provided by libgo's go.c */
+extern void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size_t));
+
+/* Forward declaration of our spawn function */
+gof_fiber_t* gof_spawn(gof_fn fn, void *arg, size_t stack_bytes);
+
 static pthread_once_t gof_once_ctrl = PTHREAD_ONCE_INIT;
 static size_t gof_init_stack_bytes = 0;
 
@@ -27,15 +36,6 @@ static pthread_mutex_t bg_mutex = PTHREAD_MUTEX_INITIALIZER;
 int gof_bg_stop_requested(void) {
     return atomic_load_explicit(&bg_stop_requested, memory_order_acquire);
 }
-
-/* Forward declaration — implemented in sched.c */
-extern void *gof_worker_main_external(void *arg);
-
-/* Registration function provided by libgo's go.c */
-extern void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size_t));
-
-/* Forward declaration of our spawn function */
-gof_fiber_t* gof_spawn(gof_fn fn, void *arg, size_t stack_bytes);
 
 void gof_init(size_t default_stack_bytes) {
   gof_init_stack_bytes = default_stack_bytes;
