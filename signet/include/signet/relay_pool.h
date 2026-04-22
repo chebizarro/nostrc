@@ -82,9 +82,33 @@ void signet_relay_pool_stop(SignetRelayPool *rp);
  * Passing n_kinds=0 clears subscription intent. */
 int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, size_t n_kinds);
 
+/* NPA-04: Subscribe with scoped filters.
+ * Extends subscribe_kinds with optional #p tag (recipient pubkey) and since
+ * timestamp. This reduces relay bandwidth by only receiving events addressed
+ * to our pubkey and avoids replaying old events after reconnect.
+ * Pass pubkey_hex=NULL to omit #p tag. Pass since=0 to omit since. */
+int signet_relay_pool_subscribe_scoped(SignetRelayPool *rp,
+                                       const int *kinds, size_t n_kinds,
+                                       const char *pubkey_hex,
+                                       int64_t since);
+
 /* Publish a raw Nostr event JSON string to relays (thread-safe).
- * Returns 0 on enqueue success, -1 if not started / OOM. */
+ * Returns 0 on enqueue success, -1 if not started / OOM.
+ * NOTE: This is fire-and-forget — relay OK responses are not tracked.
+ * For critical publishes, use signet_relay_pool_publish_event_json_ack(). */
 int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_json);
+
+/* NPA-02: Publish callback for relay OK response tracking. */
+typedef void (*SignetPublishOkCallback)(const char *event_id, bool accepted,
+                                        const char *reason, void *user_data);
+
+/* Publish with OK acknowledgment tracking.
+ * The callback fires once for each relay that responds with OK.
+ * Returns 0 on enqueue success, -1 if not started / OOM. */
+int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
+                                              const char *event_json,
+                                              SignetPublishOkCallback cb,
+                                              void *user_data);
 
 /* Parse a NIP-01 event JSON string and dispatch it to the configured callback.
  * This is intended to be called by the libnostr receive-event glue layer.
@@ -97,6 +121,17 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
 
 /* True if at least one relay is currently connected. */
 bool signet_relay_pool_is_connected(SignetRelayPool *rp);
+
+/* NPA-06: Check if any active subscription has been closed by the relay.
+ * Returns true if a CLOSED frame was detected — caller should re-subscribe.
+ * Resets the closed flag after reporting. */
+bool signet_relay_pool_check_sub_closed(SignetRelayPool *rp);
+
+/* NPA-03: Update the since filter to the latest event timestamp.
+ * Call this before re-subscribing after reconnect to avoid reprocessing
+ * events that the replay cache may have evicted. Uses a 60s skew margin.
+ * Returns the since timestamp that was set (0 if no events seen yet). */
+int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp);
 
 /* Get the relay URL array (borrowed pointers). Returns NULL if pool is NULL.
  * Writes the count to *out_count. URLs are valid for the pool's lifetime. */

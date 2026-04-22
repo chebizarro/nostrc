@@ -581,7 +581,11 @@ int main(int argc, char **argv) {
 
   /* Subscribe to management event kinds (28000-28090) and NIP-46 requests (24133).
    * Without this subscription the daemon connects to the relay but never receives
-   * incoming management commands or signing requests. */
+   * incoming management commands or signing requests.
+   *
+   * NPA-04: Use scoped subscribe with our bunker pubkey as #p tag filter.
+   * This tells the relay to only send us events tagged with our pubkey,
+   * dramatically reducing bandwidth on shared relays. */
   {
     static const int signet_kinds[] = {
       24133,                       /* NIP-46 signing requests      */
@@ -594,13 +598,17 @@ int main(int argc, char **argv) {
       /* NOTE: 28090 (MGMT_ACK) intentionally excluded — signetd publishes
        * acks but does not need to receive them; subscribing wastes relay BW. */
     };
-    if (signet_relay_pool_subscribe_kinds(relays, signet_kinds,
-                                          G_N_ELEMENTS(signet_kinds)) != 0) {
+    const char *bunker_pk = cfg.remote_signer_pubkey_hex[0]
+                              ? cfg.remote_signer_pubkey_hex : NULL;
+    if (signet_relay_pool_subscribe_scoped(relays, signet_kinds,
+                                           G_N_ELEMENTS(signet_kinds),
+                                           bunker_pk, 0) != 0) {
       fprintf(stderr, "signetd: failed to subscribe to event kinds\n");
       goto cleanup;
     }
-    g_message("[signetd] subscribed to %zu event kinds on relay pool",
-              G_N_ELEMENTS(signet_kinds));
+    g_message("[signetd] subscribed to %zu event kinds on relay pool (p-tag=%s)",
+              G_N_ELEMENTS(signet_kinds),
+              bunker_pk ? bunker_pk : "unscoped");
   }
 
   /* Main loop: update health snapshot and wait for shutdown. */
@@ -617,6 +625,24 @@ int main(int argc, char **argv) {
       memset(&snap, 0, sizeof(snap));
       snap.relay_connected = signet_relay_pool_is_connected(relays);
 
+      /* NPA-06: If a relay sent CLOSED for our subscription, re-subscribe.
+       * This detects silent subscription termination while the WebSocket
+       * stays connected. */
+      if (snap.relay_connected && signet_relay_pool_check_sub_closed(relays)) {
+        g_warning("[signetd] subscription CLOSED by relay — re-subscribing");
+        static const int resub_kinds[] = {
+          24133,
+          SIGNET_KIND_PROVISION_AGENT,
+          SIGNET_KIND_REVOKE_AGENT,
+          SIGNET_KIND_SET_POLICY,
+          SIGNET_KIND_GET_STATUS,
+          SIGNET_KIND_LIST_AGENTS,
+          SIGNET_KIND_ROTATE_KEY,
+        };
+        signet_relay_pool_subscribe_kinds(relays, resub_kinds,
+                                          G_N_ELEMENTS(resub_kinds));
+      }
+
       /* Explicit reconnect: if the relay connection dropped, restart the pool
        * and re-subscribe. LibNostr's internal reconnect relies on GLib timers
        * that may not fire reliably when the relay closes an idle socket.
@@ -626,6 +652,10 @@ int main(int argc, char **argv) {
         if (now_ts - last_reconnect_attempt >= 30) {
           last_reconnect_attempt = now_ts;
           g_message("[signetd] relay disconnected — restarting pool");
+          /* NPA-03: Update since to latest event timestamp before reconnect.
+           * This ensures we only backfill events from after the last one we
+           * processed, avoiding replay of events the cache may have evicted. */
+          signet_relay_pool_update_since_from_latest(relays);
           signet_relay_pool_stop(relays);
           if (signet_relay_pool_start(relays) == 0) {
             static const int signet_kinds[] = {
@@ -637,6 +667,9 @@ int main(int argc, char **argv) {
               SIGNET_KIND_LIST_AGENTS,
               SIGNET_KIND_ROTATE_KEY,
             };
+            /* NPA-04: Re-subscribe with scoped filter (bunker pubkey + since).
+             * The relay pool caches these params, so subscribe_kinds suffices
+             * here — it delegates to subscribe_scoped with stored params. */
             signet_relay_pool_subscribe_kinds(relays, signet_kinds,
                                               G_N_ELEMENTS(signet_kinds));
             g_message("[signetd] relay pool restarted and resubscribed");

@@ -54,6 +54,14 @@ struct SignetRelayPool {
   int   *active_kinds;
   size_t n_active_kinds;
 
+  /* NPA-04: Scoped filter parameters for post-AUTH re-subscribe replay */
+  char  *filter_pubkey_hex;  /* #p tag value (owned, may be NULL) */
+  int64_t filter_since;      /* since timestamp (0 = unset) */
+
+  /* NPA-03: Track latest event timestamp for since-based backfill on reconnect.
+   * Uses gint for g_atomic_int_* compatibility (32-bit, wraps in 2038). */
+  volatile gint last_event_ts;
+
   GMutex mu;
   gboolean started;
 };
@@ -63,11 +71,24 @@ struct SignetRelayPool {
  * active pool in a process-global atomic pointer. */
 static SignetRelayPool *g_active_pool = NULL;
 
+/* Forward declaration — defined after public API section */
+static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp);
+
 /* ----------------------- event middleware bridge -------------------------- */
 
 static void signet_pool_event_middleware(NostrIncomingEvent *incoming) {
   SignetRelayPool *rp = g_atomic_pointer_get((void **)&g_active_pool);
   if (!rp || !incoming || !incoming->event || !rp->on_event) return;
+
+  /* NPA-01: Verify Schnorr signature before dispatching.
+   * Relays are untrusted — they can inject or modify event JSON.
+   * Only events with valid signatures are forwarded to handlers. */
+  if (!nostr_event_check_signature(incoming->event)) {
+    char *bad_id = nostr_event_get_id(incoming->event);
+    g_warning("[signetd] dropping event %s: invalid signature", bad_id ? bad_id : "(null)");
+    free(bad_id);
+    return;
+  }
 
   char *event_id = nostr_event_get_id(incoming->event);
 
@@ -77,6 +98,17 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming) {
   ev.event_id_hex = event_id;
   ev.pubkey_hex = nostr_event_get_pubkey(incoming->event);
   ev.content = nostr_event_get_content(incoming->event);
+
+  /* NPA-03: Track latest event timestamp for since-based backfill.
+   * After reconnect, filter_since is updated to this value so we
+   * don't reprocess events the replay cache has already evicted.
+   * Uses relaxed atomic — exact ordering not critical for a HWM. */
+  if (ev.created_at > 0) {
+    gint old_val = g_atomic_int_get((volatile gint *)&rp->last_event_ts);
+    if ((int64_t)ev.created_at > (int64_t)old_val) {
+      g_atomic_int_set((volatile gint *)&rp->last_event_ts, (gint)ev.created_at);
+    }
+  }
 
   rp->on_event(&ev, rp->user_data);
 
@@ -108,42 +140,23 @@ static gboolean signet_post_auth_resubscribe(gpointer data) {
 
   g_message("[signetd] auth-ok: Khatru confirmed auth, re-subscribing on %s", rurl);
 
+  /* NPA-04: Use shared scoped filter builder for consistent filtering */
   g_mutex_lock(&rp->mu);
-  int   *kinds_copy = NULL;
-  size_t n_kinds    = rp->n_active_kinds;
-  if (rp->active_kinds && n_kinds > 0) {
-    kinds_copy = (int *)malloc(n_kinds * sizeof(int));
-    if (kinds_copy) memcpy(kinds_copy, rp->active_kinds, n_kinds * sizeof(int));
-  }
+  NostrFilters *filters = signet_relay_pool_build_filters_locked(rp);
   g_mutex_unlock(&rp->mu);
 
   g_free(rd);   /* ownership transferred — free before subscribe to avoid leak */
 
-  if (kinds_copy) {
-    NostrFilter *filter = nostr_filter_new();
-    if (filter) {
-      nostr_filter_set_kinds(filter, kinds_copy, n_kinds);
-      free(kinds_copy);
-
-      NostrFilters *filters = nostr_filters_new();
-      if (filters) {
-        nostr_filters_add(filters, filter);
-        GoContext *ctx = nostr_relay_get_context(r);
-        Error *err = NULL;
-        if (nostr_relay_subscribe(r, ctx, filters, &err)) {
-          g_message("[signetd] post-AUTH re-subscribed on %s", rurl);
-        } else {
-          g_warning("[signetd] post-AUTH re-subscribe failed on %s: %s",
-                    rurl, err ? err->message : "unknown");
-        }
-        nostr_filters_free(filters);
-      } else {
-        nostr_filter_free(filter);
-        free(kinds_copy);
-      }
+  if (filters) {
+    GoContext *ctx = nostr_relay_get_context(r);
+    Error *err = NULL;
+    if (nostr_relay_subscribe(r, ctx, filters, &err)) {
+      g_message("[signetd] post-AUTH re-subscribed on %s", rurl);
     } else {
-      free(kinds_copy);
+      g_warning("[signetd] post-AUTH re-subscribe failed on %s: %s",
+                rurl, err ? err->message : "unknown");
     }
+    nostr_filters_free(filters);
   }
 
   return G_SOURCE_REMOVE;  /* one-shot */
@@ -256,117 +269,11 @@ static gboolean signet_send_auth_idle(gpointer data) {
   return G_SOURCE_REMOVE;  /* one-shot */
 }
 
-/* Thread function: send NIP-42 AUTH response, wait for Khatru to confirm,
- * then re-subscribe.  Runs OUTSIDE the LWS callback chain so that
- * nostr_connection_write_message() + lws_cancel_service() actually wakes
- * the LWS send loop (lws_cancel_service is a no-op when called from within
- * a LWS callback — the loop is already running that thread).
- * Frees its own arg and returns NULL. */
-static gpointer signet_post_auth_resub_thread(gpointer arg) {
-  PostAuthResubData *rd   = (PostAuthResubData *)arg;
-  NostrRelay        *r    = rd->relay;
-  SignetRelayPool   *rp   = rd->pool;
-  const char        *rurl = rd->relay_url[0] ? rd->relay_url
-                                              : nostr_relay_get_url_const(r);
-
-  g_message("[signetd] auth-thread: started for %s challenge=%.16s", rurl, rd->challenge);
-
-  /* --- Step 1: build and send AUTH from outside LWS callback context --- */
-  if (rd->sk_hex[0] && rd->challenge[0]) {
-    NostrEvent *evt = nostr_event_new();
-    if (evt) {
-      nostr_event_set_kind(evt, NOSTR_KIND_CLIENT_AUTHENTICATION);
-      nostr_event_set_created_at(evt, (int64_t)time(NULL));
-      nostr_event_set_content(evt, "");
-
-      NostrTags *tags = nostr_tags_new(0);
-      if (tags) {
-        NostrTag *t_relay     = nostr_tag_new("relay",     rurl,         NULL);
-        NostrTag *t_challenge = nostr_tag_new("challenge", rd->challenge, NULL);
-        if (t_relay)     nostr_tags_append(tags, t_relay);
-        if (t_challenge) nostr_tags_append(tags, t_challenge);
-        nostr_event_set_tags(evt, tags);
-      }
-
-      if (nostr_event_sign(evt, rd->sk_hex) == 0) {
-        char *event_json = nostr_event_serialize_compact(evt);
-        if (event_json) {
-          char *auth_envelope = g_strdup_printf("[\"AUTH\",%s]", event_json);
-          free(event_json);
-          if (auth_envelope) {
-            /* Log in chunks — GLib truncates long g_message strings */
-            size_t alen = strlen(auth_envelope);
-            for (size_t off = 0; off < alen; off += 300)
-              g_message("[signetd] AUTH[%zu]: %.300s", off, auth_envelope + off);
-
-            /* Use nostr_relay_write() — goes through the relay's write_queue
-             * → write_operations worker thread → write_message → LWS.
-             * This is the SAME path that nostr_relay_subscribe/nostr_subscription_fire
-             * use (confirmed working in pcap).  Direct nostr_connection_write_message
-             * calls from non-LWS threads are silently swallowed because
-             * lws_cancel_service has no effect when LWS is already in the
-             * callback chain that just spawned us.  write_queue path avoids this. */
-            char *envelope_copy = strdup(auth_envelope);
-            g_free(auth_envelope);
-            auth_envelope = NULL;
-            if (envelope_copy) {
-              g_message("[signetd] auth-thread: sending via nostr_relay_write len=%zu", strlen(envelope_copy));
-              /* nostr_relay_write takes ownership of msg string */
-              GoChannel *wch = nostr_relay_write(r, envelope_copy);
-              if (wch) {
-                g_message("[signetd] NIP-42 AUTH sent to %s (via write_queue)", rurl);
-                go_channel_unref(wch);
-              } else {
-                g_warning("[signetd] auth-thread: nostr_relay_write returned NULL for %s", rurl);
-              }
-            }
-          }
-        }
-      } else {
-        g_warning("[signetd] NIP-42 AUTH sign failed for %s", rurl);
-      }
-      nostr_event_free(evt);
-    }
-  }
-
-  g_free(rd);
-
-  /* --- Step 2: wait for Khatru to validate AUTH and update its state --- */
-  g_message("[signetd] auth-thread: waiting 800ms for AUTH to be processed");
-  g_usleep(800 * 1000);  /* 800 ms — wire RTT + Khatru validation */
-  g_message("[signetd] auth-thread: wait done, attempting re-subscribe");
-
-  g_mutex_lock(&rp->mu);
-  int   *kinds_copy = NULL;
-  size_t n_kinds    = rp->n_active_kinds;
-  if (rp->active_kinds && n_kinds > 0) {
-    kinds_copy = (int *)malloc(n_kinds * sizeof(int));
-    if (kinds_copy) memcpy(kinds_copy, rp->active_kinds, n_kinds * sizeof(int));
-  }
-  g_mutex_unlock(&rp->mu);
-
-  if (!kinds_copy) return NULL;
-
-  NostrFilter *filter = nostr_filter_new();
-  if (!filter) { free(kinds_copy); return NULL; }
-  nostr_filter_set_kinds(filter, kinds_copy, n_kinds);
-  free(kinds_copy);
-
-  NostrFilters *filters = nostr_filters_new();
-  if (!filters) { nostr_filter_free(filter); return NULL; }
-  nostr_filters_add(filters, filter);
-
-  GoContext *ctx = nostr_relay_get_context(r);
-  Error *err = NULL;
-  if (nostr_relay_subscribe(r, ctx, filters, &err)) {
-    g_message("[signetd] post-AUTH re-subscribed on %s", rurl ? rurl : "?");
-  } else {
-    g_warning("[signetd] post-AUTH re-subscribe failed on %s: %s",
-              rurl ? rurl : "?", err ? err->message : "unknown");
-  }
-  nostr_filters_free(filters);
-  return NULL;
-}
+/* NPA-05: Legacy signet_post_auth_resub_thread removed.
+ * The 800ms g_usleep timeout-based AUTH wait was fragile — too short for
+ * high-latency relays, too long for LANs.  The OK-callback path
+ * (signet_send_auth_idle → signet_ok_response_callback →
+ * signet_post_auth_resubscribe) is the correct protocol-driven flow. */
 
 /* User-data struct threaded through per-relay auth callbacks.
  * Pointer to owning pool so the callback can replay subscriptions after auth. */
@@ -557,6 +464,9 @@ void signet_relay_pool_free(SignetRelayPool *rp) {
   rp->active_kinds = NULL;
   rp->n_active_kinds = 0;
 
+  g_free(rp->filter_pubkey_hex);
+  rp->filter_pubkey_hex = NULL;
+
   g_mutex_clear(&rp->mu);
   free(rp);
 }
@@ -596,28 +506,50 @@ void signet_relay_pool_stop(SignetRelayPool *rp) {
   g_mutex_unlock(&rp->mu);
 }
 
-int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, size_t n_kinds) {
-  if (!rp || !rp->pool) return -1;
-  if (!kinds || n_kinds == 0) return 0;
+/* NPA-04: Build a NostrFilters* from cached kinds + optional scoped params.
+ * Caller must hold rp->mu. Returns NULL on failure. Caller frees result. */
+static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp) {
+  if (!rp->active_kinds || rp->n_active_kinds == 0) return NULL;
 
-  /* Build a NostrFilter with the requested kinds */
   NostrFilter *filter = nostr_filter_new();
-  if (!filter) return -1;
+  if (!filter) return NULL;
 
-  nostr_filter_set_kinds(filter, kinds, n_kinds);
+  nostr_filter_set_kinds(filter, rp->active_kinds, rp->n_active_kinds);
+
+  /* Scope: #p tag limits to events addressed to our pubkey */
+  if (rp->filter_pubkey_hex && rp->filter_pubkey_hex[0]) {
+    NostrTags *ftags = nostr_tags_new(0);
+    if (ftags) {
+      NostrTag *ptag = nostr_tag_new("p", rp->filter_pubkey_hex, NULL);
+      if (ptag) nostr_tags_append(ftags, ptag);
+      nostr_filter_set_tags(filter, ftags);
+    }
+  }
+
+  /* Scope: since avoids replaying old events after reconnect */
+  if (rp->filter_since > 0) {
+    nostr_filter_set_since(filter, (NostrTimestamp)rp->filter_since);
+  }
 
   NostrFilters *filters = nostr_filters_new();
   if (!filters) {
     nostr_filter_free(filter);
-    return -1;
+    return NULL;
   }
 
   nostr_filters_add(filters, filter);
-  /* filter contents moved into filters; don't free filter separately */
+  return filters;
+}
+
+int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, size_t n_kinds) {
+  if (!rp || !rp->pool) return -1;
+  if (!kinds || n_kinds == 0) return 0;
 
   g_mutex_lock(&rp->mu);
 
-  /* Cache the kinds list so post-AUTH re-subscribe can replay them */
+  /* Update kinds but preserve existing scoped filter params (pubkey, since).
+   * This allows reconnect paths to call subscribe_kinds() without losing
+   * the scoped parameters set by the initial subscribe_scoped() call. */
   free(rp->active_kinds);
   rp->active_kinds = (int *)malloc(n_kinds * sizeof(int));
   if (rp->active_kinds) {
@@ -625,7 +557,50 @@ int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, siz
     rp->n_active_kinds = n_kinds;
   }
 
-  /* Subscribe across all URLs with de-duplication enabled */
+  NostrFilters *filters = signet_relay_pool_build_filters_locked(rp);
+  if (!filters) {
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+
+  nostr_simple_pool_subscribe(rp->pool,
+                               (const char **)rp->urls, rp->n_urls,
+                               *filters, true);
+
+  g_mutex_unlock(&rp->mu);
+
+  nostr_filters_free(filters);
+  return 0;
+}
+
+int signet_relay_pool_subscribe_scoped(SignetRelayPool *rp,
+                                       const int *kinds, size_t n_kinds,
+                                       const char *pubkey_hex,
+                                       int64_t since) {
+  if (!rp || !rp->pool) return -1;
+  if (!kinds || n_kinds == 0) return 0;
+
+  g_mutex_lock(&rp->mu);
+
+  /* Cache filter parameters for post-AUTH re-subscribe replay */
+  free(rp->active_kinds);
+  rp->active_kinds = (int *)malloc(n_kinds * sizeof(int));
+  if (rp->active_kinds) {
+    memcpy(rp->active_kinds, kinds, n_kinds * sizeof(int));
+    rp->n_active_kinds = n_kinds;
+  }
+
+  g_free(rp->filter_pubkey_hex);
+  rp->filter_pubkey_hex = pubkey_hex ? g_strdup(pubkey_hex) : NULL;
+  rp->filter_since = since;
+
+  /* Build scoped filter and subscribe */
+  NostrFilters *filters = signet_relay_pool_build_filters_locked(rp);
+  if (!filters) {
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+
   nostr_simple_pool_subscribe(rp->pool,
                                (const char **)rp->urls, rp->n_urls,
                                *filters, true);
@@ -667,6 +642,99 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
     }
   }
 
+  nostr_event_free(evt);
+  g_mutex_unlock(&rp->mu);
+  return 0;
+}
+
+/* NPA-02: Publish OK tracking.
+ * We install a temporary OK callback per-relay that matches a specific
+ * event ID and forwards to the user callback, then restores the AUTH callback. */
+typedef struct {
+  char event_id[65];
+  SignetPublishOkCallback user_cb;
+  void *user_data;
+  /* Saved AUTH callback to restore after our publish OK fires. */
+  void (*saved_ok_cb)(const char *, bool, const char *, void *);
+  void *saved_ok_data;
+  NostrRelay *relay;
+} PublishOkCtx;
+
+static void signet_publish_ok_handler(const char *event_id, bool ok,
+                                       const char *reason, void *user_data) {
+  PublishOkCtx *ctx = (PublishOkCtx *)user_data;
+  if (!ctx) return;
+
+  if (event_id && strcmp(event_id, ctx->event_id) == 0) {
+    /* This OK is for our published event — fire user callback */
+    if (ctx->user_cb) {
+      ctx->user_cb(event_id, ok, reason, ctx->user_data);
+    }
+    if (!ok) {
+      g_warning("[signetd] publish-ok: relay rejected event %s: %s",
+                event_id, reason ? reason : "(no reason)");
+    }
+    /* Restore saved AUTH OK callback */
+    nostr_relay_set_ok_callback(ctx->relay, ctx->saved_ok_cb, ctx->saved_ok_data);
+    g_free(ctx);
+  } else {
+    /* Not our event — forward to saved callback (AUTH handler) */
+    if (ctx->saved_ok_cb) {
+      ctx->saved_ok_cb(event_id, ok, reason, ctx->saved_ok_data);
+    }
+  }
+}
+
+int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
+                                              const char *event_json,
+                                              SignetPublishOkCallback cb,
+                                              void *user_data) {
+  if (!rp || !rp->pool || !event_json) return -1;
+
+  g_mutex_lock(&rp->mu);
+  if (!rp->started) {
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) {
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+
+  if (!nostr_event_deserialize_compact(evt, event_json, NULL)) {
+    nostr_event_free(evt);
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+
+  /* Extract event ID for OK matching */
+  char *eid = nostr_event_get_id(evt);
+
+  NostrSimplePool *pool = rp->pool;
+  for (size_t i = 0; i < pool->relay_count; i++) {
+    NostrRelay *relay = pool->relays[i];
+    if (relay && nostr_relay_is_connected(relay)) {
+      if (cb && eid) {
+        /* Install per-event OK tracker that chains to existing callback */
+        PublishOkCtx *ctx = g_new0(PublishOkCtx, 1);
+        g_strlcpy(ctx->event_id, eid, sizeof(ctx->event_id));
+        ctx->user_cb = cb;
+        ctx->user_data = user_data;
+        ctx->relay = relay;
+        /* NOTE: We don't have a getter for the existing ok_callback/user_data.
+         * The saved pointers will be NULL, which is fine — the AUTH path
+         * re-registers its own callback before sending AUTH. */
+        ctx->saved_ok_cb = NULL;
+        ctx->saved_ok_data = NULL;
+        nostr_relay_set_ok_callback(relay, signet_publish_ok_handler, ctx);
+      }
+      nostr_relay_publish(relay, evt);
+    }
+  }
+
+  free(eid);
   nostr_event_free(evt);
   g_mutex_unlock(&rp->mu);
   return 0;
@@ -749,4 +817,45 @@ bool signet_relay_pool_is_connected(SignetRelayPool *rp) {
 
   g_mutex_unlock(&rp->mu);
   return any;
+}
+
+int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp) {
+  if (!rp) return 0;
+
+  int64_t latest = (int64_t)g_atomic_int_get((volatile gint *)&rp->last_event_ts);
+  if (latest <= 0) return 0;
+
+  /* Subtract 60s skew to ensure we don't miss events near the boundary.
+   * The replay cache handles any duplicates within this window. */
+  int64_t since = latest - 60;
+  if (since < 0) since = 0;
+
+  g_mutex_lock(&rp->mu);
+  rp->filter_since = since;
+  g_mutex_unlock(&rp->mu);
+
+  g_message("[signetd] NPA-03: updated since filter to %" G_GINT64_FORMAT
+            " (latest_event=%" G_GINT64_FORMAT ", skew=60s)", since, latest);
+  return since;
+}
+
+bool signet_relay_pool_check_sub_closed(SignetRelayPool *rp) {
+  if (!rp || !rp->pool) return false;
+
+  g_mutex_lock(&rp->mu);
+  NostrSimplePool *pool = rp->pool;
+  bool any_closed = false;
+
+  /* NPA-06: Check all active subscriptions for CLOSED state.
+   * A CLOSED frame from the relay means our subscription was terminated
+   * (auth-required, policy, rate limit, etc.). */
+  for (size_t i = 0; i < pool->subs_count; i++) {
+    if (pool->subs[i] && nostr_subscription_is_closed(pool->subs[i])) {
+      any_closed = true;
+      break;
+    }
+  }
+
+  g_mutex_unlock(&rp->mu);
+  return any_closed;
 }

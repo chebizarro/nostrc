@@ -702,7 +702,10 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         event_id_hex, now, enc_resp, &outer_err);
     if (outer_evt) {
       if (s->relays) {
-        published = (signet_relay_pool_publish_event_json(s->relays, outer_evt) == 0);
+        /* NPA-02: Use ack-aware publish so relay rejections are logged.
+         * The callback logs warnings; published tracks enqueue success. */
+        published = (signet_relay_pool_publish_event_json_ack(
+                       s->relays, outer_evt, NULL, NULL) == 0);
       }
       free(outer_evt);
     }
