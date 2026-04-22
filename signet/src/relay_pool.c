@@ -839,6 +839,27 @@ int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp) {
   return since;
 }
 
+bool signet_relay_pool_is_subscribed(SignetRelayPool *rp) {
+  if (!rp || !rp->pool) return false;
+
+  g_mutex_lock(&rp->mu);
+  NostrSimplePool *pool = rp->pool;
+  bool any_eosed = false;
+
+  /* NPA-10: Check all active subscriptions for EOSE (End of Stored Events).
+   * EOSE means the relay accepted our REQ and sent back all stored events.
+   * Before EOSE, the subscription may still be pending (waiting for AUTH). */
+  for (size_t i = 0; i < pool->subs_count; i++) {
+    if (pool->subs[i] && nostr_subscription_is_eosed(pool->subs[i])) {
+      any_eosed = true;
+      break;
+    }
+  }
+
+  g_mutex_unlock(&rp->mu);
+  return any_eosed;
+}
+
 bool signet_relay_pool_check_sub_closed(SignetRelayPool *rp) {
   if (!rp || !rp->pool) return false;
 

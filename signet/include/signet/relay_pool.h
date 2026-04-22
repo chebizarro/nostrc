@@ -122,6 +122,12 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
 /* True if at least one relay is currently connected. */
 bool signet_relay_pool_is_connected(SignetRelayPool *rp);
 
+/* NPA-10: Check if any active subscription has received EOSE.
+ * Returns true once the relay has acknowledged our subscription by sending
+ * End-of-Stored-Events. Useful for waiting until AUTH + subscribe is complete
+ * before publishing events. */
+bool signet_relay_pool_is_subscribed(SignetRelayPool *rp);
+
 /* NPA-06: Check if any active subscription has been closed by the relay.
  * Returns true if a CLOSED frame was detected — caller should re-subscribe.
  * Resets the closed flag after reporting. */

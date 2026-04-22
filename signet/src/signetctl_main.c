@@ -626,13 +626,16 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
 
-    /* Extra drain: flush the auth + re-subscribe idle chain that queued up
-     * immediately after connection was established. */
-    int64_t auth_deadline = g_get_monotonic_time() + 2000000LL; /* 2s */
+    /* NPA-10: Wait for subscription EOSE instead of fixed 2s drain.
+     * On non-AUTH relays, EOSE arrives within ~1 RTT of connect.
+     * On AUTH relays, EOSE arrives after: AUTH challenge → response →
+     * OK → post-auth resubscribe → EOSE. Timeout after 5s. */
+    int64_t auth_deadline = g_get_monotonic_time() + 5000000LL; /* 5s */
     while (g_get_monotonic_time() < auth_deadline) {
       while (g_main_context_iteration(NULL, FALSE))
         ;
-      g_usleep(10 * 1000);
+      if (signet_relay_pool_is_subscribed(rp)) break;
+      g_usleep(10 * 1000); /* 10ms poll */
     }
   }
 
