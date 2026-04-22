@@ -47,6 +47,9 @@ struct SignetRelayPool {
   /* NIP-42: override relay URL for AUTH event tag (optional, may be empty) */
   char auth_relay_tag_url[256];
 
+  /* Per-relay auth callback data — tracked for cleanup on pool_free */
+  GPtrArray *auth_cb_data;
+
   /* Last subscribed kinds — stored so post-auth re-subscribe can replay them */
   int   *active_kinds;
   size_t n_active_kinds;
@@ -440,9 +443,11 @@ static void signet_relay_auth_callback(NostrRelay *relay,
 static void signet_relay_pool_register_auth(SignetRelayPool *rp) {
   if (!rp->auth_sk_hex[0]) return;
 
-  /* Allocate one callback-data struct per relay (intentionally leaked — lives
-   * as long as the relay connection; simplest lifetime model). */
+  /* Allocate one callback-data struct per relay, tracked in auth_cb_data
+   * for cleanup in signet_relay_pool_free(). */
   NostrSimplePool *pool = rp->pool;
+  if (!rp->auth_cb_data)
+    rp->auth_cb_data = g_ptr_array_new();
   for (size_t i = 0; i < pool->relay_count; i++) {
     NostrRelay *relay = pool->relays[i];
     if (!relay) continue;
@@ -453,6 +458,7 @@ static void signet_relay_pool_register_auth(SignetRelayPool *rp) {
     d->last_challenge[0] = '\0';
     g_mutex_init(&d->challenge_mu);
     nostr_relay_set_auth_callback(relay, signet_relay_auth_callback, d);
+    g_ptr_array_add(rp->auth_cb_data, d);
   }
 }
 
@@ -531,6 +537,20 @@ void signet_relay_pool_free(SignetRelayPool *rp) {
     }
     free(rp->urls);
     rp->urls = NULL;
+  }
+
+  /* Free per-relay auth callback data. */
+  if (rp->auth_cb_data) {
+    for (guint i = 0; i < rp->auth_cb_data->len; i++) {
+      SignetAuthCallbackData *d = (SignetAuthCallbackData *)g_ptr_array_index(rp->auth_cb_data, i);
+      if (d) {
+        memset(d->sk_hex, 0, sizeof(d->sk_hex));
+        g_mutex_clear(&d->challenge_mu);
+        free(d);
+      }
+    }
+    g_ptr_array_free(rp->auth_cb_data, TRUE);
+    rp->auth_cb_data = NULL;
   }
 
   free(rp->active_kinds);

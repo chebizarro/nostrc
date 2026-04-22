@@ -388,32 +388,19 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
   return resp;
 }
 
-/* ----------------------------- GIO callbacks ------------------------------ */
+/* ----------------------------- per-client thread -------------------------- */
 
-static gboolean
-nip5l_on_incoming(GSocketService *service,
-                   GSocketConnection *connection,
-                   GObject *source_object,
-                   gpointer user_data) {
-  (void)service;
-  (void)source_object;
-  SignetNip5lServer *ns = (SignetNip5lServer *)user_data;
+typedef struct {
+  SignetNip5lServer *ns;
+  Nip5lConnState *cs;
+  GSocketConnection *conn_ref; /* ref'd to keep the socket alive */
+} Nip5lClientThreadData;
 
-  Nip5lConnState *cs = g_new0(Nip5lConnState, 1);
+static gpointer nip5l_client_thread(gpointer data) {
+  Nip5lClientThreadData *td = (Nip5lClientThreadData *)data;
+  SignetNip5lServer *ns = td->ns;
+  Nip5lConnState *cs = td->cs;
 
-  GSocket *sock = g_socket_connection_get_socket(connection);
-  int fd = g_socket_get_fd(sock);
-  cs->channel = g_io_channel_unix_new(fd);
-  g_io_channel_set_encoding(cs->channel, NULL, NULL);
-  g_io_channel_set_line_term(cs->channel, "\n", 1);
-
-  g_mutex_lock(&ns->mu);
-  ns->connections = g_list_prepend(ns->connections, cs);
-  g_mutex_unlock(&ns->mu);
-
-  /* Read loop in a thread to avoid blocking the service. */
-  /* For production, this should use GSource/async IO. Here we use
-   * a simple synchronous read for clarity. */
   GError *err = NULL;
   gchar *line = NULL;
   gsize len = 0;
@@ -448,6 +435,55 @@ nip5l_on_incoming(GSocketService *service,
   g_mutex_unlock(&ns->mu);
 
   nip5l_conn_state_free(cs);
+  g_object_unref(td->conn_ref); /* release the connection ref */
+  g_free(td);
+  return NULL;
+}
+
+/* ----------------------------- GIO callbacks ------------------------------ */
+
+static gboolean
+nip5l_on_incoming(GSocketService *service,
+                   GSocketConnection *connection,
+                   GObject *source_object,
+                   gpointer user_data) {
+  (void)service;
+  (void)source_object;
+  SignetNip5lServer *ns = (SignetNip5lServer *)user_data;
+
+  Nip5lConnState *cs = g_new0(Nip5lConnState, 1);
+
+  GSocket *sock = g_socket_connection_get_socket(connection);
+  int fd = g_socket_get_fd(sock);
+  cs->channel = g_io_channel_unix_new(fd);
+  g_io_channel_set_encoding(cs->channel, NULL, NULL);
+  g_io_channel_set_line_term(cs->channel, "\n", 1);
+
+  g_mutex_lock(&ns->mu);
+  ns->connections = g_list_prepend(ns->connections, cs);
+  g_mutex_unlock(&ns->mu);
+
+  /* Spawn a dedicated thread per client so the listener stays available
+   * for new connections.  Ref the GSocketConnection to keep the underlying
+   * fd alive until the thread finishes. */
+  Nip5lClientThreadData *td = g_new0(Nip5lClientThreadData, 1);
+  td->ns = ns;
+  td->cs = cs;
+  td->conn_ref = g_object_ref(connection);
+
+  GThread *t = g_thread_new("signet-nip5l-client", nip5l_client_thread, td);
+  if (t) {
+    g_thread_unref(t); /* detach — thread manages its own lifetime */
+  } else {
+    /* Thread creation failed — clean up inline. */
+    g_mutex_lock(&ns->mu);
+    ns->connections = g_list_remove(ns->connections, cs);
+    g_mutex_unlock(&ns->mu);
+    nip5l_conn_state_free(cs);
+    g_object_unref(td->conn_ref);
+    g_free(td);
+  }
+
   return TRUE;
 }
 
