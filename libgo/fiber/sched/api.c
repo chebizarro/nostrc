@@ -7,14 +7,9 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
-/* Forward declaration — implemented in sched.c */
-extern void *gof_worker_main_external(void *arg);
-
-/* Registration function provided by libgo's go.c */
-extern void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size_t));
-
-/* Forward declaration of our spawn function */
-gof_fiber_t* gof_spawn(gof_fn fn, void *arg, size_t stack_bytes);
+/* go.h provides go_register_fiber_spawn; sched.h provides gof_worker_main_external;
+   fiber.h provides gof_spawn — no need for bare extern forward declarations. */
+#include "../../include/go.h"
 
 static pthread_once_t gof_once_ctrl = PTHREAD_ONCE_INIT;
 static size_t gof_init_stack_bytes = 0;
