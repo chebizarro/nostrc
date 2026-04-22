@@ -80,6 +80,16 @@ if (TARGET PkgConfig::GLIB)
   target_link_libraries(test_capability PRIVATE PkgConfig::GLIB)
 endif()
 
+# NPA-11: Protocol-level relay pool tests
+add_executable(test_relay_pool_protocol test_relay_pool_protocol.c)
+target_link_libraries(test_relay_pool_protocol PRIVATE signet_core)
+if (TARGET nostr)
+  target_link_libraries(test_relay_pool_protocol PRIVATE nostr)
+endif()
+if (TARGET PkgConfig::GLIB)
+  target_link_libraries(test_relay_pool_protocol PRIVATE PkgConfig::GLIB)
+endif()
+
 # Register tests with CTest
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
 add_test(NAME replay_cache COMMAND test_replay_cache)
@@ -90,3 +100,4 @@ add_test(NAME store COMMAND test_store)
 add_test(NAME key_store COMMAND test_key_store)
 add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
+add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
