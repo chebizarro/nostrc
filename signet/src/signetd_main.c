@@ -60,10 +60,14 @@
 #define SIGNET_NIP46_KIND_CIPHERTEXT 24133
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
+static GMainLoop *g_main_loop = NULL;
 
 static void signet_on_term(int signo) {
   (void)signo;
   g_shutdown_requested = 1;
+  /* NPA-07: Wake GMainLoop so it exits immediately instead of blocking
+   * until the next timeout fires. */
+  if (g_main_loop) g_main_loop_quit(g_main_loop);
 }
 
 static int64_t signet_now_unix(void) {
@@ -183,6 +187,86 @@ static void signet_audit_daemon_event(SignetAuditLogger *audit,
 
   (void)signet_audit_log_json(audit, type, json);
   g_free(json);
+}
+
+/* NPA-07: Health timer context and callback at file scope (ISO C11). */
+typedef struct {
+  SignetHealthServer *health;
+  SignetRelayPool *relays;
+  SignetKeyStore *keys;
+  SignetPolicyStore *store;
+  const SignetConfig *cfg;
+  int64_t started_at;
+  int64_t last_reconnect_attempt;
+} HealthTimerCtx;
+
+static gboolean signetd_health_tick(gpointer data) {
+  HealthTimerCtx *ctx = (HealthTimerCtx *)data;
+  if (g_shutdown_requested) return G_SOURCE_REMOVE;
+
+  if (!ctx->health) return G_SOURCE_CONTINUE;
+
+  SignetHealthSnapshot snap;
+  memset(&snap, 0, sizeof(snap));
+  snap.relay_connected = signet_relay_pool_is_connected(ctx->relays);
+
+  /* NPA-06: CLOSED subscription detection. */
+  if (snap.relay_connected && signet_relay_pool_check_sub_closed(ctx->relays)) {
+    g_warning("[signetd] subscription CLOSED by relay \u2014 re-subscribing");
+    static const int resub_kinds[] = {
+      24133,
+      SIGNET_KIND_PROVISION_AGENT, SIGNET_KIND_REVOKE_AGENT,
+      SIGNET_KIND_SET_POLICY, SIGNET_KIND_GET_STATUS,
+      SIGNET_KIND_LIST_AGENTS, SIGNET_KIND_ROTATE_KEY,
+    };
+    signet_relay_pool_subscribe_kinds(ctx->relays, resub_kinds,
+                                      G_N_ELEMENTS(resub_kinds));
+  }
+
+  /* Explicit reconnect with 30s throttle. */
+  if (!snap.relay_connected) {
+    int64_t now_ts = signet_now_unix();
+    if (now_ts - ctx->last_reconnect_attempt >= 30) {
+      ctx->last_reconnect_attempt = now_ts;
+      g_message("[signetd] relay disconnected \u2014 restarting pool");
+      signet_relay_pool_update_since_from_latest(ctx->relays);
+      signet_relay_pool_stop(ctx->relays);
+      if (signet_relay_pool_start(ctx->relays) == 0) {
+        static const int signet_kinds[] = {
+          24133,
+          SIGNET_KIND_PROVISION_AGENT, SIGNET_KIND_REVOKE_AGENT,
+          SIGNET_KIND_SET_POLICY, SIGNET_KIND_GET_STATUS,
+          SIGNET_KIND_LIST_AGENTS, SIGNET_KIND_ROTATE_KEY,
+        };
+        signet_relay_pool_subscribe_kinds(ctx->relays, signet_kinds,
+                                          G_N_ELEMENTS(signet_kinds));
+        g_message("[signetd] relay pool restarted and resubscribed");
+      }
+      snap.relay_connected = signet_relay_pool_is_connected(ctx->relays);
+    }
+  }
+
+  snap.db_open = signet_key_store_is_open(ctx->keys);
+  snap.agents_active = signet_key_store_cache_count(ctx->keys);
+  snap.cache_entries = signet_key_store_cache_count(ctx->keys);
+  snap.relay_count = snap.relay_connected ? (uint32_t)ctx->cfg->n_relays : 0;
+  snap.policy_store_loaded = (ctx->store != NULL);
+  snap.key_store_available = (ctx->keys != NULL);
+
+  snap.sign_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.sign_total);
+  snap.auth_total_ok = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_ok);
+  snap.auth_total_denied = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_denied);
+  snap.auth_total_error = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_error);
+  snap.bootstrap_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.bootstrap_total);
+  snap.revoke_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.revoke_total);
+  snap.active_sessions = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_sessions);
+  snap.active_leases = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_leases);
+
+  int64_t now = signet_now_unix();
+  snap.uptime_sec = (now >= ctx->started_at) ? (uint64_t)(now - ctx->started_at) : 0;
+
+  signet_health_server_set_snapshot(ctx->health, &snap);
+  return G_SOURCE_CONTINUE;
 }
 
 static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_data) {
@@ -611,98 +695,33 @@ int main(int argc, char **argv) {
               bunker_pk ? bunker_pk : "unscoped");
   }
 
-  /* Main loop: update health snapshot and wait for shutdown. */
+  /* NPA-07: Event-driven main loop using GMainLoop.
+   * Replaces the old 250ms g_usleep poll loop. GMainLoop blocks efficiently
+   * on I/O readiness, drains GLib sources (timers, idle callbacks) properly,
+   * and wakes immediately on SIGINT/SIGTERM via g_main_loop_quit().
+   *
+   * A 250ms GLib timeout source handles:
+   * - Health snapshot updates
+   * - CLOSED subscription detection + re-subscribe
+   * - Relay reconnect with 30s throttle */
   int64_t started_at = signet_now_unix();
-  int64_t last_reconnect_attempt = 0;
-  while (!g_shutdown_requested) {
-    /* Drain the GLib main context so libnostr's reconnect timers can fire.
-     * Without this, NostrSimplePool's GLib-based reconnect logic never runs
-     * because g_usleep() does not iterate the main context event queue. */
-    g_main_context_iteration(NULL, FALSE);
 
-    if (health) {
-      SignetHealthSnapshot snap;
-      memset(&snap, 0, sizeof(snap));
-      snap.relay_connected = signet_relay_pool_is_connected(relays);
+  HealthTimerCtx htctx = {
+    .health = health,
+    .relays = relays,
+    .keys = keys,
+    .store = store,
+    .cfg = &cfg,
+    .started_at = started_at,
+    .last_reconnect_attempt = 0,
+  };
 
-      /* NPA-06: If a relay sent CLOSED for our subscription, re-subscribe.
-       * This detects silent subscription termination while the WebSocket
-       * stays connected. */
-      if (snap.relay_connected && signet_relay_pool_check_sub_closed(relays)) {
-        g_warning("[signetd] subscription CLOSED by relay — re-subscribing");
-        static const int resub_kinds[] = {
-          24133,
-          SIGNET_KIND_PROVISION_AGENT,
-          SIGNET_KIND_REVOKE_AGENT,
-          SIGNET_KIND_SET_POLICY,
-          SIGNET_KIND_GET_STATUS,
-          SIGNET_KIND_LIST_AGENTS,
-          SIGNET_KIND_ROTATE_KEY,
-        };
-        signet_relay_pool_subscribe_kinds(relays, resub_kinds,
-                                          G_N_ELEMENTS(resub_kinds));
-      }
-
-      /* Explicit reconnect: if the relay connection dropped, restart the pool
-       * and re-subscribe. LibNostr's internal reconnect relies on GLib timers
-       * that may not fire reliably when the relay closes an idle socket.
-       * Throttle attempts to once every 30 seconds. */
-      if (!snap.relay_connected) {
-        int64_t now_ts = signet_now_unix();
-        if (now_ts - last_reconnect_attempt >= 30) {
-          last_reconnect_attempt = now_ts;
-          g_message("[signetd] relay disconnected — restarting pool");
-          /* NPA-03: Update since to latest event timestamp before reconnect.
-           * This ensures we only backfill events from after the last one we
-           * processed, avoiding replay of events the cache may have evicted. */
-          signet_relay_pool_update_since_from_latest(relays);
-          signet_relay_pool_stop(relays);
-          if (signet_relay_pool_start(relays) == 0) {
-            static const int signet_kinds[] = {
-              24133,
-              SIGNET_KIND_PROVISION_AGENT,
-              SIGNET_KIND_REVOKE_AGENT,
-              SIGNET_KIND_SET_POLICY,
-              SIGNET_KIND_GET_STATUS,
-              SIGNET_KIND_LIST_AGENTS,
-              SIGNET_KIND_ROTATE_KEY,
-            };
-            /* NPA-04: Re-subscribe with scoped filter (bunker pubkey + since).
-             * The relay pool caches these params, so subscribe_kinds suffices
-             * here — it delegates to subscribe_scoped with stored params. */
-            signet_relay_pool_subscribe_kinds(relays, signet_kinds,
-                                              G_N_ELEMENTS(signet_kinds));
-            g_message("[signetd] relay pool restarted and resubscribed");
-          }
-          /* Re-check after reconnect attempt */
-          snap.relay_connected = signet_relay_pool_is_connected(relays);
-        }
-      }
-      snap.db_open = signet_key_store_is_open(keys);
-      snap.agents_active = signet_key_store_cache_count(keys);
-      snap.cache_entries = signet_key_store_cache_count(keys);
-      snap.relay_count = snap.relay_connected ? (uint32_t)cfg.n_relays : 0;
-      snap.policy_store_loaded = (store != NULL);      /* non-blocking hint */
-      snap.key_store_available = (keys != NULL);       /* non-blocking hint */
-
-      /* Read atomic counters from subsystem handlers. */
-      snap.sign_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.sign_total);
-      snap.auth_total_ok = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_ok);
-      snap.auth_total_denied = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_denied);
-      snap.auth_total_error = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_error);
-      snap.bootstrap_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.bootstrap_total);
-      snap.revoke_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.revoke_total);
-      snap.active_sessions = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_sessions);
-      snap.active_leases = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_leases);
-
-      int64_t now = signet_now_unix();
-      snap.uptime_sec = (now >= started_at) ? (uint64_t)(now - started_at) : 0;
-
-      signet_health_server_set_snapshot(health, &snap);
-    }
-
-    g_usleep(250 * 1000);
-  }
+  g_main_loop = g_main_loop_new(NULL, FALSE);
+  g_timeout_add(250, signetd_health_tick, &htctx);
+  g_message("[signetd] entering event-driven main loop");
+  g_main_loop_run(g_main_loop);
+  g_main_loop_unref(g_main_loop);
+  g_main_loop = NULL;
 
   exit_code = 0;
 
