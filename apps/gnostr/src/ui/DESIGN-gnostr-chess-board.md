@@ -2,7 +2,7 @@
 
 **Issue**: nostrc-9ghs
 **Author**: Brett (GTK4 UI Developer)
-**Status**: BLOCKED - Awaiting chess engine port
+**Status**: Phase 1 COMPLETE (scaffold + header) — Phases 2–4 awaiting chess engine port
 **Date**: 2026-02-06
 
 ## Overview

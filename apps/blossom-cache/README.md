@@ -81,8 +81,8 @@ On `GET /<sha256>`, the server accepts hint parameters for upstream resolution:
 - **`?xs=<server>`** — Server hints where the blob may be available (repeatable).
   Bare domains are normalized to `https://`. These servers are tried first, before
   the configured upstream list.
-- **`?as=<pubkey>`** — Author hints for `kind:10063` server list lookup (requires
-  Nostr relay client — not yet implemented, parsed but not acted upon).
+- **`?as=<pubkey>`** — Author hints for `kind:10063` server list lookup
+  (async relay lookup with result caching and TTL).
 
 ```bash
 # Fetch with server hints
@@ -283,7 +283,7 @@ that returns an error, and the application gracefully falls back to SQLite.
 - ✅ `GET /<sha256>` and `HEAD /<sha256>` with optional file extensions
 - ✅ Range requests (RFC 7233) with `Accept-Ranges: bytes`
 - ✅ `xs=` proxy hints (BUD-10 server hint query parameters)
-- ⏳ `as=` author hints (requires `kind:10063` relay lookup — not yet implemented)
+- ✅ `as=` author hints (`kind:10063` relay lookup with result caching)
 - ✅ CORS `Access-Control-Allow-Origin: *` on all responses
 
 ### BUD-01 (Server Requirement)
@@ -306,7 +306,7 @@ that returns an error, and the application gracefully falls back to SQLite.
 ### BUD-10 (Proxy Hints)
 
 - ✅ `?xs=<server>` — server hint query parameters (repeatable, bare domains normalized)
-- ⏳ `?as=<pubkey>` — author hint (parsed but not yet acted upon)
+- ✅ `?as=<pubkey>` — author hint (async relay lookup of `kind:10063`, result caching, TTL)
 
 ## File Layout
 
@@ -321,6 +321,7 @@ apps/blossom-cache/
 │   ├── bc-blob-store.h                         # Blob storage API
 │   ├── bc-cache-manager.h                      # Cache policy layer
 │   ├── bc-db-backend.h                         # Metadata backend vtable
+│   ├── bc-author-hints.h                       # Author hint relay lookup API
 │   ├── bc-http-server.h                        # HTTP server API
 │   └── bc-upstream-client.h                    # Upstream fetch API
 ├── src/
@@ -331,6 +332,7 @@ apps/blossom-cache/
 │   ├── bc-db-backend.c                         # Common vtable utilities
 │   ├── bc-db-backend-sqlite.c                  # SQLite backend implementation
 │   ├── bc-db-backend-lmdb.c                    # LMDB backend implementation
+│   ├── bc-author-hints.c                       # Async kind:10063 relay lookup + caching
 │   ├── bc-http-server.c                        # libsoup 3 server + BUD endpoints
 │   └── bc-upstream-client.c                    # libsoup 3 client + hint resolution
 └── tests/

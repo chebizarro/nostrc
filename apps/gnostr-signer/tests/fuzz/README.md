@@ -31,9 +31,7 @@ cmake -S . -B build-fuzz -G Ninja \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=Debug \
     -DBUILD_FUZZ_TARGETS=ON \
-    -DFUZZ_ENGINE=LIBFUZZER \
-    -DENABLE_NIP19=ON \
-    -DENABLE_NIP49=ON
+    -DFUZZ_ENGINE=LIBFUZZER
 
 # Build all fuzz targets
 cmake --build build-fuzz --target fuzz-targets
