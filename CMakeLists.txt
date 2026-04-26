@@ -501,6 +501,11 @@ if (NOSTR_ENABLE_GI)
     # Includes needed for headers referenced by libnostr public headers
     find_path(NSYNC_INCLUDE_DIR nsync.h)
 
+    set(NOSTR_GI_LIBGO_INCLUDE_DIRS
+      ${CMAKE_SOURCE_DIR}/libgo/include
+      ${CMAKE_SOURCE_DIR}/libgo/include/go
+    )
+
     # Create temporary shared wrappers around static libs for GIR to link
     # without changing how main targets are built.
     set(GIR_WRAPPER_DIR "${CMAKE_BINARY_DIR}/gir_wrappers")
@@ -549,6 +554,7 @@ if (NOSTR_ENABLE_GI)
         --pkg jansson --pkg libwebsockets --pkg openssl --pkg libsecp256k1
         -I ${CMAKE_SOURCE_DIR}/libnostr/include
         -I ${CMAKE_SOURCE_DIR}/libgo/include
+        -I ${CMAKE_SOURCE_DIR}/libgo/include/go
         $<$<BOOL:${NSYNC_INCLUDE_DIR}>:-I${NSYNC_INCLUDE_DIR}>
         -I ${CMAKE_BINARY_DIR}/libnostr/generated
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-utils.h

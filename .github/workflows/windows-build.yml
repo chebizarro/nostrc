@@ -134,6 +134,7 @@ jobs:
             -DBUILD_WINDOWS_INSTALLER=ON \
             -DBUILD_LIBMARMOT=OFF \
             -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_LIBHANAMI=OFF \
             -DBUILD_GNOSTR_APP=OFF \
             -DBUILD_RELAYD=OFF \
             -DSIGNET_ENABLE=OFF \

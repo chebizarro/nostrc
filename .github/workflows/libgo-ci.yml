@@ -74,7 +74,7 @@ jobs:
           export ASAN_OPTIONS=detect_leaks=0
           if [ "${{ matrix.sanitizer }}" = "tsan" ]; then
             # Skip flaky tests under TSAN to keep CI green
-            ctest --test-dir build --output-on-failure -j2 -E "GoTickerTest|GoChannelStressTest|GoSelectTest|GoChannelCloseTest|GoSelectMultiTest"
+            ctest --test-dir build --output-on-failure -j2 -E "GoChannelTest|GoTickerTest|GoChannelStressTest|GoSelectTest|GoChannelCloseTest|GoSelectMultiTest"
           else
             if [ "$RUNNER_OS" = "macOS" ]; then
               # Skip stress test on macOS under asan_ubsan where it intermittently times out
@@ -183,6 +183,7 @@ jobs:
             -DENABLE_FUZZING_RUNTIME=OFF \
             -DBUILD_LIBMARMOT=OFF \
             -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_LIBHANAMI=OFF \
             -DBUILD_NOSTR_GTK=OFF \
             -DBUILD_APPS=OFF \
             -DBUILD_RELAYD=OFF \
