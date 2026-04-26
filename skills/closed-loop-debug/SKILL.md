@@ -124,7 +124,7 @@ GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
 build/apps/gnostr/tests/gnostr-test-ndb-main-thread-violations 2>&1
 
 # Or the real-component bind latency test
-xvfb-run -a build/apps/gnostr/tests/gnostr-test-real-bind-latency 2>&1
+xvfb-run -a build/nostr-gtk/tests/test_nostr_gtk_bind_latency_budget 2>&1
 ```
 
 **Output**: A single command that fails consistently.
@@ -293,7 +293,7 @@ Running: ctest -R listview_recycle --output-on-failure
 Result: FAIL — "profile notification after unbind" test crashes
 
 === REPRODUCE ===
-Command: build-asan/nostr-gtk/tests/nostr-gtk-test-listview-recycle
+Command: build-asan/nostr-gtk/tests/test_nostr_gtk_listview_recycle_stress
 ASan output:
   heap-use-after-free in on_profile_changed (note-card-factory.c:312)
   freed by factory_unbind_cb (note-card-factory.c:280)
@@ -314,11 +314,11 @@ lost when the stack frame exits.
 Store the tier-2 handler ID in the row struct.
 Disconnect it in factory_unbind_cb.
 
-apply_edits(path="nostr-gtk/src/note-card-factory.c", ...)
+apply_edits(path="apps/gnostr/src/ui/note-card-factory.c", ...)
 
 === VERIFY ===
 cmake --build build-asan
-build-asan/nostr-gtk/tests/nostr-gtk-test-listview-recycle  → PASS ✅
+build-asan/nostr-gtk/tests/test_nostr_gtk_listview_recycle_stress  → PASS ✅
 cd build-asan && ctest --output-on-failure  → ALL PASS ✅
 ```
 

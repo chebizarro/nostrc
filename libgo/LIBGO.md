@@ -285,8 +285,6 @@ GO_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(GoWaitGroup, go_wait_group_destroy)
 Built-in registration in `refptr.h`: GoRefPtr.
 Additional registrations in `go-auto-internal.h`: GoChannel, GoContext,
 GoHashMap, Error, Ticker, GoWaitGroup, IntArray, StringArray.
-Libnostr registrations in `nostr-auto-internal.h`: NostrEvent, NostrTags,
-NostrTag, NostrFilter, nostr_secure_buf.
 
 ## Hash Map
 

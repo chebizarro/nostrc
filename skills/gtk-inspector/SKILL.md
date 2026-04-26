@@ -98,7 +98,7 @@ browser_snapshot()
   `GtkSelectionModel` and its underlying `GListModel`
 - **Factory state:** For `GtkListItemFactory`, check bound items
 
-**Debugging GnostrTimelineView sizing (blocker #3):**
+**Debugging NostrGtkTimelineView sizing (blocker #3):**
 ```
 1. Launch app with Inspector
 2. In Inspector Objects panel, expand:
@@ -107,7 +107,7 @@ browser_snapshot()
 4. Check properties:
    - vexpand: should be TRUE
    - hexpand: should be TRUE
-   - If a child NoteCardRow is visible, select it
+   - If a child NostrGtkNoteCardRow is visible, select it
    - Check its height-request, vexpand, natural size
 5. Take screenshot to see the visual highlight overlay
    (Inspector highlights the selected widget with a blue border)
@@ -178,7 +178,7 @@ box, scrolledwindow, listview {
 **How to use it for sizing issues (blocker #3):**
 
 ```
-1. Select a NoteCardRow in the Objects panel
+1. Select a NostrGtkNoteCardRow in the Objects panel
 2. Switch to Visual panel
 3. Read the box model:
    - Margin: outside spacing
@@ -396,9 +396,9 @@ This is invaluable for debugging reference count issues (blocker #2).
 
 ```
 1. Open Inspector → Objects panel
-2. Use the search/filter to find your type (e.g., "NoteCardRow")
+2. Use the search/filter to find your type (e.g., "NostrGtkNoteCardRow")
 3. Count instances:
-   - After scrolling away from a timeline, the old NoteCardRow
+   - After scrolling away from a timeline, the old NostrGtkNoteCardRow
      instances should be finalized
    - If the count keeps growing → leak
 4. Select an instance → check "References" in properties:
@@ -435,7 +435,7 @@ This is invaluable for debugging reference count issues (blocker #2).
 
 ## Debugging Scenarios with Inspector
 
-### Scenario 1: NoteCardRow expanding beyond container
+### Scenario 1: NostrGtkNoteCardRow expanding beyond container
 
 **Problem:** Timeline cards grow to enormous heights with long content.
 
@@ -444,7 +444,7 @@ This is invaluable for debugging reference count issues (blocker #2).
 2. browser_snapshot() → find Inspector window
 3. In Inspector, click "Pick Widget" tool
 4. Click on the oversized card in the app
-5. Inspector selects the NoteCardRow
+5. Inspector selects the NostrGtkNoteCardRow
 6. Read properties:
    - height-request: -1 (no explicit constraint)
    - vexpand: TRUE (expanding to fill!)
@@ -462,7 +462,7 @@ This is invaluable for debugging reference count issues (blocker #2).
 
 ```
 1. Launch with Inspector + ASan build
-2. Scroll slowly → select a NoteCardRow in Inspector
+2. Scroll slowly → select a NostrGtkNoteCardRow in Inspector
 3. Count signal handlers in the Signals section
 4. Scroll rapidly (items recycle) → select same row position
 5. Count signal handlers again:
@@ -488,7 +488,7 @@ This is invaluable for debugging reference count issues (blocker #2).
    - CSS node count growing? → widgets not being recycled
    - Frame times increasing? → render tree growing
 6. Switch to Objects panel
-7. Search for "NoteCardRow" → count instances
+7. Search for "NostrGtkNoteCardRow" → count instances
    - More than visible + small buffer? → leak
 8. Search for "GdkTexture" → count instances
    - More than IMAGE_CACHE_SIZE? → cache broken
