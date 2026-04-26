@@ -4,11 +4,11 @@ GTK4/libadwaita widget library for displaying Nostr content — reusable UI comp
 
 ## What it provides
 
-- **GnostrTimelineView** — Universal scrollable event list with subscription-driven updates
-- **GnostrNoteCardRow** — NIP-01 event rendering (notes, reposts, reactions)
-- **GnostrThreadView** — NIP-10 threaded conversation display
-- **GnostrComposer** — NIP-01 event composition widget
-- **GnostrProfilePane** — NIP-01 kind:0 profile display
+- **NostrGtkTimelineView** — Universal scrollable event list with subscription-driven updates
+- **NostrGtkNoteCardRow** — NIP-01 event rendering (notes, reposts, reactions)
+- **NostrGtkThreadView** — NIP-10 threaded conversation display
+- **NostrGtkComposer** — NIP-01 event composition widget
+- **NostrGtkProfilePane** — NIP-01 kind:0 profile display
 - **Content renderer** — Pango markup + media URL extraction from note content
 - **Blueprint templates** — Compiled `.blp` → `.ui` for all widgets
 
