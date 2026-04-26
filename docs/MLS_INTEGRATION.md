@@ -37,7 +37,46 @@ The integration follows the existing plugin pattern (libpeas) for these reasons:
 | Ephemeral pubkeys | Each kind:445 event uses a fresh keypair |
 | Group types | DirectMessage, Group |
 
-## Phased Implementation Plan
+## Implementation Status
+
+The plugin is substantially implemented. The following table shows the actual
+file layout as of the current codebase:
+
+```
+apps/gnostr/plugins/mls-groups/
+  ├── CMakeLists.txt
+  ├── mls-groups.plugin               # libpeas descriptor
+  ├── mls-groups-plugin.h/c           # Plugin impl (activate/deactivate)
+  ├── gn-marmot-service.h/c           # MarmotGobjectClient singleton
+  ├── gn-key-package-manager.h/c      # Auto-publish key packages (Phase 2)
+  ├── gn-mls-event-router.h/c         # Kind:1059/445 subscription + dispatch (Phase 3)
+  ├── gn-mls-dm-manager.h/c           # MLS 1-on-1 DM management (Phase 6)
+  ├── gn-mls-media-manager.h/c        # Encrypted media (Phase 7)
+  ├── model/
+  │   ├── gn-group-list-model.h/c     # GListModel of groups
+  │   └── gn-group-message-model.h/c  # GListModel of messages
+  └── ui/
+      ├── gn-group-list-view.h/c      # Chat list (all groups)
+      ├── gn-group-list-row.h/c       # Row in group list
+      ├── gn-group-chat-view.h/c      # Conversation view
+      ├── gn-group-message-row.h/c    # Message bubble widget
+      ├── gn-group-composer.h/c       # Message input area
+      ├── gn-create-group-dialog.h/c  # Create group dialog
+      ├── gn-group-settings-view.h/c  # Group settings (admin)
+      ├── gn-member-row.h/c           # Member row widget
+      ├── gn-mls-dm-list-view.h/c     # DM list view
+      └── gn-welcome-list-view.h/c    # Pending welcome invitations
+```
+
+**Differences from original plan:**
+- `gn-welcome-manager.h/c` (planned Phase 3) → replaced by `gn-welcome-list-view` (UI-focused)
+- `gn-group-members-view.h/c` (planned Phase 5) → replaced by `gn-member-row` (per-row widget)
+- `gn-add-members-dialog.h/c` (planned Phase 5) → not yet implemented
+- `gn-mls-dm-manager.h/c` and `gn-mls-media-manager.h/c` → added (not in original plan)
+- `gn-mls-dm-list-view.h/c` → added for Phase 6 DM UI
+- No `.ui` template files — widgets use Blueprint or programmatic layout
+
+## Original Phased Implementation Plan
 
 ### Phase 1: Plugin Scaffold + Marmot Service (Foundation)
 
