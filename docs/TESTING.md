@@ -611,7 +611,6 @@ GTK_DEBUG=interactive GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
 
 ## Related Documentation
 
-- [`docs/TESTING_ARCHITECTURE.md`](TESTING_ARCHITECTURE.md) — Mock relay testing architecture
 - [`docs/BROADWAY_TESTING.md`](BROADWAY_TESTING.md) — Broadway + Playwright browser UI testing
 - [`docs/test-scenarios/`](test-scenarios/) — Broadway-specific test scenarios
 - [`skills/`](../skills/) — LLM skill documents for debug workflows:
