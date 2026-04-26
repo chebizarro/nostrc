@@ -1,12 +1,16 @@
-# NostrdB Storage Backend
+# Storage API (`ln_store`)
 
-This document describes how to use the NostrdB-backed `ln_store` implementation in libnostr.
+This document describes the pluggable `ln_store` storage layer in libnostr.
+The API is backend-agnostic — all interaction is through strings and opaque handles.
+The default backend is NostrdB (LMDB-based), but the vtable design (`ln_store_ops`)
+allows alternative backends.
 
 ## Opening the store
 
-- API: `ln_store_open(ln_store **out, const char *path, const char *opts_json)`
+- API: `ln_store_open(const char *backend, const char *path, const char *opts_json, ln_store **out)`
+- `backend`: backend identifier (e.g., `"nostrdb"`). The backend must be registered via the `ln_store_ops` vtable.
 - `path`: database directory.
-- `opts_json` keys (all optional):
+- `opts_json` keys (all optional, backend-specific):
   - `mapsize` (size_t as integer): LMDB map size. Default ~8 GiB.
   - `flags` (int): `NDB_FLAG_*` bitmask; defaults to 0.
   - `ingester_threads` (int): worker threads; default 1.
@@ -17,7 +21,7 @@ Example:
 ```c
 const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":1}"; // 1 GiB
 ln_store *store = NULL;
-ln_store_open(&store, ".ndb-demo", opts);
+ln_store_open("nostrdb", ".ndb-demo", opts, &store);
 ```
 
 ## Ingest
@@ -68,11 +72,26 @@ ln_store_end_query(store, txn);
   - Query/Text search: free each entry then the `char **` array.
   - Getters/Stats: free the single returned `char *`.
 
+## Profile search
+
+- API: `ln_store_search_profile(store, txn, query, limit, &results, &count)`
+- `query`: search string.
+- `limit`: max results.
+- Returns `char **results` of JSON profiles; same ownership rules as queries.
+
+## Closing
+
+- `ln_store_close(store)` — free the store and all backend resources.
+
+## Backend access
+
+- `ln_store_get_backend_handle(store)` — returns the raw backend handle (e.g., `struct ndb *` for nostrdb). Returns NULL for backends that don't expose internals.
+
 ## Notes
 
 - Capacity: queries currently cap at 256 results per call; consider paging.
 - Minimal JSON parsing is used internally for options/config; provide simple flat JSON.
-- No nostrdb types leak through the public API; all interaction is through strings and opaque handles.
+- No backend types leak through the public API; all interaction is through strings and opaque handles.
 
 ## Demo
 
