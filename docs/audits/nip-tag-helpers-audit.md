@@ -1,5 +1,10 @@
 # NIP Tag Helpers Audit (Phase 0)
 
+> **Status: PARTIALLY COMPLETED.** Section 3 "Refactor targets" (Jansson
+> removal from NIP modules) is done — no NIP source includes `<jansson.h>`
+> directly. Section 2 "Proposed helper API" (typed tag builders under
+> `libnostr/include/nips/`) remains unimplemented.
+
 Scope: NIP-01, NIP-02, NIP-10, NIP-31 across libnostr core, NIP modules, tests, and examples.
 
 Ground rules reflected:

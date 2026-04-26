@@ -1,5 +1,10 @@
 # GNostr / libnostr — Canonical JSON Facade Audit (Phase 0)
 
+> **Status: COMPLETED.** The JSON facade refactor described in this plan is
+> done. `libnostr/src/json_backend_libjson.c` exists, and no NIP module
+> includes `<jansson.h>` directly. The inventory below is preserved as a
+> historical record of the migration.
+
 This document inventories all direct JSON library usages (Jansson and others) outside the backend, and proposes the exact replacement via the canonical JSON facade.
 
 Authoritative facades:
