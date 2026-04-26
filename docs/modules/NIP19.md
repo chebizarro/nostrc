@@ -90,8 +90,8 @@ Relationship to other libraries
     - nprofile: usually implies `authors = [pubkey]`.
 
 - libnostr (relay/subscription)
-  - `relay_connect()`/`relay_close()` manage connections.
-  - `subscription_create()`/`relay_subscribe()` publish REQ with `Filter`.
+  - `nostr_relay_connect()`/`nostr_relay_close()` manage connections.
+    - `nostr_relay_subscribe()` publishes REQ with a `NostrFilter`.
   - Use pointer `relays[]` to select preferred targets:
     - If present, connect/subscribe to those relays first.
     - Otherwise, fall back to app/relay list.
@@ -133,7 +133,7 @@ char *bech = NULL;
 nostr_nip19_encode_naddr(ap, &bech);
 // use bech, then free
 free(bech);
-ostr_entity_pointer_free(ap);
+nostr_entity_pointer_free(ap);
 ```
 
 Validation & robustness
