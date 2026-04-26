@@ -25,7 +25,7 @@ Decisions:
 - Casing: lower-case strings for encode per bech32 rules (spec lines 13–25 imply standard casing; mixed-case invalid).
 - No extra limits beyond spec.
 
-TODOs:
-- Implement TLV enc/dec for `nprofile`, `nevent`, `naddr`, `nrelay` with exact TLV rules (spec lines 31–56).
-- GLib wrappers with GI annotations.
-- Fuzz/property tests for TLV.
+Completed work (formerly TODOs):
+- ✅ TLV enc/dec for `nprofile`, `nevent`, `naddr`, `nrelay` (see `src/tlv.c`).
+- ✅ Tests for TLV (see `tests/test_nip19_tlv.c`).
+- ⏳ GLib wrappers with GI annotations (pending).

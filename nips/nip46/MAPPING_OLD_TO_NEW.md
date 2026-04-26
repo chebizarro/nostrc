@@ -44,9 +44,14 @@ New public API will be split by role and documented in `include/nostr/nip46/`:
 ## Sources (old → new)
 
 - src/nip46.c → src/core/nip46_session.c + src/core/nip46_envelope.c
-- src/dynamic_signer.c → src/core/nip46_bunker.c (handlers; integrates with callbacks)
-- src/static_key_signer.c → src/core/nip46_client_crypto.c (adapters that call existing libnostr NIP-04/44 helpers)
+- src/dynamic_signer.c → folded into src/core/nip46_session.c (bunker handling integrated into session logic)
+- src/static_key_signer.c → folded into src/core/nip46_session.c (crypto adapters inline)
 - src/well_known_nostr.c → src/core/nip46_uri.c (URI parsing/issuance; .well-known lookup adapts existing DNS/NIP-05 helpers)
+- (new) src/core/nip46_msg.c — request/response message construction and parsing
+
+> **Note**: The original plan predicted `nip46_bunker.c` and `nip46_client_crypto.c`
+> as separate files, but their logic was consolidated into `nip46_session.c` during
+> implementation. Additionally, `nip46_msg.c` was added for message handling.
 
 GLib layer (new):
 
