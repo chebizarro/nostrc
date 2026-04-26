@@ -8,7 +8,7 @@ The Nostr C library provides an implementation of the Nostr protocol, including 
 
 - Nostr event handling
 - JSON (de)serialization with optional NSON support
-- NIP implementations (e.g., NIP-04, NIP-05, NIP-13, NIP-19, NIP-29, NIP-31, NIP-34)
+- 54 NIP implementations (see [full list](#nip-implementations) below)
 - Optional memory management handled by the library
  - NIP-47 (Wallet Connect): canonical helpers for encrypt/decrypt supporting NIP-44 v2 (preferred) and NIP-04 fallback, with automatic key format handling (x-only and SEC1) and full tests/examples.
 
@@ -101,15 +101,65 @@ sudo make install
 
 ## NIP Implementations
 
-This library includes various Nostr Improvement Proposals (NIPs):
+This library includes 54 Nostr Improvement Proposals (NIPs), each in its own
+directory under `nips/`:
 
-- **NIP-04**: Encrypted Direct Messages
-- **NIP-05**: Mapping Nostr keys to DNS-based identifiers
-- **NIP-13**: Proof-of-Work
-- **NIP-19**: Bech32-encoded entities
-- **NIP-29**: Simple group management
-- **NIP-31**: Alternative content
-- **NIP-34**: GitHub-like repository management on Nostr
+| NIP | Description |
+|-----|-------------|
+| [01](nips/nip01/) | Basic Protocol Flow |
+| [02](nips/nip02/) | Follow List |
+| [04](nips/nip04/) | Encrypted Direct Messages (legacy) |
+| [05](nips/nip05/) | DNS-based Internet Identifiers |
+| [06](nips/nip06/) | Key Derivation from Mnemonic Seed Phrase |
+| [10](nips/nip10/) | Text Note Replies |
+| [11](nips/nip11/) | Relay Information Document |
+| [13](nips/nip13/) | Proof of Work |
+| [14](nips/nip14/) | Subject Tag in Text Events |
+| [17](nips/nip17/) | Private Direct Messages |
+| [18](nips/nip18/) | Reposts |
+| [19](nips/nip19/) | Bech32-Encoded Entities |
+| [21](nips/nip21/) | nostr: URI Scheme |
+| [22](nips/nip22/) | Comment |
+| [23](nips/nip23/) | Long-Form Content |
+| [24](nips/nip24/) | Extra Metadata Fields |
+| [25](nips/nip25/) | Reactions |
+| [27](nips/nip27/) | Text Note References |
+| [28](nips/nip28/) | Public Chat |
+| [29](nips/nip29/) | Relay-Based Groups |
+| [30](nips/nip30/) | Custom Emoji |
+| [31](nips/nip31/) | Dealing with Unknown Events |
+| [34](nips/nip34/) | Git Stuff |
+| [39](nips/nip39/) | External Identities |
+| [40](nips/nip40/) | Expiration Timestamp |
+| [42](nips/nip42/) | Authentication of Clients to Relays |
+| [44](nips/nip44/) | Versioned Encryption |
+| [45](nips/nip45/) | Counting Results |
+| [46](nips/nip46/) | Nostr Connect |
+| [47](nips/nip47/) | Wallet Connect |
+| [49](nips/nip49/) | Private Key Encryption |
+| [50](nips/nip50/) | Search Capability |
+| [51](nips/nip51/) | Lists |
+| [52](nips/nip52/) | Calendar Events |
+| [53](nips/nip53/) | Live Activities |
+| [54](nips/nip54/) | Wiki |
+| [55L](nips/nip55l/) | Linux Signer Application (DBus) |
+| [57](nips/nip57/) | Lightning Zaps |
+| [58](nips/nip58/) | Badges |
+| [59](nips/nip59/) | Gift Wrap |
+| [5F](nips/nip5f/) | Local Signer via Unix Socket |
+| [60](nips/nip60/) | Cashu Wallet |
+| [61](nips/nip61/) | Nutzaps |
+| [65](nips/nip65/) | Relay List Metadata |
+| [70](nips/nip70/) | Protected Events |
+| [73](nips/nip73/) | External Content IDs |
+| [75](nips/nip75/) | Zap Goals |
+| [77](nips/nip77/) | Negentropy Syncing |
+| [86](nips/nip86/) | Relay Management API |
+| [92](nips/nip92/) | Media Attachments |
+| [94](nips/nip94/) | File Metadata |
+| [98](nips/nip98/) | HTTP Auth |
+| [99](nips/nip99/) | Classified Listings |
+| [B0](nips/nipb0/) | Blossom Integration |
 
 ## Contributing
 
