@@ -99,7 +99,7 @@ Uses `g_object_weak_ref()` to track GObject finalization. Call `gn_test_assert_f
 
 | Test File | Test Count | What It Validates |
 |-----------|------------|-------------------|
-| `benchmark/gnostr_bench_memory_timeline_scroll.c` | 1 | Creates 10,000-item GtkListView, scrolls through entire content, samples RSS at each step, enforces hard ceiling (default 1 GB) |
+| `benchmark/gnostr_bench_real_memory.c` | 1 | Memory profiling benchmark for real-world usage patterns |
 | `nostr-gobject/tests/test_profile_provider_lru.c` | 5 | LRU cache capacity enforcement, eviction ordering, init/shutdown cycles, watcher cleanup |
 
 **Key invariants enforced:**
@@ -296,7 +296,7 @@ Same as above, but wraps execution in `xvfb-run -a` on Linux. On macOS, runs nat
 | 11 | `apps/gnostr/tests/test_event_model_windowing.c` | 11 | Sliding windows | No |
 | 12 | `apps/gnostr/tests/test_event_item_txn_budget.c` | 7 | Transaction budgets | No |
 | 13 | `apps/gnostr/tests/integ/test_model_delete_authorization.c` | 6 | NIP-09 delete | No |
-| 14 | `benchmark/gnostr_bench_memory_timeline_scroll.c` | 1 | Memory ceiling (mock) | Yes |
+| 14 | `benchmark/gnostr_bench_real_memory.c` | 1 | Memory profiling | Yes |
 | 15 | `apps/gnostr/tests/test_ndb_main_thread_violations.c` | 5 | **NDB violation detection** | No |
 | 16 | `apps/gnostr/tests/test_real_bind_latency.c` | 2 | **Real-component latency** | Yes |
 | 17 | `benchmark/gnostr_bench_real_memory.c` | 1 | **Real-component memory** | Yes |
