@@ -15,6 +15,7 @@
 #include "relay_store.h"
 #include "secure-memory.h"
 #include <nostr-event.h>
+#include <nostr-json.h>
 #include <nostr-relay.h>
 #include <json-glib/json-glib.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>

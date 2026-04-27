@@ -97,6 +97,7 @@ add_executable(test_event_canonical test_event_canonical.c)
 add_executable(test_event_priority test_event_priority.c)
 add_executable(test_json_parse test_json_parse.c)
 add_executable(test_nip04_aead test_nip04_aead.c)
+if(TARGET relayd_core)
 add_executable(test_relay_ingress_policy test_relay_ingress_policy.c)
 
 # Link OpenSSL, libsecp256k1, nsync, and project libraries
@@ -134,6 +135,7 @@ target_link_libraries(test_nip04_aead PRIVATE nip04 libnostr ${NSYNC_LIB} nostr_
 target_include_directories(test_nip04_aead PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip04/include)
 target_link_libraries(test_relay_ingress_policy PRIVATE relayd_core libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_include_directories(test_relay_ingress_policy PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/apps/relayd/include)
+endif()
 target_link_libraries(test_json_parse PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
 # Apply sanitizers to tests if enabled
@@ -161,7 +163,9 @@ apply_sanitizers(microbench_json)
 apply_sanitizers(test_event_canonical)
 apply_sanitizers(test_event_priority)
 apply_sanitizers(test_nip04_aead)
+if(TARGET relayd_core)
 apply_sanitizers(test_relay_ingress_policy)
+endif()
 apply_sanitizers(test_json_parse)
 
 # Register tests for CTest. Run with: `ctest --output-on-failure`
@@ -308,7 +312,9 @@ add_test(NAME test_nip86_policy COMMAND test_nip86_policy)
 add_test(NAME test_event_canonical COMMAND test_event_canonical)
 add_test(NAME test_event_priority COMMAND test_event_priority)
 add_test(NAME test_nip04_aead COMMAND test_nip04_aead)
+if(TARGET relayd_core)
 add_test(NAME test_relay_ingress_policy COMMAND test_relay_ingress_policy)
+endif()
 
 # Per-test timeouts (seconds) — keep tight to surface stalls early
 set_tests_properties(test_nostr PROPERTIES TIMEOUT 20)
@@ -334,7 +340,9 @@ set_tests_properties(test_filters_move_semantics PROPERTIES TIMEOUT 20)
 set_tests_properties(test_event_canonical PROPERTIES TIMEOUT 20)
 set_tests_properties(test_event_priority PROPERTIES TIMEOUT 20)
 set_tests_properties(test_nip04_aead PROPERTIES TIMEOUT 20)
+if(TARGET relayd_core)
 set_tests_properties(test_relay_ingress_policy PROPERTIES TIMEOUT 20)
+endif()
 
 # Include directories for libsecp256k1 headers
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})
