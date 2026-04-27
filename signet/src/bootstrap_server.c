@@ -45,6 +45,7 @@ struct SignetBootstrapServer {
   char *bunker_pubkey_hex;
   char **relay_urls;
   size_t n_relay_urls;
+  bool require_tls;
 };
 
 /* Per-connection context for accumulating POST body. */
@@ -56,6 +57,35 @@ typedef struct {
 
 static int64_t signet_now_unix(void) {
   return (int64_t)time(NULL);
+}
+
+static bool signet_bootstrap_tls_required_from_env(void) {
+  const char *v = g_getenv("SIGNET_BOOTSTRAP_REQUIRE_TLS");
+  if (!v || !v[0]) return true;
+  if (g_ascii_strcasecmp(v, "0") == 0 ||
+      g_ascii_strcasecmp(v, "false") == 0 ||
+      g_ascii_strcasecmp(v, "no") == 0 ||
+      g_ascii_strcasecmp(v, "off") == 0) {
+    return false;
+  }
+  return true;
+}
+
+static bool signet_bootstrap_is_tls(struct MHD_Connection *conn) {
+  const char *xfp = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "X-Forwarded-Proto");
+  if (!xfp || !xfp[0]) return false;
+
+  while (*xfp && g_ascii_isspace(*xfp)) xfp++;
+
+  char proto[16];
+  size_t i = 0;
+  while (xfp[i] && xfp[i] != ',' && !g_ascii_isspace(xfp[i]) && i < sizeof(proto) - 1) {
+    proto[i] = xfp[i];
+    i++;
+  }
+  proto[i] = '\0';
+
+  return g_ascii_strcasecmp(proto, "https") == 0;
 }
 
 /* ----------------------------- JSON helpers ------------------------------- */
@@ -408,6 +438,10 @@ signet_bootstrap_handler(void *cls,
   }
 
   /* POST body fully received — dispatch. */
+  if (bs->require_tls && !signet_bootstrap_is_tls(connection)) {
+    return send_json(connection, MHD_HTTP_FORBIDDEN,
+                     json_error("TLS required (set X-Forwarded-Proto: https)"));
+  }
 
   /* GET /challenge */
   if (strcmp(method, "GET") == 0 && strcmp(url, "/challenge") == 0) {
@@ -459,6 +493,7 @@ SignetBootstrapServer *signet_bootstrap_server_new(const SignetBootstrapServerCo
   bs->audit = cfg->audit;
   bs->fleet = cfg->fleet;
   bs->bunker_pubkey_hex = g_strdup(cfg->bunker_pubkey_hex);
+  bs->require_tls = signet_bootstrap_tls_required_from_env();
 
   /* Copy relay URLs. */
   if (cfg->relay_urls && cfg->n_relay_urls > 0) {
@@ -487,6 +522,9 @@ void signet_bootstrap_server_free(SignetBootstrapServer *bs) {
 int signet_bootstrap_server_start(SignetBootstrapServer *bs) {
   if (!bs || !bs->listen) return -1;
   if (bs->mhd) return 0; /* already started */
+  if (!bs->require_tls) {
+    g_warning("bootstrap TLS enforcement is disabled; set SIGNET_BOOTSTRAP_REQUIRE_TLS=true in production");
+  }
 
   const char *colon = strrchr(bs->listen, ':');
   if (!colon || colon[1] == '\0') return -1;

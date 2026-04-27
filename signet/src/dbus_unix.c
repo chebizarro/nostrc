@@ -8,12 +8,14 @@
  */
 
 #include "signet/dbus_unix.h"
+#include "dbus_common.h"
 #include "signet/key_store.h"
 #include "signet/capability.h"
 #include "signet/store.h"
 #include "signet/store_leases.h"
 #include "signet/store_secrets.h"
 #include "signet/audit_logger.h"
+#include "signet/util.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -90,10 +92,6 @@ struct SignetDbusServer {
   GDBusNodeInfo *node_info;
 };
 
-static int64_t signet_now_unix(void) {
-  return (int64_t)time(NULL);
-}
-
 /* ----------------------------- UID resolution ----------------------------- */
 
 static char *signet_dbus_resolve_sender(SignetDbusServer *ds,
@@ -122,9 +120,9 @@ static char *signet_dbus_resolve_sender(SignetDbusServer *ds,
   return ds->uid_resolver((uid_t)uid, ds->uid_resolver_data);
 }
 
-/* ----------------------------- Signer methods ----------------------------- */
+/* ----------------------------- Shared dispatch ----------------------------- */
 
-static void signet_dbus_handle_signer(GDBusConnection *connection,
+static void signet_dbus_handle_method(GDBusConnection *connection,
                                        const gchar *sender,
                                        const gchar *object_path,
                                        const gchar *interface_name,
@@ -133,7 +131,6 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
                                        GDBusMethodInvocation *invocation,
                                        gpointer user_data) {
   (void)object_path;
-  (void)interface_name;
   SignetDbusServer *ds = (SignetDbusServer *)user_data;
 
   char *agent_id = signet_dbus_resolve_sender(ds, connection, sender);
@@ -144,391 +141,27 @@ static void signet_dbus_handle_signer(GDBusConnection *connection,
     return;
   }
 
-  /* Capability check (skip if policy not configured). */
-  if (ds->policy && !signet_policy_evaluate(ds->policy, agent_id, method_name, -1)) {
-    g_free(agent_id);
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.CapabilityDenied",
-        "Operation not permitted by policy");
-    return;
-  }
-
-  int64_t op_start = signet_now_unix();
-
-  if (strcmp(method_name, "GetPublicKey") == 0) {
-    char pubkey_hex[65];
-    if (!signet_key_store_get_agent_pubkey(ds->keys, agent_id, pubkey_hex, sizeof(pubkey_hex))) {
-      signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_KEY_ACCESS,
-          &(SignetAuditCommonFields){ .identity = agent_id, .method = "GetPublicKey",
-            .decision = "error", .reason_code = "key_not_found" },
-          "{\"transport\":\"dbus_unix\"}");
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.NotFound", "Agent key not found");
-      return;
-    }
-    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_KEY_ACCESS,
-        &(SignetAuditCommonFields){ .identity = agent_id, .method = "GetPublicKey",
-          .decision = "allow", .reason_code = "ok" },
-        "{\"transport\":\"dbus_unix\"}");
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(s)", pubkey_hex));
-
-  } else if (strcmp(method_name, "SignEvent") == 0) {
-    const char *event_json = NULL;
-    g_variant_get(parameters, "(&s)", &event_json);
-
-    /* Load the agent's secret key. */
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!signet_key_store_load_agent_key(ds->keys, agent_id, &lk)) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.NotFound", "Agent key not found");
-      return;
-    }
-
-    /* Deserialize, sign with libnostr, serialize back. */
-    NostrEvent *ev = nostr_event_new();
-    if (!ev || nostr_event_deserialize(ev, event_json) != 0) {
-      if (ev) nostr_event_free(ev);
-      signet_loaded_key_clear(&lk);
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.BadRequest", "Invalid event JSON");
-      return;
-    }
-
-    /* Convert secret key to hex for nostr_event_sign(). */
-    char sk_hex[65];
-    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-    sk_hex[64] = '\0';
-    int sign_rc = nostr_event_sign(ev, sk_hex);
-    sodium_memzero(sk_hex, sizeof(sk_hex));
-    signet_loaded_key_clear(&lk);
-
-    if (sign_rc != 0) {
-      nostr_event_free(ev);
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.Internal", "Signing failed");
-      return;
-    }
-
-    char *signed_json = nostr_event_serialize(ev);
-    nostr_event_free(ev);
-    if (!signed_json) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.Internal", "Serialization failed");
-      return;
-    }
-
-    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
-        &(SignetAuditCommonFields){ .identity = agent_id, .method = "SignEvent",
-          .decision = "allow", .reason_code = "ok" },
-        "{\"transport\":\"dbus_unix\"}");
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(s)", signed_json));
-    free(signed_json);
-
-  } else if (strcmp(method_name, "Encrypt") == 0) {
-    const char *plaintext = NULL, *peer_pubkey = NULL, *algo = NULL;
-    g_variant_get(parameters, "(&s&s&s)", &plaintext, &peer_pubkey, &algo);
-
-    /* Determine algorithm: default to nip04 for backward compat. */
-    bool use_nip44 = (algo && strcmp(algo, "nip44") == 0);
-    bool use_nip04 = (!algo || algo[0] == '\0' || strcmp(algo, "nip04") == 0);
-    if (!use_nip04 && !use_nip44) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.BadRequest",
-          "Unsupported algorithm; use 'nip04', 'nip44', or empty");
-      return;
-    }
-
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!signet_key_store_load_agent_key(ds->keys, agent_id, &lk)) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.NotFound", "Agent key not found");
-      return;
-    }
-
-    char *result_ct = NULL;
-    int rc;
-
-    if (use_nip44) {
-      /* NIP-44 v2: peer_pubkey is hex-encoded x-only 32-byte key. */
-      uint8_t peer_pk[32];
-      bool pk_ok = (peer_pubkey && strlen(peer_pubkey) == 64);
-      if (pk_ok) {
-        for (int i = 0; i < 32; i++) {
-          unsigned int byte;
-          if (sscanf(peer_pubkey + i * 2, "%2x", &byte) != 1) { pk_ok = false; break; }
-          peer_pk[i] = (uint8_t)byte;
-        }
-      }
-      if (!pk_ok) {
-        signet_loaded_key_clear(&lk);
-        g_free(agent_id);
-        g_dbus_method_invocation_return_dbus_error(
-            invocation, "net.signet.Error.BadRequest", "Invalid peer pubkey hex");
-        return;
-      }
-      rc = nostr_nip44_encrypt_v2(lk.secret_key, peer_pk,
-                                  (const uint8_t *)plaintext, strlen(plaintext),
-                                  &result_ct);
-    } else {
-      /* NIP-04 */
-      char sk_hex[65];
-      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-      sk_hex[64] = '\0';
-      char *err_msg = NULL;
-      rc = nostr_nip04_encrypt(plaintext, peer_pubkey, sk_hex, &result_ct, &err_msg);
-      sodium_memzero(sk_hex, sizeof(sk_hex));
-      free(err_msg);
-    }
-    signet_loaded_key_clear(&lk);
-
-    if (rc != 0) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.Internal", "Encryption failed");
-      return;
-    }
-
-    char audit_detail[128];
-    snprintf(audit_detail, sizeof(audit_detail),
-             "{\"transport\":\"dbus_unix\",\"algo\":\"%s\"}", use_nip44 ? "nip44" : "nip04");
-    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
-        &(SignetAuditCommonFields){ .identity = agent_id, .method = "Encrypt",
-          .decision = "allow", .reason_code = "ok" }, audit_detail);
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(s)", result_ct));
-    free(result_ct);
-
-  } else if (strcmp(method_name, "Decrypt") == 0) {
-    const char *ciphertext = NULL, *peer_pubkey = NULL, *algo = NULL;
-    g_variant_get(parameters, "(&s&s&s)", &ciphertext, &peer_pubkey, &algo);
-
-    /* Determine algorithm: default to nip04 for backward compat. */
-    bool use_nip44 = (algo && strcmp(algo, "nip44") == 0);
-    bool use_nip04 = (!algo || algo[0] == '\0' || strcmp(algo, "nip04") == 0);
-    if (!use_nip04 && !use_nip44) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.BadRequest",
-          "Unsupported algorithm; use 'nip04', 'nip44', or empty");
-      return;
-    }
-
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!signet_key_store_load_agent_key(ds->keys, agent_id, &lk)) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.NotFound", "Agent key not found");
-      return;
-    }
-
-    char *result_pt = NULL;
-    int rc;
-
-    if (use_nip44) {
-      /* NIP-44 v2: peer_pubkey is hex-encoded x-only 32-byte key. */
-      uint8_t peer_pk[32];
-      bool pk_ok = (peer_pubkey && strlen(peer_pubkey) == 64);
-      if (pk_ok) {
-        for (int i = 0; i < 32; i++) {
-          unsigned int byte;
-          if (sscanf(peer_pubkey + i * 2, "%2x", &byte) != 1) { pk_ok = false; break; }
-          peer_pk[i] = (uint8_t)byte;
-        }
-      }
-      if (!pk_ok) {
-        signet_loaded_key_clear(&lk);
-        g_free(agent_id);
-        g_dbus_method_invocation_return_dbus_error(
-            invocation, "net.signet.Error.BadRequest", "Invalid peer pubkey hex");
-        return;
-      }
-      uint8_t *raw_pt = NULL;
-      size_t raw_pt_len = 0;
-      rc = nostr_nip44_decrypt_v2(lk.secret_key, peer_pk, ciphertext, &raw_pt, &raw_pt_len);
-      if (rc == 0 && raw_pt) {
-        result_pt = (char *)g_malloc(raw_pt_len + 1);
-        memcpy(result_pt, raw_pt, raw_pt_len);
-        result_pt[raw_pt_len] = '\0';
-        free(raw_pt);
-      }
-    } else {
-      /* NIP-04 */
-      char sk_hex[65];
-      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-      sk_hex[64] = '\0';
-      char *err_msg = NULL;
-      rc = nostr_nip04_decrypt(ciphertext, peer_pubkey, sk_hex, &result_pt, &err_msg);
-      sodium_memzero(sk_hex, sizeof(sk_hex));
-      free(err_msg);
-    }
-    signet_loaded_key_clear(&lk);
-
-    if (rc != 0 || !result_pt) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.Internal", "Decryption failed");
-      return;
-    }
-
-    char audit_detail[128];
-    snprintf(audit_detail, sizeof(audit_detail),
-             "{\"transport\":\"dbus_unix\",\"algo\":\"%s\"}", use_nip44 ? "nip44" : "nip04");
-    signet_audit_log_common(ds->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
-        &(SignetAuditCommonFields){ .identity = agent_id, .method = "Decrypt",
-          .decision = "allow", .reason_code = "ok" }, audit_detail);
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(s)", result_pt));
-    free(result_pt);
-
-  } else {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.UnknownMethod", "Unknown method");
-  }
-
+  SignetDbusDispatchContext ctx = {
+    .keys = ds->keys,
+    .policy = ds->policy,
+    .store = ds->store,
+    .audit = ds->audit,
+    .transport = "dbus_unix",
+  };
+  signet_dbus_dispatch_authenticated(&ctx, agent_id, interface_name,
+                                      method_name, parameters, invocation);
   g_free(agent_id);
 }
-
-/* ----------------------------- Credentials methods ----------------------- */
-
-static void signet_dbus_handle_credentials(GDBusConnection *connection,
-                                            const gchar *sender,
-                                            const gchar *object_path,
-                                            const gchar *interface_name,
-                                            const gchar *method_name,
-                                            GVariant *parameters,
-                                            GDBusMethodInvocation *invocation,
-                                            gpointer user_data) {
-  (void)object_path;
-  (void)interface_name;
-  SignetDbusServer *ds = (SignetDbusServer *)user_data;
-
-  char *agent_id = signet_dbus_resolve_sender(ds, connection, sender);
-  if (!agent_id) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.Unauthorized",
-        "Could not resolve caller UID to agent_id");
-    return;
-  }
-
-  if (ds->policy && !signet_policy_evaluate(ds->policy, agent_id, method_name, -1)) {
-    g_free(agent_id);
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.CapabilityDenied",
-        "Operation not permitted by policy");
-    return;
-  }
-
-  int64_t now = signet_now_unix();
-
-  if (strcmp(method_name, "GetSession") == 0) {
-    const char *service_url = NULL;
-    g_variant_get(parameters, "(&s)", &service_url);
-
-    /* Generate session token and issue a lease. */
-    uint8_t raw[32];
-    randombytes_buf(raw, sizeof(raw));
-    char token_hex[65];
-    for (int i = 0; i < 32; i++) sprintf(token_hex + i * 2, "%02x", raw[i]);
-    token_hex[64] = '\0';
-    sodium_memzero(raw, sizeof(raw));
-
-    int64_t expires_at = now + 24 * 60 * 60; /* 24h default */
-
-    /* Generate a unique lease ID. */
-    uint8_t lid_raw[16];
-    randombytes_buf(lid_raw, sizeof(lid_raw));
-    char lease_id[33];
-    for (int i = 0; i < 16; i++) sprintf(lease_id + i * 2, "%02x", lid_raw[i]);
-    lease_id[32] = '\0';
-
-    char *meta = g_strdup_printf("{\"service_url\":\"%s\"}", service_url ? service_url : "");
-    (void)signet_store_issue_lease(ds->store, lease_id, "session",
-                                    agent_id, now, expires_at, meta);
-    g_free(meta);
-
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(sx)", token_hex, (gint64)expires_at));
-
-  } else if (strcmp(method_name, "GetToken") == 0) {
-    const char *cred_type = NULL;
-    g_variant_get(parameters, "(&s)", &cred_type);
-
-    /* Look up credential from secrets store. */
-    SignetSecretRecord rec;
-    memset(&rec, 0, sizeof(rec));
-    int rc = signet_store_get_secret(ds->store, cred_type, &rec);
-    if (rc != 0) {
-      g_free(agent_id);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.NotFound", "Credential not found");
-      return;
-    }
-
-    int64_t expires_at = now + 3600; /* 1h default lease */
-
-    /* Convert binary payload to hex for transport. */
-    char *token_hex = NULL;
-    if (rec.payload && rec.payload_len > 0) {
-      token_hex = g_malloc(rec.payload_len * 2 + 1);
-      for (size_t i = 0; i < rec.payload_len; i++)
-        sprintf(token_hex + i * 2, "%02x", rec.payload[i]);
-      token_hex[rec.payload_len * 2] = '\0';
-    }
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(sx)", token_hex ? token_hex : "", (gint64)expires_at));
-    g_free(token_hex);
-    signet_secret_record_clear(&rec);
-
-  } else if (strcmp(method_name, "ListCredentials") == 0) {
-    /* Return available credential types from the secrets store. */
-    GVariantBuilder builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
-
-    if (ds->store) {
-      char **ids = NULL;
-      char **labels = NULL;
-      size_t count = 0;
-      if (signet_store_list_secrets(ds->store, agent_id, &ids, &labels, &count) == 0) {
-        for (size_t i = 0; i < count; i++) {
-          if (ids[i])
-            g_variant_builder_add(&builder, "s", ids[i]);
-        }
-        signet_store_free_secret_list(ids, labels, count);
-      }
-    }
-
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(as)", &builder));
-
-  } else {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.UnknownMethod", "Unknown method");
-  }
-
-  g_free(agent_id);
-}
-
-/* ----------------------------- bus lifecycle ------------------------------ */
 
 static const GDBusInterfaceVTable signer_vtable = {
-  .method_call = signet_dbus_handle_signer,
+  .method_call = signet_dbus_handle_method,
 };
 
 static const GDBusInterfaceVTable credentials_vtable = {
-  .method_call = signet_dbus_handle_credentials,
+  .method_call = signet_dbus_handle_method,
 };
+
+/* ----------------------------- bus lifecycle ------------------------------ */
 
 static void signet_on_bus_acquired(GDBusConnection *conn,
                                     const gchar *name,

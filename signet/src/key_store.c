@@ -502,8 +502,12 @@ bool signet_key_store_get_agent_pubkey(SignetKeyStore *ks,
 
 uint32_t signet_key_store_cache_count(const SignetKeyStore *ks) {
   if (!ks || !ks->cache) return 0;
-  /* Note: not locking for this read-only atomic-ish operation. */
-  return (uint32_t)g_hash_table_size(ks->cache);
+
+  g_mutex_lock((GMutex *)&ks->mu);
+  uint32_t n = (uint32_t)g_hash_table_size(ks->cache);
+  g_mutex_unlock((GMutex *)&ks->mu);
+
+  return n;
 }
 
 bool signet_key_store_is_open(const SignetKeyStore *ks) {

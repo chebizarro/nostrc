@@ -12,9 +12,11 @@
 #include "signet/policy_store.h"
 #include "signet/relay_pool.h"
 #include "signet/audit_logger.h"
+#include "signet/util.h"
 
 #include <nostr/nip44/nip44.h>
 #include <secure_buf.h>
+#include <sodium.h>
 
 #include <string.h>
 #include <time.h>
@@ -32,16 +34,7 @@ static void signet_mgmt_memzero(void *p, size_t n) {
   if (p && n) secure_wipe(p, n);
 }
 
-static bool signet_mgmt_hex_to_bytes32(const char *hex, uint8_t out[32]) {
-  if (!hex || strlen(hex) != 64) return false;
-  for (int i = 0; i < 32; i++) {
-    unsigned int byte;
-    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
-    out[i] = (uint8_t)byte;
-  }
-  return true;
-}
-
+#define signet_mgmt_hex_to_bytes32 signet_hex_to_bytes32
 
 SignetMgmtOp signet_mgmt_op_from_kind(int kind) {
   switch (kind) {
@@ -277,7 +270,15 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
     h->n_provisioner_pubkeys = cfg->n_provisioner_pubkeys;
   }
 
-  h->bunker_sk_hex = g_strdup(cfg->bunker_secret_key_hex);
+  if (cfg->bunker_secret_key_hex) {
+    size_t sk_hex_len = strlen(cfg->bunker_secret_key_hex);
+    h->bunker_sk_hex = (char *)sodium_malloc(sk_hex_len + 1);
+    if (!h->bunker_sk_hex) {
+      signet_mgmt_handler_free(h);
+      return NULL;
+    }
+    memcpy(h->bunker_sk_hex, cfg->bunker_secret_key_hex, sk_hex_len + 1);
+  }
   h->bunker_pk_hex = g_strdup(cfg->bunker_pubkey_hex);
 
   if (cfg->relay_urls && cfg->n_relay_urls > 0) {
@@ -298,8 +299,8 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
   g_free(h->provisioner_pubkeys);
 
   if (h->bunker_sk_hex) {
-    memset(h->bunker_sk_hex, 0, strlen(h->bunker_sk_hex));
-    g_free(h->bunker_sk_hex);
+    sodium_memzero(h->bunker_sk_hex, strlen(h->bunker_sk_hex));
+    sodium_free(h->bunker_sk_hex);
   }
   g_free(h->bunker_pk_hex);
   for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
@@ -381,31 +382,41 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
   }
 
   /* 1b) NIP-44 v2 decrypt the event content.
-   * Management events MUST be encrypted to the bunker pubkey per spec.
-   * Try decryption first; if it fails, fall back to plaintext for backward
-   * compatibility (logged as a warning). */
+   * Management events with content MUST decrypt successfully.
+   * Plaintext fallback is intentionally rejected. */
   char *decrypted_content = NULL;
   const char *effective_content = content_json;
 
-  if (content_json && content_json[0] && h->bunker_sk_hex && event_pubkey_hex) {
-    uint8_t sk[32], pk[32];
-    if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
-        signet_mgmt_hex_to_bytes32(event_pubkey_hex, pk)) {
-      uint8_t *pt = NULL;
-      size_t pt_len = 0;
-      int drc = nostr_nip44_decrypt_v2(sk, pk, content_json, &pt, &pt_len);
-      signet_mgmt_memzero(sk, 32);
-      if (drc == 0 && pt && pt_len > 0) {
-        decrypted_content = (char *)malloc(pt_len + 1);
-        if (decrypted_content) {
-          memcpy(decrypted_content, pt, pt_len);
-          decrypted_content[pt_len] = '\0';
-          effective_content = decrypted_content;
-        }
-        free(pt);
-      }
-      /* If decryption fails, effective_content stays as plaintext (backward compat). */
+  if (content_json && content_json[0]) {
+    if (!h->bunker_sk_hex || !event_pubkey_hex) {
+      return -1;
     }
+
+    uint8_t sk[32], pk[32];
+    if (!signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) ||
+        !signet_mgmt_hex_to_bytes32(event_pubkey_hex, pk)) {
+      signet_mgmt_memzero(sk, sizeof(sk));
+      return -1;
+    }
+
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    int drc = nostr_nip44_decrypt_v2(sk, pk, content_json, &pt, &pt_len);
+    signet_mgmt_memzero(sk, sizeof(sk));
+    if (drc != 0 || !pt || pt_len == 0) {
+      free(pt);
+      return -1;
+    }
+
+    decrypted_content = (char *)malloc(pt_len + 1);
+    if (!decrypted_content) {
+      free(pt);
+      return -1;
+    }
+    memcpy(decrypted_content, pt, pt_len);
+    decrypted_content[pt_len] = '\0';
+    effective_content = decrypted_content;
+    free(pt);
   }
 
   /* 2) Parse request. */

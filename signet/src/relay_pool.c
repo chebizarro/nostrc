@@ -59,8 +59,8 @@ struct SignetRelayPool {
   int64_t filter_since;      /* since timestamp (0 = unset) */
 
   /* NPA-03: Track latest event timestamp for since-based backfill on reconnect.
-   * Uses gint for g_atomic_int_* compatibility (32-bit, wraps in 2038). */
-  volatile gint last_event_ts;
+   * Use 64-bit timestamp storage to avoid Y2038 overflow. */
+  gint64 last_event_ts;
 
   GMutex mu;
   gboolean started;
@@ -100,13 +100,13 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
 
   /* NPA-03: Track latest event timestamp for since-based backfill.
    * After reconnect, filter_since is updated to this value so we
-   * don't reprocess events the replay cache has already evicted.
-   * Uses relaxed atomic — exact ordering not critical for a HWM. */
+   * don't reprocess events the replay cache has already evicted. */
   if (ev.created_at > 0) {
-    gint old_val = g_atomic_int_get((volatile gint *)&rp->last_event_ts);
-    if ((int64_t)ev.created_at > (int64_t)old_val) {
-      g_atomic_int_set((volatile gint *)&rp->last_event_ts, (gint)ev.created_at);
+    g_mutex_lock(&rp->mu);
+    if ((gint64)ev.created_at > rp->last_event_ts) {
+      rp->last_event_ts = (gint64)ev.created_at;
     }
+    g_mutex_unlock(&rp->mu);
   }
 
   rp->on_event(&ev, rp->user_data);
@@ -819,15 +819,18 @@ bool signet_relay_pool_is_connected(SignetRelayPool *rp) {
 int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp) {
   if (!rp) return 0;
 
-  int64_t latest = (int64_t)g_atomic_int_get((volatile gint *)&rp->last_event_ts);
-  if (latest <= 0) return 0;
+  g_mutex_lock(&rp->mu);
+  int64_t latest = rp->last_event_ts;
+  if (latest <= 0) {
+    g_mutex_unlock(&rp->mu);
+    return 0;
+  }
 
   /* Subtract 60s skew to ensure we don't miss events near the boundary.
    * The replay cache handles any duplicates within this window. */
   int64_t since = latest - 60;
   if (since < 0) since = 0;
 
-  g_mutex_lock(&rp->mu);
   rp->filter_since = since;
   g_mutex_unlock(&rp->mu);
 

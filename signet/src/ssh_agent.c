@@ -43,6 +43,9 @@
 #define SSH_ED25519_KEYTYPE "ssh-ed25519"
 #define SSH_ED25519_KEYTYPE_LEN 11
 
+/* Limit concurrent per-client threads to avoid unbounded spawning. */
+#define SSH_AGENT_MAX_CONNECTIONS 64
+
 struct SignetSshAgent {
   char *socket_path;
   SignetKeyStore *keys;
@@ -54,6 +57,7 @@ struct SignetSshAgent {
   int listen_fd;
   GThread *accept_thread;
   volatile gint running;
+  volatile gint active_clients;
 };
 
 /* ----------------------------- wire helpers ------------------------------- */
@@ -151,9 +155,13 @@ static int handle_request_identities(SignetSshAgent *sa, int client_fd,
     return send_msg(client_fd, msg, 5);
   }
 
-  /* Derive ed25519 public key from secret key. */
-  uint8_t pk[32];
-  crypto_scalarmult_ed25519_base_noclamp(pk, lk.secret_key);
+  /* Derive ed25519 keypair from 32-byte seed exactly as signing does. */
+  uint8_t pk[32], sk_expanded[64];
+  if (crypto_sign_ed25519_seed_keypair(pk, sk_expanded, lk.secret_key) != 0) {
+    signet_loaded_key_clear(&lk);
+    return send_failure(client_fd);
+  }
+  sodium_memzero(sk_expanded, sizeof(sk_expanded));
   signet_loaded_key_clear(&lk);
 
   size_t blob_len = 0;
@@ -207,13 +215,13 @@ static int handle_sign_request(SignetSshAgent *sa, int client_fd,
   if (!signet_key_store_load_agent_key(sa->keys, agent_id, &lk))
     return send_failure(client_fd);
 
-  /* Sign with ed25519. Build the full 64-byte ed25519 secret key
-   * (sk32 || pk32) that libsodium expects. */
+  /* Sign with ed25519 using libsodium's seed-based key derivation. */
   uint8_t ed_sk[64];
   uint8_t pk[32];
-  crypto_scalarmult_ed25519_base_noclamp(pk, lk.secret_key);
-  memcpy(ed_sk, lk.secret_key, 32);
-  memcpy(ed_sk + 32, pk, 32);
+  if (crypto_sign_ed25519_seed_keypair(pk, ed_sk, lk.secret_key) != 0) {
+    signet_loaded_key_clear(&lk);
+    return send_failure(client_fd);
+  }
   signet_loaded_key_clear(&lk);
 
   uint8_t sig[64];
@@ -326,6 +334,7 @@ typedef struct {
 static gpointer ssh_agent_client_thread(gpointer data) {
   SshClientThreadData *td = (SshClientThreadData *)data;
   handle_client(td->sa, td->client_fd);
+  g_atomic_int_add(&td->sa->active_clients, -1);
   g_free(td);
   return NULL;
 }
@@ -341,6 +350,13 @@ static gpointer ssh_agent_accept_loop(gpointer data) {
       if (errno == EINTR) continue;
       break;
     }
+    gint prev = g_atomic_int_add(&sa->active_clients, 1);
+    if (prev >= SSH_AGENT_MAX_CONNECTIONS) {
+      g_atomic_int_add(&sa->active_clients, -1);
+      close(client_fd);
+      continue;
+    }
+
     /* Handle each client in its own thread for concurrency. */
     SshClientThreadData *td = g_new(SshClientThreadData, 1);
     td->sa = sa;
@@ -349,6 +365,7 @@ static gpointer ssh_agent_accept_loop(gpointer data) {
     if (t) {
       g_thread_unref(t); /* detach — client thread manages its own lifetime */
     } else {
+      g_atomic_int_add(&sa->active_clients, -1);
       close(client_fd);
       g_free(td);
     }

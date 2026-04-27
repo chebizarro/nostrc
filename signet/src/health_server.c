@@ -7,7 +7,9 @@
  */
 
 #include "signet/health_server.h"
+#include "signet/util.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,10 +31,6 @@ struct SignetHealthServer {
   SignetHealthSnapshot snap;
   int64_t started_at_unix;
 };
-
-static int64_t signet_now_unix(void) {
-  return (int64_t)time(NULL);
-}
 
 /* ----------------------------- JSON builder ------------------------------ */
 
@@ -337,8 +335,11 @@ int signet_health_server_start(SignetHealthServer *hs) {
   const char *colon = strrchr(hs->listen, ':');
   if (!colon || colon[1] == '\0') return -1;
 
-  unsigned int port = (unsigned int)atoi(colon + 1);
-  if (port == 0 && strcmp(colon + 1, "0") != 0) return -1;
+  errno = 0;
+  char *end = NULL;
+  unsigned long parsed = strtoul(colon + 1, &end, 10);
+  if (errno != 0 || end == colon + 1 || *end != '\0' || parsed > 65535UL) return -1;
+  unsigned int port = (unsigned int)parsed;
 
   hs->mhd = MHD_start_daemon(
       MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG,

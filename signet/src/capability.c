@@ -206,6 +206,8 @@ bool signet_policy_rate_limit_check(SignetPolicyRegistry *pr,
   return allowed;
 }
 
+static const char *const SIGNET_CAP_ALWAYS_ALLOW = "__always_allow__";
+
 const char *signet_method_to_capability(const char *method) {
   if (!method) return NULL;
   if (strcmp(method, "sign_event") == 0)    return SIGNET_CAP_NOSTR_SIGN;
@@ -220,10 +222,10 @@ const char *signet_method_to_capability(const char *method) {
   if (strcmp(method, "Decrypt") == 0)      return SIGNET_CAP_NOSTR_ENCRYPT;
   if (strcmp(method, "GetToken") == 0)     return SIGNET_CAP_CREDENTIAL_GET_TOKEN;
   if (strcmp(method, "GetSession") == 0)   return SIGNET_CAP_CREDENTIAL_GET_SESSION;
-  if (strcmp(method, "connect") == 0)      return NULL; /* connect is always allowed */
-  if (strcmp(method, "ping") == 0)         return NULL;
-  if (strcmp(method, "get_relays") == 0)   return NULL;
-  return NULL; /* unknown method — deny by default at call site */
+  if (strcmp(method, "connect") == 0)      return SIGNET_CAP_ALWAYS_ALLOW;
+  if (strcmp(method, "ping") == 0)         return SIGNET_CAP_ALWAYS_ALLOW;
+  if (strcmp(method, "get_relays") == 0)   return SIGNET_CAP_ALWAYS_ALLOW;
+  return NULL;
 }
 
 bool signet_policy_evaluate(SignetPolicyRegistry *pr,
@@ -233,7 +235,8 @@ bool signet_policy_evaluate(SignetPolicyRegistry *pr,
   if (!pr || !agent_id || !method) return false;
 
   const char *cap = signet_method_to_capability(method);
-  if (!cap) return true; /* Methods without capability requirement are open. */
+  if (!cap) return false;
+  if (strcmp(cap, SIGNET_CAP_ALWAYS_ALLOW) == 0) return true;
 
   if (!signet_policy_has_capability(pr, agent_id, cap)) return false;
 

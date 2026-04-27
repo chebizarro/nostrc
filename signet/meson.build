@@ -136,6 +136,7 @@ signet_core_sources = files(
   'src/capability.c',
   'src/bootstrap_server.c',
   'src/revocation.c',
+  'src/dbus_common.c',
   'src/dbus_unix.c',
   'src/bootstrap_delivery.c',
   'src/dbus_tcp.c',

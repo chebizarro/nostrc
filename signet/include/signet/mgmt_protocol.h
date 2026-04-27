@@ -16,7 +16,7 @@
  *   28090 - ack (response to any management command)
  *
  * Transport: NIP-44 v2 encrypted to bunker pubkey (decrypt on receive,
- *            encrypt on ack; falls back to plaintext for backward compat).
+ *            encrypt on ack; decryption failures are rejected).
  * Authorization: event.pubkey must be in provisioner_pubkeys list.
  */
 

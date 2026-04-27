@@ -5,10 +5,20 @@
  * SQLCipher provides transparent AES-256-CBC encryption of the entire
  * database. On top of that, individual secret keys are envelope-encrypted
  * using libsodium's crypto_secretbox_easy (XSalsa20-Poly1305) with a
- * data-encryption key derived via HKDF-SHA256 from the master key.
+ * data-encryption key derived via BLAKE2b (crypto_generichash) and
+ * domain separation from the master key.
+ */
+
+/*
+ * Dual key-management architecture:
  *
- * This double encryption ensures that even if the SQLCipher key leaks,
- * the nsec values require the HKDF-derived key to decrypt.
+ * 1) SQLCipher layer (PRAGMA key = master key) encrypts the full database.
+ * 2) Envelope layer encrypts each agent nsec with a DEK derived from the same
+ *    master key using BLAKE2b plus a fixed domain string.
+ *
+ * Tradeoff: both layers depend on the same master secret, so compromise of
+ * SIGNET_DB_KEY compromises both. The envelope layer still adds value for
+ * defense-in-depth against SQLCipher bypass or partial data exposure paths.
  */
 
 #include "signet/store.h"
@@ -23,7 +33,7 @@
 /* libnostr secure memory */
 #include <secure_buf.h>
 
-/* libsodium for envelope encryption + HKDF */
+/* libsodium for envelope encryption + DEK derivation */
 #include <sodium.h>
 
 #define SIGNET_NSEC_LEN          32
@@ -31,8 +41,8 @@
 #define SIGNET_CIPHERTEXT_EXTRA  crypto_secretbox_MACBYTES     /* 16 */
 #define SIGNET_DEK_LEN           crypto_secretbox_KEYBYTES     /* 32 */
 
-/* HKDF info string for deriving the data-encryption key. */
-static const char SIGNET_HKDF_INFO[] = "signet-agent-nsec-v1";
+/* Domain-separation string for deriving the data-encryption key. */
+static const char SIGNET_DEK_DOMAIN[] = "signet-agent-nsec-v1";
 
 struct SignetStore {
   sqlite3 *db;
@@ -53,7 +63,8 @@ static int signet_hex_decode(const char *hex, uint8_t *out, size_t out_len) {
   return 0;
 }
 
-/* Derive the data-encryption key from master_key via HKDF-SHA256.
+/* Derive the data-encryption key from master_key via BLAKE2b
+ * (crypto_generichash) with domain separation.
  * master_key can be hex (64 chars) or raw bytes. */
 static bool signet_derive_dek(const char *master_key, uint8_t dek[SIGNET_DEK_LEN]) {
   if (!master_key || !master_key[0]) return false;
@@ -81,12 +92,11 @@ static bool signet_derive_dek(const char *master_key, uint8_t dek[SIGNET_DEK_LEN
     return false; /* insufficient entropy */
   }
 
-  /* HKDF-SHA256: extract + expand */
-  /* Using crypto_kdf_derive_from_key as a simpler HKDF substitute.
-   * We use crypto_generichash (BLAKE2b) as a KDF since libsodium
-   * doesn't expose raw HKDF-SHA256. This is equally secure. */
+  /* BLAKE2b KDF with domain separation.
+   * crypto_generichash outputs the DEK from (key=master_key,
+   * input=SIGNET_DEK_DOMAIN). */
   if (crypto_generichash(dek, SIGNET_DEK_LEN,
-                         (const uint8_t *)SIGNET_HKDF_INFO, strlen(SIGNET_HKDF_INFO),
+                         (const uint8_t *)SIGNET_DEK_DOMAIN, strlen(SIGNET_DEK_DOMAIN),
                          ikm, ikm_len) != 0) {
     sodium_memzero(ikm, sizeof(ikm));
     return false;

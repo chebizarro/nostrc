@@ -25,6 +25,7 @@
 #include <gio/gio.h>
 #include <gio/gunixsocketaddress.h>
 #include <glib.h>
+#include <json-glib/json-glib.h>
 #include <json.h>
 #include <sodium.h>
 
@@ -36,6 +37,7 @@
 
 /* NIP-46 JSON-RPC framing: line-delimited JSON. */
 #define NIP5L_MAX_LINE 65536
+#define NIP5L_MAX_CONNECTIONS 64
 
 /* Per-connection state. */
 typedef struct {
@@ -68,11 +70,69 @@ struct SignetNip5lServer {
 
   GSocketService *service;
   GList *connections;  /* list of Nip5lConnState* */
+  guint active_connections;
   GMutex mu;
 };
 
 static int64_t signet_now_unix(void) {
   return (int64_t)time(NULL);
+}
+
+static char *nip5l_json_result_string(const char *value) {
+  char *escaped = g_strescape(value ? value : "", NULL);
+  char *resp = g_strdup_printf("{\"result\":\"%s\"}", escaped ? escaped : "");
+  g_free(escaped);
+  return resp;
+}
+
+static char *nip5l_json_error_string(const char *value) {
+  char *escaped = g_strescape(value ? value : "", NULL);
+  char *resp = g_strdup_printf("{\"error\":\"%s\"}", escaped ? escaped : "error");
+  g_free(escaped);
+  return resp;
+}
+
+static char *nip5l_json_auth_result(const char *agent_id) {
+  char *escaped = g_strescape(agent_id ? agent_id : "", NULL);
+  char *resp = g_strdup_printf("{\"result\":\"authenticated\",\"agent_id\":\"%s\"}",
+                               escaped ? escaped : "");
+  g_free(escaped);
+  return resp;
+}
+
+static char *nip5l_json_get_relays(SignetNip5lServer *ns) {
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+  json_builder_set_member_name(builder, "result");
+  json_builder_begin_object(builder);
+
+  if (ns->relays) {
+    size_t n_urls = 0;
+    const char *const *urls = signet_relay_pool_get_urls(ns->relays, &n_urls);
+    for (size_t i = 0; i < n_urls; i++) {
+      const char *url = urls[i] ? urls[i] : "";
+      json_builder_set_member_name(builder, url);
+      json_builder_begin_object(builder);
+      json_builder_set_member_name(builder, "read");
+      json_builder_add_boolean_value(builder, TRUE);
+      json_builder_set_member_name(builder, "write");
+      json_builder_add_boolean_value(builder, TRUE);
+      json_builder_end_object(builder);
+    }
+  }
+
+  json_builder_end_object(builder);
+  json_builder_end_object(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  char *json = json_generator_to_data(gen, NULL);
+
+  json_node_free(root);
+  g_object_unref(gen);
+  g_object_unref(builder);
+  return json;
 }
 
 /* ----------------------------- message handling --------------------------- */
@@ -111,7 +171,7 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
       if (!challenge)
         return g_strdup("{\"error\":\"failed to issue challenge\"}");
 
-      char *resp = g_strdup_printf("{\"result\":\"%s\"}", challenge);
+      char *resp = nip5l_json_result_string(challenge);
       g_free(challenge);
       return resp;
     }
@@ -131,13 +191,13 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
       if (ar != SIGNET_AUTH_OK) {
         g_free(agent_id);
         g_free(pubkey_hex);
-        return g_strdup_printf("{\"error\":\"%s\"}", signet_auth_result_string(ar));
+        return nip5l_json_error_string(signet_auth_result_string(ar));
       }
 
       cs->agent_id = agent_id;
       cs->pubkey_hex = pubkey_hex;
       cs->authenticated = true;
-      return g_strdup_printf("{\"result\":\"authenticated\",\"agent_id\":\"%s\"}", agent_id);
+      return nip5l_json_auth_result(agent_id);
     }
 
     free(method);
@@ -163,7 +223,7 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
     if (!signet_key_store_get_agent_pubkey(ns->keys, cs->agent_id, pubkey_hex, sizeof(pubkey_hex))) {
       resp = g_strdup("{\"error\":\"key not found\"}");
     } else {
-      resp = g_strdup_printf("{\"result\":\"%s\"}", pubkey_hex);
+      resp = nip5l_json_result_string(pubkey_hex);
     }
 
   } else if (strcmp(method, "sign_event") == 0) {
@@ -228,14 +288,14 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
       sk_hex[64] = '\0';
       char *ct = NULL, *err_msg = NULL;
       if (nostr_nip04_encrypt(plaintext, peer_pk, sk_hex, &ct, &err_msg) != 0) {
-        resp = g_strdup_printf("{\"error\":\"%s\"}", err_msg ? err_msg : "encrypt failed");
+        resp = nip5l_json_error_string(err_msg ? err_msg : "encrypt failed");
         free(err_msg);
       } else {
         signet_audit_log_common(ns->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
             &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip04_encrypt",
               .decision = "allow", .reason_code = "ok" },
             "{\"transport\":\"nip5l\",\"algo\":\"nip04\"}");
-        resp = g_strdup_printf("{\"result\":\"%s\"}", ct);
+        resp = nip5l_json_result_string(ct);
         free(ct);
       }
       sodium_memzero(sk_hex, sizeof(sk_hex));
@@ -258,14 +318,14 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
       sk_hex[64] = '\0';
       char *pt = NULL, *err_msg = NULL;
       if (nostr_nip04_decrypt(ciphertext, peer_pk, sk_hex, &pt, &err_msg) != 0) {
-        resp = g_strdup_printf("{\"error\":\"%s\"}", err_msg ? err_msg : "decrypt failed");
+        resp = nip5l_json_error_string(err_msg ? err_msg : "decrypt failed");
         free(err_msg);
       } else {
         signet_audit_log_common(ns->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
             &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip04_decrypt",
               .decision = "allow", .reason_code = "ok" },
             "{\"transport\":\"nip5l\",\"algo\":\"nip04\"}");
-        resp = g_strdup_printf("{\"result\":\"%s\"}", pt);
+        resp = nip5l_json_result_string(pt);
         free(pt);
       }
       sodium_memzero(sk_hex, sizeof(sk_hex));
@@ -306,7 +366,7 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
               &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip44_encrypt",
                 .decision = "allow", .reason_code = "ok" },
               "{\"transport\":\"nip5l\",\"algo\":\"nip44\"}");
-          resp = g_strdup_printf("{\"result\":\"%s\"}", ct);
+          resp = nip5l_json_result_string(ct);
           free(ct);
         }
       }
@@ -351,7 +411,7 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
               &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip44_decrypt",
                 .decision = "allow", .reason_code = "ok" },
               "{\"transport\":\"nip5l\",\"algo\":\"nip44\"}");
-          resp = g_strdup_printf("{\"result\":\"%s\"}", pt_str);
+          resp = nip5l_json_result_string(pt_str);
           g_free(pt_str);
         }
       }
@@ -365,20 +425,7 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
 
   } else if (strcmp(method, "get_relays") == 0) {
     /* Build a JSON object mapping relay URLs to read/write hints. */
-    if (ns->relays) {
-      size_t n_urls = 0;
-      const char *const *urls = signet_relay_pool_get_urls(ns->relays, &n_urls);
-      GString *rb = g_string_new("{\"result\":{");
-      for (size_t ri = 0; ri < n_urls; ri++) {
-        if (ri > 0) g_string_append_c(rb, ',');
-        g_string_append_printf(rb, "\"%s\":{\"read\":true,\"write\":true}",
-                               urls[ri] ? urls[ri] : "");
-      }
-      g_string_append(rb, "}}");
-      resp = g_string_free(rb, FALSE);
-    } else {
-      resp = g_strdup("{\"result\":{}}");
-    }
+    resp = nip5l_json_get_relays(ns);
 
   } else {
     resp = g_strdup("{\"error\":\"unknown method\"}");
@@ -432,6 +479,7 @@ static gpointer nip5l_client_thread(gpointer data) {
 
   g_mutex_lock(&ns->mu);
   ns->connections = g_list_remove(ns->connections, cs);
+  if (ns->active_connections > 0) ns->active_connections--;
   g_mutex_unlock(&ns->mu);
 
   nip5l_conn_state_free(cs);
@@ -450,6 +498,15 @@ nip5l_on_incoming(GSocketService *service,
   (void)service;
   (void)source_object;
   SignetNip5lServer *ns = (SignetNip5lServer *)user_data;
+
+  g_mutex_lock(&ns->mu);
+  if (ns->active_connections >= NIP5L_MAX_CONNECTIONS) {
+    g_mutex_unlock(&ns->mu);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    return TRUE;
+  }
+  ns->active_connections++;
+  g_mutex_unlock(&ns->mu);
 
   Nip5lConnState *cs = g_new0(Nip5lConnState, 1);
 
@@ -478,6 +535,7 @@ nip5l_on_incoming(GSocketService *service,
     /* Thread creation failed — clean up inline. */
     g_mutex_lock(&ns->mu);
     ns->connections = g_list_remove(ns->connections, cs);
+    if (ns->active_connections > 0) ns->active_connections--;
     g_mutex_unlock(&ns->mu);
     nip5l_conn_state_free(cs);
     g_object_unref(td->conn_ref);

@@ -16,21 +16,19 @@
 #include "signet/store_audit.h"
 #include "signet/capability.h"
 #include "signet/audit_logger.h"
+#include "signet/util.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include <glib.h>
+#include <json-glib/json-glib.h>
 #include <sodium.h>
 
 #ifdef SIGNET_HAVE_CURL
 #include <curl/curl.h>
 #endif
-
-static int64_t signet_now_unix(void) {
-  return (int64_t)time(NULL);
-}
 
 #ifdef SIGNET_HAVE_CURL
 
@@ -60,58 +58,55 @@ static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata
  * Returns 0 on success, -1 on parse failure. */
 static int parse_session_response(const char *json, size_t json_len,
                                    char **out_token, int64_t *out_expires_at) {
-  if (!json || json_len == 0) return -1;
-
-  /* Simple JSON key extraction without a full parser.
-   * Look for "session_token" or "token" key. */
-  const char *tok_key = NULL;
-  const char *tok_start = NULL;
-
-  tok_key = strstr(json, "\"session_token\"");
-  if (!tok_key) tok_key = strstr(json, "\"token\"");
-  if (!tok_key) return -1;
-
-  /* Find the colon and opening quote. */
-  const char *colon = strchr(tok_key + 1, ':');
-  if (!colon) return -1;
-  /* Skip whitespace. */
-  const char *p = colon + 1;
-  while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-  if (*p != '"') return -1;
-  tok_start = p + 1;
-  const char *tok_end = strchr(tok_start, '"');
-  if (!tok_end) return -1;
-
-  *out_token = g_strndup(tok_start, (gsize)(tok_end - tok_start));
-
-  /* Parse expires_at (absolute) or expires_in (relative). */
+  if (!json || json_len == 0 || !out_token || !out_expires_at) return -1;
+  *out_token = NULL;
   *out_expires_at = 0;
-  const char *exp_key = strstr(json, "\"expires_at\"");
-  if (exp_key) {
-    const char *ec = strchr(exp_key + 1, ':');
-    if (ec) {
-      const char *ep = ec + 1;
-      while (*ep == ' ' || *ep == '\t') ep++;
-      *out_expires_at = g_ascii_strtoll(ep, NULL, 10);
-    }
-  } else {
-    exp_key = strstr(json, "\"expires_in\"");
-    if (exp_key) {
-      const char *ec = strchr(exp_key + 1, ':');
-      if (ec) {
-        const char *ep = ec + 1;
-        while (*ep == ' ' || *ep == '\t') ep++;
-        int64_t delta = g_ascii_strtoll(ep, NULL, 10);
-        if (delta > 0)
-          *out_expires_at = signet_now_unix() + delta;
-      }
-    }
+
+  JsonParser *parser = json_parser_new();
+  if (!parser) return -1;
+
+  GError *err = NULL;
+  gboolean ok = json_parser_load_from_data(parser, json, (gssize)json_len, &err);
+  if (!ok) {
+    if (err) g_error_free(err);
+    g_object_unref(parser);
+    return -1;
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  JsonObject *obj = (root && JSON_NODE_HOLDS_OBJECT(root))
+                        ? json_node_get_object(root)
+                        : NULL;
+  if (!obj) {
+    g_object_unref(parser);
+    return -1;
+  }
+
+  const char *token = NULL;
+  if (json_object_has_member(obj, "session_token"))
+    token = json_object_get_string_member(obj, "session_token");
+  else if (json_object_has_member(obj, "token"))
+    token = json_object_get_string_member(obj, "token");
+
+  if (!token || token[0] == '\0') {
+    g_object_unref(parser);
+    return -1;
+  }
+  *out_token = g_strdup(token);
+
+  if (json_object_has_member(obj, "expires_at")) {
+    *out_expires_at = (int64_t)json_object_get_int_member(obj, "expires_at");
+  } else if (json_object_has_member(obj, "expires_in")) {
+    int64_t delta = (int64_t)json_object_get_int_member(obj, "expires_in");
+    if (delta > 0)
+      *out_expires_at = signet_now_unix() + delta;
   }
 
   /* Fallback: 1h if no expiry found. */
   if (*out_expires_at <= 0)
     *out_expires_at = signet_now_unix() + 3600;
 
+  g_object_unref(parser);
   return 0;
 }
 

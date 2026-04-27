@@ -22,6 +22,7 @@
 #include "signet/key_store.h"
 #include "signet/replay_cache.h"
 #include "signet/audit_logger.h"
+#include "signet/util.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -49,17 +50,6 @@
 
 static void signet_memzero(void *p, size_t n) {
   if (p && n) secure_wipe(p, n);
-}
-
-/* Decode a 64-char hex string into 32 raw bytes. Returns false on error. */
-static bool signet_hex_to_bytes32(const char *hex, uint8_t out[32]) {
-  if (!hex) return false;
-  for (int i = 0; i < 32; i++) {
-    unsigned int byte;
-    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
-    out[i] = (uint8_t)byte;
-  }
-  return true;
 }
 
 static void signet_bytes32_to_hex(const uint8_t in[32], char out_hex[65]) {
@@ -352,9 +342,8 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (!remote_signer_pubkey_hex || !remote_signer_secret_key_hex ||
       !client_pubkey_hex || !ciphertext) return false;
 
-  g_mutex_lock(&s->mu);
-
-  /* 1) Replay check (by outer event id) */
+  /* 1) Replay check (by outer event id). The replay cache has its own lock;
+   * do not hold the NIP-46 server session mutex across crypto, policy, or I/O. */
   SignetReplayResult rr = SIGNET_REPLAY_OK;
   if (s->replay && event_id_hex && event_id_hex[0]) {
     rr = signet_replay_check_and_mark(s->replay, event_id_hex, created_at, now);
@@ -431,21 +420,26 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         }
       }
     } else {
-      const char *bound_agent = s->sessions_by_client_pubkey
-                                  ? (const char *)g_hash_table_lookup(s->sessions_by_client_pubkey,
-                                                                      client_pubkey_hex)
-                                  : NULL;
-      if (!bound_agent || !bound_agent[0]) {
+      bool bound_found = false;
+      if (s->sessions_by_client_pubkey) {
+        g_mutex_lock(&s->mu);
+        const char *bound_agent = (const char *)g_hash_table_lookup(
+            s->sessions_by_client_pubkey, client_pubkey_hex);
+        if (bound_agent && bound_agent[0]) {
+          bound_found = true;
+          session_agent_id = g_strdup(bound_agent);
+        }
+        g_mutex_unlock(&s->mu);
+      }
+
+      if (!bound_found) {
         pre_code = "not_connected";
         pre_err = g_strdup("client has no active NIP-46 session");
+      } else if (!session_agent_id) {
+        pre_code = "oom";
+        pre_err = g_strdup("out of memory");
       } else {
-        session_agent_id = g_strdup(bound_agent);
-        if (!session_agent_id) {
-          pre_code = "oom";
-          pre_err = g_strdup("out of memory");
-        } else {
-          policy_identity = session_agent_id;
-        }
+        policy_identity = session_agent_id;
       }
     }
   }
@@ -518,12 +512,22 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
     /* 6) Execute method */
     if (strcmp(method, "connect") == 0) {
-      g_hash_table_replace(s->sessions_by_client_pubkey,
-                           g_strdup(client_pubkey_hex),
-                           g_strdup(session_agent_id));
-      result = g_strdup("ack");
-      status = "ok";
-      code = "ok";
+      char *session_key = g_strdup(client_pubkey_hex);
+      char *session_value = g_strdup(session_agent_id);
+      if (!session_key || !session_value) {
+        g_free(session_key);
+        g_free(session_value);
+        err_str = g_strdup("out of memory");
+        status = "error";
+        code = "oom";
+      } else {
+        g_mutex_lock(&s->mu);
+        g_hash_table_replace(s->sessions_by_client_pubkey, session_key, session_value);
+        g_mutex_unlock(&s->mu);
+        result = g_strdup("ack");
+        status = "ok";
+        code = "ok";
+      }
 
     } else if (strcmp(method, "ping") == 0) {
       result = g_strdup("pong");
@@ -724,8 +728,6 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   free(dec_err);
 
   nostr_nip46_request_free(&req);
-
-  g_mutex_unlock(&s->mu);
 
   return published;
 }
